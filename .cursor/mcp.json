@@ -1,11 +1,14 @@
 {
   "mcpServers": {
-    "filesystem": {
-      "command": "npx",
+    "proxy": {
+      "command": "/Users/Loocor/GitHub/MCP/mcp-client/.venv/bin/python",
       "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/"
+        "/Users/Loocor/GitHub/MCP/mcp-client/mcp_proxy.py",
+        "--stdio",
+        "--config",
+        "/Users/Loocor/GitHub/MCP/mcp-client/mcp.json",
+        "--log-file",
+        "/Users/Loocor/GitHub/MCP/mcp-client/logs/cursor_proxy.log"
       ]
     }
   }

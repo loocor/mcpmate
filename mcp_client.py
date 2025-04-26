@@ -374,18 +374,67 @@ def format_result(result: Any) -> str:
     Returns:
         A formatted string representation of the result.
     """
+    # Log the result type for debugging
+    logger.debug(f"Result type: {type(result)}")
+    logger.debug(f"Result: {result}")
+
+    # Handle None
+    if result is None:
+        return ""
+
+    # Handle dictionaries
     if isinstance(result, dict):
-        return json.dumps(result, indent=2)
-    elif hasattr(result, 'content') and hasattr(result.content[0], 'text'):
-        return result.content[0].text
-    elif hasattr(result, '__dict__'):
+        try:
+            return json.dumps(result, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Error formatting dict result: {e}")
+            return str(result)
+
+    # Handle lists
+    if isinstance(result, list):
+        try:
+            return json.dumps(result, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Error formatting list result: {e}")
+            return str(result)
+
+    # Handle TextContent objects
+    if hasattr(result, 'content') and isinstance(result.content, list) and len(result.content) > 0:
+        try:
+            # Check if content items have 'text' attribute
+            if hasattr(result.content[0], 'text'):
+                return result.content[0].text
+            # Check if content items are dictionaries with 'text' key
+            elif isinstance(result.content[0], dict) and 'text' in result.content[0]:
+                return result.content[0]['text']
+            # Otherwise, try to convert the content to JSON
+            else:
+                content_list = []
+                for item in result.content:
+                    if hasattr(item, '__dict__'):
+                        content_list.append(item.__dict__)
+                    else:
+                        content_list.append(str(item))
+                return json.dumps(content_list, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Error formatting TextContent result: {e}")
+            return str(result)
+
+    # Handle objects with __dict__ attribute
+    if hasattr(result, '__dict__'):
         try:
             result_dict = result.__dict__
-            return json.dumps(result_dict, indent=2)
-        except Exception:
+            return json.dumps(result_dict, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Error formatting object result: {e}")
             return str(result)
-    else:
+
+    # Handle primitive types
+    if isinstance(result, (str, int, float, bool)):
         return str(result)
+
+    # Default case
+    return str(result)
 
 def parse_arguments() -> Dict[str, Any]:
     """Parse command line arguments.

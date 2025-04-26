@@ -10,7 +10,7 @@
         "firecrawl-mcp"
       ],
       "command": "npx",
-      "commandPath": "./runtime/node-darwin-arm64/bin",
+      "commandPath": "/Users/Loocor/GitHub/MCP/mcp-client/runtime/node-darwin-arm64/bin",
       "enabled": true,
       "env": {
         "FIRECRAWL_API_KEY": "fc-acd14d04e67d4bd4a4d38fe12ec4d923"
@@ -26,7 +26,7 @@
         "@executeautomation/playwright-mcp-server"
       ],
       "command": "npx",
-      "commandPath": "./runtime/node-darwin-arm64/bin",
+      "commandPath": "/Users/Loocor/GitHub/MCP/mcp-client/runtime/node-darwin-arm64/bin",
       "enabled": true
     },
     "thinking": {
@@ -39,7 +39,7 @@
         "@modelcontextprotocol/server-sequential-thinking"
       ],
       "command": "npx",
-      "commandPath": "./runtime/node-darwin-arm64/bin",
+      "commandPath": "/Users/Loocor/GitHub/MCP/mcp-client/runtime/node-darwin-arm64/bin",
       "enabled": true
     },
     "proxy": {
