@@ -1,6 +1,7 @@
 [
   {
-    "name": "playwright_navigate",
+    "server": "playwright",
+    "tool": "playwright_navigate",
     "arguments": {
       "url": "https://modelcontextprotocol.io",
       "width": 1280,
@@ -9,7 +10,8 @@
     }
   },
   {
-    "name": "playwright_screenshot",
+    "server": "playwright",
+    "tool": "playwright_screenshot",
     "arguments": {
       "name": "screenshot",
       "fullPage": true,
@@ -17,7 +19,8 @@
     }
   },
   {
-    "name": "playwright_close",
+    "server": "playwright",
+    "tool": "playwright_close",
     "arguments": {}
   }
 ]

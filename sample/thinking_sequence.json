@@ -1,6 +1,7 @@
 [
   {
-    "name": "sequentialthinking",
+    "server": "thinking",
+    "tool": "sequentialthinking",
     "arguments": {
       "thought": "Let me think about this problem: how to design an efficient MCP client?",
       "thoughtNumber": 1,
@@ -9,7 +10,8 @@
     }
   },
   {
-    "name": "sequentialthinking",
+    "server": "thinking",
+    "tool": "sequentialthinking",
     "arguments": {
       "thought": "Based on my previous thoughts, let me continue analyzing this problem.",
       "thoughtNumber": 2,
@@ -18,7 +20,8 @@
     }
   },
   {
-    "name": "sequentialthinking",
+    "server": "thinking",
+    "tool": "sequentialthinking",
     "arguments": {
       "thought": "Based on my previous thoughts, let me continue analyzing this problem.",
       "thoughtNumber": 3,
@@ -27,7 +30,8 @@
     }
   },
   {
-    "name": "sequentialthinking",
+    "server": "thinking",
+    "tool": "sequentialthinking",
     "arguments": {
       "thought": "Based on my previous thoughts, let me continue analyzing this problem.",
       "thoughtNumber": 4,
@@ -36,7 +40,8 @@
     }
   },
   {
-    "name": "sequentialthinking",
+    "server": "thinking",
+    "tool": "sequentialthinking",
     "arguments": {
       "thought": "Based on my previous thoughts, let me continue analyzing this problem.",
       "thoughtNumber": 5,

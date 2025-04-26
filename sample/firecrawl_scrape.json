@@ -1,9 +1,12 @@
 [
   {
-    "name": "firecrawl_scrape",
+    "server": "firecrawl",
+    "tool": "firecrawl_scrape",
     "arguments": {
       "url": "https://modelcontextprotocol.io",
-      "formats": ["markdown"],
+      "formats": [
+        "markdown"
+      ],
       "onlyMainContent": true
     }
   }

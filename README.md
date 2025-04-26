@@ -20,16 +20,32 @@ python mcp_tool.py --server <server_name> --tool <tool_name> --args '<json_args>
 python mcp_tool.py --server firecrawl --tool firecrawl_scrape --args '{"url": "https://modelcontextprotocol.io", "formats": ["markdown"], "onlyMainContent": true}'
 ```
 
-#### 工具序列调用
+#### 工具配置调用
 
 ```bash
-python mcp_tool.py --server <server_name> --sequence <sequence_file>
+python mcp_tool.py --conf <config_file>
 ```
 
 例如：
 
 ```bash
-python mcp_tool.py --server playwright --sequence sequences/playwright_screenshot.json
+python mcp_tool.py --conf sample/firecrawl_scrape.json
+```
+
+配置文件可以包含服务器信息，这样就不需要在命令行中指定 `--server` 参数：
+
+```json
+[
+  {
+    "server": "firecrawl",
+    "tool": "firecrawl_scrape",
+    "arguments": {
+      "url": "https://modelcontextprotocol.io",
+      "formats": ["markdown"],
+      "onlyMainContent": true
+    }
+  }
+]
 ```
 
 #### 输出格式
@@ -94,27 +110,47 @@ python mcp_thinking.py "<problem>"
 python mcp_thinking.py "如何设计一个高效的 MCP 客户端？"
 ```
 
-## 工具序列
+## 工具配置
 
-`sequences` 目录包含了一些预定义的工具序列：
+`sample` 目录包含了一些预定义的工具配置：
 
 - `playwright_screenshot.json`: 使用 playwright 服务器导航到网页并截图
 - `firecrawl_scrape.json`: 使用 firecrawl 服务器抓取网页内容
 - `thinking_sequence.json`: 使用 thinking 服务器进行顺序思考
 
-你可以创建自己的工具序列，只需要按照以下格式：
+你可以创建自己的工具配置，有两种格式可供选择：
+
+### 1. 单个工具调用
 
 ```json
 [
   {
-    "name": "tool_name",
+    "server": "firecrawl",
+    "tool": "firecrawl_scrape",
+    "arguments": {
+      "url": "https://modelcontextprotocol.io",
+      "formats": ["markdown"],
+      "onlyMainContent": true
+    }
+  }
+]
+```
+
+### 2. 工具序列
+
+```json
+[
+  {
+    "server": "server_name",
+    "tool": "tool_name",
     "arguments": {
       "arg1": "value1",
       "arg2": "value2"
     }
   },
   {
-    "name": "another_tool",
+    "server": "server_name",
+    "tool": "another_tool",
     "arguments": {
       "arg1": "value1"
     }
@@ -125,5 +161,11 @@ python mcp_thinking.py "如何设计一个高效的 MCP 客户端？"
 然后使用 `mcp_tool.py` 调用它：
 
 ```bash
-python mcp_tool.py --server <server_name> --sequence <your_sequence_file>
+python mcp_tool.py --conf <your_config_file>
+```
+
+或者，如果配置文件中没有指定服务器：
+
+```bash
+python mcp_tool.py --server <server_name> --conf <your_config_file>
 ```
