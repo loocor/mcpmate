@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "firecrawl": {
+      "args": [
+        "-y",
+        "firecrawl-mcp"
+      ],
+      "command": "npx",
+      "env": {
+        "FIRECRAWL_API_KEY": "fc-acd14d04e67d4bd4a4d38fe12ec4d923"
+      }
+    },
+    "playwright": {
+      "args": [
+        "--loglevel verbose",
+        "--cache /Users/Loocor/Downloads/cache/playwright",
+        "-y",
+        "@executeautomation/playwright-mcp-server"
+      ],
+      "command": "npx"
+    },
+    "thinking": {
+      "args": [
+        "--loglevel verbose",
+        "--cache /Users/Loocor/Downloads/cache/thinking",
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "command": "npx"
+    }
+  }
+}
