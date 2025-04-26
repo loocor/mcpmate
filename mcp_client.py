@@ -67,13 +67,20 @@ class MCPClient:
         logger.error(f"Tried paths: {paths_to_try}")
         raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
 
-    def get_server_names(self) -> List[str]:
+    def get_server_names(self, only_enabled: bool = False) -> List[str]:
         """Get the names of all configured servers.
+
+        Args:
+            only_enabled: If True, only return enabled servers.
 
         Returns:
             A list of server names.
         """
-        return list(self.config.get("mcpServers", {}).keys())
+        servers = self.config.get("mcpServers", {})
+        if only_enabled:
+            return [name for name, config in servers.items() if config.get("enabled", False)]
+        else:
+            return list(servers.keys())
 
     def get_server_config(self, server_name: str) -> Dict[str, Any]:
         """Get the configuration for a server.
