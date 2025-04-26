@@ -1,0 +1,281 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Code & Project Conventions
+
+This document outlines the unified code style, naming, error handling, file size, and project conventions for the MCPMan project. All team members and AI tools should follow these rules for consistency and maintainability.
+
+> **For technology stack and toolchain details, see [tech-stack.mdc](mdc:tech-stack.mdc).**
+>
+> **For project directory structure, see [project-structure.mdc](mdc:project-structure.mdc).**
+
+## Core Principles
+
+1. **Code Quality First** - Prioritize clean, maintainable code over quick solutions
+2. **Consistent Patterns** - Use consistent patterns across the codebase
+3. **Documentation** - Document all key components and complex logic
+4. **Performance Awareness** - Consider performance implications in all designs
+
+## Filesystem MCP Server Usage
+
+- **When using the filesystem mcp server, always provide the full absolute file path.**
+  - Example: `/Users/Loocor/GitHub/MCP/mcp-man/DEVELOPMENT.md`
+  - Relative or root-only paths may result in access denied errors.
+
+## File Size Limit
+
+**All source files must not exceed 300 lines of code.**
+
+This limit is strictly enforced to ensure:
+1. **Readability** - Files are easier to read and understand
+2. **Maintainability** - Smaller files are easier to maintain
+3. **Testability** - Smaller files are easier to test
+4. **Focus** - Encourages single responsibility principle
+
+### Implementation Strategies
+
+When a file approaches the 300-line limit, consider these strategies:
+
+1. **Extract Modules** - Move related functionality to separate modules
+2. **Create Utility Functions** - Extract common functionality to utility files
+3. **Split by Responsibility** - Separate different responsibilities into different files
+
+### Exceptions
+
+In rare cases, exceeding the 300-line limit may be acceptable:
+
+1. **Test Data** - Files containing extensive test data
+2. **Documentation** - Files containing documentation
+
+However, these exceptions should be rare and justified.
+
+## Naming Conventions
+
+### General
+- **Clear and Descriptive** - Names should clearly indicate purpose
+- **Full Words** - Avoid abbreviations except for common ones (e.g., `id`, `url`)
+- **Consistent Casing** - Follow language-specific conventions
+
+### TypeScript/JavaScript
+- **Components** - PascalCase (e.g., `ServerList`, `ConfigEditor`)
+- **Functions** - camelCase (e.g., `fetchConfig`, `handleSubmit`)
+- **Variables** - camelCase (e.g., `serverList`, `configData`)
+- **Constants** - UPPER_SNAKE_CASE for true constants (e.g., `MAX_SERVERS`, `API_ENDPOINTS`)
+- **Interfaces/Types** - PascalCase, prefixed with `I` for interfaces (e.g., `IServerConfig`, `ServerType`)
+- **Files** - kebab-case for most files (e.g., `server-list.tsx`, `config-utils.ts`)
+- **React Components** - One component per file, file name matches component name
+
+### Rust
+- **Structs/Enums** - PascalCase (e.g., `ServerConfig`, `AppStatus`)
+- **Functions** - snake_case (e.g., `read_config`, `start_process`)
+- **Variables** - snake_case (e.g., `server_list`, `config_data`)
+- **Constants** - UPPER_SNAKE_CASE (e.g., `MAX_SERVERS`, `DEFAULT_TIMEOUT`)
+- **Modules** - snake_case (e.g., `config_manager`, `process_utils`)
+
+## Code Style
+
+### Rust Guidelines
+1. **Module Organization**: Organize code into small, focused modules with clear responsibilities
+2. **Error Types**: Use `anyhow::Result` for functions that can fail, with proper context
+3. **Async/Await**: Use `async/await` for asynchronous operations, with proper error propagation
+4. **Documentation**: Add rustdoc comments (`///`) for public functions and types
+5. **Formatting**: Follow standard Rust formatting with `rustfmt`
+
+```rust
+// Example of recommended Rust style
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// Configuration for an MCP server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub name: String,
+    pub command: String,
+    pub working_dir: PathBuf,
+    pub args: Vec<String>,
+}
+
+/// Reads server configuration from the provided path
+pub async fn read_config(path: &PathBuf) -> Result<ServerConfig> {
+    let data = tokio::fs::read_to_string(path)
+        .await
+        .context("Failed to read config file")?;
+
+    let config: ServerConfig = serde_json::from_str(&data)
+        .context("Failed to parse config file")?;
+
+    Ok(config)
+}
+```
+
+### TypeScript/JavaScript Guidelines
+1. **Types**: Use TypeScript with proper type annotations
+2. **Promises**: Use async/await for asynchronous operations
+3. **Component Structure**: Keep React components small and focused
+4. **State Management**: Use appropriate state management based on complexity
+
+```typescript
+// Example of recommended TypeScript style
+import { useState, useEffect } from 'react';
+import { ServerConfig } from '../types';
+
+interface ServerListProps {
+  onSelectServer: (server: ServerConfig) => void;
+}
+
+export const ServerList: React.FC<ServerListProps> = ({ onSelectServer }) => {
+  const [servers, setServers] = useState<ServerConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadServers = async () => {
+      try {
+        const result = await fetch('/api/servers');
+        const data = await result.json();
+        setServers(data);
+      } catch (error) {
+        console.error('Failed to load servers:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadServers();
+  }, []);
+
+  return (
+    <div className="server-list">
+      {loading ? (
+        <p>Loading servers...</p>
+      ) : (
+        servers.map((server) => (
+          <div
+            key={server.id}
+            className="server-item"
+            onClick={() => onSelectServer(server)}
+          >
+            {server.name}
+          </div>
+        ))
+      )}
+    </div>
+  );
+};
+```
+
+## Error Handling
+
+### TypeScript/JavaScript
+- Use async/await with try/catch
+- Provide meaningful error messages
+- Consider error reporting to the user
+
+```typescript
+async function fetchServerStatus(id: string): Promise<ServerStatus> {
+  try {
+    const response = await fetch(`/api/servers/${id}/status`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch server status: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching server status:', error);
+    // Propagate error with context
+    throw new Error(`Could not retrieve status for server ${id}: ${error.message}`);
+  }
+}
+```
+
+### Rust
+- Use `anyhow::Result` for functions that can fail
+- Add context to errors with `.context()`
+- Create custom error types for domain-specific errors
+
+```rust
+use anyhow::{Context, Result};
+
+pub async fn start_server(config: &ServerConfig) -> Result<Child> {
+    let cmd = Command::new(&config.command)
+        .args(&config.args)
+        .current_dir(&config.working_dir)
+        .spawn()
+        .context(format!("Failed to start server '{}'", config.name))?;
+
+    Ok(cmd)
+}
+```
+
+## Code Comments
+
+- **Why, Not What** - Explain why code exists, not what it does
+- **Public APIs** - Document all public functions/classes
+- **Complex Logic** - Comment non-obvious code sections
+
+### JavaScript/TypeScript
+```typescript
+/**
+ * Manages server configurations
+ * Handles loading, saving, and validating server configs
+ */
+export class ServerManager {
+  // Store for active server configs
+  private configs: ServerConfig[] = [];
+
+  /**
+   * Loads server configurations from storage
+   * @returns Promise resolving to loaded configurations
+   */
+  async loadConfigs(): Promise<ServerConfig[]> {
+    // Implementation
+  }
+}
+```
+
+### Rust
+```rust
+/// Configuration for an MCP server
+/// Contains all details needed to start and manage a server process
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub name: String,
+    pub command: String,
+    pub working_dir: PathBuf,
+    pub args: Vec<String>,
+}
+
+/// Reads and parses a server configuration from the provided path
+///
+/// # Arguments
+/// * `path` - Path to the configuration file
+///
+/// # Returns
+/// * `Result<ServerConfig>` - The parsed configuration or an error
+pub async fn read_config(path: &PathBuf) -> Result<ServerConfig> {
+    // Implementation
+}
+```
+
+## Commit Conventions
+
+Follow conventional commits pattern:
+
+- `feat:` - New feature
+- `fix:` - Bug fix
+- `docs:` - Documentation change
+- `style:` - Formatting, missing semicolons, etc.
+- `refactor:` - Code change that neither fixes a bug nor adds a feature
+- `perf:` - Performance improvement
+- `test:` - Adding or updating tests
+- `chore:` - Changes to build process or auxiliary tools
+
+Example:
+```
+feat: add server configuration UI
+fix: resolve memory leak in process manager
+docs: update README with setup instructions
+```
