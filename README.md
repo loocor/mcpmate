@@ -142,6 +142,55 @@ python mcp_thinking.py "<problem>"
 python mcp_thinking.py "如何设计一个高效的 MCP 客户端？"
 ```
 
+## 服务器配置
+
+### mcp.json 配置文件
+
+MCP 客户端使用 `mcp.json` 配置文件来定义服务器设置。以下是配置文件的格式：
+
+```json
+{
+  "mcpServers": {
+    "server_name": {
+      "command": "npx",
+      "commandPath": "./runtime/node-darwin-arm64/bin",  // 可选，指定命令的路径
+      "args": [
+        "--loglevel verbose",
+        "-y",
+        "package-name"
+      ],
+      "env": {
+        "ENV_VAR": "value"
+      }
+    }
+  }
+}
+```
+
+配置选项说明：
+
+- `command`: 要执行的命令（通常是 `npx`）
+- `commandPath`: （可选）命令的路径，如果指定，将与 `command` 拼接形成完整路径
+- `args`: 命令行参数数组
+- `env`: 环境变量对象
+
+例如，要使用项目内的 Node.js 运行时，可以这样配置：
+
+```json
+{
+  "mcpServers": {
+    "firecrawl": {
+      "command": "npx",
+      "commandPath": "./runtime/node-darwin-arm64/bin",
+      "args": [
+        "-y",
+        "firecrawl-mcp"
+      ]
+    }
+  }
+}
+```
+
 ## 工具配置
 
 `sample` 目录包含了一些预定义的工具配置：

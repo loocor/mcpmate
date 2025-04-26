@@ -2,10 +2,13 @@
   "mcpServers": {
     "firecrawl": {
       "args": [
+        "--loglevel verbose",
+        "--cache /Users/Loocor/Downloads/cache/firecrawl",
         "-y",
         "firecrawl-mcp"
       ],
       "command": "npx",
+      "commandPath": "./runtime/node-darwin-arm64/bin",
       "env": {
         "FIRECRAWL_API_KEY": "fc-acd14d04e67d4bd4a4d38fe12ec4d923"
       }
@@ -17,7 +20,8 @@
         "-y",
         "@executeautomation/playwright-mcp-server"
       ],
-      "command": "npx"
+      "command": "npx",
+      "commandPath": "./runtime/node-darwin-arm64/bin"
     },
     "thinking": {
       "args": [
@@ -26,7 +30,8 @@
         "-y",
         "@modelcontextprotocol/server-sequential-thinking"
       ],
-      "command": "npx"
+      "command": "npx",
+      "commandPath": "./runtime/node-darwin-arm64/bin"
     }
   }
 }

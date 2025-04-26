@@ -111,6 +111,15 @@ class MCPClient:
         args = server_config.get("args", [])
         env = server_config.get("env", {})
 
+        # Check if a specific command path is provided
+        command_path = server_config.get("commandPath")
+        if command_path:
+            # Use the specified path for the command
+            full_command = os.path.join(command_path, command)
+            logger.info(f"Using custom command path: {command_path}")
+            logger.info(f"Full command path: {full_command}")
+            command = full_command
+
         # Merge environment variables
         full_env = os.environ.copy()
         if env:
@@ -473,7 +482,7 @@ async def main() -> None:
 
     try:
         client = MCPClient(config_path)
-        
+
         if list_servers:
             # List all servers
             server_names = client.get_server_names()
