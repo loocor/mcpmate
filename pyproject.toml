@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mcp-client = "mcp_client.cli:app"
+mcp-client = "mcp_client:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

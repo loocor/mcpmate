@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-MCP Common - Common utilities for MCP demos.
+MCP Client
+
+A client for interacting with MCP servers.
 """
 
+import asyncio
 import json
 import logging
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
-
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -384,3 +386,124 @@ def parse_arguments() -> Dict[str, Any]:
     parser.add_argument("--all", action="store_true", help="Connect to all servers")
 
     return vars(parser.parse_args())
+
+async def list_all_servers_info(config_path: str) -> None:
+    """List information for all servers.
+
+    Args:
+        config_path: Path to the MCP configuration file.
+    """
+    client = MCPClient(config_path)
+    server_names = client.get_server_names()
+
+    if not server_names:
+        print("No servers configured")
+        return
+
+    for server_name in server_names:
+        print(f"\n{'=' * 50}")
+        print(f"Server: {server_name}")
+        print(f"{'=' * 50}")
+
+        # Connect to the server
+        result = await client.connect_to_server(server_name)
+        if not result:
+            print(f"Failed to connect to server: {server_name}")
+            continue
+
+        session, stdio_ctx, session_ctx = result
+
+        try:
+            # Get server info
+            server_info = await client.get_server_info(session)
+
+            # Print server info
+            client.print_server_info(server_name, server_info)
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            # Close the session and contexts
+            try:
+                await session_ctx.__aexit__(None, None, None)
+                await stdio_ctx.__aexit__(None, None, None)
+            except Exception as e:
+                logger.warning(f"Error closing session for server '{server_name}': {e}")
+
+async def get_server_info_cli(server_name: str, config_path: str) -> None:
+    """Get information for a specific server.
+
+    Args:
+        server_name: Name of the server to get information for.
+        config_path: Path to the MCP configuration file.
+    """
+    client = MCPClient(config_path)
+
+    # Connect to the server
+    result = await client.connect_to_server(server_name)
+    if not result:
+        print(f"Failed to connect to server: {server_name}")
+        return
+
+    session, stdio_ctx, session_ctx = result
+
+    try:
+        # Get server info
+        server_info = await client.get_server_info(session)
+
+        # Print server info
+        client.print_server_info(server_name, server_info)
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        # Close the session and contexts
+        try:
+            await session_ctx.__aexit__(None, None, None)
+            await stdio_ctx.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning(f"Error closing session for server '{server_name}': {e}")
+
+async def main() -> None:
+    """Main entry point for the MCP client."""
+    args = parse_arguments()
+
+    config_path = args["config"]
+    server_name = args["server"]
+    list_servers = args["list"]
+    all_servers = args["all"]
+
+    try:
+        client = MCPClient(config_path)
+        
+        if list_servers:
+            # List all servers
+            server_names = client.get_server_names()
+            print("\nConfigured MCP Servers:")
+            for name in server_names:
+                print(f"  - {name}")
+            return
+
+        if all_servers:
+            # Get info for all servers
+            await list_all_servers_info(config_path)
+            return
+
+        if server_name:
+            # Get info for a specific server
+            await get_server_info_cli(server_name, config_path)
+            return
+
+        # If no specific action is requested, list available servers
+        server_names = client.get_server_names()
+        print("\nConfigured MCP Servers:")
+        for name in server_names:
+            print(f"  - {name}")
+        print("\nUse --server <name> to get information about a specific server")
+        print("Use --all to get information about all servers")
+        print("Use --serve to start a local MCP server")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    asyncio.run(main())

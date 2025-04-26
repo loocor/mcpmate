@@ -1,6 +1,44 @@
-# MCP Demo Tools
+# MCP Client
 
 这个目录包含了一系列用于演示 MCP（Model Context Protocol）功能的工具。
+
+## 服务器管理
+
+### mcp_client.py
+
+这是一个用于管理和查询 MCP 服务器的工具。它提供了以下命令：
+
+#### 列出所有服务器
+
+```bash
+python mcp_client.py --list
+```
+
+#### 获取特定服务器的信息
+
+```bash
+python mcp_client.py --server <server_name>
+```
+
+例如：
+
+```bash
+python mcp_client.py --server firecrawl
+```
+
+#### 获取所有服务器的信息
+
+```bash
+python mcp_client.py --all
+```
+
+如果你已经安装了这个包（使用 `pip install -e .` 或 `uv pip install -e .`），你也可以使用 `mcp-client` 命令：
+
+```bash
+mcp-client --list
+mcp-client --server firecrawl
+mcp-client --all
+```
 
 ## 通用工具
 
@@ -60,13 +98,7 @@ python mcp_tool.py --server firecrawl --tool firecrawl_scrape --args '{"url": "h
 
 以下是一些针对特定 MCP 服务器的工具：
 
-### mcp_info.py
-
-这个工具连接到所有配置的 MCP 服务器并获取它们的信息。
-
-```bash
-python mcp_info.py
-```
+> **注意**：这些特定工具的功能现在也可以通过 `mcp_client.py` 和 `mcp_tool.py` 实现。
 
 ### mcp_scrape.py
 
