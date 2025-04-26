@@ -1,0 +1,10 @@
+[
+  {
+    "name": "firecrawl_scrape",
+    "arguments": {
+      "url": "https://modelcontextprotocol.io",
+      "formats": ["markdown"],
+      "onlyMainContent": true
+    }
+  }
+]

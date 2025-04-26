@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """
-MCP Client - A simple command line tool to interact with MCP servers.
+MCP Common - Common utilities for MCP demos.
 """
 
-import asyncio
-import argparse
 import json
 import logging
 import os
@@ -24,7 +22,7 @@ logger = logging.getLogger(__name__)
 class MCPClient:
     """A client for interacting with MCP servers."""
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str = "mcp.json"):
         """Initialize the MCP client.
 
         Args:
@@ -43,15 +41,29 @@ class MCPClient:
             FileNotFoundError: If the configuration file doesn't exist.
             json.JSONDecodeError: If the configuration file is invalid JSON.
         """
-        try:
-            with open(self.config_path, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logger.error(f"Configuration file not found: {self.config_path}")
-            raise
-        except json.JSONDecodeError:
-            logger.error(f"Invalid JSON in configuration file: {self.config_path}")
-            raise
+        # Try to find the configuration file in the current directory
+        # or in the parent directory (project root)
+        paths_to_try = [
+            self.config_path,  # Current directory
+            os.path.join("..", self.config_path),  # Parent directory
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), self.config_path)  # Absolute path to project root
+        ]
+
+        for path in paths_to_try:
+            try:
+                with open(path, 'r') as f:
+                    logger.info(f"Loading configuration from: {path}")
+                    return json.load(f)
+            except FileNotFoundError:
+                continue
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON in configuration file: {path}")
+                raise
+
+        # If we get here, we couldn't find the configuration file
+        logger.error(f"Configuration file not found: {self.config_path}")
+        logger.error(f"Tried paths: {paths_to_try}")
+        raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
 
     def get_server_names(self) -> List[str]:
         """Get the names of all configured servers.
@@ -61,11 +73,14 @@ class MCPClient:
         """
         return list(self.config.get("mcpServers", {}).keys())
 
-    async def connect_to_server(self, server_name: str) -> None:
-        """Connect to an MCP server and retrieve information.
+    def get_server_config(self, server_name: str) -> Dict[str, Any]:
+        """Get the configuration for a server.
 
         Args:
-            server_name: The name of the server to connect to.
+            server_name: The name of the server.
+
+        Returns:
+            The server configuration.
 
         Raises:
             ValueError: If the server name is not found in the configuration.
@@ -73,7 +88,21 @@ class MCPClient:
         if server_name not in self.get_server_names():
             raise ValueError(f"Server '{server_name}' not found in configuration")
 
-        server_config = self.config["mcpServers"][server_name]
+        return self.config["mcpServers"][server_name]
+
+    async def connect_to_server(self, server_name: str) -> Optional[Tuple[ClientSession, Any, Any]]:
+        """Connect to an MCP server.
+
+        Args:
+            server_name: The name of the server to connect to.
+
+        Returns:
+            A tuple of (session, stdio_context, session_context), or None if connection failed.
+
+        Raises:
+            ValueError: If the server name is not found in the configuration.
+        """
+        server_config = self.get_server_config(server_name)
 
         # Create server parameters
         command = server_config["command"]
@@ -95,21 +124,103 @@ class MCPClient:
         logger.info(f"Command: {command} {' '.join(args)}")
 
         try:
-            async with stdio_client(server_params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    # Initialize the connection
-                    await session.initialize()
+            stdio_context = stdio_client(server_params)
+            read, write = await stdio_context.__aenter__()
 
-                    # Get server information
-                    server_info = await self._get_server_info(session)
+            session_context = ClientSession(read, write)
+            session = await session_context.__aenter__()
 
-                    # Print server information
-                    self._print_server_info(server_name, server_info)
+            # Initialize the connection
+            await session.initialize()
+
+            return session, stdio_context, session_context
         except Exception as e:
             logger.error(f"Error connecting to server '{server_name}': {e}")
-            raise
+            return None
 
-    async def _get_server_info(self, session: ClientSession) -> Dict[str, Any]:
+    async def list_tools(self, session: ClientSession) -> List[Dict[str, Any]]:
+        """List all tools available on the server.
+
+        Args:
+            session: The MCP client session.
+
+        Returns:
+            A list of tools.
+        """
+        tools = []
+        try:
+            tools_response = await session.list_tools()
+            for tool_item in tools_response:
+                if isinstance(tool_item, tuple) and tool_item[0] == "tools":
+                    for tool in tool_item[1]:
+                        tool_info = {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {}
+                        }
+                        tools.append(tool_info)
+        except Exception as e:
+            logger.warning(f"Error listing tools: {e}")
+
+        return tools
+
+    async def list_resources(self, session: ClientSession) -> List[Dict[str, Any]]:
+        """List all resources available on the server.
+
+        Args:
+            session: The MCP client session.
+
+        Returns:
+            A list of resources.
+        """
+        resources = []
+        try:
+            resources_response = await session.list_resources()
+            for resource_item in resources_response:
+                if isinstance(resource_item, tuple) and resource_item[0] == "resources":
+                    for resource in resource_item[1]:
+                        resource_info = {
+                            "pattern": resource.pattern if hasattr(resource, "pattern") else str(resource),
+                            "description": resource.description if hasattr(resource, "description") else ""
+                        }
+                        resources.append(resource_info)
+        except Exception as e:
+            logger.warning(f"Error listing resources: {e}")
+
+        return resources
+
+    async def list_prompts(self, session: ClientSession) -> List[Dict[str, Any]]:
+        """List all prompts available on the server.
+
+        Args:
+            session: The MCP client session.
+
+        Returns:
+            A list of prompts.
+        """
+        prompts = []
+        try:
+            prompts_response = await session.list_prompts()
+            for prompt in prompts_response:
+                prompt_info = {
+                    "name": prompt.name,
+                    "description": prompt.description,
+                    "arguments": [
+                        {
+                            "name": arg.name,
+                            "description": arg.description,
+                            "required": arg.required
+                        }
+                        for arg in prompt.arguments
+                    ] if hasattr(prompt, "arguments") else []
+                }
+                prompts.append(prompt_info)
+        except Exception as e:
+            logger.warning(f"Error listing prompts: {e}")
+
+        return prompts
+
+    async def get_server_info(self, session: ClientSession) -> Dict[str, Any]:
         """Get information from an MCP server.
 
         Args:
@@ -120,52 +231,42 @@ class MCPClient:
         """
         server_info = {}
 
-        # Get server capabilities
-        try:
-            capabilities = session.capabilities
-            server_info["capabilities"] = capabilities
-            logger.info(f"Server capabilities: {capabilities}")
-        except Exception as e:
-            logger.warning(f"Error getting capabilities: {e}")
-            server_info["capabilities"] = {}
-
         # Get tools
-        try:
-            tools = await session.list_tools()
-            server_info["tools"] = tools
-        except Exception as e:
-            logger.warning(f"Error listing tools: {e}")
-            server_info["tools"] = []
+        server_info["tools"] = await self.list_tools(session)
 
         # Get resources
-        try:
-            # Only try to list resources if the server has the capability
-            if server_info.get("capabilities", {}).get("resources", False):
-                resources = await session.list_resources()
-                server_info["resources"] = resources
-            else:
-                logger.info("Server does not support resources")
-                server_info["resources"] = []
-        except Exception as e:
-            logger.warning(f"Error listing resources: {e}")
-            server_info["resources"] = []
+        server_info["resources"] = await self.list_resources(session)
 
         # Get prompts
-        try:
-            # Only try to list prompts if the server has the capability
-            if server_info.get("capabilities", {}).get("prompts", False):
-                prompts = await session.list_prompts()
-                server_info["prompts"] = prompts
-            else:
-                logger.info("Server does not support prompts")
-                server_info["prompts"] = []
-        except Exception as e:
-            logger.warning(f"Error listing prompts: {e}")
-            server_info["prompts"] = []
+        server_info["prompts"] = await self.list_prompts(session)
 
         return server_info
 
-    def _print_server_info(self, server_name: str, server_info: Dict[str, Any]) -> None:
+    async def call_tool(self, session: ClientSession, tool_name: str, arguments: Dict[str, Any]) -> Any:
+        """Call a tool on the server.
+
+        Args:
+            session: The MCP client session.
+            tool_name: The name of the tool to call.
+            arguments: The arguments to pass to the tool.
+
+        Returns:
+            The result of the tool call.
+
+        Raises:
+            Exception: If the tool call fails.
+        """
+        logger.info(f"Calling tool: {tool_name}")
+        logger.info(f"Arguments: {json.dumps(arguments, indent=2)}")
+
+        try:
+            result = await session.call_tool(tool_name, arguments)
+            return result
+        except Exception as e:
+            logger.error(f"Error calling tool: {e}")
+            raise
+
+    def print_server_info(self, server_name: str, server_info: Dict[str, Any]) -> None:
         """Print server information to the console.
 
         Args:
@@ -176,59 +277,29 @@ class MCPClient:
         print(f"Server: {server_name}")
         print(f"{'=' * 50}")
 
-        # Print capabilities
-        capabilities = server_info.get("capabilities", {})
-        print("\nCapabilities:")
-        print("-" * 50)
-        if capabilities:
-            for cap_name, cap_value in capabilities.items():
-                if isinstance(cap_value, dict):
-                    print(f"  - {cap_name}:")
-                    for sub_name, sub_value in cap_value.items():
-                        print(f"      {sub_name}: {sub_value}")
-                else:
-                    print(f"  - {cap_name}: {cap_value}")
-        else:
-            print("  No capabilities available")
-
         # Print tools
         tools = server_info.get("tools", [])
-        tool_count = 0
-        for tool_item in tools:
-            if isinstance(tool_item, tuple) and tool_item[0] == "tools":
-                tool_count = len(tool_item[1])
-
-        print(f"\nTools ({tool_count}):")
+        print(f"\nTools ({len(tools)}):")
         print("-" * 50)
         if tools:
-            for tool_item in tools:
-                if isinstance(tool_item, tuple) and tool_item[0] == "tools":
-                    for tool in tool_item[1]:
-                        print(f"  - {tool.name}: {tool.description}")
-                        if hasattr(tool, 'inputSchema') and tool.inputSchema:
-                            print("    Arguments:")
-                            if "properties" in tool.inputSchema:
-                                for param_name, param_info in tool.inputSchema["properties"].items():
-                                    required = "required" if param_name in tool.inputSchema.get("required", []) else "optional"
-                                    desc = param_info.get("description", "No description")
-                                    print(f"      {param_name} ({required}): {desc}")
+            for tool in tools:
+                print(f"  - {tool['name']}: {tool['description']}")
+                if tool.get("input_schema") and tool["input_schema"].get("properties"):
+                    print("    Arguments:")
+                    for param_name, param_info in tool["input_schema"]["properties"].items():
+                        required = "required" if param_name in tool["input_schema"].get("required", []) else "optional"
+                        desc = param_info.get("description", "No description")
+                        print(f"      {param_name} ({required}): {desc}")
         else:
             print("  No tools available")
 
         # Print resources
         resources = server_info.get("resources", [])
-        resource_count = 0
-        for resource_item in resources:
-            if isinstance(resource_item, tuple) and resource_item[0] == "resources":
-                resource_count = len(resource_item[1])
-
-        print(f"\nResources ({resource_count}):")
+        print(f"\nResources ({len(resources)}):")
         print("-" * 50)
         if resources:
-            for resource_item in resources:
-                if isinstance(resource_item, tuple) and resource_item[0] == "resources":
-                    for resource in resource_item[1]:
-                        print(f"  - {resource.pattern}: {resource.description}")
+            for resource in resources:
+                print(f"  - {resource['pattern']}: {resource['description']}")
         else:
             print("  No resources available")
 
@@ -238,89 +309,78 @@ class MCPClient:
         print("-" * 50)
         if prompts:
             for prompt in prompts:
-                print(f"  - {prompt.name}: {prompt.description}")
-                if hasattr(prompt, 'arguments') and prompt.arguments:
+                print(f"  - {prompt['name']}: {prompt['description']}")
+                if prompt.get("arguments"):
                     print("    Arguments:")
-                    for arg in prompt.arguments:
-                        required = "required" if arg.required else "optional"
-                        print(f"      {arg.name} ({required}): {arg.description}")
+                    for arg in prompt["arguments"]:
+                        required = "required" if arg["required"] else "optional"
+                        print(f"      {arg['name']} ({required}): {arg['description']}")
         else:
             print("  No prompts available")
 
-async def main():
-    """Main entry point for the MCP client."""
-    parser = argparse.ArgumentParser(description="MCP Client - A simple command line tool to interact with MCP servers")
+async def run_with_server(server_name: str, callback: callable, config_path: str = "mcp.json") -> None:
+    """Run a callback function with a connected server.
+
+    Args:
+        server_name: The name of the server to connect to.
+        callback: The callback function to run with the server session.
+        config_path: Path to the MCP configuration file.
+    """
+    client = MCPClient(config_path)
+
+    # Connect to the server
+    result = await client.connect_to_server(server_name)
+    if not result:
+        logger.error(f"Failed to connect to server: {server_name}")
+        sys.exit(1)
+
+    session, stdio_ctx, session_ctx = result
+
+    try:
+        # Run the callback function
+        await callback(session)
+    finally:
+        # Close the session and contexts
+        try:
+            await session_ctx.__aexit__(None, None, None)
+            await stdio_ctx.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning(f"Error closing session for server '{server_name}': {e}")
+
+def format_result(result: Any) -> str:
+    """Format a result for display.
+
+    Args:
+        result: The result to format.
+
+    Returns:
+        A formatted string representation of the result.
+    """
+    if isinstance(result, dict):
+        return json.dumps(result, indent=2)
+    elif hasattr(result, 'content') and hasattr(result.content[0], 'text'):
+        return result.content[0].text
+    elif hasattr(result, '__dict__'):
+        try:
+            result_dict = result.__dict__
+            return json.dumps(result_dict, indent=2)
+        except Exception:
+            return str(result)
+    else:
+        return str(result)
+
+def parse_arguments() -> Dict[str, Any]:
+    """Parse command line arguments.
+
+    Returns:
+        A dictionary of parsed arguments.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="MCP Demo")
     parser.add_argument("--config", default="mcp.json", help="Path to the MCP configuration file (default: mcp.json)")
     parser.add_argument("--server", help="Name of the server to connect to (if not specified, will list available servers)")
     parser.add_argument("--list", action="store_true", help="List available servers")
     parser.add_argument("--all", action="store_true", help="Connect to all servers")
 
-    args = parser.parse_args()
-
-    try:
-        client = MCPClient(args.config)
-
-        if args.list:
-            # List available servers
-            servers = client.get_server_names()
-            print("Available servers:")
-            for server in servers:
-                print(f"  - {server}")
-            return
-
-        if args.all:
-            # Connect to all servers
-            servers = client.get_server_names()
-            for server in servers:
-                try:
-                    await client.connect_to_server(server)
-                except Exception as e:
-                    logger.error(f"Error connecting to server '{server}': {e}")
-            return
-
-        if args.server:
-            # Connect to the specified server
-            await client.connect_to_server(args.server)
-            return
-
-        # If no specific action is requested, list servers and prompt for selection
-        servers = client.get_server_names()
-        if not servers:
-            print("No servers found in configuration")
-            return
-
-        print("Available servers:")
-        for i, server in enumerate(servers, 1):
-            print(f"  {i}. {server}")
-
-        try:
-            choice = input("\nEnter server number to connect to (or 'all' for all servers): ")
-            if choice.lower() == 'all':
-                for server in servers:
-                    try:
-                        await client.connect_to_server(server)
-                    except Exception as e:
-                        logger.error(f"Error connecting to server '{server}': {e}")
-            else:
-                idx = int(choice) - 1
-                if 0 <= idx < len(servers):
-                    await client.connect_to_server(servers[idx])
-                else:
-                    print("Invalid selection")
-        except ValueError:
-            print("Invalid input")
-        except KeyboardInterrupt:
-            print("\nOperation cancelled")
-
-    except FileNotFoundError:
-        print(f"Configuration file not found: {args.config}")
-        sys.exit(1)
-    except json.JSONDecodeError:
-        print(f"Invalid JSON in configuration file: {args.config}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    return vars(parser.parse_args())

@@ -1,0 +1,23 @@
+[
+  {
+    "name": "playwright_navigate",
+    "arguments": {
+      "url": "https://modelcontextprotocol.io",
+      "width": 1280,
+      "height": 800,
+      "headless": true
+    }
+  },
+  {
+    "name": "playwright_screenshot",
+    "arguments": {
+      "name": "screenshot",
+      "fullPage": true,
+      "storeBase64": true
+    }
+  },
+  {
+    "name": "playwright_close",
+    "arguments": {}
+  }
+]

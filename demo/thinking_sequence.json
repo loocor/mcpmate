@@ -1,0 +1,47 @@
+[
+  {
+    "name": "sequentialthinking",
+    "arguments": {
+      "thought": "Let me think about this problem: how to design an efficient MCP client?",
+      "thoughtNumber": 1,
+      "totalThoughts": 5,
+      "nextThoughtNeeded": true
+    }
+  },
+  {
+    "name": "sequentialthinking",
+    "arguments": {
+      "thought": "Based on my previous thoughts, let me continue analyzing this problem.",
+      "thoughtNumber": 2,
+      "totalThoughts": 5,
+      "nextThoughtNeeded": true
+    }
+  },
+  {
+    "name": "sequentialthinking",
+    "arguments": {
+      "thought": "Based on my previous thoughts, let me continue analyzing this problem.",
+      "thoughtNumber": 3,
+      "totalThoughts": 5,
+      "nextThoughtNeeded": true
+    }
+  },
+  {
+    "name": "sequentialthinking",
+    "arguments": {
+      "thought": "Based on my previous thoughts, let me continue analyzing this problem.",
+      "thoughtNumber": 4,
+      "totalThoughts": 5,
+      "nextThoughtNeeded": true
+    }
+  },
+  {
+    "name": "sequentialthinking",
+    "arguments": {
+      "thought": "Based on my previous thoughts, let me continue analyzing this problem.",
+      "thoughtNumber": 5,
+      "totalThoughts": 5,
+      "nextThoughtNeeded": false
+    }
+  }
+]
