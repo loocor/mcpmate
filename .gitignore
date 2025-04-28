@@ -3,3 +3,8 @@ __pycache__/
 .venv/
 .specstory/
 runtime/
+
+
+# Added by cargo
+
+/target
