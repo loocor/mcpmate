@@ -1,7 +1,9 @@
 use anyhow::Result;
 use rmcp::{
     model::{ServerCapabilities, ServerInfo},
-    tool, ServerHandler, ServiceExt, transport::stdio,
+    tool,
+    transport::stdio,
+    ServerHandler, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::{self, EnvFilter};
@@ -48,10 +50,10 @@ impl SimpleServer {
 impl ServerHandler for SimpleServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            instructions: Some("A simple calculator server that can add and subtract numbers".into()),
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .build(),
+            instructions: Some(
+                "A simple calculator server that can add and subtract numbers".into(),
+            ),
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
         }
     }

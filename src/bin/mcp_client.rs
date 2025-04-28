@@ -1,31 +1,11 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use rmcp::{
-    service::ServiceExt,
-    transport::TokioChildProcess,
-};
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
+use mcp_client::config::load_config;
+use rmcp::{service::ServiceExt, transport::TokioChildProcess};
+use serde_json;
+use std::path::PathBuf;
 use tokio::process::Command;
 use tracing_subscriber::{self, EnvFilter};
-
-/// Configuration for MCP servers
-#[derive(Debug, Deserialize, Serialize)]
-struct Config {
-    #[serde(rename = "mcpServers")]
-    mcp_servers: HashMap<String, ServerConfig>,
-}
-
-/// Configuration for a single MCP server
-#[derive(Debug, Deserialize, Serialize)]
-struct ServerConfig {
-    command: String,
-    args: Vec<String>,
-    #[serde(rename = "commandPath")]
-    command_path: Option<String>,
-    enabled: Option<bool>,
-    env: Option<HashMap<String, String>>,
-}
 
 /// Command line arguments for the MCP client
 #[derive(Parser, Debug)]
@@ -52,17 +32,6 @@ enum Commands {
     },
 }
 
-/// Load the MCP configuration from a file
-fn load_config(path: &PathBuf) -> Result<Config> {
-    let config_str = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-
-    let config: Config = serde_json::from_str(&config_str)
-        .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
-
-    Ok(config)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize the tracing subscriber
@@ -81,12 +50,18 @@ async fn main() -> Result<()> {
             println!("Available MCP servers:");
             for (name, server_config) in &config.mcp_servers {
                 let enabled = server_config.enabled.unwrap_or(false);
-                println!("  - {} ({})", name, if enabled { "enabled" } else { "disabled" });
+                println!(
+                    "  - {} ({})",
+                    name,
+                    if enabled { "enabled" } else { "disabled" }
+                );
             }
-        },
+        }
         Commands::Info { server } => {
             // Check if the server exists
-            let server_config = config.mcp_servers.get(&server)
+            let server_config = config
+                .mcp_servers
+                .get(&server)
                 .with_context(|| format!("Server '{}' not found in configuration", server))?;
 
             println!("Server: {}", server);
@@ -100,8 +75,13 @@ async fn main() -> Result<()> {
 
                 // Build the command
                 let mut command = if let Some(command_path) = &server_config.command_path {
-                    let full_path = format!("{}/{}", command_path, server_config.command);
-                    Command::new(full_path)
+                    let mut cmd = Command::new(&server_config.command);
+                    cmd.current_dir(command_path);
+                    let path_var = std::env::var("PATH").unwrap_or_default();
+                    let new_path = format!("{}:{}", command_path, path_var);
+                    cmd.env("PATH", new_path);
+
+                    cmd
                 } else {
                     Command::new(&server_config.command)
                 };
@@ -117,9 +97,7 @@ async fn main() -> Result<()> {
                 }
 
                 // Connect to the server
-                let service = ()
-                    .serve(TokioChildProcess::new(&mut command)?)
-                    .await?;
+                let service = ().serve(TokioChildProcess::new(&mut command)?).await?;
 
                 // List tools
                 let tools_result = service.list_tools(Default::default()).await?;
@@ -127,8 +105,17 @@ async fn main() -> Result<()> {
                 println!("\nAvailable tools:");
                 let tools = tools_result.tools;
                 if !tools.is_empty() {
-                    for tool in tools {
-                        println!("  - {}: {}", tool.name, tool.description.clone().map_or_else(|| "No description".to_string(), |d| d.to_string()));
+                    for tool in &tools {
+                        println!("  - {}", tool.name);
+                        println!(
+                            "      Description: {}",
+                            tool.description.clone().into_owned()
+                        );
+                        println!(
+                            "      Parameters: {}",
+                            serde_json::to_string_pretty(&tool.input_schema)
+                                .unwrap_or_else(|_| "<invalid schema>".to_string())
+                        );
                     }
                 } else {
                     println!("  No tools available");
@@ -139,7 +126,7 @@ async fn main() -> Result<()> {
             } else {
                 println!("\nServer is disabled. Use --enable to enable it.");
             }
-        },
+        }
     }
 
     Ok(())
