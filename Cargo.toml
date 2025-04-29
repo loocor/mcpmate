@@ -9,6 +9,7 @@ authors = ["Loocor <loocor@gmail.com>"]
 rmcp = { version = "0.1", features = ["server", "client", "macros", "transport-io", "transport-child-process"] }
 schemars = "0.8"
 tokio = { version = "1.44", features = ["full"] }
+json5 = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"

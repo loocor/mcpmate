@@ -1,0 +1,61 @@
+{
+  "mcpServers": {
+    "blender": {
+      "args": [
+        "blender-mcp"
+      ],
+      "command": "uvx",
+      "type": "stdio"
+    },
+    "firecrawl": {
+      "args": [
+        "--loglevel",
+        "verbose",
+        "--cache",
+        "/Users/Loocor/Downloads/cache/firecrawl",
+        "-y",
+        "firecrawl-mcp"
+      ],
+      "command": "npx",
+      "env": {
+        "FIRECRAWL_API_KEY": "fc-acd14d04e67d4bd4a4d38fe12ec4d923"
+      },
+      "type": "stdio"
+    },
+    "playdocker": {
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "--init",
+        "mcp/playwright"
+      ],
+      "command": "docker",
+      "type": "stdio"
+    },
+    "playwright": {
+      "args": [
+        "--loglevel",
+        "verbose",
+        "--cache",
+        "/Users/Loocor/Downloads/cache/playwright",
+        "-y",
+        "@executeautomation/playwright-mcp-server"
+      ],
+      "command": "npx",
+      "type": "stdio"
+    },
+    "proxy": {
+      "args": [
+        "mcp_proxy.py",
+        "--stdio"
+      ],
+      "command": "python",
+      "type": "stdio"
+    },
+    "thinking": {
+      "type": "sse",
+      "url": "https://mcp.api-inference.modelscope.cn/sse/7ee0f39ba6c04f"
+    }
+  }
+}

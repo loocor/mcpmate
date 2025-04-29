@@ -1,0 +1,33 @@
+// rule config for MCP server tools enable/disable
+// by black list mode
+// 2025-04-29
+
+{
+  "rules": {
+    "blender": {
+      "enabled": true,
+      "tools": {
+      }
+    },
+    "firecrawl": {
+      "enabled": true,
+      "tools": {}
+    },
+    "playdocker": {
+      "enabled": true,
+      "tools": {}
+    },
+    "playwright": {
+      "enabled": true,
+      "tools": {}
+    },
+    "proxy": {
+      "enabled": false,
+      "tools": {}
+    },
+    "thinking": {
+      "enabled": false,
+      "tools": {}
+    }
+  }
+}
