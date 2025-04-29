@@ -7,6 +7,10 @@
       "command": "uvx",
       "type": "stdio"
     },
+    "fetch": {
+      "type": "sse",
+      "url": "https://mcp.api-inference.modelscope.cn/sse/a9a8baa3ba534a"
+    },
     "firecrawl": {
       "args": [
         "--loglevel",

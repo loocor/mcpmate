@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use dotenvy;
 use mcp_client::{
-    client::handle_stdio_server,
+    client::{handle_sse_server, handle_stdio_server},
     config::{load_rule_config, load_server_config},
 };
 use std::path::PathBuf;
@@ -96,6 +96,7 @@ async fn main() -> Result<()> {
 
             match server_config.kind.as_str() {
                 "stdio" => handle_stdio_server(&server, server_config).await?,
+                "sse" => handle_sse_server(&server, server_config).await?,
                 _ => println!(
                     "\nServer type '{}' is not supported for tool listing",
                     server_config.kind
