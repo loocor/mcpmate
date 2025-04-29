@@ -5,6 +5,10 @@ edition = "2021"
 description = "A Rust implementation of MCP client and server"
 authors = ["Loocor <loocor@gmail.com>"]
 
+[lib]
+name = "mcp_client"
+path = "src/lib.rs"
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
