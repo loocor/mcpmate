@@ -1,3 +1,6 @@
+use crate::client::CallToolInput;
+use rmcp::model::CallToolRequestParam;
+use rmcp::model::Tool;
 use serde_json;
 use std::env;
 use tokio::process::Command;
@@ -90,4 +93,57 @@ pub fn prepare_command_env(command: &mut Command, command_str: &str) {
             command.env(cache_var, cache_val);
         }
     }
+}
+
+/// Print content from tool call results
+pub fn print_content(idx: usize, content: &rmcp::model::Content) {
+    match &content.raw {
+        rmcp::model::RawContent::Text(txt) => {
+            println!("[{}] Text: {}", idx + 1, txt.text);
+        }
+        rmcp::model::RawContent::Image(img) => {
+            println!(
+                "[{}] Image: [mime: {}, {} bytes]",
+                idx + 1,
+                img.mime_type,
+                img.data.len()
+            );
+        }
+        rmcp::model::RawContent::Resource(res) => match &res.resource {
+            rmcp::model::ResourceContents::TextResourceContents { text, .. } => {
+                println!("[{}] Embedded Text Resource: {}", idx + 1, text);
+            }
+            rmcp::model::ResourceContents::BlobResourceContents { blob, .. } => {
+                println!(
+                    "[{}] Embedded Blob Resource: [base64, {} bytes]",
+                    idx + 1,
+                    blob.len()
+                );
+            }
+        },
+    }
+}
+
+/// find the tool, check the arguments and return the tool and the request parameters
+pub fn prepare_tool_call<'a>(
+    tools: &'a [Tool],
+    input: &CallToolInput<'_>,
+) -> Result<(&'a Tool, CallToolRequestParam), String> {
+    let tool = tools.iter().find(|t| t.name == input.tool_name);
+    if tool.is_none() {
+        return Err(format!("Tool '{}' not found on server.", input.tool_name));
+    }
+    let tool = tool.unwrap();
+    let arguments = match &input.arguments {
+        Some(serde_json::Value::Object(map)) => Some(map.clone()),
+        Some(_) => {
+            return Err("Tool arguments must be a JSON object.".to_string());
+        }
+        None => None,
+    };
+    let req = CallToolRequestParam {
+        name: input.tool_name.clone().into(),
+        arguments,
+    };
+    Ok((tool, req))
 }
