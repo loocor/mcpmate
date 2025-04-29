@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use mcp_client::config::load_server_config;
+use mcp_client::config::{load_rule_config, load_server_config};
 use rmcp::{service::ServiceExt, transport::TokioChildProcess};
 use serde_json;
 use std::path::PathBuf;
@@ -42,21 +42,28 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
 
-    // Load the configuration
+    // Load the MCP server and rule configuration
     let config = load_server_config(&args.config)?;
+    let rule_config = load_rule_config("config/rule.json5")?;
 
     match args.command {
         Commands::List => {
             println!("Available MCP servers:");
             for (name, server_config) in &config.mcp_servers {
+                let enabled = rule_config
+                    .rules
+                    .get(name)
+                    .map(|r| r.enabled)
+                    .unwrap_or(false);
                 println!(
-                    "  - {} ({} type{})",
+                    "  - {} ({} type{}{})",
                     name,
                     server_config.kind,
                     server_config
                         .command
                         .as_deref()
-                        .map_or("".to_string(), |cmd| format!(" with command: {}", cmd))
+                        .map_or("".to_string(), |cmd| format!(" with command: {}", cmd)),
+                    if enabled { " [enabled]" } else { " [disabled]" }
                 );
             }
         }
@@ -66,6 +73,15 @@ async fn main() -> Result<()> {
                 .mcp_servers
                 .get(&server)
                 .with_context(|| format!("Server '{}' not found in configuration", server))?;
+            let enabled = rule_config
+                .rules
+                .get(&server)
+                .map(|r| r.enabled)
+                .unwrap_or(false);
+            if !enabled {
+                println!("Server '{}' is disabled (by rule config).", server);
+                return Ok(());
+            }
 
             println!("Server: {}", server);
             println!("Type: {}", server_config.kind);
