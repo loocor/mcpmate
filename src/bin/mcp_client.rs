@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use mcp_client::config::load_config;
+use mcp_client::config::load_server_config;
 use rmcp::{service::ServiceExt, transport::TokioChildProcess};
 use serde_json;
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use tracing_subscriber::{self, EnvFilter};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Path to the MCP configuration file
-    #[arg(short, long, default_value = "mcp.json")]
+    #[arg(short, long, default_value = "config/mcp.json")]
     config: PathBuf,
 
     #[command(subcommand)]
@@ -43,17 +43,20 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Load the configuration
-    let config = load_config(&args.config)?;
+    let config = load_server_config(&args.config)?;
 
     match args.command {
         Commands::List => {
             println!("Available MCP servers:");
             for (name, server_config) in &config.mcp_servers {
-                let enabled = server_config.enabled.unwrap_or(false);
                 println!(
-                    "  - {} ({})",
+                    "  - {} ({} type{})",
                     name,
-                    if enabled { "enabled" } else { "disabled" }
+                    server_config.kind,
+                    server_config
+                        .command
+                        .as_deref()
+                        .map_or("".to_string(), |cmd| format!(" with command: {}", cmd))
                 );
             }
         }
@@ -65,31 +68,26 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("Server '{}' not found in configuration", server))?;
 
             println!("Server: {}", server);
-            println!("Command: {}", server_config.command);
+            println!("Type: {}", server_config.kind);
+            println!("Command: {:?}", server_config.command);
             println!("Arguments: {:?}", server_config.args);
-            println!("Enabled: {}", server_config.enabled.unwrap_or(false));
 
-            // Only connect to the server if it's enabled
-            if server_config.enabled.unwrap_or(false) {
+            if server_config.kind == "stdio" {
                 println!("\nConnecting to server...\n");
 
                 // Build the command
-                let mut command = if let Some(command_path) = &server_config.command_path {
-                    let mut cmd = Command::new(&server_config.command);
-                    cmd.current_dir(command_path);
-                    let path_var = std::env::var("PATH").unwrap_or_default();
-                    let new_path = format!("{}:{}", command_path, path_var);
-                    cmd.env("PATH", new_path);
+                let command_str = server_config
+                    .command
+                    .as_ref()
+                    .with_context(|| format!("Command not specified for server '{}'", server))?;
+                let mut command = Command::new(command_str);
 
-                    cmd
-                } else {
-                    Command::new(&server_config.command)
-                };
+                // Add arguments if present
+                if let Some(args) = &server_config.args {
+                    command.args(args);
+                }
 
-                // Add arguments
-                command.args(&server_config.args);
-
-                // Add environment variables
+                // Add environment variables if present
                 if let Some(env) = &server_config.env {
                     for (key, value) in env {
                         command.env(key, value);
@@ -138,7 +136,10 @@ async fn main() -> Result<()> {
                 // Close the connection
                 service.cancel().await?;
             } else {
-                println!("\nServer is disabled. Use --enable to enable it.");
+                println!(
+                    "\nServer type '{}' is not supported for tool listing",
+                    server_config.kind
+                );
             }
         }
     }

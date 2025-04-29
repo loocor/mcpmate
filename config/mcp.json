@@ -45,14 +45,6 @@
       "command": "npx",
       "type": "stdio"
     },
-    "proxy": {
-      "args": [
-        "mcp_proxy.py",
-        "--stdio"
-      ],
-      "command": "python",
-      "type": "stdio"
-    },
     "thinking": {
       "type": "sse",
       "url": "https://mcp.api-inference.modelscope.cn/sse/7ee0f39ba6c04f"
