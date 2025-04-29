@@ -5,7 +5,7 @@
 {
   "rules": {
     "blender": {
-      "enabled": false,
+      "enabled": true,
       "tools": {
       }
     },
@@ -14,7 +14,7 @@
       "tools": {}
     },
     "playdocker": {
-      "enabled": false,
+      "enabled": true,
       "tools": {}
     },
     "playwright": {
