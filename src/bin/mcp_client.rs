@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
 
             // Only connect to the server if it's enabled
             if server_config.enabled.unwrap_or(false) {
-                println!("\nConnecting to server...");
+                println!("\nConnecting to server...\n");
 
                 // Build the command
                 let mut command = if let Some(command_path) = &server_config.command_path {
@@ -100,22 +100,36 @@ async fn main() -> Result<()> {
                 let service = ().serve(TokioChildProcess::new(&mut command)?).await?;
 
                 // List tools
-                let tools_result = service.list_tools(Default::default()).await?;
+                println!("ready to call list_all_tools ...");
+                let tools_result = match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    service.list_all_tools(),
+                )
+                .await
+                {
+                    Ok(Ok(tools)) => {
+                        println!("list_all_tools call success, get {} tools", tools.len());
+                        tools
+                    }
+                    Ok(Err(e)) => {
+                        println!("list_all_tools call failed: {e}");
+                        service.cancel().await?;
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        println!("list_all_tools call timeout!");
+                        service.cancel().await?;
+                        return Ok(());
+                    }
+                };
 
                 println!("\nAvailable tools:");
-                let tools = tools_result.tools;
-                if !tools.is_empty() {
-                    for tool in &tools {
-                        println!("  - {}", tool.name);
-                        println!(
-                            "      Description: {}",
-                            tool.description.clone().into_owned()
-                        );
-                        println!(
-                            "      Parameters: {}",
-                            serde_json::to_string_pretty(&tool.input_schema)
-                                .unwrap_or_else(|_| "<invalid schema>".to_string())
-                        );
+                if !tools_result.is_empty() {
+                    for (i, tool) in tools_result.iter().enumerate() {
+                        println!("{:02} - {}: {}", i + 1, tool.name, tool.description);
+                        println!("     Parameters:");
+                        println!("{}", schema_formater(&tool.input_schema));
+                        println!();
                     }
                 } else {
                     println!("  No tools available");
@@ -130,4 +144,64 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Format the schema parameters into a human-readable string
+fn schema_formater(schema: &serde_json::Map<String, serde_json::Value>) -> String {
+    // Convert to Value for easier processing
+    let schema_value: serde_json::Value =
+        serde_json::to_value(schema).unwrap_or_else(|_| serde_json::json!({}));
+
+    // Extract and format parameter information
+    if let Some(properties) = schema_value.get("properties").and_then(|p| p.as_object()) {
+        let mut param_info = Vec::new();
+
+        for (param_name, param_details) in properties {
+            let param_type = param_details
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown");
+            let param_desc = param_details
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            let required = schema_value
+                .get("required")
+                .and_then(|r| r.as_array())
+                .map(|r| r.iter().any(|v| v.as_str() == Some(param_name)))
+                .unwrap_or(false);
+
+            param_info.push(format!(
+                "       - {}{}: {} ({})",
+                param_name,
+                if required { " [required]" } else { "" },
+                param_type,
+                param_desc
+            ));
+
+            // Handle nested properties
+            if let Some(sub_properties) =
+                param_details.get("properties").and_then(|p| p.as_object())
+            {
+                for (sub_name, sub_details) in sub_properties {
+                    let sub_type = sub_details
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("unknown");
+                    let sub_desc = sub_details
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("");
+                    param_info.push(format!(
+                        "         • {}: {} ({})",
+                        sub_name, sub_type, sub_desc
+                    ));
+                }
+            }
+        }
+
+        param_info.join("\n")
+    } else {
+        "       No parameters required".to_string()
+    }
 }
