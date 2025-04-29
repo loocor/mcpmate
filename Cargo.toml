@@ -6,16 +6,17 @@ description = "A Rust implementation of MCP client and server"
 authors = ["Loocor <loocor@gmail.com>"]
 
 [dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+dotenvy = "0.15.7"
+json5 = "0.4"
 rmcp = { version = "0.1", features = ["server", "client", "macros", "transport-io", "transport-child-process"] }
 schemars = "0.8"
-tokio = { version = "1.44", features = ["full"] }
-json5 = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-anyhow = "1.0"
+tokio = { version = "1.44", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4.5", features = ["derive"] }
 
 [[bin]]
 name = "mcp-server"

@@ -11,8 +11,6 @@
       "args": [
         "--loglevel",
         "verbose",
-        "--cache",
-        "/Users/Loocor/Downloads/cache/firecrawl",
         "-y",
         "firecrawl-mcp"
       ],
@@ -37,8 +35,6 @@
       "args": [
         "--loglevel",
         "verbose",
-        "--cache",
-        "/Users/Loocor/Downloads/cache/playwright",
         "-y",
         "@executeautomation/playwright-mcp-server"
       ],

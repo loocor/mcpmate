@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use dotenvy;
 use mcp_client::config::{load_rule_config, load_server_config};
 use rmcp::{service::ServiceExt, transport::TokioChildProcess};
 use serde_json;
+use std::env;
 use std::path::PathBuf;
 use tokio::process::Command;
 use tracing_subscriber::{self, EnvFilter};
@@ -34,17 +36,20 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize the tracing subscriber
+    // initialize the tracing subscriber
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
 
-    // Parse command line arguments
+    // parse command line arguments
     let args = Args::parse();
 
-    // Load the MCP server and rule configuration
+    // load the MCP server and rule configuration
     let config = load_server_config(&args.config)?;
     let rule_config = load_rule_config("config/rule.json5")?;
+
+    // load env vars if .env file exists
+    let _ = dotenvy::dotenv();
 
     match args.command {
         Commands::List => {
@@ -91,29 +96,32 @@ async fn main() -> Result<()> {
             if server_config.kind == "stdio" {
                 println!("\nConnecting to server...\n");
 
-                // Build the command
+                // build the command
                 let command_str = server_config
                     .command
                     .as_ref()
                     .with_context(|| format!("Command not specified for server '{}'", server))?;
                 let mut command = Command::new(command_str);
 
-                // Add arguments if present
+                // add args if present
                 if let Some(args) = &server_config.args {
                     command.args(args);
                 }
 
-                // Add environment variables if present
-                if let Some(env) = &server_config.env {
-                    for (key, value) in env {
+                // add env vars if present
+                if let Some(env_map) = &server_config.env {
+                    for (key, value) in env_map {
                         command.env(key, value);
                     }
                 }
 
-                // Connect to the server
+                // prepare command env
+                prepare_command_env(&mut command, command_str);
+
+                // connect to the server
                 let service = ().serve(TokioChildProcess::new(&mut command)?).await?;
 
-                // List tools
+                // list tools
                 println!("ready to call list_all_tools ...");
                 let tools_result = match tokio::time::timeout(
                     tokio::time::Duration::from_secs(10),
@@ -220,5 +228,35 @@ fn schema_formater(schema: &serde_json::Map<String, serde_json::Value>) -> Strin
         param_info.join("\n")
     } else {
         "       No parameters required".to_string()
+    }
+}
+
+/// prepare command env for different commands
+fn prepare_command_env(command: &mut Command, command_str: &str) {
+    // 1. bin path
+    let bin_var = match command_str {
+        "npx" => "NPX_BIN_PATH",
+        "uvx" => "UVX_BIN_PATH",
+        _ => "MCP_RUNTIME_BIN",
+    };
+    let bin_path = env::var(bin_var)
+        .or_else(|_| env::var("MCP_RUNTIME_BIN"))
+        .ok();
+    if let Some(bin_path) = bin_path {
+        let old_path = env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_path, old_path);
+        command.env("PATH", new_path);
+    }
+
+    // 2. cache env
+    let cache_var = match command_str {
+        "npx" => "NPM_CONFIG_CACHE",
+        "uvx" => "UV_CACHE_DIR",
+        _ => "",
+    };
+    if !cache_var.is_empty() {
+        if let Ok(cache_val) = env::var(cache_var) {
+            command.env(cache_var, cache_val);
+        }
     }
 }
