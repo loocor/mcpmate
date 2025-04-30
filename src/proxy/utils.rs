@@ -7,7 +7,6 @@ pub fn prepare_command_env(command: &mut Command, command_str: &str) {
     let bin_var = match command_str {
         "npx" => "NPX_BIN_PATH",
         "uvx" => "UVX_BIN_PATH",
-        "docker" => "DOCKER_BIN_PATH",
         _ => "MCP_RUNTIME_BIN",
     };
     let bin_path = env::var(bin_var)
@@ -28,14 +27,6 @@ pub fn prepare_command_env(command: &mut Command, command_str: &str) {
     if !cache_var.is_empty() {
         if let Ok(cache_val) = env::var(cache_var) {
             command.env(cache_var, cache_val);
-        }
-    }
-
-    // 3. Docker specific settings
-    if command_str == "docker" {
-        // Set DOCKER_HOST if available
-        if let Ok(docker_host) = env::var("DOCKER_HOST") {
-            command.env("DOCKER_HOST", docker_host);
         }
     }
 }

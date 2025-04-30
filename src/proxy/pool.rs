@@ -1,0 +1,300 @@
+// MCP Proxy connection pool module
+// Contains the UpstreamConnectionPool struct and related functionality
+
+use anyhow::{Context, Result};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::{sync::Mutex, task::JoinSet, time::sleep};
+use tracing;
+
+use super::{
+    connect_sse_server, connect_stdio_server, connection::UpstreamConnection,
+    ConnectionStatus,
+};
+use crate::config::Config;
+
+/// Pool of connections to upstream MCP servers
+#[derive(Debug)]
+pub struct UpstreamConnectionPool {
+    /// Map of server name to connection
+    pub connections: HashMap<String, UpstreamConnection>,
+    /// Server configuration
+    pub config: Arc<Config>,
+    /// Rule configuration
+    pub rule_config: Arc<HashMap<String, bool>>,
+}
+
+impl UpstreamConnectionPool {
+    /// Create a new connection pool
+    pub fn new(config: Arc<Config>, rule_config: Arc<HashMap<String, bool>>) -> Self {
+        Self {
+            connections: HashMap::new(),
+            config,
+            rule_config,
+        }
+    }
+
+    /// Initialize the connection pool with all enabled servers
+    pub fn initialize(&mut self) {
+        for (name, _server_config) in &self.config.mcp_servers {
+            // Skip the proxy server itself
+            if name == "proxy" {
+                continue;
+            }
+
+            // Check if the server is enabled in the rule configuration
+            let enabled = self.rule_config.get(name).copied().unwrap_or(false);
+            if !enabled {
+                tracing::info!("Server '{}' is disabled, skipping", name);
+                continue;
+            }
+
+            // Create a new connection
+            self.connections
+                .insert(name.clone(), UpstreamConnection::new(name.clone()));
+        }
+
+        tracing::info!(
+            "Initialized connection pool with {} enabled servers",
+            self.connections.len()
+        );
+    }
+
+    /// Connect to a specific server
+    pub async fn connect(&mut self, server_name: &str) -> Result<()> {
+        // Check if we should connect
+        {
+            let conn = self.connections.get(server_name).context(format!(
+                "Server '{}' not found in connection pool",
+                server_name
+            ))?;
+
+            // Avoid connecting if already connecting
+            if matches!(conn.status, ConnectionStatus::Connecting) {
+                return Ok(());
+            }
+        };
+
+        // Update status and increment connection attempts
+        {
+            let conn = self.connections.get_mut(server_name).unwrap();
+            conn.update_connecting();
+        }
+
+        tracing::info!("Connecting to server '{}'...", server_name);
+
+        // Get the server type
+        let server_type = {
+            let server_config = self.config.mcp_servers.get(server_name).unwrap();
+            server_config.kind.clone()
+        };
+
+        // Connect based on server type
+        let result = match server_type.as_str() {
+            "stdio" => self.connect_stdio(server_name).await,
+            "sse" => self.connect_sse(server_name).await,
+            _ => {
+                let error_msg = format!("Unsupported server type: {}", server_type);
+                let conn = self.connections.get_mut(server_name).unwrap();
+                conn.update_failed(error_msg.clone());
+                Err(anyhow::anyhow!(error_msg))
+            }
+        };
+
+        // Handle connection result
+        if let Err(e) = &result {
+            let conn = self.connections.get_mut(server_name).unwrap();
+            conn.update_failed(e.to_string());
+            tracing::error!("Failed to connect to server '{}': {}", server_name, e);
+        }
+
+        result
+    }
+
+    /// Connect to a stdio server
+    async fn connect_stdio(&mut self, server_name: &str) -> Result<()> {
+        // Get server configuration
+        let server_config = self.config.mcp_servers.get(server_name).unwrap();
+
+        // Connect to the server using the proxy module function
+        match connect_stdio_server(server_name, server_config).await {
+            Ok((service, tools)) => {
+                // Update connection
+                let conn = self.connections.get_mut(server_name).unwrap();
+                conn.update_connected(service, tools);
+                tracing::info!(
+                    "Connected to server '{}', found {} tools",
+                    server_name,
+                    conn.tools.len()
+                );
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Connect to an SSE server
+    async fn connect_sse(&mut self, server_name: &str) -> Result<()> {
+        // Get server configuration
+        let server_config = self.config.mcp_servers.get(server_name).unwrap();
+
+        // Connect to the server using the proxy module function
+        match connect_sse_server(server_name, server_config).await {
+            Ok((service, tools)) => {
+                // Update connection
+                let conn = self.connections.get_mut(server_name).unwrap();
+                conn.update_connected(service, tools);
+                tracing::info!(
+                    "Connected to server '{}', found {} tools",
+                    server_name,
+                    conn.tools.len()
+                );
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Disconnect from a server
+    pub async fn disconnect(&mut self, server_name: &str) -> Result<()> {
+        let conn = self.connections.get_mut(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        // If there's an active service, take it and cancel it
+        if let Some(service) = conn.service.take() {
+            if let Err(e) = service.cancel().await {
+                tracing::warn!("Error cancelling service for '{}': {}", server_name, e);
+            }
+        }
+
+        // Update connection status
+        conn.update_disconnected();
+        tracing::info!("Disconnected from server '{}'", server_name);
+
+        Ok(())
+    }
+
+    /// Reconnect to a server
+    pub async fn reconnect(&mut self, server_name: &str) -> Result<()> {
+        // First disconnect
+        self.disconnect(server_name).await?;
+
+        // Get connection for backoff calculation
+        let conn = self.connections.get(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        // Calculate backoff time using exponential backoff
+        let backoff = std::cmp::min(
+            30,                                                   // Maximum 30 seconds
+            2u64.pow(std::cmp::min(5, conn.connection_attempts)), // Exponential backoff, max 2^5=32 seconds
+        );
+
+        tracing::info!(
+            "Waiting {}s before reconnecting to '{}'",
+            backoff,
+            server_name
+        );
+        sleep(Duration::from_secs(backoff)).await;
+
+        // Reconnect
+        self.connect(server_name).await
+    }
+
+    /// Connect to all servers in parallel
+    pub async fn connect_all(&mut self) -> Result<()> {
+        let mut set = JoinSet::new();
+
+        // Start connection tasks for all servers
+        for server_name in self.connections.keys().cloned().collect::<Vec<_>>() {
+            let server_name_clone = server_name.clone();
+            set.spawn(async move { (server_name_clone, ()) });
+
+            // Connect to the server
+            if let Err(e) = self.connect(&server_name).await {
+                tracing::error!("Failed to connect to server '{}': {}", server_name, e);
+            }
+        }
+
+        // Wait for all tasks to complete
+        while let Some(res) = set.join_next().await {
+            if let Err(e) = res {
+                tracing::error!("Error in connection task: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Disconnect from all servers
+    pub async fn disconnect_all(&mut self) -> Result<()> {
+        for server_name in self.connections.keys().cloned().collect::<Vec<_>>() {
+            if let Err(e) = self.disconnect(&server_name).await {
+                tracing::error!("Failed to disconnect from server '{}': {}", server_name, e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Start health check task
+    pub fn start_health_check(connection_pool: Arc<Mutex<Self>>) {
+        tokio::spawn(async move {
+            let pool_clone = connection_pool.clone();
+
+            loop {
+                // Wait for health check interval
+                sleep(Duration::from_secs(30)).await;
+
+                // Check all connections
+                let mut reconnect_servers = Vec::new();
+                {
+                    let pool_guard = pool_clone.lock().await;
+                    for (name, conn) in &pool_guard.connections {
+                        match &conn.status {
+                            ConnectionStatus::Connected => {
+                                // Check if the service is still alive
+                                if let Some(_service) = &conn.service {
+                                    // We can't directly check if the service is closed
+                                    // Instead, we'll periodically try to reconnect to ensure health
+                                    if conn.last_connected.elapsed() > Duration::from_secs(300) {
+                                        tracing::info!(
+                                            "Health check: Periodic reconnect for '{}'",
+                                            name
+                                        );
+                                        reconnect_servers.push(name.clone());
+                                    }
+                                } else {
+                                    // If service is None but status is Connected, something is wrong
+                                    tracing::warn!("Health check: Server '{}' has Connected status but no service, will reconnect", name);
+                                    reconnect_servers.push(name.clone());
+                                }
+                            }
+                            ConnectionStatus::Failed(_) => {
+                                // Reconnect failed servers after a delay
+                                if conn.last_connected.elapsed() > Duration::from_secs(60) {
+                                    reconnect_servers.push(name.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Reconnect servers that need it
+                for server_name in reconnect_servers {
+                    tracing::info!("Health check: Attempting to reconnect to '{}'", server_name);
+                    let mut pool_guard = pool_clone.lock().await;
+                    if let Err(e) = pool_guard.reconnect(&server_name).await {
+                        tracing::warn!(
+                            "Health check: Failed to reconnect to '{}': {}",
+                            server_name,
+                            e
+                        );
+                    }
+                }
+            }
+        });
+    }
+}
