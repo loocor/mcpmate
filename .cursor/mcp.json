@@ -1,15 +1,3 @@
 {
-  "mcpServers": {
-    "proxy": {
-      "command": "/Users/Loocor/GitHub/MCP/mcp-client/.venv/bin/python",
-      "args": [
-        "/Users/Loocor/GitHub/MCP/mcp-client/mcp_proxy.py",
-        "--stdio",
-        "--config",
-        "/Users/Loocor/GitHub/MCP/mcp-client/mcp.json",
-        "--log-file",
-        "/Users/Loocor/GitHub/MCP/mcp-client/logs/cursor_proxy.log"
-      ]
-    }
-  }
+  "mcpServers": {}
 }
