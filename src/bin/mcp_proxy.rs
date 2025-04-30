@@ -14,12 +14,57 @@ use rmcp::{
 };
 use std::{
     collections::HashMap,
+    env,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{process::Command, sync::Mutex, time::sleep};
+use tokio::{
+    process::Command,
+    sync::Mutex,
+    task::JoinSet,
+    time::{sleep, timeout},
+};
 use tracing_subscriber::{self, EnvFilter};
+
+/// Prepare command environment variables for different command types
+fn prepare_command_env(command: &mut Command, command_str: &str) {
+    // 1. bin path
+    let bin_var = match command_str {
+        "npx" => "NPX_BIN_PATH",
+        "uvx" => "UVX_BIN_PATH",
+        "docker" => "DOCKER_BIN_PATH",
+        _ => "MCP_RUNTIME_BIN",
+    };
+    let bin_path = env::var(bin_var)
+        .or_else(|_| env::var("MCP_RUNTIME_BIN"))
+        .ok();
+    if let Some(bin_path) = bin_path {
+        let old_path = env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_path, old_path);
+        command.env("PATH", new_path);
+    }
+
+    // 2. cache env
+    let cache_var = match command_str {
+        "npx" => "NPM_CONFIG_CACHE",
+        "uvx" => "UV_CACHE_DIR",
+        _ => "",
+    };
+    if !cache_var.is_empty() {
+        if let Ok(cache_val) = env::var(cache_var) {
+            command.env(cache_var, cache_val);
+        }
+    }
+
+    // 3. Docker specific settings
+    if command_str == "docker" {
+        // Set DOCKER_HOST if available
+        if let Ok(docker_host) = env::var("DOCKER_HOST") {
+            command.env("DOCKER_HOST", docker_host);
+        }
+    }
+}
 
 /// Command line arguments for the MCP proxy server
 #[derive(Parser, Debug)]
@@ -181,7 +226,7 @@ impl UpstreamConnectionPool {
         result
     }
 
-    /// Connect to a stdio server
+    /// Connect to a stdio server with timeout
     async fn connect_stdio(&mut self, server_name: &str) -> Result<()> {
         // Get server configuration
         let server_config = self.config.mcp_servers.get(server_name).unwrap();
@@ -207,47 +252,102 @@ impl UpstreamConnectionPool {
             }
         }
 
-        // Connect to the server
-        match TokioChildProcess::new(&mut cmd) {
+        // Prepare command environment (important for Docker, npx, etc.)
+        prepare_command_env(&mut cmd, command);
+
+        // Determine appropriate timeout based on command type
+        let connection_timeout = match command.as_str() {
+            "docker" => Duration::from_secs(120), // Docker operations can take longer
+            "npx" => Duration::from_secs(60),     // npm operations can take time
+            _ => Duration::from_secs(30),         // Default timeout
+        };
+
+        let tools_timeout = match command.as_str() {
+            "docker" => Duration::from_secs(60), // Docker operations can take longer
+            "npx" => Duration::from_secs(30),    // npm operations can take time
+            _ => Duration::from_secs(20),        // Default timeout
+        };
+
+        tracing::info!(
+            "Using timeouts for '{}': connection={}s, tools={}s",
+            server_name,
+            connection_timeout.as_secs(),
+            tools_timeout.as_secs()
+        );
+
+        // Connect to the server with timeout
+        let connect_result = match TokioChildProcess::new(&mut cmd) {
             Ok(child_process) => {
-                match ().serve(child_process).await {
-                    Ok(service) => {
-                        // Get tools
-                        match service.list_tools(Default::default()).await {
-                            Ok(tools_result) => {
-                                // Update connection
-                                let conn = self.connections.get_mut(server_name).unwrap();
-                                conn.tools = tools_result.tools;
-                                conn.service = Some(service);
-                                conn.status = ConnectionStatus::Connected;
-                                conn.last_connected = Instant::now();
-                                tracing::info!(
-                                    "Connected to server '{}', found {} tools",
-                                    server_name,
-                                    conn.tools.len()
-                                );
-                                Ok(())
-                            }
-                            Err(e) => {
-                                let error_msg = format!("Failed to list tools: {}", e);
-                                Err(anyhow::anyhow!(error_msg))
-                            }
+                // Set a timeout for the connection process
+                match timeout(connection_timeout, async {
+                    match ().serve(child_process).await {
+                        Ok(service) => Ok(service),
+                        Err(e) => {
+                            let error_msg = format!("Failed to connect to server: {}", e);
+                            Err(anyhow::anyhow!(error_msg))
                         }
                     }
-                    Err(e) => {
-                        let error_msg = format!("Failed to connect to server: {}", e);
-                        Err(anyhow::anyhow!(error_msg))
+                })
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        let error_msg = format!("Connection timeout for server '{}'", server_name);
+                        tracing::warn!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
                     }
                 }
             }
             Err(e) => {
                 let error_msg = format!("Failed to create child process: {}", e);
-                Err(anyhow::anyhow!(error_msg))
+                return Err(anyhow::anyhow!(error_msg));
             }
+        };
+
+        // If connection was successful, get tools with timeout
+        match connect_result {
+            Ok(service) => {
+                // Set a timeout for listing tools
+                match timeout(tools_timeout, service.list_tools(Default::default())).await {
+                    Ok(Ok(tools_result)) => {
+                        // Update connection
+                        let conn = self.connections.get_mut(server_name).unwrap();
+                        conn.tools = tools_result.tools;
+                        conn.service = Some(service);
+                        conn.status = ConnectionStatus::Connected;
+                        conn.last_connected = Instant::now();
+                        tracing::info!(
+                            "Connected to server '{}', found {} tools",
+                            server_name,
+                            conn.tools.len()
+                        );
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        let error_msg = format!("Failed to list tools: {}", e);
+                        // Make sure to cancel the service to avoid resource leaks
+                        if let Err(cancel_err) = service.cancel().await {
+                            tracing::warn!("Error cancelling service: {}", cancel_err);
+                        }
+                        Err(anyhow::anyhow!(error_msg))
+                    }
+                    Err(_) => {
+                        let error_msg =
+                            format!("Timeout listing tools for server '{}'", server_name);
+                        tracing::warn!("{}", error_msg);
+                        // Make sure to cancel the service to avoid resource leaks
+                        if let Err(cancel_err) = service.cancel().await {
+                            tracing::warn!("Error cancelling service: {}", cancel_err);
+                        }
+                        Err(anyhow::anyhow!(error_msg))
+                    }
+                }
+            }
+            Err(e) => Err(e),
         }
     }
 
-    /// Connect to an SSE server
+    /// Connect to an SSE server with timeout
     async fn connect_sse(&mut self, server_name: &str) -> Result<()> {
         // Get server configuration
         let server_config = self.config.mcp_servers.get(server_name).unwrap();
@@ -258,14 +358,58 @@ impl UpstreamConnectionPool {
             .as_ref()
             .context("URL not specified for SSE server")?;
 
-        // Connect to the server
-        match SseTransport::start(url).await {
+        // Connect to the server with timeout
+        let transport_result =
+            match timeout(Duration::from_secs(30), SseTransport::start(url)).await {
+                Ok(Ok(transport)) => Ok(transport),
+                Ok(Err(e)) => {
+                    let error_msg = format!("Failed to create SSE transport: {}", e);
+                    Err(anyhow::anyhow!(error_msg))
+                }
+                Err(_) => {
+                    let error_msg = format!(
+                        "Timeout creating SSE transport for server '{}'",
+                        server_name
+                    );
+                    tracing::warn!("{}", error_msg);
+                    Err(anyhow::anyhow!(error_msg))
+                }
+            };
+
+        // If transport creation was successful, serve and get tools with timeout
+        match transport_result {
             Ok(transport) => {
-                match ().serve(transport).await {
+                // Set a timeout for serving the transport
+                let service_result = match timeout(Duration::from_secs(30), async {
+                    match ().serve(transport).await {
+                        Ok(service) => Ok(service),
+                        Err(e) => {
+                            let error_msg = format!("Failed to connect to server: {}", e);
+                            Err(anyhow::anyhow!(error_msg))
+                        }
+                    }
+                })
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        let error_msg = format!("Connection timeout for server '{}'", server_name);
+                        tracing::warn!("{}", error_msg);
+                        return Err(anyhow::anyhow!(error_msg));
+                    }
+                };
+
+                // If service creation was successful, get tools with timeout
+                match service_result {
                     Ok(service) => {
-                        // Get tools
-                        match service.list_tools(Default::default()).await {
-                            Ok(tools_result) => {
+                        // Set a timeout for listing tools
+                        match timeout(
+                            Duration::from_secs(20),
+                            service.list_tools(Default::default()),
+                        )
+                        .await
+                        {
+                            Ok(Ok(tools_result)) => {
                                 // Update connection
                                 let conn = self.connections.get_mut(server_name).unwrap();
                                 conn.tools = tools_result.tools;
@@ -279,22 +423,22 @@ impl UpstreamConnectionPool {
                                 );
                                 Ok(())
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 let error_msg = format!("Failed to list tools: {}", e);
+                                Err(anyhow::anyhow!(error_msg))
+                            }
+                            Err(_) => {
+                                let error_msg =
+                                    format!("Timeout listing tools for server '{}'", server_name);
+                                tracing::warn!("{}", error_msg);
                                 Err(anyhow::anyhow!(error_msg))
                             }
                         }
                     }
-                    Err(e) => {
-                        let error_msg = format!("Failed to connect to server: {}", e);
-                        Err(anyhow::anyhow!(error_msg))
-                    }
+                    Err(e) => Err(e),
                 }
             }
-            Err(e) => {
-                let error_msg = format!("Failed to create SSE transport: {}", e);
-                Err(anyhow::anyhow!(error_msg))
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -349,13 +493,301 @@ impl UpstreamConnectionPool {
 
     /// Connect to all servers (sequential version)
     #[allow(dead_code)]
-    async fn connect_all(&mut self) -> Result<()> {
+    async fn connect_all_sequential(&mut self) -> Result<()> {
         let server_names: Vec<String> = self.connections.keys().cloned().collect();
 
         // connect all servers one by one
         for name in server_names {
             if let Err(e) = self.connect(&name).await {
                 tracing::error!("Failed to connect to server '{}': {}", name, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Connect to all servers in parallel
+    async fn connect_all(&mut self) -> Result<()> {
+        let server_names: Vec<String> = self.connections.keys().cloned().collect();
+
+        // Create a JoinSet to manage parallel tasks
+        let mut join_set = JoinSet::new();
+
+        // Start a task for each server
+        for name in server_names {
+            // Clone necessary data for the task
+            let name_clone = name.clone();
+            let config_clone = self.config.clone();
+
+            // Mark as connecting
+            if let Some(conn) = self.connections.get_mut(&name) {
+                conn.status = ConnectionStatus::Connecting;
+                conn.connection_attempts += 1;
+            }
+
+            // Spawn a task for this server
+            join_set.spawn(async move {
+                // Get the server type
+                let server_config = config_clone.mcp_servers.get(&name_clone).unwrap();
+                let server_type = &server_config.kind;
+
+                // Connect based on server type
+                let result = match server_type.as_str() {
+                    "stdio" => {
+                        // Get command and arguments
+                        let command = match server_config.command.as_ref() {
+                            Some(cmd) => cmd,
+                            None => {
+                                let error_msg = "Command not specified for stdio server";
+                                return (name_clone, Err(anyhow::anyhow!(error_msg)));
+                            }
+                        };
+
+                        // Create command
+                        let mut cmd = Command::new(command);
+
+                        // Add arguments if any
+                        if let Some(args) = &server_config.args {
+                            cmd.args(args);
+                        }
+
+                        // Add environment variables if any
+                        if let Some(env) = &server_config.env {
+                            for (key, value) in env {
+                                cmd.env(key, value);
+                            }
+                        }
+
+                        // Prepare command environment (important for Docker, npx, etc.)
+                        prepare_command_env(&mut cmd, command);
+
+                        // Determine appropriate timeout based on command type
+                        let connection_timeout = match command.as_str() {
+                            "docker" => Duration::from_secs(120), // Docker operations can take longer
+                            "npx" => Duration::from_secs(60),     // npm operations can take time
+                            _ => Duration::from_secs(30),         // Default timeout
+                        };
+
+                        let tools_timeout = match command.as_str() {
+                            "docker" => Duration::from_secs(60), // Docker operations can take longer
+                            "npx" => Duration::from_secs(30),    // npm operations can take time
+                            _ => Duration::from_secs(20),        // Default timeout
+                        };
+
+                        tracing::info!(
+                            "Using timeouts for '{}': connection={}s, tools={}s",
+                            name_clone,
+                            connection_timeout.as_secs(),
+                            tools_timeout.as_secs()
+                        );
+
+                        // Connect to the server with timeout
+                        let connect_result = match TokioChildProcess::new(&mut cmd) {
+                            Ok(child_process) => {
+                                // Set a timeout for the connection process
+                                match timeout(connection_timeout, async {
+                                    match ().serve(child_process).await {
+                                        Ok(service) => Ok(service),
+                                        Err(e) => {
+                                            let error_msg =
+                                                format!("Failed to connect to server: {}", e);
+                                            Err(anyhow::anyhow!(error_msg))
+                                        }
+                                    }
+                                })
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(_) => {
+                                        let error_msg = format!(
+                                            "Connection timeout for server '{}'",
+                                            name_clone
+                                        );
+                                        tracing::warn!("{}", error_msg);
+                                        return (name_clone, Err(anyhow::anyhow!(error_msg)));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Failed to create child process: {}", e);
+                                return (name_clone, Err(anyhow::anyhow!(error_msg)));
+                            }
+                        };
+
+                        // If connection was successful, get tools with timeout
+                        match connect_result {
+                            Ok(service) => {
+                                // Set a timeout for listing tools
+                                match timeout(tools_timeout, service.list_tools(Default::default()))
+                                    .await
+                                {
+                                    Ok(Ok(tools_result)) => {
+                                        (name_clone, Ok((service, tools_result.tools)))
+                                    }
+                                    Ok(Err(e)) => {
+                                        let error_msg = format!("Failed to list tools: {}", e);
+                                        // Make sure to cancel the service to avoid resource leaks
+                                        if let Err(cancel_err) = service.cancel().await {
+                                            tracing::warn!(
+                                                "Error cancelling service: {}",
+                                                cancel_err
+                                            );
+                                        }
+                                        (name_clone, Err(anyhow::anyhow!(error_msg)))
+                                    }
+                                    Err(_) => {
+                                        let error_msg = format!(
+                                            "Timeout listing tools for server '{}'",
+                                            name_clone
+                                        );
+                                        tracing::warn!("{}", error_msg);
+                                        // Make sure to cancel the service to avoid resource leaks
+                                        if let Err(cancel_err) = service.cancel().await {
+                                            tracing::warn!(
+                                                "Error cancelling service: {}",
+                                                cancel_err
+                                            );
+                                        }
+                                        (name_clone, Err(anyhow::anyhow!(error_msg)))
+                                    }
+                                }
+                            }
+                            Err(e) => (name_clone, Err(e)),
+                        }
+                    }
+                    "sse" => {
+                        // Get URL
+                        let url = match server_config.url.as_ref() {
+                            Some(url) => url,
+                            None => {
+                                let error_msg = "URL not specified for SSE server";
+                                return (name_clone, Err(anyhow::anyhow!(error_msg)));
+                            }
+                        };
+
+                        // Connect to the server with timeout
+                        let transport_result = match timeout(
+                            Duration::from_secs(30),
+                            SseTransport::start(url),
+                        )
+                        .await
+                        {
+                            Ok(Ok(transport)) => Ok(transport),
+                            Ok(Err(e)) => {
+                                let error_msg = format!("Failed to create SSE transport: {}", e);
+                                Err(anyhow::anyhow!(error_msg))
+                            }
+                            Err(_) => {
+                                let error_msg = format!(
+                                    "Timeout creating SSE transport for server '{}'",
+                                    name_clone
+                                );
+                                tracing::warn!("{}", error_msg);
+                                Err(anyhow::anyhow!(error_msg))
+                            }
+                        };
+
+                        // If transport creation was successful, serve and get tools with timeout
+                        match transport_result {
+                            Ok(transport) => {
+                                // Set a timeout for serving the transport
+                                let service_result = match timeout(Duration::from_secs(30), async {
+                                    match ().serve(transport).await {
+                                        Ok(service) => Ok(service),
+                                        Err(e) => {
+                                            let error_msg =
+                                                format!("Failed to connect to server: {}", e);
+                                            Err(anyhow::anyhow!(error_msg))
+                                        }
+                                    }
+                                })
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(_) => {
+                                        let error_msg = format!(
+                                            "Connection timeout for server '{}'",
+                                            name_clone
+                                        );
+                                        tracing::warn!("{}", error_msg);
+                                        return (name_clone, Err(anyhow::anyhow!(error_msg)));
+                                    }
+                                };
+
+                                // If service creation was successful, get tools with timeout
+                                match service_result {
+                                    Ok(service) => {
+                                        // Set a timeout for listing tools
+                                        match timeout(
+                                            Duration::from_secs(20),
+                                            service.list_tools(Default::default()),
+                                        )
+                                        .await
+                                        {
+                                            Ok(Ok(tools_result)) => {
+                                                (name_clone, Ok((service, tools_result.tools)))
+                                            }
+                                            Ok(Err(e)) => {
+                                                let error_msg =
+                                                    format!("Failed to list tools: {}", e);
+                                                (name_clone, Err(anyhow::anyhow!(error_msg)))
+                                            }
+                                            Err(_) => {
+                                                let error_msg = format!(
+                                                    "Timeout listing tools for server '{}'",
+                                                    name_clone
+                                                );
+                                                tracing::warn!("{}", error_msg);
+                                                (name_clone, Err(anyhow::anyhow!(error_msg)))
+                                            }
+                                        }
+                                    }
+                                    Err(e) => (name_clone, Err(e)),
+                                }
+                            }
+                            Err(e) => (name_clone, Err(e)),
+                        }
+                    }
+                    _ => {
+                        let error_msg = format!("Unsupported server type: {}", server_type);
+                        (name_clone, Err(anyhow::anyhow!(error_msg)))
+                    }
+                };
+
+                result
+            });
+        }
+
+        // Process results as they complete
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok((name, connection_result)) => {
+                    match connection_result {
+                        Ok((service, tools)) => {
+                            // Update connection
+                            if let Some(conn) = self.connections.get_mut(&name) {
+                                conn.tools = tools;
+                                conn.service = Some(service);
+                                conn.status = ConnectionStatus::Connected;
+                                conn.last_connected = Instant::now();
+                                tracing::info!(
+                                    "Connected to server '{}', found {} tools",
+                                    name,
+                                    conn.tools.len()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to connect to server '{}': {}", name, e);
+                            if let Some(conn) = self.connections.get_mut(&name) {
+                                conn.status = ConnectionStatus::Failed(e.to_string());
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Task join error: {}", e);
+                }
             }
         }
 
@@ -553,12 +985,9 @@ async fn main() -> Result<()> {
             // connect to all servers
             let mut pool = proxy_clone.connection_pool.lock().await;
 
-            // connect all servers one by one (not blocking the main thread)
-            let server_names: Vec<String> = pool.connections.keys().cloned().collect();
-            for name in server_names {
-                if let Err(e) = pool.connect(&name).await {
-                    tracing::error!("Failed to connect to server '{}': {}", name, e);
-                }
+            // Connect to all servers in parallel
+            if let Err(e) = pool.connect_all().await {
+                tracing::error!("Error in parallel connection process: {}", e);
             }
 
             // record the connection status
