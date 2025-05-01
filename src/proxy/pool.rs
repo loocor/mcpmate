@@ -451,94 +451,6 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
-    /// Disable a server (manually prevent connections)
-    pub async fn disable_server(&mut self, server_name: &str) -> Result<()> {
-        // Check if the server exists
-        if !self.connections.contains_key(server_name) {
-            return Err(anyhow::anyhow!(
-                "Server '{}' not found in connection pool",
-                server_name
-            ));
-        }
-
-        // Get all instances for this server
-        let instances = self.connections.get(server_name).unwrap();
-        let instance_ids: Vec<String> = instances.keys().cloned().collect();
-
-        // Disable all instances
-        for instance_id in instance_ids {
-            // Check if connected
-            let conn = self.get_instance(server_name, &instance_id)?;
-            if conn.is_connected() {
-                // Disconnect first
-                self.disconnect(server_name, &instance_id).await?;
-            }
-
-            // Update status to shutdown
-            let conn = self.get_instance_mut(server_name, &instance_id)?;
-            conn.update_disabled();
-        }
-
-        tracing::info!("Server '{}' has been disabled", server_name);
-        Ok(())
-    }
-
-    /// Enable a server (allow connections)
-    pub async fn enable_server(&mut self, server_name: &str) -> Result<()> {
-        // Check if the server exists
-        if !self.connections.contains_key(server_name) {
-            return Err(anyhow::anyhow!(
-                "Server '{}' not found in connection pool",
-                server_name
-            ));
-        }
-
-        // Get all instances for this server
-        let instances = self.connections.get(server_name).unwrap();
-        let instance_ids: Vec<String> = instances.keys().cloned().collect();
-
-        // Enable all instances
-        for instance_id in instance_ids {
-            // Update status to shutdown (ready to connect)
-            let conn = self.get_instance_mut(server_name, &instance_id)?;
-            conn.update_disconnected();
-        }
-
-        tracing::info!("Server '{}' has been enabled", server_name);
-        Ok(())
-    }
-
-    /// Pause a server (temporarily prevent connections)
-    pub async fn pause_server(&mut self, server_name: &str) -> Result<()> {
-        // Check if the server exists
-        if !self.connections.contains_key(server_name) {
-            return Err(anyhow::anyhow!(
-                "Server '{}' not found in connection pool",
-                server_name
-            ));
-        }
-
-        // Get all instances for this server
-        let instances = self.connections.get(server_name).unwrap();
-        let instance_ids: Vec<String> = instances.keys().cloned().collect();
-
-        // Pause all instances
-        for instance_id in instance_ids {
-            // Disconnect if connected
-            let conn = self.get_instance(server_name, &instance_id)?;
-            if conn.is_connected() {
-                self.disconnect(server_name, &instance_id).await?;
-            }
-
-            // Update status to shutdown (paused)
-            let conn = self.get_instance_mut(server_name, &instance_id)?;
-            conn.update_paused();
-        }
-
-        tracing::info!("Server '{}' has been paused", server_name);
-        Ok(())
-    }
-
     /// Get status of the default instance of a server
     pub fn get_server_status(&self, server_name: &str) -> Result<String> {
         // Check if the server exists
@@ -582,6 +494,88 @@ impl UpstreamConnectionPool {
         result
     }
 
+    /// Get server type
+    pub fn get_server_type(&self, server_name: &str) -> Option<String> {
+        self.config
+            .mcp_servers
+            .get(server_name)
+            .map(|cfg| cfg.kind.clone())
+    }
+
+    /// Perform an operation on a specific instance
+    pub async fn perform_instance_operation(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+        operation: &str,
+    ) -> Result<()> {
+        // Get the instance
+        let conn = self.get_instance_mut(server_name, instance_id)?;
+
+        // Check if the operation is allowed
+        if !conn.can_perform_operation(operation)
+            && !(operation == "force_disconnect" && conn.status.can_force_disconnect())
+            && !(operation == "reset_reconnect" && conn.status.can_reset_reconnect())
+        {
+            return Err(anyhow::anyhow!(
+                "Operation '{}' is not allowed in the current state: {}",
+                operation,
+                conn.status
+            ));
+        }
+
+        // Perform the operation
+        match operation {
+            "disconnect" => {
+                // Normal disconnect
+                self.disconnect(server_name, instance_id).await
+            }
+            "force_disconnect" => {
+                // Force disconnect (works in any state except Shutdown)
+                if conn.status.can_force_disconnect() {
+                    self.disconnect(server_name, instance_id).await
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Cannot force disconnect in the current state: {}",
+                        conn.status
+                    ))
+                }
+            }
+            "reconnect" => {
+                // Normal reconnect
+                self.reconnect(server_name, instance_id).await
+            }
+            "reset_reconnect" => {
+                // Reset and reconnect (works in any state)
+                // First disconnect if needed
+                if !matches!(conn.status, ConnectionStatus::Shutdown) {
+                    if let Err(e) = self.disconnect(server_name, instance_id).await {
+                        tracing::warn!("Error during reset_reconnect disconnect phase: {}", e);
+                    }
+                }
+
+                // Reset connection attempts counter
+                let conn = self.get_instance_mut(server_name, instance_id)?;
+                conn.reset_connection_attempts();
+
+                // Then reconnect
+                self.trigger_connect(server_name, instance_id).await
+            }
+            "cancel" => {
+                // Cancel initialization (only works in Initializing state)
+                if matches!(conn.status, ConnectionStatus::Initializing) {
+                    self.disconnect(server_name, instance_id).await
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Cannot cancel in the current state: {}",
+                        conn.status
+                    ))
+                }
+            }
+            _ => Err(anyhow::anyhow!("Unknown operation: {}", operation)),
+        }
+    }
+
     /// Start health check task
     pub fn start_health_check(connection_pool: Arc<Mutex<Self>>) {
         tokio::spawn(async move {
@@ -592,7 +586,7 @@ impl UpstreamConnectionPool {
                 sleep(Duration::from_secs(30)).await;
 
                 // Check all connections
-                let mut reconnect_instances = Vec::new();
+                let mut reconnects = Vec::new();
                 {
                     let pool_guard = pool_clone.lock().await;
                     for (server_name, instances) in &pool_guard.connections {
@@ -621,14 +615,13 @@ impl UpstreamConnectionPool {
                                                 server_name,
                                                 instance_id
                                             );
-                                            reconnect_instances
+                                            reconnects
                                                 .push((server_name.clone(), instance_id.clone()));
                                         }
                                     } else {
                                         // If service is None but status is Ready, something is wrong
                                         tracing::warn!("Health check: Server '{}' instance '{}' has Ready status but no service, will reconnect", server_name, instance_id);
-                                        reconnect_instances
-                                            .push((server_name.clone(), instance_id.clone()));
+                                        reconnects.push((server_name.clone(), instance_id.clone()));
                                     }
                                 }
                                 ConnectionStatus::Error(_) => {
@@ -638,8 +631,7 @@ impl UpstreamConnectionPool {
                                         && now.duration_since(conn.last_connected)
                                             > Duration::from_secs(60)
                                     {
-                                        reconnect_instances
-                                            .push((server_name.clone(), instance_id.clone()));
+                                        reconnects.push((server_name.clone(), instance_id.clone()));
                                     }
                                 }
                                 _ => {}
@@ -649,7 +641,7 @@ impl UpstreamConnectionPool {
                 }
 
                 // Reconnect instances that need it
-                for (server_name, instance_id) in reconnect_instances {
+                for (server_name, instance_id) in reconnects {
                     tracing::info!(
                         "Health check: Attempting to reconnect to '{}' instance '{}'",
                         server_name,

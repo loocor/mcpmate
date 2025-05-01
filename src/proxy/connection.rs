@@ -104,13 +104,6 @@ impl UpstreamConnection {
         self.status = ConnectionStatus::Initializing;
     }
 
-    /// Update connection status to shutdown (paused)
-    pub fn update_paused(&mut self) {
-        self.service = None;
-        self.tools = Vec::new();
-        self.status = ConnectionStatus::Shutdown;
-    }
-
     /// Get a string representation of the connection status
     pub fn status_string(&self) -> String {
         self.status.to_string()
@@ -129,5 +122,24 @@ impl UpstreamConnection {
     /// Check if the connection is in a state that should be monitored by health checks
     pub fn should_monitor(&self) -> bool {
         self.status.should_monitor()
+    }
+
+    /// Check if a specific operation is allowed in the current state
+    pub fn can_perform_operation(&self, operation: &str) -> bool {
+        self.status.can_perform_operation(operation)
+    }
+
+    /// Get the allowed operations for this connection
+    pub fn allowed_operations(&self) -> Vec<String> {
+        self.status
+            .allowed_operations()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// Reset connection attempts counter
+    pub fn reset_connection_attempts(&mut self) {
+        self.connection_attempts = 0;
     }
 }

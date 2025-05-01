@@ -72,4 +72,21 @@ impl ConnectionStatus {
 
         ops
     }
+
+    /// Check if a specific operation is allowed in the current state
+    pub fn can_perform_operation(&self, operation: &str) -> bool {
+        self.allowed_operations().contains(&operation)
+    }
+
+    /// Check if force disconnect is allowed
+    pub fn can_force_disconnect(&self) -> bool {
+        // Force disconnect is allowed in all states except Shutdown
+        !matches!(self, Self::Shutdown)
+    }
+
+    /// Check if reset reconnect is allowed
+    pub fn can_reset_reconnect(&self) -> bool {
+        // Reset reconnect is allowed in all states
+        true
+    }
 }

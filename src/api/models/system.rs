@@ -4,7 +4,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// System status response
+// 重新导出 MCP 模型中的系统相关模型
+pub use crate::api::models::mcp::{SystemMetricsResponse, SystemStatusResponse};
+
+/// System status response (向后兼容)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatusResponse {
     /// System status (running, starting, stopping, etc.)
@@ -17,7 +20,7 @@ pub struct StatusResponse {
     pub connected_servers: usize,
 }
 
-/// System metrics response
+/// System metrics response (向后兼容)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetricsResponse {
     /// System uptime in seconds

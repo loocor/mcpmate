@@ -1,4 +1,4 @@
-// MCP Proxy API handlers for MCP server management
+// MCP Proxy API handlers for MCP server management (V2)
 // Contains handler functions for MCP server endpoints
 
 use axum::{
@@ -10,8 +10,8 @@ use std::sync::Arc;
 use crate::{
     api::{
         models::mcp::{
-            InstanceDetails, InstanceStatus, ServerDetailsResponse, ServerHealthResponse,
-            ServerListResponse, ServerResponse, ServerStatusResponse,
+            InstanceHealthResponse, OperationRequest, OperationResponse, ServerInstanceResponse,
+            ServerInstancesResponse, ServerListResponse, ServerResponse,
         },
         routes::AppState,
     },
@@ -19,47 +19,6 @@ use crate::{
 };
 
 use super::ApiError;
-
-/// Helper function to get instance statuses for a server
-fn get_instance_statuses(
-    pool: &crate::proxy::pool::UpstreamConnectionPool,
-    server_name: &str,
-) -> Result<(String, Vec<InstanceStatus>), ApiError> {
-    // Check if the server exists
-    if !pool.connections.contains_key(server_name) {
-        return Err(ApiError::NotFound(format!(
-            "Server '{}' not found",
-            server_name
-        )));
-    }
-
-    // Get all instances for this server
-    let instances = pool.connections.get(server_name).unwrap();
-
-    // Create a summary status
-    let status = if instances.is_empty() {
-        "No instances".to_string()
-    } else {
-        let instance_count = instances.len();
-        let ready_count = instances
-            .iter()
-            .filter(|(_, conn)| matches!(conn.status, ConnectionStatus::Ready))
-            .count();
-
-        format!("{}/{} instances ready", ready_count, instance_count)
-    };
-
-    // Create instance status list
-    let instance_statuses = instances
-        .iter()
-        .map(|(id, conn)| InstanceStatus {
-            id: id.clone(),
-            status: conn.status_string(),
-        })
-        .collect();
-
-    Ok((status, instance_statuses))
-}
 
 /// List all MCP servers
 pub async fn list_servers(
@@ -86,32 +45,17 @@ pub async fn list_servers(
     let servers = statuses
         .into_iter()
         .map(|(name, instances)| {
-            // Create a summary status string
-            let status = if instances.is_empty() {
-                "No instances".to_string()
-            } else {
-                let instance_count = instances.len();
-                let ready_count = instances
-                    .iter()
-                    .filter(|(_, status)| status.contains("Ready"))
-                    .count();
+            // Get the number of instances
+            let instances_count = instances.len();
 
-                format!("{}/{} instances ready", ready_count, instance_count)
-            };
+            // Check if server is enabled in configuration
+            let enabled = pool.rule_config.get(&name).copied().unwrap_or(false);
 
-            // Create instance status list
-            let instance_statuses = instances
-                .iter()
-                .map(|(id, status)| InstanceStatus {
-                    id: id.clone(),
-                    status: status.clone(),
-                })
-                .collect();
-
-            ServerStatusResponse {
+            // Create server response
+            ServerResponse {
                 name,
-                status,
-                instances: instance_statuses,
+                instances_count,
+                enabled,
             }
         })
         .collect();
@@ -140,171 +84,30 @@ pub async fn get_server(
         }
     };
 
-    // Get instance statuses
-    let (status, instances) = get_instance_statuses(&pool, &name)?;
+    // Check if the server exists
+    if !pool.connections.contains_key(&name) {
+        return Err(ApiError::NotFound(format!("Server '{}' not found", name)));
+    }
+
+    // Get all instances for this server
+    let instances = pool.connections.get(&name).unwrap();
+    let instances_count = instances.len();
+
+    // Check if server is enabled in configuration
+    let enabled = pool.rule_config.get(&name).copied().unwrap_or(false);
 
     Ok(Json(ServerResponse {
         name,
-        status,
-        instances,
+        instances_count,
+        enabled,
     }))
 }
 
-/// Enable a server
-pub async fn enable_server(
+/// List all instances for a specific MCP server
+pub async fn list_instances(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
-) -> Result<Json<ServerResponse>, ApiError> {
-    let mut pool = state.connection_pool.lock().await;
-
-    match pool.enable_server(&name).await {
-        Ok(_) => {
-            // Get instance statuses
-            let (status, instances) = get_instance_statuses(&pool, &name)?;
-
-            Ok(Json(ServerResponse {
-                name,
-                status,
-                instances,
-            }))
-        }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to enable server '{}': {}",
-            name, e
-        ))),
-    }
-}
-
-/// Disable a server
-pub async fn disable_server(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<ServerResponse>, ApiError> {
-    let mut pool = state.connection_pool.lock().await;
-
-    match pool.disable_server(&name).await {
-        Ok(_) => {
-            // Get instance statuses
-            let (status, instances) = get_instance_statuses(&pool, &name)?;
-
-            Ok(Json(ServerResponse {
-                name,
-                status,
-                instances,
-            }))
-        }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to disable server '{}': {}",
-            name, e
-        ))),
-    }
-}
-
-/// Pause a server
-pub async fn pause_server(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<ServerResponse>, ApiError> {
-    let mut pool = state.connection_pool.lock().await;
-
-    match pool.pause_server(&name).await {
-        Ok(_) => {
-            // Get instance statuses
-            let (status, instances) = get_instance_statuses(&pool, &name)?;
-
-            Ok(Json(ServerResponse {
-                name,
-                status,
-                instances,
-            }))
-        }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to pause server '{}': {}",
-            name, e
-        ))),
-    }
-}
-
-/// Connect to a server
-pub async fn connect_server(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<ServerResponse>, ApiError> {
-    let mut pool = state.connection_pool.lock().await;
-
-    match pool.trigger_connect_default(&name).await {
-        Ok(_) => {
-            // Get instance statuses
-            let (status, instances) = get_instance_statuses(&pool, &name)?;
-
-            Ok(Json(ServerResponse {
-                name,
-                status,
-                instances,
-            }))
-        }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to connect to server '{}': {}",
-            name, e
-        ))),
-    }
-}
-
-/// Disconnect from a server
-pub async fn disconnect_server(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<ServerResponse>, ApiError> {
-    let mut pool = state.connection_pool.lock().await;
-
-    match pool.disconnect_default(&name).await {
-        Ok(_) => {
-            // Get instance statuses
-            let (status, instances) = get_instance_statuses(&pool, &name)?;
-
-            Ok(Json(ServerResponse {
-                name,
-                status,
-                instances,
-            }))
-        }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to disconnect from server '{}': {}",
-            name, e
-        ))),
-    }
-}
-
-/// Reconnect to a server
-pub async fn reconnect_server(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<ServerResponse>, ApiError> {
-    let mut pool = state.connection_pool.lock().await;
-
-    match pool.reconnect_default(&name).await {
-        Ok(_) => {
-            // Get instance statuses
-            let (status, instances) = get_instance_statuses(&pool, &name)?;
-
-            Ok(Json(ServerResponse {
-                name,
-                status,
-                instances,
-            }))
-        }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to reconnect to server '{}': {}",
-            name, e
-        ))),
-    }
-}
-
-/// Get detailed information about a server
-pub async fn get_server_details(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<ServerDetailsResponse>, ApiError> {
+) -> Result<Json<ServerInstancesResponse>, ApiError> {
     // Use a timeout to avoid blocking indefinitely
     let pool_result = tokio::time::timeout(
         std::time::Duration::from_secs(1),
@@ -326,77 +129,44 @@ pub async fn get_server_details(
         return Err(ApiError::NotFound(format!("Server '{}' not found", name)));
     }
 
-    // Get server configuration
-    let server_config = pool.config.mcp_servers.get(&name).ok_or_else(|| {
-        ApiError::NotFound(format!("Server configuration for '{}' not found", name))
-    })?;
-
     // Get all instances for this server
     let instances = pool.connections.get(&name).unwrap();
 
-    // Create a summary status
-    let status = if instances.is_empty() {
-        "No instances".to_string()
-    } else {
-        let instance_count = instances.len();
-        let ready_count = instances
-            .iter()
-            .filter(|(_, conn)| matches!(conn.status, ConnectionStatus::Ready))
-            .count();
-
-        format!("{}/{} instances ready", ready_count, instance_count)
-    };
-
-    // Create instance details list
-    let instance_details = instances
+    // Create instance summary list
+    let instance_summaries = instances
         .iter()
         .map(|(id, conn)| {
-            // Get error message if status is Error
-            let error_message = match &conn.status {
-                ConnectionStatus::Error(msg) => Some(msg.clone()),
-                _ => None,
-            };
-
-            // Calculate time since last connection
-            let last_connected_seconds = if conn.is_connected() {
-                let now = std::time::Instant::now();
-                if now > conn.last_connected {
-                    Some(now.duration_since(conn.last_connected).as_secs())
-                } else {
-                    Some(0)
-                }
+            // Format connected time if available
+            let connected_at = if conn.is_connected() {
+                Some(
+                    chrono::DateTime::<chrono::Utc>::from(
+                        std::time::SystemTime::now() - conn.time_since_last_connection(),
+                    )
+                    .to_rfc3339(),
+                )
             } else {
                 None
             };
 
-            InstanceDetails {
+            crate::api::models::mcp::ServerInstanceSummary {
                 id: id.clone(),
                 status: conn.status_string(),
-                connection_attempts: conn.connection_attempts,
-                last_connected_seconds,
-                tools_count: conn.tools.len(),
-                error_message,
+                connected_at,
             }
         })
         .collect();
 
-    // Check if server is enabled in configuration
-    let is_enabled = pool.rule_config.get(&name).copied().unwrap_or(false);
-
-    Ok(Json(ServerDetailsResponse {
-        name: name.clone(),
-        status,
-        server_type: server_config.kind.clone(),
-        is_enabled,
-        instances: instance_details,
+    Ok(Json(ServerInstancesResponse {
+        name,
+        instances: instance_summaries,
     }))
 }
 
-/// Check the health of a server
-pub async fn check_server_health(
+/// Get a specific instance for a specific MCP server
+pub async fn get_instance(
     State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<ServerHealthResponse>, ApiError> {
+    Path((name, id)): Path<(String, String)>,
+) -> Result<Json<ServerInstanceResponse>, ApiError> {
     // Use a timeout to avoid blocking indefinitely
     let pool_result = tokio::time::timeout(
         std::time::Duration::from_secs(1),
@@ -413,59 +183,244 @@ pub async fn check_server_health(
         }
     };
 
-    // Check if the server exists
-    if !pool.connections.contains_key(&name) {
-        return Err(ApiError::NotFound(format!("Server '{}' not found", name)));
-    }
+    // Get the instance
+    let conn = pool.get_instance(&name, &id)?;
 
-    // Get all instances for this server
-    let instances = pool.connections.get(&name).unwrap();
-
-    // Create a summary status
-    let status = if instances.is_empty() {
-        "No instances".to_string()
-    } else {
-        let instance_count = instances.len();
-        let ready_count = instances
-            .iter()
-            .filter(|(_, conn)| matches!(conn.status, ConnectionStatus::Ready))
-            .count();
-
-        format!("{}/{} instances ready", ready_count, instance_count)
+    // Create instance details
+    let details = crate::api::models::mcp::ServerInstanceDetails {
+        connection_attempts: conn.connection_attempts,
+        last_connected_seconds: if conn.is_connected() {
+            Some(conn.time_since_last_connection().as_secs())
+        } else {
+            None
+        },
+        tools_count: conn.tools.len(),
+        error_message: match &conn.status {
+            ConnectionStatus::Error(err) => Some(err.clone()),
+            _ => None,
+        },
+        server_type: pool.get_server_type(&name).unwrap_or_default(),
     };
 
-    // Determine if the server is healthy (at least one instance is ready)
-    let healthy = instances
-        .iter()
-        .any(|(_, conn)| matches!(conn.status, ConnectionStatus::Ready));
+    // Get allowed operations
+    let allowed_operations = conn.allowed_operations();
+
+    Ok(Json(ServerInstanceResponse {
+        id,
+        name,
+        status: conn.status_string(),
+        allowed_operations,
+        details,
+    }))
+}
+
+/// Check the health of a specific instance
+pub async fn check_health(
+    State(state): State<Arc<AppState>>,
+    Path((name, id)): Path<(String, String)>,
+) -> Result<Json<InstanceHealthResponse>, ApiError> {
+    // Use a timeout to avoid blocking indefinitely
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
+
+    let pool = match pool_result {
+        Ok(pool) => pool,
+        Err(_) => {
+            return Err(ApiError::InternalError(
+                "Timed out waiting for connection pool lock".to_string(),
+            ));
+        }
+    };
+
+    // Get the instance
+    let conn = pool.get_instance(&name, &id)?;
+
+    // Determine if the instance is healthy
+    let healthy = matches!(conn.status, ConnectionStatus::Ready);
 
     // Create message based on health status
-    let message = if healthy {
-        "At least one instance is ready and healthy".to_string()
-    } else if instances.is_empty() {
-        "No instances available".to_string()
-    } else {
-        "No ready instances available".to_string()
+    let message = match conn.status {
+        ConnectionStatus::Ready => "Instance is ready and healthy".to_string(),
+        ConnectionStatus::Busy => "Instance is busy processing a request".to_string(),
+        ConnectionStatus::Initializing => "Instance is initializing".to_string(),
+        ConnectionStatus::Error(ref err) => format!("Instance has an error: {}", err),
+        ConnectionStatus::Shutdown => "Instance is shut down".to_string(),
     };
-
-    // Create instance status list
-    let instance_statuses = instances
-        .iter()
-        .map(|(id, conn)| InstanceStatus {
-            id: id.clone(),
-            status: conn.status_string(),
-        })
-        .collect();
 
     // Get current time as ISO 8601 string
     let checked_at = chrono::Utc::now().to_rfc3339();
 
-    Ok(Json(ServerHealthResponse {
-        name: name.clone(),
+    Ok(Json(InstanceHealthResponse {
+        id,
+        name,
         healthy,
         message,
-        status,
+        status: conn.status_string(),
         checked_at,
-        instances: instance_statuses,
     }))
+}
+
+/// Disconnect an instance
+pub async fn disconnect(
+    State(state): State<Arc<AppState>>,
+    Path((name, id)): Path<(String, String)>,
+    Json(request): Json<OperationRequest>,
+) -> Result<Json<OperationResponse>, ApiError> {
+    let mut pool = state.connection_pool.lock().await;
+
+    // Determine if this is a force disconnect
+    let operation = if request.force.unwrap_or(false) {
+        "force_disconnect"
+    } else {
+        "disconnect"
+    };
+
+    // Perform the operation
+    match pool.perform_instance_operation(&name, &id, operation).await {
+        Ok(_) => {
+            // Get the updated instance
+            let conn = pool.get_instance(&name, &id)?;
+
+            Ok(Json(OperationResponse {
+                id,
+                name,
+                result: format!("Successfully disconnected instance"),
+                status: conn.status_string(),
+                allowed_operations: conn.allowed_operations(),
+            }))
+        }
+        Err(e) => Err(ApiError::BadRequest(format!(
+            "Failed to disconnect instance: {}",
+            e
+        ))),
+    }
+}
+
+/// Force disconnect an instance
+pub async fn force_disconnect(
+    State(state): State<Arc<AppState>>,
+    Path((name, id)): Path<(String, String)>,
+) -> Result<Json<OperationResponse>, ApiError> {
+    let mut pool = state.connection_pool.lock().await;
+
+    // Perform the operation
+    match pool
+        .perform_instance_operation(&name, &id, "force_disconnect")
+        .await
+    {
+        Ok(_) => {
+            // Get the updated instance
+            let conn = pool.get_instance(&name, &id)?;
+
+            Ok(Json(OperationResponse {
+                id,
+                name,
+                result: format!("Successfully force disconnected instance"),
+                status: conn.status_string(),
+                allowed_operations: conn.allowed_operations(),
+            }))
+        }
+        Err(e) => Err(ApiError::BadRequest(format!(
+            "Failed to force disconnect instance: {}",
+            e
+        ))),
+    }
+}
+
+/// Reconnect an instance
+pub async fn reconnect(
+    State(state): State<Arc<AppState>>,
+    Path((name, id)): Path<(String, String)>,
+    Json(request): Json<OperationRequest>,
+) -> Result<Json<OperationResponse>, ApiError> {
+    let mut pool = state.connection_pool.lock().await;
+
+    // Determine if this is a reset reconnect
+    let operation = if request.reset.unwrap_or(false) {
+        "reset_reconnect"
+    } else {
+        "reconnect"
+    };
+
+    // Perform the operation
+    match pool.perform_instance_operation(&name, &id, operation).await {
+        Ok(_) => {
+            // Get the updated instance
+            let conn = pool.get_instance(&name, &id)?;
+
+            Ok(Json(OperationResponse {
+                id,
+                name,
+                result: format!("Successfully reconnected instance"),
+                status: conn.status_string(),
+                allowed_operations: conn.allowed_operations(),
+            }))
+        }
+        Err(e) => Err(ApiError::BadRequest(format!(
+            "Failed to reconnect instance: {}",
+            e
+        ))),
+    }
+}
+
+/// Reset and reconnect an instance
+pub async fn reset_reconnect(
+    State(state): State<Arc<AppState>>,
+    Path((name, id)): Path<(String, String)>,
+) -> Result<Json<OperationResponse>, ApiError> {
+    let mut pool = state.connection_pool.lock().await;
+
+    // Perform the operation
+    match pool
+        .perform_instance_operation(&name, &id, "reset_reconnect")
+        .await
+    {
+        Ok(_) => {
+            // Get the updated instance
+            let conn = pool.get_instance(&name, &id)?;
+
+            Ok(Json(OperationResponse {
+                id,
+                name,
+                result: format!("Successfully reset and reconnected instance"),
+                status: conn.status_string(),
+                allowed_operations: conn.allowed_operations(),
+            }))
+        }
+        Err(e) => Err(ApiError::BadRequest(format!(
+            "Failed to reset and reconnect instance: {}",
+            e
+        ))),
+    }
+}
+
+/// Cancel an initializing instance
+pub async fn cancel(
+    State(state): State<Arc<AppState>>,
+    Path((name, id)): Path<(String, String)>,
+) -> Result<Json<OperationResponse>, ApiError> {
+    let mut pool = state.connection_pool.lock().await;
+
+    // Perform the operation
+    match pool.perform_instance_operation(&name, &id, "cancel").await {
+        Ok(_) => {
+            // Get the updated instance
+            let conn = pool.get_instance(&name, &id)?;
+
+            Ok(Json(OperationResponse {
+                id,
+                name,
+                result: format!("Successfully cancelled instance initialization"),
+                status: conn.status_string(),
+                allowed_operations: conn.allowed_operations(),
+            }))
+        }
+        Err(e) => Err(ApiError::BadRequest(format!(
+            "Failed to cancel instance initialization: {}",
+            e
+        ))),
+    }
 }
