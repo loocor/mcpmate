@@ -115,7 +115,7 @@ pub async fn connect_server(
 ) -> Result<Json<ServerResponse>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
-    match pool.connect(&name).await {
+    match pool.trigger_connect(&name) {
         Ok(_) => {
             let status = pool.get_server_status(&name).map_err(|_| {
                 ApiError::InternalError(format!("Failed to get status for server '{}'", name))

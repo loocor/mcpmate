@@ -23,6 +23,21 @@ pub struct UpstreamConnection {
     pub status: ConnectionStatus,
 }
 
+// Manual implementation of Clone for UpstreamConnection
+// We can't derive Clone because RunningService doesn't implement Clone
+impl Clone for UpstreamConnection {
+    fn clone(&self) -> Self {
+        Self {
+            server_name: self.server_name.clone(),
+            service: None, // We don't clone the service
+            tools: self.tools.clone(),
+            last_connected: self.last_connected,
+            connection_attempts: self.connection_attempts,
+            status: self.status.clone(),
+        }
+    }
+}
+
 impl UpstreamConnection {
     /// Create a new upstream connection
     pub fn new(server_name: String) -> Self {

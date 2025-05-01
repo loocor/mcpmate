@@ -4,7 +4,7 @@
 use anyhow::{self, Context, Result};
 use rmcp::{model::Tool, service::RunningService, RoleClient};
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::{sync::Mutex, task::JoinSet, time::sleep};
+use tokio::{sync::Mutex, time::sleep};
 use tracing;
 
 use super::{
@@ -14,7 +14,7 @@ use super::{
 use crate::config::Config;
 
 /// Pool of connections to upstream MCP servers
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UpstreamConnectionPool {
     /// Map of server name to connection
     pub connections: HashMap<String, UpstreamConnection>,
@@ -60,7 +60,118 @@ impl UpstreamConnectionPool {
         );
     }
 
-    /// Connect to a specific server
+    /// Trigger connection to all servers in the pool without waiting for completion
+    pub fn trigger_connect_all(&mut self) {
+        // Get all server names
+        let server_names: Vec<String> = self.connections.keys().cloned().collect();
+
+        // Trigger connection for each server
+        for name in server_names {
+            if let Err(e) = self.trigger_connect(&name) {
+                tracing::warn!("Failed to trigger connection to server '{}': {}", name, e);
+            }
+        }
+    }
+
+    /// Trigger a connection to a specific server without waiting for completion
+    pub fn trigger_connect(&mut self, server_name: &str) -> Result<()> {
+        // Check if the server exists
+        let conn = self.connections.get(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        // Avoid connecting if already connecting
+        if matches!(conn.status, ConnectionStatus::Connecting) {
+            return Ok(());
+        }
+
+        // Check if the server is disabled or paused
+        if matches!(
+            conn.status,
+            ConnectionStatus::Disabled | ConnectionStatus::Paused
+        ) {
+            return Err(anyhow::anyhow!(
+                "Server '{}' is {} and cannot be connected",
+                server_name,
+                conn.status
+            ));
+        }
+
+        // Update status and increment connection attempts
+        {
+            let conn = self.connections.get_mut(server_name).unwrap();
+            conn.update_connecting();
+        }
+
+        tracing::info!("Triggering connection to server '{}'...", server_name);
+
+        // Get the server type
+        let server_type = {
+            let server_config = self.config.mcp_servers.get(server_name).unwrap();
+            server_config.kind.clone()
+        };
+
+        // Clone necessary data for the background task
+        let server_name = server_name.to_string();
+        let pool = Arc::new(Mutex::new(self.clone()));
+
+        // Spawn a background task to perform the actual connection
+        tokio::spawn(async move {
+            // This is a background task that will connect to the server
+            let result = match server_type.as_str() {
+                "stdio" => {
+                    tracing::info!(
+                        "Background task: Connecting to stdio server '{}'...",
+                        server_name
+                    );
+                    // Server configuration is already in config_clone
+
+                    // Connect to the server
+                    let mut pool_guard = pool.lock().await;
+                    pool_guard.connect_stdio(&server_name).await
+                }
+                "sse" => {
+                    tracing::info!(
+                        "Background task: Connecting to SSE server '{}'...",
+                        server_name
+                    );
+                    // Server configuration is already in config_clone
+
+                    // Connect to the server
+                    let mut pool_guard = pool.lock().await;
+                    pool_guard.connect_sse(&server_name).await
+                }
+                _ => {
+                    let error_msg = format!("Unsupported server type: {}", server_type);
+                    Err(anyhow::anyhow!(error_msg))
+                }
+            };
+
+            // Log the result
+            match &result {
+                Ok(_) => tracing::info!("Background task: Connected to server '{}'", server_name),
+                Err(e) => {
+                    tracing::error!(
+                        "Background task: Failed to connect to server '{}': {}",
+                        server_name,
+                        e
+                    );
+
+                    // Update connection status to failed
+                    if let Ok(mut pool_guard) = pool.try_lock() {
+                        if let Some(conn) = pool_guard.connections.get_mut(&server_name) {
+                            conn.update_failed(e.to_string());
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Connect to a specific server (blocking version)
     pub async fn connect(&mut self, server_name: &str) -> Result<()> {
         // Check if we should connect
         {
@@ -210,26 +321,10 @@ impl UpstreamConnectionPool {
 
     /// Connect to all servers in parallel
     pub async fn connect_all(&mut self) -> Result<()> {
-        let mut set = JoinSet::new();
+        // First trigger connection for all servers without waiting
+        self.trigger_connect_all();
 
-        // Start connection tasks for all servers
-        for server_name in self.connections.keys().cloned().collect::<Vec<_>>() {
-            let server_name_clone = server_name.clone();
-            set.spawn(async move { (server_name_clone, ()) });
-
-            // Connect to the server
-            if let Err(e) = self.connect(&server_name).await {
-                tracing::error!("Failed to connect to server '{}': {}", server_name, e);
-            }
-        }
-
-        // Wait for all tasks to complete
-        while let Some(res) = set.join_next().await {
-            if let Err(e) = res {
-                tracing::error!("Error in connection task: {}", e);
-            }
-        }
-
+        // Return immediately, connections will happen in the background
         Ok(())
     }
 

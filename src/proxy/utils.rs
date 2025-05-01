@@ -38,7 +38,7 @@ pub fn get_connection_timeout(command: &str) -> std::time::Duration {
     match command {
         "docker" => std::time::Duration::from_secs(120), // Docker operations can take longer
         "npx" => std::time::Duration::from_secs(60),     // npm operations can take time
-        _ => std::time::Duration::from_secs(30),         // Default timeout
+        _ => std::time::Duration::from_secs(60),         // Increased default timeout to 60 seconds
     }
 }
 
@@ -46,24 +46,24 @@ pub fn get_connection_timeout(command: &str) -> std::time::Duration {
 pub fn get_tools_timeout(command: &str) -> Duration {
     match command {
         "docker" => Duration::from_secs(60), // Docker operations can take longer
-        "npx" => Duration::from_secs(30),    // npm operations can take time
-        _ => Duration::from_secs(20),        // Default timeout
+        "npx" => Duration::from_secs(60),    // Increased npm timeout to 60 seconds
+        _ => Duration::from_secs(60),        // Increased default timeout to 60 seconds
     }
 }
 
 /// Determine appropriate SSE connection timeout
 pub fn get_sse_connection_timeout() -> Duration {
-    Duration::from_secs(30)
+    Duration::from_secs(60)
 }
 
 /// Determine appropriate SSE service timeout
 pub fn get_sse_service_timeout() -> Duration {
-    Duration::from_secs(30)
+    Duration::from_secs(60)
 }
 
 /// Determine appropriate SSE tools timeout
 pub fn get_sse_tools_timeout() -> Duration {
-    Duration::from_secs(20)
+    Duration::from_secs(60)
 }
 
 /// Determine appropriate health check interval

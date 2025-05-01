@@ -86,14 +86,14 @@ pub async fn connect_stdio_server(
     match connect_result {
         Ok(service) => {
             // Set a timeout for listing tools
-            match timeout(tools_timeout, service.list_tools(Default::default())).await {
-                Ok(Ok(tools_result)) => {
+            match timeout(tools_timeout, service.list_all_tools()).await {
+                Ok(Ok(tools)) => {
                     tracing::info!(
                         "Connected to server '{}', found {} tools",
                         server_name,
-                        tools_result.tools.len()
+                        tools.len()
                     );
-                    Ok((service, tools_result.tools))
+                    Ok((service, tools))
                 }
                 Ok(Err(e)) => {
                     let error_msg = format!("Failed to list tools: {}", e);

@@ -2,7 +2,7 @@
 // Contains handler functions for system endpoints
 
 use axum::{extract::State, Json};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::api::{
     models::system::{MetricsResponse, StatusResponse},
@@ -15,8 +15,26 @@ use super::ApiError;
 pub async fn get_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<StatusResponse>, ApiError> {
-    let pool = state.connection_pool.lock().await;
-    let statuses = pool.get_all_server_statuses();
+    // Use timeout to avoid blocking indefinitely
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
+
+    let statuses = match pool_result {
+        Ok(pool) => pool.get_all_server_statuses(),
+        Err(_) => {
+            // If we can't get the lock within the timeout, return a partial response
+            tracing::warn!("Timed out waiting for connection pool lock in get_status");
+            return Ok(Json(StatusResponse {
+                status: "running".to_string(),
+                uptime: get_uptime_seconds(),
+                total_servers: 0,
+                connected_servers: 0,
+            }));
+        }
+    };
 
     let total_servers = statuses.len();
     let connected_servers = statuses
@@ -36,13 +54,24 @@ pub async fn get_status(
 pub async fn get_metrics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MetricsResponse>, ApiError> {
-    let pool = state.connection_pool.lock().await;
-    let statuses = pool.get_all_server_statuses();
+    // Use timeout to avoid blocking indefinitely
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
 
-    let server_statuses = statuses
-        .into_iter()
-        .map(|(name, status)| (name, status))
-        .collect();
+    let server_statuses = match pool_result {
+        Ok(pool) => pool.get_all_server_statuses(),
+        Err(_) => {
+            // If we can't get the lock within the timeout, return a partial response
+            tracing::warn!("Timed out waiting for connection pool lock in get_metrics");
+            return Ok(Json(MetricsResponse {
+                uptime: get_uptime_seconds(),
+                server_statuses: HashMap::new(),
+            }));
+        }
+    };
 
     Ok(Json(MetricsResponse {
         uptime: get_uptime_seconds(),
