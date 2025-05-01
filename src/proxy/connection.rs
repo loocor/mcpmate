@@ -2,7 +2,7 @@
 // Contains the UpstreamConnection struct and related functionality
 
 use rmcp::{model::Tool, service::RunningService, RoleClient};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::types::ConnectionStatus;
 
@@ -38,7 +38,7 @@ impl UpstreamConnection {
 
     /// Check if the connection is active
     pub fn is_connected(&self) -> bool {
-        self.status == ConnectionStatus::Connected
+        matches!(self.status, ConnectionStatus::Connected)
     }
 
     /// Update connection with successful connection details
@@ -65,5 +65,42 @@ impl UpstreamConnection {
         self.service = None;
         self.tools = Vec::new();
         self.status = ConnectionStatus::Disconnected;
+    }
+
+    /// Update connection status to disabled
+    pub fn update_disabled(&mut self) {
+        self.service = None;
+        self.tools = Vec::new();
+        self.status = ConnectionStatus::Disabled;
+    }
+
+    /// Update connection status to paused
+    pub fn update_paused(&mut self) {
+        self.status = ConnectionStatus::Paused;
+    }
+
+    /// Update connection status to reconnecting
+    pub fn update_reconnecting(&mut self) {
+        self.status = ConnectionStatus::Reconnecting;
+    }
+
+    /// Get a string representation of the connection status
+    pub fn status_string(&self) -> String {
+        self.status.to_string()
+    }
+
+    /// Get the time elapsed since the last connection
+    pub fn time_since_last_connection(&self) -> Duration {
+        self.last_connected.elapsed()
+    }
+
+    /// Check if the connection is in a state that allows connection attempts
+    pub fn can_connect(&self) -> bool {
+        self.status.can_connect()
+    }
+
+    /// Check if the connection is in a state that should be monitored by health checks
+    pub fn should_monitor(&self) -> bool {
+        self.status.should_monitor()
     }
 }

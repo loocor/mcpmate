@@ -3,6 +3,7 @@
 
 // Module declarations
 pub mod connection;
+pub mod error;
 pub mod pool;
 pub mod server;
 pub mod sse;

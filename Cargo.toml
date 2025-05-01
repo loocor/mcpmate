@@ -18,6 +18,7 @@ rmcp = { version = "0.1", features = ["server", "client", "macros", "transport-i
 schemars = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+thiserror = "1.0"
 tokio = { version = "1.44", features = ["full"] }
 tokio-util = "0.7"
 tracing = "0.1"

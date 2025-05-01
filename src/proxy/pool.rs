@@ -1,7 +1,7 @@
 // MCP Proxy connection pool module
 // Contains the UpstreamConnectionPool struct and related functionality
 
-use anyhow::{Context, Result};
+use anyhow::{self, Context, Result};
 use rmcp::{model::Tool, service::RunningService, RoleClient};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, task::JoinSet, time::sleep};
@@ -243,6 +243,97 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
+    /// Disable a server (manually prevent connections)
+    pub async fn disable_server(&mut self, server_name: &str) -> Result<()> {
+        // Check if already disabled
+        {
+            let conn = self.connections.get(server_name).context(format!(
+                "Server '{}' not found in connection pool",
+                server_name
+            ))?;
+
+            // If already disabled, do nothing
+            if matches!(conn.status, ConnectionStatus::Disabled) {
+                tracing::info!("Server '{}' is already disabled", server_name);
+                return Ok(());
+            }
+
+            // Check if connected
+            if conn.is_connected() {
+                // Disconnect first (in a separate scope)
+                self.disconnect(server_name).await?;
+            }
+        }
+
+        // Now update status to disabled
+        let conn = self.connections.get_mut(server_name).unwrap();
+        conn.update_disabled();
+        tracing::info!("Server '{}' has been disabled", server_name);
+
+        Ok(())
+    }
+
+    /// Enable a server (allow connections)
+    pub async fn enable_server(&mut self, server_name: &str) -> Result<()> {
+        let conn = self.connections.get_mut(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        // If not disabled or paused, do nothing
+        if !matches!(
+            conn.status,
+            ConnectionStatus::Disabled | ConnectionStatus::Paused
+        ) {
+            tracing::info!("Server '{}' is already enabled", server_name);
+            return Ok(());
+        }
+
+        // Update status to disconnected (ready to connect)
+        conn.update_disconnected();
+        tracing::info!("Server '{}' has been enabled", server_name);
+
+        Ok(())
+    }
+
+    /// Pause a server (temporarily prevent connections)
+    pub async fn pause_server(&mut self, server_name: &str) -> Result<()> {
+        let conn = self.connections.get_mut(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        // If already paused, do nothing
+        if matches!(conn.status, ConnectionStatus::Paused) {
+            tracing::info!("Server '{}' is already paused", server_name);
+            return Ok(());
+        }
+
+        // Update status to paused
+        conn.update_paused();
+        tracing::info!("Server '{}' has been paused", server_name);
+
+        Ok(())
+    }
+
+    /// Get server status
+    pub fn get_server_status(&self, server_name: &str) -> Result<String> {
+        let conn = self.connections.get(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        Ok(conn.status_string())
+    }
+
+    /// Get all server statuses
+    pub fn get_all_server_statuses(&self) -> HashMap<String, String> {
+        self.connections
+            .iter()
+            .map(|(name, conn)| (name.clone(), conn.status_string()))
+            .collect()
+    }
+
     /// Start health check task
     pub fn start_health_check(connection_pool: Arc<Mutex<Self>>) {
         tokio::spawn(async move {
@@ -257,13 +348,19 @@ impl UpstreamConnectionPool {
                 {
                     let pool_guard = pool_clone.lock().await;
                     for (name, conn) in &pool_guard.connections {
+                        // Only monitor servers that should be monitored
+                        if !conn.should_monitor() {
+                            continue;
+                        }
+
                         match &conn.status {
                             ConnectionStatus::Connected => {
                                 // Check if the service is still alive
                                 if let Some(_service) = &conn.service {
                                     // We can't directly check if the service is closed
                                     // Instead, we'll periodically try to reconnect to ensure health
-                                    if conn.last_connected.elapsed() > Duration::from_secs(300) {
+                                    if conn.time_since_last_connection() > Duration::from_secs(300)
+                                    {
                                         tracing::info!(
                                             "Health check: Periodic reconnect for '{}'",
                                             name
@@ -278,7 +375,7 @@ impl UpstreamConnectionPool {
                             }
                             ConnectionStatus::Failed(_) => {
                                 // Reconnect failed servers after a delay
-                                if conn.last_connected.elapsed() > Duration::from_secs(60) {
+                                if conn.time_since_last_connection() > Duration::from_secs(60) {
                                     reconnect_servers.push(name.clone());
                                 }
                             }
