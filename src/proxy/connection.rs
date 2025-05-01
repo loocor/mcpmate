@@ -3,12 +3,15 @@
 
 use rmcp::{model::Tool, service::RunningService, RoleClient};
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 use super::types::ConnectionStatus;
 
 /// Connection to an upstream MCP server
 #[derive(Debug)]
 pub struct UpstreamConnection {
+    /// Unique instance ID
+    pub id: String,
     /// Name of the server
     pub server_name: String,
     /// Active service connection
@@ -28,6 +31,7 @@ pub struct UpstreamConnection {
 impl Clone for UpstreamConnection {
     fn clone(&self) -> Self {
         Self {
+            id: self.id.clone(),
             server_name: self.server_name.clone(),
             service: None, // We don't clone the service
             tools: self.tools.clone(),
@@ -42,61 +46,69 @@ impl UpstreamConnection {
     /// Create a new upstream connection
     pub fn new(server_name: String) -> Self {
         Self {
+            id: Uuid::new_v4().to_string(),
             server_name,
             service: None,
             tools: Vec::new(),
             last_connected: Instant::now(),
             connection_attempts: 0,
-            status: ConnectionStatus::Disconnected,
+            status: ConnectionStatus::Shutdown,
         }
     }
 
     /// Check if the connection is active
     pub fn is_connected(&self) -> bool {
-        matches!(self.status, ConnectionStatus::Connected)
+        matches!(self.status, ConnectionStatus::Ready)
     }
 
     /// Update connection with successful connection details
     pub fn update_connected(&mut self, service: RunningService<RoleClient, ()>, tools: Vec<Tool>) {
         self.service = Some(service);
         self.tools = tools;
-        self.status = ConnectionStatus::Connected;
+        self.status = ConnectionStatus::Ready;
         self.last_connected = Instant::now();
     }
 
-    /// Update connection status to failed
+    /// Update connection status to error
     pub fn update_failed(&mut self, error_msg: String) {
-        self.status = ConnectionStatus::Failed(error_msg);
+        self.status = ConnectionStatus::Error(error_msg);
     }
 
-    /// Update connection status to connecting
+    /// Update connection status to initializing
     pub fn update_connecting(&mut self) {
-        self.status = ConnectionStatus::Connecting;
+        self.status = ConnectionStatus::Initializing;
         self.connection_attempts += 1;
     }
 
-    /// Update connection status to disconnected
+    /// Update connection status to shutdown
     pub fn update_disconnected(&mut self) {
         self.service = None;
         self.tools = Vec::new();
-        self.status = ConnectionStatus::Disconnected;
+        self.status = ConnectionStatus::Shutdown;
     }
 
-    /// Update connection status to disabled
+    /// Update connection status to shutdown (disabled)
     pub fn update_disabled(&mut self) {
         self.service = None;
         self.tools = Vec::new();
-        self.status = ConnectionStatus::Disabled;
+        self.status = ConnectionStatus::Shutdown;
     }
 
-    /// Update connection status to paused
-    pub fn update_paused(&mut self) {
-        self.status = ConnectionStatus::Paused;
+    /// Update connection status to busy
+    pub fn update_busy(&mut self) {
+        self.status = ConnectionStatus::Busy;
     }
 
-    /// Update connection status to reconnecting
+    /// Update connection status to initializing (for reconnection)
     pub fn update_reconnecting(&mut self) {
-        self.status = ConnectionStatus::Reconnecting;
+        self.status = ConnectionStatus::Initializing;
+    }
+
+    /// Update connection status to shutdown (paused)
+    pub fn update_paused(&mut self) {
+        self.service = None;
+        self.tools = Vec::new();
+        self.status = ConnectionStatus::Shutdown;
     }
 
     /// Get a string representation of the connection status

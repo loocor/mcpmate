@@ -22,6 +22,6 @@ pub struct StatusResponse {
 pub struct MetricsResponse {
     /// System uptime in seconds
     pub uptime: u64,
-    /// Server statuses
-    pub server_statuses: HashMap<String, String>,
+    /// Server statuses with instance details
+    pub server_statuses: HashMap<String, Vec<(String, String)>>,
 }

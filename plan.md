@@ -1,122 +1,151 @@
-# MCP 代理服务器开发计划
+# 设计方案
 
-## 阶段 1：基础框架搭建
+确保我们在实现时不会遗漏任何重要内容：
 
-**目标**
+## 1. 状态模型
+我们将保持与 Rust SDK 一致的状态枚举：
 
-创建基本的项目结构和框架。
+```rust
+pub enum ConnectionStatus {
+    Initializing,  // 初始化中
+    Ready,         // 就绪
+    Busy,          // 忙碌
+    Error(String), // 错误
+    Shutdown,      // 已关闭
+}
+```
 
-**任务**
-- 创建 `src/bin/mcp_proxy.rs` 文件
-- 实现命令行参数解析（使用 `clap`）
-- 实现配置文件加载（复用 `mcp_client.rs` 中的配置加载逻辑）
-- 设置日志系统（使用 `tracing_subscriber`）
-- 创建基本的 `ProxyServer` 结构体和实现
-- 添加基本的信号处理（如 Ctrl+C）
+## 2. 操作集
+每个状态允许的操作：
 
-**成果**
+- Initializing: disconnect, reconnect, cancel
+- Ready: disconnect, reconnect
+- Busy: disconnect, reconnect
+- Error: disconnect, reconnect
+- Shutdown: 只有 reconnect
 
-一个可以启动但不执行任何实际功能的代理服务器框架。
+特殊说明：
 
+- disconnect 有普通和强制两种模式
+- reconnect 有普通和重置两种模式
 
-## 阶段 2：连接池管理实现
+## 3. 实例标识
+为每个服务实例分配唯一 ID，确保操作针对正确的实例：
 
-**目标**
-实现连接池管理系统，能够连接到多个上游 MCP 服务器并管理这些连接。
+```rust
+pub struct UpstreamConnection {
+    pub id: String,  // 实例唯一ID
+    pub name: String,
+    pub status: ConnectionStatus,
+    // 其他字段...
+}
+```
 
-**任务**
-- 创建 `UpstreamConnectionPool` 和 `UpstreamConnection` 结构体
-- 实现连接池初始化逻辑
-- 实现连接到上游服务器的方法（支持 stdio 和 SSE）
-- 实现断开连接和重连逻辑
-- 实现健康检查机制
-- 添加错误处理和日志记录
-- 确保连接池的并发安全（使用 `Mutex`）
+## 4. API 端点设计
+采用嵌套路径模式，使用专用端点表示不同操作模式：
 
-**成果**
-一个能够连接到多个上游 MCP 服务器并管理这些连接的连接池系统。
+```http
+  # 服务管理
+  GET    /api/mcp/servers                       # 列出所有服务
+  GET    /api/mcp/servers/:name                 # 获取服务信息
 
-## 阶段 3：工具代理和命名空间实现
+  # 实例管理
+  GET    /api/mcp/servers/:name/instances       # 列出服务的所有实例
+  GET    /api/mcp/servers/:name/instances/:id   # 获取特定实例信息
+  GET    /api/mcp/servers/:name/instances/:id/health # 获取实例健康状态
 
-**目标**
-实现工具代理系统，能够从上游服务器获取工具信息并创建代理工具。
+  # 实例操作 - 基本操作
+  POST   /api/mcp/servers/:name/instances/:id/disconnect       # 正常断开连接
+  POST   /api/mcp/servers/:name/instances/:id/disconnect/force # 强制断开连接
+  POST   /api/mcp/servers/:name/instances/:id/reconnect        # 正常重新连接
+  POST   /api/mcp/servers/:name/instances/:id/reconnect/reset  # 重置并重新连接
+  POST   /api/mcp/servers/:name/instances/:id/cancel           # 取消初始化（仅 Initializing 状态）
 
-**任务**
-- 实现工具名称映射（添加前缀/命名空间）
-- 创建工具映射表（工具名称 -> 服务器名称）
-- 实现获取所有上游服务器工具的方法
-- 实现工具列表处理（处理名称冲突）
-- 实现通用的工具调用代理方法
-- 添加工具描述更新逻辑（反映它是代理的）
-- 实现工具参数和结果转换
+  # 系统管理
+  GET    /api/system/status                     # 获取系统状态
+  GET    /api/system/metrics                    # 获取系统指标
+}
+```
 
-**成果**
+## 5. 响应模型
 
-一个能够代理上游服务器工具的系统，解决工具名称冲突问题。
+```rust
+// 服务响应
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerResponse {
+    pub name: String,
+    pub instances_count: usize,
+    pub enabled: bool,
+}
 
-## 阶段 4：HTTP/SSE 服务器实现
+// 实例列表响应
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerInstancesResponse {
+    pub name: String,
+    pub instances: Vec<ServerInstanceSummary>,
+}
 
-**目标**
-实现 HTTP/SSE 服务器，为下游客户端提供服务。
+// 实例摘要
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerInstanceSummary {
+    pub id: String,
+    pub status: String,
+    pub connected_at: Option<String>,
+}
 
-**任务**
-- 创建 SSE 服务器配置（使用 `rmcp` 库的 `SseServer`）
-- 实现服务器启动逻辑
-- 实现 `ServerHandler` trait 的必要方法
-- 实现工具列表请求处理
-- 实现工具调用请求处理
-- 添加请求和响应日志记录
-- 实现服务器关闭逻辑
+// 实例详情响应
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerInstanceResponse {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub allowed_operations: Vec<String>,
+    pub details: ServerInstanceDetails,
+}
 
-**成果**
-一个能够接收下游客户端请求并提供服务的 HTTP/SSE 服务器。
+// 实例详情
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerInstanceDetails {
+    pub connection_attempts: u32,
+    pub last_connected_seconds: Option<u64>,
+    pub tools_count: usize,
+    pub error_message: Option<String>,
+    pub server_type: String,
+}
+```
 
-## 阶段 5：错误处理和恢复机制
+## 6. 实现注意事项
 
-**目标**
+- 多实例支持：
+  - 修改连接池结构，支持一个服务有多个实例
+  - 为每个新连接生成唯一 ID
+- 状态转换：
+  - 确保状态转换逻辑清晰
+  - 在每个状态下只允许特定的操作
+- 错误处理：
+  - 提供清晰的错误消息
+  - 对于不允许的操作，返回适当的错误代码
+- 文档：
+  - 为每个端点提供详细文档
+  - 说明每个状态允许的操作
 
-完善错误处理和恢复机制，提高系统的稳定性和可靠性。
+# 实施步骤
 
-**任务**
-- 实现更详细的错误类型和错误处理
-- 添加重试机制（带指数退避）
-- 实现连接失败后的自动重连
-- 添加超时处理
-- 实现优雅的错误报告（给客户端）
-- 完善日志记录（包括错误详情）
-- 添加系统状态监控
+每进行一个阶段，需要交给老陈进行测试确认。
 
-**成果**
+## 第一阶段：基础结构调整
+- 更新 ConnectionStatus 枚举，与 Rust SDK 保持一致
+- 为连接添加实例 ID 支持
+- 修改连接池结构，支持多实例
 
-一个具有健壮错误处理和恢复机制的系统，能够应对各种故障情况。
+## 第二阶段：API 模型更新
+- 定义新的响应模型，支持实例信息
+- 实现状态转换逻辑和操作限制
 
-## 阶段 6：测试和优化
+## 第三阶段：端点实现
+- 实现服务和实例管理端点
+- 实现各种操作端点，包括专用变体
 
-**目标**
-
-测试系统功能，发现并修复问题，优化性能。
-
-**任务**
-- 编写单元测试（测试各个组件）
-- 编写集成测试（测试整个系统）
-- 进行性能测试（测试系统在高负载下的表现）
-- 优化连接池管理（减少资源消耗）
-- 优化工具调用路由（提高响应速度）
-- 添加更多日志和监控点（便于调试）
-- 修复发现的问题
-
-**成果**
-
-一个经过测试和优化的系统，具有良好的性能和稳定性。
-
-## 建议的开发方法
-
-- **逐阶段开发**：按照上述阶段逐步开发，每个阶段完成后进行测试。
-- **增量测试**：每实现一个功能就进行测试，确保它正常工作。
-- **代码审查**：定期进行代码审查，确保代码质量和一致性。
-- **文档记录**：为每个组件和功能编写文档，便于后续维护。
-- **版本控制**：使用 Git 进行版本控制，每个阶段完成后创建一个标签或里程碑。
-
-> 这个分阶段的开发计划应该能帮助你更有条理地实现 MCP 代理服务器，避免一次性处理过多复杂问题带来的困难。每个阶段都有明确的目标和可衡量的成果，这样可以更好地跟踪进度和保持动力。
->
-> 你可以从阶段 1 开始，逐步构建系统的各个部分。如果在某个阶段遇到困难，可以随时调整计划或寻求帮助。
+## 第四阶段：测试和优化 (暂时忽略)
+- 编写单元测试和集成测试
+- 优化性能和错误处理

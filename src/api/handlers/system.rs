@@ -39,7 +39,7 @@ pub async fn get_status(
     let total_servers = statuses.len();
     let connected_servers = statuses
         .values()
-        .filter(|status| status == &"Connected")
+        .filter(|instances| instances.iter().any(|(_, status)| status.contains("Ready")))
         .count();
 
     Ok(Json(StatusResponse {

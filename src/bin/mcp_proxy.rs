@@ -96,7 +96,11 @@ async fn main() -> Result<()> {
         let connected_count = pool
             .connections
             .values()
-            .filter(|conn| conn.status == ConnectionStatus::Connected)
+            .filter(|instances| {
+                instances
+                    .values()
+                    .any(|conn| matches!(conn.status, ConnectionStatus::Ready))
+            })
             .count();
 
         tracing::info!(
