@@ -15,6 +15,8 @@ pub fn routes(state: Arc<AppState>) -> Router {
     let servers_router = Router::new()
         .route("/", get(mcp::list_servers))
         .route("/:name", get(mcp::get_server))
+        .route("/:name/details", get(mcp::get_server_details))
+        .route("/:name/health", get(mcp::check_server_health))
         .route("/:name/pause", post(mcp::pause_server))
         .route("/:name/enable", post(mcp::enable_server))
         .route("/:name/disable", post(mcp::disable_server))

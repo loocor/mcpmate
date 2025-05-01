@@ -61,20 +61,20 @@ impl UpstreamConnectionPool {
     }
 
     /// Trigger connection to all servers in the pool without waiting for completion
-    pub fn trigger_connect_all(&mut self) {
+    pub async fn trigger_connect_all(&mut self) {
         // Get all server names
         let server_names: Vec<String> = self.connections.keys().cloned().collect();
 
         // Trigger connection for each server
         for name in server_names {
-            if let Err(e) = self.trigger_connect(&name) {
+            if let Err(e) = self.trigger_connect(&name).await {
                 tracing::warn!("Failed to trigger connection to server '{}': {}", name, e);
             }
         }
     }
 
     /// Trigger a connection to a specific server without waiting for completion
-    pub fn trigger_connect(&mut self, server_name: &str) -> Result<()> {
+    pub async fn trigger_connect(&mut self, server_name: &str) -> Result<()> {
         // Check if the server exists
         let conn = self.connections.get(server_name).context(format!(
             "Server '{}' not found in connection pool",
@@ -112,61 +112,17 @@ impl UpstreamConnectionPool {
             server_config.kind.clone()
         };
 
-        // Clone necessary data for the background task
-        let server_name = server_name.to_string();
-        let pool = Arc::new(Mutex::new(self.clone()));
-
-        // Spawn a background task to perform the actual connection
-        tokio::spawn(async move {
-            // This is a background task that will connect to the server
-            let result = match server_type.as_str() {
-                "stdio" => {
-                    tracing::info!(
-                        "Background task: Connecting to stdio server '{}'...",
-                        server_name
-                    );
-                    // Server configuration is already in config_clone
-
-                    // Connect to the server
-                    let mut pool_guard = pool.lock().await;
-                    pool_guard.connect_stdio(&server_name).await
-                }
-                "sse" => {
-                    tracing::info!(
-                        "Background task: Connecting to SSE server '{}'...",
-                        server_name
-                    );
-                    // Server configuration is already in config_clone
-
-                    // Connect to the server
-                    let mut pool_guard = pool.lock().await;
-                    pool_guard.connect_sse(&server_name).await
-                }
-                _ => {
-                    let error_msg = format!("Unsupported server type: {}", server_type);
-                    Err(anyhow::anyhow!(error_msg))
-                }
-            };
-
-            // Log the result
-            match &result {
-                Ok(_) => tracing::info!("Background task: Connected to server '{}'", server_name),
-                Err(e) => {
-                    tracing::error!(
-                        "Background task: Failed to connect to server '{}': {}",
-                        server_name,
-                        e
-                    );
-
-                    // Update connection status to failed
-                    if let Ok(mut pool_guard) = pool.try_lock() {
-                        if let Some(conn) = pool_guard.connections.get_mut(&server_name) {
-                            conn.update_failed(e.to_string());
-                        }
-                    }
-                }
+        // Connect based on server type
+        match server_type.as_str() {
+            "stdio" => self.connect_stdio(server_name).await?,
+            "sse" => self.connect_sse(server_name).await?,
+            _ => {
+                let error_msg = format!("Unsupported server type: {}", server_type);
+                let conn = self.connections.get_mut(server_name).unwrap();
+                conn.update_failed(error_msg.clone());
+                return Err(anyhow::anyhow!(error_msg));
             }
-        });
+        };
 
         Ok(())
     }
@@ -322,7 +278,7 @@ impl UpstreamConnectionPool {
     /// Connect to all servers in parallel
     pub async fn connect_all(&mut self) -> Result<()> {
         // First trigger connection for all servers without waiting
-        self.trigger_connect_all();
+        self.trigger_connect_all().await;
 
         // Return immediately, connections will happen in the background
         Ok(())

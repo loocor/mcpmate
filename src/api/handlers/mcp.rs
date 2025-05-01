@@ -7,9 +7,15 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::api::{
-    models::mcp::{ServerListResponse, ServerResponse, ServerStatusResponse},
-    routes::AppState,
+use crate::{
+    api::{
+        models::mcp::{
+            ServerDetailsResponse, ServerHealthResponse, ServerListResponse, ServerResponse,
+            ServerStatusResponse,
+        },
+        routes::AppState,
+    },
+    proxy::types::ConnectionStatus,
 };
 
 use super::ApiError;
@@ -18,7 +24,22 @@ use super::ApiError;
 pub async fn list_servers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ServerListResponse>, ApiError> {
-    let pool = state.connection_pool.lock().await;
+    // Use a timeout to avoid blocking indefinitely
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
+
+    let pool = match pool_result {
+        Ok(pool) => pool,
+        Err(_) => {
+            return Err(ApiError::InternalError(
+                "Timed out waiting for connection pool lock".to_string(),
+            ));
+        }
+    };
+
     let statuses = pool.get_all_server_statuses();
 
     let servers = statuses
@@ -34,7 +55,21 @@ pub async fn get_server(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> Result<Json<ServerResponse>, ApiError> {
-    let pool = state.connection_pool.lock().await;
+    // Use a timeout to avoid blocking indefinitely
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
+
+    let pool = match pool_result {
+        Ok(pool) => pool,
+        Err(_) => {
+            return Err(ApiError::InternalError(
+                "Timed out waiting for connection pool lock".to_string(),
+            ));
+        }
+    };
 
     match pool.get_server_status(&name) {
         Ok(status) => Ok(Json(ServerResponse { name, status })),
@@ -115,7 +150,7 @@ pub async fn connect_server(
 ) -> Result<Json<ServerResponse>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
-    match pool.trigger_connect(&name) {
+    match pool.trigger_connect(&name).await {
         Ok(_) => {
             let status = pool.get_server_status(&name).map_err(|_| {
                 ApiError::InternalError(format!("Failed to get status for server '{}'", name))
@@ -172,4 +207,119 @@ pub async fn reconnect_server(
             name, e
         ))),
     }
+}
+
+/// Get detailed information about a server
+pub async fn get_server_details(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<ServerDetailsResponse>, ApiError> {
+    // Use a timeout to avoid blocking indefinitely
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
+
+    let pool = match pool_result {
+        Ok(pool) => pool,
+        Err(_) => {
+            return Err(ApiError::InternalError(
+                "Timed out waiting for connection pool lock".to_string(),
+            ));
+        }
+    };
+
+    // Get the connection for this server
+    let conn = pool
+        .connections
+        .get(&name)
+        .ok_or_else(|| ApiError::NotFound(format!("Server '{}' not found", name)))?;
+
+    // Get server configuration
+    let server_config = pool.config.mcp_servers.get(&name).ok_or_else(|| {
+        ApiError::NotFound(format!("Server configuration for '{}' not found", name))
+    })?;
+
+    // Get error message if status is Failed
+    let error_message = match &conn.status {
+        ConnectionStatus::Failed(msg) => Some(msg.clone()),
+        _ => None,
+    };
+
+    // Calculate time since last connection
+    let last_connected_seconds = if conn.is_connected() {
+        let now = std::time::Instant::now();
+        if now > conn.last_connected {
+            Some(now.duration_since(conn.last_connected).as_secs())
+        } else {
+            Some(0)
+        }
+    } else {
+        None
+    };
+
+    // Check if server is enabled in configuration
+    let is_enabled = pool.rule_config.get(&name).copied().unwrap_or(false);
+
+    Ok(Json(ServerDetailsResponse {
+        name: name.clone(),
+        status: conn.status_string(),
+        connection_attempts: conn.connection_attempts,
+        last_connected_seconds,
+        tools_count: conn.tools.len(),
+        error_message,
+        server_type: server_config.kind.clone(),
+        is_enabled,
+    }))
+}
+
+/// Check the health of a server
+pub async fn check_server_health(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<ServerHealthResponse>, ApiError> {
+    // Use a timeout to avoid blocking indefinitely
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
+
+    let pool = match pool_result {
+        Ok(pool) => pool,
+        Err(_) => {
+            return Err(ApiError::InternalError(
+                "Timed out waiting for connection pool lock".to_string(),
+            ));
+        }
+    };
+
+    // Get the connection for this server
+    let conn = pool
+        .connections
+        .get(&name)
+        .ok_or_else(|| ApiError::NotFound(format!("Server '{}' not found", name)))?;
+
+    // Determine if the server is healthy
+    let (healthy, message) = match conn.status {
+        ConnectionStatus::Connected => (true, "Server is connected and healthy".to_string()),
+        ConnectionStatus::Connecting => (false, "Server is currently connecting".to_string()),
+        ConnectionStatus::Disconnected => (false, "Server is disconnected".to_string()),
+        ConnectionStatus::Failed(ref msg) => (false, format!("Server connection failed: {}", msg)),
+        ConnectionStatus::Disabled => (false, "Server is disabled".to_string()),
+        ConnectionStatus::Paused => (false, "Server is paused".to_string()),
+        ConnectionStatus::Reconnecting => (false, "Server is reconnecting".to_string()),
+    };
+
+    // Get current time as ISO 8601 string
+    let checked_at = chrono::Utc::now().to_rfc3339();
+
+    Ok(Json(ServerHealthResponse {
+        name: name.clone(),
+        healthy,
+        message,
+        status: conn.status_string(),
+        checked_at,
+    }))
 }
