@@ -1,14 +1,10 @@
 // MCP Proxy connection module
 // Contains the UpstreamConnection struct and related functionality
 
-use rmcp::{
-    model::Tool,
-    service::RunningService,
-    RoleClient,
-};
+use rmcp::{model::Tool, service::RunningService, RoleClient};
 use std::time::Instant;
 
-use super::ConnectionStatus;
+use super::types::ConnectionStatus;
 
 /// Connection to an upstream MCP server
 #[derive(Debug)]

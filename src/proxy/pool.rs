@@ -2,13 +2,14 @@
 // Contains the UpstreamConnectionPool struct and related functionality
 
 use anyhow::{Context, Result};
+use rmcp::{model::Tool, service::RunningService, RoleClient};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, task::JoinSet, time::sleep};
 use tracing;
 
 use super::{
     connect_sse_server, connect_stdio_server, connection::UpstreamConnection,
-    ConnectionStatus,
+    types::ConnectionStatus,
 };
 use crate::config::Config;
 
@@ -110,6 +111,22 @@ impl UpstreamConnectionPool {
         result
     }
 
+    /// Helper function to update connection after successful connection
+    fn update_connection(
+        &mut self,
+        server_name: &str,
+        service: RunningService<RoleClient, ()>,
+        tools: Vec<Tool>,
+    ) {
+        let conn = self.connections.get_mut(server_name).unwrap();
+        conn.update_connected(service, tools);
+        tracing::info!(
+            "Connected to server '{}', found {} tools",
+            server_name,
+            conn.tools.len()
+        );
+    }
+
     /// Connect to a stdio server
     async fn connect_stdio(&mut self, server_name: &str) -> Result<()> {
         // Get server configuration
@@ -119,13 +136,7 @@ impl UpstreamConnectionPool {
         match connect_stdio_server(server_name, server_config).await {
             Ok((service, tools)) => {
                 // Update connection
-                let conn = self.connections.get_mut(server_name).unwrap();
-                conn.update_connected(service, tools);
-                tracing::info!(
-                    "Connected to server '{}', found {} tools",
-                    server_name,
-                    conn.tools.len()
-                );
+                self.update_connection(server_name, service, tools);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -141,13 +152,7 @@ impl UpstreamConnectionPool {
         match connect_sse_server(server_name, server_config).await {
             Ok((service, tools)) => {
                 // Update connection
-                let conn = self.connections.get_mut(server_name).unwrap();
-                conn.update_connected(service, tools);
-                tracing::info!(
-                    "Connected to server '{}', found {} tools",
-                    server_name,
-                    conn.tools.len()
-                );
+                self.update_connection(server_name, service, tools);
                 Ok(())
             }
             Err(e) => Err(e),
