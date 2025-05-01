@@ -12,6 +12,35 @@ Models define the structure of request and response data for API endpoints. They
 - `mcp.rs` - Models for MCP server management
 - `system.rs` - Models for system operations
 
+## MCP Models
+
+The `mcp.rs` file contains models for MCP server and instance management:
+
+- Server models:
+  - `ServerResponse` - Basic server information
+  - `ServerListResponse` - List of servers
+  - `ServerDetailsResponse` - Detailed server information
+  - `ServerStatusResponse` - Server status information
+
+- Instance models:
+  - `InstanceStatus` - Basic instance status
+  - `InstanceDetails` - Detailed instance information
+  - `ServerInstanceSummary` - Instance summary information
+  - `ServerInstanceResponse` - Instance response information
+  - `ServerInstancesResponse` - List of instances for a server
+  - `InstanceHealthResponse` - Instance health information
+
+- Operation models:
+  - `OperationRequest` - Request for an operation
+  - `OperationResponse` - Response from an operation
+
+## System Models
+
+The `system.rs` file contains models for system operations:
+
+- `SystemStatusResponse` - System status information
+- `SystemMetricsResponse` - System metrics information
+
 ## Model Types
 
 Models typically include:

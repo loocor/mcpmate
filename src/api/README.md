@@ -17,7 +17,20 @@ The API module provides HTTP endpoints for controlling and monitoring the MCP Pr
 ## API Domains
 
 - `/api/mcp/servers/*` - Endpoints for managing MCP upstream servers
+  - `/api/mcp/servers` - List all servers
+  - `/api/mcp/servers/:name` - Get a specific server
+  - `/api/mcp/servers/:name/instances` - List all instances for a server
+  - `/api/mcp/servers/:name/instances/:id` - Get a specific instance
+  - `/api/mcp/servers/:name/instances/:id/health` - Check instance health
+  - `/api/mcp/servers/:name/instances/:id/disconnect` - Disconnect an instance
+  - `/api/mcp/servers/:name/instances/:id/disconnect/force` - Force disconnect an instance
+  - `/api/mcp/servers/:name/instances/:id/reconnect` - Reconnect an instance
+  - `/api/mcp/servers/:name/instances/:id/reconnect/reset` - Reset and reconnect an instance
+  - `/api/mcp/servers/:name/instances/:id/cancel` - Cancel an initializing instance
+
 - `/api/system/*` - Endpoints for system-level operations and monitoring
+  - `/api/system/info` - Get system information
+  - `/api/system/health` - Check system health
 
 ## Usage
 

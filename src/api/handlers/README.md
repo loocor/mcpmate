@@ -9,8 +9,33 @@ Handlers implement the business logic for API endpoints. They process incoming r
 ## Files
 
 - `mod.rs` - Handlers module entry point
-- `mcp.rs` - Handlers for MCP server management
+- `mcp.rs` - Handlers for MCP server and instance management
 - `system.rs` - Handlers for system operations
+
+## MCP Handlers
+
+The `mcp.rs` file contains handlers for managing MCP servers and instances:
+
+- Server management:
+  - `list_servers` - List all MCP servers
+  - `get_server` - Get a specific MCP server
+
+- Instance management:
+  - `list_instances` - List all instances for a specific server
+  - `get_instance` - Get a specific instance
+  - `check_health` - Check the health of a specific instance
+  - `disconnect` - Disconnect an instance
+  - `force_disconnect` - Force disconnect an instance
+  - `reconnect` - Reconnect an instance
+  - `reset_reconnect` - Reset and reconnect an instance
+  - `cancel` - Cancel an initializing instance
+
+## System Handlers
+
+The `system.rs` file contains handlers for system operations:
+
+- `get_system_info` - Get system information
+- `check_health` - Check system health
 
 ## Handler Structure
 
