@@ -1,11 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
 use mcp_client::{
+    api::ApiServer,
     config::{load_rule_config, load_server_config},
     proxy::{ConnectionStatus, ProxyServer},
 };
 use rmcp::transport::sse_server::{SseServer, SseServerConfig};
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use tracing_subscriber::{self, EnvFilter};
 
@@ -21,9 +22,13 @@ struct Args {
     #[arg(short, long, default_value = "config/rule.json5")]
     rule_config: PathBuf,
 
-    /// Port to listen on
+    /// Port to listen on for MCP server
     #[arg(short, long, default_value = "8000")]
     port: u16,
+
+    /// Port to listen on for API server
+    #[arg(long, default_value = "8080")]
+    api_port: u16,
 
     /// Log level
     #[arg(short, long, default_value = "info")]
@@ -102,11 +107,11 @@ async fn main() -> Result<()> {
     });
 
     // Start SSE server
-    let bind_address = format!("127.0.0.1:{}", args.port).parse()?;
-    tracing::info!("Starting SSE server on {}", bind_address);
+    let mcp_bind_address = format!("127.0.0.1:{}", args.port).parse()?;
+    tracing::info!("Starting MCP SSE server on {}", mcp_bind_address);
 
     let server_config = SseServerConfig {
-        bind: bind_address,
+        bind: mcp_bind_address,
         sse_path: "/sse".to_string(),
         post_path: "/message".to_string(),
         ct: Default::default(),
@@ -116,16 +121,35 @@ async fn main() -> Result<()> {
     let proxy_clone = proxy.clone();
     let factory = move || proxy_clone.clone();
 
-    let server = SseServer::serve_with_config(server_config)
+    let mcp_server = SseServer::serve_with_config(server_config)
         .await?
         .with_service(factory);
 
-    tracing::info!("Server started. Press Ctrl+C to stop.");
+    // Start API server
+    let api_bind_address: SocketAddr = format!("127.0.0.1:{}", args.api_port).parse()?;
+    tracing::info!("Starting API server on {}", api_bind_address);
+
+    let api_server = ApiServer::new(api_bind_address);
+    let connection_pool_clone = Arc::clone(&proxy.connection_pool);
+
+    // Start API server in a separate task
+    let api_task = tokio::spawn(async move {
+        if let Err(e) = api_server.start(connection_pool_clone).await {
+            tracing::error!("API server error: {}", e);
+        }
+    });
+
+    tracing::info!("Servers started. Press Ctrl+C to stop.");
 
     // Wait for Ctrl+C
     tokio::signal::ctrl_c().await?;
     tracing::info!("Received Ctrl+C, shutting down...");
-    server.cancel();
+
+    // Cancel MCP server
+    mcp_server.cancel();
+
+    // Cancel API server task
+    api_task.abort();
 
     // Disconnect from all servers
     {
