@@ -1,4 +1,4 @@
-use mcp_client::config::*;
+use mcpman::config::*;
 use std::path::PathBuf;
 
 #[test]

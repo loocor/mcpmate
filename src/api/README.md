@@ -1,10 +1,10 @@
-# API Module
+# MCPMan API Module
 
-This module contains the RESTful API implementation for the MCP Proxy server.
+This module contains the RESTful API implementation for the MCPMan Proxy server.
 
 ## Purpose
 
-The API module provides HTTP endpoints for controlling and monitoring the MCP Proxy server. It allows external systems (like Tauri desktop applications) to interact with the proxy server without using the MCP protocol directly, avoiding circular dependencies.
+The API module provides HTTP endpoints for controlling and monitoring the MCPMan Proxy server. It allows external systems (like the MCPMan Desktop application) to interact with the proxy server without using the MCP protocol directly, avoiding circular dependencies.
 
 ## Structure
 
@@ -34,7 +34,7 @@ The API module provides HTTP endpoints for controlling and monitoring the MCP Pr
 
 ## Usage
 
-The API server is started alongside the MCP Proxy server and provides a RESTful interface for controlling and monitoring the proxy server.
+The API server is started alongside the MCPMan Proxy server and provides a RESTful interface for controlling and monitoring the proxy server. This API is designed to be used by the MCPMan Desktop application and other client applications.
 
 ## Directory structure
 ```

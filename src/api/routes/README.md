@@ -1,6 +1,6 @@
-# API Routes
+# MCPMan API Routes
 
-This directory contains route definitions for the MCP Proxy API server.
+This directory contains route definitions for the MCPMan Proxy API server.
 
 ## Purpose
 

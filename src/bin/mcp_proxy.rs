@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use mcp_client::{
+use mcpman::{
     api::ApiServer,
     config::{load_rule_config, load_server_config},
     proxy::{ConnectionStatus, ProxyServer},

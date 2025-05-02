@@ -1,6 +1,6 @@
-# MCP-Proxy 测试目录
+# MCPMan 测试目录
 
-本目录包含 MCP-Proxy 项目的测试文件和示例配置。
+本目录包含 MCPMan 项目的测试文件和示例配置。
 
 ## 目录结构
 
@@ -26,5 +26,5 @@ cargo test
 示例配置文件可以用于测试 MCP 工具调用。例如：
 
 ```bash
-cargo run --bin mcp-client -- --tool --conf tests/samples/firecrawl_scrape.json
+cargo run --bin mcpman-proxy -- --tool --conf tests/samples/firecrawl_scrape.json
 ```

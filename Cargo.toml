@@ -1,12 +1,12 @@
 [package]
-name = "mcp-client"
+name = "mcpman"
 version = "0.1.0"
 edition = "2021"
-description = "A Rust implementation of MCP client and server"
+description = "MCPMan - A comprehensive management center for Model Context Protocol (MCP) servers"
 authors = ["Loocor <loocor@gmail.com>"]
 
 [lib]
-name = "mcp_client"
+name = "mcpman"
 path = "src/lib.rs"
 
 [dependencies]
@@ -28,5 +28,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.7", features = ["v4", "serde"] }
 
 [[bin]]
-name = "mcp-proxy"
+name = "mcpman-proxy"
 path = "src/bin/mcp_proxy.rs"
