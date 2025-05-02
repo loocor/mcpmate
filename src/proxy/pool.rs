@@ -478,17 +478,17 @@ impl UpstreamConnectionPool {
         Ok(conn.status_string())
     }
 
-    /// Get all server statuses
-    pub fn get_all_server_statuses(&self) -> HashMap<String, Vec<(String, String)>> {
+    /// Get all server instances with cloned connections
+    pub fn get_all_server_instances(&self) -> HashMap<String, Vec<(String, UpstreamConnection)>> {
         let mut result = HashMap::new();
 
         for (server_name, instances) in &self.connections {
-            let instance_statuses: Vec<(String, String)> = instances
+            let instance_clones: Vec<(String, UpstreamConnection)> = instances
                 .iter()
-                .map(|(id, conn)| (id.clone(), conn.status_string()))
+                .map(|(id, conn)| (id.clone(), conn.clone()))
                 .collect();
 
-            result.insert(server_name.clone(), instance_statuses);
+            result.insert(server_name.clone(), instance_clones);
         }
 
         result

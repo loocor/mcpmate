@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use mcpman::{
-    api::ApiServer,
+    api::{handlers::system::initialize_server_start_time, ApiServer},
     config::{load_rule_config, load_server_config},
     proxy::{ConnectionStatus, ProxyServer},
 };
@@ -50,6 +50,9 @@ async fn main() -> Result<()> {
             ),
         )
         .init();
+
+    // Initialize server start time
+    initialize_server_start_time();
 
     // Load the MCP server and rule configuration
     let config = load_server_config(&args.config)?;

@@ -18,6 +18,8 @@ pub struct UpstreamConnection {
     pub service: Option<RunningService<RoleClient, ()>>,
     /// Tools provided by this server
     pub tools: Vec<Tool>,
+    /// Time when the connection was created
+    pub created_at: Instant,
     /// Last time the server was connected
     pub last_connected: Instant,
     /// Number of connection attempts
@@ -35,6 +37,7 @@ impl Clone for UpstreamConnection {
             server_name: self.server_name.clone(),
             service: None, // We don't clone the service
             tools: self.tools.clone(),
+            created_at: self.created_at,
             last_connected: self.last_connected,
             connection_attempts: self.connection_attempts,
             status: self.status.clone(),
@@ -45,12 +48,14 @@ impl Clone for UpstreamConnection {
 impl UpstreamConnection {
     /// Create a new upstream connection
     pub fn new(server_name: String) -> Self {
+        let now = Instant::now();
         Self {
             id: Uuid::new_v4().to_string(),
             server_name,
             service: None,
             tools: Vec::new(),
-            last_connected: Instant::now(),
+            created_at: now,
+            last_connected: now,
             connection_attempts: 0,
             status: ConnectionStatus::Shutdown,
         }
@@ -112,6 +117,11 @@ impl UpstreamConnection {
     /// Get the time elapsed since the last connection
     pub fn time_since_last_connection(&self) -> Duration {
         self.last_connected.elapsed()
+    }
+
+    /// Get the time elapsed since the connection was created
+    pub fn time_since_creation(&self) -> Duration {
+        self.created_at.elapsed()
     }
 
     /// Check if the connection is in a state that allows connection attempts

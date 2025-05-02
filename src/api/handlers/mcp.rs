@@ -10,8 +10,8 @@ use std::sync::Arc;
 use crate::{
     api::{
         models::mcp::{
-            InstanceHealthResponse, OperationRequest, OperationResponse, ServerInstanceResponse,
-            ServerInstancesResponse, ServerListResponse, ServerResponse,
+            InstanceHealthResponse, OperationResponse, ServerInstanceResponse,
+            ServerInstanceSummary, ServerInstancesResponse, ServerListResponse, ServerResponse,
         },
         routes::AppState,
     },
@@ -40,22 +40,52 @@ pub async fn list_servers(
         }
     };
 
-    let statuses = pool.get_all_server_statuses();
+    let instances_map = pool.get_all_server_instances();
 
-    let servers = statuses
+    let servers = instances_map
         .into_iter()
         .map(|(name, instances)| {
-            // Get the number of instances
-            let instances_count = instances.len();
-
             // Check if server is enabled in configuration
             let enabled = pool.rule_config.get(&name).copied().unwrap_or(false);
+
+            // Create instance summaries
+            let instances = instances
+                .into_iter()
+                .map(|(id, conn)| {
+                    // Format connected time if available
+                    let connected_at = if conn.is_connected() {
+                        Some(
+                            chrono::DateTime::<chrono::Utc>::from(
+                                std::time::SystemTime::now() - conn.time_since_last_connection(),
+                            )
+                            .to_rfc3339(),
+                        )
+                    } else {
+                        None
+                    };
+
+                    // Format started time
+                    let started_at = Some(
+                        chrono::DateTime::<chrono::Utc>::from(
+                            std::time::SystemTime::now() - conn.time_since_creation(),
+                        )
+                        .to_rfc3339(),
+                    );
+
+                    ServerInstanceSummary {
+                        id,
+                        status: conn.status_string(),
+                        started_at,
+                        connected_at,
+                    }
+                })
+                .collect();
 
             // Create server response
             ServerResponse {
                 name,
-                instances_count,
                 enabled,
+                instances,
             }
         })
         .collect();
@@ -91,15 +121,44 @@ pub async fn get_server(
 
     // Get all instances for this server
     let instances = pool.connections.get(&name).unwrap();
-    let instances_count = instances.len();
 
     // Check if server is enabled in configuration
     let enabled = pool.rule_config.get(&name).copied().unwrap_or(false);
 
+    // Create instance summaries
+    let instances = instances
+        .iter()
+        .map(|(id, conn)| {
+            // Format connected time if available
+            let connected_at = if conn.is_connected() {
+                Some(
+                    chrono::DateTime::<chrono::Utc>::from(
+                        std::time::SystemTime::now() - conn.time_since_last_connection(),
+                    )
+                    .to_rfc3339(),
+                )
+            } else {
+                None
+            };
+
+            ServerInstanceSummary {
+                id: id.clone(),
+                status: conn.status_string(),
+                started_at: Some(
+                    chrono::DateTime::<chrono::Utc>::from(
+                        std::time::SystemTime::now() - conn.time_since_creation(),
+                    )
+                    .to_rfc3339(),
+                ),
+                connected_at,
+            }
+        })
+        .collect();
+
     Ok(Json(ServerResponse {
         name,
-        instances_count,
         enabled,
+        instances,
     }))
 }
 
@@ -151,6 +210,12 @@ pub async fn list_instances(
             crate::api::models::mcp::ServerInstanceSummary {
                 id: id.clone(),
                 status: conn.status_string(),
+                started_at: Some(
+                    chrono::DateTime::<chrono::Utc>::from(
+                        std::time::SystemTime::now() - conn.time_since_creation(),
+                    )
+                    .to_rfc3339(),
+                ),
                 connected_at,
             }
         })
@@ -267,16 +332,11 @@ pub async fn check_health(
 pub async fn disconnect(
     State(state): State<Arc<AppState>>,
     Path((name, id)): Path<(String, String)>,
-    Json(request): Json<OperationRequest>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
-    // Determine if this is a force disconnect
-    let operation = if request.force.unwrap_or(false) {
-        "force_disconnect"
-    } else {
-        "disconnect"
-    };
+    // Use regular disconnect operation
+    let operation = "disconnect";
 
     // Perform the operation
     match pool.perform_instance_operation(&name, &id, operation).await {
@@ -334,16 +394,11 @@ pub async fn force_disconnect(
 pub async fn reconnect(
     State(state): State<Arc<AppState>>,
     Path((name, id)): Path<(String, String)>,
-    Json(request): Json<OperationRequest>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
-    // Determine if this is a reset reconnect
-    let operation = if request.reset.unwrap_or(false) {
-        "reset_reconnect"
-    } else {
-        "reconnect"
-    };
+    // Use regular reconnect operation
+    let operation = "reconnect";
 
     // Perform the operation
     match pool.perform_instance_operation(&name, &id, operation).await {

@@ -2,12 +2,8 @@
 // Contains data models for system endpoints
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
-// 重新导出 MCP 模型中的系统相关模型
-pub use crate::api::models::mcp::{SystemMetricsResponse, SystemStatusResponse};
-
-/// System status response (向后兼容)
+/// System status response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatusResponse {
     /// System status (running, starting, stopping, etc.)
@@ -20,11 +16,30 @@ pub struct StatusResponse {
     pub connected_servers: usize,
 }
 
-/// System metrics response (向后兼容)
+/// System status response
 #[derive(Debug, Serialize, Deserialize)]
-pub struct MetricsResponse {
+pub struct SystemStatusResponse {
+    /// System version
+    pub version: String,
     /// System uptime in seconds
-    pub uptime: u64,
-    /// Server statuses with instance details
-    pub server_statuses: HashMap<String, Vec<(String, String)>>,
+    pub uptime_seconds: u64,
+    /// Number of connected servers
+    pub connected_servers: usize,
+    /// Number of total instances
+    pub total_instances: usize,
+    /// Number of ready instances
+    pub ready_instances: usize,
+}
+
+/// System metrics response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SystemMetricsResponse {
+    /// CPU usage percentage
+    pub cpu_usage: f32,
+    /// Memory usage in MB
+    pub memory_usage_mb: f32,
+    /// Number of requests processed
+    pub requests_processed: u64,
+    /// Average response time in ms
+    pub avg_response_time_ms: f32,
 }
