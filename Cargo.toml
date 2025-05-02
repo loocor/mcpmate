@@ -28,5 +28,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.7", features = ["v4", "serde"] }
 
 [[bin]]
-name = "mcpman-proxy"
-path = "src/bin/mcp_proxy.rs"
+name = "proxy"
+path = "src/bin/proxy.rs"
