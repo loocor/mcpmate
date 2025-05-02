@@ -5,19 +5,35 @@ use super::error::{ProxyError, Result};
 
 /// Prepare command environment variables for different command types
 pub fn prepare_command_env(command: &mut Command, command_str: &str) {
+    tracing::debug!("Preparing environment for command: {}", command_str);
+
     // 1. bin path
     let bin_var = match command_str {
         "npx" => "NPX_BIN_PATH",
         "uvx" => "UVX_BIN_PATH",
         _ => "MCP_RUNTIME_BIN",
     };
+
+    tracing::debug!("Looking for binary path in env var: {}", bin_var);
+
     let bin_path = env::var(bin_var)
-        .or_else(|_| env::var("MCP_RUNTIME_BIN"))
+        .or_else(|_| {
+            tracing::debug!("Env var {} not found, trying MCP_RUNTIME_BIN", bin_var);
+            env::var("MCP_RUNTIME_BIN")
+        })
         .ok();
+
     if let Some(bin_path) = bin_path {
         let old_path = env::var("PATH").unwrap_or_default();
         let new_path = format!("{}:{}", bin_path, old_path);
+        tracing::debug!("Setting PATH to include binary path: {}", bin_path);
         command.env("PATH", new_path);
+    } else {
+        tracing::warn!(
+            "No binary path found for {} (tried {} and MCP_RUNTIME_BIN)",
+            command_str,
+            bin_var
+        );
     }
 
     // 2. cache env
@@ -26,10 +42,38 @@ pub fn prepare_command_env(command: &mut Command, command_str: &str) {
         "uvx" => "UV_CACHE_DIR",
         _ => "",
     };
+
     if !cache_var.is_empty() {
+        tracing::debug!("Looking for cache directory in env var: {}", cache_var);
+
         if let Ok(cache_val) = env::var(cache_var) {
+            tracing::debug!("Setting cache env var {}={}", cache_var, cache_val);
             command.env(cache_var, cache_val);
+        } else {
+            tracing::warn!("Cache env var {} not found", cache_var);
         }
+    }
+
+    // Log relevant environment variables for debugging
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let relevant_vars = [
+            "NPX_BIN_PATH",
+            "NPM_CONFIG_CACHE",
+            "UVX_BIN_PATH",
+            "UV_CACHE_DIR",
+            "PATH",
+        ];
+
+        let mut env_info = Vec::new();
+        for var in relevant_vars {
+            if let Ok(value) = env::var(var) {
+                env_info.push(format!("{}={}", var, value));
+            } else {
+                env_info.push(format!("{}=<NOT SET>", var));
+            }
+        }
+
+        tracing::debug!("Environment for {}: {}", command_str, env_info.join(", "));
     }
 }
 

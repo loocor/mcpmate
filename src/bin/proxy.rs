@@ -51,6 +51,22 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    // Load environment variables from .env file
+    if let Ok(path) = std::env::current_dir().map(|p| p.join(".env")) {
+        if path.exists() {
+            match dotenvy::from_path(&path) {
+                Ok(_) => {
+                    tracing::info!("Loaded environment from {}", path.display());
+                }
+                Err(e) => {
+                    tracing::error!("Error loading .env file: {}", e);
+                }
+            }
+        } else {
+            tracing::warn!("No .env file found at {}", path.display());
+        }
+    }
+
     // Initialize server start time
     initialize_server_start_time();
 
