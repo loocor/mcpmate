@@ -52,15 +52,16 @@ pub async fn get_status(
 
 /// Get system metrics
 pub async fn get_metrics(
-    _state: State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<SystemMetricsResponse>, ApiError> {
-    // In a real implementation, this would collect actual system metrics
-    // For now, we'll just return placeholder values
+    // Get metrics from the system metrics collector
+    let metrics_collector = &state.metrics_collector;
+
     Ok(Json(SystemMetricsResponse {
-        cpu_usage: 0.0,
-        memory_usage_mb: 0.0,
-        requests_processed: 0,
-        avg_response_time_ms: 0.0,
+        cpu_usage: metrics_collector.get_cpu_usage(),
+        memory_usage_mb: metrics_collector.get_memory_usage_mb(),
+        requests_processed: 0,     // Not implemented yet
+        avg_response_time_ms: 0.0, // Not implemented yet
     }))
 }
 
