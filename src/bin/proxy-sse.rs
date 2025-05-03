@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use mcpman::{
     api::{handlers::system::initialize_server_start_time, ApiServer},
-    config::{load_rule_config, load_server_config},
+    core::config::{load_rule_config, load_server_config},
     core::ConnectionStatus,
     sse::SseProxyServer,
 };

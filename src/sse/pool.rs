@@ -8,7 +8,7 @@ use tokio::{sync::Mutex, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
-use crate::config::Config;
+use crate::core::config::Config;
 use crate::core::{
     connect_sse_server, connection::UpstreamConnection, monitor::ProcessMonitor,
     types::ConnectionStatus,

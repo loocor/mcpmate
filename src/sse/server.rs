@@ -10,7 +10,7 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    config::Config,
+    core::config::Config,
     core::tool::parse_tool_name,
     core::{tool::get_all_tools_with_smart_prefix, UpstreamConnectionPool},
 };

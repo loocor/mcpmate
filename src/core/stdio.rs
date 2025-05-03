@@ -12,7 +12,7 @@ use tokio::{process::Command, time::timeout};
 use tokio_util::sync::CancellationToken;
 
 use super::utils::{get_connection_timeout, get_tools_timeout, prepare_command_env};
-use crate::config::ServerConfig;
+use crate::core::config::ServerConfig;
 
 /// Connect to a stdio server with timeout and cancellation token
 pub async fn connect_stdio_server_with_ct(

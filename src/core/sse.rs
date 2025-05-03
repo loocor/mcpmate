@@ -11,7 +11,7 @@ use rmcp::{
 use tokio::time::timeout;
 
 use super::utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout};
-use crate::config::ServerConfig;
+use crate::core::config::ServerConfig;
 
 /// Connect to an SSE server with timeout
 pub async fn connect_sse_server(

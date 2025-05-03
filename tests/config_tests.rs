@@ -1,4 +1,4 @@
-use mcpman::config::*;
+use mcpman::core::config::*;
 use std::path::PathBuf;
 
 #[test]
