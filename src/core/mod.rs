@@ -6,7 +6,6 @@ pub mod config;
 pub mod connection;
 pub mod error;
 pub mod monitor;
-pub mod server;
 pub mod sse;
 pub mod stdio;
 pub mod tool;
@@ -16,7 +15,6 @@ pub mod utils;
 // Re-exports
 pub use crate::sse::pool::UpstreamConnectionPool;
 pub use connection::UpstreamConnection;
-pub use server::ProxyServer;
 pub use sse::connect_sse_server;
 pub use stdio::connect_stdio_server;
 pub use tool::{call_upstream_tool, get_all_tools};
