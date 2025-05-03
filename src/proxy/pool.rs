@@ -8,10 +8,7 @@ use tokio::{sync::Mutex, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
-use super::{
-    connect_sse_server, connect_stdio_server, connection::UpstreamConnection,
-    types::ConnectionStatus,
-};
+use super::{connect_sse_server, connection::UpstreamConnection, types::ConnectionStatus};
 use crate::config::Config;
 
 /// Pool of connections to upstream MCP servers
@@ -307,8 +304,10 @@ impl UpstreamConnectionPool {
         service: RunningService<RoleClient, ()>,
         tools: Vec<Tool>,
     ) {
+        // Update the connection with the service and tools
         let conn = self.get_instance_mut(server_name, instance_id).unwrap();
         conn.update_connected(service, tools);
+
         tracing::info!(
             "Connected to server '{}' instance '{}', found {} tools",
             server_name,
@@ -322,14 +321,32 @@ impl UpstreamConnectionPool {
         // Get server configuration
         let server_config = self.config.mcp_servers.get(server_name).unwrap();
 
-        // Connect to the server using the proxy module function
-        match connect_stdio_server(server_name, server_config).await {
+        // Create a new cancellation token
+        let ct = CancellationToken::new();
+
+        // Store the cancellation token
+        self.cancellation_tokens
+            .entry(server_name.to_string())
+            .or_insert_with(HashMap::new)
+            .insert(instance_id.to_string(), ct.clone());
+
+        // Connect to the server using the proxy module function with cancellation token
+        match super::stdio::connect_stdio_server_with_ct(server_name, server_config, ct).await {
             Ok((service, tools)) => {
                 // Update connection
                 self.update_connection(server_name, instance_id, service, tools);
+
+                // We'll check the connection status in the health check task
+
                 Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                // Remove the cancellation token if connection failed
+                if let Some(tokens) = self.cancellation_tokens.get_mut(server_name) {
+                    tokens.remove(instance_id);
+                }
+                Err(e)
+            }
         }
     }
 
@@ -363,22 +380,55 @@ impl UpstreamConnectionPool {
 
     /// Disconnect from a specific instance of a server
     pub async fn disconnect(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
-        let conn = self.get_instance_mut(server_name, instance_id)?;
+        // Take the service from the connection
+        let service = {
+            let conn = self.get_instance_mut(server_name, instance_id)?;
+            conn.service.take()
+        };
 
-        // If there's an active service, take it and cancel it
-        if let Some(service) = conn.service.take() {
-            if let Err(e) = service.cancel().await {
-                tracing::warn!(
-                    "Error cancelling service for '{}' instance '{}': {}",
-                    server_name,
-                    instance_id,
-                    e
-                );
+        // If there's an active service, cancel it
+        if let Some(service) = service {
+            match service.cancel().await {
+                Ok(quit_reason) => {
+                    tracing::info!(
+                        "Service for server '{}' instance '{}' cancelled with reason: {:?}",
+                        server_name,
+                        instance_id,
+                        quit_reason
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Error cancelling service for '{}' instance '{}': {}",
+                        server_name,
+                        instance_id,
+                        e
+                    );
+                }
             }
         }
 
+        // Cancel the token if it exists
+        let token_opt = self
+            .cancellation_tokens
+            .get_mut(server_name)
+            .and_then(|tokens| tokens.remove(instance_id));
+
+        if let Some(token) = token_opt {
+            token.cancel();
+            tracing::debug!(
+                "Cancelled token for server '{}' instance '{}'",
+                server_name,
+                instance_id
+            );
+        }
+
         // Update connection status
-        conn.update_disconnected();
+        {
+            let conn = self.get_instance_mut(server_name, instance_id)?;
+            conn.update_disconnected();
+        }
+
         tracing::info!(
             "Disconnected from server '{}' instance '{}'",
             server_name,
@@ -580,6 +630,48 @@ impl UpstreamConnectionPool {
         }
     }
 
+    /// Wait for a service to exit and handle the exit reason
+    pub async fn waiting_for_service_exit(
+        connection_pool: Arc<Mutex<Self>>,
+        server_name: String,
+        instance_id: String,
+    ) {
+        // Wait for a short delay to allow the service to initialize
+        sleep(Duration::from_secs(1)).await;
+
+        // Lock the pool and check if the service is still running
+        let mut pool = connection_pool.lock().await;
+
+        // Check if the instance still exists
+        if let Ok(conn) = pool.get_instance_mut(&server_name, &instance_id) {
+            // Only update if the service is not connected
+            if !conn.is_connected() {
+                tracing::info!(
+                    "Service for server '{}' instance '{}' is not connected",
+                    server_name,
+                    instance_id
+                );
+
+                // Drop the lock before sleeping
+                drop(pool);
+
+                // Wait for a short delay
+                sleep(Duration::from_secs(5)).await;
+
+                // Try to reconnect
+                let mut pool = connection_pool.lock().await;
+                if let Err(e) = pool.reconnect(&server_name, &instance_id).await {
+                    tracing::error!(
+                        "Failed to reconnect to '{}' instance '{}' after check: {}",
+                        server_name,
+                        instance_id,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
     /// Start health check task
     pub fn start_health_check(connection_pool: Arc<Mutex<Self>>) {
         tokio::spawn(async move {
@@ -589,12 +681,21 @@ impl UpstreamConnectionPool {
                 // Wait for health check interval
                 sleep(Duration::from_secs(30)).await;
 
-                // Check all connections
+                // Check connection status for all instances
+                {
+                    let mut pool = pool_clone.lock().await;
+                    pool.check_connection_status().await;
+                }
+
+                // Check all connections for periodic reconnects
                 let mut reconnects = Vec::new();
                 {
                     let pool_guard = pool_clone.lock().await;
                     for (server_name, instances) in &pool_guard.connections {
                         for (instance_id, conn) in instances {
+                            // Update last health check time
+                            let now = std::time::Instant::now();
+
                             // Only monitor instances that should be monitored
                             if !matches!(
                                 conn.status,
@@ -607,12 +708,11 @@ impl UpstreamConnectionPool {
                                 ConnectionStatus::Ready => {
                                     // Check if the service is still alive
                                     if let Some(_service) = &conn.service {
-                                        // We can't directly check if the service is closed
-                                        // Instead, we'll periodically try to reconnect to ensure health
-                                        let now = std::time::Instant::now();
+                                        // Periodic reconnect to ensure health
                                         if now > conn.last_connected
                                             && now.duration_since(conn.last_connected)
-                                                > Duration::from_secs(300)
+                                                > Duration::from_secs(1800)
+                                        // Every 30 minutes
                                         {
                                             tracing::info!(
                                                 "Health check: Periodic reconnect for '{}' instance '{}'",
@@ -630,7 +730,6 @@ impl UpstreamConnectionPool {
                                 }
                                 ConnectionStatus::Error(_) => {
                                     // Reconnect error instances after a delay
-                                    let now = std::time::Instant::now();
                                     if now > conn.last_connected
                                         && now.duration_since(conn.last_connected)
                                             > Duration::from_secs(60)
@@ -663,6 +762,52 @@ impl UpstreamConnectionPool {
                 }
             }
         });
+    }
+
+    /// Check connection status for all instances
+    pub async fn check_connection_status(&mut self) {
+        // Get all instances that need checking
+        let instances_to_check = {
+            let mut result = Vec::new();
+
+            for (server_name, instances) in &self.connections {
+                for (instance_id, conn) in instances {
+                    if matches!(conn.status, ConnectionStatus::Ready) && conn.service.is_some() {
+                        result.push((server_name.clone(), instance_id.clone()));
+                    }
+                }
+            }
+
+            result
+        };
+
+        // Check each instance
+        for (server_name, instance_id) in instances_to_check {
+            // Get the connection
+            let conn = match self.get_instance(&server_name, &instance_id) {
+                Ok(conn) => conn,
+                Err(_) => continue,
+            };
+
+            // Check if the service is still connected
+            if !conn.is_connected() {
+                tracing::warn!(
+                    "Connection check: Service for '{}' instance '{}' is not connected",
+                    server_name,
+                    instance_id
+                );
+
+                // Try to reconnect
+                if let Err(e) = self.reconnect(&server_name, &instance_id).await {
+                    tracing::error!(
+                        "Connection check: Failed to reconnect to '{}' instance '{}': {}",
+                        server_name,
+                        instance_id,
+                        e
+                    );
+                }
+            }
+        }
     }
 
     /// Calculate a hash value representing the current state of the connection pool

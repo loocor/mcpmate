@@ -4,19 +4,21 @@
 use anyhow::{Context, Result};
 use rmcp::{
     model::Tool,
-    service::{RunningService, ServiceExt},
+    service::{serve_client_with_ct, RunningService},
     transport::TokioChildProcess,
     RoleClient,
 };
 use tokio::{process::Command, time::timeout};
+use tokio_util::sync::CancellationToken;
 
 use super::utils::{get_connection_timeout, get_tools_timeout, prepare_command_env};
 use crate::config::ServerConfig;
 
-/// Connect to a stdio server with timeout
-pub async fn connect_stdio_server(
+/// Connect to a stdio server with timeout and cancellation token
+pub async fn connect_stdio_server_with_ct(
     server_name: &str,
     server_config: &ServerConfig,
+    ct: CancellationToken,
 ) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>)> {
     // Get command and arguments
     let command = server_config
@@ -58,7 +60,7 @@ pub async fn connect_stdio_server(
         Ok(child_process) => {
             // Set a timeout for the connection process
             match timeout(connection_timeout, async {
-                match ().serve(child_process).await {
+                match serve_client_with_ct((), child_process, ct.clone()).await {
                     Ok(service) => Ok(service),
                     Err(e) => {
                         let error_msg = format!("Failed to connect to server: {}", e);
@@ -116,4 +118,12 @@ pub async fn connect_stdio_server(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Connect to a stdio server with timeout (backward compatibility wrapper)
+pub async fn connect_stdio_server(
+    server_name: &str,
+    server_config: &ServerConfig,
+) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>)> {
+    connect_stdio_server_with_ct(server_name, server_config, CancellationToken::new()).await
 }
