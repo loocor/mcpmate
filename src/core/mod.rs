@@ -4,7 +4,6 @@
 // Module declarations
 pub mod connection;
 pub mod error;
-pub mod pool;
 pub mod monitor;
 pub mod server;
 pub mod sse;
@@ -14,8 +13,8 @@ pub mod types;
 pub mod utils;
 
 // Re-exports
+pub use crate::sse::pool::UpstreamConnectionPool;
 pub use connection::UpstreamConnection;
-pub use pool::UpstreamConnectionPool;
 pub use server::ProxyServer;
 pub use sse::connect_sse_server;
 pub use stdio::connect_stdio_server;

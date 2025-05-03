@@ -5,7 +5,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 use tracing;
 
-use crate::core::pool::UpstreamConnectionPool;
+use crate::sse::pool::UpstreamConnectionPool;
 
 use super::routes::create_router;
 

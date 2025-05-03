@@ -8,11 +8,11 @@ use tokio::{sync::Mutex, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
-use super::{
+use crate::config::Config;
+use crate::core::{
     connect_sse_server, connection::UpstreamConnection, monitor::ProcessMonitor,
     types::ConnectionStatus,
 };
-use crate::config::Config;
 
 /// Pool of connections to upstream MCP servers
 #[derive(Debug, Clone)]
@@ -343,7 +343,8 @@ impl UpstreamConnectionPool {
             .insert(instance_id.to_string(), ct.clone());
 
         // Connect to the server using the proxy module function with cancellation token
-        match super::stdio::connect_stdio_server_with_ct(server_name, server_config, ct).await {
+        match crate::core::stdio::connect_stdio_server_with_ct(server_name, server_config, ct).await
+        {
             Ok((service, tools, pid)) => {
                 // Update connection
                 self.update_connection(server_name, instance_id, service, tools);
@@ -885,11 +886,11 @@ impl UpstreamConnectionPool {
         // Second pass: handle resource limit actions
         for (server_name, instance_id, _pid, action, message) in instances_to_update {
             match action {
-                super::monitor::ResourceLimitAction::Warn => {
+                crate::core::monitor::ResourceLimitAction::Warn => {
                     // Just log a warning
                     tracing::warn!("{}", message);
                 }
-                super::monitor::ResourceLimitAction::Restart => {
+                crate::core::monitor::ResourceLimitAction::Restart => {
                     // Log the action
                     tracing::warn!("{} - Attempting to restart process", message);
 
@@ -901,7 +902,7 @@ impl UpstreamConnectionPool {
                         );
                     }
                 }
-                super::monitor::ResourceLimitAction::Terminate => {
+                crate::core::monitor::ResourceLimitAction::Terminate => {
                     // Log the action
                     tracing::warn!("{} - Attempting to terminate process", message);
 
@@ -971,7 +972,7 @@ impl UpstreamConnectionPool {
                 ConnectionStatus::Error(error_details) => {
                     // Check if we should retry based on error type and failure count
                     let should_retry = match error_details.error_type {
-                        super::types::ErrorType::Temporary => {
+                        crate::core::types::ErrorType::Temporary => {
                             // Use exponential backoff for temporary errors
                             let backoff_seconds = std::cmp::min(
                                 300,                                                     // Maximum 5 minutes
@@ -999,11 +1000,11 @@ impl UpstreamConnectionPool {
                                 false
                             }
                         }
-                        super::types::ErrorType::Permanent => {
+                        crate::core::types::ErrorType::Permanent => {
                             // Don't retry permanent errors
                             false
                         }
-                        super::types::ErrorType::Unknown => {
+                        crate::core::types::ErrorType::Unknown => {
                             // For unknown errors, retry with a fixed backoff
                             let backoff_seconds = 60; // 1 minute
 
@@ -1020,9 +1021,10 @@ impl UpstreamConnectionPool {
                     // If we should retry, attempt to reconnect
                     if should_retry {
                         // Check if we've exceeded the maximum retry count for temporary errors
-                        let max_retries_exceeded =
-                            matches!(error_details.error_type, super::types::ErrorType::Temporary)
-                                && error_details.failure_count > 10;
+                        let max_retries_exceeded = matches!(
+                            error_details.error_type,
+                            crate::core::types::ErrorType::Temporary
+                        ) && error_details.failure_count > 10;
 
                         if max_retries_exceeded {
                             // Store the failure count for later use
@@ -1099,20 +1101,20 @@ impl UpstreamConnectionPool {
                 // Hash connection status - use discriminant instead of debug format
                 // This is more efficient and still captures the essential state
                 let status_discriminant = match &conn.status {
-                    super::types::ConnectionStatus::Initializing => 1,
-                    super::types::ConnectionStatus::Ready => 2,
-                    super::types::ConnectionStatus::Busy => 3,
-                    super::types::ConnectionStatus::Error(_) => 4,
-                    super::types::ConnectionStatus::Shutdown => 5,
+                    crate::core::types::ConnectionStatus::Initializing => 1,
+                    crate::core::types::ConnectionStatus::Ready => 2,
+                    crate::core::types::ConnectionStatus::Busy => 3,
+                    crate::core::types::ConnectionStatus::Error(_) => 4,
+                    crate::core::types::ConnectionStatus::Shutdown => 5,
                 };
                 status_discriminant.hash(&mut hasher);
 
                 // For error status, also hash the error type (but not the full details)
-                if let super::types::ConnectionStatus::Error(details) = &conn.status {
+                if let crate::core::types::ConnectionStatus::Error(details) = &conn.status {
                     let error_type_discriminant = match details.error_type {
-                        super::types::ErrorType::Temporary => 1,
-                        super::types::ErrorType::Permanent => 2,
-                        super::types::ErrorType::Unknown => 3,
+                        crate::core::types::ErrorType::Temporary => 1,
+                        crate::core::types::ErrorType::Permanent => 2,
+                        crate::core::types::ErrorType::Unknown => 3,
                     };
                     error_type_discriminant.hash(&mut hasher);
 

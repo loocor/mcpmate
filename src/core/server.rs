@@ -9,7 +9,7 @@ use rmcp::{
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
-use super::pool::UpstreamConnectionPool;
+use crate::sse::pool::UpstreamConnectionPool;
 use crate::config::Config;
 
 /// MCP Proxy Server that aggregates tools from multiple MCP servers
