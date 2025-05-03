@@ -40,7 +40,3 @@ sysinfo = "0.30.5"
 [[bin]]
 name = "proxy-sse"
 path = "src/bin/proxy-sse.rs"
-
-[[bin]]
-name = "proxy-stdio"
-path = "src/bin/proxy-stdio.rs"

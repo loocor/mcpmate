@@ -1,0 +1,169 @@
+// MCP Proxy connection pool module
+// Contains the UpstreamConnectionPool struct and related functionality
+
+use anyhow::{self, Context, Result};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio_util::sync::CancellationToken;
+use tracing;
+
+use crate::core::config::Config;
+use crate::core::{connection::UpstreamConnection, monitor::ProcessMonitor};
+
+// Import submodules
+mod connection;
+mod health;
+mod monitoring;
+mod utils;
+
+/// Pool of connections to upstream MCP servers
+#[derive(Debug, Clone)]
+pub struct UpstreamConnectionPool {
+    /// Map of server name to map of instance ID to connection
+    pub connections: HashMap<String, HashMap<String, UpstreamConnection>>,
+    /// Server configuration
+    pub config: Arc<Config>,
+    /// Rule configuration
+    pub rule_config: Arc<HashMap<String, bool>>,
+    /// Map of server name to map of instance ID to cancellation token
+    pub cancellation_tokens: HashMap<String, HashMap<String, CancellationToken>>,
+    /// Process monitor for tracking resource usage
+    pub process_monitor: Option<Arc<ProcessMonitor>>,
+}
+
+impl UpstreamConnectionPool {
+    /// Create a new connection pool
+    pub fn new(config: Arc<Config>, rule_config: Arc<HashMap<String, bool>>) -> Self {
+        // Create process monitor with 5 second update interval
+        let process_monitor = Arc::new(ProcessMonitor::new(Duration::from_secs(5)));
+
+        // Start process monitoring
+        ProcessMonitor::start_monitoring(process_monitor.clone());
+
+        Self {
+            connections: HashMap::new(),
+            config,
+            rule_config,
+            cancellation_tokens: HashMap::new(),
+            process_monitor: Some(process_monitor),
+        }
+    }
+
+    /// Initialize the connection pool with all enabled servers
+    pub fn initialize(&mut self) {
+        for (name, _server_config) in &self.config.mcp_servers {
+            // Skip the proxy server itself
+            if name == "proxy" {
+                continue;
+            }
+
+            // Check if the server is enabled in the rule configuration
+            let enabled = self.rule_config.get(name).copied().unwrap_or(false);
+            if !enabled {
+                tracing::info!("Server '{}' is disabled, skipping", name);
+                continue;
+            }
+
+            // Create a new connection
+            let connection = UpstreamConnection::new(name.clone());
+            let instance_id = connection.id.clone();
+
+            // Create a new map for this server if it doesn't exist
+            let instances = self
+                .connections
+                .entry(name.clone())
+                .or_insert_with(HashMap::new);
+
+            // Add the connection to the map
+            instances.insert(instance_id, connection);
+        }
+
+        // Count total instances
+        let total_instances: usize = self
+            .connections
+            .values()
+            .map(|instances| instances.len())
+            .sum();
+
+        tracing::info!(
+            "Initialized connection pool with {} enabled servers and {} instances",
+            self.connections.len(),
+            total_instances
+        );
+    }
+
+    /// Helper method to get a specific instance of a server
+    pub fn get_instance(
+        &self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<&UpstreamConnection> {
+        let instances = self.connections.get(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        instances.get(instance_id).context(format!(
+            "Instance '{}' not found for server '{}'",
+            instance_id, server_name
+        ))
+    }
+
+    /// Helper method to get a mutable reference to a specific instance of a server
+    pub fn get_instance_mut(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<&mut UpstreamConnection> {
+        let instances = self.connections.get_mut(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        instances.get_mut(instance_id).context(format!(
+            "Instance '{}' not found for server '{}'",
+            instance_id, server_name
+        ))
+    }
+
+    /// Helper method to get the default instance of a server
+    pub fn get_default_instance(&self, server_name: &str) -> Result<(String, &UpstreamConnection)> {
+        let instances = self.connections.get(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        if instances.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No instances found for server '{}'",
+                server_name
+            ));
+        }
+
+        // Get the first instance (for now, we'll just use the first one as default)
+        let (instance_id, connection) = instances.iter().next().unwrap();
+        Ok((instance_id.clone(), connection))
+    }
+
+    /// Helper method to get a mutable reference to the default instance of a server
+    pub fn get_default_instance_mut(
+        &mut self,
+        server_name: &str,
+    ) -> Result<(String, &mut UpstreamConnection)> {
+        let instances = self.connections.get_mut(server_name).context(format!(
+            "Server '{}' not found in connection pool",
+            server_name
+        ))?;
+
+        if instances.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No instances found for server '{}'",
+                server_name
+            ));
+        }
+
+        // Get the first instance (for now, we'll just use the first one as default)
+        let instance_id = instances.keys().next().unwrap().clone();
+        let connection = instances.get_mut(&instance_id).unwrap();
+        Ok((instance_id, connection))
+    }
+}
