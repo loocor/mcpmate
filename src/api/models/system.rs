@@ -42,4 +42,8 @@ pub struct SystemMetricsResponse {
     pub requests_processed: u64,
     /// Average response time in ms
     pub avg_response_time_ms: f32,
+    // TODO: Consider adding the following fields in the future:
+    // - connection_pool_summary: ConnectionPoolSummary - Summary statistics about the connection pool
+    // - active_instances_count: usize - Number of active instances across all servers
+    // - instance_status_counts: HashMap<String, usize> - Count of instances by status (Ready, Error, etc.)
 }

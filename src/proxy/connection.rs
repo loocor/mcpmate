@@ -26,6 +26,12 @@ pub struct UpstreamConnection {
     pub connection_attempts: u32,
     /// Current connection status
     pub status: ConnectionStatus,
+    /// Last time the health check was performed
+    pub last_health_check: Instant,
+    /// CPU usage of the process (percentage)
+    pub cpu_usage: Option<f32>,
+    /// Memory usage of the process (bytes)
+    pub memory_usage: Option<u64>,
 }
 
 // Manual implementation of Clone for UpstreamConnection
@@ -41,6 +47,9 @@ impl Clone for UpstreamConnection {
             last_connected: self.last_connected,
             connection_attempts: self.connection_attempts,
             status: self.status.clone(),
+            last_health_check: self.last_health_check,
+            cpu_usage: self.cpu_usage,
+            memory_usage: self.memory_usage,
         }
     }
 }
@@ -58,6 +67,9 @@ impl UpstreamConnection {
             last_connected: now,
             connection_attempts: 0,
             status: ConnectionStatus::Shutdown,
+            last_health_check: now,
+            cpu_usage: None,
+            memory_usage: None,
         }
     }
 

@@ -5,6 +5,7 @@ use anyhow::{self, Context, Result};
 use rmcp::{model::Tool, service::RunningService, RoleClient};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, time::sleep};
+use tokio_util::sync::CancellationToken;
 use tracing;
 
 use super::{
@@ -22,6 +23,8 @@ pub struct UpstreamConnectionPool {
     pub config: Arc<Config>,
     /// Rule configuration
     pub rule_config: Arc<HashMap<String, bool>>,
+    /// Map of server name to map of instance ID to cancellation token
+    pub cancellation_tokens: HashMap<String, HashMap<String, CancellationToken>>,
 }
 
 impl UpstreamConnectionPool {
@@ -31,6 +34,7 @@ impl UpstreamConnectionPool {
             connections: HashMap::new(),
             config,
             rule_config,
+            cancellation_tokens: HashMap::new(),
         }
     }
 
@@ -659,5 +663,41 @@ impl UpstreamConnectionPool {
                 }
             }
         });
+    }
+
+    /// Calculate a hash value representing the current state of the connection pool
+    /// This can be used to detect changes in the connection pool
+    pub fn calculate_connection_state_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+
+        // Hash the number of servers
+        self.connections.len().hash(&mut hasher);
+
+        // For each server, hash its name and the state of each instance
+        for (server_name, instances) in &self.connections {
+            server_name.hash(&mut hasher);
+            instances.len().hash(&mut hasher);
+
+            for (instance_id, conn) in instances {
+                instance_id.hash(&mut hasher);
+
+                // Hash the connection status
+                let status_str = format!("{:?}", conn.status);
+                status_str.hash(&mut hasher);
+
+                // Hash the number of tools
+                conn.tools.len().hash(&mut hasher);
+
+                // Hash the tool names
+                for tool in &conn.tools {
+                    tool.name.to_string().hash(&mut hasher);
+                }
+            }
+        }
+
+        hasher.finish()
     }
 }

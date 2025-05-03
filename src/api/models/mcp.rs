@@ -73,6 +73,10 @@ pub struct ServerInstanceDetails {
     pub error_message: Option<String>,
     /// Server type (stdio, sse, etc.)
     pub server_type: String,
+    // TODO: Consider adding the following fields in the future:
+    // - cpu_usage: Option<f32> - CPU usage percentage of the instance process
+    // - memory_usage: Option<u64> - Memory usage in bytes of the instance process
+    // - last_health_check: Option<String> - ISO 8601 timestamp of the last health check
 }
 
 /// Server Instance Response
@@ -105,6 +109,10 @@ pub struct InstanceHealthResponse {
     pub status: String,
     /// Last health check time (ISO 8601 format)
     pub checked_at: String,
+    // TODO: Consider adding the following fields in the future:
+    // - resource_metrics: Option<ResourceMetrics> - Resource usage metrics for the instance
+    // - connection_stability: Option<f32> - Stability score based on connection history
+    // - health_history: Option<Vec<HealthRecord>> - Recent health check history
 }
 
 /// Operation Request

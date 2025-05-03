@@ -21,22 +21,36 @@ pub struct ProxyServer {
     tool_name_mapping_cache: Arc<Mutex<Option<HashMap<String, super::tool::ToolNameMapping>>>>,
     /// Last time the tool name mapping was updated
     last_tool_mapping_update: Arc<Mutex<std::time::Instant>>,
+    /// Last connection state hash, used to detect changes in the connection pool
+    last_connection_state_hash: Arc<Mutex<u64>>,
 }
 
 #[tool(tool_box)]
 impl ProxyServer {
     /// Get the cached tool name mapping, or build a new one if the cache is expired or empty
     async fn get_tool_name_mapping(&self) -> HashMap<String, super::tool::ToolNameMapping> {
-        // Cache expiration time (5 seconds)
-        const CACHE_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(5);
+        // Cache expiration time (30 seconds)
+        const CACHE_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(30);
+
+        // Calculate current connection state hash
+        let current_hash = {
+            let pool = self.connection_pool.lock().await;
+            pool.calculate_connection_state_hash()
+        };
 
         // Check if we need to update the cache
         let update_cache = {
             let last_update = self.last_tool_mapping_update.lock().await;
             let cache = self.tool_name_mapping_cache.lock().await;
+            let last_hash = self.last_connection_state_hash.lock().await;
 
-            // Update if cache is None or if it's been more than CACHE_EXPIRATION since last update
-            cache.is_none() || last_update.elapsed() > CACHE_EXPIRATION
+            // Update if any of these conditions are true:
+            // 1. Cache is None (first time)
+            // 2. Connection state has changed (hash is different)
+            // 3. Cache has expired (as a fallback)
+            cache.is_none()
+                || *last_hash != current_hash
+                || last_update.elapsed() > CACHE_EXPIRATION
         };
 
         if update_cache {
@@ -51,10 +65,14 @@ impl ProxyServer {
                 // Update the last update time
                 let mut last_update = self.last_tool_mapping_update.lock().await;
                 *last_update = std::time::Instant::now();
+
+                // Update the last connection state hash
+                let mut last_hash = self.last_connection_state_hash.lock().await;
+                *last_hash = current_hash;
             }
 
             tracing::info!(
-                "Updated tool name mapping cache with {} entries",
+                "Updated tool name mapping cache with {} entries (connection state changed)",
                 new_mapping.len()
             );
 
@@ -82,6 +100,7 @@ impl ProxyServer {
             connection_pool,
             tool_name_mapping_cache: Arc::new(Mutex::new(None)),
             last_tool_mapping_update: Arc::new(Mutex::new(std::time::Instant::now())),
+            last_connection_state_hash: Arc::new(Mutex::new(0)),
         }
     }
 }
