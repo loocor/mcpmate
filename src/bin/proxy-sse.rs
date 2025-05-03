@@ -3,9 +3,9 @@ use clap::Parser;
 use mcpman::{
     api::{handlers::system::initialize_server_start_time, ApiServer},
     config::{load_rule_config, load_server_config},
-    proxy::{ConnectionStatus, ProxyServer},
+    proxy::ConnectionStatus,
+    sse::SseProxyServer,
 };
-use rmcp::transport::sse_server::{SseServer, SseServerConfig};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use tracing_subscriber::{self, EnvFilter};
@@ -92,8 +92,8 @@ async fn main() -> Result<()> {
         .map(|(name, rule)| (name.clone(), rule.enabled))
         .collect::<HashMap<String, bool>>();
 
-    // Create proxy server
-    let proxy = ProxyServer::new(Arc::new(config), Arc::new(rule_map));
+    // Create SSE proxy server
+    let proxy = SseProxyServer::new(Arc::new(config), Arc::new(rule_map));
 
     // Get a reference to the connection pool
     let connection_pool = Arc::clone(&proxy.connection_pool);
@@ -133,20 +133,11 @@ async fn main() -> Result<()> {
     let mcp_bind_address = format!("127.0.0.1:{}", args.port).parse()?;
     tracing::info!("Starting MCP SSE server on {}", mcp_bind_address);
 
-    let server_config = SseServerConfig {
-        bind: mcp_bind_address,
-        sse_path: "/sse".to_string(),
-        post_path: "/message".to_string(),
-        ct: Default::default(),
-    };
-
-    // Create a factory function that returns a new ProxyServer instance
-    let proxy_clone = proxy.clone();
-    let factory = move || proxy_clone.clone();
-
-    let mcp_server = SseServer::serve_with_config(server_config)
-        .await?
-        .with_service(factory);
+    // Start the SSE server
+    if let Err(e) = proxy.start(mcp_bind_address, "/sse", "/message").await {
+        tracing::error!("Failed to start SSE server: {}", e);
+        return Err(e);
+    }
 
     // Start API server
     let api_bind_address: SocketAddr = format!("127.0.0.1:{}", args.api_port).parse()?;
@@ -167,9 +158,6 @@ async fn main() -> Result<()> {
     // Wait for Ctrl+C
     tokio::signal::ctrl_c().await?;
     tracing::info!("Received Ctrl+C, shutting down...");
-
-    // Cancel MCP server
-    mcp_server.cancel();
 
     // Cancel API server task
     api_task.abort();
