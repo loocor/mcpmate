@@ -11,10 +11,19 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1.0"
+async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 dotenvy = "0.15.7"
 json5 = "0.4"
-rmcp = { version = "0.1", features = ["server", "client", "macros", "transport-io", "transport-child-process", "transport-sse", "transport-sse-server"] }
+rmcp = { version = "0.1", features = [
+  "server",
+  "client",
+  "macros",
+  "transport-io",
+  "transport-child-process",
+  "transport-sse",
+  "transport-sse-server",
+] }
 schemars = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -29,5 +38,9 @@ uuid = { version = "1.7", features = ["v4", "serde"] }
 sysinfo = "0.30.5"
 
 [[bin]]
-name = "proxy"
-path = "src/bin/proxy.rs"
+name = "proxy-sse"
+path = "src/bin/proxy-sse.rs"
+
+[[bin]]
+name = "proxy-stdio"
+path = "src/bin/proxy-stdio.rs"
