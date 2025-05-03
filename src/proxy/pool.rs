@@ -916,33 +916,64 @@ impl UpstreamConnectionPool {
 
     /// Calculate a hash value representing the current state of the connection pool
     /// This can be used to detect changes in the connection pool
+    ///
+    /// This optimized version:
+    /// 1. Avoids unnecessary string allocations
+    /// 2. Only hashes essential information needed to detect relevant changes
+    /// 3. Uses a more efficient hashing approach for connection status
     pub fn calculate_connection_state_hash(&self) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
 
-        // Hash the number of servers
+        // Hash the number of servers (important for detecting server additions/removals)
         self.connections.len().hash(&mut hasher);
 
         // For each server, hash its name and the state of each instance
         for (server_name, instances) in &self.connections {
+            // Hash server name
             server_name.hash(&mut hasher);
+
+            // Hash number of instances (important for detecting instance additions/removals)
             instances.len().hash(&mut hasher);
 
+            // For each instance, hash its state
             for (instance_id, conn) in instances {
+                // Hash instance ID
                 instance_id.hash(&mut hasher);
 
-                // Hash the connection status
-                let status_str = format!("{:?}", conn.status);
-                status_str.hash(&mut hasher);
+                // Hash connection status - use discriminant instead of debug format
+                // This is more efficient and still captures the essential state
+                let status_discriminant = match &conn.status {
+                    super::types::ConnectionStatus::Initializing => 1,
+                    super::types::ConnectionStatus::Ready => 2,
+                    super::types::ConnectionStatus::Busy => 3,
+                    super::types::ConnectionStatus::Error(_) => 4,
+                    super::types::ConnectionStatus::Shutdown => 5,
+                };
+                status_discriminant.hash(&mut hasher);
 
-                // Hash the number of tools
+                // For error status, also hash the error type (but not the full details)
+                if let super::types::ConnectionStatus::Error(details) = &conn.status {
+                    let error_type_discriminant = match details.error_type {
+                        super::types::ErrorType::Temporary => 1,
+                        super::types::ErrorType::Permanent => 2,
+                        super::types::ErrorType::Unknown => 3,
+                    };
+                    error_type_discriminant.hash(&mut hasher);
+
+                    // Hash failure count as it affects reconnection behavior
+                    details.failure_count.hash(&mut hasher);
+                }
+
+                // Hash the number of tools (important for detecting tool changes)
                 conn.tools.len().hash(&mut hasher);
 
-                // Hash the tool names
+                // Hash tool names (important for detecting tool changes)
+                // Avoid unnecessary string allocations by using references
                 for tool in &conn.tools {
-                    tool.name.to_string().hash(&mut hasher);
+                    tool.name.hash(&mut hasher);
                 }
             }
         }

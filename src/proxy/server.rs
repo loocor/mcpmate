@@ -28,9 +28,28 @@ pub struct ProxyServer {
 #[tool(tool_box)]
 impl ProxyServer {
     /// Get the cached tool name mapping, or build a new one if the cache is expired or empty
+    ///
+    /// This optimized version uses a more efficient caching strategy:
+    /// 1. Uses a longer cache expiration time (2 minutes instead of 30 seconds)
+    /// 2. Prioritizes connection state hash changes over time-based expiration
+    /// 3. Provides detailed logging about cache update reasons
+    /// 4. Reduces lock contention by acquiring locks only when necessary
     async fn get_tool_name_mapping(&self) -> HashMap<String, super::tool::ToolNameMapping> {
-        // Cache expiration time (30 seconds)
-        const CACHE_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(30);
+        // Cache expiration time (2 minutes)
+        const CACHE_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(120);
+
+        // First, check if cache exists without calculating hash (fast path)
+        let cache_exists = {
+            let cache = self.tool_name_mapping_cache.lock().await;
+            cache.is_some()
+        };
+
+        // If cache doesn't exist, we definitely need to update
+        if !cache_exists {
+            return self
+                .rebuild_tool_mapping_cache("Cache is empty (first use)")
+                .await;
+        }
 
         // Calculate current connection state hash
         let current_hash = {
@@ -38,50 +57,73 @@ impl ProxyServer {
             pool.calculate_connection_state_hash()
         };
 
-        // Check if we need to update the cache
-        let update_cache = {
-            let last_update = self.last_tool_mapping_update.lock().await;
-            let cache = self.tool_name_mapping_cache.lock().await;
+        // Check if connection state has changed
+        let hash_changed = {
             let last_hash = self.last_connection_state_hash.lock().await;
-
-            // Update if any of these conditions are true:
-            // 1. Cache is None (first time)
-            // 2. Connection state has changed (hash is different)
-            // 3. Cache has expired (as a fallback)
-            cache.is_none()
-                || *last_hash != current_hash
-                || last_update.elapsed() > CACHE_EXPIRATION
+            *last_hash != current_hash
         };
 
-        if update_cache {
-            // Build a new tool name mapping
-            let new_mapping = super::tool::build_tool_name_mapping(&self.connection_pool).await;
-
-            // Update the cache
-            {
-                let mut cache = self.tool_name_mapping_cache.lock().await;
-                *cache = Some(new_mapping.clone());
-
-                // Update the last update time
-                let mut last_update = self.last_tool_mapping_update.lock().await;
-                *last_update = std::time::Instant::now();
-
-                // Update the last connection state hash
-                let mut last_hash = self.last_connection_state_hash.lock().await;
-                *last_hash = current_hash;
-            }
-
-            tracing::info!(
-                "Updated tool name mapping cache with {} entries (connection state changed)",
-                new_mapping.len()
-            );
-
-            new_mapping
-        } else {
-            // Use the cached mapping
-            let cache = self.tool_name_mapping_cache.lock().await;
-            cache.as_ref().unwrap().clone()
+        // If hash changed, update cache immediately
+        if hash_changed {
+            return self
+                .rebuild_tool_mapping_cache("Connection state changed")
+                .await;
         }
+
+        // Check if cache has expired (only if hash hasn't changed)
+        let cache_expired = {
+            let last_update = self.last_tool_mapping_update.lock().await;
+            last_update.elapsed() > CACHE_EXPIRATION
+        };
+
+        // If cache has expired, update it
+        if cache_expired {
+            return self.rebuild_tool_mapping_cache("Cache expired").await;
+        }
+
+        // Use the cached mapping (fast path)
+        let cache = self.tool_name_mapping_cache.lock().await;
+        cache.as_ref().unwrap().clone()
+    }
+
+    /// Helper method to rebuild the tool mapping cache
+    async fn rebuild_tool_mapping_cache(
+        &self,
+        reason: &str,
+    ) -> HashMap<String, super::tool::ToolNameMapping> {
+        // Calculate current hash
+        let current_hash = {
+            let pool = self.connection_pool.lock().await;
+            pool.calculate_connection_state_hash()
+        };
+
+        // Build a new tool name mapping
+        let start_time = std::time::Instant::now();
+        let new_mapping = super::tool::build_tool_name_mapping(&self.connection_pool).await;
+        let build_time = start_time.elapsed();
+
+        // Update the cache
+        {
+            let mut cache = self.tool_name_mapping_cache.lock().await;
+            *cache = Some(new_mapping.clone());
+
+            // Update the last update time
+            let mut last_update = self.last_tool_mapping_update.lock().await;
+            *last_update = std::time::Instant::now();
+
+            // Update the last connection state hash
+            let mut last_hash = self.last_connection_state_hash.lock().await;
+            *last_hash = current_hash;
+        }
+
+        tracing::info!(
+            "Updated tool name mapping cache with {} entries (reason: {}, build time: {:?})",
+            new_mapping.len(),
+            reason,
+            build_time
+        );
+
+        new_mapping
     }
 
     pub fn new(config: Arc<Config>, rule_config: Arc<HashMap<String, bool>>) -> Self {
@@ -218,16 +260,86 @@ impl ServerHandler for ProxyServer {
                             // Mark the connection as ready again
                             conn.status = super::types::ConnectionStatus::Ready;
 
-                            // Log the error and return it
-                            tracing::error!(
-                                "Error calling tool '{}' on server '{}' instance '{}': {}",
-                                mapping.upstream_tool_name,
-                                mapping.server_name,
-                                mapping.instance_id,
-                                e
-                            );
+                            // Handle different types of errors
+                            use rmcp::ServiceError;
+                            let error_message = match e {
+                                ServiceError::McpError(mcp_err) => {
+                                    // This is already a McpError, so we can just pass it through
+                                    tracing::error!(
+                                        "MCP error calling tool '{}' on server '{}' instance '{}': {}",
+                                        mapping.upstream_tool_name,
+                                        mapping.server_name,
+                                        mapping.instance_id,
+                                        mcp_err
+                                    );
+                                    return Err(mcp_err);
+                                }
+                                ServiceError::Transport(io_err) => {
+                                    // Transport error (network, IO)
+                                    tracing::error!(
+                                        "Transport error calling tool '{}' on server '{}' instance '{}': {}",
+                                        mapping.upstream_tool_name,
+                                        mapping.server_name,
+                                        mapping.instance_id,
+                                        io_err
+                                    );
+
+                                    // Update connection status to error
+                                    conn.update_failed(format!("Transport error: {}", io_err));
+
+                                    format!("Network or IO error: {}", io_err)
+                                }
+                                ServiceError::UnexpectedResponse => {
+                                    // Unexpected response type
+                                    tracing::error!(
+                                        "Unexpected response type from tool '{}' on server '{}' instance '{}'",
+                                        mapping.upstream_tool_name,
+                                        mapping.server_name,
+                                        mapping.instance_id
+                                    );
+                                    "Unexpected response type from upstream server".to_string()
+                                }
+                                ServiceError::Cancelled { reason } => {
+                                    // Request was cancelled
+                                    let reason_str = reason.as_deref().unwrap_or("<unknown>");
+                                    tracing::error!(
+                                        "Request cancelled for tool '{}' on server '{}' instance '{}': {}",
+                                        mapping.upstream_tool_name,
+                                        mapping.server_name,
+                                        mapping.instance_id,
+                                        reason_str
+                                    );
+                                    format!("Request cancelled: {}", reason_str)
+                                }
+                                ServiceError::Timeout { timeout } => {
+                                    // Request timed out
+                                    tracing::error!(
+                                        "Request timeout for tool '{}' on server '{}' instance '{}' after {:?}",
+                                        mapping.upstream_tool_name,
+                                        mapping.server_name,
+                                        mapping.instance_id,
+                                        timeout
+                                    );
+                                    format!("Request timed out after {:?}", timeout)
+                                }
+                                // Handle any future error types that might be added
+                                _ => {
+                                    tracing::error!(
+                                        "Unknown error calling tool '{}' on server '{}' instance '{}': {:?}",
+                                        mapping.upstream_tool_name,
+                                        mapping.server_name,
+                                        mapping.instance_id,
+                                        e
+                                    );
+                                    format!("Unknown error: {:?}", e)
+                                }
+                            };
+
                             Err(McpError::internal_error(
-                                format!("Error calling tool '{}': {}", tool_name_str, e),
+                                format!(
+                                    "Error calling tool '{}': {}",
+                                    tool_name_str, error_message
+                                ),
                                 None,
                             ))
                         }

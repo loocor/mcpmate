@@ -563,19 +563,94 @@ pub async fn call_upstream_tool(
     // Mark the connection as ready again
     conn.status = super::types::ConnectionStatus::Ready;
 
-    // Handle the result
+    // Handle the result with detailed error handling
     match result {
         Ok(result) => Ok(result),
         Err(e) => {
-            // Log the error and return it
-            tracing::error!(
-                "Error calling tool '{}' on server '{}' instance '{}': {}",
+            // Handle different types of errors
+            use rmcp::ServiceError;
+            let error_message = match &e {
+                ServiceError::McpError(mcp_err) => {
+                    // This is an MCP protocol error
+                    tracing::error!(
+                        "MCP protocol error calling tool '{}' on server '{}' instance '{}': {}",
+                        upstream_tool_name,
+                        server_name,
+                        instance_id,
+                        mcp_err
+                    );
+                    format!("MCP protocol error: {}", mcp_err)
+                }
+                ServiceError::Transport(io_err) => {
+                    // Transport error (network, IO)
+                    tracing::error!(
+                        "Transport error calling tool '{}' on server '{}' instance '{}': {}",
+                        upstream_tool_name,
+                        server_name,
+                        instance_id,
+                        io_err
+                    );
+
+                    // Update connection status to error
+                    conn.update_failed(format!("Transport error: {}", io_err));
+
+                    format!("Network or IO error: {}", io_err)
+                }
+                ServiceError::UnexpectedResponse => {
+                    // Unexpected response type
+                    tracing::error!(
+                        "Unexpected response type from tool '{}' on server '{}' instance '{}'",
+                        upstream_tool_name,
+                        server_name,
+                        instance_id
+                    );
+                    "Unexpected response type from upstream server".to_string()
+                }
+                ServiceError::Cancelled { reason } => {
+                    // Request was cancelled
+                    let reason_str = reason.as_deref().unwrap_or("<unknown>");
+                    tracing::error!(
+                        "Request cancelled for tool '{}' on server '{}' instance '{}': {}",
+                        upstream_tool_name,
+                        server_name,
+                        instance_id,
+                        reason_str
+                    );
+                    format!("Request cancelled: {}", reason_str)
+                }
+                ServiceError::Timeout { timeout } => {
+                    // Request timed out
+                    tracing::error!(
+                        "Request timeout for tool '{}' on server '{}' instance '{}' after {:?}",
+                        upstream_tool_name,
+                        server_name,
+                        instance_id,
+                        timeout
+                    );
+                    format!("Request timed out after {:?}", timeout)
+                }
+                // Handle any future error types that might be added
+                _ => {
+                    tracing::error!(
+                        "Unknown error calling tool '{}' on server '{}' instance '{}': {:?}",
+                        upstream_tool_name,
+                        server_name,
+                        instance_id,
+                        e
+                    );
+                    format!("Unknown error: {:?}", e)
+                }
+            };
+
+            // Create a detailed error message
+            Err(anyhow::anyhow!(
+                "Error calling tool '{}' (upstream: '{}') on server '{}' instance '{}': {}",
+                tool_name,
                 upstream_tool_name,
                 server_name,
                 instance_id,
-                e
-            );
-            Err(anyhow::anyhow!("Error calling tool '{}': {}", tool_name, e))
+                error_message
+            ))
         }
     }
 }
