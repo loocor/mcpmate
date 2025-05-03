@@ -15,7 +15,7 @@ use crate::{
         },
         routes::AppState,
     },
-    proxy::types::{ConnectionStatus, ErrorType},
+    core::types::{ConnectionStatus, ErrorType},
 };
 
 use super::ApiError;

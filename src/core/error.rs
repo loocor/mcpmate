@@ -1,11 +1,11 @@
-// Core error module for MCPMan
-// Contains shared error types and functions
+// MCP Proxy error module
+// Contains custom error types for the MCP proxy server
 
 use thiserror::Error;
 
-/// Custom error type for MCP operations
+/// Custom error type for MCP proxy operations
 #[derive(Error, Debug)]
-pub enum McpError {
+pub enum ProxyError {
     /// Error when connecting to an upstream server
     #[error("Connection error for server '{server_name}': {message}")]
     ConnectionError {
@@ -91,7 +91,7 @@ pub enum McpError {
     },
 }
 
-impl McpError {
+impl ProxyError {
     /// Create a new connection error
     pub fn connection_error(
         server_name: &str,
@@ -169,5 +169,5 @@ impl McpError {
     }
 }
 
-/// Result type for MCP operations
-pub type Result<T> = std::result::Result<T, McpError>;
+/// Result type for MCP proxy operations
+pub type Result<T> = std::result::Result<T, ProxyError>;

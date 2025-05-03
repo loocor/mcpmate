@@ -3,7 +3,7 @@ use clap::Parser;
 use mcpman::{
     api::{handlers::system::initialize_server_start_time, ApiServer},
     config::{load_rule_config, load_server_config},
-    proxy::ConnectionStatus,
+    core::ConnectionStatus,
     sse::SseProxyServer,
 };
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};

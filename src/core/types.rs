@@ -1,81 +1,134 @@
-// Core types for MCPMan
-// These types are shared across different transport modes
+// MCP Proxy types
+// Contains shared type definitions for the MCP proxy server
 
-use rmcp::model::Tool;
-use std::collections::HashMap;
-use uuid::Uuid;
+use std::fmt;
 
-/// Status of a connection to an upstream server
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Connection status for an upstream server
+#[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionStatus {
-    /// Connection is initializing
+    /// Server is initializing or in the process of connecting
     Initializing,
-    /// Connection is ready
+    /// Server is connected and ready to receive requests
     Ready,
-    /// Connection is disconnected
-    Disconnected,
-    /// Connection failed
-    Failed(String),
+    /// Server is processing a request
+    Busy,
+    /// Server encountered an error
+    Error(ErrorDetails),
+    /// Server is shut down or disconnected
+    Shutdown,
 }
 
-/// Resource usage information for a process
-#[derive(Debug, Clone, Default)]
-pub struct ResourceUsage {
-    /// Process ID
-    pub pid: Option<u32>,
-    /// CPU usage in percentage (0-100)
-    pub cpu_usage: Option<f32>,
-    /// Memory usage in bytes
-    pub memory_usage: Option<u64>,
+/// Detailed error information for connection errors
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErrorDetails {
+    /// Error message
+    pub message: String,
+    /// Error type
+    pub error_type: ErrorType,
+    /// Number of consecutive failures
+    pub failure_count: u32,
+    /// First failure time (as seconds since UNIX epoch)
+    pub first_failure_time: u64,
+    /// Last failure time (as seconds since UNIX epoch)
+    pub last_failure_time: u64,
 }
 
-/// Resource limits for a process
-#[derive(Debug, Clone)]
-pub struct ResourceLimits {
-    /// Maximum CPU usage in percentage (0-100)
-    pub max_cpu: Option<f32>,
-    /// Maximum memory usage in bytes
-    pub max_memory: Option<u64>,
-    /// Action to take when limits are exceeded
-    pub action: ResourceLimitAction,
+/// Types of errors that can occur
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErrorType {
+    /// Temporary error that can be retried
+    Temporary,
+    /// Permanent error that requires manual intervention
+    Permanent,
+    /// Unknown error type
+    Unknown,
 }
 
-/// Action to take when resource limits are exceeded
-#[derive(Debug, Clone)]
-pub enum ResourceLimitAction {
-    /// Log a warning
-    Warn,
-    /// Restart the process
-    Restart,
-    /// Terminate the process
-    Terminate,
+impl fmt::Display for ErrorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ErrorType::Temporary => write!(f, "Temporary"),
+            ErrorType::Permanent => write!(f, "Permanent"),
+            ErrorType::Unknown => write!(f, "Unknown"),
+        }
+    }
 }
 
-/// Tool information with server name
-#[derive(Debug, Clone)]
-pub struct ToolInfo {
-    /// The tool
-    pub tool: Tool,
-    /// The server name
-    pub server_name: String,
+impl fmt::Display for ErrorDetails {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.message, self.error_type)
+    }
 }
 
-/// Tool mapping information
-#[derive(Debug, Clone)]
-pub struct ToolMapping {
-    /// Map of tool name to server name
-    pub tool_to_server: HashMap<String, String>,
-    /// Map of server name to list of tools
-    pub server_to_tools: HashMap<String, Vec<Tool>>,
+impl fmt::Display for ConnectionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnectionStatus::Initializing => write!(f, "Initializing"),
+            ConnectionStatus::Ready => write!(f, "Ready"),
+            ConnectionStatus::Busy => write!(f, "Busy"),
+            ConnectionStatus::Error(err) => write!(f, "Error: {}", err),
+            ConnectionStatus::Shutdown => write!(f, "Shutdown"),
+        }
+    }
 }
 
-/// Result of a tool call
-#[derive(Debug, Clone)]
-pub struct ToolCallResult {
-    /// The result of the tool call
-    pub result: serde_json::Value,
-    /// The server name
-    pub server_name: String,
-    /// The instance ID
-    pub instance_id: Uuid,
+impl ConnectionStatus {
+    /// Check if the connection is in a state that allows connection attempts
+    pub fn can_connect(&self) -> bool {
+        match self {
+            ConnectionStatus::Shutdown | ConnectionStatus::Error(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Check if the connection is in a state that should be monitored by health checks
+    pub fn should_monitor(&self) -> bool {
+        match self {
+            ConnectionStatus::Ready | ConnectionStatus::Error(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Get the allowed operations for this status
+    pub fn allowed_operations(&self) -> Vec<&'static str> {
+        let mut ops = vec!["disconnect", "reconnect"]; // Most states share these operations
+
+        match self {
+            Self::Initializing => {
+                ops.push("cancel"); // Can cancel initialization
+            }
+            Self::Ready => {
+                // No special operations
+            }
+            Self::Busy => {
+                // No special operations
+            }
+            Self::Error(_) => {
+                // No special operations
+            }
+            Self::Shutdown => {
+                ops.clear(); // Clear shared operations
+                ops.push("reconnect"); // Only reconnect is allowed
+            }
+        }
+
+        ops
+    }
+
+    /// Check if a specific operation is allowed in the current state
+    pub fn can_perform_operation(&self, operation: &str) -> bool {
+        self.allowed_operations().contains(&operation)
+    }
+
+    /// Check if force disconnect is allowed
+    pub fn can_force_disconnect(&self) -> bool {
+        // Force disconnect is allowed in all states except Shutdown
+        !matches!(self, Self::Shutdown)
+    }
+
+    /// Check if reset reconnect is allowed
+    pub fn can_reset_reconnect(&self) -> bool {
+        // Reset reconnect is allowed in all states
+        true
+    }
 }

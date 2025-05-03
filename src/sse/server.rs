@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use crate::{
     config::Config,
     core::tool::parse_tool_name,
-    proxy::{tool::get_all_tools_with_smart_prefix, UpstreamConnectionPool},
+    core::{tool::get_all_tools_with_smart_prefix, UpstreamConnectionPool},
 };
 
 /// SSE Proxy Server that aggregates tools from multiple MCP servers
@@ -22,7 +22,7 @@ pub struct SseProxyServer {
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     /// Tool name mapping cache
     tool_name_mapping_cache:
-        Arc<Mutex<Option<HashMap<String, crate::proxy::tool::ToolNameMapping>>>>,
+        Arc<Mutex<Option<HashMap<String, crate::core::tool::ToolNameMapping>>>>,
     /// Last time the tool name mapping was updated
     last_tool_mapping_update: Arc<Mutex<std::time::Instant>>,
     /// Last connection state hash, used to detect changes in the connection pool
@@ -38,7 +38,7 @@ impl SseProxyServer {
     /// 2. Prioritizes connection state hash changes over time-based expiration
     /// 3. Provides detailed logging about cache update reasons
     /// 4. Reduces lock contention by acquiring locks only when necessary
-    async fn get_tool_name_mapping(&self) -> HashMap<String, crate::proxy::tool::ToolNameMapping> {
+    async fn get_tool_name_mapping(&self) -> HashMap<String, crate::core::tool::ToolNameMapping> {
         // Cache expiration time (2 minutes)
         const CACHE_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(120);
 
@@ -94,7 +94,7 @@ impl SseProxyServer {
     async fn rebuild_tool_mapping_cache(
         &self,
         reason: &str,
-    ) -> HashMap<String, crate::proxy::tool::ToolNameMapping> {
+    ) -> HashMap<String, crate::core::tool::ToolNameMapping> {
         // Calculate current hash
         let current_hash = {
             let pool = self.connection_pool.lock().await;
@@ -103,7 +103,7 @@ impl SseProxyServer {
 
         // Build a new tool name mapping
         let start_time = std::time::Instant::now();
-        let new_mapping = crate::proxy::tool::build_tool_name_mapping(&self.connection_pool).await;
+        let new_mapping = crate::core::tool::build_tool_name_mapping(&self.connection_pool).await;
         let build_time = start_time.elapsed();
 
         // Update the cache
@@ -287,12 +287,12 @@ impl ServerHandler for SseProxyServer {
                     {
                         Ok(result) => {
                             // Mark the connection as ready again
-                            conn.status = crate::proxy::ConnectionStatus::Ready;
+                            conn.status = crate::core::ConnectionStatus::Ready;
                             Ok(result)
                         }
                         Err(e) => {
                             // Mark the connection as ready again
-                            conn.status = crate::proxy::ConnectionStatus::Ready;
+                            conn.status = crate::core::ConnectionStatus::Ready;
 
                             // Handle different types of errors
                             use rmcp::ServiceError;
@@ -400,7 +400,7 @@ impl ServerHandler for SseProxyServer {
             let (server_prefix, original_tool_name) = parse_tool_name(&tool_name_str);
 
             // Call the upstream tool
-            match crate::proxy::tool::call_upstream_tool(
+            match crate::core::tool::call_upstream_tool(
                 &self.connection_pool,
                 &tool_name_str,
                 arguments,
