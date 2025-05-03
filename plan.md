@@ -1,151 +1,319 @@
-# 设计方案
+# MCPMan 开发计划
 
-确保我们在实现时不会遗漏任何重要内容：
+## 当前状态
 
-## 1. 状态模型
-我们将保持与 Rust SDK 一致的状态枚举：
+MCPMan 项目已经完成了以下关键里程碑：
 
-```rust
-pub enum ConnectionStatus {
-    Initializing,  // 初始化中
-    Ready,         // 就绪
-    Busy,          // 忙碌
-    Error(String), // 错误
-    Shutdown,      // 已关闭
-}
-```
+1. **基础代理功能**：实现了基本的 MCP 代理功能，能够连接上游 MCP 服务器并转发请求。
+2. **连接池重构**：完成了连接池的重构，提高了连接稳定性和工具映射缓存效率。
+3. **资源监控**：实现了进程资源监控功能，能够跟踪和限制上游服务器进程的资源使用。
 
-## 2. 操作集
-每个状态允许的操作：
+## 下一阶段：增强兼容性和用户体验
 
-- Initializing: disconnect, reconnect, cancel
-- Ready: disconnect, reconnect
-- Busy: disconnect, reconnect
-- Error: disconnect, reconnect
-- Shutdown: 只有 reconnect
+在下一阶段，我们将专注于提升 MCPMan 的兼容性和用户体验，使其能够支持更多的应用场景并简化用户配置流程。
 
-特殊说明：
+### 计划中可能的下一阶段方向有：
 
-- disconnect 有普通和强制两种模式
-- reconnect 有普通和重置两种模式
+#### 1. 增加 stdio 服务模式
 
-## 3. 实例标识
-为每个服务实例分配唯一 ID，确保操作针对正确的实例：
+- 优势：扩大兼容性，支持 Claude desktop 等不支持 SSE 的应用
+- 复杂度：中等，可以复用现有的 stdio 连接逻辑
+- 影响：立即提升产品兼容性范围
 
-```rust
-pub struct UpstreamConnection {
-    pub id: String,  // 实例唯一ID
-    pub name: String,
-    pub status: ConnectionStatus,
-    // 其他字段...
-}
-```
+#### 2. 增加 Prompts、Resources 资源的转发代理支持
 
-## 4. API 端点设计
-采用嵌套路径模式，使用专用端点表示不同操作模式：
+- 势：完整支持 MCP 协议的所有功能
+- 复杂度：中等到高，需要实现新的资源管理和转发逻辑
+- 影响：提升功能完整性，支持更复杂的应用场景
 
-```http
-  # 服务管理
-  GET    /api/mcp/servers                       # 列出所有服务
-  GET    /api/mcp/servers/:name                 # 获取服务信息
+#### 3. 开发 Tauri 界面
 
-  # 实例管理
-  GET    /api/mcp/servers/:name/instances       # 列出服务的所有实例
-  GET    /api/mcp/servers/:name/instances/:id   # 获取特定实例信息
-  GET    /api/mcp/servers/:name/instances/:id/health # 获取实例健康状态
+- 优势：大幅提升用户友好性，使非技术用户也能使用
+- 复杂度：高，需要设计和实现完整的 UI/UX
+- 影响：从开发者工具转变为面向一般用户的产品
 
-  # 实例操作 - 基本操作
-  POST   /api/mcp/servers/:name/instances/:id/disconnect       # 正常断开连接
-  POST   /api/mcp/servers/:name/instances/:id/disconnect/force # 强制断开连接
-  POST   /api/mcp/servers/:name/instances/:id/reconnect        # 正常重新连接
-  POST   /api/mcp/servers/:name/instances/:id/reconnect/reset  # 重置并重新连接
-  POST   /api/mcp/servers/:name/instances/:id/cancel           # 取消初始化（仅 Initializing 状态）
+#### 4. 检测已安装 host app 并管理配置
 
-  # 系统管理
-  GET    /api/system/status                     # 获取系统状态
-  GET    /api/system/metrics                    # 获取系统指标
-}
-```
+- 优势：简化配置流程，提供一站式管理体验
+- 复杂度：中等，需要实现检测逻辑和配置文件读写
+- 影响：提升用户体验，减少手动配置需求
 
-## 5. 响应模型
+#### 5. 提供自定义运行时路径管理
 
-```rust
-// 服务响应
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ServerResponse {
-    pub name: String,
-    pub instances_count: usize,
-    pub enabled: bool,
-}
+- 优势：增强环境隔离，避免系统依赖冲突
+- 复杂度：中等，需要实现路径管理和环境变量控制
+- 影响：提升稳定性和可靠性
 
-// 实例列表响应
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ServerInstancesResponse {
-    pub name: String,
-    pub instances: Vec<ServerInstanceSummary>,
-}
+#### 6. 支持 Windows 等其他平台
 
-// 实例摘要
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ServerInstanceSummary {
-    pub id: String,
-    pub status: String,
-    pub connected_at: Option<String>,
-}
+- 优势：扩大用户群体，提升市场覆盖
+- 复杂度：高，需要处理跨平台兼容性问题
+- 影响：显著扩大潜在用户群体
 
-// 实例详情响应
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ServerInstanceResponse {
-    pub id: String,
-    pub name: String,
-    pub status: String,
-    pub allowed_operations: Vec<String>,
-    pub details: ServerInstanceDetails,
-}
+### 优先级建议
+考虑到用户价值、实现复杂度和基础设施需求，我建议以下优先顺序：
 
-// 实例详情
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ServerInstanceDetails {
-    pub connection_attempts: u32,
-    pub last_connected_seconds: Option<u64>,
-    pub tools_count: usize,
-    pub error_message: Option<String>,
-    pub server_type: String,
-}
-```
+#### 第一优先级：增加 stdio 服务模式
+这是一个相对容易实现但能带来立即价值的功能。通过支持 stdio 服务模式，我们可以让 MCPMan 与更多应用兼容，特别是 Claude desktop 等流行应用。这也为后续的 Tauri 界面开发奠定基础。
 
-## 6. 实现注意事项
+#### 第二优先级：检测已安装 host app 并管理配置
+这个功能可以大幅简化用户配置流程，提供更好的用户体验。它也是构建完整生态系统的重要一步，让 MCPMan 成为真正的"管理器"而不仅仅是代理。
 
-- 多实例支持：
-  - 修改连接池结构，支持一个服务有多个实例
-  - 为每个新连接生成唯一 ID
-- 状态转换：
-  - 确保状态转换逻辑清晰
-  - 在每个状态下只允许特定的操作
-- 错误处理：
-  - 提供清晰的错误消息
-  - 对于不允许的操作，返回适当的错误代码
-- 文档：
-  - 为每个端点提供详细文档
-  - 说明每个状态允许的操作
+#### 第三优先级：提供自定义运行时路径管理
+这个功能可以解决环境依赖问题，提升系统稳定性。它也是支持多平台的基础工作之一。
 
-# 实施步骤
+#### 后续优先级：
 
-每进行一个阶段，需要交给老陈进行测试确认。
+- 增加 Prompts、Resources 资源的转发代理支持
+- 开发 Tauri 界面
+- 支持 Windows 等其他平台
 
-## 第一阶段：基础结构调整
-- 更新 ConnectionStatus 枚举，与 Rust SDK 保持一致
-- 为连接添加实例 ID 支持
-- 修改连接池结构，支持多实例
+### 阶段 6：增加 stdio 服务模式
 
-## 第二阶段：API 模型更新
-- 定义新的响应模型，支持实例信息
-- 实现状态转换逻辑和操作限制
+#### 背景和动机
 
-## 第三阶段：端点实现
-- 实现服务和实例管理端点
-- 实现各种操作端点，包括专用变体
+目前，MCPMan 作为代理服务器，通过 SSE 协议暴露 MCP 服务。然而，许多应用（如 Claude desktop）不支持 SSE 协议，而是使用 stdio 协议与 MCP 服务器通信。为了支持这些应用，我们需要实现 stdio 服务模式，使 MCPMan 能够作为 stdio 服务暴露给这些应用。
 
-## 第四阶段：测试和优化 (暂时忽略)
-- 编写单元测试和集成测试
-- 优化性能和错误处理
+#### 目标
+
+1. 实现 stdio 服务模式，使 MCPMan 能够作为 stdio 服务暴露给客户端应用
+2. 确保 stdio 服务模式与现有的 SSE 服务模式共存，不影响现有功能
+3. 实现消息通知机制，当服务器和工具列表发生变化时通知客户端应用
+4. 提供配置选项，允许用户启用和配置 stdio 服务模式
+5. 提供文档和示例，说明如何将 MCPMan 与各种客户端应用集成
+
+#### 技术方案
+
+1. **设计 stdio 服务接口**
+   - 实现 `StdioServer` 结构体，负责处理 stdio 通信
+   - 使用 rust-sdk 提供的 `serve_server` 函数创建 stdio 服务器
+   - 实现请求处理逻辑，将客户端请求转发到上游 MCP 服务
+
+2. **实现请求转发逻辑**
+   - 设计请求路由机制，将客户端请求路由到适当的上游服务
+   - 实现工具调用转发，将工具调用请求转发到拥有该工具的上游服务
+   - 处理特殊请求类型，如 `ListToolsRequest`、`InitializeRequest` 等
+
+3. **集成到现有架构**
+   - 在 `main.rs` 中添加 stdio 服务启动选项
+   - 添加配置选项，允许用户启用和配置 stdio 服务模式
+   - 确保 stdio 服务与现有的 SSE 服务共享连接池和工具映射缓存
+
+4. **提供文档和示例**
+   - 更新 README.md，说明如何启用和使用 stdio 服务模式
+   - 提供示例配置，说明如何将 MCPMan 与各种客户端应用集成
+   - 添加故障排除指南，帮助用户解决常见问题
+
+#### 具体实施步骤
+
+1. **创建 stdio 服务器模块**
+   ```rust
+   // src/stdio_server.rs
+   use rmcp::{model::*, service::*, transport::*};
+   use tokio::sync::Mutex;
+   use std::sync::Arc;
+
+   pub struct StdioServer {
+       connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
+       // 其他必要字段
+   }
+
+   impl StdioServer {
+       pub fn new(connection_pool: Arc<Mutex<UpstreamConnectionPool>>) -> Self {
+           Self {
+               connection_pool,
+               // 初始化其他字段
+           }
+       }
+
+       pub async fn start() -> Result<()> {
+           // 实现 stdio 服务器启动逻辑
+           let stdio = StdioTransport::new(std::io::stdin(), std::io::stdout());
+           serve_server(self, stdio).await?;
+           Ok(())
+       }
+
+       // 实现请求处理逻辑
+       async fn handle_request(&self, request: Request) -> Result<Response> {
+           // 根据请求类型分发到不同的处理函数
+           match request {
+               Request::Initialize(req) => self.handle_initialize(req).await,
+               Request::ListTools(req) => self.handle_list_tools(req).await,
+               Request::CallTool(req) => self.handle_call_tool(req).await,
+               // 处理其他请求类型
+               _ => Err(anyhow::anyhow!("Unsupported request type")),
+           }
+       }
+
+       // 实现各种请求处理函数
+       async fn handle_initialize(&self, req: InitializeRequest) -> Result<Response> {
+           // 处理初始化请求
+           // ...
+       }
+
+       async fn handle_list_tools(&self, req: ListToolsRequest) -> Result<Response> {
+           // 处理工具列表请求
+           // ...
+       }
+
+       async fn handle_call_tool(&self, req: CallToolRequest) -> Result<Response> {
+           // 处理工具调用请求
+           // ...
+       }
+   }
+
+   // 实现 Service trait
+   #[async_trait]
+   impl Service<RoleServer> for StdioServer {
+       async fn handle(&self, request: Request) -> Result<Response, ServiceError> {
+           self.handle_request(request).await.map_err(|e| {
+               ServiceError::McpError(McpError::internal_error(e.to_string()))
+           })
+       }
+   }
+   ```
+
+2. **更新配置结构体**
+   ```rust
+   // src/config.rs
+   #[derive(Debug, Deserialize)]
+   pub struct Config {
+       // 现有字段
+       pub mcp_servers: HashMap<String, ServerConfig>,
+       pub proxy: ProxyConfig,
+
+       // 新增字段
+       #[serde(default)]
+       pub stdio_server: StdioServerConfig,
+   }
+
+   #[derive(Debug, Deserialize, Default)]
+   pub struct StdioServerConfig {
+       #[serde(default)]
+       pub enabled: bool,
+
+       #[serde(default = "default_stdio_server_name")]
+       pub server_name: String,
+   }
+
+   fn default_stdio_server_name() -> String {
+       "mcpman".to_string()
+   }
+   ```
+
+3. **更新 main.rs**
+   ```rust
+   // src/main.rs
+   #[tokio::main]
+   async fn main() -> Result<()> {
+       // 初始化日志和配置
+       // ...
+
+       // 创建连接池
+       let connection_pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+           Arc::new(config.clone()),
+           Arc::new(rule_config.clone()),
+       )));
+
+       // 初始化连接池
+       {
+           let mut pool = connection_pool.lock().await;
+           pool.initialize();
+       }
+
+       // 启动健康检查
+       UpstreamConnectionPool::start_health_check(connection_pool.clone());
+
+       // 创建代理服务器
+       let proxy_server = Arc::new(ProxyServer::new(connection_pool.clone()));
+
+       // 启动 SSE 服务器
+       let sse_server_handle = tokio::spawn(async move {
+           // 启动 SSE 服务器
+           // ...
+       });
+
+       // 如果启用了 stdio 服务器，则启动它
+       if config.stdio_server.enabled {
+           let stdio_server = StdioServer::new(connection_pool.clone());
+           tokio::spawn(async move {
+               if let Err(e) = stdio_server.start().await {
+                   tracing::error!("Error starting stdio server: {}", e);
+               }
+           });
+       }
+
+       // 启动 API 服务器
+       // ...
+
+       // 等待所有服务器完成
+       // ...
+
+       Ok(())
+   }
+   ```
+
+4. **添加命令行选项**
+   ```rust
+   // src/main.rs
+   use clap::{App, Arg};
+
+   fn main() -> Result<()> {
+       let matches = App::new("MCPMan")
+           .version("0.1.0")
+           .author("Your Name")
+           .about("MCP Manager")
+           .arg(
+               Arg::with_name("stdio")
+                   .long("stdio")
+                   .help("Run in stdio mode (for integration with Claude desktop, etc.)")
+                   .takes_value(false),
+           )
+           .get_matches();
+
+       // 如果指定了 stdio 参数，则以 stdio 模式运行
+       if matches.is_present("stdio") {
+           // 创建连接池
+           // ...
+
+           // 创建 stdio 服务器
+           let stdio_server = StdioServer::new(connection_pool);
+
+           // 启动 stdio 服务器
+           return stdio_server.start().await.map_err(|e| anyhow::anyhow!("Error starting stdio server: {}", e));
+       }
+
+       // 否则，以正常模式运行
+       // ...
+   }
+   ```
+
+#### 工作量评估
+
+| 任务 | 工作量（人天） | 复杂度 | 关键依赖 |
+|------|--------------|--------|---------|
+| 设计 stdio 服务接口 | 0.5-1 | 中 | rust-sdk 的 stdio 服务器实现 |
+| 实现请求转发逻辑 | 1-1.5 | 高 | 对 MCP 协议的理解 |
+| 实现消息通知机制 | 0.5-1 | 中 | 对 MCP 通知协议的理解 |
+| 集成到现有架构 | 0.5-1 | 中 | 现有代码的理解 |
+| 提供文档和示例 | 0.5 | 低 | 前面任务的完成 |
+
+总体工作量估计：
+- **纯人工实现**：3-5 天
+- **协作实现**：2-4 天
+
+### 阶段 7：检测已安装 host app 并管理配置
+
+在完成 stdio 服务模式后，我们将实现检测已安装 host app 并管理配置的功能，这将在下一个计划文档中详细说明。
+
+## 参考资料
+
+1. MCP 规范：https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/refs/heads/main/schema/2025-03-26/schema.ts
+2. rust-sdk 文档：
+   - 主页：https://docs.rs/rmcp/latest/rmcp/
+   - 完整索引：https://docs.rs/rmcp/latest/rmcp/all.html
+   - 服务模块：https://docs.rs/rmcp/latest/rmcp/service/index.html
+   - 传输模块：https://docs.rs/rmcp/latest/rmcp/transport/index.html
+3. Claude desktop 文档：https://docs.anthropic.com/claude/docs/claude-desktop-app
+4. rust-sdk 示例：
+   - stdio 服务器：`@rust-sdk/examples/servers/src/std_io.rs`

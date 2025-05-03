@@ -11,27 +11,27 @@
     },
     "fetch": {
       "enabled": true,
-      "tools": {}
+      "tools": { }
     },
     "firecrawl": {
       "enabled": true,
-      "tools": {}
+      "tools": { }
     },
     "playdocker": {
-      "enabled": false,
-      "tools": {}
+      "enabled": true,
+      "tools": { }
     },
     "playwright": {
-      "enabled": true,
-      "tools": {}
+      "enabled": false,
+      "tools": { }
     },
     "proxy": {
       "enabled": false,
-      "tools": {}
+      "tools": { }
     },
     "thinking": {
       "enabled": true,
-      "tools": {}
+      "tools": { }
     }
   }
 }

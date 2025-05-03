@@ -20,7 +20,7 @@
       ],
       "command": "npx",
       "env": {
-        "FIRECRAWL_API_KEY": "fc-acd14d04e67d4bd4a4d38fe12ec4d923"
+        "FIRECRAWL_API_KEY": "fc-200cbeb18dd647818bbbc10c30e7b9c0"
       },
       "type": "stdio"
     },
