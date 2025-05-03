@@ -5,6 +5,7 @@
 pub mod connection;
 pub mod error;
 pub mod pool;
+pub mod monitor;
 pub mod server;
 pub mod sse;
 pub mod stdio;

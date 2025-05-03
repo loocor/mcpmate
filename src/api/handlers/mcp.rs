@@ -265,6 +265,10 @@ pub async fn get_instance(
             _ => None,
         },
         server_type: pool.get_server_type(&name).unwrap_or_default(),
+        process_id: conn.process_id,
+        cpu_usage: conn.cpu_usage,
+        memory_usage: conn.memory_usage,
+        last_health_check: Some(chrono::Local::now().to_rfc3339()),
     };
 
     // Get allowed operations
@@ -326,7 +330,7 @@ pub async fn check_health(
     };
 
     // Get current time as ISO 8601 string
-    let checked_at = chrono::Utc::now().to_rfc3339();
+    let checked_at = chrono::Local::now().to_rfc3339();
 
     Ok(Json(InstanceHealthResponse {
         id,

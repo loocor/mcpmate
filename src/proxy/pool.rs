@@ -8,7 +8,10 @@ use tokio::{sync::Mutex, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
-use super::{connect_sse_server, connection::UpstreamConnection, types::ConnectionStatus};
+use super::{
+    connect_sse_server, connection::UpstreamConnection, monitor::ProcessMonitor,
+    types::ConnectionStatus,
+};
 use crate::config::Config;
 
 /// Pool of connections to upstream MCP servers
@@ -22,16 +25,25 @@ pub struct UpstreamConnectionPool {
     pub rule_config: Arc<HashMap<String, bool>>,
     /// Map of server name to map of instance ID to cancellation token
     pub cancellation_tokens: HashMap<String, HashMap<String, CancellationToken>>,
+    /// Process monitor for tracking resource usage
+    pub process_monitor: Option<Arc<ProcessMonitor>>,
 }
 
 impl UpstreamConnectionPool {
     /// Create a new connection pool
     pub fn new(config: Arc<Config>, rule_config: Arc<HashMap<String, bool>>) -> Self {
+        // Create process monitor with 5 second update interval
+        let process_monitor = Arc::new(ProcessMonitor::new(Duration::from_secs(5)));
+
+        // Start process monitoring
+        ProcessMonitor::start_monitoring(process_monitor.clone());
+
         Self {
             connections: HashMap::new(),
             config,
             rule_config,
             cancellation_tokens: HashMap::new(),
+            process_monitor: Some(process_monitor),
         }
     }
 
@@ -332,12 +344,29 @@ impl UpstreamConnectionPool {
 
         // Connect to the server using the proxy module function with cancellation token
         match super::stdio::connect_stdio_server_with_ct(server_name, server_config, ct).await {
-            Ok((service, tools)) => {
+            Ok((service, tools, pid)) => {
                 // Update connection
                 self.update_connection(server_name, instance_id, service, tools);
 
-                // We'll check the connection status in the health check task
+                // If we have a process ID, update resource monitoring
+                if let Some(pid) = pid {
+                    // Store the process ID for resource monitoring
+                    if let Some(_process_monitor) = &self.process_monitor {
+                        tracing::info!(
+                            "Monitoring process resources for '{}' instance '{}' (PID: {})",
+                            server_name,
+                            instance_id,
+                            pid
+                        );
 
+                        // Update the connection with process ID
+                        if let Ok(conn) = self.get_instance_mut(server_name, instance_id) {
+                            conn.process_id = Some(pid);
+                        }
+                    }
+                }
+
+                // We'll check the connection status in the health check task
                 Ok(())
             }
             Err(e) => {
@@ -674,16 +703,16 @@ impl UpstreamConnectionPool {
 
     /// Start health check task
     pub fn start_health_check(connection_pool: Arc<Mutex<Self>>) {
+        // Start the main health check task
+        let health_check_pool = connection_pool.clone();
         tokio::spawn(async move {
-            let pool_clone = connection_pool.clone();
-
             loop {
-                // Wait for health check interval (2 minutes)
-                sleep(Duration::from_secs(120)).await;
+                // Wait for health check interval (1 minute)
+                sleep(Duration::from_secs(60)).await;
 
                 // Check connection status for all instances
                 {
-                    let mut pool = pool_clone.lock().await;
+                    let mut pool = health_check_pool.lock().await;
                     if let Err(e) = pool.check_connection_status().await {
                         tracing::error!("Error checking connection status: {}", e);
                     }
@@ -692,7 +721,7 @@ impl UpstreamConnectionPool {
                 // Check all connections for periodic reconnects
                 let mut reconnects = Vec::new();
                 {
-                    let pool_guard = pool_clone.lock().await;
+                    let pool_guard = health_check_pool.lock().await;
                     for (server_name, instances) in &pool_guard.connections {
                         for (instance_id, conn) in instances {
                             // Update last health check time
@@ -752,7 +781,7 @@ impl UpstreamConnectionPool {
                         server_name,
                         instance_id
                     );
-                    let mut pool_guard = pool_clone.lock().await;
+                    let mut pool_guard = health_check_pool.lock().await;
                     if let Err(e) = pool_guard.reconnect(&server_name, &instance_id).await {
                         tracing::warn!(
                             "Health check: Failed to reconnect to '{}' instance '{}': {}",
@@ -764,6 +793,130 @@ impl UpstreamConnectionPool {
                 }
             }
         });
+
+        // Start a separate process monitoring task with shorter interval
+        let process_monitor_pool = connection_pool.clone();
+        tokio::spawn(async move {
+            // Wait a short time before starting to allow connections to initialize
+            sleep(Duration::from_secs(5)).await;
+
+            loop {
+                // Wait for process monitoring interval (10 seconds)
+                sleep(Duration::from_secs(10)).await;
+
+                // Update process resource usage
+                {
+                    let mut pool = process_monitor_pool.lock().await;
+                    if let Err(e) = pool.update_process_resources().await {
+                        tracing::error!("Error updating process resources: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
+    /// Update process resource usage for all instances
+    pub async fn update_process_resources(&mut self) -> Result<()> {
+        // Skip if process monitor is not available
+        let process_monitor = match &self.process_monitor {
+            Some(monitor) => monitor.clone(),
+            None => return Ok(()),
+        };
+
+        // Collect instances to update
+        let mut instances_to_update = Vec::new();
+
+        // First pass: collect resource info and update CPU/memory usage
+        for (server_name, instances) in &mut self.connections {
+            for (instance_id, conn) in instances {
+                // Skip if process ID is not available
+                let pid = match conn.process_id {
+                    Some(pid) => pid,
+                    None => continue,
+                };
+
+                // Get process resource info
+                if let Some(resource_info) = process_monitor.get_process_info(pid).await {
+                    // Update connection with resource info
+                    conn.cpu_usage = Some(resource_info.cpu_usage);
+                    conn.memory_usage = Some(resource_info.memory_usage);
+
+                    tracing::debug!(
+                        "Updated resource usage for '{}' instance '{}' (PID: {}): CPU: {:.1}%, Memory: {:.1} MB",
+                        server_name,
+                        instance_id,
+                        pid,
+                        resource_info.cpu_usage,
+                        resource_info.memory_usage as f64 / 1024.0 / 1024.0
+                    );
+
+                    // Check resource limits
+                    if let Some((action, message)) =
+                        process_monitor.check_resource_limits(pid).await
+                    {
+                        // Store instance for action
+                        instances_to_update.push((
+                            server_name.clone(),
+                            instance_id.clone(),
+                            pid,
+                            action,
+                            message,
+                        ));
+                    }
+                } else {
+                    // Process not found, clear resource info
+                    conn.cpu_usage = None;
+                    conn.memory_usage = None;
+
+                    // Clear process ID if process is not running
+                    if !process_monitor.is_process_running(pid).await {
+                        tracing::warn!(
+                            "Process for '{}' instance '{}' (PID: {}) is not running, clearing process ID",
+                            server_name,
+                            instance_id,
+                            pid
+                        );
+                        conn.process_id = None;
+                    }
+                }
+            }
+        }
+
+        // Second pass: handle resource limit actions
+        for (server_name, instance_id, _pid, action, message) in instances_to_update {
+            match action {
+                super::monitor::ResourceLimitAction::Warn => {
+                    // Just log a warning
+                    tracing::warn!("{}", message);
+                }
+                super::monitor::ResourceLimitAction::Restart => {
+                    // Log the action
+                    tracing::warn!("{} - Attempting to restart process", message);
+
+                    // Try to reconnect
+                    if let Err(e) = self.reconnect(&server_name, &instance_id).await {
+                        tracing::error!(
+                            "Failed to restart '{}' instance '{}' after resource limit exceeded: {}",
+                            server_name, instance_id, e
+                        );
+                    }
+                }
+                super::monitor::ResourceLimitAction::Terminate => {
+                    // Log the action
+                    tracing::warn!("{} - Attempting to terminate process", message);
+
+                    // Try to disconnect
+                    if let Err(e) = self.disconnect(&server_name, &instance_id).await {
+                        tracing::error!(
+                            "Failed to terminate '{}' instance '{}' after resource limit exceeded: {}",
+                            server_name, instance_id, e
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Check connection status for all instances
@@ -826,7 +979,7 @@ impl UpstreamConnectionPool {
                             );
 
                             // Calculate time since last failure
-                            let now = chrono::Utc::now().timestamp() as u64;
+                            let now = chrono::Local::now().timestamp() as u64;
                             let seconds_since_last_failure =
                                 now.saturating_sub(error_details.last_failure_time);
 
@@ -855,7 +1008,7 @@ impl UpstreamConnectionPool {
                             let backoff_seconds = 60; // 1 minute
 
                             // Calculate time since last failure
-                            let now = chrono::Utc::now().timestamp() as u64;
+                            let now = chrono::Local::now().timestamp() as u64;
                             let seconds_since_last_failure =
                                 now.saturating_sub(error_details.last_failure_time);
 

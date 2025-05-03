@@ -54,14 +54,102 @@ pub async fn get_status(
 pub async fn get_metrics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SystemMetricsResponse>, ApiError> {
-    // Get metrics from the system metrics collector
-    let metrics_collector = &state.metrics_collector;
+    // We'll get metrics directly from sysinfo instead of the metrics collector
+
+    // Get connection pool metrics
+    let pool = state.connection_pool.lock().await;
+
+    // Count instances by status
+    let mut total_instances_count = 0;
+    let mut ready_instances_count = 0;
+    let mut error_instances_count = 0;
+    let mut initializing_instances_count = 0;
+    let mut busy_instances_count = 0;
+    let mut shutdown_instances_count = 0;
+    let mut total_tools_count = 0;
+    let mut unique_tools = std::collections::HashSet::new();
+
+    // Count connected servers
+    let mut connected_servers_count = 0;
+
+    // Iterate through all instances
+    for (_, instances) in &pool.connections {
+        let mut server_has_ready_instance = false;
+
+        for (_, conn) in instances {
+            total_instances_count += 1;
+
+            // Count by status
+            if conn.is_connected() {
+                ready_instances_count += 1;
+                server_has_ready_instance = true;
+            } else {
+                // Use string representation for simplicity
+                match conn.status_string().as_str() {
+                    "error" => error_instances_count += 1,
+                    "initializing" => initializing_instances_count += 1,
+                    "busy" => busy_instances_count += 1,
+                    "shutdown" => shutdown_instances_count += 1,
+                    _ => {} // Unknown status
+                }
+            }
+
+            // Count tools
+            total_tools_count += conn.tools.len();
+            for tool in &conn.tools {
+                unique_tools.insert(tool.name.clone());
+            }
+        }
+
+        // Count connected servers
+        if server_has_ready_instance {
+            connected_servers_count += 1;
+        }
+    }
+
+    // Get system metrics using sysinfo
+    let mut system = sysinfo::System::new();
+    system.refresh_all();
+
+    // Get current process ID
+    let pid = std::process::id();
+
+    // Get process metrics
+    let (cpu_usage, memory_usage) =
+        if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
+            (Some(process.cpu_usage()), Some(process.memory()))
+        } else {
+            (None, None)
+        };
+
+    // Get system metrics
+    let system_cpu_usage = Some(system.global_cpu_info().cpu_usage());
+    let system_memory_usage = Some(system.used_memory());
+    let system_memory_total = Some(system.total_memory());
+
+    // Get current timestamp
+    let timestamp = chrono::Local::now().to_rfc3339();
+
+    // Get uptime
+    let uptime_seconds = get_uptime_seconds();
 
     Ok(Json(SystemMetricsResponse {
-        cpu_usage: metrics_collector.get_cpu_usage(),
-        memory_usage_mb: metrics_collector.get_memory_usage_mb(),
-        requests_processed: 0,     // Not implemented yet
-        avg_response_time_ms: 0.0, // Not implemented yet
+        uptime_seconds,
+        timestamp,
+        connected_servers_count,
+        total_instances_count,
+        ready_instances_count,
+        error_instances_count,
+        initializing_instances_count,
+        busy_instances_count,
+        shutdown_instances_count,
+        total_tools_count,
+        unique_tools_count: unique_tools.len(),
+        cpu_usage,
+        memory_usage,
+        system_cpu_usage,
+        system_memory_usage,
+        system_memory_total,
     }))
 }
 

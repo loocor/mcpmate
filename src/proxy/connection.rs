@@ -28,6 +28,8 @@ pub struct UpstreamConnection {
     pub status: ConnectionStatus,
     /// Last time the health check was performed
     pub last_health_check: Instant,
+    /// Process ID of the server process
+    pub process_id: Option<u32>,
     /// CPU usage of the process (percentage)
     pub cpu_usage: Option<f32>,
     /// Memory usage of the process (bytes)
@@ -48,6 +50,7 @@ impl Clone for UpstreamConnection {
             connection_attempts: self.connection_attempts,
             status: self.status.clone(),
             last_health_check: self.last_health_check,
+            process_id: self.process_id,
             cpu_usage: self.cpu_usage,
             memory_usage: self.memory_usage,
         }
@@ -68,6 +71,7 @@ impl UpstreamConnection {
             connection_attempts: 0,
             status: ConnectionStatus::Shutdown,
             last_health_check: now,
+            process_id: None,
             cpu_usage: None,
             memory_usage: None,
         }
@@ -93,7 +97,7 @@ impl UpstreamConnection {
             ConnectionStatus::Error(details) => {
                 (details.failure_count + 1, details.first_failure_time)
             }
-            _ => (1, chrono::Utc::now().timestamp() as u64),
+            _ => (1, chrono::Local::now().timestamp() as u64),
         };
 
         // Create error details
@@ -102,7 +106,7 @@ impl UpstreamConnection {
             error_type: super::types::ErrorType::Temporary, // Default to temporary
             failure_count,
             first_failure_time,
-            last_failure_time: chrono::Utc::now().timestamp() as u64,
+            last_failure_time: chrono::Local::now().timestamp() as u64,
         };
 
         self.status = ConnectionStatus::Error(error_details);
@@ -115,8 +119,8 @@ impl UpstreamConnection {
             message: error_msg,
             error_type: super::types::ErrorType::Permanent,
             failure_count: 1,
-            first_failure_time: chrono::Utc::now().timestamp() as u64,
-            last_failure_time: chrono::Utc::now().timestamp() as u64,
+            first_failure_time: chrono::Local::now().timestamp() as u64,
+            last_failure_time: chrono::Local::now().timestamp() as u64,
         };
 
         self.status = ConnectionStatus::Error(error_details);

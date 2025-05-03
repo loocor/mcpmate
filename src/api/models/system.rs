@@ -34,16 +34,36 @@ pub struct SystemStatusResponse {
 /// System metrics response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SystemMetricsResponse {
-    /// CPU usage percentage
-    pub cpu_usage: f32,
-    /// Memory usage in MB
-    pub memory_usage_mb: f32,
-    /// Number of requests processed
-    pub requests_processed: u64,
-    /// Average response time in ms
-    pub avg_response_time_ms: f32,
-    // TODO: Consider adding the following fields in the future:
-    // - connection_pool_summary: ConnectionPoolSummary - Summary statistics about the connection pool
-    // - active_instances_count: usize - Number of active instances across all servers
-    // - instance_status_counts: HashMap<String, usize> - Count of instances by status (Ready, Error, etc.)
+    /// System uptime in seconds
+    pub uptime_seconds: u64,
+    /// Current timestamp in ISO 8601 format
+    pub timestamp: String,
+    /// Number of connected servers
+    pub connected_servers_count: usize,
+    /// Number of total server instances
+    pub total_instances_count: usize,
+    /// Number of ready instances
+    pub ready_instances_count: usize,
+    /// Number of error instances
+    pub error_instances_count: usize,
+    /// Number of initializing instances
+    pub initializing_instances_count: usize,
+    /// Number of busy instances
+    pub busy_instances_count: usize,
+    /// Number of shutdown instances
+    pub shutdown_instances_count: usize,
+    /// Total number of tools available
+    pub total_tools_count: usize,
+    /// Number of unique tools available
+    pub unique_tools_count: usize,
+    /// CPU usage percentage of the proxy process
+    pub cpu_usage: Option<f32>,
+    /// Memory usage in bytes of the proxy process
+    pub memory_usage: Option<u64>,
+    /// Overall system CPU usage percentage
+    pub system_cpu_usage: Option<f32>,
+    /// Overall system memory usage in bytes
+    pub system_memory_usage: Option<u64>,
+    /// Total system memory in bytes
+    pub system_memory_total: Option<u64>,
 }
