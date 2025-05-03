@@ -13,9 +13,51 @@ pub enum ConnectionStatus {
     /// Server is processing a request
     Busy,
     /// Server encountered an error
-    Error(String),
+    Error(ErrorDetails),
     /// Server is shut down or disconnected
     Shutdown,
+}
+
+/// Detailed error information for connection errors
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErrorDetails {
+    /// Error message
+    pub message: String,
+    /// Error type
+    pub error_type: ErrorType,
+    /// Number of consecutive failures
+    pub failure_count: u32,
+    /// First failure time (as seconds since UNIX epoch)
+    pub first_failure_time: u64,
+    /// Last failure time (as seconds since UNIX epoch)
+    pub last_failure_time: u64,
+}
+
+/// Types of errors that can occur
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErrorType {
+    /// Temporary error that can be retried
+    Temporary,
+    /// Permanent error that requires manual intervention
+    Permanent,
+    /// Unknown error type
+    Unknown,
+}
+
+impl fmt::Display for ErrorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ErrorType::Temporary => write!(f, "Temporary"),
+            ErrorType::Permanent => write!(f, "Permanent"),
+            ErrorType::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+impl fmt::Display for ErrorDetails {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.message, self.error_type)
+    }
 }
 
 impl fmt::Display for ConnectionStatus {

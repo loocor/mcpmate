@@ -678,13 +678,15 @@ impl UpstreamConnectionPool {
             let pool_clone = connection_pool.clone();
 
             loop {
-                // Wait for health check interval
-                sleep(Duration::from_secs(30)).await;
+                // Wait for health check interval (2 minutes)
+                sleep(Duration::from_secs(120)).await;
 
                 // Check connection status for all instances
                 {
                     let mut pool = pool_clone.lock().await;
-                    pool.check_connection_status().await;
+                    if let Err(e) = pool.check_connection_status().await {
+                        tracing::error!("Error checking connection status: {}", e);
+                    }
                 }
 
                 // Check all connections for periodic reconnects
@@ -711,8 +713,8 @@ impl UpstreamConnectionPool {
                                         // Periodic reconnect to ensure health
                                         if now > conn.last_connected
                                             && now.duration_since(conn.last_connected)
-                                                > Duration::from_secs(1800)
-                                        // Every 30 minutes
+                                                > Duration::from_secs(3600)
+                                        // Every 60 minutes
                                         {
                                             tracing::info!(
                                                 "Health check: Periodic reconnect for '{}' instance '{}'",
@@ -765,14 +767,17 @@ impl UpstreamConnectionPool {
     }
 
     /// Check connection status for all instances
-    pub async fn check_connection_status(&mut self) {
+    pub async fn check_connection_status(&mut self) -> Result<()> {
         // Get all instances that need checking
         let instances_to_check = {
             let mut result = Vec::new();
 
             for (server_name, instances) in &self.connections {
                 for (instance_id, conn) in instances {
-                    if matches!(conn.status, ConnectionStatus::Ready) && conn.service.is_some() {
+                    // Check both Ready and Error states
+                    if (matches!(conn.status, ConnectionStatus::Ready) && conn.service.is_some())
+                        || matches!(conn.status, ConnectionStatus::Error(_))
+                    {
                         result.push((server_name.clone(), instance_id.clone()));
                     }
                 }
@@ -789,25 +794,124 @@ impl UpstreamConnectionPool {
                 Err(_) => continue,
             };
 
-            // Check if the service is still connected
-            if !conn.is_connected() {
-                tracing::warn!(
-                    "Connection check: Service for '{}' instance '{}' is not connected",
-                    server_name,
-                    instance_id
-                );
+            match &conn.status {
+                ConnectionStatus::Ready => {
+                    // Check if the service is still connected
+                    if !conn.is_connected() {
+                        tracing::warn!(
+                            "Connection check: Service for '{}' instance '{}' is not connected",
+                            server_name,
+                            instance_id
+                        );
 
-                // Try to reconnect
-                if let Err(e) = self.reconnect(&server_name, &instance_id).await {
-                    tracing::error!(
-                        "Connection check: Failed to reconnect to '{}' instance '{}': {}",
-                        server_name,
-                        instance_id,
-                        e
-                    );
+                        // Try to reconnect
+                        if let Err(e) = self.reconnect(&server_name, &instance_id).await {
+                            tracing::error!(
+                                "Connection check: Failed to reconnect to '{}' instance '{}': {}",
+                                server_name,
+                                instance_id,
+                                e
+                            );
+                        }
+                    }
+                }
+                ConnectionStatus::Error(error_details) => {
+                    // Check if we should retry based on error type and failure count
+                    let should_retry = match error_details.error_type {
+                        super::types::ErrorType::Temporary => {
+                            // Use exponential backoff for temporary errors
+                            let backoff_seconds = std::cmp::min(
+                                300,                                                     // Maximum 5 minutes
+                                2u64.pow(std::cmp::min(8, error_details.failure_count)), // Exponential backoff, max 2^8=256 seconds
+                            );
+
+                            // Calculate time since last failure
+                            let now = chrono::Utc::now().timestamp() as u64;
+                            let seconds_since_last_failure =
+                                now.saturating_sub(error_details.last_failure_time);
+
+                            // Only retry if enough time has passed based on backoff
+                            if seconds_since_last_failure >= backoff_seconds {
+                                tracing::info!(
+                                    "Connection check: Retrying temporary error for '{}' instance '{}' after {}s (failure count: {})",
+                                    server_name, instance_id, seconds_since_last_failure, error_details.failure_count
+                                );
+                                true
+                            } else {
+                                tracing::debug!(
+                                    "Connection check: Waiting {}s before retrying '{}' instance '{}' (failure count: {})",
+                                    backoff_seconds - seconds_since_last_failure,
+                                    server_name, instance_id, error_details.failure_count
+                                );
+                                false
+                            }
+                        }
+                        super::types::ErrorType::Permanent => {
+                            // Don't retry permanent errors
+                            false
+                        }
+                        super::types::ErrorType::Unknown => {
+                            // For unknown errors, retry with a fixed backoff
+                            let backoff_seconds = 60; // 1 minute
+
+                            // Calculate time since last failure
+                            let now = chrono::Utc::now().timestamp() as u64;
+                            let seconds_since_last_failure =
+                                now.saturating_sub(error_details.last_failure_time);
+
+                            // Only retry if enough time has passed
+                            seconds_since_last_failure >= backoff_seconds
+                        }
+                    };
+
+                    // If we should retry, attempt to reconnect
+                    if should_retry {
+                        // Check if we've exceeded the maximum retry count for temporary errors
+                        let max_retries_exceeded =
+                            matches!(error_details.error_type, super::types::ErrorType::Temporary)
+                                && error_details.failure_count > 10;
+
+                        if max_retries_exceeded {
+                            // Store the failure count for later use
+                            let failure_count = error_details.failure_count;
+
+                            // We need to break out of the match and for loop to avoid borrowing issues
+                            // No need to explicitly drop a reference
+
+                            // Convert to permanent error after too many retries
+                            {
+                                let conn = self.get_instance_mut(&server_name, &instance_id)?;
+                                conn.update_permanent_error(format!(
+                                    "Too many failed reconnection attempts ({}). Manual intervention required.",
+                                    failure_count
+                                ));
+                            }
+
+                            tracing::error!(
+                                "Connection check: Too many failed reconnection attempts for '{}' instance '{}' ({}). Marking as permanent error.",
+                                server_name, instance_id, failure_count
+                            );
+                            continue;
+                        }
+
+                        // Try to reconnect
+                        if let Err(e) = self.reconnect(&server_name, &instance_id).await {
+                            tracing::error!(
+                                "Connection check: Failed to reconnect to '{}' instance '{}': {}",
+                                server_name,
+                                instance_id,
+                                e
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    // Other states don't need checking
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Calculate a hash value representing the current state of the connection pool

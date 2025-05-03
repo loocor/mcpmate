@@ -15,7 +15,7 @@ use crate::{
         },
         routes::AppState,
     },
-    proxy::types::ConnectionStatus,
+    proxy::types::{ConnectionStatus, ErrorType},
 };
 
 use super::ApiError;
@@ -261,7 +261,7 @@ pub async fn get_instance(
         },
         tools_count: conn.tools.len(),
         error_message: match &conn.status {
-            ConnectionStatus::Error(err) => Some(err.clone()),
+            ConnectionStatus::Error(err) => Some(err.message.clone()),
             _ => None,
         },
         server_type: pool.get_server_type(&name).unwrap_or_default(),
@@ -311,7 +311,17 @@ pub async fn check_health(
         ConnectionStatus::Ready => "Instance is ready and healthy".to_string(),
         ConnectionStatus::Busy => "Instance is busy processing a request".to_string(),
         ConnectionStatus::Initializing => "Instance is initializing".to_string(),
-        ConnectionStatus::Error(ref err) => format!("Instance has an error: {}", err),
+        ConnectionStatus::Error(ref err) => {
+            let error_type = match err.error_type {
+                ErrorType::Temporary => "temporary",
+                ErrorType::Permanent => "permanent",
+                ErrorType::Unknown => "unknown",
+            };
+            format!(
+                "Instance has a {} error: {} (failure count: {})",
+                error_type, err.message, err.failure_count
+            )
+        }
         ConnectionStatus::Shutdown => "Instance is shut down".to_string(),
     };
 

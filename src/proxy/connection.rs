@@ -88,7 +88,38 @@ impl UpstreamConnection {
 
     /// Update connection status to error
     pub fn update_failed(&mut self, error_msg: String) {
-        self.status = ConnectionStatus::Error(error_msg);
+        // Check if we're already in an error state
+        let (failure_count, first_failure_time) = match &self.status {
+            ConnectionStatus::Error(details) => {
+                (details.failure_count + 1, details.first_failure_time)
+            }
+            _ => (1, chrono::Utc::now().timestamp() as u64),
+        };
+
+        // Create error details
+        let error_details = super::types::ErrorDetails {
+            message: error_msg,
+            error_type: super::types::ErrorType::Temporary, // Default to temporary
+            failure_count,
+            first_failure_time,
+            last_failure_time: chrono::Utc::now().timestamp() as u64,
+        };
+
+        self.status = ConnectionStatus::Error(error_details);
+    }
+
+    /// Update connection status to permanent error (requires manual intervention)
+    pub fn update_permanent_error(&mut self, error_msg: String) {
+        // Create error details
+        let error_details = super::types::ErrorDetails {
+            message: error_msg,
+            error_type: super::types::ErrorType::Permanent,
+            failure_count: 1,
+            first_failure_time: chrono::Utc::now().timestamp() as u64,
+            last_failure_time: chrono::Utc::now().timestamp() as u64,
+        };
+
+        self.status = ConnectionStatus::Error(error_details);
     }
 
     /// Update connection status to initializing
