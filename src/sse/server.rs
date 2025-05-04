@@ -402,8 +402,10 @@ impl ServerHandler for SseProxyServer {
             // Call the upstream tool
             match crate::core::tool::call_upstream_tool(
                 &self.connection_pool,
-                &tool_name_str,
-                arguments,
+                CallToolRequestParam {
+                    name: tool_name_str.clone().into(),
+                    arguments,
+                },
             )
             .await
             {

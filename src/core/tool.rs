@@ -444,11 +444,13 @@ fn detect_common_prefix(tools: &[Tool], server_name: &str) -> bool {
 /// Call a tool on the appropriate upstream server
 pub async fn call_upstream_tool(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
-    tool_name: &str,
-    arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    request: CallToolRequestParam,
 ) -> Result<CallToolResult> {
+    // Extract the tool name from the request
+    let tool_name = request.name.to_string();
+
     // Try to parse the tool name to extract server prefix if present
-    let (server_prefix, original_tool_name) = parse_tool_name(tool_name);
+    let (server_prefix, original_tool_name) = parse_tool_name(&tool_name);
 
     tracing::debug!(
         "Parsed tool name '{}' -> prefix: {:?}, original: '{}'",
@@ -475,7 +477,7 @@ pub async fn call_upstream_tool(
 
                 // If we couldn't find the tool with the original name, try with the full name
                 // This handles cases where the prefix detection might be incorrect
-                tool_mapping.get(tool_name).cloned().context(format!(
+                tool_mapping.get(&tool_name).cloned().context(format!(
                     "Tool '{}' not found in any connected server",
                     tool_name
                 ))?
@@ -483,7 +485,7 @@ pub async fn call_upstream_tool(
         }
     } else {
         // Otherwise, try to find the tool directly
-        tool_mapping.get(tool_name).cloned().context(format!(
+        tool_mapping.get(&tool_name).cloned().context(format!(
             "Tool '{}' not found in any connected server",
             tool_name
         ))?
@@ -511,7 +513,7 @@ pub async fn call_upstream_tool(
         }
     } else {
         // Otherwise, use the tool name as is
-        tool_name
+        &tool_name
     };
 
     tracing::info!(
@@ -551,14 +553,19 @@ pub async fn call_upstream_tool(
     conn.update_busy();
 
     // Prepare the request with the upstream tool name
-    let request = CallToolRequestParam {
+    let upstream_request = CallToolRequestParam {
         name: upstream_tool_name.to_string().into(),
-        arguments,
+        arguments: request.arguments,
     };
 
     // Get the service and call the tool
     // We already checked that service is Some above
-    let result = conn.service.as_mut().unwrap().call_tool(request).await;
+    let result = conn
+        .service
+        .as_mut()
+        .unwrap()
+        .call_tool(upstream_request)
+        .await;
 
     // Mark the connection as ready again
     conn.status = super::types::ConnectionStatus::Ready;
