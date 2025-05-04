@@ -38,5 +38,5 @@ uuid = { version = "1.7", features = ["v4", "serde"] }
 sysinfo = "0.30.5"
 
 [[bin]]
-name = "proxy-sse"
-path = "src/bin/proxy-sse.rs"
+name = "proxy"
+path = "src/bin/proxy.rs"
