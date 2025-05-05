@@ -973,6 +973,7 @@ dependencies = [
  "clap",
  "dotenvy",
  "json5",
+ "once_cell",
  "rmcp",
  "schemars",
  "serde",
