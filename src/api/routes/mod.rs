@@ -2,6 +2,7 @@
 // Contains route definitions for the API server
 
 pub mod mcp;
+pub mod notifications;
 pub mod system;
 
 use axum::Router;
@@ -37,5 +38,6 @@ pub fn create_router(connection_pool: Arc<Mutex<UpstreamConnectionPool>>) -> Rou
 
     Router::new()
         .merge(mcp::routes(state.clone()))
-        .merge(system::routes(state))
+        .merge(system::routes(state.clone()))
+        .merge(notifications::routes(state))
 }

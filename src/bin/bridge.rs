@@ -9,15 +9,67 @@ use rmcp::{
     serve_server,
     service::{RequestContext, ServiceExt},
     transport::{io, SseTransport},
-    Error as McpError, RoleClient, RoleServer, ServerHandler,
+    ClientHandler, Error as McpError, RoleClient, RoleServer, ServerHandler,
 };
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing_subscriber::{self, EnvFilter};
 
 // Global variable to store SSE client
 static SSE_CLIENT: OnceCell<
-    Mutex<Option<rmcp::service::RunningService<RoleClient, rmcp::model::InitializeRequestParam>>>,
+    Mutex<Option<rmcp::service::RunningService<RoleClient, BridgeClient>>>,
 > = OnceCell::new();
+
+/// A client handler for the bridge client
+#[derive(Clone, Debug)]
+struct BridgeClient {
+    /// Flag indicating whether the tool list has changed
+    tool_list_changed: Arc<Mutex<bool>>,
+    /// The peer for sending requests and notifications
+    peer: Option<rmcp::service::Peer<RoleClient>>,
+}
+
+impl BridgeClient {
+    /// Create a new bridge client
+    fn new() -> Self {
+        Self {
+            tool_list_changed: Arc::new(Mutex::new(false)),
+            peer: None,
+        }
+    }
+}
+
+impl ClientHandler for BridgeClient {
+    fn get_peer(&self) -> Option<rmcp::service::Peer<RoleClient>> {
+        self.peer.clone()
+    }
+
+    fn set_peer(&mut self, peer: rmcp::service::Peer<RoleClient>) {
+        self.peer = Some(peer);
+    }
+
+    fn get_info(&self) -> ClientInfo {
+        ClientInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ClientCapabilities::default(),
+            client_info: Implementation {
+                name: "mcpman-bridge-client".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+        }
+    }
+
+    async fn on_tool_list_changed(&self) {
+        tracing::info!("Received tool list changed notification from upstream server");
+
+        // Set the tool list changed flag
+        let mut flag = self.tool_list_changed.lock().await;
+        *flag = true;
+
+        // The notification will be forwarded to downstream clients
+        // when they call list_tools or call_tool
+    }
+}
 
 /// Command line arguments for the stdio to SSE bridge
 #[derive(Parser, Debug)]
@@ -45,6 +97,48 @@ impl BridgeServer {
         Self { sse_url }
     }
 
+    /// Check if the tool list has changed and send a notification if needed
+    async fn check_tool_list_changed(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        // Get the global SSE client
+        if let Some(client_mutex) = SSE_CLIENT.get() {
+            let client_guard = client_mutex.lock().await;
+
+            if let Some(sse_client) = &*client_guard {
+                // Get the client handler
+                let client_handler = sse_client.service();
+
+                // Check if the tool list has changed
+                let tool_list_changed = {
+                    let flag = client_handler.tool_list_changed.lock().await;
+                    *flag
+                };
+
+                // If the tool list has changed, send a notification
+                if tool_list_changed {
+                    // Send the notification
+                    if let Err(e) = context.peer.notify_tool_list_changed().await {
+                        tracing::error!("Failed to send tool list changed notification: {}", e);
+                        return Err(McpError::internal_error(
+                            format!("Failed to send tool list changed notification: {}", e),
+                            None,
+                        ));
+                    }
+
+                    // Reset the flag
+                    let mut flag = client_handler.tool_list_changed.lock().await;
+                    *flag = false;
+
+                    tracing::info!("Sent tool list changed notification to downstream client");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Connect to the upstream SSE server
     async fn connect_to_sse(&self) -> Result<(), McpError> {
         // initialize the global SSE client
@@ -61,15 +155,8 @@ impl BridgeServer {
             return Ok(());
         }
 
-        // create client info
-        let client_info = ClientInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "mcpman-bridge".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
-        };
+        // create client handler
+        let client_handler = BridgeClient::new();
 
         // create SSE transport
         let sse_transport = match SseTransport::start(&self.sse_url).await {
@@ -87,7 +174,7 @@ impl BridgeServer {
         };
 
         // initialize SSE client
-        *client_guard = match client_info.serve(sse_transport).await {
+        *client_guard = match client_handler.serve(sse_transport).await {
             Ok(client) => {
                 tracing::info!("Successfully initialized SSE client");
                 Some(client)
@@ -110,7 +197,10 @@ impl ServerHandler for BridgeServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed() // Enable tool list changed notifications
+                .build(),
             server_info: Implementation {
                 name: "mcpman-bridge".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
@@ -124,8 +214,14 @@ impl ServerHandler for BridgeServer {
     async fn list_tools(
         &self,
         request: Option<rmcp::model::PaginatedRequestParamInner>,
-        _ctx: RequestContext<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, McpError> {
+        // Check if the tool list has changed and send a notification if needed
+        if let Err(e) = self.check_tool_list_changed(ctx.clone()).await {
+            tracing::warn!("Failed to check tool list changed: {}", e);
+            // Continue with the request even if the notification failed
+        }
+
         // get the global SSE client
         if let Some(client_mutex) = SSE_CLIENT.get() {
             let client_guard = client_mutex.lock().await;
@@ -161,8 +257,14 @@ impl ServerHandler for BridgeServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
-        _ctx: RequestContext<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        // Check if the tool list has changed and send a notification if needed
+        if let Err(e) = self.check_tool_list_changed(ctx.clone()).await {
+            tracing::warn!("Failed to check tool list changed: {}", e);
+            // Continue with the request even if the notification failed
+        }
+
         // get the global SSE client
         if let Some(client_mutex) = SSE_CLIENT.get() {
             let client_guard = client_mutex.lock().await;

@@ -31,6 +31,29 @@ pub struct SseProxyServer {
 
 #[tool(tool_box)]
 impl SseProxyServer {
+    /// Send a tool list changed notification to all connected clients
+    ///
+    /// This method is used by the API server to notify clients when the tool list has changed
+    pub async fn notify_tool_list_changed(
+        &self,
+        context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<(), McpError> {
+        // Get the peer from the context
+        let peer = context.peer;
+
+        // Send the notification
+        if let Err(e) = peer.notify_tool_list_changed().await {
+            tracing::error!("Failed to send tool list changed notification: {}", e);
+            return Err(McpError::internal_error(
+                format!("Failed to send tool list changed notification: {}", e),
+                None,
+            ));
+        }
+
+        tracing::info!("Sent tool list changed notification to client");
+        Ok(())
+    }
+
     /// Get the cached tool name mapping, or build a new one if the cache is expired or empty
     ///
     /// This optimized version uses a more efficient caching strategy:
@@ -187,7 +210,10 @@ impl ServerHandler for SseProxyServer {
             instructions: Some(
                 "MCP SSE Proxy Server that aggregates tools from multiple MCP servers".into(),
             ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed() // Enable tool list changed notifications
+                .build(),
             ..Default::default()
         }
     }

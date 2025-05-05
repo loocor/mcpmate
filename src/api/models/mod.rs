@@ -2,6 +2,7 @@
 // Contains data models for API requests and responses
 
 pub mod mcp;
+pub mod notifications;
 pub mod system;
 
 /// Generic success response

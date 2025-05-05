@@ -2,6 +2,7 @@
 // Contains handler functions for API endpoints
 
 pub mod instance;
+pub mod notification;
 pub mod server;
 pub mod system;
 
