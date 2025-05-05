@@ -8,23 +8,25 @@ use axum::{
 use std::sync::Arc;
 
 use super::AppState;
-use crate::api::handlers::mcp;
+use crate::api::handlers::{instance, server};
 
 /// Create MCP server management routes
 pub fn routes(state: Arc<AppState>) -> Router {
     let servers_router = Router::new()
-        .route("/", get(mcp::list_servers))
-        .route("/:name", get(mcp::get_server));
+        .route("/", get(server::list_servers))
+        .route("/:name", get(server::get_server))
+        .route("/:name/enable", post(server::enable_server))
+        .route("/:name/disable", post(server::disable_server))
+        .route("/:name/instances", get(server::list_instances));
 
     let instances_router = Router::new()
-        .route("/", get(mcp::list_instances))
-        .route("/:id", get(mcp::get_instance))
-        .route("/:id/health", get(mcp::check_health))
-        .route("/:id/disconnect", post(mcp::disconnect))
-        .route("/:id/disconnect/force", post(mcp::force_disconnect))
-        .route("/:id/reconnect", post(mcp::reconnect))
-        .route("/:id/reconnect/reset", post(mcp::reset_reconnect))
-        .route("/:id/cancel", post(mcp::cancel));
+        .route("/:id", get(instance::get_instance))
+        .route("/:id/health", get(instance::check_health))
+        .route("/:id/disconnect", post(instance::disconnect))
+        .route("/:id/disconnect/force", post(instance::force_disconnect))
+        .route("/:id/reconnect", post(instance::reconnect))
+        .route("/:id/reconnect/reset", post(instance::reset_reconnect))
+        .route("/:id/cancel", post(instance::cancel));
 
     let combined_router = servers_router.nest("/:name/instances", instances_router);
 

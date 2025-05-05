@@ -1,7 +1,8 @@
 // MCP Proxy API handlers module
 // Contains handler functions for API endpoints
 
-pub mod mcp;
+pub mod instance;
+pub mod server;
 pub mod system;
 
 use axum::{
