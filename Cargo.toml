@@ -1,12 +1,12 @@
 [package]
-name = "mcpman"
+name = "mcpmate"
 version = "0.1.0"
 edition = "2021"
-description = "MCPMan - A comprehensive management center for Model Context Protocol (MCP) servers"
+description = "MCPMate - A comprehensive management center for Model Context Protocol (MCP) servers"
 authors = ["Loocor <loocor@gmail.com>"]
 
 [lib]
-name = "mcpman"
+name = "mcpmate"
 path = "src/lib.rs"
 
 [dependencies]

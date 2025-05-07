@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use mcpman::{
+use mcpmate::{
     api::{handlers::system::initialize_server_start_time, ApiServer},
     core::config::{load_rule_config, load_server_config},
     core::ConnectionStatus,

@@ -1,12 +1,4 @@
-__pycache__/
 .DS_Store
 .venv/
-.specstory/
 runtime/
-
-
-# Added by cargo
-
 /target
-# SpecStory explanation file
-.specstory/.what-is-this.md
