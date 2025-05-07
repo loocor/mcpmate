@@ -1,10 +1,10 @@
-# MCPMan API Handlers
+# MCPMate API Handlers
 
-This directory contains handler functions for the MCPMan Proxy API server.
+This directory contains handler functions for the MCPMate Proxy API server.
 
 ## Purpose
 
-Handlers implement the business logic for API endpoints. They process incoming requests, interact with the MCPMan Proxy server, and return appropriate responses.
+Handlers implement the business logic for API endpoints. They process incoming requests, interact with the MCPMate Proxy server, and return appropriate responses.
 
 ## Files
 
@@ -14,7 +14,7 @@ Handlers implement the business logic for API endpoints. They process incoming r
 
 ## MCP Handlers
 
-The `mcp.rs` file contains handlers for managing MCPMan servers and instances:
+The `mcp.rs` file contains handlers for managing MCPMate servers and instances:
 
 - Server management:
   - `list_servers` - List all MCP servers
@@ -42,7 +42,7 @@ The `system.rs` file contains handlers for system operations:
 Each handler typically:
 
 1. Extracts and validates request parameters
-2. Interacts with the MCPMan Proxy server (via the connection pool)
+2. Interacts with the MCPMate Proxy server (via the connection pool)
 3. Transforms the result into an appropriate response
 4. Handles errors and returns appropriate status codes
 

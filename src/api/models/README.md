@@ -1,6 +1,6 @@
-# MCPMan API Models
+# MCPMate API Models
 
-This directory contains data models for the MCPMan Proxy API server.
+This directory contains data models for the MCPMate Proxy API server.
 
 ## Purpose
 

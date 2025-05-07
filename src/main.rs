@@ -1,3 +1,3 @@
 fn main() {
-    println!("Welcome to MCPMan!");
+    println!("Welcome to MCPMate!");
 }

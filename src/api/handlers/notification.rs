@@ -1,4 +1,4 @@
-// MCPMan Proxy API handlers for notifications
+// MCPMate Proxy API handlers for notifications
 // Contains handler functions for notification endpoints
 
 use axum::extract::{Json, Path, State};

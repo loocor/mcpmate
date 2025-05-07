@@ -1,4 +1,4 @@
-// SSE server implementation for MCPMan
+// SSE server implementation for MCPMate
 
 use anyhow::Result;
 use rmcp::{

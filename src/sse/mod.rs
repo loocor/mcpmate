@@ -1,4 +1,4 @@
-// SSE module for MCPMan
+// SSE module for MCPMate
 // Contains SSE server implementation
 
 pub mod pool;

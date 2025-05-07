@@ -53,7 +53,7 @@ impl ClientHandler for BridgeClient {
             protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
-                name: "mcpman-bridge-client".to_string(),
+                name: "mcpmate-bridge-client".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
         }
@@ -202,7 +202,7 @@ impl ServerHandler for BridgeServer {
                 .enable_tool_list_changed() // Enable tool list changed notifications
                 .build(),
             server_info: Implementation {
-                name: "mcpman-bridge".to_string(),
+                name: "mcpmate-bridge".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
             instructions: Some(

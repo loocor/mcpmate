@@ -1,10 +1,10 @@
-# MCPMan API Module
+# MCPMate API Module
 
-This module contains the RESTful API implementation for the MCPMan Proxy server.
+This module contains the RESTful API implementation for the MCPMate Proxy server.
 
 ## Purpose
 
-The API module provides HTTP endpoints for controlling and monitoring the MCPMan Proxy server. It allows external systems (like the MCPMan Desktop application) to interact with the proxy server without using the MCP protocol directly, avoiding circular dependencies.
+The API module provides HTTP endpoints for controlling and monitoring the MCPMate Proxy server. It allows external systems (like the MCPMate Desktop application) to interact with the proxy server without using the MCP protocol directly, avoiding circular dependencies.
 
 ## Structure
 
@@ -34,7 +34,7 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMan
 
 ## Usage
 
-The API server is started alongside the MCPMan Proxy server and provides a RESTful interface for controlling and monitoring the proxy server. This API is designed to be used by the MCPMan Desktop application and other client applications.
+The API server is started alongside the MCPMate Proxy server and provides a RESTful interface for controlling and monitoring the proxy server. This API is designed to be used by the MCPMate Desktop application and other client applications.
 
 ## Directory structure
 ```

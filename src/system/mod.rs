@@ -1,4 +1,4 @@
-// MCPMan system metrics module
+// MCPMate system metrics module
 // Contains functionality for collecting system metrics
 
 use std::sync::{Arc, Mutex};

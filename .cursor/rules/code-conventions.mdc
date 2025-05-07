@@ -5,7 +5,7 @@ alwaysApply: true
 ---
 # Code & Project Conventions
 
-This document outlines the unified code style, naming, error handling, file size, and project conventions for the MCPMan project. All team members and AI tools should follow these rules for consistency and maintainability.
+This document outlines the unified code style, naming, error handling, file size, and project conventions for the MCPMate project. All team members and AI tools should follow these rules for consistency and maintainability.
 
 > **For technology stack and toolchain details, see [tech-stack.mdc](mdc:tech-stack.mdc).**
 >

@@ -1,4 +1,4 @@
-// MCPMan Proxy API handlers for MCP server management
+// MCPMate Proxy API handlers for MCP server management
 // Contains handler functions for MCP server endpoints
 
 use axum::{
