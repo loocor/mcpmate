@@ -18,15 +18,11 @@
       "tools": { }
     },
     "playdocker": {
-      "enabled": true,
+      "enabled": false,
       "tools": { }
     },
     "playwright": {
-      "enabled": false,
-      "tools": { }
-    },
-    "proxy": {
-      "enabled": false,
+      "enabled": true,
       "tools": { }
     },
     "thinking": {

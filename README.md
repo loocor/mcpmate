@@ -22,6 +22,7 @@ MCPMate 旨在通过集中化的配置管理、智能化的服务调度和增强
 
 - 连接到多个 MCP 服务器并聚合它们的工具
 - 提供统一的接口给 AI 客户端
+- 支持多种传输协议（SSE、Streamable HTTP 或统一模式）
 - 实时监控和审计 MCP 通信
 - 检测潜在的安全风险（如工具投毒）
 - 智能管理服务器资源
@@ -30,11 +31,11 @@ MCPMate 旨在通过集中化的配置管理、智能化的服务调度和增强
 
 ### Bridge
 
-`bridge` 是一个轻量级的桥接组件，用于将stdio模式的MCP客户端（如Claude Desktop）连接到SSE模式的MCPMate代理服务器：
+`bridge` 是一个轻量级的桥接组件，用于将stdio模式的MCP客户端（如Claude Desktop）连接到HTTP模式的MCPMate代理服务器：
 
-- 将stdio协议转换为SSE协议，无需修改客户端
-- 自动继承SSE服务的所有功能和工具
-- 极简设计，只需配置SSE服务地址
+- 将stdio协议转换为HTTP协议（支持SSE和Streamable HTTP），无需修改客户端
+- 自动继承HTTP服务的所有功能和工具
+- 极简设计，只需配置服务地址
 - 适用于仅支持stdio模式的客户端（如Claude Desktop）
 
 ## 配置文件
@@ -62,7 +63,7 @@ MCPMate 旨在通过集中化的配置管理、智能化的服务调度和增强
 
 配置选项说明：
 
-- `kind`: 服务器类型，支持 "stdio" 和 "sse"
+- `kind`: 服务器类型，支持 "stdio"、"sse" 和 "streamable_http"
 - `command`: 要执行的命令（通常是 `npx`）
 - `commandPath`: （可选）命令的路径，如果指定，将与 `command` 拼接形成完整路径
 - `args`: 命令行参数数组。**重要**：参数和值必须作为单独的数组元素，例如 `["--loglevel", "verbose"]` 而不是 `["--loglevel verbose"]`
