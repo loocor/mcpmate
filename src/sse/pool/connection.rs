@@ -7,9 +7,10 @@ use tokio::{sync::Mutex, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
-use crate::core::connect_sse_server;
-use crate::core::stdio::connect_stdio_server_with_ct;
-use crate::core::types::ConnectionStatus;
+use crate::core::{
+    connect_http_server, connect_sse_server, stdio::connect_stdio_server_with_ct,
+    transport::TransportType, types::ConnectionStatus,
+};
 
 use super::UpstreamConnectionPool;
 
@@ -77,7 +78,10 @@ impl UpstreamConnectionPool {
         // Connect based on server type
         match server_type.as_str() {
             "stdio" => self.connect_stdio(server_name, instance_id).await?,
-            "sse" => self.connect_sse(server_name, instance_id).await?,
+            "sse" => self.connect_http(server_name, instance_id).await?,
+            "streamable_http" | "streamablehttp" => {
+                self.connect_http(server_name, instance_id).await?
+            }
             _ => {
                 let error_msg = format!("Unsupported server type: {}", server_type);
                 let conn = self.get_instance_mut(server_name, instance_id)?;
@@ -132,7 +136,10 @@ impl UpstreamConnectionPool {
         // Connect based on server type
         let result = match server_type.as_str() {
             "stdio" => self.connect_stdio(server_name, instance_id).await,
-            "sse" => self.connect_sse(server_name, instance_id).await,
+            "sse" => self.connect_http(server_name, instance_id).await,
+            "streamable_http" | "streamablehttp" => {
+                self.connect_http(server_name, instance_id).await
+            }
             _ => {
                 let error_msg = format!("Unsupported server type: {}", server_type);
                 let conn = self.get_instance_mut(server_name, instance_id)?;
@@ -227,19 +234,35 @@ impl UpstreamConnectionPool {
         }
     }
 
-    /// Connect to an SSE server
-    async fn connect_sse(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
+    /// Connect to an HTTP-based server (SSE or Streamable HTTP)
+    async fn connect_http(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
         // Get server configuration
         let server_config = self.config.mcp_servers.get(server_name).unwrap();
 
-        // Connect to the server using the proxy module function
-        match connect_sse_server(server_name, server_config).await {
-            Ok((service, tools)) => {
-                // Update connection
-                self.update_connection(server_name, instance_id, service, tools);
-                Ok(())
+        // Get transport type
+        let transport_type = server_config.get_transport_type();
+
+        // For backward compatibility, if the type is SSE, use the old function
+        if transport_type == TransportType::Sse {
+            // Connect to the server using the proxy module function
+            match connect_sse_server(server_name, server_config).await {
+                Ok((service, tools)) => {
+                    // Update connection
+                    self.update_connection(server_name, instance_id, service, tools);
+                    Ok(())
+                }
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
+        } else {
+            // Connect using the new function for Streamable HTTP
+            match connect_http_server(server_name, server_config, transport_type).await {
+                Ok((service, tools)) => {
+                    // Update connection
+                    self.update_connection(server_name, instance_id, service, tools);
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
         }
     }
 

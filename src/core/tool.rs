@@ -257,10 +257,14 @@ pub async fn get_all_tools_with_smart_prefix(
                 // Update description to indicate source
                 if !processed_tool
                     .description
-                    .contains(&format!("[{}]", server_name))
+                    .as_ref()
+                    .map_or(false, |desc| desc.contains(&format!("[{}]", server_name)))
                 {
-                    processed_tool.description =
-                        format!("[{}] {}", server_name, processed_tool.description).into();
+                    let desc = processed_tool
+                        .description
+                        .as_ref()
+                        .map_or("".to_string(), |d| d.to_string());
+                    processed_tool.description = Some(format!("[{}] {}", server_name, desc).into());
                 }
             }
 
@@ -317,14 +321,16 @@ pub async fn build_tool_name_mapping(
                 for original_tool in &conn.tools {
                     // Check if this is the same tool (by comparing descriptions or other properties)
                     // This is a heuristic and might need improvement
-                    if prefixed_tool
-                        .description
-                        .contains(&original_tool.description.to_string())
-                        || (prefixed_tool
-                            .name
-                            .to_string()
-                            .contains(&original_tool.name.to_string())
-                            && prefixed_tool.name.to_string() != original_tool.name.to_string())
+                    if prefixed_tool.description.as_ref().map_or(false, |desc| {
+                        original_tool
+                            .description
+                            .as_ref()
+                            .map_or(false, |orig_desc| desc.contains(&orig_desc.to_string()))
+                    }) || (prefixed_tool
+                        .name
+                        .to_string()
+                        .contains(&original_tool.name.to_string())
+                        && prefixed_tool.name.to_string() != original_tool.name.to_string())
                     {
                         // Found the original tool
                         name_mapping.insert(

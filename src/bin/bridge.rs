@@ -213,7 +213,7 @@ impl ServerHandler for BridgeServer {
 
     async fn list_tools(
         &self,
-        request: Option<rmcp::model::PaginatedRequestParamInner>,
+        request: Option<rmcp::model::PaginatedRequestParam>,
         ctx: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, McpError> {
         // Check if the tool list has changed and send a notification if needed

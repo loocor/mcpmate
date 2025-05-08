@@ -3,6 +3,8 @@ use json5;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
+use super::transport::TransportType;
+
 /// Configuration for MCP servers
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
@@ -19,6 +21,31 @@ pub struct ServerConfig {
     pub args: Option<Vec<String>>,
     pub url: Option<String>,
     pub env: Option<HashMap<String, String>>,
+    #[serde(rename = "transportType")]
+    #[serde(default)]
+    pub transport_type: Option<TransportType>,
+}
+
+impl ServerConfig {
+    /// Get the transport type for this server
+    pub fn get_transport_type(&self) -> TransportType {
+        // If transport_type is explicitly set, use it
+        if let Some(transport_type) = self.transport_type {
+            return transport_type;
+        }
+
+        // Otherwise, infer from the 'kind' field for backward compatibility
+        match self.kind.as_str() {
+            "stdio" => TransportType::Stdio,
+            "sse" => TransportType::Sse,
+            "streamable_http" | "streamablehttp" => TransportType::StreamableHttp,
+            _ => {
+                // Default to SSE for unknown types
+                tracing::warn!("Unknown server type: {}, defaulting to SSE", self.kind);
+                TransportType::Sse
+            }
+        }
+    }
 }
 
 /// Load the MCP server configuration from a file

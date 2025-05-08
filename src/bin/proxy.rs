@@ -3,14 +3,14 @@ use clap::Parser;
 use mcpmate::{
     api::{handlers::system::initialize_server_start_time, ApiServer},
     core::config::{load_rule_config, load_server_config},
-    core::ConnectionStatus,
+    core::{ConnectionStatus, TransportType},
     sse::SseProxyServer,
 };
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use tracing_subscriber::{self, EnvFilter};
 
-/// Command line arguments for the MCP SSE proxy server
+/// Command line arguments for the MCP proxy server
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -33,6 +33,10 @@ struct Args {
     /// Log level
     #[arg(short, long, default_value = "info")]
     log_level: String,
+
+    /// Transport type (sse, str, or uni)
+    #[arg(long, alias = "trans", default_value = "uni")]
+    transport: String,
 }
 
 #[tokio::main]
@@ -129,14 +133,58 @@ async fn main() -> Result<()> {
         );
     });
 
-    // Start SSE server
+    // Start proxy server with specified transport
     let mcp_bind_address = format!("127.0.0.1:{}", args.port).parse()?;
-    tracing::info!("Starting MCP SSE server on {}", mcp_bind_address);
 
-    // Start the SSE server
-    if let Err(e) = proxy.start(mcp_bind_address, "/sse", "/message").await {
-        tracing::error!("Failed to start SSE server: {}", e);
-        return Err(e);
+    // Check if using unified mode
+    if args.transport == "unified" || args.transport == "uni" {
+        tracing::info!(
+            "Starting MCP proxy server on {} with unified transport (both SSE and Streamable HTTP)",
+            mcp_bind_address
+        );
+
+        // Start the unified server
+        if let Err(e) = proxy.start_unified(mcp_bind_address).await {
+            tracing::error!("Failed to start unified proxy server: {}", e);
+            return Err(e);
+        }
+    } else {
+        // Parse transport type for non-unified mode
+        let transport_type = match args.transport.as_str() {
+            "sse" => TransportType::Sse,
+            "streamable_http" | "streamablehttp" | "str" => TransportType::StreamableHttp,
+            _ => {
+                tracing::warn!(
+                    "Unknown transport type: {}, defaulting to SSE",
+                    args.transport
+                );
+                TransportType::Sse
+            }
+        };
+
+        tracing::info!(
+            "Starting MCP proxy server on {} with transport type {:?}",
+            mcp_bind_address,
+            transport_type
+        );
+
+        // Start the server with specific transport
+        let path = match transport_type {
+            TransportType::Sse => "/sse",
+            TransportType::StreamableHttp => "/mcp", // Path for Streamable HTTP
+            _ => "/sse",                             // Default
+        };
+
+        tracing::info!(
+            "Using path '{}' for transport type {:?}",
+            path,
+            transport_type
+        );
+
+        if let Err(e) = proxy.start(mcp_bind_address, path, transport_type).await {
+            tracing::error!("Failed to start proxy server: {}", e);
+            return Err(e);
+        }
     }
 
     // Start API server
