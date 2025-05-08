@@ -14,7 +14,7 @@ pub mod types;
 pub mod utils;
 
 // Re-exports
-pub use crate::sse::pool::UpstreamConnectionPool;
+pub use crate::http::pool::UpstreamConnectionPool;
 pub use connection::UpstreamConnection;
 pub use sse::connect_sse_server;
 pub use stdio::connect_stdio_server;

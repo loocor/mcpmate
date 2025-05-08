@@ -1,4 +1,4 @@
-// SSE server implementation for MCPMate
+// HTTP proxy server implementation for MCPMate
 
 use anyhow::{Context, Result};
 use rmcp::{
@@ -17,9 +17,9 @@ use crate::{
     core::{tool::get_all_tools_with_smart_prefix, UpstreamConnectionPool},
 };
 
-/// SSE Proxy Server that aggregates tools from multiple MCP servers
+/// HTTP Proxy Server that aggregates tools from multiple MCP servers
 #[derive(Debug, Clone)]
-pub struct SseProxyServer {
+pub struct HttpProxyServer {
     /// Connection pool for upstream servers
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     /// Tool name mapping cache
@@ -32,7 +32,7 @@ pub struct SseProxyServer {
 }
 
 #[tool(tool_box)]
-impl SseProxyServer {
+impl HttpProxyServer {
     /// Send a tool list changed notification to all connected clients
     ///
     /// This method is used by the API server to notify clients when the tool list has changed
@@ -155,7 +155,7 @@ impl SseProxyServer {
         new_mapping
     }
 
-    /// Create a new SSE proxy server
+    /// Create a new HTTP proxy server
     pub fn new(config: Arc<Config>, rule_config: Arc<HashMap<String, bool>>) -> Self {
         // Create connection pool
         let mut pool = UpstreamConnectionPool::new(config, rule_config);
@@ -177,6 +177,21 @@ impl SseProxyServer {
     }
 
     /// Start the proxy server with specified transport type
+    ///
+    /// This method starts a proxy server with the specified transport type, address, and path.
+    /// It's a convenience method that delegates to the appropriate specialized start method
+    /// based on the transport type.
+    ///
+    /// Note: For maximum compatibility, consider using `start_unified` instead, which supports
+    /// both Streamable HTTP and SSE protocols on the same port.
+    ///
+    /// # Arguments
+    /// * `bind_address` - The socket address to bind the server to
+    /// * `path` - The path for the server endpoint
+    /// * `transport_type` - The transport type to use (SSE or Streamable HTTP)
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if the server started successfully, Err otherwise
     pub async fn start(
         &self,
         bind_address: SocketAddr,
@@ -192,16 +207,25 @@ impl SseProxyServer {
 
         let result = match transport_type {
             TransportType::Sse => {
-                tracing::info!("Using SSE transport mode");
-                self.start_sse(bind_address, path).await
+                tracing::info!("Using SSE transport mode (2024-11-05 MCP specification)");
+                self.start_sse(bind_address, path)
+                    .await
+                    .context(format!("Failed to start SSE server on {}", bind_address))
             }
             TransportType::StreamableHttp => {
-                tracing::info!("Using Streamable HTTP transport mode");
-                self.start_streamable_http(bind_address, path).await
+                tracing::info!(
+                    "Using Streamable HTTP transport mode (2025-03-26 MCP specification)"
+                );
+                self.start_streamable_http(bind_address, path)
+                    .await
+                    .context(format!(
+                        "Failed to start Streamable HTTP server on {}",
+                        bind_address
+                    ))
             }
             _ => {
                 let err = anyhow::anyhow!(
-                    "Unsupported transport type for server: {:?}",
+                    "Unsupported transport type for server: {:?}. Supported types are SSE and StreamableHttp.",
                     transport_type
                 );
                 tracing::error!("{}", err);
@@ -210,7 +234,7 @@ impl SseProxyServer {
         };
 
         if let Err(ref e) = result {
-            tracing::error!("Failed to start server: {}", e);
+            tracing::error!("Failed to start server: {:#}", e); // Use {:#} to show the full error chain
         } else {
             tracing::info!("Server started successfully");
         }
@@ -218,8 +242,34 @@ impl SseProxyServer {
         result
     }
 
+    /// Create a service factory function that returns a new HttpProxyServer instance
+    ///
+    /// This helper method is used by all server start methods to create a factory function
+    /// that returns a new HttpProxyServer instance for handling requests.
+    fn create_service_factory(&self) -> impl Fn() -> Self + Clone + Send + Sync + 'static {
+        let proxy_clone = self.clone();
+        move || proxy_clone.clone()
+    }
+
     /// Start the SSE server
+    ///
+    /// This method starts an SSE server on the specified address and path.
+    /// The server will handle Server-Sent Events (SSE) connections from clients
+    /// and route tool calls to the appropriate upstream servers.
+    ///
+    /// # Arguments
+    /// * `bind_address` - The socket address to bind the server to
+    /// * `sse_path` - The path for the SSE endpoint (e.g., "/sse")
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if the server started successfully, Err otherwise
     pub async fn start_sse(&self, bind_address: SocketAddr, sse_path: &str) -> Result<()> {
+        tracing::info!(
+            "Configuring SSE server on {} at path {}",
+            bind_address,
+            sse_path
+        );
+
         // Create SSE server config
         let server_config = rmcp::transport::sse_server::SseServerConfig {
             bind: bind_address,
@@ -229,19 +279,20 @@ impl SseProxyServer {
             sse_keep_alive: Some(Duration::from_secs(15)),
         };
 
-        // Create a factory function that returns a new SseProxyServer instance
-        let proxy_clone = self.clone();
-        let factory = move || proxy_clone.clone();
+        // Create a factory function
+        let factory = self.create_service_factory();
 
         // Start the SSE server
-        let server =
-            rmcp::transport::sse_server::SseServer::serve_with_config(server_config).await?;
+        tracing::info!("Starting SSE server...");
+        let server = rmcp::transport::sse_server::SseServer::serve_with_config(server_config)
+            .await
+            .context("Failed to start SSE server")?;
 
-        // Start the server with our service
+        // Register our service with the server
         server.with_service(factory);
 
         tracing::info!(
-            "Started SSE server on {} at path {}",
+            "Successfully started SSE server on {} at path {} with message path /message",
             bind_address,
             sse_path
         );
@@ -249,74 +300,111 @@ impl SseProxyServer {
     }
 
     /// Start the Streamable HTTP server
-    pub async fn start_streamable_http(&self, bind_address: SocketAddr, _path: &str) -> Result<()> {
-        // For Streamable HTTP, we always use the root path "/"
+    ///
+    /// This method starts a Streamable HTTP server on the specified address.
+    /// The server will handle Streamable HTTP connections from clients
+    /// and route tool calls to the appropriate upstream servers.
+    ///
+    /// # Arguments
+    /// * `bind_address` - The socket address to bind the server to
+    /// * `path` - The path for the Streamable HTTP endpoint (e.g., "/mcp")
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if the server started successfully, Err otherwise
+    pub async fn start_streamable_http(&self, bind_address: SocketAddr, path: &str) -> Result<()> {
+        // For Streamable HTTP, we use the specified path
         tracing::info!(
-            "Configuring Streamable HTTP server on {} at path /",
-            bind_address
+            "Configuring Streamable HTTP server on {} at path {}",
+            bind_address,
+            path
         );
 
-        // Create a factory function that returns a new SseProxyServer instance
-        let proxy_clone = self.clone();
-        let factory = move || proxy_clone.clone();
+        // Create a factory function
+        let factory = self.create_service_factory();
 
-        // Start the Streamable HTTP server using the simpler serve method
-        // This method sets the correct defaults for path and other settings
+        // Create Streamable HTTP server config
+        let server_config =
+            rmcp::transport::streamable_http_server::axum::StreamableHttpServerConfig {
+                bind: bind_address,
+                path: path.to_string(),
+                ct: Default::default(),
+                sse_keep_alive: Some(Duration::from_secs(15)),
+            };
+
+        // Start the Streamable HTTP server
         tracing::info!("Starting Streamable HTTP server...");
-        let server = rmcp::transport::streamable_http_server::axum::StreamableHttpServer::serve(
-            bind_address,
-        )
-        .await
-        .context("Failed to start Streamable HTTP server")?;
+        let server =
+            rmcp::transport::streamable_http_server::axum::StreamableHttpServer::serve_with_config(
+                server_config,
+            )
+            .await
+            .context("Failed to start Streamable HTTP server")?;
 
-        // Start the server with our service
-        tracing::info!("Registering service with Streamable HTTP server...");
+        // Register our service with the server
         server.with_service(factory);
 
         tracing::info!(
-            "Successfully started Streamable HTTP server on {} at path /",
-            bind_address
+            "Successfully started Streamable HTTP server on {} at path {}",
+            bind_address,
+            path
         );
         Ok(())
     }
 
     /// Start the proxy server with both Streamable HTTP and SSE support
+    ///
+    /// This method starts a unified HTTP server that supports both Streamable HTTP and SSE protocols
+    /// on the same port. It uses the following endpoints:
+    /// - `/mcp` - Streamable HTTP endpoint (2025-03-26 MCP specification)
+    /// - `/sse` - SSE endpoint (2024-11-05 MCP specification)
+    /// - `/message` - SSE message endpoint (2024-11-05 MCP specification)
+    ///
+    /// This is the recommended way to start the server, as it provides maximum compatibility
+    /// with different client implementations.
+    ///
+    /// # Arguments
+    /// * `bind_address` - The socket address to bind the server to
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if the server started successfully, Err otherwise
     pub async fn start_unified(&self, bind_address: SocketAddr) -> Result<()> {
         tracing::info!(
-            "Starting proxy server on {} with both Streamable HTTP and SSE support",
+            "Starting unified HTTP server on {} with both Streamable HTTP and SSE support",
             bind_address
         );
 
-        // Import the UnifiedMcpServer
-        use crate::sse::unified::{UnifiedMcpServer, UnifiedMcpServerConfig};
+        // Import the UnifiedHttpServer
+        use crate::http::unified::{UnifiedHttpServer, UnifiedHttpServerConfig};
 
-        // Create unified server config
-        let config = UnifiedMcpServerConfig {
-            bind: bind_address,
-            streamable_http_path: "/mcp".to_string(),
-            sse_path: "/sse".to_string(),
-            sse_message_path: "/message".to_string(),
-            sse_keep_alive: Some(Duration::from_secs(15)),
-            ct: Default::default(),
+        // Create unified server config with standard MCP endpoints
+        let config = UnifiedHttpServerConfig {
+            bind_address,
+            streamable_http_path: "/mcp".to_string(), // 2025-03-26 spec endpoint
+            sse_path: "/sse".to_string(),             // 2024-11-05 spec endpoint
+            sse_message_path: "/message".to_string(), // 2024-11-05 spec endpoint
+            keep_alive_interval: Some(Duration::from_secs(15)),
+            cancellation_token: Default::default(),
         };
 
-        // Create a factory function that returns a new SseProxyServer instance
-        let proxy_clone = self.clone();
-        let factory = move || proxy_clone.clone();
+        // Create a factory function
+        let factory = self.create_service_factory();
 
         // Create and start the unified server
-        let server = UnifiedMcpServer::with_config(config);
-        server.start(factory).await?;
+        let server = UnifiedHttpServer::with_config(config);
+        server
+            .start(factory)
+            .await
+            .context("Failed to start unified HTTP server")?;
 
         tracing::info!(
-            "Successfully started unified MCP server on {} with endpoints /mcp, /sse, and /message",
+            "Successfully started unified HTTP server on {} with endpoints /mcp, /sse, and /message",
             bind_address
         );
         Ok(())
     }
 }
 
-impl ServerHandler for SseProxyServer {
+impl ServerHandler for HttpProxyServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(

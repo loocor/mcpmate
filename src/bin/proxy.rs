@@ -4,7 +4,7 @@ use mcpmate::{
     api::{handlers::system::initialize_server_start_time, ApiServer},
     core::config::{load_rule_config, load_server_config},
     core::{ConnectionStatus, TransportType},
-    sse::SseProxyServer,
+    http::HttpProxyServer,
 };
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -96,8 +96,8 @@ async fn main() -> Result<()> {
         .map(|(name, rule)| (name.clone(), rule.enabled))
         .collect::<HashMap<String, bool>>();
 
-    // Create SSE proxy server
-    let proxy = SseProxyServer::new(Arc::new(config), Arc::new(rule_map));
+    // Create HTTP proxy server
+    let proxy = HttpProxyServer::new(Arc::new(config), Arc::new(rule_map));
 
     // Get a reference to the connection pool
     let connection_pool = Arc::clone(&proxy.connection_pool);

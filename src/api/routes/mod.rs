@@ -8,7 +8,7 @@ pub mod system;
 use axum::Router;
 use std::sync::Arc;
 
-use crate::sse::pool::UpstreamConnectionPool;
+use crate::http::pool::UpstreamConnectionPool;
 use crate::system::SystemMetricsCollector;
 use tokio::sync::Mutex;
 

@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tracing;
 
-use crate::sse::pool::UpstreamConnectionPool;
+use crate::http::pool::UpstreamConnectionPool;
 
 /// Tool mapping information
 #[derive(Debug, Clone)]
