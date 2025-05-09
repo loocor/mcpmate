@@ -2,3 +2,4 @@
 .venv/
 runtime/
 /target
+mcpmate.db*

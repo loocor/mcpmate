@@ -97,7 +97,18 @@ async fn main() -> Result<()> {
         .collect::<HashMap<String, bool>>();
 
     // Create HTTP proxy server
-    let proxy = HttpProxyServer::new(Arc::new(config), Arc::new(rule_map));
+    let mut proxy = HttpProxyServer::new(Arc::new(config), Arc::new(rule_map));
+
+    // Initialize database
+    if let Err(e) = proxy.init_database().await {
+        tracing::error!("Failed to initialize database: {}", e);
+        // Continue without database
+        tracing::warn!(
+            "Continuing without database support. Tool-level configuration will not be available."
+        );
+    } else {
+        tracing::info!("Database initialized successfully. Tool-level configuration is available.");
+    }
 
     // Get a reference to the connection pool
     let connection_pool = Arc::clone(&proxy.connection_pool);
@@ -193,13 +204,19 @@ async fn main() -> Result<()> {
 
     let api_server = ApiServer::new(api_bind_address);
     let connection_pool_clone = Arc::clone(&proxy.connection_pool);
+    let proxy_clone = Arc::new(proxy.clone());
 
     // Start API server in a separate task
     let api_task = tokio::spawn(async move {
-        if let Err(e) = api_server.start(connection_pool_clone).await {
+        if let Err(e) = api_server
+            .start(connection_pool_clone, Some(proxy_clone))
+            .await
+        {
             tracing::error!("API server error: {}", e);
         }
     });
+
+    tracing::info!("API server started with HTTP proxy server reference");
 
     tracing::info!("Servers started. Press Ctrl+C to stop.");
 

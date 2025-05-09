@@ -4,6 +4,7 @@
 pub mod mcp;
 pub mod notifications;
 pub mod system;
+pub mod tool;
 
 /// Generic success response
 #[derive(serde::Serialize)]

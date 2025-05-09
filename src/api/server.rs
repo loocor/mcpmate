@@ -5,9 +5,9 @@ use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 use tracing;
 
-use crate::http::pool::UpstreamConnectionPool;
+use crate::http::{pool::UpstreamConnectionPool, HttpProxyServer};
 
-use super::routes::create_router;
+use super::routes::{create_router, create_router_with_proxy};
 
 /// API server for the MCP Proxy
 #[derive(Debug)]
@@ -26,8 +26,14 @@ impl ApiServer {
     pub async fn start(
         &self,
         connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
+        http_proxy: Option<Arc<HttpProxyServer>>,
     ) -> Result<(), anyhow::Error> {
-        let router = create_router(connection_pool);
+        // Create the router with connection pool and HTTP proxy reference if available
+        let router = if let Some(proxy) = http_proxy {
+            create_router_with_proxy(connection_pool.clone(), proxy)
+        } else {
+            create_router(connection_pool.clone())
+        };
 
         tracing::info!("Starting API server on {}", self.address);
 

@@ -18,17 +18,17 @@ The `mcp.rs` file defines routes for MCP server and instance management:
 
 - Server routes:
   - `GET /api/mcp/servers` - List all servers
-  - `GET /api/mcp/servers/:name` - Get a specific server
+  - `GET /api/mcp/servers/{name}` - Get a specific server
 
 - Instance routes:
-  - `GET /api/mcp/servers/:name/instances` - List all instances for a server
-  - `GET /api/mcp/servers/:name/instances/:id` - Get a specific instance
-  - `GET /api/mcp/servers/:name/instances/:id/health` - Check instance health
-  - `POST /api/mcp/servers/:name/instances/:id/disconnect` - Disconnect an instance
-  - `POST /api/mcp/servers/:name/instances/:id/disconnect/force` - Force disconnect an instance
-  - `POST /api/mcp/servers/:name/instances/:id/reconnect` - Reconnect an instance
-  - `POST /api/mcp/servers/:name/instances/:id/reconnect/reset` - Reset and reconnect an instance
-  - `POST /api/mcp/servers/:name/instances/:id/cancel` - Cancel an initializing instance
+  - `GET /api/mcp/servers/{name}/instances` - List all instances for a server
+  - `GET /api/mcp/servers/{name}/instances/{id}` - Get a specific instance
+  - `GET /api/mcp/servers/{name}/instances/{id}/health` - Check instance health
+  - `POST /api/mcp/servers/{name}/instances/{id}/disconnect` - Disconnect an instance
+  - `POST /api/mcp/servers/{name}/instances/{id}/disconnect/force` - Force disconnect an instance
+  - `POST /api/mcp/servers/{name}/instances/{id}/reconnect` - Reconnect an instance
+  - `POST /api/mcp/servers/{name}/instances/{id}/reconnect/reset` - Reset and reconnect an instance
+  - `POST /api/mcp/servers/{name}/instances/{id}/cancel` - Cancel an initializing instance
 
 ## System Routes
 

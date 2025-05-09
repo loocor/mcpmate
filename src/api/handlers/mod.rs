@@ -5,6 +5,7 @@ pub mod instance;
 pub mod notification;
 pub mod server;
 pub mod system;
+pub mod tool;
 
 use axum::{
     http::StatusCode,

@@ -15,6 +15,7 @@ use crate::{
     core::config::Config,
     core::tool::parse_tool_name,
     core::{tool::get_all_tools_with_smart_prefix, UpstreamConnectionPool},
+    conf::Database,
 };
 
 /// HTTP Proxy Server that aggregates tools from multiple MCP servers
@@ -29,6 +30,8 @@ pub struct HttpProxyServer {
     last_tool_mapping_update: Arc<Mutex<std::time::Instant>>,
     /// Last connection state hash, used to detect changes in the connection pool
     last_connection_state_hash: Arc<Mutex<u64>>,
+    /// Database connection for tool configuration persistence
+    pub db: Option<Arc<Database>>,
 }
 
 #[tool(tool_box)]
@@ -173,7 +176,23 @@ impl HttpProxyServer {
             tool_name_mapping_cache: Arc::new(Mutex::new(None)),
             last_tool_mapping_update: Arc::new(Mutex::new(std::time::Instant::now())),
             last_connection_state_hash: Arc::new(Mutex::new(0)),
+            db: None, // Database will be initialized separately
         }
+    }
+
+    /// Initialize the database connection
+    pub async fn init_database(&mut self) -> Result<()> {
+        // Create database connection
+        let db = Database::new().await?;
+
+        // Initialize default values
+        db.initialize_defaults().await?;
+
+        // Store the database connection
+        self.db = Some(Arc::new(db));
+
+        tracing::info!("Database initialized successfully");
+        Ok(())
     }
 
     /// Start the proxy server with specified transport type
@@ -424,7 +443,67 @@ impl ServerHandler for HttpProxyServer {
         _: RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, McpError> {
         // Get tools with smart prefixing
-        let tools = get_all_tools_with_smart_prefix(&self.connection_pool).await;
+        let all_tools = get_all_tools_with_smart_prefix(&self.connection_pool).await;
+
+        // Filter disabled tools if database is available
+        let tools = if let Some(db) = &self.db {
+            let mut filtered_tools = Vec::new();
+
+            for tool in all_tools {
+                // Parse the tool name to extract server prefix if present
+                let (server_prefix, original_tool_name) = parse_tool_name(&tool.name);
+
+                // Get the server name (either from prefix or from the tool name mapping)
+                let server_name = if let Some(prefix) = server_prefix {
+                    prefix.to_string()
+                } else {
+                    // If no prefix, try to get the server name from the tool name mapping
+                    let tool_name_mapping = self.get_tool_name_mapping().await;
+                    if let Some(mapping) = tool_name_mapping.get(&tool.name.to_string()) {
+                        mapping.server_name.clone()
+                    } else {
+                        // If we can't determine the server, include the tool by default
+                        filtered_tools.push(tool);
+                        continue;
+                    }
+                };
+
+                // Check if the tool is enabled
+                match crate::conf::operations::is_tool_enabled(
+                    &db.pool,
+                    &server_name,
+                    &original_tool_name,
+                )
+                .await
+                {
+                    Ok(enabled) => {
+                        if enabled {
+                            filtered_tools.push(tool);
+                        } else {
+                            tracing::debug!(
+                                "Filtering out disabled tool '{}' from server '{}'",
+                                original_tool_name,
+                                server_name
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        // Log the error but include the tool by default
+                        tracing::warn!(
+                            "Error checking if tool '{}' is enabled: {}. Including by default.",
+                            original_tool_name,
+                            e
+                        );
+                        filtered_tools.push(tool);
+                    }
+                }
+            }
+
+            filtered_tools
+        } else {
+            // If no database, return all tools
+            all_tools
+        };
 
         tracing::info!("Returning {} aggregated tools to client", tools.len());
 
@@ -456,6 +535,38 @@ impl ServerHandler for HttpProxyServer {
                 mapping.server_name,
                 mapping.upstream_tool_name
             );
+
+            // Check if the tool is enabled if database is available
+            if let Some(db) = &self.db {
+                // Parse the tool name to extract original name
+                let (_, original_tool_name) = parse_tool_name(&mapping.upstream_tool_name);
+
+                // Check if the tool is enabled
+                match crate::conf::operations::is_tool_enabled(
+                    &db.pool,
+                    &mapping.server_name,
+                    &original_tool_name,
+                )
+                .await
+                {
+                    Ok(enabled) => {
+                        if !enabled {
+                            return Err(McpError::invalid_params(
+                                format!("Tool '{}' is disabled", tool_name_str),
+                                None,
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        // Log the error but allow the tool call to proceed
+                        tracing::warn!(
+                            "Error checking if tool '{}' is enabled: {}. Allowing by default.",
+                            original_tool_name,
+                            e
+                        );
+                    }
+                }
+            }
 
             // Lock the connection pool to access the service
             let mut pool = self.connection_pool.lock().await;
