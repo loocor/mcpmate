@@ -58,8 +58,11 @@ pub async fn get_config_suits_by_type(
 }
 
 /// Get a specific configuration suit from the database
-pub async fn get_config_suit(pool: &Pool<Sqlite>, id: i64) -> Result<Option<ConfigSuit>> {
-    tracing::debug!("Executing SQL query to get configuration suit with ID {}", id);
+pub async fn get_config_suit(pool: &Pool<Sqlite>, id: &str) -> Result<Option<ConfigSuit>> {
+    tracing::debug!(
+        "Executing SQL query to get configuration suit with ID {}",
+        id
+    );
 
     let suit = sqlx::query_as::<_, ConfigSuit>(
         r#"
@@ -108,7 +111,7 @@ pub async fn get_config_suit_by_name(
         tracing::debug!(
             "Found configuration suit '{}' with ID {}, type: {}",
             name,
-            s.id.unwrap_or(0),
+            s.id.as_ref().unwrap_or(&"unknown".to_string()),
             s.suit_type
         );
     } else {
@@ -119,7 +122,7 @@ pub async fn get_config_suit_by_name(
 }
 
 /// Create or update a configuration suit in the database
-pub async fn upsert_config_suit(pool: &Pool<Sqlite>, suit: &ConfigSuit) -> Result<i64> {
+pub async fn upsert_config_suit(pool: &Pool<Sqlite>, suit: &ConfigSuit) -> Result<String> {
     tracing::debug!(
         "Upserting configuration suit '{}', type: {}",
         suit.name,
@@ -137,11 +140,18 @@ pub async fn upsert_config_suit(pool: &Pool<Sqlite>, suit: &ConfigSuit) -> Resul
 pub async fn upsert_config_suit_tx(
     tx: &mut Transaction<'_, Sqlite>,
     suit: &ConfigSuit,
-) -> Result<i64> {
+) -> Result<String> {
+    // Generate a UUID for the suit if it doesn't have one
+    let suit_id = if let Some(id) = &suit.id {
+        id.clone()
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
+
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit (name, description, type, multi_select, priority)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO config_suit (id, name, description, type, multi_select, priority)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(name) DO UPDATE SET
             description = excluded.description,
             type = excluded.type,
@@ -150,6 +160,7 @@ pub async fn upsert_config_suit_tx(
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
+    .bind(&suit_id)
     .bind(&suit.name)
     .bind(&suit.description)
     .bind(&suit.suit_type)
@@ -159,12 +170,9 @@ pub async fn upsert_config_suit_tx(
     .await
     .context("Failed to upsert configuration suit")?;
 
-    // Get the ID of the inserted or updated row
-    let suit_id = if result.last_insert_rowid() > 0 {
-        result.last_insert_rowid()
-    } else {
-        // If no new row was inserted, get the ID of the existing row
-        sqlx::query_scalar::<_, i64>(
+    if result.rows_affected() == 0 {
+        // If no rows were affected, get the existing ID
+        let existing_id = sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM config_suit
             WHERE name = ?
@@ -173,14 +181,16 @@ pub async fn upsert_config_suit_tx(
         .bind(&suit.name)
         .fetch_one(&mut **tx)
         .await
-        .context("Failed to get configuration suit ID")?
-    };
+        .context("Failed to get configuration suit ID")?;
+
+        return Ok(existing_id);
+    }
 
     Ok(suit_id)
 }
 
 /// Delete a configuration suit from the database
-pub async fn delete_config_suit(pool: &Pool<Sqlite>, id: i64) -> Result<bool> {
+pub async fn delete_config_suit(pool: &Pool<Sqlite>, id: &str) -> Result<bool> {
     tracing::debug!("Deleting configuration suit with ID {}", id);
 
     let result = sqlx::query(
@@ -200,7 +210,7 @@ pub async fn delete_config_suit(pool: &Pool<Sqlite>, id: i64) -> Result<bool> {
 /// Get all servers for a configuration suit from the database
 pub async fn get_config_suit_servers(
     pool: &Pool<Sqlite>,
-    config_suit_id: i64,
+    config_suit_id: &str,
 ) -> Result<Vec<ConfigSuitServer>> {
     tracing::debug!(
         "Executing SQL query to get servers for configuration suit with ID {}",
@@ -230,10 +240,10 @@ pub async fn get_config_suit_servers(
 /// Add a server to a configuration suit in the database
 pub async fn add_server_to_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: i64,
-    server_id: i64,
+    config_suit_id: &str,
+    server_id: &str,
     enabled: bool,
-) -> Result<i64> {
+) -> Result<String> {
     tracing::debug!(
         "Adding server ID {} to configuration suit ID {}, enabled: {}",
         server_id,
@@ -241,15 +251,19 @@ pub async fn add_server_to_config_suit(
         enabled
     );
 
+    // Generate a UUID for the association
+    let association_id = uuid::Uuid::new_v4().to_string();
+
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit_server (config_suit_id, server_id, enabled)
-        VALUES (?, ?, ?)
+        INSERT INTO config_suit_server (id, config_suit_id, server_id, enabled)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(config_suit_id, server_id) DO UPDATE SET
             enabled = excluded.enabled,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
+    .bind(&association_id)
     .bind(config_suit_id)
     .bind(server_id)
     .bind(enabled)
@@ -257,12 +271,9 @@ pub async fn add_server_to_config_suit(
     .await
     .context("Failed to add server to configuration suit")?;
 
-    // Get the ID of the inserted or updated row
-    let association_id = if result.last_insert_rowid() > 0 {
-        result.last_insert_rowid()
-    } else {
-        // If no new row was inserted, get the ID of the existing row
-        sqlx::query_scalar::<_, i64>(
+    if result.rows_affected() == 0 {
+        // If no rows were affected, get the existing ID
+        let existing_id = sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM config_suit_server
             WHERE config_suit_id = ? AND server_id = ?
@@ -272,8 +283,10 @@ pub async fn add_server_to_config_suit(
         .bind(server_id)
         .fetch_one(pool)
         .await
-        .context("Failed to get configuration suit server association ID")?
-    };
+        .context("Failed to get configuration suit server association ID")?;
+
+        return Ok(existing_id);
+    }
 
     Ok(association_id)
 }
@@ -281,8 +294,8 @@ pub async fn add_server_to_config_suit(
 /// Remove a server from a configuration suit in the database
 pub async fn remove_server_from_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: i64,
-    server_id: i64,
+    config_suit_id: &str,
+    server_id: &str,
 ) -> Result<bool> {
     tracing::debug!(
         "Removing server ID {} from configuration suit ID {}",
@@ -308,7 +321,7 @@ pub async fn remove_server_from_config_suit(
 /// Get all tools for a configuration suit from the database
 pub async fn get_config_suit_tools(
     pool: &Pool<Sqlite>,
-    config_suit_id: i64,
+    config_suit_id: &str,
 ) -> Result<Vec<ConfigSuitTool>> {
     tracing::debug!(
         "Executing SQL query to get tools for configuration suit with ID {}",
@@ -338,11 +351,11 @@ pub async fn get_config_suit_tools(
 /// Add a tool to a configuration suit in the database
 pub async fn add_tool_to_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: i64,
-    server_id: i64,
+    config_suit_id: &str,
+    server_id: &str,
     tool_name: &str,
     enabled: bool,
-) -> Result<i64> {
+) -> Result<String> {
     tracing::debug!(
         "Adding tool '{}' from server ID {} to configuration suit ID {}, enabled: {}",
         tool_name,
@@ -351,29 +364,35 @@ pub async fn add_tool_to_config_suit(
         enabled
     );
 
+    // Generate a UUID for the tool
+    let tool_id = uuid::Uuid::new_v4().to_string();
+
+    // Create a prefixed name (server_name:tool_name)
+    let prefixed_name: Option<String> = None; // This will be set by the API if needed
+
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit_tool (config_suit_id, server_id, tool_name, enabled)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO config_suit_tool (id, config_suit_id, server_id, tool_name, prefixed_name, enabled)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(config_suit_id, server_id, tool_name) DO UPDATE SET
             enabled = excluded.enabled,
+            prefixed_name = excluded.prefixed_name,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
+    .bind(&tool_id)
     .bind(config_suit_id)
     .bind(server_id)
     .bind(tool_name)
+    .bind(&prefixed_name)
     .bind(enabled)
     .execute(pool)
     .await
     .context("Failed to add tool to configuration suit")?;
 
-    // Get the ID of the inserted or updated row
-    let association_id = if result.last_insert_rowid() > 0 {
-        result.last_insert_rowid()
-    } else {
-        // If no new row was inserted, get the ID of the existing row
-        sqlx::query_scalar::<_, i64>(
+    if result.rows_affected() == 0 {
+        // If no rows were affected, get the existing ID
+        let existing_id = sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM config_suit_tool
             WHERE config_suit_id = ? AND server_id = ? AND tool_name = ?
@@ -384,17 +403,19 @@ pub async fn add_tool_to_config_suit(
         .bind(tool_name)
         .fetch_one(pool)
         .await
-        .context("Failed to get configuration suit tool association ID")?
-    };
+        .context("Failed to get configuration suit tool association ID")?;
 
-    Ok(association_id)
+        return Ok(existing_id);
+    }
+
+    Ok(tool_id)
 }
 
 /// Remove a tool from a configuration suit in the database
 pub async fn remove_tool_from_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: i64,
-    server_id: i64,
+    config_suit_id: &str,
+    server_id: &str,
     tool_name: &str,
 ) -> Result<bool> {
     tracing::debug!(

@@ -9,7 +9,7 @@ use sqlx::FromRow;
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Server {
     /// Unique ID
-    pub id: Option<i64>,
+    pub id: Option<String>,
     /// Name of the server
     pub name: String,
     /// Type of the server (stdio, sse, streamable_http)
@@ -88,9 +88,9 @@ impl Server {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ServerArg {
     /// Unique ID
-    pub id: Option<i64>,
+    pub id: Option<String>,
     /// Server ID
-    pub server_id: i64,
+    pub server_id: String,
     /// Argument index
     pub arg_index: i32,
     /// Argument value
@@ -101,9 +101,9 @@ pub struct ServerArg {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ServerEnv {
     /// Unique ID
-    pub id: Option<i64>,
+    pub id: Option<String>,
     /// Server ID
-    pub server_id: i64,
+    pub server_id: String,
     /// Environment variable key
     pub env_key: String,
     /// Environment variable value
@@ -114,9 +114,9 @@ pub struct ServerEnv {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ServerMeta {
     /// Unique ID
-    pub id: Option<i64>,
+    pub id: Option<String>,
     /// Server ID
-    pub server_id: i64,
+    pub server_id: String,
     /// Description of the server
     pub description: Option<String>,
     /// Author of the server
@@ -139,7 +139,7 @@ pub struct ServerMeta {
 
 impl ServerMeta {
     /// Create new server metadata
-    pub fn new(server_id: i64) -> Self {
+    pub fn new(server_id: String) -> Self {
         Self {
             id: None,
             server_id,

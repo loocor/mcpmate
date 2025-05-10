@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 
 use crate::conf::{
-    operations::{get_all_servers, get_server_args, get_server_env},
+    operations::{get_enabled_servers, get_server_args, get_server_env},
     Database,
 };
 use crate::core::{
@@ -17,10 +17,10 @@ use crate::core::{
 pub async fn load_server_config(db: &Database) -> Result<Config> {
     tracing::info!("Loading server configuration from database");
 
-    // Get all servers from the database
-    let servers = get_all_servers(&db.pool)
+    // Get enabled servers from the database based on config suits
+    let servers = get_enabled_servers(&db.pool)
         .await
-        .context("Failed to get servers from database")?;
+        .context("Failed to get enabled servers from database")?;
 
     // Create a new Config object
     let mut config = Config {
@@ -30,7 +30,7 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
     // Convert each server to MCPServerConfig
     for server in servers {
         // Get server arguments
-        let args = if let Some(id) = server.id {
+        let args = if let Some(id) = &server.id {
             let server_args = get_server_args(&db.pool, id)
                 .await
                 .context("Failed to get server arguments")?;
@@ -48,7 +48,7 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
         };
 
         // Get server environment variables
-        let env = if let Some(id) = server.id {
+        let env = if let Some(id) = &server.id {
             let env_map = get_server_env(&db.pool, id)
                 .await
                 .context("Failed to get server environment variables")?;
@@ -88,7 +88,7 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
     }
 
     tracing::info!(
-        "Successfully loaded {} servers from database",
+        "Successfully loaded {} enabled servers from database",
         config.mcp_servers.len()
     );
     Ok(config)

@@ -9,38 +9,12 @@ use tracing;
 pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::info!("Running database initialization");
 
-    // Create tool_config table if it doesn't exist
-    tracing::debug!("Creating tool_config table if it doesn't exist");
-    match sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS tool_config (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            server_name TEXT NOT NULL,
-            tool_name TEXT NOT NULL,
-            alias_name TEXT,
-            enabled BOOLEAN NOT NULL DEFAULT 1,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(server_name, tool_name)
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    {
-        Ok(_) => tracing::debug!("tool_config table created or already exists"),
-        Err(e) => {
-            tracing::error!("Failed to create tool_config table: {}", e);
-            return Err(anyhow::anyhow!("Failed to create tool_config table: {}", e));
-        }
-    };
-
     // Create server_config table if it doesn't exist
     tracing::debug!("Creating server_config table if it doesn't exist");
     match sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS server_config (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
             server_type TEXT NOT NULL,
             command TEXT,
@@ -57,7 +31,10 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
         Ok(_) => tracing::debug!("server_config table created or already exists"),
         Err(e) => {
             tracing::error!("Failed to create server_config table: {}", e);
-            return Err(anyhow::anyhow!("Failed to create server_config table: {}", e));
+            return Err(anyhow::anyhow!(
+                "Failed to create server_config table: {}",
+                e
+            ));
         }
     };
 
@@ -66,8 +43,8 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     match sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS server_args (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            server_id INTEGER NOT NULL,
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL,
             arg_index INTEGER NOT NULL,
             arg_value TEXT NOT NULL,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
@@ -90,8 +67,8 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     match sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS server_env (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            server_id INTEGER NOT NULL,
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL,
             env_key TEXT NOT NULL,
             env_value TEXT NOT NULL,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
@@ -114,8 +91,8 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     match sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS server_meta (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            server_id INTEGER NOT NULL,
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL,
             description TEXT,
             author TEXT,
             website TEXT,
@@ -145,7 +122,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     match sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS config_suit (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
             description TEXT,
             type TEXT NOT NULL,
@@ -171,9 +148,9 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     match sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_server (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            config_suit_id INTEGER NOT NULL,
-            server_id INTEGER NOT NULL,
+            id TEXT PRIMARY KEY,
+            config_suit_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -201,10 +178,11 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     match sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_tool (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             config_suit_id INTEGER NOT NULL,
             server_id INTEGER NOT NULL,
             tool_name TEXT NOT NULL,
+            prefixed_name TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -229,7 +207,6 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
 
     // Verify that all tables were created successfully
     let tables = vec![
-        "tool_config",
         "server_config",
         "server_args",
         "server_env",

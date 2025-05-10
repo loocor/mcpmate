@@ -90,14 +90,6 @@ impl Database {
         // Create database instance
         let db = Self { pool };
 
-        // TODO: Add version tracking for database schema
-        // In the future, we should add a version table to track schema changes
-        // and perform necessary migrations when the schema is updated.
-        // This would involve:
-        // 1. Creating a version table with a schema_version field
-        // 2. Checking the current version against the expected version
-        // 3. Running appropriate migration scripts if needed
-
         // Check if we need to migrate configuration from files
         let default_config_path = std::path::Path::new("config/mcp.json");
         if default_config_path.exists() {

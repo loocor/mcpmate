@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::conf::models::{Server, ServerArg, ServerEnv, ServerMeta};
 
@@ -21,7 +21,10 @@ pub async fn get_all_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
     .await
     .context("Failed to fetch servers")?;
 
-    tracing::debug!("Successfully fetched {} servers from database", servers.len());
+    tracing::debug!(
+        "Successfully fetched {} servers from database",
+        servers.len()
+    );
     Ok(servers)
 }
 
@@ -50,7 +53,7 @@ pub async fn get_server(pool: &Pool<Sqlite>, name: &str) -> Result<Option<Server
 }
 
 /// Create or update a server in the database
-pub async fn upsert_server(pool: &Pool<Sqlite>, server: &Server) -> Result<i64> {
+pub async fn upsert_server(pool: &Pool<Sqlite>, server: &Server) -> Result<String> {
     tracing::debug!(
         "Upserting server '{}', type: {}",
         server.name,
@@ -65,11 +68,18 @@ pub async fn upsert_server(pool: &Pool<Sqlite>, server: &Server) -> Result<i64> 
 }
 
 /// Create or update a server in the database (transaction version)
-pub async fn upsert_server_tx(tx: &mut Transaction<'_, Sqlite>, server: &Server) -> Result<i64> {
+pub async fn upsert_server_tx(tx: &mut Transaction<'_, Sqlite>, server: &Server) -> Result<String> {
+    // Generate a UUID for the server if it doesn't have one
+    let server_id = if let Some(id) = &server.id {
+        id.clone()
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
+
     let result = sqlx::query(
         r#"
-        INSERT INTO server_config (name, server_type, command, url, transport_type)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO server_config (id, name, server_type, command, url, transport_type)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(name) DO UPDATE SET
             server_type = excluded.server_type,
             command = excluded.command,
@@ -78,6 +88,7 @@ pub async fn upsert_server_tx(tx: &mut Transaction<'_, Sqlite>, server: &Server)
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
+    .bind(&server_id)
     .bind(&server.name)
     .bind(&server.server_type)
     .bind(&server.command)
@@ -87,12 +98,9 @@ pub async fn upsert_server_tx(tx: &mut Transaction<'_, Sqlite>, server: &Server)
     .await
     .context("Failed to upsert server")?;
 
-    // Get the ID of the inserted or updated row
-    let server_id = if result.last_insert_rowid() > 0 {
-        result.last_insert_rowid()
-    } else {
-        // If no new row was inserted, get the ID of the existing row
-        sqlx::query_scalar::<_, i64>(
+    if result.rows_affected() == 0 {
+        // If no rows were affected, get the existing ID
+        let existing_id = sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM server_config
             WHERE name = ?
@@ -101,8 +109,10 @@ pub async fn upsert_server_tx(tx: &mut Transaction<'_, Sqlite>, server: &Server)
         .bind(&server.name)
         .fetch_one(&mut **tx)
         .await
-        .context("Failed to get server ID")?
-    };
+        .context("Failed to get server ID")?;
+
+        return Ok(existing_id);
+    }
 
     Ok(server_id)
 }
@@ -126,8 +136,11 @@ pub async fn delete_server(pool: &Pool<Sqlite>, name: &str) -> Result<bool> {
 }
 
 /// Get all arguments for a server from the database
-pub async fn get_server_args(pool: &Pool<Sqlite>, server_id: i64) -> Result<Vec<ServerArg>> {
-    tracing::debug!("Executing SQL query to get arguments for server ID {}", server_id);
+pub async fn get_server_args(pool: &Pool<Sqlite>, server_id: &str) -> Result<Vec<ServerArg>> {
+    tracing::debug!(
+        "Executing SQL query to get arguments for server ID {}",
+        server_id
+    );
 
     let args = sqlx::query_as::<_, ServerArg>(
         r#"
@@ -152,7 +165,7 @@ pub async fn get_server_args(pool: &Pool<Sqlite>, server_id: i64) -> Result<Vec<
 /// Create or update server arguments in the database
 pub async fn upsert_server_args(
     pool: &Pool<Sqlite>,
-    server_id: i64,
+    server_id: &str,
     args: &[String],
 ) -> Result<()> {
     tracing::debug!(
@@ -171,7 +184,7 @@ pub async fn upsert_server_args(
 /// Create or update server arguments in the database (transaction version)
 pub async fn upsert_server_args_tx(
     tx: &mut Transaction<'_, Sqlite>,
-    server_id: i64,
+    server_id: &str,
     args: &[String],
 ) -> Result<()> {
     // Delete existing arguments
@@ -188,12 +201,16 @@ pub async fn upsert_server_args_tx(
 
     // Insert new arguments
     for (index, arg) in args.iter().enumerate() {
+        // Generate a UUID for the argument
+        let arg_id = uuid::Uuid::new_v4().to_string();
+
         sqlx::query(
             r#"
-            INSERT INTO server_args (server_id, arg_index, arg_value)
-            VALUES (?, ?, ?)
+            INSERT INTO server_args (id, server_id, arg_index, arg_value)
+            VALUES (?, ?, ?, ?)
             "#,
         )
+        .bind(&arg_id)
         .bind(server_id)
         .bind(index as i32)
         .bind(arg)
@@ -208,7 +225,7 @@ pub async fn upsert_server_args_tx(
 /// Get all environment variables for a server from the database
 pub async fn get_server_env(
     pool: &Pool<Sqlite>,
-    server_id: i64,
+    server_id: &str,
 ) -> Result<HashMap<String, String>> {
     tracing::debug!(
         "Executing SQL query to get environment variables for server ID {}",
@@ -242,7 +259,7 @@ pub async fn get_server_env(
 /// Create or update server environment variables in the database
 pub async fn upsert_server_env(
     pool: &Pool<Sqlite>,
-    server_id: i64,
+    server_id: &str,
     env: &HashMap<String, String>,
 ) -> Result<()> {
     tracing::debug!(
@@ -261,7 +278,7 @@ pub async fn upsert_server_env(
 /// Create or update server environment variables in the database (transaction version)
 pub async fn upsert_server_env_tx(
     tx: &mut Transaction<'_, Sqlite>,
-    server_id: i64,
+    server_id: &str,
     env: &HashMap<String, String>,
 ) -> Result<()> {
     // Delete existing environment variables
@@ -278,12 +295,16 @@ pub async fn upsert_server_env_tx(
 
     // Insert new environment variables
     for (key, value) in env {
+        // Generate a UUID for the environment variable
+        let env_id = uuid::Uuid::new_v4().to_string();
+
         sqlx::query(
             r#"
-            INSERT INTO server_env (server_id, env_key, env_value)
-            VALUES (?, ?, ?)
+            INSERT INTO server_env (id, server_id, env_key, env_value)
+            VALUES (?, ?, ?, ?)
             "#,
         )
+        .bind(&env_id)
         .bind(server_id)
         .bind(key)
         .bind(value)
@@ -296,10 +317,7 @@ pub async fn upsert_server_env_tx(
 }
 
 /// Get server metadata from the database
-pub async fn get_server_meta(
-    pool: &Pool<Sqlite>,
-    server_id: i64,
-) -> Result<Option<ServerMeta>> {
+pub async fn get_server_meta(pool: &Pool<Sqlite>, server_id: &str) -> Result<Option<ServerMeta>> {
     tracing::debug!(
         "Executing SQL query to get metadata for server ID {}",
         server_id
@@ -326,16 +344,23 @@ pub async fn get_server_meta(
 }
 
 /// Create or update server metadata in the database
-pub async fn upsert_server_meta(pool: &Pool<Sqlite>, meta: &ServerMeta) -> Result<i64> {
+pub async fn upsert_server_meta(pool: &Pool<Sqlite>, meta: &ServerMeta) -> Result<String> {
     tracing::debug!("Upserting metadata for server ID {}", meta.server_id);
+
+    // Generate a UUID for the metadata if it doesn't have one
+    let meta_id = if let Some(id) = &meta.id {
+        id.clone()
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
 
     let result = sqlx::query(
         r#"
         INSERT INTO server_meta (
-            server_id, description, author, website, repository,
+            id, server_id, description, author, website, repository,
             category, recommended_scenario, rating
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id) DO UPDATE SET
             description = excluded.description,
             author = excluded.author,
@@ -347,7 +372,8 @@ pub async fn upsert_server_meta(pool: &Pool<Sqlite>, meta: &ServerMeta) -> Resul
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
-    .bind(meta.server_id)
+    .bind(&meta_id)
+    .bind(&meta.server_id)
     .bind(&meta.description)
     .bind(&meta.author)
     .bind(&meta.website)
@@ -359,22 +385,82 @@ pub async fn upsert_server_meta(pool: &Pool<Sqlite>, meta: &ServerMeta) -> Resul
     .await
     .context("Failed to upsert server metadata")?;
 
-    // Get the ID of the inserted or updated row
-    let meta_id = if result.last_insert_rowid() > 0 {
-        result.last_insert_rowid()
-    } else {
-        // If no new row was inserted, get the ID of the existing row
-        sqlx::query_scalar::<_, i64>(
+    if result.rows_affected() == 0 {
+        // If no rows were affected, get the existing ID
+        let existing_id = sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM server_meta
             WHERE server_id = ?
             "#,
         )
-        .bind(meta.server_id)
+        .bind(&meta.server_id)
         .fetch_one(pool)
         .await
-        .context("Failed to get server metadata ID")?
-    };
+        .context("Failed to get server metadata ID")?;
+
+        return Ok(existing_id);
+    }
 
     Ok(meta_id)
+}
+
+/// Get all enabled servers from the database based on config suits
+pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
+    tracing::debug!("Getting all enabled servers from config suits");
+
+    // Get all servers first
+    let all_servers = get_all_servers(pool).await?;
+
+    // If there are no servers, return empty list
+    if all_servers.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Get the default config suit
+    let default_suit = crate::conf::operations::get_config_suit_by_name(pool, "default").await?;
+
+    // If there's no default suit, return all servers (backward compatibility)
+    if default_suit.is_none() {
+        tracing::info!("No default config suit found, returning all servers");
+        return Ok(all_servers);
+    }
+
+    let suit_id = default_suit.unwrap().id.unwrap();
+
+    // Get all enabled servers in the default suit
+    let enabled_server_configs =
+        crate::conf::operations::get_config_suit_servers(pool, &suit_id).await?;
+
+    // If there are no server configs in the suit, return all servers (backward compatibility)
+    if enabled_server_configs.is_empty() {
+        tracing::info!("No server configurations in default suit, returning all servers");
+        return Ok(all_servers);
+    }
+
+    // Create a set of enabled server IDs
+    let mut enabled_server_ids = HashSet::new();
+    for server_config in enabled_server_configs {
+        if server_config.enabled {
+            enabled_server_ids.insert(server_config.server_id);
+        }
+    }
+
+    // Filter servers by enabled status
+    let enabled_servers: Vec<Server> = all_servers
+        .into_iter()
+        .filter(|server| {
+            if let Some(id) = &server.id {
+                enabled_server_ids.contains(id)
+            } else {
+                false // Server without ID is not enabled
+            }
+        })
+        .collect();
+
+    tracing::info!(
+        "Found {} enabled servers in default config suit",
+        enabled_servers.len()
+    );
+
+    Ok(enabled_servers)
 }

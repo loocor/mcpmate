@@ -90,7 +90,7 @@ pub async fn migrate_from_files(pool: &Pool<Sqlite>, mcp_config_path: &Path) -> 
 
         // Insert server arguments if any
         if let Some(args) = server_config.args {
-            match upsert_server_args(pool, server_id, &args).await {
+            match upsert_server_args(pool, &server_id, &args).await {
                 Ok(_) => tracing::info!(
                     "Successfully migrated {} arguments for server '{}'",
                     args.len(),
@@ -104,7 +104,7 @@ pub async fn migrate_from_files(pool: &Pool<Sqlite>, mcp_config_path: &Path) -> 
 
         // Insert server environment variables if any
         if let Some(env) = server_config.env {
-            match upsert_server_env(pool, server_id, &env).await {
+            match upsert_server_env(pool, &server_id, &env).await {
                 Ok(_) => tracing::info!(
                     "Successfully migrated {} environment variables for server '{}'",
                     env.len(),

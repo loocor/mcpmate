@@ -8,29 +8,23 @@ use serde::{Deserialize, Serialize};
 pub struct ToolConfigRequest {
     /// Whether the tool is enabled
     pub enabled: bool,
-    /// Alias name for the tool (user-defined)
-    pub alias_name: Option<String>,
+    /// Prefixed/qualified name for the tool (to avoid conflicts)
+    pub prefixed_name: Option<String>,
 }
 
-/// Tool configuration response
+/// Tool response (replacing both ToolResponse and ToolConfigResponse)
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ToolConfigResponse {
-    /// Unique ID
-    pub id: i64,
+pub struct ToolResponse {
+    /// Unique ID (UUID from config_suit_tool table)
+    pub id: String,
     /// Name of the server that provides this tool
     pub server_name: String,
     /// Name of the tool
     pub tool_name: String,
-    /// Alias name for the tool (user-defined)
-    pub alias_name: Option<String>,
-    /// Display name (alias_name if set, otherwise tool_name)
-    pub display_name: String,
+    /// Prefixed/qualified name for the tool (to avoid conflicts)
+    pub prefixed_name: Option<String>,
     /// Whether the tool is enabled
     pub enabled: bool,
-    /// When the configuration was created
-    pub created_at: Option<String>,
-    /// When the configuration was last updated
-    pub updated_at: Option<String>,
     /// Allowed operations on this tool
     pub allowed_operations: Vec<String>,
 }
@@ -38,8 +32,8 @@ pub struct ToolConfigResponse {
 /// Tool status response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ToolStatusResponse {
-    /// Unique ID
-    pub id: i64,
+    /// Unique ID (UUID from config_suit_tool table)
+    pub id: String,
     /// Name of the server that provides this tool
     pub server_name: String,
     /// Name of the tool
@@ -52,30 +46,27 @@ pub struct ToolStatusResponse {
     pub allowed_operations: Vec<String>,
 }
 
-/// Tool response
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ToolResponse {
-    /// Unique ID
-    pub id: i64,
-    /// Name of the server that provides this tool
-    pub server_name: String,
-    /// Name of the tool
-    pub tool_name: String,
-    /// Alias name for the tool (user-defined)
-    pub alias_name: Option<String>,
-    /// Display name (alias_name if set, otherwise tool_name)
-    pub display_name: String,
-    /// Whether the tool is enabled
-    pub enabled: bool,
-    /// When the configuration was created
-    pub created_at: Option<String>,
-    /// When the configuration was last updated
-    pub updated_at: Option<String>,
-}
-
 /// Tool list response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ToolListResponse {
     /// List of tools
     pub tools: Vec<ToolResponse>,
+}
+
+// For backward compatibility during transition
+// TODO: Remove after API handlers are updated
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ToolConfigResponse {
+    /// Unique ID
+    pub id: String,
+    /// Name of the server that provides this tool
+    pub server_name: String,
+    /// Name of the tool
+    pub tool_name: String,
+    /// Prefixed/qualified name for the tool (to avoid conflicts)
+    pub prefixed_name: Option<String>,
+    /// Whether the tool is enabled
+    pub enabled: bool,
+    /// Allowed operations on this tool
+    pub allowed_operations: Vec<String>,
 }

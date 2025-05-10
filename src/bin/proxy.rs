@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Loaded configuration from database");
     tracing::info!(
-        "Found {} MCP servers in database configuration",
+        "Found {} enabled MCP servers in database configuration",
         config.mcp_servers.len()
     );
 

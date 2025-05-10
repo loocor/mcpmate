@@ -233,11 +233,60 @@ pub async fn enable_server(
     let instances_response = list_instances(state.clone(), Path(server_name.clone())).await?;
     let instances = instances_response.0.instances;
 
-    // TODO: update rule config to enable server
-    tracing::info!(
-        "Would update rule config to enable server '{}'",
-        server_name
-    );
+    // Update config_suit to enable server
+    if let Some(db) = &state.http_proxy.as_ref().and_then(|p| p.db.clone()) {
+        // Get the server ID
+        let server = crate::conf::operations::get_server(&db.pool, &server_name)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+
+        if let Some(server) = server {
+            if let Some(server_id) = server.id {
+                // Get or create the default config suit
+                let default_suit =
+                    crate::conf::operations::get_config_suit_by_name(&db.pool, "default")
+                        .await
+                        .map_err(|e| {
+                            ApiError::InternalError(format!(
+                                "Failed to get default config suit: {}",
+                                e
+                            ))
+                        })?;
+
+                let suit_id = if let Some(suit) = default_suit {
+                    suit.id.unwrap()
+                } else {
+                    // Create default config suit if it doesn't exist
+                    let new_suit = crate::conf::models::ConfigSuit::new(
+                        "default".to_string(),
+                        crate::conf::models::ConfigSuitType::Shared,
+                    );
+                    crate::conf::operations::upsert_config_suit(&db.pool, &new_suit)
+                        .await
+                        .map_err(|e| {
+                            ApiError::InternalError(format!(
+                                "Failed to create default config suit: {}",
+                                e
+                            ))
+                        })?
+                };
+
+                // Enable the server in the config suit
+                crate::conf::operations::add_server_to_config_suit(
+                    &db.pool, &suit_id, &server_id, true,
+                )
+                .await
+                .map_err(|e| {
+                    ApiError::InternalError(format!(
+                        "Failed to enable server in config suit: {}",
+                        e
+                    ))
+                })?;
+
+                tracing::info!("Enabled server '{}' in default config suit", server_name);
+            }
+        }
+    }
 
     if instances.is_empty() {
         // no instance records, return error
@@ -303,11 +352,60 @@ pub async fn disable_server(
     let instances_response = list_instances(state.clone(), Path(server_name.clone())).await?;
     let instances = instances_response.0.instances;
 
-    // TODO: update rule config to disable server
-    tracing::info!(
-        "Would update rule config to disable server '{}'",
-        server_name
-    );
+    // Update config_suit to disable server
+    if let Some(db) = &state.http_proxy.as_ref().and_then(|p| p.db.clone()) {
+        // Get the server ID
+        let server = crate::conf::operations::get_server(&db.pool, &server_name)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+
+        if let Some(server) = server {
+            if let Some(server_id) = server.id {
+                // Get or create the default config suit
+                let default_suit =
+                    crate::conf::operations::get_config_suit_by_name(&db.pool, "default")
+                        .await
+                        .map_err(|e| {
+                            ApiError::InternalError(format!(
+                                "Failed to get default config suit: {}",
+                                e
+                            ))
+                        })?;
+
+                let suit_id = if let Some(suit) = default_suit {
+                    suit.id.unwrap()
+                } else {
+                    // Create default config suit if it doesn't exist
+                    let new_suit = crate::conf::models::ConfigSuit::new(
+                        "default".to_string(),
+                        crate::conf::models::ConfigSuitType::Shared,
+                    );
+                    crate::conf::operations::upsert_config_suit(&db.pool, &new_suit)
+                        .await
+                        .map_err(|e| {
+                            ApiError::InternalError(format!(
+                                "Failed to create default config suit: {}",
+                                e
+                            ))
+                        })?
+                };
+
+                // Disable the server in the config suit
+                crate::conf::operations::add_server_to_config_suit(
+                    &db.pool, &suit_id, &server_id, false,
+                )
+                .await
+                .map_err(|e| {
+                    ApiError::InternalError(format!(
+                        "Failed to disable server in config suit: {}",
+                        e
+                    ))
+                })?;
+
+                tracing::info!("Disabled server '{}' in default config suit", server_name);
+            }
+        }
+    }
 
     if instances.is_empty() {
         // no instance records, return success (already disabled)

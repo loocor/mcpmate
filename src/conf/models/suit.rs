@@ -41,7 +41,7 @@ impl ConfigSuitType {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ConfigSuit {
     /// Unique ID
-    pub id: Option<i64>,
+    pub id: Option<String>,
     /// Name of the configuration suit
     pub name: String,
     /// Description of the configuration suit
@@ -102,11 +102,11 @@ impl ConfigSuit {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ConfigSuitServer {
     /// Unique ID
-    pub id: Option<i64>,
+    pub id: Option<String>,
     /// Configuration suit ID
-    pub config_suit_id: i64,
+    pub config_suit_id: String,
     /// Server ID
-    pub server_id: i64,
+    pub server_id: String,
     /// Whether the server is enabled in this configuration suit
     pub enabled: bool,
     /// When the association was created
@@ -118,14 +118,16 @@ pub struct ConfigSuitServer {
 /// Configuration suit tool association model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ConfigSuitTool {
-    /// Unique ID
-    pub id: Option<i64>,
+    /// Unique ID (UUID)
+    pub id: Option<String>,
     /// Configuration suit ID
-    pub config_suit_id: i64,
+    pub config_suit_id: String,
     /// Server ID
-    pub server_id: i64,
+    pub server_id: String,
     /// Tool name
     pub tool_name: String,
+    /// Prefixed/qualified name for the tool (to avoid conflicts)
+    pub prefixed_name: Option<String>,
     /// Whether the tool is enabled in this configuration suit
     pub enabled: bool,
     /// When the association was created
