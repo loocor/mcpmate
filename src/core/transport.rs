@@ -12,17 +12,17 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use tokio::time::timeout;
 
-use super::config::ServerConfig;
+use super::models::MCPServerConfig;
 use super::utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout};
 
 /// Transport types supported by the proxy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TransportType {
-    /// Server-Sent Events transport
-    Sse,
     /// Streamable HTTP transport
     StreamableHttp,
+    /// Server-Sent Events transport
+    Sse,
     /// Standard input/output transport
     Stdio,
 }
@@ -38,8 +38,8 @@ impl FromStr for TransportType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "sse" => Ok(Self::Sse),
             "streamable_http" | "streamablehttp" => Ok(Self::StreamableHttp),
+            "sse" => Ok(Self::Sse),
             "stdio" => Ok(Self::Stdio),
             _ => Err(anyhow::anyhow!("Unknown transport type: {}", s)),
         }
@@ -49,7 +49,7 @@ impl FromStr for TransportType {
 /// Connect to an HTTP-based server (SSE or Streamable HTTP) with timeout
 pub async fn connect_http_server(
     server_name: &str,
-    server_config: &ServerConfig,
+    server_config: &MCPServerConfig,
     transport_type: TransportType,
 ) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>)> {
     // Get URL

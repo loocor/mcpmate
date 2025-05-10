@@ -11,12 +11,12 @@ use rmcp::{
 use tokio::time::timeout;
 
 use super::utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout};
-use crate::core::config::ServerConfig;
+use crate::core::models::MCPServerConfig;
 
 /// Connect to an SSE server with timeout
 pub async fn connect_sse_server(
     server_name: &str,
-    server_config: &ServerConfig,
+    server_config: &MCPServerConfig,
 ) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>)> {
     // Get URL
     let url = server_config

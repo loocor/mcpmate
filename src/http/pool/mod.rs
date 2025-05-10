@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
-use crate::core::config::Config;
+use crate::core::models::Config;
 use crate::core::{connection::UpstreamConnection, monitor::ProcessMonitor};
 
 // Import submodules
@@ -22,8 +22,6 @@ pub struct UpstreamConnectionPool {
     pub connections: HashMap<String, HashMap<String, UpstreamConnection>>,
     /// Server configuration
     pub config: Arc<Config>,
-    /// Rule configuration
-    pub rule_config: Arc<HashMap<String, bool>>,
     /// Map of server name to map of instance ID to cancellation token
     pub cancellation_tokens: HashMap<String, HashMap<String, CancellationToken>>,
     /// Process monitor for tracking resource usage
@@ -32,7 +30,7 @@ pub struct UpstreamConnectionPool {
 
 impl UpstreamConnectionPool {
     /// Create a new connection pool
-    pub fn new(config: Arc<Config>, rule_config: Arc<HashMap<String, bool>>) -> Self {
+    pub fn new(config: Arc<Config>) -> Self {
         // Create process monitor with 5 second update interval
         let process_monitor = Arc::new(ProcessMonitor::new(Duration::from_secs(5)));
 
@@ -42,24 +40,16 @@ impl UpstreamConnectionPool {
         Self {
             connections: HashMap::new(),
             config,
-            rule_config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
         }
     }
 
-    /// Initialize the connection pool with all enabled servers
+    /// Initialize the connection pool with all servers
     pub fn initialize(&mut self) {
         for (name, _server_config) in &self.config.mcp_servers {
             // Skip the proxy server itself
             if name == "proxy" {
-                continue;
-            }
-
-            // Check if the server is enabled in the rule configuration
-            let enabled = self.rule_config.get(name).copied().unwrap_or(false);
-            if !enabled {
-                tracing::info!("Server '{}' is disabled, skipping", name);
                 continue;
             }
 
@@ -85,7 +75,7 @@ impl UpstreamConnectionPool {
             .sum();
 
         tracing::info!(
-            "Initialized connection pool with {} enabled servers and {} instances",
+            "Initialized connection pool with {} servers and {} instances",
             self.connections.len(),
             total_instances
         );

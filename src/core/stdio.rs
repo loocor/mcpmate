@@ -12,12 +12,12 @@ use tokio::{process::Command, time::timeout};
 use tokio_util::sync::CancellationToken;
 
 use super::utils::{get_connection_timeout, get_tools_timeout, prepare_command_env};
-use crate::core::config::ServerConfig;
+use crate::core::models::MCPServerConfig;
 
 /// Connect to a stdio server with timeout and cancellation token
 pub async fn connect_stdio_server_with_ct(
     server_name: &str,
-    server_config: &ServerConfig,
+    server_config: &MCPServerConfig,
     ct: CancellationToken,
 ) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<u32>)> {
     // Get command and arguments
@@ -221,7 +221,7 @@ pub async fn connect_stdio_server_with_ct(
 /// Connect to a stdio server with timeout (backward compatibility wrapper)
 pub async fn connect_stdio_server(
     server_name: &str,
-    server_config: &ServerConfig,
+    server_config: &MCPServerConfig,
 ) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<u32>)> {
     connect_stdio_server_with_ct(server_name, server_config, CancellationToken::new()).await
 }

@@ -1,5 +1,5 @@
-// Database models for MCPMate
-// Contains data models for database operations
+// Tool models for MCPMate
+// Contains data models for tool configuration
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use sqlx::FromRow;
 
 /// Tool configuration model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct ToolConfig {
+pub struct Tool {
     /// Unique ID
     pub id: Option<i64>,
     /// Name of the server that provides this tool
@@ -24,7 +24,7 @@ pub struct ToolConfig {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
-impl ToolConfig {
+impl Tool {
     /// Create a new tool configuration
     pub fn new(server_name: String, tool_name: String, enabled: bool) -> Self {
         Self {
@@ -59,9 +59,13 @@ impl ToolConfig {
 
 /// Tool configuration update model
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolConfigUpdate {
+pub struct ToolUpdate {
     /// Whether the tool is enabled
     pub enabled: bool,
     /// Alias name for the tool (user-defined)
     pub alias_name: Option<String>,
 }
+
+// For backward compatibility
+pub type ToolConfig = Tool;
+pub type ToolConfigUpdate = ToolUpdate;

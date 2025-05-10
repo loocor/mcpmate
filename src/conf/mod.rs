@@ -1,10 +1,13 @@
-// Database module for MCPMate
-// Contains SQLite connection and operations for tool configuration persistence
+// Configuration module for MCPMate
+// Contains database connection and configuration management
 
-use anyhow::Result;
-use sqlx::{migrate::MigrateDatabase, sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
+use anyhow::{Context, Result};
+use sqlx::{migrate::MigrateDatabase, sqlite::SqlitePoolOptions, Pool, Sqlite};
+use std::path::Path;
 use tracing;
 
+pub mod initialization;
+pub mod migration;
 pub mod models;
 pub mod operations;
 
@@ -21,10 +24,13 @@ pub struct Database {
 impl Database {
     /// Create a new database connection
     pub async fn new() -> Result<Self> {
-        tracing::info!("Initializing database connection to {}", DB_URL);
+        // Get database URL from environment or use default
+        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| DB_URL.to_string());
+
+        tracing::info!("Initializing database connection to {}", database_url);
 
         // Check if database exists
-        let db_exists = match Sqlite::database_exists(DB_URL).await {
+        let db_exists = match Sqlite::database_exists(&database_url).await {
             Ok(exists) => {
                 tracing::debug!("Database existence check result: {}", exists);
                 exists
@@ -37,8 +43,8 @@ impl Database {
 
         // Create database if it doesn't exist
         if !db_exists {
-            tracing::info!("Creating database at {}", DB_URL);
-            match Sqlite::create_database(DB_URL).await {
+            tracing::info!("Creating database at {}", database_url);
+            match Sqlite::create_database(&database_url).await {
                 Ok(_) => tracing::info!("Database created successfully"),
                 Err(e) => {
                     tracing::error!("Failed to create SQLite database: {}", e);
@@ -46,14 +52,14 @@ impl Database {
                 }
             }
         } else {
-            tracing::info!("Database already exists at {}", DB_URL);
+            tracing::info!("Database already exists at {}", database_url);
         }
 
         // Connect to the database
         tracing::debug!("Connecting to database with max 5 connections");
         let pool = match SqlitePoolOptions::new()
             .max_connections(5)
-            .connect(DB_URL)
+            .connect(&database_url)
             .await
         {
             Ok(pool) => {
@@ -69,124 +75,77 @@ impl Database {
             }
         };
 
-        // Run migrations
-        if let Err(e) = Self::run_migrations(&pool).await {
-            tracing::error!("Failed to run database migrations: {}", e);
+        // Enable foreign keys
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .context("Failed to enable foreign keys")?;
+
+        // Run initialization
+        if let Err(e) = initialization::run_initialization(&pool).await {
+            tracing::error!("Failed to run database initialization: {}", e);
             return Err(e);
         }
 
-        tracing::info!("Database initialization completed successfully");
-        Ok(Self { pool })
-    }
+        // Create database instance
+        let db = Self { pool };
 
-    /// Run database migrations
-    async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
-        tracing::info!("Running database migrations");
+        // TODO: Add version tracking for database schema
+        // In the future, we should add a version table to track schema changes
+        // and perform necessary migrations when the schema is updated.
+        // This would involve:
+        // 1. Creating a version table with a schema_version field
+        // 2. Checking the current version against the expected version
+        // 3. Running appropriate migration scripts if needed
 
-        // Create tool_config table if it doesn't exist
-        tracing::debug!("Creating tool_config table if it doesn't exist");
-        match sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS tool_config (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                server_name TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                alias_name TEXT,
-                enabled BOOLEAN NOT NULL DEFAULT 1,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(server_name, tool_name)
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        {
-            Ok(_) => tracing::debug!("tool_config table created or already exists"),
-            Err(e) => {
-                tracing::error!("Failed to create tool_config table: {}", e);
-                return Err(anyhow::anyhow!("Failed to create tool_config table: {}", e));
-            }
-        };
-
-        // Check if the table was created successfully
-        match sqlx::query(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_config'",
-        )
-        .fetch_optional(pool)
-        .await
-        {
-            Ok(Some(_)) => tracing::info!("Verified tool_config table exists"),
-            Ok(None) => {
-                let err = "tool_config table not found after creation";
-                tracing::error!("{}", err);
-                return Err(anyhow::anyhow!(err));
-            }
-            Err(e) => {
-                tracing::error!("Failed to verify tool_config table: {}", e);
-                return Err(anyhow::anyhow!("Failed to verify tool_config table: {}", e));
-            }
-        };
-
-        // Check if alias_name column exists
-        tracing::debug!("Checking if alias_name column exists in tool_config table");
-        let has_alias_name = match sqlx::query("PRAGMA table_info(tool_config)")
-            .fetch_all(pool)
-            .await
-        {
-            Ok(rows) => {
-                let mut found = false;
-                for row in rows {
-                    let column_name: String = row.get(1);
-                    if column_name == "alias_name" {
-                        found = true;
-                        break;
+        // Check if we need to migrate configuration from files
+        let default_config_path = std::path::Path::new("config/mcp.json");
+        if default_config_path.exists() {
+            // Check if database already has server configurations
+            let has_server_configs =
+                match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
+                    .fetch_one(&db.pool)
+                    .await
+                {
+                    Ok(count) => count > 0,
+                    Err(e) => {
+                        tracing::error!("Failed to check if server_config table has data: {}", e);
+                        false
                     }
-                }
-                found
-            }
-            Err(e) => {
-                tracing::error!("Failed to check if alias_name column exists: {}", e);
-                return Err(anyhow::anyhow!(
-                    "Failed to check if alias_name column exists: {}",
-                    e
-                ));
-            }
-        };
+                };
 
-        // Add alias_name column if it doesn't exist
-        if !has_alias_name {
-            tracing::info!("Adding alias_name column to tool_config table");
-            match sqlx::query("ALTER TABLE tool_config ADD COLUMN alias_name TEXT")
-                .execute(pool)
-                .await
-            {
-                Ok(_) => {
-                    tracing::info!("Successfully added alias_name column to tool_config table")
+            // If database is empty, migrate configuration from files
+            if !has_server_configs {
+                tracing::info!("Database is empty, migrating configuration from files");
+                if let Err(e) = db.migrate_from_files(default_config_path).await {
+                    tracing::error!("Failed to migrate configuration from files: {}", e);
+                    tracing::warn!("Continuing with empty database");
+                } else {
+                    tracing::info!("Successfully migrated configuration from files");
                 }
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to add alias_name column to tool_config table: {}",
-                        e
-                    );
-                    return Err(anyhow::anyhow!(
-                        "Failed to add alias_name column to tool_config table: {}",
-                        e
-                    ));
-                }
-            };
-        } else {
-            tracing::debug!("alias_name column already exists in tool_config table");
+            }
         }
 
-        tracing::info!("Database migrations completed successfully");
-        Ok(())
+        tracing::info!("Database initialization completed successfully");
+        Ok(db)
     }
 
-    /// Initialize the database with default values
+    /// Migrate configuration from files to database
+    pub async fn migrate_from_files(&self, mcp_config_path: &Path) -> Result<()> {
+        migration::migrate_from_files(&self.pool, mcp_config_path).await
+    }
+
+    /// Initialize the database with some default values
     pub async fn initialize_defaults(&self) -> Result<()> {
         // This method can be used to insert default values if needed
         tracing::info!("Database initialized with default values");
+        Ok(())
+    }
+
+    /// Close the database connection
+    pub async fn close(self) -> Result<()> {
+        tracing::info!("Closing database connection");
+        self.pool.close().await;
         Ok(())
     }
 }

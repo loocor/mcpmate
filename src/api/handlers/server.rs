@@ -42,8 +42,8 @@ pub async fn list_servers(
     let servers = instances_map
         .into_iter()
         .map(|(name, instances)| {
-            // Check if server is enabled in configuration
-            let enabled = pool.rule_config.get(&name).copied().unwrap_or(false);
+            // All servers are enabled by default
+            let enabled = true;
 
             // Create instance summaries
             let instances = instances
@@ -119,8 +119,8 @@ pub async fn get_server(
     // Get all instances for this server
     let instances = pool.connections.get(&name).unwrap();
 
-    // Check if server is enabled in configuration
-    let enabled = pool.rule_config.get(&name).copied().unwrap_or(false);
+    // All servers are enabled by default
+    let enabled = true;
 
     // Create instance summaries
     let instances = instances

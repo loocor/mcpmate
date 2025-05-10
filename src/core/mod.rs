@@ -2,9 +2,10 @@
 // Contains functions and utilities for the MCP proxy server
 
 // Module declarations
-pub mod config;
 pub mod connection;
 pub mod error;
+pub mod loader;
+pub mod models;
 pub mod monitor;
 pub mod sse;
 pub mod stdio;

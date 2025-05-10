@@ -12,10 +12,10 @@ use tokio::sync::Mutex;
 use crate::core::TransportType;
 
 use crate::{
-    core::config::Config,
+    conf::Database,
+    core::models::Config,
     core::tool::parse_tool_name,
     core::{tool::get_all_tools_with_smart_prefix, UpstreamConnectionPool},
-    conf::Database,
 };
 
 /// HTTP Proxy Server that aggregates tools from multiple MCP servers
@@ -159,9 +159,9 @@ impl HttpProxyServer {
     }
 
     /// Create a new HTTP proxy server
-    pub fn new(config: Arc<Config>, rule_config: Arc<HashMap<String, bool>>) -> Self {
+    pub fn new(config: Arc<Config>) -> Self {
         // Create connection pool
-        let mut pool = UpstreamConnectionPool::new(config, rule_config);
+        let mut pool = UpstreamConnectionPool::new(config);
 
         // Initialize the pool
         pool.initialize();
@@ -192,6 +192,18 @@ impl HttpProxyServer {
         self.db = Some(Arc::new(db));
 
         tracing::info!("Database initialized successfully");
+        Ok(())
+    }
+
+    /// Set the database connection
+    pub async fn set_database(&mut self, db: Database) -> Result<()> {
+        // Initialize default values
+        db.initialize_defaults().await?;
+
+        // Store the database connection
+        self.db = Some(Arc::new(db));
+
+        tracing::info!("Database connection set successfully");
         Ok(())
     }
 

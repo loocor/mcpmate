@@ -2,11 +2,12 @@ use anyhow::Result;
 use clap::Parser;
 use mcpmate::{
     api::{handlers::system::initialize_server_start_time, ApiServer},
-    core::config::{load_rule_config, load_server_config},
+    conf::Database,
+    core::loader::load_server_config,
     core::{ConnectionStatus, TransportType},
     http::HttpProxyServer,
 };
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use tracing_subscriber::{self, EnvFilter};
 
@@ -14,14 +15,6 @@ use tracing_subscriber::{self, EnvFilter};
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Path to the MCP configuration file
-    #[arg(short, long, default_value = "config/mcp.json")]
-    config: PathBuf,
-
-    /// Path to the rule configuration file
-    #[arg(short, long, default_value = "config/rule.json5")]
-    rule_config: PathBuf,
-
     /// Port to listen on for MCP server
     #[arg(short, long, default_value = "8000")]
     port: u16,
@@ -74,41 +67,35 @@ async fn main() -> Result<()> {
     // Initialize server start time
     initialize_server_start_time();
 
-    // Load the MCP server and rule configuration
-    let config = load_server_config(&args.config)?;
-    let rule_config = load_rule_config(&args.rule_config)?;
+    // Initialize database
+    let db = match Database::new().await {
+        Ok(db) => {
+            tracing::info!("Database initialized successfully");
+            db
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize database: {}", e);
+            return Err(anyhow::anyhow!("Failed to initialize database: {}", e));
+        }
+    };
 
-    // Log the loaded configuration
-    tracing::info!("Loaded configuration from: {}", args.config.display());
+    // Note: Migration from files to database is automatically performed if the database is empty and config/mcp.json exists
+
+    // Load configuration from database
+    let config = load_server_config(&db).await?;
+
+    tracing::info!("Loaded configuration from database");
     tracing::info!(
-        "Found {} MCP servers in configuration",
+        "Found {} MCP servers in database configuration",
         config.mcp_servers.len()
     );
-    tracing::info!(
-        "Loaded rule configuration from: {}",
-        args.rule_config.display()
-    );
-
-    // Convert rule config to HashMap<String, bool>
-    let rule_map = rule_config
-        .rules
-        .iter()
-        .map(|(name, rule)| (name.clone(), rule.enabled))
-        .collect::<HashMap<String, bool>>();
 
     // Create HTTP proxy server
-    let mut proxy = HttpProxyServer::new(Arc::new(config), Arc::new(rule_map));
+    let mut proxy = HttpProxyServer::new(Arc::new(config));
 
-    // Initialize database
-    if let Err(e) = proxy.init_database().await {
-        tracing::error!("Failed to initialize database: {}", e);
-        // Continue without database
-        tracing::warn!(
-            "Continuing without database support. Tool-level configuration will not be available."
-        );
-    } else {
-        tracing::info!("Database initialized successfully. Tool-level configuration is available.");
-    }
+    // Use the existing database connection
+    proxy.set_database(db).await?;
+    tracing::info!("Using database connection for tool-level configuration.");
 
     // Get a reference to the connection pool
     let connection_pool = Arc::clone(&proxy.connection_pool);
