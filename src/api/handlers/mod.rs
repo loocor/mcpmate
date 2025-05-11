@@ -4,6 +4,7 @@
 pub mod instance;
 pub mod notification;
 pub mod server;
+pub mod specs;
 pub mod system;
 pub mod tool;
 
