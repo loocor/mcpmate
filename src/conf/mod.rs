@@ -93,6 +93,18 @@ impl Database {
         // Check if we need to migrate configuration from files
         let default_config_path = std::path::Path::new("config/mcp.json");
         if default_config_path.exists() {
+            tracing::info!(
+                "Found MCP configuration file at {}",
+                default_config_path.display()
+            );
+        } else {
+            tracing::warn!(
+                "MCP configuration file not found at {}. No servers will be available.",
+                default_config_path.display()
+            );
+        }
+
+        if default_config_path.exists() {
             // Check if database already has server configurations
             let has_server_configs =
                 match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
@@ -113,9 +125,32 @@ impl Database {
                     tracing::error!("Failed to migrate configuration from files: {}", e);
                     tracing::warn!("Continuing with empty database");
                 } else {
-                    tracing::info!("Successfully migrated configuration from files");
+                    // Check if servers were actually migrated
+                    let server_count = match sqlx::query_scalar::<_, i64>(
+                        "SELECT COUNT(*) FROM server_config",
+                    )
+                    .fetch_one(&db.pool)
+                    .await
+                    {
+                        Ok(count) => count,
+                        Err(e) => {
+                            tracing::error!("Failed to check if server_config table has data after migration: {}", e);
+                            0
+                        }
+                    };
+
+                    tracing::info!(
+                        "Successfully migrated configuration from files. Found {} servers.",
+                        server_count
+                    );
                 }
             }
+        }
+
+        // Initialize default values (after migrating servers from config files)
+        if let Err(e) = db.initialize_defaults().await {
+            tracing::error!("Failed to initialize default values: {}", e);
+            tracing::warn!("Continuing with database initialization");
         }
 
         tracing::info!("Database initialization completed successfully");
@@ -129,7 +164,102 @@ impl Database {
 
     /// Initialize the database with some default values
     pub async fn initialize_defaults(&self) -> Result<()> {
-        // This method can be used to insert default values if needed
+        // Create default configuration suit if it doesn't exist
+        let default_suit = operations::get_config_suit_by_name(&self.pool, "default").await?;
+
+        let suit_id = if default_suit.is_none() {
+            tracing::info!("Creating default configuration suit");
+
+            // Create a new default configuration suit
+            let mut new_suit = models::ConfigSuit::new_with_description(
+                "default".to_string(),
+                Some("Default configuration suit".to_string()),
+                models::ConfigSuitType::Shared,
+            );
+
+            // Set active and default flags
+            new_suit.is_active = true;
+            new_suit.is_default = true;
+            new_suit.multi_select = true;
+
+            // Insert the default suit
+            let id = operations::upsert_config_suit(&self.pool, &new_suit).await?;
+            tracing::info!("Created default configuration suit with ID {}", id);
+            id
+        } else {
+            // Check if the default suit is active and default
+            let suit = default_suit.unwrap();
+            let id = suit.id.clone().unwrap();
+
+            if !suit.is_active || !suit.is_default {
+                tracing::info!("Updating default configuration suit to be active and default");
+
+                // Set the suit as active and default
+                if !suit.is_active {
+                    operations::suit::set_config_suit_active(&self.pool, &id, true).await?;
+                }
+                if !suit.is_default {
+                    operations::suit::set_config_suit_default(&self.pool, &id).await?;
+                }
+            }
+            id
+        };
+
+        // Check if we need to add servers to the default configuration suit
+        let suit_servers = operations::suit::get_config_suit_servers(&self.pool, &suit_id).await?;
+
+        if suit_servers.is_empty() {
+            tracing::info!("Adding servers to default configuration suit");
+
+            // Get all servers from the database
+            let all_servers = operations::get_all_servers(&self.pool).await?;
+            let server_count = all_servers.len();
+
+            tracing::info!(
+                "Found {} servers in the database to add to default configuration suit",
+                server_count
+            );
+
+            if server_count == 0 {
+                tracing::warn!("No servers found in the database. Make sure mcp.json exists and contains valid server configurations.");
+                tracing::warn!(
+                    "You may need to restart the application after adding server configurations."
+                );
+            }
+
+            // Add each server to the default configuration suit
+            for server in &all_servers {
+                if let Some(server_id) = &server.id {
+                    // Add the server to the default configuration suit with enabled=true
+                    operations::suit::add_server_to_config_suit(
+                        &self.pool, &suit_id, server_id, true,
+                    )
+                    .await?;
+
+                    tracing::debug!(
+                        "Added server '{}' to default configuration suit",
+                        server.name
+                    );
+                }
+            }
+
+            tracing::info!(
+                "Added {} servers to default configuration suit",
+                server_count
+            );
+        }
+
+        // Verify that servers were added to the default configuration suit
+        let suit_servers = operations::suit::get_config_suit_servers(&self.pool, &suit_id).await?;
+        if suit_servers.is_empty() {
+            tracing::warn!("No servers were added to the default configuration suit. This may indicate a database issue.");
+        } else {
+            tracing::info!(
+                "Verified {} servers were added to the default configuration suit",
+                suit_servers.len()
+            );
+        }
+
         tracing::info!("Database initialized with default values");
         Ok(())
     }

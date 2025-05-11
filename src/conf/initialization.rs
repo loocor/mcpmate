@@ -45,6 +45,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
         CREATE TABLE IF NOT EXISTS server_args (
             id TEXT PRIMARY KEY,
             server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
             arg_index INTEGER NOT NULL,
             arg_value TEXT NOT NULL,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
@@ -69,6 +70,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
         CREATE TABLE IF NOT EXISTS server_env (
             id TEXT PRIMARY KEY,
             server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
             env_key TEXT NOT NULL,
             env_value TEXT NOT NULL,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
@@ -93,6 +95,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
         CREATE TABLE IF NOT EXISTS server_meta (
             id TEXT PRIMARY KEY,
             server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
             description TEXT,
             author TEXT,
             website TEXT,
@@ -153,6 +156,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
             id TEXT PRIMARY KEY,
             config_suit_id TEXT NOT NULL,
             server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -181,8 +185,9 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_tool (
             id TEXT PRIMARY KEY,
-            config_suit_id INTEGER NOT NULL,
-            server_id INTEGER NOT NULL,
+            config_suit_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
             tool_name TEXT NOT NULL,
             prefixed_name TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,

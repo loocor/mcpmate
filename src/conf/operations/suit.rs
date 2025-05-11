@@ -27,6 +27,56 @@ pub async fn get_all_config_suits(pool: &Pool<Sqlite>) -> Result<Vec<ConfigSuit>
     Ok(suits)
 }
 
+/// Get all active configuration suits from the database
+pub async fn get_active_config_suits(pool: &Pool<Sqlite>) -> Result<Vec<ConfigSuit>> {
+    tracing::debug!("Executing SQL query to get all active configuration suits");
+
+    let suits = sqlx::query_as::<_, ConfigSuit>(
+        r#"
+        SELECT * FROM config_suit
+        WHERE is_active = 1
+        ORDER BY priority DESC, created_at ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("Failed to fetch active configuration suits")?;
+
+    tracing::debug!(
+        "Successfully fetched {} active configuration suits from database",
+        suits.len()
+    );
+    Ok(suits)
+}
+
+/// Get the default configuration suit from the database
+pub async fn get_default_config_suit(pool: &Pool<Sqlite>) -> Result<Option<ConfigSuit>> {
+    tracing::debug!("Executing SQL query to get default configuration suit");
+
+    let suit = sqlx::query_as::<_, ConfigSuit>(
+        r#"
+        SELECT * FROM config_suit
+        WHERE is_default = 1
+        LIMIT 1
+        "#,
+    )
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch default configuration suit")?;
+
+    if let Some(ref s) = suit {
+        tracing::debug!(
+            "Found default configuration suit '{}' with ID {}",
+            s.name,
+            s.id.as_ref().unwrap_or(&"unknown".to_string())
+        );
+    } else {
+        tracing::debug!("No default configuration suit found");
+    }
+
+    Ok(suit)
+}
+
 /// Get configuration suits by type from the database
 pub async fn get_config_suits_by_type(
     pool: &Pool<Sqlite>,
@@ -136,6 +186,101 @@ pub async fn upsert_config_suit(pool: &Pool<Sqlite>, suit: &ConfigSuit) -> Resul
     Ok(suit_id)
 }
 
+/// Set a configuration suit as active or inactive
+pub async fn set_config_suit_active(
+    pool: &Pool<Sqlite>,
+    suit_id: &str,
+    active: bool,
+) -> Result<()> {
+    tracing::debug!(
+        "Setting configuration suit with ID {} as {}",
+        suit_id,
+        if active { "active" } else { "inactive" }
+    );
+
+    // Get the configuration suit to check multi_select
+    let suit = get_config_suit(pool, suit_id).await?;
+    if suit.is_none() {
+        return Err(anyhow::anyhow!(
+            "Configuration suit with ID {} not found",
+            suit_id
+        ));
+    }
+    let suit = suit.unwrap();
+
+    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
+
+    // If activating and multi_select is false, deactivate all other suits
+    if active && !suit.multi_select {
+        sqlx::query(
+            r#"
+            UPDATE config_suit
+            SET is_active = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id != ?
+            "#,
+        )
+        .bind(suit_id)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to deactivate other configuration suits")?;
+    }
+
+    // Update the specified suit
+    sqlx::query(
+        r#"
+        UPDATE config_suit
+        SET is_active = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+    )
+    .bind(active)
+    .bind(suit_id)
+    .execute(&mut *tx)
+    .await
+    .context("Failed to update configuration suit active status")?;
+
+    tx.commit().await.context("Failed to commit transaction")?;
+    Ok(())
+}
+
+/// Set a configuration suit as the default
+pub async fn set_config_suit_default(pool: &Pool<Sqlite>, suit_id: &str) -> Result<()> {
+    tracing::debug!("Setting configuration suit with ID {} as default", suit_id);
+
+    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
+
+    // Clear default flag from all suits
+    sqlx::query(
+        r#"
+        UPDATE config_suit
+        SET is_default = 0,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .execute(&mut *tx)
+    .await
+    .context("Failed to clear default flag from all configuration suits")?;
+
+    // Set the specified suit as default
+    sqlx::query(
+        r#"
+        UPDATE config_suit
+        SET is_default = 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+    )
+    .bind(suit_id)
+    .execute(&mut *tx)
+    .await
+    .context("Failed to set configuration suit as default")?;
+
+    tx.commit().await.context("Failed to commit transaction")?;
+    Ok(())
+}
+
 /// Create or update a configuration suit in the database (transaction version)
 pub async fn upsert_config_suit_tx(
     tx: &mut Transaction<'_, Sqlite>,
@@ -150,13 +295,15 @@ pub async fn upsert_config_suit_tx(
 
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit (id, name, description, type, multi_select, priority)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO config_suit (id, name, description, type, multi_select, priority, is_active, is_default)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(name) DO UPDATE SET
             description = excluded.description,
             type = excluded.type,
             multi_select = excluded.multi_select,
             priority = excluded.priority,
+            is_active = excluded.is_active,
+            is_default = excluded.is_default,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -166,6 +313,8 @@ pub async fn upsert_config_suit_tx(
     .bind(&suit.suit_type)
     .bind(suit.multi_select)
     .bind(suit.priority)
+    .bind(suit.is_active)
+    .bind(suit.is_default)
     .execute(&mut **tx)
     .await
     .context("Failed to upsert configuration suit")?;
@@ -254,11 +403,34 @@ pub async fn add_server_to_config_suit(
     // Generate a UUID for the association
     let association_id = uuid::Uuid::new_v4().to_string();
 
+    // Get the server name
+    let server_name = match sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT name FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to get server name")?
+    {
+        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
+        None => {
+            tracing::warn!(
+                "Server ID {} not found, using 'unknown' as server_name",
+                server_id
+            );
+            "unknown".to_string()
+        }
+    };
+
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit_server (id, config_suit_id, server_id, enabled)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO config_suit_server (id, config_suit_id, server_id, server_name, enabled)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(config_suit_id, server_id) DO UPDATE SET
+            server_name = excluded.server_name,
             enabled = excluded.enabled,
             updated_at = CURRENT_TIMESTAMP
         "#,
@@ -266,6 +438,7 @@ pub async fn add_server_to_config_suit(
     .bind(&association_id)
     .bind(config_suit_id)
     .bind(server_id)
+    .bind(&server_name)
     .bind(enabled)
     .execute(pool)
     .await
@@ -367,14 +540,51 @@ pub async fn add_tool_to_config_suit(
     // Generate a UUID for the tool
     let tool_id = uuid::Uuid::new_v4().to_string();
 
-    // Create a prefixed name (server_name:tool_name)
-    let prefixed_name: Option<String> = None; // This will be set by the API if needed
+    // Get the existing prefixed name if any
+    let existing_prefixed_name = sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT prefixed_name FROM config_suit_tool
+        WHERE config_suit_id = ? AND server_id = ? AND tool_name = ?
+        "#,
+    )
+    .bind(config_suit_id)
+    .bind(server_id)
+    .bind(tool_name)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to get existing prefixed name")?;
+
+    // Keep the existing prefixed name if there is one
+    let prefixed_name = existing_prefixed_name;
+
+    // Get the server name
+    let server_name = match sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT name FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to get server name")?
+    {
+        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
+        None => {
+            tracing::warn!(
+                "Server ID {} not found, using 'unknown' as server_name",
+                server_id
+            );
+            "unknown".to_string()
+        }
+    };
 
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit_tool (id, config_suit_id, server_id, tool_name, prefixed_name, enabled)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, prefixed_name, enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(config_suit_id, server_id, tool_name) DO UPDATE SET
+            server_name = excluded.server_name,
             enabled = excluded.enabled,
             prefixed_name = excluded.prefixed_name,
             updated_at = CURRENT_TIMESTAMP
@@ -383,6 +593,7 @@ pub async fn add_tool_to_config_suit(
     .bind(&tool_id)
     .bind(config_suit_id)
     .bind(server_id)
+    .bind(&server_name)
     .bind(tool_name)
     .bind(&prefixed_name)
     .bind(enabled)

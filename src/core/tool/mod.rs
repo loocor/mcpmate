@@ -3,6 +3,7 @@
 
 // Module declarations
 mod call;
+mod db;
 mod mapping;
 mod prefix;
 mod types;

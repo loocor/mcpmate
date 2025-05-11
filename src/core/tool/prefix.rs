@@ -141,6 +141,28 @@ pub async fn get_all_with_prefix(
     let mut tools_by_server: HashMap<String, Vec<Tool>> = HashMap::new();
     let mut all_tool_names: HashMap<String, (String, String)> = HashMap::new(); // tool_name -> (server_name, instance_id)
 
+    // Try to get custom prefixed names from database if available
+    let mut custom_prefixed_names = HashMap::new();
+
+    // Try to get the database from the proxy server
+    if let Some(proxy) = crate::http::proxy::get_proxy_server() {
+        if let Some(db) = &proxy.database {
+            match super::db::get_custom_prefixed_names(&db.pool).await {
+                Ok(names) => {
+                    tracing::debug!("Loaded {} custom prefixed names from database", names.len());
+                    custom_prefixed_names = names;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load custom prefixed names from database: {}", e);
+                }
+            }
+        } else {
+            tracing::debug!("No database connection available in proxy server");
+        }
+    } else {
+        tracing::debug!("Could not get proxy server instance");
+    }
+
     // Collect tools and check for name conflicts
     for (server_name, instances) in &pool.connections {
         for (instance_id, conn) in instances {
@@ -225,55 +247,18 @@ pub async fn get_all_with_prefix(
             // Convert tool name to string for easier manipulation
             let tool_name_string = tool.name.to_string();
 
-            // Check if the tool already has the server prefix
-            let server_prefix = format!("{}_", server_name.to_lowercase());
-            let already_has_server_prefix =
-                tool_name_string.to_lowercase().starts_with(&server_prefix);
+            // Check if there's a custom prefixed name for this tool
+            let custom_name =
+                custom_prefixed_names.get(&(server_name.clone(), tool_name_string.clone()));
 
-            // Check if the tool has any prefix that matches another server name
-            let has_other_server_prefix = server_has_prefix
-                .iter()
-                .filter(|(other_server, _)| *other_server != server_name)
-                .any(|(other_server, _)| {
-                    let other_prefix = format!("{}_", other_server.to_lowercase());
-                    tool_name_string.to_lowercase().starts_with(&other_prefix)
-                });
-
-            // Determine if we need to add a prefix
-            let needs_prefix = if has_prefix || already_has_server_prefix {
-                // Already has prefix, no need to add
-                false
-            } else if has_other_server_prefix {
-                // Has prefix from another server, need to replace with correct prefix
-                true
-            } else if is_single_tool_server && !name_conflicts.contains(&tool_name_string) {
-                // Single tool server with no conflicts, no need to add prefix
-                false
-            } else {
-                // Either multi-tool server without prefix or has conflicts
-                true
-            };
-
-            if needs_prefix {
-                // If the tool already has a prefix from another server, we need to remove it first
-                let original_name = if has_other_server_prefix {
-                    // Find the underscore and get the part after it
-                    if let Some(pos) = tool_name_string.find('_') {
-                        &tool_name_string[pos + 1..]
-                    } else {
-                        &tool_name_string
-                    }
-                } else {
-                    &tool_name_string
-                };
-
-                // Add prefix with proper conversion to Cow<str>
-                processed_tool.name = format!("{}_{}", server_name, original_name).into();
+            if let Some(custom_prefixed_name) = custom_name {
+                // Use the custom prefixed name from the database
+                processed_tool.name = custom_prefixed_name.clone().into();
 
                 tracing::debug!(
-                    "Added prefix to tool: '{}' -> '{}'",
+                    "Using custom prefixed name for tool: '{}' -> '{}'",
                     tool_name_string,
-                    processed_tool.name
+                    custom_prefixed_name
                 );
 
                 // Update description to indicate source
@@ -287,6 +272,74 @@ pub async fn get_all_with_prefix(
                         .as_ref()
                         .map_or("".to_string(), |d| d.to_string());
                     processed_tool.description = Some(format!("[{}] {}", server_name, desc).into());
+                }
+            } else {
+                // No custom name, apply smart prefixing logic
+
+                // Check if the tool already has the server prefix
+                let server_prefix = format!("{}_", server_name.to_lowercase());
+                let already_has_server_prefix =
+                    tool_name_string.to_lowercase().starts_with(&server_prefix);
+
+                // Check if the tool has any prefix that matches another server name
+                let has_other_server_prefix = server_has_prefix
+                    .iter()
+                    .filter(|(other_server, _)| *other_server != server_name)
+                    .any(|(other_server, _)| {
+                        let other_prefix = format!("{}_", other_server.to_lowercase());
+                        tool_name_string.to_lowercase().starts_with(&other_prefix)
+                    });
+
+                // Determine if we need to add a prefix
+                let needs_prefix = if has_prefix || already_has_server_prefix {
+                    // Already has prefix, no need to add
+                    false
+                } else if has_other_server_prefix {
+                    // Has prefix from another server, need to replace with correct prefix
+                    true
+                } else if is_single_tool_server && !name_conflicts.contains(&tool_name_string) {
+                    // Single tool server with no conflicts, no need to add prefix
+                    false
+                } else {
+                    // Either multi-tool server without prefix or has conflicts
+                    true
+                };
+
+                if needs_prefix {
+                    // If the tool already has a prefix from another server, we need to remove it first
+                    let original_name = if has_other_server_prefix {
+                        // Find the underscore and get the part after it
+                        if let Some(pos) = tool_name_string.find('_') {
+                            &tool_name_string[pos + 1..]
+                        } else {
+                            &tool_name_string
+                        }
+                    } else {
+                        &tool_name_string
+                    };
+
+                    // Add prefix with proper conversion to Cow<str>
+                    processed_tool.name = format!("{}_{}", server_name, original_name).into();
+
+                    tracing::debug!(
+                        "Added prefix to tool: '{}' -> '{}'",
+                        tool_name_string,
+                        processed_tool.name
+                    );
+
+                    // Update description to indicate source
+                    if !processed_tool
+                        .description
+                        .as_ref()
+                        .map_or(false, |desc| desc.contains(&format!("[{}]", server_name)))
+                    {
+                        let desc = processed_tool
+                            .description
+                            .as_ref()
+                            .map_or("".to_string(), |d| d.to_string());
+                        processed_tool.description =
+                            Some(format!("[{}] {}", server_name, desc).into());
+                    }
                 }
             }
 

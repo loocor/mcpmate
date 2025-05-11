@@ -97,6 +97,10 @@ async fn main() -> Result<()> {
     proxy.set_database(db).await?;
     tracing::info!("Using database connection for tool-level configuration.");
 
+    // Create an Arc for the proxy server and set the global instance
+    let proxy_arc = Arc::new(proxy.clone());
+    mcpmate::http::proxy::set_proxy_server(proxy_arc);
+
     // Get a reference to the connection pool
     let connection_pool = Arc::clone(&proxy.connection_pool);
 

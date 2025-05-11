@@ -28,7 +28,7 @@ pub async fn get_all_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
     Ok(servers)
 }
 
-/// Get a specific server from the database
+/// Get a specific server from the database by name
 pub async fn get_server(pool: &Pool<Sqlite>, name: &str) -> Result<Option<Server>> {
     tracing::debug!("Executing SQL query to get server '{}'", name);
 
@@ -47,6 +47,30 @@ pub async fn get_server(pool: &Pool<Sqlite>, name: &str) -> Result<Option<Server
         tracing::debug!("Found server '{}', type: {}", name, s.server_type);
     } else {
         tracing::debug!("No server found with name '{}'", name);
+    }
+
+    Ok(server)
+}
+
+/// Get a specific server from the database by ID
+pub async fn get_server_by_id(pool: &Pool<Sqlite>, id: &str) -> Result<Option<Server>> {
+    tracing::debug!("Executing SQL query to get server with ID '{}'", id);
+
+    let server = sqlx::query_as::<_, Server>(
+        r#"
+        SELECT * FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch server by ID")?;
+
+    if let Some(ref s) = server {
+        tracing::debug!("Found server with ID '{}', name: {}", id, s.name);
+    } else {
+        tracing::debug!("No server found with ID '{}'", id);
     }
 
     Ok(server)
@@ -199,6 +223,28 @@ pub async fn upsert_server_args_tx(
     .await
     .context("Failed to delete existing server arguments")?;
 
+    // Get the server name
+    let server_name = match sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT name FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(server_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .context("Failed to get server name")?
+    {
+        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
+        None => {
+            tracing::warn!(
+                "Server ID {} not found, using 'unknown' as server_name",
+                server_id
+            );
+            "unknown".to_string()
+        }
+    };
+
     // Insert new arguments
     for (index, arg) in args.iter().enumerate() {
         // Generate a UUID for the argument
@@ -206,12 +252,13 @@ pub async fn upsert_server_args_tx(
 
         sqlx::query(
             r#"
-            INSERT INTO server_args (id, server_id, arg_index, arg_value)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO server_args (id, server_id, server_name, arg_index, arg_value)
+            VALUES (?, ?, ?, ?, ?)
             "#,
         )
         .bind(&arg_id)
         .bind(server_id)
+        .bind(&server_name)
         .bind(index as i32)
         .bind(arg)
         .execute(&mut **tx)
@@ -293,6 +340,28 @@ pub async fn upsert_server_env_tx(
     .await
     .context("Failed to delete existing server environment variables")?;
 
+    // Get the server name
+    let server_name = match sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT name FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(server_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .context("Failed to get server name")?
+    {
+        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
+        None => {
+            tracing::warn!(
+                "Server ID {} not found, using 'unknown' as server_name",
+                server_id
+            );
+            "unknown".to_string()
+        }
+    };
+
     // Insert new environment variables
     for (key, value) in env {
         // Generate a UUID for the environment variable
@@ -300,12 +369,13 @@ pub async fn upsert_server_env_tx(
 
         sqlx::query(
             r#"
-            INSERT INTO server_env (id, server_id, env_key, env_value)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO server_env (id, server_id, server_name, env_key, env_value)
+            VALUES (?, ?, ?, ?, ?)
             "#,
         )
         .bind(&env_id)
         .bind(server_id)
+        .bind(&server_name)
         .bind(key)
         .bind(value)
         .execute(&mut **tx)
@@ -354,14 +424,37 @@ pub async fn upsert_server_meta(pool: &Pool<Sqlite>, meta: &ServerMeta) -> Resul
         uuid::Uuid::new_v4().to_string()
     };
 
+    // Get the server name
+    let server_name = match sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT name FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(&meta.server_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to get server name")?
+    {
+        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
+        None => {
+            tracing::warn!(
+                "Server ID {} not found, using 'unknown' as server_name",
+                meta.server_id
+            );
+            "unknown".to_string()
+        }
+    };
+
     let result = sqlx::query(
         r#"
         INSERT INTO server_meta (
-            id, server_id, description, author, website, repository,
+            id, server_id, server_name, description, author, website, repository,
             category, recommended_scenario, rating
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id) DO UPDATE SET
+            server_name = excluded.server_name,
             description = excluded.description,
             author = excluded.author,
             website = excluded.website,
@@ -374,6 +467,7 @@ pub async fn upsert_server_meta(pool: &Pool<Sqlite>, meta: &ServerMeta) -> Resul
     )
     .bind(&meta_id)
     .bind(&meta.server_id)
+    .bind(&server_name)
     .bind(&meta.description)
     .bind(&meta.author)
     .bind(&meta.website)
@@ -416,33 +510,66 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
         return Ok(Vec::new());
     }
 
-    // Get the default config suit
-    let default_suit = crate::conf::operations::get_config_suit_by_name(pool, "default").await?;
+    // Get all active config suits
+    let active_suits = crate::conf::operations::suit::get_active_config_suits(pool).await?;
 
-    // If there's no default suit, return all servers (backward compatibility)
-    if default_suit.is_none() {
-        tracing::info!("No default config suit found, returning all servers");
-        return Ok(all_servers);
-    }
+    // If there are no active suits, try to get the default suit
+    if active_suits.is_empty() {
+        let default_suit = crate::conf::operations::suit::get_default_config_suit(pool).await?;
 
-    let suit_id = default_suit.unwrap().id.unwrap();
+        // If there's no default suit, try the legacy "default" named suit
+        if default_suit.is_none() {
+            let legacy_default =
+                crate::conf::operations::get_config_suit_by_name(pool, "default").await?;
 
-    // Get all enabled servers in the default suit
-    let enabled_server_configs =
-        crate::conf::operations::get_config_suit_servers(pool, &suit_id).await?;
+            // If there's no legacy default suit either, return no servers (whitelist mode)
+            if legacy_default.is_none() {
+                tracing::info!("No active or default config suits found, returning no servers (whitelist mode)");
+                return Ok(Vec::new());
+            }
 
-    // If there are no server configs in the suit, return all servers (backward compatibility)
-    if enabled_server_configs.is_empty() {
-        tracing::info!("No server configurations in default suit, returning all servers");
-        return Ok(all_servers);
-    }
-
-    // Create a set of enabled server IDs
-    let mut enabled_server_ids = HashSet::new();
-    for server_config in enabled_server_configs {
-        if server_config.enabled {
-            enabled_server_ids.insert(server_config.server_id);
+            // Use the legacy default suit
+            let suit_id = legacy_default.unwrap().id.unwrap();
+            return get_enabled_servers_from_suit(pool, &suit_id, &all_servers).await;
         }
+
+        // Use the default suit
+        let suit_id = default_suit.unwrap().id.unwrap();
+        return get_enabled_servers_from_suit(pool, &suit_id, &all_servers).await;
+    }
+
+    // Create a map to track enabled server IDs with their priority
+    // Higher priority value means higher precedence
+    let mut enabled_server_map: HashMap<String, (bool, i32)> = HashMap::new();
+
+    // Process all active suits in priority order (already sorted by priority DESC)
+    for suit in active_suits {
+        if let Some(suit_id) = &suit.id {
+            // Get all server configs in this suit
+            let server_configs =
+                crate::conf::operations::get_config_suit_servers(pool, suit_id).await?;
+
+            // Process each server config
+            for server_config in server_configs {
+                // Only update the map if this server hasn't been seen yet or if the current suit has higher priority
+                if !enabled_server_map.contains_key(&server_config.server_id)
+                    || enabled_server_map.get(&server_config.server_id).unwrap().1 < suit.priority
+                {
+                    enabled_server_map.insert(
+                        server_config.server_id.clone(),
+                        (server_config.enabled, suit.priority),
+                    );
+                }
+            }
+        }
+    }
+
+    // If no server configurations were found in any active suits, return no servers (whitelist mode)
+    if enabled_server_map.is_empty() {
+        tracing::info!(
+            "No server configurations in any active suits, returning no servers (whitelist mode)"
+        );
+        return Ok(Vec::new());
     }
 
     // Filter servers by enabled status
@@ -450,7 +577,9 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
         .into_iter()
         .filter(|server| {
             if let Some(id) = &server.id {
-                enabled_server_ids.contains(id)
+                enabled_server_map
+                    .get(id)
+                    .map_or(false, |(enabled, _)| *enabled)
             } else {
                 false // Server without ID is not enabled
             }
@@ -458,8 +587,56 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
         .collect();
 
     tracing::info!(
-        "Found {} enabled servers in default config suit",
+        "Found {} enabled servers across all active config suits",
         enabled_servers.len()
+    );
+
+    Ok(enabled_servers)
+}
+
+/// Helper function to get enabled servers from a specific suit
+async fn get_enabled_servers_from_suit(
+    pool: &Pool<Sqlite>,
+    suit_id: &str,
+    all_servers: &[Server],
+) -> Result<Vec<Server>> {
+    // Get all enabled servers in the suit
+    let server_configs = crate::conf::operations::get_config_suit_servers(pool, suit_id).await?;
+
+    // If there are no server configs in the suit, return no servers (whitelist mode)
+    if server_configs.is_empty() {
+        tracing::info!(
+            "No server configurations in suit {}, returning no servers (whitelist mode)",
+            suit_id
+        );
+        return Ok(Vec::new());
+    }
+
+    // Create a set of enabled server IDs
+    let mut enabled_server_ids = HashSet::new();
+    for server_config in server_configs {
+        if server_config.enabled {
+            enabled_server_ids.insert(server_config.server_id);
+        }
+    }
+
+    // Filter servers by enabled status
+    let enabled_servers: Vec<Server> = all_servers
+        .iter()
+        .filter(|server| {
+            if let Some(id) = &server.id {
+                enabled_server_ids.contains(id)
+            } else {
+                false // Server without ID is not enabled
+            }
+        })
+        .cloned()
+        .collect();
+
+    tracing::info!(
+        "Found {} enabled servers in suit {}",
+        enabled_servers.len(),
+        suit_id
     );
 
     Ok(enabled_servers)

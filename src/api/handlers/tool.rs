@@ -53,24 +53,74 @@ pub async fn list_tools(
                 let tool_name = tool.name.to_string();
 
                 // Check if the tool is enabled
-                let enabled =
-                    match operations::is_tool_enabled(&db.pool, server_name, &tool_name).await {
-                        Ok(enabled) => enabled,
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to check if tool is enabled: {}, assuming enabled",
-                                e
-                            );
-                            true // Default to enabled if there's an error
-                        }
-                    };
+                let enabled = match operations::tool::is_tool_enabled(
+                    &db.pool,
+                    server_name,
+                    &tool_name,
+                )
+                .await
+                {
+                    Ok(enabled) => enabled,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to check if tool is enabled: {}, assuming enabled",
+                            e
+                        );
+                        true // Default to enabled if there's an error
+                    }
+                };
+
+                // Get the tool ID from the database
+                let tool_id = match operations::tool::get_tool_id(&db.pool, server_name, &tool_name)
+                    .await
+                {
+                    Ok(Some(id)) => id,
+                    Ok(None) => {
+                        // If the tool doesn't have an ID in the database, use a placeholder
+                        tracing::debug!(
+                            "Tool '{}' from server '{}' doesn't have an ID in the database",
+                            tool_name,
+                            server_name
+                        );
+                        "0".to_string()
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to get tool ID for '{}' from server '{}': {}, using placeholder",
+                            tool_name,
+                            server_name,
+                            e
+                        );
+                        "0".to_string()
+                    }
+                };
+
+                // Get the prefixed name from the database
+                let prefixed_name = match operations::tool::get_tool_prefixed_name(
+                    &db.pool,
+                    server_name,
+                    &tool_name,
+                )
+                .await
+                {
+                    Ok(name) => name,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to get prefixed name for '{}' from server '{}': {}",
+                            tool_name,
+                            server_name,
+                            e
+                        );
+                        None
+                    }
+                };
 
                 // Create a tool response
                 let tool_response = ToolResponse {
-                    id: "0".to_string(), // Placeholder ID
+                    id: tool_id,
                     server_name: server_name.clone(),
                     tool_name: tool_name.clone(),
-                    prefixed_name: None,
+                    prefixed_name,
                     enabled,
                     allowed_operations: vec![if enabled {
                         "disable".to_string()
@@ -123,12 +173,50 @@ pub async fn get_tool(
             ApiError::InternalError(format!("Failed to check if tool is enabled: {}", e))
         })?;
 
+    // Get the tool ID from the database
+    let tool_id = match operations::tool::get_tool_id(&db.pool, &server_name, &tool_name).await {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            // If the tool doesn't have an ID in the database, use a placeholder
+            tracing::debug!(
+                "Tool '{}' from server '{}' doesn't have an ID in the database",
+                tool_name,
+                server_name
+            );
+            "0".to_string()
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to get tool ID for '{}' from server '{}': {}, using placeholder",
+                tool_name,
+                server_name,
+                e
+            );
+            "0".to_string()
+        }
+    };
+
+    // Get the prefixed name from the database
+    let prefixed_name =
+        match operations::tool::get_tool_prefixed_name(&db.pool, &server_name, &tool_name).await {
+            Ok(name) => name,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get prefixed name for '{}' from server '{}': {}",
+                    tool_name,
+                    server_name,
+                    e
+                );
+                None
+            }
+        };
+
     // Create tool configuration response
     let response = ToolConfigResponse {
-        id: "0".to_string(), // Placeholder ID
+        id: tool_id,
         server_name: server_name.clone(),
         tool_name: tool_name.clone(),
-        prefixed_name: None,
+        prefixed_name,
         enabled,
         allowed_operations: vec![if enabled {
             "disable".to_string()
@@ -158,7 +246,7 @@ pub async fn enable_tool(
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     // Enable the tool
-    let id = operations::set_tool_enabled(&db.pool, &server_name, &tool_name, true)
+    let id = operations::tool::set_tool_enabled(&db.pool, &server_name, &tool_name, true)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to enable tool: {}", e)))?;
 
@@ -206,7 +294,7 @@ pub async fn disable_tool(
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     // Disable the tool
-    let id = operations::set_tool_enabled(&db.pool, &server_name, &tool_name, false)
+    let id = operations::tool::set_tool_enabled(&db.pool, &server_name, &tool_name, false)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to disable tool: {}", e)))?;
 
@@ -255,9 +343,26 @@ pub async fn update_tool(
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
     // Enable or disable the tool
-    let id = operations::set_tool_enabled(&db.pool, &server_name, &tool_name, request.enabled)
+    let id =
+        operations::tool::set_tool_enabled(&db.pool, &server_name, &tool_name, request.enabled)
+            .await
+            .map_err(|e| {
+                ApiError::InternalError(format!("Failed to update tool enabled status: {}", e))
+            })?;
+
+    // Update the prefixed name if provided
+    if request.prefixed_name.is_some() {
+        operations::tool::update_tool_prefixed_name(
+            &db.pool,
+            &server_name,
+            &tool_name,
+            request.prefixed_name.clone(),
+        )
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to update tool: {}", e)))?;
+        .map_err(|e| {
+            ApiError::InternalError(format!("Failed to update tool prefixed name: {}", e))
+        })?;
+    }
 
     // Notify clients about tool list change
     tracing::info!(

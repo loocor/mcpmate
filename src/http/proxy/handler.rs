@@ -67,7 +67,9 @@ pub async fn list_tools(
             };
 
             // Check if the tool is enabled
-            match operations::is_tool_enabled(&db.pool, &server_name, &original_tool_name).await {
+            match operations::tool::is_tool_enabled(&db.pool, &server_name, &original_tool_name)
+                .await
+            {
                 Ok(enabled) => {
                     if enabled {
                         filtered_tools.push(tool);
@@ -135,8 +137,12 @@ pub async fn call_tool(
             let (_, original_tool_name) = parse_tool_name(&mapping.upstream_tool_name);
 
             // Check if the tool is enabled
-            match operations::is_tool_enabled(&db.pool, &mapping.server_name, &original_tool_name)
-                .await
+            match operations::tool::is_tool_enabled(
+                &db.pool,
+                &mapping.server_name,
+                &original_tool_name,
+            )
+            .await
             {
                 Ok(enabled) => {
                     if !enabled {
