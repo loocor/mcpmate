@@ -53,6 +53,10 @@ pub struct ConfigSuit {
     pub multi_select: bool,
     /// Priority of the configuration suit (higher priority wins in case of conflicts)
     pub priority: i32,
+    /// Whether the configuration suit is currently active
+    pub is_active: bool,
+    /// Whether the configuration suit is the default one
+    pub is_default: bool,
     /// When the configuration suit was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the configuration suit was last updated
@@ -69,6 +73,8 @@ impl ConfigSuit {
             suit_type: suit_type.as_str().to_string(),
             multi_select: false,
             priority: 0,
+            is_active: false,
+            is_default: false,
             created_at: None,
             updated_at: None,
         }
@@ -87,6 +93,8 @@ impl ConfigSuit {
             suit_type: suit_type.as_str().to_string(),
             multi_select: false,
             priority: 0,
+            is_active: false,
+            is_default: false,
             created_at: None,
             updated_at: None,
         }

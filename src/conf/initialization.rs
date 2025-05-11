@@ -128,6 +128,8 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
             type TEXT NOT NULL,
             multi_select BOOLEAN NOT NULL DEFAULT 0,
             priority INTEGER NOT NULL DEFAULT 0,
+            is_active BOOLEAN NOT NULL DEFAULT 0,
+            is_default BOOLEAN NOT NULL DEFAULT 0,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
