@@ -226,7 +226,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
         .fetch_optional(pool)
         .await
         {
-            Ok(Some(_)) => tracing::info!("Verified {} table exists", table),
+            Ok(Some(_)) => tracing::debug!("Verified {} table exists", table),
             Ok(None) => {
                 let err = format!("{} table not found after creation", table);
                 tracing::error!("{}", err);

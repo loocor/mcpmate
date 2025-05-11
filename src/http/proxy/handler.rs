@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     conf::operations,
-    core::tool::{call_upstream_tool, get_all_tools_with_smart_prefix, parse_tool_name},
+    core::tool::{call_upstream_tool, get_all_with_prefix, parse_tool_name},
     core::ConnectionStatus,
     http::proxy::core::HttpProxyServer,
 };
@@ -41,7 +41,7 @@ pub async fn list_tools(
     _context: RequestContext<RoleServer>,
 ) -> Result<ListToolsResult, McpError> {
     // Get tools with smart prefixing
-    let all_tools = get_all_tools_with_smart_prefix(&server.connection_pool).await;
+    let all_tools = get_all_with_prefix(&server.connection_pool).await;
 
     // Filter disabled tools if database is available
     let tools = if let Some(db) = &server.database {

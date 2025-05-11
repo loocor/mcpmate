@@ -76,7 +76,7 @@ pub async fn rebuild_tool_mapping_cache(
 
     // Build a new tool name mapping
     let start_time = std::time::Instant::now();
-    let new_mapping = tool::build_tool_name_mapping(&server.connection_pool).await;
+    let new_mapping = tool::build_name_mapping(&server.connection_pool).await;
     let build_time = start_time.elapsed();
 
     // Update the cache
