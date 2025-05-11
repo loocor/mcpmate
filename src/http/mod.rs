@@ -2,8 +2,8 @@
 // Contains HTTP server implementations for different transport types
 
 pub mod pool;
-pub mod server;
+pub mod proxy;
 pub mod unified;
 
 // Re-exports
-pub use server::HttpProxyServer;
+pub use proxy::HttpProxyServer;

@@ -32,7 +32,7 @@ pub async fn list_tools(
 
     // Check if database is available
     let db = proxy
-        .db
+        .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
@@ -100,7 +100,7 @@ pub async fn get_tool(
 
     // Check if database is available
     let db = proxy
-        .db
+        .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
@@ -153,7 +153,7 @@ pub async fn enable_tool(
 
     // Check if database is available
     let db = proxy
-        .db
+        .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
@@ -201,7 +201,7 @@ pub async fn disable_tool(
 
     // Check if database is available
     let db = proxy
-        .db
+        .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 
@@ -250,7 +250,7 @@ pub async fn update_tool(
 
     // Check if database is available
     let db = proxy
-        .db
+        .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))?;
 

@@ -234,7 +234,7 @@ pub async fn enable_server(
     let instances = instances_response.0.instances;
 
     // Update config_suit to enable server
-    if let Some(db) = &state.http_proxy.as_ref().and_then(|p| p.db.clone()) {
+    if let Some(db) = &state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
         // Get the server ID
         let server = crate::conf::operations::get_server(&db.pool, &server_name)
             .await
@@ -353,7 +353,7 @@ pub async fn disable_server(
     let instances = instances_response.0.instances;
 
     // Update config_suit to disable server
-    if let Some(db) = &state.http_proxy.as_ref().and_then(|p| p.db.clone()) {
+    if let Some(db) = &state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
         // Get the server ID
         let server = crate::conf::operations::get_server(&db.pool, &server_name)
             .await
