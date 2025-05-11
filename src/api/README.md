@@ -28,9 +28,19 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
   - `/api/mcp/servers/:name/instances/:id/reconnect/reset` - Reset and reconnect an instance
   - `/api/mcp/servers/:name/instances/:id/cancel` - Cancel an initializing instance
 
+- `/api/mcp/tools/*` - Endpoints for managing MCP tools
+  - `/api/mcp/tools` - List all tools
+  - `/api/mcp/tools/:server_name/:tool_name` - Get a specific tool configuration
+  - `/api/mcp/tools/:server_name/:tool_name/enable` - Enable a specific tool
+  - `/api/mcp/tools/:server_name/:tool_name/disable` - Disable a specific tool
+  - `/api/mcp/tools/:server_name/:tool_name` (POST) - Update a specific tool configuration
+
+- `/api/notifications/*` - Endpoints for notification management
+  - `/api/notifications/tools/changed` - Notify clients that the tools list has changed
+
 - `/api/system/*` - Endpoints for system-level operations and monitoring
-  - `/api/system/info` - Get system information
-  - `/api/system/health` - Check system health
+  - `/api/system/status` - Get system status
+  - `/api/system/metrics` - Get system metrics
 
 ## Usage
 
@@ -45,14 +55,20 @@ src/
 │   ├── routes/           # 路由定义
 │   │   ├── mod.rs        # 路由模块入口
 │   │   ├── mcp.rs        # MCP 服务器相关路由
+│   │   ├── tool.rs       # 工具管理相关路由
+│   │   ├── notifications.rs # 通知相关路由
 │   │   └── system.rs     # 系统相关路由
 │   ├── handlers/         # 请求处理函数
 │   │   ├── mod.rs        # 处理函数模块入口
 │   │   ├── mcp.rs        # MCP 服务器相关处理函数
+│   │   ├── tool.rs       # 工具管理相关处理函数
+│   │   ├── notification.rs # 通知相关处理函数
 │   │   └── system.rs     # 系统相关处理函数
 │   └── models/           # 请求/响应模型
 │       ├── mod.rs        # 模型模块入口
 │       ├── mcp.rs        # MCP 服务器相关模型
+│       ├── tool.rs       # 工具管理相关模型
+│       ├── notifications.rs # 通知相关模型
 │       └── system.rs     # 系统相关模型
 └── proxy/                # 现有的代理服务代码
     └── ...
