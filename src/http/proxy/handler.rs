@@ -46,10 +46,27 @@ pub async fn list_tools(
     // Filter disabled tools if database is available
     let tools = if let Some(db) = &server.database {
         let mut filtered_tools = Vec::new();
+        let mut enabled_count = 0;
+        let mut disabled_count = 0;
+        let mut error_count = 0;
+        let mut unknown_server_count = 0;
+
+        tracing::info!(
+            "Filtering tools based on enabled status, total tools before filtering: {}",
+            all_tools.len()
+        );
 
         for tool in all_tools {
             // Parse the tool name to extract server prefix if present
             let (server_prefix, original_tool_name) = parse_tool_name(&tool.name);
+
+            // Log the parsed tool name
+            tracing::debug!(
+                "Parsed tool name: '{}' -> prefix: {:?}, original: '{}'",
+                tool.name,
+                server_prefix,
+                original_tool_name
+            );
 
             // Get the server name (either from prefix or from the tool name mapping)
             let server_name = if let Some(prefix) = server_prefix {
@@ -61,41 +78,85 @@ pub async fn list_tools(
                     mapping.server_name.clone()
                 } else {
                     // If we can't determine the server, include the tool by default
+                    tracing::warn!(
+                        "Could not determine server for tool '{}', including by default",
+                        tool.name
+                    );
+                    unknown_server_count += 1;
                     filtered_tools.push(tool);
                     continue;
                 }
             };
 
+            // Determine the correct tool name to use for database check
+            // If the tool name already has a server prefix, use the full name
+            // Otherwise, use the original tool name
+            let tool_name_for_db_check =
+                if server_prefix.is_some() && server_prefix.unwrap() == server_name {
+                    // The tool name already has the correct server prefix, use the full name
+                    tool.name.to_string()
+                } else {
+                    // No prefix or different prefix, use the original tool name
+                    original_tool_name.to_string()
+                };
+
+            tracing::debug!(
+                "Checking if tool is enabled: server='{}', tool_name='{}'",
+                server_name,
+                tool_name_for_db_check
+            );
+
             // Check if the tool is enabled
-            match operations::tool::is_tool_enabled(&db.pool, &server_name, &original_tool_name)
+            match operations::tool::is_tool_enabled(&db.pool, &server_name, &tool_name_for_db_check)
                 .await
             {
                 Ok(enabled) => {
                     if enabled {
+                        tracing::debug!(
+                            "Including enabled tool '{}' from server '{}'",
+                            original_tool_name,
+                            server_name
+                        );
+                        enabled_count += 1;
                         filtered_tools.push(tool);
                     } else {
-                        tracing::debug!(
+                        tracing::info!(
                             "Filtering out disabled tool '{}' from server '{}'",
                             original_tool_name,
                             server_name
                         );
+                        disabled_count += 1;
                     }
                 }
                 Err(e) => {
                     // Log the error but include the tool by default
                     tracing::warn!(
-                        "Error checking if tool '{}' is enabled: {}. Including by default.",
+                        "Error checking if tool '{}' from server '{}' is enabled: {}. Including by default.",
                         original_tool_name,
+                        server_name,
                         e
                     );
+                    error_count += 1;
                     filtered_tools.push(tool);
                 }
             }
         }
 
+        tracing::info!(
+            "Tool filtering summary: {} enabled, {} disabled, {} errors, {} unknown server",
+            enabled_count,
+            disabled_count,
+            error_count,
+            unknown_server_count
+        );
+
         filtered_tools
     } else {
         // If no database, return all tools
+        tracing::info!(
+            "No database available, returning all {} tools without filtering",
+            all_tools.len()
+        );
         all_tools
     };
 
@@ -134,13 +195,31 @@ pub async fn call_tool(
         // Check if the tool is enabled if database is available
         if let Some(db) = &server.database {
             // Parse the tool name to extract original name
-            let (_, original_tool_name) = parse_tool_name(&mapping.upstream_tool_name);
+            let (server_prefix, original_tool_name) = parse_tool_name(&mapping.upstream_tool_name);
+
+            // Determine the correct tool name to use for database check
+            // If the tool name already has a server prefix, use the full name
+            // Otherwise, use the original tool name
+            let tool_name_for_db_check =
+                if server_prefix.is_some() && server_prefix.unwrap() == mapping.server_name {
+                    // The tool name already has the correct server prefix, use the full name
+                    mapping.upstream_tool_name.clone()
+                } else {
+                    // No prefix or different prefix, use the original tool name
+                    original_tool_name.to_string()
+                };
+
+            tracing::debug!(
+                "Checking if tool is enabled for call: server='{}', tool_name='{}'",
+                mapping.server_name,
+                tool_name_for_db_check
+            );
 
             // Check if the tool is enabled
             match operations::tool::is_tool_enabled(
                 &db.pool,
                 &mapping.server_name,
-                &original_tool_name,
+                &tool_name_for_db_check,
             )
             .await
             {

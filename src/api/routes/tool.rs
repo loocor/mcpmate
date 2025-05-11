@@ -13,14 +13,13 @@ use crate::api::handlers::tool;
 /// Create MCP tool management routes
 pub fn routes(state: Arc<AppState>) -> Router {
     let tools_router = Router::new()
-        .route("/", get(tool::list_tools))
-        .route("/{server_name}/{tool_name}", get(tool::get_tool))
-        .route("/{server_name}/{tool_name}/enable", post(tool::enable_tool))
-        .route(
-            "/{server_name}/{tool_name}/disable",
-            post(tool::disable_tool),
-        )
-        .route("/{server_name}/{tool_name}", post(tool::update_tool));
+        .route("/", get(tool::all))
+        .route("/{server_name}", get(tool::list))
+        .route("/{server_name}/refresh", post(tool::refresh))
+        .route("/{server_name}/{tool_name}", get(tool::info))
+        .route("/{server_name}/{tool_name}", post(tool::update))
+        .route("/{server_name}/{tool_name}/enable", post(tool::enable))
+        .route("/{server_name}/{tool_name}/disable", post(tool::disable));
 
     Router::new()
         .nest("/api/mcp/tools", tools_router)

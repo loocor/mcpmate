@@ -70,3 +70,14 @@ pub struct ToolConfigResponse {
     /// Allowed operations on this tool
     pub allowed_operations: Vec<String>,
 }
+
+/// Server tools response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerToolsResponse {
+    /// Name of the server
+    pub server_name: String,
+    /// Server connection status
+    pub status: String,
+    /// List of tools provided by this server
+    pub tools: Vec<ToolResponse>,
+}
