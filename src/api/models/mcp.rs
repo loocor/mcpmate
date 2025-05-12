@@ -2,6 +2,7 @@
 // Contains data models for MCP server endpoints
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 //
 // API Model
@@ -180,4 +181,75 @@ pub struct ServerDetailsResponse {
     pub is_enabled: bool,
     /// List of instances
     pub instances: Vec<InstanceDetails>,
+}
+
+/// Create server request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateServerRequest {
+    /// Server name
+    pub name: String,
+    /// Server type (stdio, sse, streamable_http)
+    pub kind: String,
+    /// Command to execute (for stdio servers)
+    pub command: Option<String>,
+    /// URL (for sse and streamable_http servers)
+    pub url: Option<String>,
+    /// Arguments to pass to the command (for stdio servers)
+    pub args: Option<Vec<String>>,
+    /// Environment variables to set (for stdio servers)
+    pub env: Option<HashMap<String, String>>,
+    /// Whether to enable the server in the default config suit
+    pub enabled: Option<bool>,
+}
+
+/// Update server request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateServerRequest {
+    /// Server type (stdio, sse, streamable_http)
+    pub kind: Option<String>,
+    /// Command to execute (for stdio servers)
+    pub command: Option<String>,
+    /// URL (for sse and streamable_http servers)
+    pub url: Option<String>,
+    /// Arguments to pass to the command (for stdio servers)
+    pub args: Option<Vec<String>>,
+    /// Environment variables to set (for stdio servers)
+    pub env: Option<HashMap<String, String>>,
+    /// Whether to enable the server in the default config suit
+    pub enabled: Option<bool>,
+}
+
+/// Import servers request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ImportServersRequest {
+    /// Map of MCP server name to configuration
+    #[serde(rename = "mcpServers")]
+    pub mcp_servers: HashMap<String, ImportServerConfig>,
+}
+
+/// Import server configuration
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ImportServerConfig {
+    /// Type of the server (stdio, sse, streamable_http)
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Command to execute (for stdio servers)
+    pub command: Option<String>,
+    /// Arguments to pass to the command (for stdio servers)
+    pub args: Option<Vec<String>>,
+    /// URL (for sse and streamable_http servers)
+    pub url: Option<String>,
+    /// Environment variables to set (for stdio servers)
+    pub env: Option<HashMap<String, String>>,
+}
+
+/// Import servers response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ImportServersResponse {
+    /// Number of servers imported
+    pub imported_count: usize,
+    /// List of imported server names
+    pub imported_servers: Vec<String>,
+    /// List of servers that failed to import
+    pub failed_servers: Vec<String>,
 }

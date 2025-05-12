@@ -2,7 +2,7 @@
 // Contains route definitions for MCP server endpoints
 
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -14,7 +14,10 @@ use crate::api::handlers::{instance, server};
 pub fn routes(state: Arc<AppState>) -> Router {
     let servers_router = Router::new()
         .route("/", get(server::list_servers))
+        .route("/", post(server::create_server))
+        .route("/import", post(server::import_servers))
         .route("/{name}", get(server::get_server))
+        .route("/{name}", put(server::update_server))
         .route("/{name}/enable", post(server::enable_server))
         .route("/{name}/disable", post(server::disable_server))
         .route("/{name}/instances", get(server::list_instances));
