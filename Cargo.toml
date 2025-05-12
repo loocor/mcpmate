@@ -15,7 +15,7 @@ async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 dotenvy = "0.15.7"
 json5 = "0.4"
-rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk.git", rev = "57e14c56e85deebc434eb11e4866e3f5ec77d906", features = [
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk.git", rev = "030b6f085892888dd1548ae5a6a7efc1f0c5b753", features = [
   "server",
   "client",
   "macros",
