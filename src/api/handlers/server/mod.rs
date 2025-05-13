@@ -5,13 +5,13 @@
 pub use self::basic::{get_server, list_servers};
 pub use self::crud::{create_server, import_servers, update_server};
 pub use self::instance::list_instances;
-pub use self::management::{disable_server, enable_server};
+pub use self::mgmt::{disable_server, enable_server};
 
 // Submodules
 mod basic;
 mod crud;
 mod instance;
-mod management;
+mod mgmt;
 
 // Common imports for all submodules
 pub(crate) mod common {

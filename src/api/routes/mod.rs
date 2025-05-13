@@ -2,7 +2,7 @@
 // Contains route definitions for the API server
 
 pub mod mcp;
-pub mod notifications;
+pub mod notifs;
 pub mod specs;
 pub mod system;
 pub mod tool;
@@ -44,7 +44,7 @@ pub fn create_router(connection_pool: Arc<Mutex<UpstreamConnectionPool>>) -> Rou
     Router::new()
         .merge(mcp::routes(state.clone()))
         .merge(system::routes(state.clone()))
-        .merge(notifications::routes(state.clone()))
+        .merge(notifs::routes(state.clone()))
         .merge(specs::routes(state.clone()))
         .merge(tool::routes(state))
 }
@@ -71,7 +71,7 @@ pub fn create_router_with_proxy(
     Router::new()
         .merge(mcp::routes(state.clone()))
         .merge(system::routes(state.clone()))
-        .merge(notifications::routes(state.clone()))
+        .merge(notifs::routes(state.clone()))
         .merge(specs::routes(state.clone()))
         .merge(tool::routes(state))
 }

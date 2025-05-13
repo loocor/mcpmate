@@ -2,6 +2,7 @@
 // Contains data models for API requests and responses
 
 pub mod mcp;
+pub mod notifs;
 pub mod notifications;
 pub mod system;
 pub mod tool;

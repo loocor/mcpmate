@@ -6,7 +6,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     api::{
-        models::notifications::{
+        models::notifs::{
             NotificationResponse, ToolChangeOperation, ToolChangeScope, ToolsChangedDetails,
             ToolsChangedRequest,
         },
