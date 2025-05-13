@@ -5,6 +5,7 @@ pub mod instance;
 pub mod notifs;
 pub mod server;
 pub mod specs;
+pub mod suits;
 pub mod system;
 pub mod tool;
 

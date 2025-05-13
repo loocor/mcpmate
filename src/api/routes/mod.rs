@@ -4,6 +4,7 @@
 pub mod mcp;
 pub mod notifs;
 pub mod specs;
+pub mod suit;
 pub mod system;
 pub mod tool;
 
@@ -46,6 +47,7 @@ pub fn create_router(connection_pool: Arc<Mutex<UpstreamConnectionPool>>) -> Rou
         .merge(system::routes(state.clone()))
         .merge(notifs::routes(state.clone()))
         .merge(specs::routes(state.clone()))
+        .merge(suit::routes(state.clone()))
         .merge(tool::routes(state))
 }
 
@@ -73,5 +75,6 @@ pub fn create_router_with_proxy(
         .merge(system::routes(state.clone()))
         .merge(notifs::routes(state.clone()))
         .merge(specs::routes(state.clone()))
+        .merge(suit::routes(state.clone()))
         .merge(tool::routes(state))
 }

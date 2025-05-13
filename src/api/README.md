@@ -40,6 +40,24 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
   - `/api/mcp/tools/:server_name/:tool_name/disable` - Disable a specific tool
   - `/api/mcp/tools/:server_name/:tool_name` (POST) - Update a specific tool configuration
 
+- `/api/mcp/suits/*` - Endpoints for managing Config Suits
+  - `/api/mcp/suits` - List all Config Suits (GET) or create a new Config Suit (POST)
+  - `/api/mcp/suits/:id` - Get (GET), update (PUT), or delete (DELETE) a specific Config Suit
+  - `/api/mcp/suits/:id/activate` - Activate a specific Config Suit
+  - `/api/mcp/suits/:id/deactivate` - Deactivate a specific Config Suit
+  - `/api/mcp/suits/batch/activate` - Batch activate Config Suits
+  - `/api/mcp/suits/batch/deactivate` - Batch deactivate Config Suits
+  - `/api/mcp/suits/:id/servers` - List all servers in a Config Suit
+  - `/api/mcp/suits/:id/servers/:server_id/enable` - Enable a server in a Config Suit
+  - `/api/mcp/suits/:id/servers/:server_id/disable` - Disable a server in a Config Suit
+  - `/api/mcp/suits/:id/servers/batch/enable` - Batch enable servers in a Config Suit
+  - `/api/mcp/suits/:id/servers/batch/disable` - Batch disable servers in a Config Suit
+  - `/api/mcp/suits/:id/tools` - List all tools in a Config Suit
+  - `/api/mcp/suits/:id/tools/:tool_id/enable` - Enable a tool in a Config Suit
+  - `/api/mcp/suits/:id/tools/:tool_id/disable` - Disable a tool in a Config Suit
+  - `/api/mcp/suits/:id/tools/batch/enable` - Batch enable tools in a Config Suit
+  - `/api/mcp/suits/:id/tools/batch/disable` - Batch disable tools in a Config Suit
+
 - `/api/notifications/*` - Endpoints for notification management
   - `/api/notifications/tools/changed` - Notify clients that the tools list has changed
 
@@ -52,6 +70,390 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
 The API server is started alongside the MCPMate Proxy server and provides a RESTful interface for controlling and monitoring the proxy server. This API is designed to be used by the MCPMate Desktop application and other client applications.
 
 ## Detailed API Documentation
+
+### Config Suit Management APIs
+
+#### List all Config Suits
+- **Endpoint**: `/api/mcp/suits`
+- **Method**: `GET`
+- **Description**: Returns a list of all Config Suits
+- **Response**:
+  ```json
+  {
+    "suits": [
+      {
+        "id": "string",
+        "name": "string",
+        "description": "string (optional)",
+        "suit_type": "string (host_app, scenario, shared)",
+        "multi_select": boolean,
+        "priority": number,
+        "is_active": boolean,
+        "is_default": boolean,
+        "allowed_operations": ["string", "..."]
+      },
+      // ... more suits
+    ]
+  }
+  ```
+
+#### Create a new Config Suit
+- **Endpoint**: `/api/mcp/suits`
+- **Method**: `POST`
+- **Description**: Creates a new Config Suit
+- **Request Body**:
+  ```json
+  {
+    "name": "string (required)",
+    "description": "string (optional)",
+    "suit_type": "string (required, one of: host_app, scenario, shared)",
+    "multi_select": boolean (optional),
+    "priority": number (optional),
+    "is_active": boolean (optional),
+    "is_default": boolean (optional),
+    "clone_from_id": "string (optional)"
+  }
+  ```
+- **Response**: The created Config Suit object
+
+#### Get a specific Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}`
+- **Method**: `GET`
+- **Description**: Returns details of a specific Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Response**: The Config Suit object
+
+#### Update a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}`
+- **Method**: `PUT`
+- **Description**: Updates a specific Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Request Body**:
+  ```json
+  {
+    "name": "string (optional)",
+    "description": "string (optional)",
+    "suit_type": "string (optional)",
+    "multi_select": boolean (optional),
+    "priority": number (optional),
+    "is_active": boolean (optional),
+    "is_default": boolean (optional)
+  }
+  ```
+- **Response**: The updated Config Suit object
+
+#### Delete a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}`
+- **Method**: `DELETE`
+- **Description**: Deletes a specific Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Response**:
+  ```json
+  {
+    "id": "string",
+    "name": "string",
+    "result": "string",
+    "status": "string",
+    "allowed_operations": []
+  }
+  ```
+
+#### Activate a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/activate`
+- **Method**: `POST`
+- **Description**: Activates a specific Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Response**:
+  ```json
+  {
+    "id": "string",
+    "name": "string",
+    "result": "string",
+    "status": "string",
+    "allowed_operations": ["string", "..."]
+  }
+  ```
+
+#### Deactivate a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/deactivate`
+- **Method**: `POST`
+- **Description**: Deactivates a specific Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Response**:
+  ```json
+  {
+    "id": "string",
+    "name": "string",
+    "result": "string",
+    "status": "string",
+    "allowed_operations": ["string", "..."]
+  }
+  ```
+
+#### Batch Activate Config Suits
+- **Endpoint**: `/api/mcp/suits/batch/activate`
+- **Method**: `POST`
+- **Description**: Activates multiple Config Suits
+- **Request Body**:
+  ```json
+  {
+    "ids": ["string", "..."]
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success_count": number,
+    "successful_ids": ["string", "..."],
+    "failed_ids": {
+      "id1": "error message",
+      "id2": "error message"
+    }
+  }
+  ```
+
+#### Batch Deactivate Config Suits
+- **Endpoint**: `/api/mcp/suits/batch/deactivate`
+- **Method**: `POST`
+- **Description**: Deactivates multiple Config Suits
+- **Request Body**:
+  ```json
+  {
+    "ids": ["string", "..."]
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success_count": number,
+    "successful_ids": ["string", "..."],
+    "failed_ids": {
+      "id1": "error message",
+      "id2": "error message"
+    }
+  }
+  ```
+
+#### List Servers in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/servers`
+- **Method**: `GET`
+- **Description**: Lists all servers in a specific Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Response**:
+  ```json
+  {
+    "suit_id": "string",
+    "suit_name": "string",
+    "servers": [
+      {
+        "id": "string",
+        "name": "string",
+        "enabled": boolean,
+        "allowed_operations": ["string", "..."]
+      },
+      // ... more servers
+    ]
+  }
+  ```
+
+#### Enable a Server in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/servers/{server_id}/enable`
+- **Method**: `POST`
+- **Description**: Enables a specific server in a Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+  - `server_id`: ID of the server
+- **Response**:
+  ```json
+  {
+    "id": "string",
+    "name": "string",
+    "result": "string",
+    "status": "string",
+    "allowed_operations": ["string", "..."]
+  }
+  ```
+
+#### Disable a Server in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/servers/{server_id}/disable`
+- **Method**: `POST`
+- **Description**: Disables a specific server in a Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+  - `server_id`: ID of the server
+- **Response**:
+  ```json
+  {
+    "id": "string",
+    "name": "string",
+    "result": "string",
+    "status": "string",
+    "allowed_operations": ["string", "..."]
+  }
+  ```
+
+#### Batch Enable Servers in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/servers/batch/enable`
+- **Method**: `POST`
+- **Description**: Enables multiple servers in a Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Request Body**:
+  ```json
+  {
+    "ids": ["string", "..."]
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success_count": number,
+    "successful_ids": ["string", "..."],
+    "failed_ids": {
+      "id1": "error message",
+      "id2": "error message"
+    }
+  }
+  ```
+
+#### Batch Disable Servers in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/servers/batch/disable`
+- **Method**: `POST`
+- **Description**: Disables multiple servers in a Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Request Body**:
+  ```json
+  {
+    "ids": ["string", "..."]
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success_count": number,
+    "successful_ids": ["string", "..."],
+    "failed_ids": {
+      "id1": "error message",
+      "id2": "error message"
+    }
+  }
+  ```
+
+#### List Tools in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/tools`
+- **Method**: `GET`
+- **Description**: Lists all tools in a specific Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Response**:
+  ```json
+  {
+    "suit_id": "string",
+    "suit_name": "string",
+    "tools": [
+      {
+        "id": "string",
+        "server_name": "string",
+        "tool_name": "string",
+        "prefixed_name": "string (optional)",
+        "enabled": boolean,
+        "allowed_operations": ["string", "..."]
+      },
+      // ... more tools
+    ]
+  }
+  ```
+
+#### Enable a Tool in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/tools/{tool_id}/enable`
+- **Method**: `POST`
+- **Description**: Enables a specific tool in a Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+  - `tool_id`: ID of the tool
+- **Response**:
+  ```json
+  {
+    "id": "string",
+    "name": "string",
+    "result": "string",
+    "status": "string",
+    "allowed_operations": ["string", "..."]
+  }
+  ```
+
+#### Disable a Tool in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/tools/{tool_id}/disable`
+- **Method**: `POST`
+- **Description**: Disables a specific tool in a Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+  - `tool_id`: ID of the tool
+- **Response**:
+  ```json
+  {
+    "id": "string",
+    "name": "string",
+    "result": "string",
+    "status": "string",
+    "allowed_operations": ["string", "..."]
+  }
+  ```
+
+#### Batch Enable Tools in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/tools/batch/enable`
+- **Method**: `POST`
+- **Description**: Enables multiple tools in a Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Request Body**:
+  ```json
+  {
+    "ids": ["string", "..."]
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success_count": number,
+    "successful_ids": ["string", "..."],
+    "failed_ids": {
+      "id1": "error message",
+      "id2": "error message"
+    }
+  }
+  ```
+
+#### Batch Disable Tools in a Config Suit
+- **Endpoint**: `/api/mcp/suits/{id}/tools/batch/disable`
+- **Method**: `POST`
+- **Description**: Disables multiple tools in a Config Suit
+- **URL Parameters**:
+  - `id`: ID of the Config Suit
+- **Request Body**:
+  ```json
+  {
+    "ids": ["string", "..."]
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success_count": number,
+    "successful_ids": ["string", "..."],
+    "failed_ids": {
+      "id1": "error message",
+      "id2": "error message"
+    }
+  }
+  ```
 
 ### Server Management APIs
 

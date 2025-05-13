@@ -4,6 +4,8 @@
 use anyhow::Result;
 use sqlx::{Pool, Sqlite};
 
+use crate::conf::models::ConfigSuitTool;
+
 /// Enable or disable a tool in the active config suits
 pub async fn set_tool_enabled(
     pool: &Pool<Sqlite>,
@@ -284,6 +286,67 @@ async fn update_tool_prefixed_name_in_suit(
 
         return Ok(tool_id);
     }
+}
+
+/// Get all tools in a configuration suit by ID
+pub async fn get_tools_by_suit_id(
+    pool: &Pool<Sqlite>,
+    suit_id: &str,
+) -> Result<Vec<ConfigSuitTool>> {
+    // Get all tools in the suit
+    let tools = sqlx::query_as::<_, ConfigSuitTool>(
+        r#"
+        SELECT * FROM config_suit_tool
+        WHERE config_suit_id = ?
+        "#,
+    )
+    .bind(suit_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(tools)
+}
+
+/// Get a specific tool in a configuration suit by ID
+pub async fn get_config_suit_tool_by_id(
+    pool: &Pool<Sqlite>,
+    tool_id: &str,
+) -> Result<Option<ConfigSuitTool>> {
+    // Get the tool
+    let tool = sqlx::query_as::<_, ConfigSuitTool>(
+        r#"
+        SELECT * FROM config_suit_tool
+        WHERE id = ?
+        "#,
+    )
+    .bind(tool_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(tool)
+}
+
+/// Enable or disable a tool in a configuration suit by ID
+pub async fn set_tool_enabled_by_id(
+    pool: &Pool<Sqlite>,
+    tool_id: &str,
+    enabled: bool,
+) -> Result<()> {
+    // Update the tool
+    sqlx::query(
+        r#"
+        UPDATE config_suit_tool
+        SET enabled = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+    )
+    .bind(enabled)
+    .bind(tool_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 /// Get the prefixed name of a tool in the database

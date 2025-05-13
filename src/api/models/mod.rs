@@ -3,7 +3,7 @@
 
 pub mod mcp;
 pub mod notifs;
-pub mod notifications;
+pub mod suit;
 pub mod system;
 pub mod tool;
 
