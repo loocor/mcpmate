@@ -7,9 +7,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing;
 
-use crate::http::pool::UpstreamConnectionPool;
 use super::mapping::{build_tool_mapping, find_tool_in_server};
 use super::prefix::parse_tool_name;
+use crate::http::pool::UpstreamConnectionPool;
 
 /// Call a tool on the appropriate upstream server
 ///
@@ -19,12 +19,14 @@ use super::prefix::parse_tool_name;
 /// # Arguments
 /// * `connection_pool` - The connection pool to use
 /// * `request` - The tool call request
+/// * `config_suit_merge_service` - Optional Config Suit merge service for tool enablement check
 ///
 /// # Returns
 /// * `Result<CallToolResult>` - The result of the tool call, or an error if the call failed
 pub async fn call_upstream_tool(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     request: CallToolRequestParam,
+    config_suit_merge_service: Option<&Arc<crate::core::suit::ConfigSuitMergeService>>,
 ) -> Result<CallToolResult> {
     // Extract the tool name from the request
     let tool_name = request.name.to_string();
@@ -74,6 +76,29 @@ pub async fn call_upstream_tool(
     // Get the server and instance
     let server_name = &mapping.server_name;
     let instance_id = &mapping.instance_id;
+
+    // Check if the tool is enabled in the config suit
+    if let Some(merge_service) = config_suit_merge_service {
+        // Get server ID from database
+        if let Ok(Some(server)) =
+            crate::conf::operations::get_server(&merge_service.db.pool, server_name).await
+        {
+            if let Some(server_id) = &server.id {
+                // Check if the tool is enabled
+                let is_enabled = merge_service
+                    .is_tool_enabled(server_id, &original_tool_name)
+                    .await
+                    .unwrap_or(true); // Default to enabled if check fails
+
+                if !is_enabled {
+                    return Err(anyhow::anyhow!(
+                        "Tool '{}' is disabled in the active configuration suits",
+                        tool_name
+                    ));
+                }
+            }
+        }
+    }
 
     // Determine the actual tool name to call on the upstream server
     let upstream_tool_name = if let Some(prefix) = server_prefix {

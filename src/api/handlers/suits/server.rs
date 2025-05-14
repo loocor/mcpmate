@@ -108,6 +108,18 @@ pub async fn enable_server(
             ))
         })?;
 
+    // Update Config Suit merge service cache
+    if let Some(merge_service) = &state.suit_merge_service {
+        if let Err(e) = merge_service.update_cache().await {
+            tracing::error!("Failed to update Config Suit merge cache: {}", e);
+        } else {
+            // Sync server connections
+            if let Err(e) = merge_service.sync_server_connections(&state).await {
+                tracing::error!("Failed to sync server connections: {}", e);
+            }
+        }
+    }
+
     // Return success response
     Ok(Json(SuitOperationResponse {
         id: server_id,
@@ -157,6 +169,18 @@ pub async fn disable_server(
                 e
             ))
         })?;
+
+    // Update Config Suit merge service cache
+    if let Some(merge_service) = &state.suit_merge_service {
+        if let Err(e) = merge_service.update_cache().await {
+            tracing::error!("Failed to update Config Suit merge cache: {}", e);
+        } else {
+            // Sync server connections
+            if let Err(e) = merge_service.sync_server_connections(&state).await {
+                tracing::error!("Failed to sync server connections: {}", e);
+            }
+        }
+    }
 
     // Return success response
     Ok(Json(SuitOperationResponse {
@@ -214,6 +238,20 @@ pub async fn batch_enable_servers(
         }
     }
 
+    // Update Config Suit merge service cache if any servers were enabled
+    if !successful_ids.is_empty() {
+        if let Some(merge_service) = &state.suit_merge_service {
+            if let Err(e) = merge_service.update_cache().await {
+                tracing::error!("Failed to update Config Suit merge cache: {}", e);
+            } else {
+                // Sync server connections
+                if let Err(e) = merge_service.sync_server_connections(&state).await {
+                    tracing::error!("Failed to sync server connections: {}", e);
+                }
+            }
+        }
+    }
+
     // Return response
     Ok(Json(BatchOperationResponse {
         success_count: successful_ids.len(),
@@ -266,6 +304,20 @@ pub async fn batch_disable_servers(
             }
             None => {
                 failed_ids.insert(server_id.clone(), "Server not found".to_string());
+            }
+        }
+    }
+
+    // Update Config Suit merge service cache if any servers were disabled
+    if !successful_ids.is_empty() {
+        if let Some(merge_service) = &state.suit_merge_service {
+            if let Err(e) = merge_service.update_cache().await {
+                tracing::error!("Failed to update Config Suit merge cache: {}", e);
+            } else {
+                // Sync server connections
+                if let Err(e) = merge_service.sync_server_connections(&state).await {
+                    tracing::error!("Failed to sync server connections: {}", e);
+                }
             }
         }
     }

@@ -250,6 +250,7 @@ pub async fn call_tool(
             &tool_name_str,
             &mapping.upstream_tool_name,
             arguments.into(),
+            server.config_suit_merge_service.as_ref(),
         )
         .await
     } else {
@@ -262,6 +263,9 @@ pub async fn call_tool(
         // Try to parse the tool name to extract server prefix if present
         let (server_prefix, original_tool_name) = parse_tool_name(&tool_name_str);
 
+        // Get Config Suit merge service if available
+        let config_suit_merge_service = server.config_suit_merge_service.as_ref();
+
         // Call the upstream tool
         match call_upstream_tool(
             &server.connection_pool,
@@ -269,6 +273,7 @@ pub async fn call_tool(
                 name: tool_name_str.clone().into(),
                 arguments,
             },
+            config_suit_merge_service,
         )
         .await
         {
@@ -307,6 +312,7 @@ pub async fn call_tool_on_instance(
     client_tool_name: &str,
     upstream_tool_name: &str,
     arguments: serde_json::Value,
+    _config_suit_merge_service: Option<&Arc<crate::core::suit::ConfigSuitMergeService>>,
 ) -> Result<CallToolResult, McpError> {
     // Lock the connection pool to access the service
     let mut pool = connection_pool.lock().await;

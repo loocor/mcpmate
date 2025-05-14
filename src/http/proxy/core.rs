@@ -29,6 +29,8 @@ pub struct HttpProxyServer {
     pub(crate) last_connection_state_hash: Arc<Mutex<u64>>,
     /// Database connection for tool configuration persistence
     pub database: Option<Arc<Database>>,
+    /// Config Suit merge service for tool enablement check
+    pub config_suit_merge_service: Option<Arc<crate::core::suit::ConfigSuitMergeService>>,
 }
 
 #[tool(tool_box)]
@@ -74,7 +76,8 @@ impl HttpProxyServer {
             tool_name_mapping_cache: Arc::new(Mutex::new(None)),
             last_tool_mapping_update: Arc::new(Mutex::new(std::time::Instant::now())),
             last_connection_state_hash: Arc::new(Mutex::new(0)),
-            database: None, // Database will be initialized separately
+            database: None,                  // Database will be initialized separately
+            config_suit_merge_service: None, // Will be initialized after database
         }
     }
 
@@ -86,10 +89,33 @@ impl HttpProxyServer {
         // Initialize default values
         db.initialize_defaults().await?;
 
-        // Store the database connection
-        self.database = Some(Arc::new(db));
+        // Create Arc for the database
+        let db_arc = Arc::new(db);
 
-        tracing::info!("Database initialized successfully");
+        // Store the database connection
+        self.database = Some(db_arc.clone());
+
+        // Initialize Config Suit merge service
+        let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(db_arc));
+
+        // Update the cache
+        if let Err(e) = merge_service.update_cache().await {
+            tracing::error!(
+                "Failed to initialize Config Suit merge service cache: {}",
+                e
+            );
+        } else {
+            tracing::info!("Config Suit merge service cache initialized successfully");
+        }
+
+        // Store the Config Suit merge service
+        let merge_service_arc = Arc::clone(&merge_service);
+        self.config_suit_merge_service = Some(merge_service);
+
+        // Start background update task
+        crate::core::suit::ConfigSuitMergeService::start_background_update(merge_service_arc);
+
+        tracing::info!("Database and Config Suit merge service initialized successfully");
         Ok(())
     }
 
@@ -98,10 +124,33 @@ impl HttpProxyServer {
         // Initialize default values
         db.initialize_defaults().await?;
 
-        // Store the database connection
-        self.database = Some(Arc::new(db));
+        // Create Arc for the database
+        let db_arc = Arc::new(db);
 
-        tracing::info!("Database connection set successfully");
+        // Store the database connection
+        self.database = Some(db_arc.clone());
+
+        // Initialize Config Suit merge service
+        let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(db_arc));
+
+        // Update the cache
+        if let Err(e) = merge_service.update_cache().await {
+            tracing::error!(
+                "Failed to initialize Config Suit merge service cache: {}",
+                e
+            );
+        } else {
+            tracing::info!("Config Suit merge service cache initialized successfully");
+        }
+
+        // Store the Config Suit merge service
+        let merge_service_arc = Arc::clone(&merge_service);
+        self.config_suit_merge_service = Some(merge_service);
+
+        // Start background update task
+        crate::core::suit::ConfigSuitMergeService::start_background_update(merge_service_arc);
+
+        tracing::info!("Database connection and Config Suit merge service set successfully");
         Ok(())
     }
 

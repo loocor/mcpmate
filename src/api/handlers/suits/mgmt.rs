@@ -15,9 +15,7 @@ pub async fn activate_suit(
     // Get the suit to check if it exists and get its name
     let suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get configuration suit: {}", e))
-        })?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {}", e)))?;
 
     // Check if the suit exists
     let suit = match suit {
@@ -37,7 +35,11 @@ pub async fn activate_suit(
             name: suit.name.clone(),
             result: "Configuration suit is already active".to_string(),
             status: "Active".to_string(),
-            allowed_operations: vec!["deactivate".to_string(), "update".to_string(), "delete".to_string()],
+            allowed_operations: vec![
+                "deactivate".to_string(),
+                "update".to_string(),
+                "delete".to_string(),
+            ],
         }));
     }
 
@@ -48,13 +50,29 @@ pub async fn activate_suit(
             ApiError::InternalError(format!("Failed to activate configuration suit: {}", e))
         })?;
 
+    // Update Config Suit merge service cache
+    if let Some(merge_service) = &state.suit_merge_service {
+        if let Err(e) = merge_service.update_cache().await {
+            tracing::error!("Failed to update Config Suit merge cache: {}", e);
+        } else {
+            // Sync server connections
+            if let Err(e) = merge_service.sync_server_connections(&state).await {
+                tracing::error!("Failed to sync server connections: {}", e);
+            }
+        }
+    }
+
     // Return success response
     Ok(Json(SuitOperationResponse {
         id,
         name: suit.name,
         result: "Successfully activated configuration suit".to_string(),
         status: "Active".to_string(),
-        allowed_operations: vec!["deactivate".to_string(), "update".to_string(), "delete".to_string()],
+        allowed_operations: vec![
+            "deactivate".to_string(),
+            "update".to_string(),
+            "delete".to_string(),
+        ],
     }))
 }
 
@@ -69,9 +87,7 @@ pub async fn deactivate_suit(
     // Get the suit to check if it exists and get its name
     let suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get configuration suit: {}", e))
-        })?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {}", e)))?;
 
     // Check if the suit exists
     let suit = match suit {
@@ -91,7 +107,11 @@ pub async fn deactivate_suit(
             name: suit.name.clone(),
             result: "Configuration suit is already inactive".to_string(),
             status: "Inactive".to_string(),
-            allowed_operations: vec!["activate".to_string(), "update".to_string(), "delete".to_string()],
+            allowed_operations: vec![
+                "activate".to_string(),
+                "update".to_string(),
+                "delete".to_string(),
+            ],
         }));
     }
 
@@ -102,13 +122,29 @@ pub async fn deactivate_suit(
             ApiError::InternalError(format!("Failed to deactivate configuration suit: {}", e))
         })?;
 
+    // Update Config Suit merge service cache
+    if let Some(merge_service) = &state.suit_merge_service {
+        if let Err(e) = merge_service.update_cache().await {
+            tracing::error!("Failed to update Config Suit merge cache: {}", e);
+        } else {
+            // Sync server connections
+            if let Err(e) = merge_service.sync_server_connections(&state).await {
+                tracing::error!("Failed to sync server connections: {}", e);
+            }
+        }
+    }
+
     // Return success response
     Ok(Json(SuitOperationResponse {
         id,
         name: suit.name,
         result: "Successfully deactivated configuration suit".to_string(),
         status: "Inactive".to_string(),
-        allowed_operations: vec!["activate".to_string(), "update".to_string(), "delete".to_string()],
+        allowed_operations: vec![
+            "activate".to_string(),
+            "update".to_string(),
+            "delete".to_string(),
+        ],
     }))
 }
 
@@ -141,7 +177,9 @@ pub async fn batch_activate_suits(
                 }
 
                 // Activate the suit
-                match crate::conf::operations::suit::set_config_suit_active(&db.pool, &id, true).await {
+                match crate::conf::operations::suit::set_config_suit_active(&db.pool, &id, true)
+                    .await
+                {
                     Ok(_) => {
                         successful_ids.push(id.clone());
                     }
@@ -152,6 +190,20 @@ pub async fn batch_activate_suits(
             }
             None => {
                 failed_ids.insert(id.clone(), "Configuration suit not found".to_string());
+            }
+        }
+    }
+
+    // Update Config Suit merge service cache if any suits were activated
+    if !successful_ids.is_empty() {
+        if let Some(merge_service) = &state.suit_merge_service {
+            if let Err(e) = merge_service.update_cache().await {
+                tracing::error!("Failed to update Config Suit merge cache: {}", e);
+            } else {
+                // Sync server connections
+                if let Err(e) = merge_service.sync_server_connections(&state).await {
+                    tracing::error!("Failed to sync server connections: {}", e);
+                }
             }
         }
     }
@@ -193,7 +245,9 @@ pub async fn batch_deactivate_suits(
                 }
 
                 // Deactivate the suit
-                match crate::conf::operations::suit::set_config_suit_active(&db.pool, &id, false).await {
+                match crate::conf::operations::suit::set_config_suit_active(&db.pool, &id, false)
+                    .await
+                {
                     Ok(_) => {
                         successful_ids.push(id.clone());
                     }
@@ -204,6 +258,20 @@ pub async fn batch_deactivate_suits(
             }
             None => {
                 failed_ids.insert(id.clone(), "Configuration suit not found".to_string());
+            }
+        }
+    }
+
+    // Update Config Suit merge service cache if any suits were deactivated
+    if !successful_ids.is_empty() {
+        if let Some(merge_service) = &state.suit_merge_service {
+            if let Err(e) = merge_service.update_cache().await {
+                tracing::error!("Failed to update Config Suit merge cache: {}", e);
+            } else {
+                // Sync server connections
+                if let Err(e) = merge_service.sync_server_connections(&state).await {
+                    tracing::error!("Failed to sync server connections: {}", e);
+                }
             }
         }
     }
