@@ -108,7 +108,10 @@ pub async fn get_config_suits_by_type(
 }
 
 /// Get a specific configuration suit from the database
-pub async fn get_config_suit(pool: &Pool<Sqlite>, id: &str) -> Result<Option<ConfigSuit>> {
+pub async fn get_config_suit(
+    pool: &Pool<Sqlite>,
+    id: &str,
+) -> Result<Option<ConfigSuit>> {
     tracing::debug!(
         "Executing SQL query to get configuration suit with ID {}",
         id
@@ -172,7 +175,10 @@ pub async fn get_config_suit_by_name(
 }
 
 /// Create or update a configuration suit in the database
-pub async fn upsert_config_suit(pool: &Pool<Sqlite>, suit: &ConfigSuit) -> Result<String> {
+pub async fn upsert_config_suit(
+    pool: &Pool<Sqlite>,
+    suit: &ConfigSuit,
+) -> Result<String> {
     tracing::debug!(
         "Upserting configuration suit '{}', type: {}",
         suit.name,
@@ -246,7 +252,10 @@ pub async fn set_config_suit_active(
 }
 
 /// Set a configuration suit as the default
-pub async fn set_config_suit_default(pool: &Pool<Sqlite>, suit_id: &str) -> Result<()> {
+pub async fn set_config_suit_default(
+    pool: &Pool<Sqlite>,
+    suit_id: &str,
+) -> Result<()> {
     tracing::debug!("Setting configuration suit with ID {} as default", suit_id);
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
@@ -339,7 +348,10 @@ pub async fn upsert_config_suit_tx(
 }
 
 /// Delete a configuration suit from the database
-pub async fn delete_config_suit(pool: &Pool<Sqlite>, id: &str) -> Result<bool> {
+pub async fn delete_config_suit(
+    pool: &Pool<Sqlite>,
+    id: &str,
+) -> Result<bool> {
     tracing::debug!("Deleting configuration suit with ID {}", id);
 
     let result = sqlx::query(

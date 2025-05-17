@@ -8,12 +8,15 @@ pub mod suit;
 pub mod system;
 pub mod tool;
 
-use axum::Router;
 use std::sync::Arc;
 
-use crate::http::{pool::UpstreamConnectionPool, HttpProxyServer};
-use crate::system::SystemMetricsCollector;
+use axum::Router;
 use tokio::sync::Mutex;
+
+use crate::{
+    http::{HttpProxyServer, pool::UpstreamConnectionPool},
+    system::SystemMetricsCollector,
+};
 
 /// Application state shared across all routes
 #[derive(Clone)]

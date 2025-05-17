@@ -45,7 +45,10 @@ pub enum ErrorType {
 }
 
 impl fmt::Display for ErrorType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         match self {
             ErrorType::Temporary => write!(f, "Temporary"),
             ErrorType::Permanent => write!(f, "Permanent"),
@@ -55,18 +58,24 @@ impl fmt::Display for ErrorType {
 }
 
 impl fmt::Display for ErrorDetails {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         write!(f, "{} ({})", self.message, self.error_type)
     }
 }
 
 impl fmt::Display for ConnectionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         match self {
             ConnectionStatus::Initializing => write!(f, "Initializing"),
             ConnectionStatus::Ready => write!(f, "Ready"),
             ConnectionStatus::Busy => write!(f, "Busy"),
-            ConnectionStatus::Error(err) => write!(f, "Error: {}", err),
+            ConnectionStatus::Error(err) => write!(f, "Error: {err}"),
             ConnectionStatus::Shutdown => write!(f, "Shutdown"),
         }
     }
@@ -75,18 +84,15 @@ impl fmt::Display for ConnectionStatus {
 impl ConnectionStatus {
     /// Check if the connection is in a state that allows connection attempts
     pub fn can_connect(&self) -> bool {
-        match self {
-            ConnectionStatus::Shutdown | ConnectionStatus::Error(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            ConnectionStatus::Shutdown | ConnectionStatus::Error(_)
+        )
     }
 
     /// Check if the connection is in a state that should be monitored by health checks
     pub fn should_monitor(&self) -> bool {
-        match self {
-            ConnectionStatus::Ready | ConnectionStatus::Error(_) => true,
-            _ => false,
-        }
+        matches!(self, ConnectionStatus::Ready | ConnectionStatus::Error(_))
     }
 
     /// Get the allowed operations for this status
@@ -116,7 +122,10 @@ impl ConnectionStatus {
     }
 
     /// Check if a specific operation is allowed in the current state
-    pub fn can_perform_operation(&self, operation: &str) -> bool {
+    pub fn can_perform_operation(
+        &self,
+        operation: &str,
+    ) -> bool {
         self.allowed_operations().contains(&operation)
     }
 

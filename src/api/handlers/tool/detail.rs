@@ -3,17 +3,16 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 
+use super::common::{get_context, get_tool_status};
 use crate::api::{
     handlers::ApiError,
     models::tool::{ToolConfigRequest, ToolConfigResponse},
     routes::AppState,
 };
-
-use super::common::{get_context, get_tool_status};
 
 /// Get a specific MCP tool configuration info
 pub async fn info(
@@ -26,12 +25,11 @@ pub async fn info(
     // Check if the server exists
     let server = crate::conf::operations::get_server(&db.pool, &server_name)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
     if server.is_none() {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found",
-            server_name
+            "Server '{server_name}' not found"
         )));
     }
 
@@ -68,12 +66,11 @@ pub async fn update(
     // Check if the server exists
     let server = crate::conf::operations::get_server(&db.pool, &server_name)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
     if server.is_none() {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found",
-            server_name
+            "Server '{server_name}' not found"
         )));
     }
 
@@ -94,7 +91,7 @@ pub async fn update(
         )
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!("Failed to update tool enabled status: {}", e))
+            ApiError::InternalError(format!("Failed to update tool enabled status: {e}"))
         })?;
         updated = true;
     }
@@ -109,7 +106,7 @@ pub async fn update(
         )
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!("Failed to update tool prefixed name: {}", e))
+            ApiError::InternalError(format!("Failed to update tool prefixed name: {e}"))
         })?;
         updated = true;
     }

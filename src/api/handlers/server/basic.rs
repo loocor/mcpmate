@@ -5,7 +5,7 @@ use super::common::*;
 
 /// List all MCP servers
 pub async fn list_servers(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>
 ) -> Result<Json<ServerListResponse>, ApiError> {
     // Use a timeout to avoid blocking indefinitely
     let pool_result = tokio::time::timeout(
@@ -99,7 +99,7 @@ pub async fn get_server(
 
     // Check if the server exists
     if !pool.connections.contains_key(&name) {
-        return Err(ApiError::NotFound(format!("Server '{}' not found", name)));
+        return Err(ApiError::NotFound(format!("Server '{name}' not found")));
     }
 
     // Get all instances for this server

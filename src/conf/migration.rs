@@ -2,18 +2,24 @@
 // Contains functions for migrating configuration from files to database
 // This file is temporary and can be removed after migration is complete
 
-use anyhow::{Context, Result};
-use sqlx::{Pool, Sqlite};
 use std::{fs::File, path::Path};
 
-use crate::conf::{
-    models::{Server, ServerMeta},
-    operations::{upsert_server, upsert_server_args, upsert_server_env, upsert_server_meta},
+use anyhow::{Context, Result};
+use sqlx::{Pool, Sqlite};
+
+use crate::{
+    conf::{
+        models::{Server, ServerMeta},
+        operations::{upsert_server, upsert_server_args, upsert_server_env, upsert_server_meta},
+    },
+    core::models::Config,
 };
-use crate::core::models::Config;
 
 /// Migrate configuration from files to database
-pub async fn migrate_from_files(pool: &Pool<Sqlite>, mcp_config_path: &Path) -> Result<()> {
+pub async fn migrate_from_files(
+    pool: &Pool<Sqlite>,
+    mcp_config_path: &Path,
+) -> Result<()> {
     tracing::info!("Migrating configuration from files to database");
 
     // Check if database already has server configurations
@@ -71,7 +77,7 @@ pub async fn migrate_from_files(pool: &Pool<Sqlite>, mcp_config_path: &Path) -> 
             server_type: server_config.kind.clone(),
             command: server_config.command.clone(),
             url: server_config.url.clone(),
-            transport_type: server_config.transport_type.map(|t| format!("{:?}", t)),
+            transport_type: server_config.transport_type.map(|t| format!("{t:?}")),
             created_at: None,
             updated_at: None,
         };

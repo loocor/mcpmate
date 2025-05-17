@@ -2,12 +2,12 @@
 // Contains the API server implementation
 
 use std::{net::SocketAddr, sync::Arc};
+
 use tokio::sync::Mutex;
 use tracing;
 
-use crate::http::{pool::UpstreamConnectionPool, HttpProxyServer};
-
 use super::routes::{create_router, create_router_with_proxy};
+use crate::http::{HttpProxyServer, pool::UpstreamConnectionPool};
 
 /// API server for the MCP Proxy
 #[derive(Debug)]

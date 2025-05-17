@@ -1,10 +1,14 @@
 use std::{env, future::Future, time::Duration};
+
 use tokio::{process::Command, time::timeout};
 
 use super::error::{ProxyError, Result};
 
 /// Prepare command environment variables for different command types
-pub fn prepare_command_env(command: &mut Command, command_str: &str) {
+pub fn prepare_command_env(
+    command: &mut Command,
+    command_str: &str,
+) {
     tracing::debug!("Preparing environment for command: {}", command_str);
 
     // 1. bin path
@@ -25,7 +29,7 @@ pub fn prepare_command_env(command: &mut Command, command_str: &str) {
 
     if let Some(bin_path) = bin_path {
         let old_path = env::var("PATH").unwrap_or_default();
-        let new_path = format!("{}:{}", bin_path, old_path);
+        let new_path = format!("{bin_path}:{old_path}");
         tracing::debug!("Setting PATH to include binary path: {}", bin_path);
         command.env("PATH", new_path);
     } else {
@@ -67,9 +71,9 @@ pub fn prepare_command_env(command: &mut Command, command_str: &str) {
         let mut env_info = Vec::new();
         for var in relevant_vars {
             if let Ok(value) = env::var(var) {
-                env_info.push(format!("{}={}", var, value));
+                env_info.push(format!("{var}={value}"));
             } else {
-                env_info.push(format!("{}=<NOT SET>", var));
+                env_info.push(format!("{var}=<NOT SET>"));
             }
         }
 
@@ -139,10 +143,10 @@ where
         Ok(Ok(result)) => Ok(result),
         Ok(Err(e)) => {
             let error_msg = match error_type {
-                TimeoutErrorType::Connection => format!("Failed to connect to server: {}", e),
-                TimeoutErrorType::Tools => format!("Failed to list tools: {}", e),
-                TimeoutErrorType::Service => format!("Failed to create service: {}", e),
-                TimeoutErrorType::Transport => format!("Failed to create transport: {}", e),
+                TimeoutErrorType::Connection => format!("Failed to connect to server: {e}"),
+                TimeoutErrorType::Tools => format!("Failed to list tools: {e}"),
+                TimeoutErrorType::Service => format!("Failed to create service: {e}"),
+                TimeoutErrorType::Transport => format!("Failed to create transport: {e}"),
             };
 
             match error_type {
@@ -151,9 +155,8 @@ where
                     &error_msg,
                     Some(e),
                 )),
-                TimeoutErrorType::Tools => {
-                    Err(ProxyError::tools_error(server_name, &error_msg, Some(e)))
-                }
+                TimeoutErrorType::Tools =>
+                    Err(ProxyError::tools_error(server_name, &error_msg, Some(e))),
                 TimeoutErrorType::Service => Err(ProxyError::connection_error(
                     server_name,
                     &error_msg,
@@ -171,26 +174,22 @@ where
             let error_msg = match error_type {
                 TimeoutErrorType::Connection => {
                     format!(
-                        "Connection timeout for server '{}' after {}s",
-                        server_name, seconds
+                        "Connection timeout for server '{server_name}' after {seconds}s"
                     )
                 }
                 TimeoutErrorType::Tools => {
                     format!(
-                        "Tools request timeout for server '{}' after {}s",
-                        server_name, seconds
+                        "Tools request timeout for server '{server_name}' after {seconds}s"
                     )
                 }
                 TimeoutErrorType::Service => {
                     format!(
-                        "Service creation timeout for server '{}' after {}s",
-                        server_name, seconds
+                        "Service creation timeout for server '{server_name}' after {seconds}s"
                     )
                 }
                 TimeoutErrorType::Transport => {
                     format!(
-                        "Transport creation timeout for server '{}' after {}s",
-                        server_name, seconds
+                        "Transport creation timeout for server '{server_name}' after {seconds}s"
                     )
                 }
             };
@@ -200,9 +199,8 @@ where
             match error_type {
                 TimeoutErrorType::Connection
                 | TimeoutErrorType::Service
-                | TimeoutErrorType::Transport => {
-                    Err(ProxyError::connection_timeout(server_name, seconds))
-                }
+                | TimeoutErrorType::Transport =>
+                    Err(ProxyError::connection_timeout(server_name, seconds)),
                 TimeoutErrorType::Tools => Err(ProxyError::tools_timeout(server_name, seconds)),
             }
         }

@@ -1,24 +1,26 @@
 // ServerHandler implementation for the HTTP proxy server
 
+use std::sync::Arc;
+
 use rmcp::{
+    Error as McpError, RoleServer, ServiceError,
     model::{
         CallToolRequestParam, CallToolResult, ListToolsResult, PaginatedRequestParam,
         ServerCapabilities, ServerInfo,
     },
     service::RequestContext,
-    Error as McpError, RoleServer, ServiceError,
 };
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use super::get_tool_name_mapping;
 use crate::{
     conf::operations,
-    core::tool::{call_upstream_tool, get_all_with_prefix, parse_tool_name},
-    core::ConnectionStatus,
+    core::{
+        ConnectionStatus,
+        tool::{call_upstream_tool, get_all_with_prefix, parse_tool_name},
+    },
     http::proxy::core::HttpProxyServer,
 };
-
-use super::get_tool_name_mapping;
 
 /// Get server information
 pub fn get_info(_server: &HttpProxyServer) -> ServerInfo {
@@ -110,7 +112,7 @@ pub async fn list_tools(
             match operations::tool::is_tool_enabled(&db.pool, &server_name, &tool_name_for_db_check)
                 .await
             {
-                Ok(enabled) => {
+                Ok(enabled) =>
                     if enabled {
                         tracing::debug!(
                             "Including enabled tool '{}' from server '{}'",
@@ -126,8 +128,7 @@ pub async fn list_tools(
                             server_name
                         );
                         disabled_count += 1;
-                    }
-                }
+                    },
                 Err(e) => {
                     // Log the error but include the tool by default
                     tracing::warn!(
@@ -223,14 +224,13 @@ pub async fn call_tool(
             )
             .await
             {
-                Ok(enabled) => {
+                Ok(enabled) =>
                     if !enabled {
                         return Err(McpError::invalid_params(
-                            format!("Tool '{}' is disabled", tool_name_str),
+                            format!("Tool '{tool_name_str}' is disabled"),
                             None,
                         ));
-                    }
-                }
+                    },
                 Err(e) => {
                     // Log the error but allow the tool call to proceed
                     tracing::warn!(
@@ -285,16 +285,14 @@ pub async fn call_tool(
                 if let Some(server_prefix) = server_prefix {
                     Err(McpError::invalid_params(
                         format!(
-                            "Error calling tool '{}' on server '{}': {}",
-                            original_tool_name, server_prefix, e
+                            "Error calling tool '{original_tool_name}' on server '{server_prefix}': {e}"
                         ),
                         None,
                     ))
                 } else {
                     Err(McpError::invalid_params(
                         format!(
-                            "Tool '{}' not found or error occurred: {}",
-                            tool_name_str, e
+                            "Tool '{tool_name_str}' not found or error occurred: {e}"
                         ),
                         None,
                     ))
@@ -326,8 +324,7 @@ pub async fn call_tool_on_instance(
             if !conn.is_connected() {
                 return Err(McpError::internal_error(
                     format!(
-                        "Server '{}' instance '{}' is not connected",
-                        server_name, instance_id
+                        "Server '{server_name}' instance '{instance_id}' is not connected"
                     ),
                     None,
                 ));
@@ -337,8 +334,7 @@ pub async fn call_tool_on_instance(
             if conn.service.is_none() {
                 return Err(McpError::internal_error(
                     format!(
-                        "Service for server '{}' instance '{}' is not available",
-                        server_name, instance_id
+                        "Service for server '{server_name}' instance '{instance_id}' is not available"
                     ),
                     None,
                 ));
@@ -361,7 +357,9 @@ pub async fn call_tool_on_instance(
             );
 
             // Call the tool on the upstream server
-            let result = match conn
+            
+
+            match conn
                 .service
                 .as_mut()
                 .unwrap()
@@ -401,9 +399,9 @@ pub async fn call_tool_on_instance(
                             );
 
                             // Update connection status to error
-                            conn.update_failed(format!("Transport error: {}", io_err));
+                            conn.update_failed(format!("Transport error: {io_err}"));
 
-                            format!("Network or IO error: {}", io_err)
+                            format!("Network or IO error: {io_err}")
                         }
                         ServiceError::UnexpectedResponse => {
                             // Unexpected response type
@@ -425,7 +423,7 @@ pub async fn call_tool_on_instance(
                                 instance_id,
                                 reason_str
                             );
-                            format!("Request cancelled: {}", reason_str)
+                            format!("Request cancelled: {reason_str}")
                         }
                         ServiceError::Timeout { timeout } => {
                             // Request timed out
@@ -436,7 +434,7 @@ pub async fn call_tool_on_instance(
                                 instance_id,
                                 timeout
                             );
-                            format!("Request timed out after {:?}", timeout)
+                            format!("Request timed out after {timeout:?}")
                         }
                         // Handle any future error types that might be added
                         _ => {
@@ -447,26 +445,23 @@ pub async fn call_tool_on_instance(
                                 instance_id,
                                 e
                             );
-                            format!("Unknown error: {:?}", e)
+                            format!("Unknown error: {e:?}")
                         }
                     };
 
                     Err(McpError::internal_error(
                         format!(
-                            "Error calling tool '{}': {}",
-                            client_tool_name, error_message
+                            "Error calling tool '{client_tool_name}': {error_message}"
                         ),
                         None,
                     ))
                 }
-            };
-
-            result
+            }
         }
         Err(e) => {
             tracing::error!("Error getting instance: {}", e);
             Err(McpError::internal_error(
-                format!("Error getting instance: {}", e),
+                format!("Error getting instance: {e}"),
                 None,
             ))
         }

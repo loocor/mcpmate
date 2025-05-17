@@ -1,9 +1,11 @@
 // MCPMate Proxy API handlers for notifications
 // Contains handler functions for notification endpoints
 
-use axum::extract::{Json, Path, State};
 use std::{collections::HashSet, sync::Arc};
 
+use axum::extract::{Json, Path, State};
+
+use super::ApiError;
 use crate::{
     api::{
         models::notifs::{
@@ -14,8 +16,6 @@ use crate::{
     },
     core::types::ConnectionStatus,
 };
-
-use super::ApiError;
 
 /// Notify clients that the tools list has changed
 pub async fn notify_tools_changed(
@@ -37,11 +37,7 @@ pub async fn notify_tools_changed(
         _ => {}
     }
 
-    let reason = request
-        .reason
-        .as_ref()
-        .map(|r| r.as_str())
-        .unwrap_or("configuration change");
+    let reason = request.reason.as_deref().unwrap_or("configuration change");
 
     tracing::info!(
         "Tools changed notification received. Operation: {:?}, Scope: {:?}, Reason: {}",
@@ -67,8 +63,8 @@ pub async fn notify_tools_changed(
     );
 
     // Count all ready connections as notified
-    for (_service_id, instances) in &pool.connections {
-        for (_instance_id, conn) in instances {
+    for instances in pool.connections.values() {
+        for conn in instances.values() {
             if let ConnectionStatus::Ready = conn.status {
                 if conn.service.is_some() {
                     notified_count += 1;
@@ -80,8 +76,7 @@ pub async fn notify_tools_changed(
     Ok(Json(NotificationResponse {
         notified_clients: notified_count,
         message: format!(
-            "Notified {} clients about tools list change",
-            notified_count
+            "Notified {notified_count} clients about tools list change"
         ),
         details: ToolsChangedDetails {
             operation: format!("{:?}", request.operation),

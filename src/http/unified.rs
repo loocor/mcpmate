@@ -1,16 +1,17 @@
 // Unified HTTP Server implementation
 // Combines StreamableHttpServer and SseServer into a single server
 
+use std::{net::SocketAddr, time::Duration};
+
 use anyhow::{Context, Result};
 use axum::Router;
 use rmcp::{
+    RoleServer, Service,
     transport::{
         sse_server::{SseServer, SseServerConfig},
         streamable_http_server::axum::{StreamableHttpServer, StreamableHttpServerConfig},
     },
-    RoleServer, Service,
 };
-use std::{net::SocketAddr, time::Duration};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
@@ -50,6 +51,12 @@ pub struct UnifiedHttpServer {
     pub config: UnifiedHttpServerConfig,
 }
 
+impl Default for UnifiedHttpServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UnifiedHttpServer {
     /// Create a new unified HTTP server with default configuration
     pub fn new() -> Self {
@@ -77,7 +84,10 @@ impl UnifiedHttpServer {
     ///
     /// # Returns
     /// * `Result<()>` - Ok if the server started successfully, Err otherwise
-    pub async fn start<F, S>(&self, service_factory: F) -> Result<()>
+    pub async fn start<F, S>(
+        &self,
+        service_factory: F,
+    ) -> Result<()>
     where
         F: Fn() -> S + Clone + Send + Sync + 'static,
         S: Service<RoleServer> + Send + Sync + 'static,

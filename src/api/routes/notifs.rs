@@ -1,11 +1,9 @@
 // MCP Proxy API routes for notifications
 // Contains route definitions for notification endpoints
 
-use axum::{
-    routing::post,
-    Router,
-};
 use std::sync::Arc;
+
+use axum::{Router, routing::post};
 
 use super::AppState;
 use crate::api::handlers::notifs;

@@ -1,9 +1,9 @@
 // MCPMate Proxy API handlers for Config Suit tool management
 // Contains handler functions for managing tools in Config Suits
 
-use super::common::*;
-use super::{check_tool_belongs_to_suit, get_suit_or_error, get_tool_or_error};
 use std::collections::HashMap;
+
+use super::{check_tool_belongs_to_suit, common::*, get_suit_or_error, get_tool_or_error};
 
 /// List tools in a configuration suit
 pub async fn list_tools(
@@ -20,7 +20,7 @@ pub async fn list_tools(
     let tool_configs = crate::conf::operations::tool::get_tools_by_suit_id(&db.pool, &id)
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get tool configurations: {}", e))
+            ApiError::InternalError(format!("Failed to get tool configurations: {e}"))
         })?;
 
     // Convert to response format
@@ -82,8 +82,7 @@ pub async fn enable_tool(
         .await
         .map_err(|e| {
             ApiError::InternalError(format!(
-                "Failed to enable tool in configuration suit: {}",
-                e
+                "Failed to enable tool in configuration suit: {e}"
             ))
         })?;
 
@@ -128,8 +127,7 @@ pub async fn disable_tool(
         .await
         .map_err(|e| {
             ApiError::InternalError(format!(
-                "Failed to disable tool in configuration suit: {}",
-                e
+                "Failed to disable tool in configuration suit: {e}"
             ))
         })?;
 
@@ -163,7 +161,7 @@ pub async fn batch_enable_tools(
         // Get the tool to check if it exists
         let tool = crate::conf::operations::tool::get_config_suit_tool_by_id(&db.pool, &tool_id)
             .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {}", e)))?;
+            .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {e}")))?;
 
         // Check if the tool exists and belongs to the specified suit
         match tool {
@@ -191,7 +189,7 @@ pub async fn batch_enable_tools(
                         successful_ids.push(tool_id.clone());
                     }
                     Err(e) => {
-                        failed_ids.insert(tool_id.clone(), format!("Failed to enable tool: {}", e));
+                        failed_ids.insert(tool_id.clone(), format!("Failed to enable tool: {e}"));
                     }
                 }
             }
@@ -229,7 +227,7 @@ pub async fn batch_disable_tools(
         // Get the tool to check if it exists
         let tool = crate::conf::operations::tool::get_config_suit_tool_by_id(&db.pool, &tool_id)
             .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {}", e)))?;
+            .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {e}")))?;
 
         // Check if the tool exists and belongs to the specified suit
         match tool {
@@ -258,7 +256,7 @@ pub async fn batch_disable_tools(
                     }
                     Err(e) => {
                         failed_ids
-                            .insert(tool_id.clone(), format!("Failed to disable tool: {}", e));
+                            .insert(tool_id.clone(), format!("Failed to disable tool: {e}"));
                     }
                 }
             }

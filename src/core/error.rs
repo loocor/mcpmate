@@ -106,7 +106,10 @@ impl ProxyError {
     }
 
     /// Create a new connection timeout error
-    pub fn connection_timeout(server_name: &str, seconds: u64) -> Self {
+    pub fn connection_timeout(
+        server_name: &str,
+        seconds: u64,
+    ) -> Self {
         Self::ConnectionTimeout {
             server_name: server_name.to_string(),
             seconds,
@@ -114,7 +117,11 @@ impl ProxyError {
     }
 
     /// Create a new tools error
-    pub fn tools_error(server_name: &str, message: &str, source: Option<anyhow::Error>) -> Self {
+    pub fn tools_error(
+        server_name: &str,
+        message: &str,
+        source: Option<anyhow::Error>,
+    ) -> Self {
         Self::ToolsError {
             server_name: server_name.to_string(),
             message: message.to_string(),
@@ -123,7 +130,10 @@ impl ProxyError {
     }
 
     /// Create a new tools timeout error
-    pub fn tools_timeout(server_name: &str, seconds: u64) -> Self {
+    pub fn tools_timeout(
+        server_name: &str,
+        seconds: u64,
+    ) -> Self {
         Self::ToolsTimeout {
             server_name: server_name.to_string(),
             seconds,
@@ -145,7 +155,10 @@ impl ProxyError {
     }
 
     /// Create a new invalid state transition error
-    pub fn invalid_state_transition(server_name: &str, state: &str) -> Self {
+    pub fn invalid_state_transition(
+        server_name: &str,
+        state: &str,
+    ) -> Self {
         Self::InvalidStateTransition {
             server_name: server_name.to_string(),
             state: state.to_string(),
@@ -153,7 +166,10 @@ impl ProxyError {
     }
 
     /// Create a new missing config error
-    pub fn missing_config(server_name: &str, field: &str) -> Self {
+    pub fn missing_config(
+        server_name: &str,
+        field: &str,
+    ) -> Self {
         Self::MissingConfig {
             server_name: server_name.to_string(),
             field: field.to_string(),
@@ -161,7 +177,10 @@ impl ProxyError {
     }
 
     /// Create a new generic error
-    pub fn generic_error(message: &str, source: Option<anyhow::Error>) -> Self {
+    pub fn generic_error(
+        message: &str,
+        source: Option<anyhow::Error>,
+    ) -> Self {
         Self::GenericError {
             message: message.to_string(),
             source,

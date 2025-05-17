@@ -1,10 +1,10 @@
 // MCP Proxy API models for MCP server management
 // Contains data models for MCP server endpoints
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-//
+use serde::{Deserialize, Serialize};
+
 // API Model
 //
 

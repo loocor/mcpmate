@@ -1,8 +1,9 @@
 // MCP Proxy API models for Config Suit management
 // Contains data models for Config Suit endpoints
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 /// Config Suit response
 #[derive(Debug, Serialize, Deserialize)]

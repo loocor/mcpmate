@@ -1,16 +1,19 @@
 // Database configuration loader for MCPMate
 // Contains functions for loading configuration from the database
 
-use anyhow::{Context, Result};
 use std::collections::HashMap;
 
-use crate::conf::{
-    operations::{get_enabled_servers, get_server_args, get_server_env},
-    Database,
-};
-use crate::core::{
-    models::{Config, MCPServerConfig},
-    transport::TransportType,
+use anyhow::{Context, Result};
+
+use crate::{
+    conf::{
+        database::Database,
+        operations::{get_enabled_servers, get_server_args, get_server_env},
+    },
+    core::{
+        models::{Config, MCPServerConfig},
+        transport::TransportType,
+    },
 };
 
 /// Load the MCP server configuration from the database

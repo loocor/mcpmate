@@ -1,9 +1,10 @@
 // Tool database operations module
 // Contains functions for interacting with the database for tool operations
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use sqlx::{Pool, Sqlite};
-use std::collections::HashMap;
 
 use crate::conf::operations;
 
@@ -18,7 +19,7 @@ use crate::conf::operations;
 /// # Returns
 /// * `Result<HashMap<(String, String), String>>` - A mapping of (server_name, tool_name) to prefixed_name
 pub async fn get_custom_prefixed_names(
-    pool: &Pool<Sqlite>,
+    pool: &Pool<Sqlite>
 ) -> Result<HashMap<(String, String), String>> {
     let mut result = HashMap::new();
 

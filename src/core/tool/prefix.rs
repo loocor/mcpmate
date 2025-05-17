@@ -1,13 +1,13 @@
 // Tool prefix module
 // Contains functions for handling tool name prefixes, parsing, and smart prefixing
 
-use rmcp::model::Tool;
 use std::{collections::HashMap, sync::Arc};
+
+use rmcp::model::Tool;
 use tokio::sync::Mutex;
 use tracing;
 
-use super::mapping::build_tool_mapping;
-use super::types::ToolNameMapping;
+use super::{mapping::build_tool_mapping, types::ToolNameMapping};
 use crate::http::pool::UpstreamConnectionPool;
 
 /// Parse a tool name to extract server prefix if present
@@ -28,7 +28,7 @@ pub fn parse_tool_name(tool_name: &str) -> (Option<&str>, &str) {
 
         // Check if the remaining part starts with the same prefix
         // This handles cases like "playwright_playwright_navigate"
-        let prefix_repeated = remaining.starts_with(&format!("{}_", server_prefix));
+        let prefix_repeated = remaining.starts_with(&format!("{server_prefix}_"));
 
         if prefix_repeated {
             // Skip the repeated prefix
@@ -61,7 +61,10 @@ pub fn parse_tool_name(tool_name: &str) -> (Option<&str>, &str) {
 ///
 /// # Returns
 /// * `bool` - True if all tools have a common prefix, false otherwise
-pub fn detect_common_prefix(tools: &[Tool], server_name: &str) -> bool {
+pub fn detect_common_prefix(
+    tools: &[Tool],
+    server_name: &str,
+) -> bool {
     if tools.is_empty() {
         return false;
     }
@@ -132,7 +135,7 @@ pub fn detect_common_prefix(tools: &[Tool], server_name: &str) -> bool {
 /// # Returns
 /// * `Vec<Tool>` - A list of all tools with smart prefixing
 pub async fn get_all_with_prefix(
-    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
 ) -> Vec<Tool> {
     // Lock the connection pool to access it
     let pool = connection_pool.lock().await;
@@ -172,9 +175,7 @@ pub async fn get_all_with_prefix(
             }
 
             // Add all tools from this instance to the server's collection
-            let server_tools = tools_by_server
-                .entry(server_name.clone())
-                .or_insert_with(Vec::new);
+            let server_tools = tools_by_server.entry(server_name.clone()).or_default();
 
             for tool in &conn.tools {
                 server_tools.push(tool.clone());
@@ -265,13 +266,13 @@ pub async fn get_all_with_prefix(
                 if !processed_tool
                     .description
                     .as_ref()
-                    .map_or(false, |desc| desc.contains(&format!("[{}]", server_name)))
+                    .is_some_and(|desc| desc.contains(&format!("[{server_name}]")))
                 {
                     let desc = processed_tool
                         .description
                         .as_ref()
                         .map_or("".to_string(), |d| d.to_string());
-                    processed_tool.description = Some(format!("[{}] {}", server_name, desc).into());
+                    processed_tool.description = Some(format!("[{server_name}] {desc}").into());
                 }
             } else {
                 // No custom name, apply smart prefixing logic
@@ -319,7 +320,7 @@ pub async fn get_all_with_prefix(
                     };
 
                     // Add prefix with proper conversion to Cow<str>
-                    processed_tool.name = format!("{}_{}", server_name, original_name).into();
+                    processed_tool.name = format!("{server_name}_{original_name}").into();
 
                     tracing::debug!(
                         "Added prefix to tool: '{}' -> '{}'",
@@ -331,14 +332,14 @@ pub async fn get_all_with_prefix(
                     if !processed_tool
                         .description
                         .as_ref()
-                        .map_or(false, |desc| desc.contains(&format!("[{}]", server_name)))
+                        .is_some_and(|desc| desc.contains(&format!("[{server_name}]")))
                     {
                         let desc = processed_tool
                             .description
                             .as_ref()
                             .map_or("".to_string(), |d| d.to_string());
                         processed_tool.description =
-                            Some(format!("[{}] {}", server_name, desc).into());
+                            Some(format!("[{server_name}] {desc}").into());
                     }
                 }
             }
@@ -377,7 +378,7 @@ pub async fn get_all_with_prefix(
 /// # Returns
 /// * `HashMap<String, ToolNameMapping>` - A mapping of client-facing tool names to upstream tool names
 pub async fn build_name_mapping(
-    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
 ) -> HashMap<String, ToolNameMapping> {
     // Get all tools with smart prefixing
     let prefixed_tools = get_all_with_prefix(connection_pool).await;
@@ -406,27 +407,24 @@ pub async fn build_name_mapping(
                 for original_tool in &conn.tools {
                     // Check if this is the same tool (by comparing descriptions or other properties)
                     // This is a heuristic and might need improvement
-                    if prefixed_tool.description.as_ref().map_or(false, |desc| {
+                    if prefixed_tool.description.as_ref().is_some_and(|desc| {
                         original_tool
                             .description
                             .as_ref()
-                            .map_or(false, |orig_desc| desc.contains(&orig_desc.to_string()))
+                            .is_some_and(|orig_desc| desc.contains(&orig_desc.to_string()))
                     }) || (prefixed_tool
                         .name
                         .to_string()
                         .contains(&original_tool.name.to_string())
-                        && prefixed_tool.name.to_string() != original_tool.name.to_string())
+                        && prefixed_tool.name != original_tool.name)
                     {
                         // Found the original tool
-                        name_mapping.insert(
-                            client_tool_name.clone(),
-                            ToolNameMapping {
-                                client_tool_name: client_tool_name.clone(),
-                                server_name: server_name.clone(),
-                                instance_id: instance_id.clone(),
-                                upstream_tool_name: original_tool.name.to_string(),
-                            },
-                        );
+                        name_mapping.insert(client_tool_name.clone(), ToolNameMapping {
+                            client_tool_name: client_tool_name.clone(),
+                            server_name: server_name.clone(),
+                            instance_id: instance_id.clone(),
+                            upstream_tool_name: original_tool.name.to_string(),
+                        });
                         break;
                     }
                 }
@@ -441,15 +439,12 @@ pub async fn build_name_mapping(
         if !name_mapping.contains_key(&client_tool_name) {
             // This tool wasn't processed, which means it's the same as the original
             if let Some(mapping) = original_mapping.get(&client_tool_name) {
-                name_mapping.insert(
-                    client_tool_name.clone(),
-                    ToolNameMapping {
-                        client_tool_name: client_tool_name.clone(),
-                        server_name: mapping.server_name.clone(),
-                        instance_id: mapping.instance_id.clone(),
-                        upstream_tool_name: mapping.upstream_tool_name.clone(),
-                    },
-                );
+                name_mapping.insert(client_tool_name.clone(), ToolNameMapping {
+                    client_tool_name: client_tool_name.clone(),
+                    server_name: mapping.server_name.clone(),
+                    instance_id: mapping.instance_id.clone(),
+                    upstream_tool_name: mapping.upstream_tool_name.clone(),
+                });
             }
         }
     }

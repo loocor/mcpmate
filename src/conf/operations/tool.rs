@@ -121,7 +121,7 @@ pub async fn get_tool_id(
 
             // Find the tool in this suit
             for tool_config in tools {
-                if &tool_config.server_id == server_id && tool_config.tool_name == tool_name {
+                if tool_config.server_id == *server_id && tool_config.tool_name == tool_name {
                     // Return the tool's ID
                     return Ok(tool_config.id);
                 }
@@ -257,7 +257,7 @@ async fn update_tool_prefixed_name_in_suit(
         .execute(pool)
         .await?;
 
-        return Ok(tool.id.unwrap_or_else(|| "0".to_string()));
+        Ok(tool.id.unwrap_or_else(|| "0".to_string()))
     } else {
         // Tool doesn't exist in this suit, add it
         let enabled = true; // Default to enabled
@@ -284,7 +284,7 @@ async fn update_tool_prefixed_name_in_suit(
         .execute(pool)
         .await?;
 
-        return Ok(tool_id);
+        Ok(tool_id)
     }
 }
 
@@ -383,7 +383,7 @@ pub async fn get_tool_prefixed_name(
 
             // Find the tool in this suit
             for tool_config in tools {
-                if &tool_config.server_id == server_id && tool_config.tool_name == tool_name {
+                if tool_config.server_id == *server_id && tool_config.tool_name == tool_name {
                     // Return the tool's prefixed name
                     return Ok(tool_config.prefixed_name);
                 }
@@ -450,7 +450,7 @@ pub async fn is_tool_enabled(
                         crate::conf::operations::get_config_suit_servers(pool, suit_id).await?;
 
                     for server_config in server_configs {
-                        if &server_config.server_id == server_id {
+                        if server_config.server_id == *server_id {
                             // Update server status if this is the first time we see it or if this suit has higher priority
                             if server_status.is_none()
                                 || server_status.as_ref().unwrap().1 < suit.priority
@@ -466,7 +466,7 @@ pub async fn is_tool_enabled(
                         crate::conf::operations::get_config_suit_tools(pool, suit_id).await?;
 
                     for tool_config in tools {
-                        if &tool_config.server_id == server_id && tool_config.tool_name == tool_name
+                        if tool_config.server_id == *server_id && tool_config.tool_name == tool_name
                         {
                             // Update tool status if this is the first time we see it or if this suit has higher priority
                             if tool_status.is_none()
@@ -512,7 +512,7 @@ pub async fn is_tool_enabled(
                     if let Some(suit_id) = &suit.id {
                         let tools =
                             crate::conf::operations::get_config_suit_tools(pool, suit_id).await?;
-                        if tools.iter().any(|t| &t.server_id == server_id) {
+                        if tools.iter().any(|t| t.server_id == *server_id) {
                             has_tool_configs = true;
                             break;
                         }
@@ -563,7 +563,7 @@ async fn is_tool_enabled_in_suit(
 
     // Find the server in this suit
     for server_config in servers {
-        if &server_config.server_id == server_id {
+        if server_config.server_id == *server_id {
             // If the server is disabled in this suit, the tool is also disabled
             if !server_config.enabled {
                 tracing::debug!(
@@ -579,12 +579,12 @@ async fn is_tool_enabled_in_suit(
             let tools = crate::conf::operations::get_config_suit_tools(pool, suit_id).await?;
 
             // Count tools for this server
-            let server_tools = tools.iter().filter(|t| &t.server_id == server_id).count();
+            let server_tools = tools.iter().filter(|t| t.server_id == *server_id).count();
 
             // Find the tool in this suit
             let tool_config = tools
                 .iter()
-                .find(|t| &t.server_id == server_id && t.tool_name == tool_name);
+                .find(|t| t.server_id == *server_id && t.tool_name == tool_name);
 
             if let Some(config) = tool_config {
                 // Return the tool's enabled status in this suit

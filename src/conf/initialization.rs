@@ -225,15 +225,14 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
 
     for table in tables {
         match sqlx::query(&format!(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='{}'",
-            table
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'"
         ))
         .fetch_optional(pool)
         .await
         {
             Ok(Some(_)) => tracing::debug!("Verified {} table exists", table),
             Ok(None) => {
-                let err = format!("{} table not found after creation", table);
+                let err = format!("{table} table not found after creation");
                 tracing::error!("{}", err);
                 return Err(anyhow::anyhow!(err));
             }

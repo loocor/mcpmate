@@ -26,7 +26,7 @@ pub async fn list_instances(
 
     // Check if the server exists
     if !pool.connections.contains_key(&name) {
-        return Err(ApiError::NotFound(format!("Server '{}' not found", name)));
+        return Err(ApiError::NotFound(format!("Server '{name}' not found")));
     }
 
     // Get all instances for this server

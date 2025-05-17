@@ -1,9 +1,9 @@
 // MCPMate Proxy API handlers for Config Suit server management
 // Contains handler functions for managing servers in Config Suits
 
-use super::common::*;
-use super::{get_server_or_error, get_suit_or_error};
 use std::collections::HashMap;
+
+use super::{common::*, get_server_or_error, get_suit_or_error};
 
 /// List servers in a configuration suit
 pub async fn list_servers(
@@ -20,13 +20,13 @@ pub async fn list_servers(
     let server_configs = crate::conf::operations::get_config_suit_servers(&db.pool, &id)
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get server configurations: {}", e))
+            ApiError::InternalError(format!("Failed to get server configurations: {e}"))
         })?;
 
     // Get all servers
     let all_servers = crate::conf::operations::get_all_servers(&db.pool)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
 
     // Create a map of server ID to server
     let server_map: HashMap<String, crate::conf::models::Server> = all_servers
@@ -83,7 +83,7 @@ pub async fn enable_server(
     let server_configs = crate::conf::operations::get_config_suit_servers(&db.pool, &suit_id)
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get server configurations: {}", e))
+            ApiError::InternalError(format!("Failed to get server configurations: {e}"))
         })?;
 
     for config in server_configs {
@@ -103,8 +103,7 @@ pub async fn enable_server(
         .await
         .map_err(|e| {
             ApiError::InternalError(format!(
-                "Failed to enable server in configuration suit: {}",
-                e
+                "Failed to enable server in configuration suit: {e}"
             ))
         })?;
 
@@ -145,7 +144,7 @@ pub async fn disable_server(
     let server_configs = crate::conf::operations::get_config_suit_servers(&db.pool, &suit_id)
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get server configurations: {}", e))
+            ApiError::InternalError(format!("Failed to get server configurations: {e}"))
         })?;
 
     for config in server_configs {
@@ -165,8 +164,7 @@ pub async fn disable_server(
         .await
         .map_err(|e| {
             ApiError::InternalError(format!(
-                "Failed to disable server in configuration suit: {}",
-                e
+                "Failed to disable server in configuration suit: {e}"
             ))
         })?;
 
@@ -212,7 +210,7 @@ pub async fn batch_enable_servers(
         // Get the server to check if it exists
         let server = crate::conf::operations::get_server_by_id(&db.pool, &server_id)
             .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
         // Check if the server exists
         match server {
@@ -228,7 +226,7 @@ pub async fn batch_enable_servers(
                     }
                     Err(e) => {
                         failed_ids
-                            .insert(server_id.clone(), format!("Failed to enable server: {}", e));
+                            .insert(server_id.clone(), format!("Failed to enable server: {e}"));
                     }
                 }
             }
@@ -280,7 +278,7 @@ pub async fn batch_disable_servers(
         // Get the server to check if it exists
         let server = crate::conf::operations::get_server_by_id(&db.pool, &server_id)
             .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
         // Check if the server exists
         match server {
@@ -297,7 +295,7 @@ pub async fn batch_disable_servers(
                     Err(e) => {
                         failed_ids.insert(
                             server_id.clone(),
-                            format!("Failed to disable server: {}", e),
+                            format!("Failed to disable server: {e}"),
                         );
                     }
                 }

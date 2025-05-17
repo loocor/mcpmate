@@ -1,8 +1,9 @@
 // MCP Proxy connection module
 // Contains the UpstreamConnection struct and related functionality
 
-use rmcp::{model::Tool, service::RunningService, RoleClient};
 use std::time::{Duration, Instant};
+
+use rmcp::{RoleClient, model::Tool, service::RunningService};
 use uuid::Uuid;
 
 use super::types::ConnectionStatus;
@@ -83,7 +84,11 @@ impl UpstreamConnection {
     }
 
     /// Update connection with successful connection details
-    pub fn update_connected(&mut self, service: RunningService<RoleClient, ()>, tools: Vec<Tool>) {
+    pub fn update_connected(
+        &mut self,
+        service: RunningService<RoleClient, ()>,
+        tools: Vec<Tool>,
+    ) {
         self.service = Some(service);
         self.tools = tools;
         self.status = ConnectionStatus::Ready;
@@ -91,12 +96,14 @@ impl UpstreamConnection {
     }
 
     /// Update connection status to error
-    pub fn update_failed(&mut self, error_msg: String) {
+    pub fn update_failed(
+        &mut self,
+        error_msg: String,
+    ) {
         // Check if we're already in an error state
         let (failure_count, first_failure_time) = match &self.status {
-            ConnectionStatus::Error(details) => {
-                (details.failure_count + 1, details.first_failure_time)
-            }
+            ConnectionStatus::Error(details) =>
+                (details.failure_count + 1, details.first_failure_time),
             _ => (1, chrono::Local::now().timestamp() as u64),
         };
 
@@ -113,7 +120,10 @@ impl UpstreamConnection {
     }
 
     /// Update connection status to permanent error (requires manual intervention)
-    pub fn update_permanent_error(&mut self, error_msg: String) {
+    pub fn update_permanent_error(
+        &mut self,
+        error_msg: String,
+    ) {
         // Create error details
         let error_details = super::types::ErrorDetails {
             message: error_msg,
@@ -182,7 +192,10 @@ impl UpstreamConnection {
     }
 
     /// Check if a specific operation is allowed in the current state
-    pub fn can_perform_operation(&self, operation: &str) -> bool {
+    pub fn can_perform_operation(
+        &self,
+        operation: &str,
+    ) -> bool {
         self.status.can_perform_operation(operation)
     }
 

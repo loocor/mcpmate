@@ -1,9 +1,10 @@
 // Tool mapping module
 // Contains functions for building and managing tool mappings
 
+use std::{collections::HashMap, sync::Arc};
+
 use anyhow::{Context, Result};
 use rmcp::model::Tool;
-use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tracing;
 
@@ -21,7 +22,7 @@ use crate::http::pool::UpstreamConnectionPool;
 /// # Returns
 /// * `HashMap<String, ToolMapping>` - A mapping of tool names to server/instance information
 pub async fn build_tool_mapping(
-    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
 ) -> HashMap<String, ToolMapping> {
     let mut tool_mapping = HashMap::new();
 
@@ -48,15 +49,12 @@ pub async fn build_tool_mapping(
                 }
 
                 // Add the tool to the mapping
-                tool_mapping.insert(
-                    tool.name.to_string(),
-                    ToolMapping {
-                        server_name: server_name.clone(),
-                        instance_id: instance_id.clone(),
-                        tool: tool.clone(),
-                        upstream_tool_name: tool.name.to_string(),
-                    },
-                );
+                tool_mapping.insert(tool.name.to_string(), ToolMapping {
+                    server_name: server_name.clone(),
+                    instance_id: instance_id.clone(),
+                    tool: tool.clone(),
+                    upstream_tool_name: tool.name.to_string(),
+                });
             }
         }
     }
@@ -83,8 +81,8 @@ pub async fn get_all_tools(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>)
     let mut all_tools = Vec::new();
 
     // Iterate through all servers and instances
-    for (_server_name, instances) in &pool.connections {
-        for (_instance_id, conn) in instances {
+    for instances in pool.connections.values() {
+        for conn in instances.values() {
             // Skip instances that are not connected
             if !conn.is_connected() {
                 continue;
@@ -122,8 +120,7 @@ pub async fn find_tool_in_server(
 
     // Check if the server exists
     let instances = pool.connections.get(server_name).context(format!(
-        "Server '{}' not found in connection pool",
-        server_name
+        "Server '{server_name}' not found in connection pool"
     ))?;
 
     // Look for the tool in all instances of this server
@@ -134,7 +131,7 @@ pub async fn find_tool_in_server(
 
         // Look for the tool in this instance
         for tool in &conn.tools {
-            if tool.name.to_string() == tool_name {
+            if tool.name == tool_name {
                 return Ok(ToolMapping {
                     server_name: server_name.to_string(),
                     instance_id: instance_id.clone(),

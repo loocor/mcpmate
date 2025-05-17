@@ -1,11 +1,11 @@
 // MCP Proxy API models for tool management
 // Contains data models for tool endpoints
 
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // Import SDK types
 use rmcp::model::Tool as RmcpTool;
+use serde::{Deserialize, Serialize};
 
 /// Tool configuration request
 #[derive(Debug, Serialize, Deserialize)]

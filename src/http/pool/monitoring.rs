@@ -88,7 +88,9 @@ impl UpstreamConnectionPool {
                     if let Err(e) = self.reconnect(&server_name, &instance_id).await {
                         tracing::error!(
                             "Failed to restart '{}' instance '{}' after resource limit exceeded: {}",
-                            server_name, instance_id, e
+                            server_name,
+                            instance_id,
+                            e
                         );
                     }
                 }
@@ -100,7 +102,9 @@ impl UpstreamConnectionPool {
                     if let Err(e) = self.disconnect(&server_name, &instance_id).await {
                         tracing::error!(
                             "Failed to terminate '{}' instance '{}' after resource limit exceeded: {}",
-                            server_name, instance_id, e
+                            server_name,
+                            instance_id,
+                            e
                         );
                     }
                 }

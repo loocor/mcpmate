@@ -1,8 +1,9 @@
 // MCP Proxy API routes for MCP specification-compliant information
 // Contains route definitions for MCP specs endpoints
 
-use axum::{routing::get, Router};
 use std::sync::Arc;
+
+use axum::{Router, routing::get};
 
 use super::AppState;
 use crate::api::handlers::specs;

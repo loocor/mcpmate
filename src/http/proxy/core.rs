@@ -1,19 +1,21 @@
 // Core implementation of the HTTP proxy server
 
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+
 use anyhow::{Context, Result};
 use rmcp::{
+    Error as McpError, ServerHandler,
     model::{CallToolRequestParam, CallToolResult, ServerInfo},
     service::RequestContext,
-    tool, Error as McpError, ServerHandler,
+    tool,
 };
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
-use crate::{
-    conf::Database, core::models::Config, core::TransportType, core::UpstreamConnectionPool,
-};
-
 use super::{handler, start_sse, start_streamable_http, start_unified};
+use crate::{
+    conf::database::Database,
+    core::{TransportType, UpstreamConnectionPool, models::Config},
+};
 
 /// HTTP Proxy Server that aggregates tools from multiple MCP servers
 #[derive(Debug, Clone)]
@@ -49,7 +51,7 @@ impl HttpProxyServer {
         if let Err(e) = peer.notify_tool_list_changed().await {
             tracing::error!("Failed to send tool list changed notification: {}", e);
             return Err(McpError::internal_error(
-                format!("Failed to send tool list changed notification: {}", e),
+                format!("Failed to send tool list changed notification: {e}"),
                 None,
             ));
         }
@@ -120,7 +122,10 @@ impl HttpProxyServer {
     }
 
     /// Set the database connection
-    pub async fn set_database(&mut self, db: Database) -> Result<()> {
+    pub async fn set_database(
+        &mut self,
+        db: Database,
+    ) -> Result<()> {
         // Initialize default values
         db.initialize_defaults().await?;
 
@@ -188,7 +193,7 @@ impl HttpProxyServer {
                 tracing::info!("Using SSE transport mode (2024-11-05 MCP specification)");
                 start_sse(self, bind_address, path)
                     .await
-                    .context(format!("Failed to start SSE server on {}", bind_address))
+                    .context(format!("Failed to start SSE server on {bind_address}"))
             }
             TransportType::StreamableHttp => {
                 tracing::info!(
@@ -197,8 +202,7 @@ impl HttpProxyServer {
                 start_streamable_http(self, bind_address, path)
                     .await
                     .context(format!(
-                        "Failed to start Streamable HTTP server on {}",
-                        bind_address
+                        "Failed to start Streamable HTTP server on {bind_address}"
                     ))
             }
             _ => {
@@ -236,7 +240,10 @@ impl HttpProxyServer {
     ///
     /// # Returns
     /// * `Result<()>` - Ok if the server started successfully, Err otherwise
-    pub async fn start_unified(&self, bind_address: SocketAddr) -> Result<()> {
+    pub async fn start_unified(
+        &self,
+        bind_address: SocketAddr,
+    ) -> Result<()> {
         start_unified(self, bind_address).await
     }
 }

@@ -1,8 +1,9 @@
 // Core models for MCPMate
 // Contains data models for core functionality
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 use crate::core::transport::TransportType;
 

@@ -28,7 +28,10 @@ pub struct Server {
 
 impl Server {
     /// Create a new server configuration
-    pub fn new(name: String, server_type: String) -> Self {
+    pub fn new(
+        name: String,
+        server_type: String,
+    ) -> Self {
         Self {
             id: None,
             name,
@@ -42,7 +45,10 @@ impl Server {
     }
 
     /// Create a new stdio server configuration
-    pub fn new_stdio(name: String, command: Option<String>) -> Self {
+    pub fn new_stdio(
+        name: String,
+        command: Option<String>,
+    ) -> Self {
         Self {
             id: None,
             name,
@@ -56,7 +62,10 @@ impl Server {
     }
 
     /// Create a new SSE server configuration
-    pub fn new_sse(name: String, url: Option<String>) -> Self {
+    pub fn new_sse(
+        name: String,
+        url: Option<String>,
+    ) -> Self {
         Self {
             id: None,
             name,
@@ -70,7 +79,10 @@ impl Server {
     }
 
     /// Create a new Streamable HTTP server configuration
-    pub fn new_streamable_http(name: String, url: Option<String>) -> Self {
+    pub fn new_streamable_http(
+        name: String,
+        url: Option<String>,
+    ) -> Self {
         Self {
             id: None,
             name,

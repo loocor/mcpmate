@@ -1,18 +1,23 @@
 // Config Suit merge service
 // Contains functions for merging and deduplicating configuration suits
 
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
+
 use anyhow::{Context, Result};
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing;
 
-use crate::api::routes::AppState;
-use crate::conf::{
-    models::{ConfigSuitTool, Server},
-    operations::suit::get_active_config_suits,
-    Database,
+use crate::{
+    api::routes::AppState,
+    conf::{
+        database::Database,
+        models::{ConfigSuitTool, Server},
+        operations::suit::get_active_config_suits,
+    },
 };
 
 /// Configuration Suit Merge Service
@@ -120,7 +125,10 @@ impl ConfigSuitMergeService {
     }
 
     /// Get all merged tools for a specific server
-    pub async fn get_merged_tools(&self, server_id: &str) -> Result<Vec<ConfigSuitTool>> {
+    pub async fn get_merged_tools(
+        &self,
+        server_id: &str,
+    ) -> Result<Vec<ConfigSuitTool>> {
         let tools_lock = self.merged_tools.read().await;
 
         if let Some(server_tools) = tools_lock.get(server_id) {
@@ -132,7 +140,11 @@ impl ConfigSuitMergeService {
     }
 
     /// Check if a tool is enabled
-    pub async fn is_tool_enabled(&self, server_id: &str, tool_id: &str) -> Result<bool> {
+    pub async fn is_tool_enabled(
+        &self,
+        server_id: &str,
+        tool_id: &str,
+    ) -> Result<bool> {
         let tools_lock = self.merged_tools.read().await;
 
         if let Some(server_tools) = tools_lock.get(server_id) {
@@ -149,7 +161,10 @@ impl ConfigSuitMergeService {
     ///
     /// This function connects to servers that are enabled in the merged list
     /// and disconnects from servers that are not in the merged list.
-    pub async fn sync_server_connections(&self, state: &Arc<AppState>) -> Result<()> {
+    pub async fn sync_server_connections(
+        &self,
+        state: &Arc<AppState>,
+    ) -> Result<()> {
         tracing::debug!("Synchronizing server connections");
 
         // Get merged servers
@@ -169,7 +184,7 @@ impl ConfigSuitMergeService {
             {
                 if let Some(server_id) = server.id {
                     // Check if any instance is connected
-                    for (_, conn) in instances {
+                    for conn in instances.values() {
                         if conn.is_connected() {
                             connected_server_ids.insert(server_id.clone());
                             break;
@@ -257,7 +272,7 @@ impl ConfigSuitMergeService {
                 let suit_servers =
                     crate::conf::operations::get_config_suit_servers(&self.db.pool, suit_id)
                         .await
-                        .context(format!("Failed to get servers for suit '{}'", suit_id))?;
+                        .context(format!("Failed to get servers for suit '{suit_id}'"))?;
 
                 // Process each server
                 for server_config in suit_servers {
@@ -298,7 +313,7 @@ impl ConfigSuitMergeService {
                 let suit_tools =
                     crate::conf::operations::tool::get_tools_by_suit_id(&self.db.pool, suit_id)
                         .await
-                        .context(format!("Failed to get tools for suit '{}'", suit_id))?;
+                        .context(format!("Failed to get tools for suit '{suit_id}'"))?;
 
                 // Process each tool
                 for tool in suit_tools {

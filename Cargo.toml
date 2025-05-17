@@ -1,7 +1,7 @@
 [package]
 name = "mcpmate"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "MCPMate - A comprehensive management center for Model Context Protocol (MCP) servers"
 authors = ["Loocor <loocor@gmail.com>"]
 
@@ -46,7 +46,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.7", features = ["v4", "serde"] }
 sysinfo = "0.30.5"
 # SQLite dependencies
-sqlx = { version = "0.7", features = [
+sqlx = { version = "0.8.1", features = [
   "runtime-tokio",
   "sqlite",
   "migrate",

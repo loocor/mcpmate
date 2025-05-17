@@ -1,17 +1,18 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use clap::Parser;
 use once_cell::sync::OnceCell;
 use rmcp::{
+    ClientHandler, Error as McpError, RoleClient, RoleServer, ServerHandler,
     model::{
         CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, Implementation,
         ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     serve_server,
     service::{RequestContext, ServiceExt},
-    transport::{io, SseTransport},
-    ClientHandler, Error as McpError, RoleClient, RoleServer, ServerHandler,
+    transport::{SseTransport, io},
 };
-use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing_subscriber::{self, EnvFilter};
 
@@ -44,7 +45,10 @@ impl ClientHandler for BridgeClient {
         self.peer.clone()
     }
 
-    fn set_peer(&mut self, peer: rmcp::service::Peer<RoleClient>) {
+    fn set_peer(
+        &mut self,
+        peer: rmcp::service::Peer<RoleClient>,
+    ) {
         self.peer = Some(peer);
     }
 
@@ -120,9 +124,9 @@ impl BridgeServer {
                 if tool_list_changed {
                     // Send the notification
                     if let Err(e) = context.peer.notify_tool_list_changed().await {
-                        tracing::error!("Failed to send tool list changed notification: {}", e);
+                        tracing::error!("Failed to send tool list changed notification: {e:?}");
                         return Err(McpError::internal_error(
-                            format!("Failed to send tool list changed notification: {}", e),
+                            format!("Failed to send tool list changed notification: {e:?}"),
                             None,
                         ));
                     }
@@ -233,7 +237,7 @@ impl ServerHandler for BridgeServer {
                         tracing::error!("Failed to get tools from SSE server: {}", e);
                         // report upstream service error
                         Err(McpError::internal_error(
-                            format!("Upstream SSE service error: {}", e),
+                            format!("Upstream SSE service error: {e:?}"),
                             None,
                         ))
                     }
@@ -282,7 +286,7 @@ impl ServerHandler for BridgeServer {
                         tracing::error!("Failed to call tool on SSE server: {}", e);
                         // report upstream service error
                         Err(McpError::internal_error(
-                            format!("Upstream SSE service error: {}", e),
+                            format!("Upstream SSE service error: {e:?}"),
                             None,
                         ))
                     }

@@ -2,19 +2,17 @@
 // Contains handler functions for Config Suit endpoints
 
 // Re-export all public functions from submodules
-pub use self::basic::{get_suit, list_suits};
-pub use self::crud::{create_suit, delete_suit, update_suit};
-pub use self::helpers::{
-    check_tool_belongs_to_suit, get_server_or_error, get_suit_or_error, get_tool_or_error,
-};
-pub use self::mgmt::{
-    activate_suit, batch_activate_suits, batch_deactivate_suits, deactivate_suit,
-};
-pub use self::server::{
-    batch_disable_servers, batch_enable_servers, disable_server, enable_server, list_servers,
-};
-pub use self::tool::{
-    batch_disable_tools, batch_enable_tools, disable_tool, enable_tool, list_tools,
+pub use self::{
+    basic::{get_suit, list_suits},
+    crud::{create_suit, delete_suit, update_suit},
+    helpers::{
+        check_tool_belongs_to_suit, get_server_or_error, get_suit_or_error, get_tool_or_error,
+    },
+    mgmt::{activate_suit, batch_activate_suits, batch_deactivate_suits, deactivate_suit},
+    server::{
+        batch_disable_servers, batch_enable_servers, disable_server, enable_server, list_servers,
+    },
+    tool::{batch_disable_tools, batch_enable_tools, disable_tool, enable_tool, list_tools},
 };
 
 // Submodules
@@ -27,14 +25,16 @@ mod tool;
 
 // Common imports for all submodules
 pub(crate) mod common {
-    pub use axum::{
-        extract::{Path, State},
-        Json,
-    };
     pub use std::sync::Arc;
+
+    pub use axum::{
+        Json,
+        extract::{Path, State},
+    };
 
     pub use crate::{
         api::{
+            handlers::ApiError,
             models::suit::{
                 BatchOperationRequest, BatchOperationResponse, ConfigSuitListResponse,
                 ConfigSuitResponse, ConfigSuitServerResponse, ConfigSuitServersResponse,
@@ -46,12 +46,10 @@ pub(crate) mod common {
         conf::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool, ConfigSuitType},
     };
 
-    pub use crate::api::handlers::ApiError;
-
     /// Get database reference from AppState
     pub async fn get_database(
-        state: &Arc<AppState>,
-    ) -> Result<Arc<crate::conf::Database>, ApiError> {
+        state: &Arc<AppState>
+    ) -> Result<Arc<crate::conf::database::Database>, ApiError> {
         match state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
             Some(db) => Ok(db),
             None => Err(ApiError::InternalError(

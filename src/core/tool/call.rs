@@ -1,14 +1,17 @@
 // Tool call module
 // Contains functions for calling tools on upstream servers
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use rmcp::model::{CallToolRequestParam, CallToolResult};
-use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing;
 
-use super::mapping::{build_tool_mapping, find_tool_in_server};
-use super::prefix::parse_tool_name;
+use super::{
+    mapping::{build_tool_mapping, find_tool_in_server},
+    prefix::parse_tool_name,
+};
 use crate::http::pool::UpstreamConnectionPool;
 
 /// Call a tool on the appropriate upstream server
@@ -60,16 +63,14 @@ pub async fn call_upstream_tool(
                 // If we couldn't find the tool with the original name, try with the full name
                 // This handles cases where the prefix detection might be incorrect
                 tool_mapping.get(&tool_name).cloned().context(format!(
-                    "Tool '{}' not found in any connected server",
-                    tool_name
+                    "Tool '{tool_name}' not found in any connected server"
                 ))?
             }
         }
     } else {
         // Otherwise, try to find the tool directly
         tool_mapping.get(&tool_name).cloned().context(format!(
-            "Tool '{}' not found in any connected server",
-            tool_name
+            "Tool '{tool_name}' not found in any connected server"
         ))?
     };
 
@@ -86,7 +87,7 @@ pub async fn call_upstream_tool(
             if let Some(server_id) = &server.id {
                 // Check if the tool is enabled
                 let is_enabled = merge_service
-                    .is_tool_enabled(server_id, &original_tool_name)
+                    .is_tool_enabled(server_id, original_tool_name)
                     .await
                     .unwrap_or(true); // Default to enabled if check fails
 
@@ -191,7 +192,7 @@ pub async fn call_upstream_tool(
                         instance_id,
                         mcp_err
                     );
-                    format!("MCP protocol error: {}", mcp_err)
+                    format!("MCP protocol error: {mcp_err}")
                 }
                 ServiceError::Transport(io_err) => {
                     // Transport error (network, IO)
@@ -204,9 +205,9 @@ pub async fn call_upstream_tool(
                     );
 
                     // Update connection status to error
-                    conn.update_failed(format!("Transport error: {}", io_err));
+                    conn.update_failed(format!("Transport error: {io_err}"));
 
-                    format!("Network or IO error: {}", io_err)
+                    format!("Network or IO error: {io_err}")
                 }
                 ServiceError::UnexpectedResponse => {
                     // Unexpected response type
@@ -228,7 +229,7 @@ pub async fn call_upstream_tool(
                         instance_id,
                         reason_str
                     );
-                    format!("Request cancelled: {}", reason_str)
+                    format!("Request cancelled: {reason_str}")
                 }
                 ServiceError::Timeout { timeout } => {
                     // Request timed out
@@ -239,7 +240,7 @@ pub async fn call_upstream_tool(
                         instance_id,
                         timeout
                     );
-                    format!("Request timed out after {:?}", timeout)
+                    format!("Request timed out after {timeout:?}")
                 }
                 // Handle any future error types that might be added
                 _ => {
@@ -250,7 +251,7 @@ pub async fn call_upstream_tool(
                         instance_id,
                         e
                     );
-                    format!("Unknown error: {:?}", e)
+                    format!("Unknown error: {e:?}")
                 }
             };
 

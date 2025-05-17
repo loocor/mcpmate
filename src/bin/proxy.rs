@@ -1,14 +1,13 @@
+use std::{net::SocketAddr, sync::Arc, time::Duration};
+
 use anyhow::Result;
 use clap::Parser;
 use mcpmate::{
-    api::{handlers::system::initialize_server_start_time, ApiServer},
-    conf::Database,
-    core::loader::load_server_config,
-    core::{ConnectionStatus, TransportType},
+    api::{ApiServer, handlers::system::initialize_server_start_time},
+    conf::database::Database,
+    core::{ConnectionStatus, TransportType, loader::load_server_config},
     http::HttpProxyServer,
 };
-use std::{net::SocketAddr, sync::Arc, time::Duration};
-
 use tracing_subscriber::{self, EnvFilter};
 
 /// Command line arguments for the MCP proxy server

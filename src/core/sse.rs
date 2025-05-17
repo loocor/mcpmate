@@ -3,10 +3,10 @@
 
 use anyhow::{Context, Result};
 use rmcp::{
+    RoleClient,
     model::Tool,
     service::{RunningService, ServiceExt},
     transport::sse::SseTransport,
-    RoleClient,
 };
 use tokio::time::timeout;
 
@@ -41,13 +41,12 @@ pub async fn connect_sse_server(
     let transport_result = match timeout(connection_timeout, SseTransport::start(url)).await {
         Ok(Ok(transport)) => Ok(transport),
         Ok(Err(e)) => {
-            let error_msg = format!("Failed to create SSE transport: {}", e);
+            let error_msg = format!("Failed to create SSE transport: {e}");
             Err(anyhow::anyhow!(error_msg))
         }
         Err(_) => {
             let error_msg = format!(
-                "Timeout creating SSE transport for server '{}'",
-                server_name
+                "Timeout creating SSE transport for server '{server_name}'"
             );
             tracing::warn!("{}", error_msg);
             Err(anyhow::anyhow!(error_msg))
@@ -62,7 +61,7 @@ pub async fn connect_sse_server(
                 match ().serve(transport).await {
                     Ok(service) => Ok(service),
                     Err(e) => {
-                        let error_msg = format!("Failed to connect to server: {}", e);
+                        let error_msg = format!("Failed to connect to server: {e}");
                         Err(anyhow::anyhow!(error_msg))
                     }
                 }
@@ -71,7 +70,7 @@ pub async fn connect_sse_server(
             {
                 Ok(result) => result,
                 Err(_) => {
-                    let error_msg = format!("Connection timeout for server '{}'", server_name);
+                    let error_msg = format!("Connection timeout for server '{server_name}'");
                     tracing::warn!("{}", error_msg);
                     return Err(anyhow::anyhow!(error_msg));
                 }
@@ -91,12 +90,12 @@ pub async fn connect_sse_server(
                             Ok((service, tools))
                         }
                         Ok(Err(e)) => {
-                            let error_msg = format!("Failed to list tools: {}", e);
+                            let error_msg = format!("Failed to list tools: {e}");
                             Err(anyhow::anyhow!(error_msg))
                         }
                         Err(_) => {
                             let error_msg =
-                                format!("Timeout listing tools for server '{}'", server_name);
+                                format!("Timeout listing tools for server '{server_name}'");
                             tracing::warn!("{}", error_msg);
                             Err(anyhow::anyhow!(error_msg))
                         }

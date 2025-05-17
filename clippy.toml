@@ -1,0 +1,19 @@
+# basic
+msrv = "1.85"
+too-many-arguments-threshold = 10
+check-private-items = false
+
+# complexity
+cognitive-complexity-threshold = 20
+type-complexity-threshold = 250
+
+# performance
+vec-box-size-threshold = 4096
+trivial-copy-size-limit = 64
+
+# style
+enum-variant-size-threshold = 200
+single-char-binding-names-threshold = 4
+
+# test
+allow-unwrap-in-tests = true

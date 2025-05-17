@@ -3,17 +3,12 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
     Json,
-};
-
-use crate::api::{
-    handlers::ApiError,
-    models::tool::ToolStatusResponse,
-    routes::AppState,
+    extract::{Path, State},
 };
 
 use super::common::{get_context, get_tool_status};
+use crate::api::{handlers::ApiError, models::tool::ToolStatusResponse, routes::AppState};
 
 /// Enable a specific MCP tool
 pub async fn enable(
@@ -26,12 +21,11 @@ pub async fn enable(
     // Check if the server exists
     let server = crate::conf::operations::get_server(&db.pool, &server_name)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
     if server.is_none() {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found",
-            server_name
+            "Server '{server_name}' not found"
         )));
     }
 
@@ -54,7 +48,7 @@ pub async fn enable(
     // Enable the tool
     crate::conf::operations::tool::set_tool_enabled(&db.pool, &server_name, &tool_name, true)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to enable tool: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to enable tool: {e}")))?;
 
     // Create response
     let response = ToolStatusResponse {
@@ -66,11 +60,7 @@ pub async fn enable(
         allowed_operations: vec!["disable".to_string()],
     };
 
-    tracing::info!(
-        "Enabled tool '{}' from server '{}'",
-        tool_name,
-        server_name
-    );
+    tracing::info!("Enabled tool '{}' from server '{}'", tool_name, server_name);
 
     Ok(Json(response))
 }
@@ -86,12 +76,11 @@ pub async fn disable(
     // Check if the server exists
     let server = crate::conf::operations::get_server(&db.pool, &server_name)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
     if server.is_none() {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found",
-            server_name
+            "Server '{server_name}' not found"
         )));
     }
 
@@ -114,7 +103,7 @@ pub async fn disable(
     // Disable the tool
     crate::conf::operations::tool::set_tool_enabled(&db.pool, &server_name, &tool_name, false)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to disable tool: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to disable tool: {e}")))?;
 
     // Create response
     let response = ToolStatusResponse {
@@ -146,23 +135,21 @@ pub async fn refresh(
     // Check if the server exists
     let server = crate::conf::operations::get_server(&db.pool, &server_name)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
     if server.is_none() {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found",
-            server_name
+            "Server '{server_name}' not found"
         )));
     }
 
     // Refresh the server's connections
     let mut connection_pool = proxy.connection_pool.lock().await;
-    
+
     // Check if the server exists in the connection pool
     if !connection_pool.connections.contains_key(&server_name) {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found in connection pool",
-            server_name
+            "Server '{server_name}' not found in connection pool"
         )));
     }
 
@@ -184,10 +171,10 @@ pub async fn refresh(
             instance_id,
             server_name
         );
-        
+
         // Increment connection attempts
         conn.connection_attempts += 1;
-        
+
         // TODO: Implement actual reconnection logic
         // This would involve calling the appropriate connection function based on the server type
         // For now, we just log a message

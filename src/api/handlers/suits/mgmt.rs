@@ -1,8 +1,9 @@
 // MCPMate Proxy API handlers for Config Suit management operations
 // Contains handler functions for activating and deactivating Config Suits
 
-use super::common::*;
 use std::collections::HashMap;
+
+use super::common::*;
 
 /// Activate a configuration suit
 pub async fn activate_suit(
@@ -15,15 +16,14 @@ pub async fn activate_suit(
     // Get the suit to check if it exists and get its name
     let suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
     // Check if the suit exists
     let suit = match suit {
         Some(s) => s,
         None => {
             return Err(ApiError::NotFound(format!(
-                "Configuration suit with ID '{}' not found",
-                id
+                "Configuration suit with ID '{id}' not found"
             )));
         }
     };
@@ -47,7 +47,7 @@ pub async fn activate_suit(
     crate::conf::operations::suit::set_config_suit_active(&db.pool, &id, true)
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!("Failed to activate configuration suit: {}", e))
+            ApiError::InternalError(format!("Failed to activate configuration suit: {e}"))
         })?;
 
     // Update Config Suit merge service cache
@@ -87,15 +87,14 @@ pub async fn deactivate_suit(
     // Get the suit to check if it exists and get its name
     let suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
     // Check if the suit exists
     let suit = match suit {
         Some(s) => s,
         None => {
             return Err(ApiError::NotFound(format!(
-                "Configuration suit with ID '{}' not found",
-                id
+                "Configuration suit with ID '{id}' not found"
             )));
         }
     };
@@ -119,7 +118,7 @@ pub async fn deactivate_suit(
     crate::conf::operations::suit::set_config_suit_active(&db.pool, &id, false)
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!("Failed to deactivate configuration suit: {}", e))
+            ApiError::InternalError(format!("Failed to deactivate configuration suit: {e}"))
         })?;
 
     // Update Config Suit merge service cache
@@ -165,7 +164,7 @@ pub async fn batch_activate_suits(
         let suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
             .await
             .map_err(|e| {
-                ApiError::InternalError(format!("Failed to get configuration suit: {}", e))
+                ApiError::InternalError(format!("Failed to get configuration suit: {e}"))
             })?;
 
         // Check if the suit exists
@@ -184,7 +183,7 @@ pub async fn batch_activate_suits(
                         successful_ids.push(id.clone());
                     }
                     Err(e) => {
-                        failed_ids.insert(id.clone(), format!("Failed to activate: {}", e));
+                        failed_ids.insert(id.clone(), format!("Failed to activate: {e}"));
                     }
                 }
             }
@@ -233,7 +232,7 @@ pub async fn batch_deactivate_suits(
         let suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
             .await
             .map_err(|e| {
-                ApiError::InternalError(format!("Failed to get configuration suit: {}", e))
+                ApiError::InternalError(format!("Failed to get configuration suit: {e}"))
             })?;
 
         // Check if the suit exists
@@ -252,7 +251,7 @@ pub async fn batch_deactivate_suits(
                         successful_ids.push(id.clone());
                     }
                     Err(e) => {
-                        failed_ids.insert(id.clone(), format!("Failed to deactivate: {}", e));
+                        failed_ids.insert(id.clone(), format!("Failed to deactivate: {e}"));
                     }
                 }
             }

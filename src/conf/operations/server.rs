@@ -1,9 +1,10 @@
 // Server operations for MCPMate
 // Contains CRUD operations for server configuration
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
-use std::collections::{HashMap, HashSet};
 
 use crate::conf::models::{Server, ServerArg, ServerEnv, ServerMeta};
 
@@ -29,7 +30,10 @@ pub async fn get_all_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
 }
 
 /// Get a specific server from the database by name
-pub async fn get_server(pool: &Pool<Sqlite>, name: &str) -> Result<Option<Server>> {
+pub async fn get_server(
+    pool: &Pool<Sqlite>,
+    name: &str,
+) -> Result<Option<Server>> {
     tracing::debug!("Executing SQL query to get server '{}'", name);
 
     let server = sqlx::query_as::<_, Server>(
@@ -53,7 +57,10 @@ pub async fn get_server(pool: &Pool<Sqlite>, name: &str) -> Result<Option<Server
 }
 
 /// Get a specific server from the database by ID
-pub async fn get_server_by_id(pool: &Pool<Sqlite>, id: &str) -> Result<Option<Server>> {
+pub async fn get_server_by_id(
+    pool: &Pool<Sqlite>,
+    id: &str,
+) -> Result<Option<Server>> {
     tracing::debug!("Executing SQL query to get server with ID '{}'", id);
 
     let server = sqlx::query_as::<_, Server>(
@@ -77,7 +84,10 @@ pub async fn get_server_by_id(pool: &Pool<Sqlite>, id: &str) -> Result<Option<Se
 }
 
 /// Create or update a server in the database
-pub async fn upsert_server(pool: &Pool<Sqlite>, server: &Server) -> Result<String> {
+pub async fn upsert_server(
+    pool: &Pool<Sqlite>,
+    server: &Server,
+) -> Result<String> {
     tracing::debug!(
         "Upserting server '{}', type: {}",
         server.name,
@@ -92,7 +102,10 @@ pub async fn upsert_server(pool: &Pool<Sqlite>, server: &Server) -> Result<Strin
 }
 
 /// Create or update a server in the database (transaction version)
-pub async fn upsert_server_tx(tx: &mut Transaction<'_, Sqlite>, server: &Server) -> Result<String> {
+pub async fn upsert_server_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    server: &Server,
+) -> Result<String> {
     // Generate a UUID for the server if it doesn't have one
     let server_id = if let Some(id) = &server.id {
         id.clone()
@@ -142,7 +155,10 @@ pub async fn upsert_server_tx(tx: &mut Transaction<'_, Sqlite>, server: &Server)
 }
 
 /// Delete a server from the database
-pub async fn delete_server(pool: &Pool<Sqlite>, name: &str) -> Result<bool> {
+pub async fn delete_server(
+    pool: &Pool<Sqlite>,
+    name: &str,
+) -> Result<bool> {
     tracing::debug!("Deleting server '{}'", name);
 
     let result = sqlx::query(
@@ -160,7 +176,10 @@ pub async fn delete_server(pool: &Pool<Sqlite>, name: &str) -> Result<bool> {
 }
 
 /// Get all arguments for a server from the database
-pub async fn get_server_args(pool: &Pool<Sqlite>, server_id: &str) -> Result<Vec<ServerArg>> {
+pub async fn get_server_args(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<Vec<ServerArg>> {
     tracing::debug!(
         "Executing SQL query to get arguments for server ID {}",
         server_id
@@ -387,7 +406,10 @@ pub async fn upsert_server_env_tx(
 }
 
 /// Get server metadata from the database
-pub async fn get_server_meta(pool: &Pool<Sqlite>, server_id: &str) -> Result<Option<ServerMeta>> {
+pub async fn get_server_meta(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<Option<ServerMeta>> {
     tracing::debug!(
         "Executing SQL query to get metadata for server ID {}",
         server_id
@@ -414,7 +436,10 @@ pub async fn get_server_meta(pool: &Pool<Sqlite>, server_id: &str) -> Result<Opt
 }
 
 /// Create or update server metadata in the database
-pub async fn upsert_server_meta(pool: &Pool<Sqlite>, meta: &ServerMeta) -> Result<String> {
+pub async fn upsert_server_meta(
+    pool: &Pool<Sqlite>,
+    meta: &ServerMeta,
+) -> Result<String> {
     tracing::debug!("Upserting metadata for server ID {}", meta.server_id);
 
     // Generate a UUID for the metadata if it doesn't have one
@@ -524,7 +549,9 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
 
             // If there's no legacy default suit either, return no servers (whitelist mode)
             if legacy_default.is_none() {
-                tracing::info!("No active or default config suits found, returning no servers (whitelist mode)");
+                tracing::info!(
+                    "No active or default config suits found, returning no servers (whitelist mode)"
+                );
                 return Ok(Vec::new());
             }
 
@@ -579,7 +606,7 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
             if let Some(id) = &server.id {
                 enabled_server_map
                     .get(id)
-                    .map_or(false, |(enabled, _)| *enabled)
+                    .is_some_and(|(enabled, _)| *enabled)
             } else {
                 false // Server without ID is not enabled
             }

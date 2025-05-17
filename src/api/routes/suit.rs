@@ -1,11 +1,12 @@
 // MCP Proxy API routes for Config Suit management
 // Contains route definitions for Config Suit endpoints
 
-use axum::{
-    routing::{get, post, put, delete},
-    Router,
-};
 use std::sync::Arc;
+
+use axum::{
+    Router,
+    routing::{delete, get, post, put},
+};
 
 use super::AppState;
 use crate::api::handlers::suits;

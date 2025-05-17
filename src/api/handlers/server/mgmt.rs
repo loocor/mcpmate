@@ -1,8 +1,7 @@
 // MCPMate Proxy API handlers for MCP server management operations
 // Contains handler functions for enabling and disabling servers
 
-use super::common::*;
-use super::instance::list_instances;
+use super::{common::*, instance::list_instances};
 
 /// Enable a server by reconnecting existing instances or creating a new one if needed
 pub async fn enable_server(
@@ -18,7 +17,7 @@ pub async fn enable_server(
         // Get the server ID
         let server = crate::conf::operations::get_server(&db.pool, &server_name)
             .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
         if let Some(server) = server {
             if let Some(server_id) = server.id {
@@ -28,8 +27,7 @@ pub async fn enable_server(
                         .await
                         .map_err(|e| {
                             ApiError::InternalError(format!(
-                                "Failed to get default config suit: {}",
-                                e
+                                "Failed to get default config suit: {e}"
                             ))
                         })?;
 
@@ -45,8 +43,7 @@ pub async fn enable_server(
                         .await
                         .map_err(|e| {
                             ApiError::InternalError(format!(
-                                "Failed to create default config suit: {}",
-                                e
+                                "Failed to create default config suit: {e}"
                             ))
                         })?
                 };
@@ -58,8 +55,7 @@ pub async fn enable_server(
                 .await
                 .map_err(|e| {
                     ApiError::InternalError(format!(
-                        "Failed to enable server in config suit: {}",
-                        e
+                        "Failed to enable server in config suit: {e}"
                     ))
                 })?;
 
@@ -71,8 +67,7 @@ pub async fn enable_server(
     if instances.is_empty() {
         // no instance records, return error
         return Err(ApiError::NotFound(format!(
-            "No instances found for server '{}'",
-            server_name
+            "No instances found for server '{server_name}'"
         )));
     }
 
@@ -116,8 +111,7 @@ pub async fn enable_server(
         Err(e) => {
             // failed to reconnect
             Err(ApiError::BadRequest(format!(
-                "Failed to enable server: {}",
-                e
+                "Failed to enable server: {e}"
             )))
         }
     }
@@ -137,7 +131,7 @@ pub async fn disable_server(
         // Get the server ID
         let server = crate::conf::operations::get_server(&db.pool, &server_name)
             .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
         if let Some(server) = server {
             if let Some(server_id) = server.id {
@@ -147,8 +141,7 @@ pub async fn disable_server(
                         .await
                         .map_err(|e| {
                             ApiError::InternalError(format!(
-                                "Failed to get default config suit: {}",
-                                e
+                                "Failed to get default config suit: {e}"
                             ))
                         })?;
 
@@ -164,8 +157,7 @@ pub async fn disable_server(
                         .await
                         .map_err(|e| {
                             ApiError::InternalError(format!(
-                                "Failed to create default config suit: {}",
-                                e
+                                "Failed to create default config suit: {e}"
                             ))
                         })?
                 };
@@ -177,8 +169,7 @@ pub async fn disable_server(
                 .await
                 .map_err(|e| {
                     ApiError::InternalError(format!(
-                        "Failed to disable server in config suit: {}",
-                        e
+                        "Failed to disable server in config suit: {e}"
                     ))
                 })?;
 
@@ -193,8 +184,7 @@ pub async fn disable_server(
             id: "".to_string(),
             name: server_name.clone(),
             result: format!(
-                "Server '{}' already disabled (no instances found)",
-                server_name
+                "Server '{server_name}' already disabled (no instances found)"
             ),
             status: "Disabled".to_string(),
             allowed_operations: vec!["enable".to_string()],
@@ -252,8 +242,7 @@ pub async fn disable_server(
         id: "all".to_string(),
         name: server_name,
         result: format!(
-            "Successfully disabled server ({} of {} instances disconnected)",
-            success_count, total_count
+            "Successfully disabled server ({success_count} of {total_count} instances disconnected)"
         ),
         status: status.to_string(),
         allowed_operations: vec!["enable".to_string()],

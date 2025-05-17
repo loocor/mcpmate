@@ -1,18 +1,18 @@
 // Connection management functionality for UpstreamConnectionPool
 
+use std::{sync::Arc, time::Duration};
+
 use anyhow::Result;
-use rmcp::{model::Tool, service::RunningService, RoleClient};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use rmcp::{RoleClient, model::Tool, service::RunningService};
 use tokio::{sync::Mutex, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
+use super::UpstreamConnectionPool;
 use crate::core::{
     connect_http_server, connect_sse_server, stdio::connect_stdio_server_with_ct,
     transport::TransportType, types::ConnectionStatus,
 };
-
-use super::UpstreamConnectionPool;
 
 impl UpstreamConnectionPool {
     /// Helper function to log connection-related events
@@ -52,7 +52,10 @@ impl UpstreamConnectionPool {
     }
 
     /// Helper function to get the default instance ID
-    fn get_default_instance_id(&self, server_name: &str) -> Result<String> {
+    fn get_default_instance_id(
+        &self,
+        server_name: &str,
+    ) -> Result<String> {
         let (id, _) = self.get_default_instance(server_name)?;
         Ok(id)
     }
@@ -110,11 +113,10 @@ impl UpstreamConnectionPool {
         let result = match server_type.as_str() {
             "stdio" => self.connect_stdio(server_name, instance_id).await,
             "sse" => self.connect_http(server_name, instance_id).await,
-            "streamable_http" | "streamablehttp" => {
-                self.connect_http(server_name, instance_id).await
-            }
+            "streamable_http" | "streamablehttp" =>
+                self.connect_http(server_name, instance_id).await,
             _ => {
-                let error_msg = format!("Unsupported server type: {}", server_type);
+                let error_msg = format!("Unsupported server type: {server_type}");
                 let conn = self.get_instance_mut(server_name, instance_id)?;
                 conn.update_failed(error_msg.clone());
                 Err(anyhow::anyhow!(error_msg))
@@ -131,7 +133,7 @@ impl UpstreamConnectionPool {
                     "error",
                     server_name,
                     instance_id,
-                    &format!("Failed to connect: {}", e),
+                    &format!("Failed to connect: {e}"),
                 );
             }
             result
@@ -145,12 +147,20 @@ impl UpstreamConnectionPool {
     }
 
     /// Trigger a connection to a specific server instance without waiting for completion
-    pub async fn trigger_connect(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
+    pub async fn trigger_connect(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
         self.connect_core(server_name, instance_id, false).await
     }
 
     /// Connect to a specific server instance (blocking version)
-    pub async fn connect(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
+    pub async fn connect(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
         self.connect_core(server_name, instance_id, true).await
     }
 
@@ -175,7 +185,11 @@ impl UpstreamConnectionPool {
     }
 
     /// Connect to a stdio server
-    async fn connect_stdio(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
+    async fn connect_stdio(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
         // Get server configuration
         let server_config = self.config.mcp_servers.get(server_name).unwrap();
 
@@ -185,7 +199,7 @@ impl UpstreamConnectionPool {
         // Store the cancellation token
         self.cancellation_tokens
             .entry(server_name.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(instance_id.to_string(), ct.clone());
 
         // Connect to the server using the proxy module function with cancellation token
@@ -226,7 +240,11 @@ impl UpstreamConnectionPool {
     }
 
     /// Connect to an HTTP-based server (SSE or Streamable HTTP)
-    async fn connect_http(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
+    async fn connect_http(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
         // Get server configuration
         let server_config = self.config.mcp_servers.get(server_name).unwrap();
 
@@ -254,7 +272,11 @@ impl UpstreamConnectionPool {
     }
 
     /// Disconnect from a specific instance of a server
-    pub async fn disconnect(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
+    pub async fn disconnect(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
         // Take the service from the connection
         let service = {
             let conn = self.get_instance_mut(server_name, instance_id)?;
@@ -314,7 +336,11 @@ impl UpstreamConnectionPool {
     }
 
     /// Reconnect to a specific instance of a server
-    pub async fn reconnect(&mut self, server_name: &str, instance_id: &str) -> Result<()> {
+    pub async fn reconnect(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
         // First disconnect
         self.disconnect(server_name, instance_id).await?;
 

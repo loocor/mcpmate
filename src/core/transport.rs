@@ -1,19 +1,22 @@
 // Transport factory for MCP proxy
 // Provides abstractions for different transport types
 
+use std::str::FromStr;
+
 use anyhow::{Context, Result};
 use rmcp::{
+    RoleClient,
     model::Tool,
     service::{RunningService, ServiceExt},
     transport::sse::SseTransport,
-    RoleClient,
 };
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use tokio::time::timeout;
 
-use super::models::MCPServerConfig;
-use super::utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout};
+use super::{
+    models::MCPServerConfig,
+    utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout},
+};
 
 /// Transport types supported by the proxy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -76,13 +79,12 @@ pub async fn connect_http_server(
         TransportType::Sse => match timeout(connection_timeout, SseTransport::start(url)).await {
             Ok(Ok(transport)) => Ok(transport),
             Ok(Err(e)) => {
-                let error_msg = format!("Failed to create SSE transport: {}", e);
+                let error_msg = format!("Failed to create SSE transport: {e}");
                 Err(anyhow::anyhow!(error_msg))
             }
             Err(_) => {
                 let error_msg = format!(
-                    "Timeout creating SSE transport for server '{}'",
-                    server_name
+                    "Timeout creating SSE transport for server '{server_name}'"
                 );
                 tracing::warn!("{}", error_msg);
                 Err(anyhow::anyhow!(error_msg))
@@ -94,13 +96,12 @@ pub async fn connect_http_server(
             match timeout(connection_timeout, SseTransport::start(url)).await {
                 Ok(Ok(transport)) => Ok(transport),
                 Ok(Err(e)) => {
-                    let error_msg = format!("Failed to create Streamable HTTP transport: {}", e);
+                    let error_msg = format!("Failed to create Streamable HTTP transport: {e}");
                     Err(anyhow::anyhow!(error_msg))
                 }
                 Err(_) => {
                     let error_msg = format!(
-                        "Timeout creating Streamable HTTP transport for server '{}'",
-                        server_name
+                        "Timeout creating Streamable HTTP transport for server '{server_name}'"
                     );
                     tracing::warn!("{}", error_msg);
                     Err(anyhow::anyhow!(error_msg))
@@ -120,7 +121,7 @@ pub async fn connect_http_server(
                 match ().serve(transport).await {
                     Ok(service) => Ok(service),
                     Err(e) => {
-                        let error_msg = format!("Failed to connect to server: {}", e);
+                        let error_msg = format!("Failed to connect to server: {e}");
                         Err(anyhow::anyhow!(error_msg))
                     }
                 }
@@ -129,7 +130,7 @@ pub async fn connect_http_server(
             {
                 Ok(result) => result,
                 Err(_) => {
-                    let error_msg = format!("Connection timeout for server '{}'", server_name);
+                    let error_msg = format!("Connection timeout for server '{server_name}'");
                     tracing::warn!("{}", error_msg);
                     return Err(anyhow::anyhow!(error_msg));
                 }
@@ -149,12 +150,12 @@ pub async fn connect_http_server(
                             Ok((service, tools))
                         }
                         Ok(Err(e)) => {
-                            let error_msg = format!("Failed to list tools: {}", e);
+                            let error_msg = format!("Failed to list tools: {e}");
                             Err(anyhow::anyhow!(error_msg))
                         }
                         Err(_) => {
                             let error_msg =
-                                format!("Timeout listing tools for server '{}'", server_name);
+                                format!("Timeout listing tools for server '{server_name}'");
                             tracing::warn!("{}", error_msg);
                             Err(anyhow::anyhow!(error_msg))
                         }

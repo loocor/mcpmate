@@ -1,8 +1,9 @@
 // MCP Proxy process monitor module
 // Contains functions for monitoring process resources
 
-use anyhow::Result;
 use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use anyhow::Result;
 use sysinfo::{Pid, System};
 use tokio::{sync::Mutex, time::sleep};
 use tracing;
@@ -149,7 +150,10 @@ impl ProcessMonitor {
     }
 
     /// Get resource information for a specific process
-    pub async fn get_process_info(&self, pid: u32) -> Option<ProcessResourceInfo> {
+    pub async fn get_process_info(
+        &self,
+        pid: u32,
+    ) -> Option<ProcessResourceInfo> {
         let resources = self.resources.lock().await;
         resources.get(&pid).cloned()
     }
@@ -161,25 +165,37 @@ impl ProcessMonitor {
     }
 
     /// Check if a process is running
-    pub async fn is_process_running(&self, pid: u32) -> bool {
+    pub async fn is_process_running(
+        &self,
+        pid: u32,
+    ) -> bool {
         let system = self.system.lock().await;
         system.process(Pid::from_u32(pid)).is_some()
     }
 
     /// Get CPU usage for a specific process
-    pub async fn get_process_cpu_usage(&self, pid: u32) -> Option<f32> {
+    pub async fn get_process_cpu_usage(
+        &self,
+        pid: u32,
+    ) -> Option<f32> {
         let resources = self.resources.lock().await;
         resources.get(&pid).map(|info| info.cpu_usage)
     }
 
     /// Get memory usage for a specific process
-    pub async fn get_process_memory_usage(&self, pid: u32) -> Option<u64> {
+    pub async fn get_process_memory_usage(
+        &self,
+        pid: u32,
+    ) -> Option<u64> {
         let resources = self.resources.lock().await;
         resources.get(&pid).map(|info| info.memory_usage)
     }
 
     /// Check if a process exceeds resource limits
-    pub async fn check_resource_limits(&self, pid: u32) -> Option<(ResourceLimitAction, String)> {
+    pub async fn check_resource_limits(
+        &self,
+        pid: u32,
+    ) -> Option<(ResourceLimitAction, String)> {
         // Skip if no resource limits are set
         let limits = match &self.resource_limits {
             Some(limits) => limits,

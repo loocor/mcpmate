@@ -1,12 +1,14 @@
 // MCPMate Proxy API handlers for MCP server management
 // Contains handler functions for MCP server endpoints
 
-use axum::{
-    extract::{Path, State},
-    Json,
-};
 use std::sync::Arc;
 
+use axum::{
+    Json,
+    extract::{Path, State},
+};
+
+use super::ApiError;
 use crate::{
     api::{
         models::mcp::{InstanceHealthResponse, OperationResponse, ServerInstanceResponse},
@@ -14,8 +16,6 @@ use crate::{
     },
     core::types::{ConnectionStatus, ErrorType},
 };
-
-use super::ApiError;
 
 /// Get a specific instance for a specific MCP server
 pub async fn get_instance(
@@ -151,14 +151,13 @@ pub async fn disconnect(
             Ok(Json(OperationResponse {
                 id,
                 name,
-                result: format!("Successfully disconnected instance"),
+                result: "Successfully disconnected instance".to_string(),
                 status: conn.status_string(),
                 allowed_operations: conn.allowed_operations(),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to disconnect instance: {}",
-            e
+            "Failed to disconnect instance: {e}"
         ))),
     }
 }
@@ -182,14 +181,13 @@ pub async fn force_disconnect(
             Ok(Json(OperationResponse {
                 id,
                 name,
-                result: format!("Successfully force disconnected instance"),
+                result: "Successfully force disconnected instance".to_string(),
                 status: conn.status_string(),
                 allowed_operations: conn.allowed_operations(),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to force disconnect instance: {}",
-            e
+            "Failed to force disconnect instance: {e}"
         ))),
     }
 }
@@ -213,14 +211,13 @@ pub async fn reconnect(
             Ok(Json(OperationResponse {
                 id,
                 name,
-                result: format!("Successfully reconnected instance"),
+                result: "Successfully reconnected instance".to_string(),
                 status: conn.status_string(),
                 allowed_operations: conn.allowed_operations(),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to reconnect instance: {}",
-            e
+            "Failed to reconnect instance: {e}"
         ))),
     }
 }
@@ -244,14 +241,13 @@ pub async fn reset_reconnect(
             Ok(Json(OperationResponse {
                 id,
                 name,
-                result: format!("Successfully reset and reconnected instance"),
+                result: "Successfully reset and reconnected instance".to_string(),
                 status: conn.status_string(),
                 allowed_operations: conn.allowed_operations(),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to reset and reconnect instance: {}",
-            e
+            "Failed to reset and reconnect instance: {e}"
         ))),
     }
 }
@@ -272,14 +268,13 @@ pub async fn cancel(
             Ok(Json(OperationResponse {
                 id,
                 name,
-                result: format!("Successfully cancelled instance initialization"),
+                result: "Successfully cancelled instance initialization".to_string(),
                 status: conn.status_string(),
                 allowed_operations: conn.allowed_operations(),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to cancel instance initialization: {}",
-            e
+            "Failed to cancel instance initialization: {e}"
         ))),
     }
 }

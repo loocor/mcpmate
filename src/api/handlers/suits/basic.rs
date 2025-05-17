@@ -5,7 +5,7 @@ use super::common::*;
 
 /// List all configuration suits
 pub async fn list_suits(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>
 ) -> Result<Json<ConfigSuitListResponse>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
@@ -13,7 +13,9 @@ pub async fn list_suits(
     // Get all configuration suits
     let suits = crate::conf::operations::suit::get_all_config_suits(&db.pool)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suits: {}", e)))?;
+        .map_err(|e| {
+            ApiError::InternalError(format!("Failed to get configuration suits: {e}"))
+        })?;
 
     // Convert to response format
     let suit_responses = suits.iter().map(suit_to_response).collect();
@@ -35,17 +37,14 @@ pub async fn get_suit(
     // Get the configuration suit
     let suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get configuration suit: {}", e))
-        })?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
     // Check if the suit exists
     let suit = match suit {
         Some(s) => s,
         None => {
             return Err(ApiError::NotFound(format!(
-                "Configuration suit with ID '{}' not found",
-                id
+                "Configuration suit with ID '{id}' not found"
             )));
         }
     };

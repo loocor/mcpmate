@@ -1,19 +1,19 @@
 // MCP Proxy API handlers for system management
 // Contains handler functions for system endpoints
 
-use axum::{extract::State, Json};
 use std::sync::Arc;
 
+use axum::{Json, extract::State};
+
+use super::ApiError;
 use crate::api::{
     models::system::{StatusResponse, SystemMetricsResponse},
     routes::AppState,
 };
 
-use super::ApiError;
-
 /// Get system status
 pub async fn get_status(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>
 ) -> Result<Json<StatusResponse>, ApiError> {
     // Use timeout to avoid blocking indefinitely
     let pool_result = tokio::time::timeout(
@@ -52,7 +52,7 @@ pub async fn get_status(
 
 /// Get system metrics
 pub async fn get_metrics(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>
 ) -> Result<Json<SystemMetricsResponse>, ApiError> {
     // We'll get metrics directly from sysinfo instead of the metrics collector
 
@@ -73,10 +73,10 @@ pub async fn get_metrics(
     let mut connected_servers_count = 0;
 
     // Iterate through all instances
-    for (_, instances) in &pool.connections {
+    for instances in pool.connections.values() {
         let mut server_has_ready_instance = false;
 
-        for (_, conn) in instances {
+        for conn in instances.values() {
             total_instances_count += 1;
 
             // Count by status

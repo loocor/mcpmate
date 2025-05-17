@@ -21,8 +21,8 @@ use crate::{
 /// # Returns
 /// * `Result<(&HttpProxyServer, &Database), ApiError>` - The HTTP proxy server and database, or an error
 pub async fn get_context(
-    state: &Arc<AppState>,
-) -> Result<(&HttpProxyServer, &crate::conf::Database), ApiError> {
+    state: &Arc<AppState>
+) -> Result<(&HttpProxyServer, &crate::conf::database::Database), ApiError> {
     // Get the HTTP proxy server
     let proxy = state
         .http_proxy
@@ -65,7 +65,7 @@ pub async fn get_tool_status(
             let default_suit = operations::suit::get_default_config_suit(pool)
                 .await
                 .map_err(|e| {
-                    ApiError::InternalError(format!("Failed to get default config suit: {}", e))
+                    ApiError::InternalError(format!("Failed to get default config suit: {e}"))
                 })?;
 
             // If there's no default suit, try the legacy "default" named suit
@@ -76,8 +76,7 @@ pub async fn get_tool_status(
                     .await
                     .map_err(|e| {
                         ApiError::InternalError(format!(
-                            "Failed to get legacy default config suit: {}",
-                            e
+                            "Failed to get legacy default config suit: {e}"
                         ))
                     })?;
 
@@ -100,8 +99,7 @@ pub async fn get_tool_status(
                         .await
                         .map_err(|e| {
                             ApiError::InternalError(format!(
-                                "Failed to create default config suit: {}",
-                                e
+                                "Failed to create default config suit: {e}"
                             ))
                         })?
                 }
@@ -110,37 +108,33 @@ pub async fn get_tool_status(
             // Get the server ID
             let server = operations::get_server(pool, server_name)
                 .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+                .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
             if let Some(server) = server {
                 if let Some(server_id) = &server.id {
                     // Add the tool to the config suit
-                    let tool_id = operations::suit::add_tool_to_config_suit(
+
+                    operations::suit::add_tool_to_config_suit(
                         pool, &suit_id, server_id, tool_name, true,
                     )
                     .await
                     .map_err(|e| {
-                        ApiError::InternalError(format!("Failed to add tool to config suit: {}", e))
-                    })?;
-
-                    tool_id
+                        ApiError::InternalError(format!("Failed to add tool to config suit: {e}"))
+                    })?
                 } else {
                     return Err(ApiError::InternalError(format!(
-                        "Server '{}' has no ID",
-                        server_name
+                        "Server '{server_name}' has no ID"
                     )));
                 }
             } else {
                 return Err(ApiError::NotFound(format!(
-                    "Server '{}' not found",
-                    server_name
+                    "Server '{server_name}' not found"
                 )));
             }
         }
         Err(e) => {
             return Err(ApiError::InternalError(format!(
-                "Failed to get tool ID: {}",
-                e
+                "Failed to get tool ID: {e}"
             )));
         }
     };
@@ -195,20 +189,19 @@ pub async fn get_tool_schema(
         .get(server_name)
         .ok_or_else(|| {
             ApiError::NotFound(format!(
-                "Server '{}' not found in connection pool",
-                server_name
+                "Server '{server_name}' not found in connection pool"
             ))
         })?;
 
     // Look for the tool in all instances of this server
-    for (_, conn) in instances {
+    for conn in instances.values() {
         if !conn.is_connected() {
             continue;
         }
 
         // Look for the tool in this instance
         for tool in &conn.tools {
-            if tool.name.to_string() == tool_name {
+            if tool.name == tool_name {
                 // Found the tool, return its schema as a Value
                 return Ok(Value::Object(tool.input_schema.as_ref().clone()));
             }
@@ -217,7 +210,6 @@ pub async fn get_tool_schema(
 
     // Tool not found
     Err(ApiError::NotFound(format!(
-        "Tool '{}' not found in server '{}'",
-        tool_name, server_name
+        "Tool '{tool_name}' not found in server '{server_name}'"
     )))
 }

@@ -1,10 +1,8 @@
 // Tool mapping cache implementation for the HTTP proxy server
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
-use crate::core::tool;
-use crate::http::proxy::core::HttpProxyServer;
+use crate::{core::tool, http::proxy::core::HttpProxyServer};
 
 /// Cache expiration time (2 minutes)
 const CACHE_EXPIRATION: Duration = Duration::from_secs(120);
@@ -17,7 +15,7 @@ const CACHE_EXPIRATION: Duration = Duration::from_secs(120);
 /// 3. Provides detailed logging about cache update reasons
 /// 4. Reduces lock contention by acquiring locks only when necessary
 pub async fn get_tool_name_mapping(
-    server: &HttpProxyServer,
+    server: &HttpProxyServer
 ) -> HashMap<String, crate::core::tool::ToolNameMapping> {
     // First, check if cache exists without calculating hash (fast path)
     let cache_exists = {

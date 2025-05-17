@@ -1,13 +1,13 @@
 // Health check functionality for UpstreamConnectionPool
 
-use anyhow::Result;
 use std::sync::Arc;
+
+use anyhow::Result;
 use tokio::{sync::Mutex, time::sleep};
 use tracing;
 
-use crate::core::types::ConnectionStatus;
-
 use super::UpstreamConnectionPool;
+use crate::core::types::ConnectionStatus;
 
 impl UpstreamConnectionPool {
     /// Start health check task
@@ -64,7 +64,11 @@ impl UpstreamConnectionPool {
                                         }
                                     } else {
                                         // If service is None but status is Ready, something is wrong
-                                        tracing::warn!("Health check: Server '{}' instance '{}' has Ready status but no service, will reconnect", server_name, instance_id);
+                                        tracing::warn!(
+                                            "Health check: Server '{}' instance '{}' has Ready status but no service, will reconnect",
+                                            server_name,
+                                            instance_id
+                                        );
                                         reconnects.push((server_name.clone(), instance_id.clone()));
                                     }
                                 }
@@ -179,8 +183,8 @@ impl UpstreamConnectionPool {
                         crate::core::types::ErrorType::Temporary => {
                             // Use exponential backoff for temporary errors
                             let backoff_seconds = std::cmp::min(
-                                300,                                                     // Maximum 5 minutes
-                                2u64.pow(std::cmp::min(8, error_details.failure_count)), // Exponential backoff, max 2^8=256 seconds
+                                300,                                                     /* Maximum 5 minutes */
+                                2u64.pow(std::cmp::min(8, error_details.failure_count)), /* Exponential backoff, max 2^8=256 seconds */
                             );
 
                             // Calculate time since last failure
@@ -192,14 +196,19 @@ impl UpstreamConnectionPool {
                             if seconds_since_last_failure >= backoff_seconds {
                                 tracing::info!(
                                     "Connection check: Retrying temporary error for '{}' instance '{}' after {}s (failure count: {})",
-                                    server_name, instance_id, seconds_since_last_failure, error_details.failure_count
+                                    server_name,
+                                    instance_id,
+                                    seconds_since_last_failure,
+                                    error_details.failure_count
                                 );
                                 true
                             } else {
                                 tracing::debug!(
                                     "Connection check: Waiting {}s before retrying '{}' instance '{}' (failure count: {})",
                                     backoff_seconds - seconds_since_last_failure,
-                                    server_name, instance_id, error_details.failure_count
+                                    server_name,
+                                    instance_id,
+                                    error_details.failure_count
                                 );
                                 false
                             }
@@ -241,14 +250,15 @@ impl UpstreamConnectionPool {
                             {
                                 let conn = self.get_instance_mut(&server_name, &instance_id)?;
                                 conn.update_permanent_error(format!(
-                                    "Too many failed reconnection attempts ({}). Manual intervention required.",
-                                    failure_count
+                                    "Too many failed reconnection attempts ({failure_count}). Manual intervention required."
                                 ));
                             }
 
                             tracing::error!(
                                 "Connection check: Too many failed reconnection attempts for '{}' instance '{}' ({}). Marking as permanent error.",
-                                server_name, instance_id, failure_count
+                                server_name,
+                                instance_id,
+                                failure_count
                             );
                             continue;
                         }

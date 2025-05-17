@@ -3,10 +3,11 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 
+use super::common::{create_tool_response, get_context, get_tool_status};
 use crate::api::{
     handlers::ApiError,
     models::tool::{
@@ -14,8 +15,6 @@ use crate::api::{
     },
     routes::AppState,
 };
-
-use super::common::{create_tool_response, get_context, get_tool_status};
 
 /// List all MCP tools (MCPMate format)
 pub async fn all(State(state): State<Arc<AppState>>) -> Result<Json<ToolListResponse>, ApiError> {
@@ -28,7 +27,7 @@ pub async fn all(State(state): State<Arc<AppState>>) -> Result<Json<ToolListResp
 
     // Iterate through all servers and their tools
     for (server_name, instances) in connection_pool.connections.iter() {
-        for (_, conn) in instances {
+        for conn in instances.values() {
             // Skip instances that are not connected
             if !conn.is_connected() {
                 continue;
@@ -71,7 +70,7 @@ pub async fn all(State(state): State<Arc<AppState>>) -> Result<Json<ToolListResp
 
 /// List all MCP tools (MCP format)
 pub async fn mcp_list(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>
 ) -> Result<Json<McpToolListResponse>, ApiError> {
     // Get the HTTP proxy server and database
     let (proxy, db) = get_context(&state).await?;
@@ -82,7 +81,7 @@ pub async fn mcp_list(
 
     // Iterate through all servers and their tools
     for (server_name, instances) in connection_pool.connections.iter() {
-        for (_, conn) in instances {
+        for conn in instances.values() {
             // Skip instances that are not connected
             if !conn.is_connected() {
                 continue;
@@ -101,7 +100,7 @@ pub async fn mcp_list(
                     // Create an MCP tool definition
                     let mcp_tool = McpTool {
                         name: prefixed_name.unwrap_or_else(|| tool_name.clone()),
-                        description: Some(format!("Tool provided by server '{}'", server_name)),
+                        description: Some(format!("Tool provided by server '{server_name}'")),
                         input_schema: serde_json::Value::Object(tool.input_schema.as_ref().clone()),
                         annotations: Some(ToolAnnotations {
                             title: Some(tool_name.clone()),
@@ -142,12 +141,11 @@ pub async fn list(
     // Check if the server exists
     let server = crate::conf::operations::get_server(&db.pool, &server_name)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
     if server.is_none() {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found",
-            server_name
+            "Server '{server_name}' not found"
         )));
     }
 
@@ -164,7 +162,7 @@ pub async fn list(
         }
 
         // Iterate through all instances
-        for (_, conn) in instances {
+        for conn in instances.values() {
             // Skip instances that are not connected
             if !conn.is_connected() {
                 continue;
@@ -210,12 +208,11 @@ pub async fn details(
     // Check if the server exists
     let server = crate::conf::operations::get_server(&db.pool, &server_name)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {}", e)))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
     if server.is_none() {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found",
-            server_name
+            "Server '{server_name}' not found"
         )));
     }
 
@@ -225,7 +222,7 @@ pub async fn details(
 
     // Find the server in the connection pool
     if let Some(instances) = connection_pool.connections.get(&server_name) {
-        for (_, conn) in instances {
+        for conn in instances.values() {
             // Skip instances that are not connected
             if !conn.is_connected() {
                 continue;
@@ -245,7 +242,7 @@ pub async fn details(
                     let sdk_tool = rmcp::model::Tool {
                         name: prefixed_name.unwrap_or_else(|| tool_name.clone()).into(),
                         description: Some(
-                            format!("Tool provided by server '{}'", server_name).into(),
+                            format!("Tool provided by server '{server_name}'").into(),
                         ),
                         input_schema: tool.input_schema.clone(), // Already an Arc<JsonObject>
                         annotations: None,
@@ -257,8 +254,7 @@ pub async fn details(
         }
     } else {
         return Err(ApiError::NotFound(format!(
-            "Server '{}' not found in connection pool",
-            server_name
+            "Server '{server_name}' not found in connection pool"
         )));
     }
 

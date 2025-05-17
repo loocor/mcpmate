@@ -1,6 +1,8 @@
 // Config Suit models for MCPMate
 // Contains data models for configuration suits
 
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -25,14 +27,21 @@ impl ConfigSuitType {
             ConfigSuitType::Shared => "shared",
         }
     }
+}
 
-    /// Parse from string
-    pub fn from_str(s: &str) -> Option<Self> {
+/// Error type for ConfigSuitType parsing
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseConfigSuitTypeError;
+
+impl FromStr for ConfigSuitType {
+    type Err = ParseConfigSuitTypeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "host_app" => Some(ConfigSuitType::HostApp),
-            "scenario" => Some(ConfigSuitType::Scenario),
-            "shared" => Some(ConfigSuitType::Shared),
-            _ => None,
+            "host_app" => Ok(ConfigSuitType::HostApp),
+            "scenario" => Ok(ConfigSuitType::Scenario),
+            "shared" => Ok(ConfigSuitType::Shared),
+            _ => Err(ParseConfigSuitTypeError),
         }
     }
 }
@@ -65,7 +74,10 @@ pub struct ConfigSuit {
 
 impl ConfigSuit {
     /// Create a new configuration suit
-    pub fn new(name: String, suit_type: ConfigSuitType) -> Self {
+    pub fn new(
+        name: String,
+        suit_type: ConfigSuitType,
+    ) -> Self {
         Self {
             id: None,
             name,
@@ -102,7 +114,7 @@ impl ConfigSuit {
 
     /// Get the configuration suit type
     pub fn get_type(&self) -> Option<ConfigSuitType> {
-        ConfigSuitType::from_str(&self.suit_type)
+        ConfigSuitType::from_str(&self.suit_type).ok()
     }
 }
 

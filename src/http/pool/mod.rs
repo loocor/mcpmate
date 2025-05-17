@@ -1,13 +1,13 @@
 // MCP Proxy connection pool module
 // Contains the UpstreamConnectionPool struct and related functionality
 
-use anyhow::{self, Context, Result};
 use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use anyhow::{self, Context, Result};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
-use crate::core::models::Config;
-use crate::core::{connection::UpstreamConnection, monitor::ProcessMonitor};
+use crate::core::{connection::UpstreamConnection, models::Config, monitor::ProcessMonitor};
 
 // Import submodules
 mod connection;
@@ -47,7 +47,7 @@ impl UpstreamConnectionPool {
 
     /// Initialize the connection pool with all servers
     pub fn initialize(&mut self) {
-        for (name, _server_config) in &self.config.mcp_servers {
+        for name in self.config.mcp_servers.keys() {
             // Skip the proxy server itself
             if name == "proxy" {
                 continue;
@@ -58,10 +58,7 @@ impl UpstreamConnectionPool {
             let instance_id = connection.id.clone();
 
             // Create a new map for this server if it doesn't exist
-            let instances = self
-                .connections
-                .entry(name.clone())
-                .or_insert_with(HashMap::new);
+            let instances = self.connections.entry(name.clone()).or_default();
 
             // Add the connection to the map
             instances.insert(instance_id, connection);
@@ -88,13 +85,11 @@ impl UpstreamConnectionPool {
         instance_id: &str,
     ) -> Result<&UpstreamConnection> {
         let instances = self.connections.get(server_name).context(format!(
-            "Server '{}' not found in connection pool",
-            server_name
+            "Server '{server_name}' not found in connection pool"
         ))?;
 
         instances.get(instance_id).context(format!(
-            "Instance '{}' not found for server '{}'",
-            instance_id, server_name
+            "Instance '{instance_id}' not found for server '{server_name}'"
         ))
     }
 
@@ -105,21 +100,21 @@ impl UpstreamConnectionPool {
         instance_id: &str,
     ) -> Result<&mut UpstreamConnection> {
         let instances = self.connections.get_mut(server_name).context(format!(
-            "Server '{}' not found in connection pool",
-            server_name
+            "Server '{server_name}' not found in connection pool"
         ))?;
 
         instances.get_mut(instance_id).context(format!(
-            "Instance '{}' not found for server '{}'",
-            instance_id, server_name
+            "Instance '{instance_id}' not found for server '{server_name}'"
         ))
     }
 
     /// Helper method to get the default instance of a server
-    pub fn get_default_instance(&self, server_name: &str) -> Result<(String, &UpstreamConnection)> {
+    pub fn get_default_instance(
+        &self,
+        server_name: &str,
+    ) -> Result<(String, &UpstreamConnection)> {
         let instances = self.connections.get(server_name).context(format!(
-            "Server '{}' not found in connection pool",
-            server_name
+            "Server '{server_name}' not found in connection pool"
         ))?;
 
         if instances.is_empty() {
@@ -140,8 +135,7 @@ impl UpstreamConnectionPool {
         server_name: &str,
     ) -> Result<(String, &mut UpstreamConnection)> {
         let instances = self.connections.get_mut(server_name).context(format!(
-            "Server '{}' not found in connection pool",
-            server_name
+            "Server '{server_name}' not found in connection pool"
         ))?;
 
         if instances.is_empty() {

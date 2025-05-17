@@ -3,10 +3,10 @@
 
 use anyhow::{Context, Result};
 use rmcp::{
-    model::Tool,
-    service::{serve_client_with_ct, RunningService},
-    transport::TokioChildProcess,
     RoleClient,
+    model::Tool,
+    service::{RunningService, serve_client_with_ct},
+    transport::TokioChildProcess,
 };
 use tokio::{process::Command, time::timeout};
 use tokio_util::sync::CancellationToken;
@@ -63,7 +63,7 @@ pub async fn connect_stdio_server_with_ct(
                 match serve_client_with_ct((), child_process, ct.clone()).await {
                     Ok(service) => Ok(service),
                     Err(e) => {
-                        let error_msg = format!("Failed to connect to server: {}", e);
+                        let error_msg = format!("Failed to connect to server: {e}");
                         Err(anyhow::anyhow!(error_msg))
                     }
                 }
@@ -72,14 +72,14 @@ pub async fn connect_stdio_server_with_ct(
             {
                 Ok(result) => result,
                 Err(_) => {
-                    let error_msg = format!("Connection timeout for server '{}'", server_name);
+                    let error_msg = format!("Connection timeout for server '{server_name}'");
                     tracing::warn!("{}", error_msg);
                     return Err(anyhow::anyhow!(error_msg));
                 }
             }
         }
         Err(e) => {
-            let error_msg = format!("Failed to create child process: {}", e);
+            let error_msg = format!("Failed to create child process: {e}");
             return Err(anyhow::anyhow!(error_msg));
         }
     };
@@ -99,7 +99,7 @@ pub async fn connect_stdio_server_with_ct(
 
                     let pid = if let Some(command) = &server_config.command {
                         // Get the command name (last part of the path)
-                        let cmd_name = command.split('/').last().unwrap_or(command);
+                        let cmd_name = command.split('/').next_back().unwrap_or(command);
 
                         // Create a new System instance
                         let mut system = sysinfo::System::new_all();
@@ -196,7 +196,7 @@ pub async fn connect_stdio_server_with_ct(
                     Ok((service, tools, pid))
                 }
                 Ok(Err(e)) => {
-                    let error_msg = format!("Failed to list tools: {}", e);
+                    let error_msg = format!("Failed to list tools: {e}");
                     // Make sure to cancel the service to avoid resource leaks
                     if let Err(cancel_err) = service.cancel().await {
                         tracing::warn!("Error cancelling service: {}", cancel_err);
@@ -204,7 +204,7 @@ pub async fn connect_stdio_server_with_ct(
                     Err(anyhow::anyhow!(error_msg))
                 }
                 Err(_) => {
-                    let error_msg = format!("Timeout listing tools for server '{}'", server_name);
+                    let error_msg = format!("Timeout listing tools for server '{server_name}'");
                     tracing::warn!("{}", error_msg);
                     // Make sure to cancel the service to avoid resource leaks
                     if let Err(cancel_err) = service.cancel().await {

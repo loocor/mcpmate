@@ -1,8 +1,8 @@
 // Transport implementations for the HTTP proxy server
 
+use std::{net::SocketAddr, time::Duration};
+
 use anyhow::{Context, Result};
-use std::net::SocketAddr;
-use std::time::Duration;
 
 use crate::http::proxy::core::HttpProxyServer;
 
@@ -11,7 +11,7 @@ use crate::http::proxy::core::HttpProxyServer;
 /// This helper method is used by all server start methods to create a factory function
 /// that returns a new HttpProxyServer instance for handling requests.
 pub fn create_service_factory(
-    server: &HttpProxyServer,
+    server: &HttpProxyServer
 ) -> impl Fn() -> HttpProxyServer + Clone + Send + Sync + 'static {
     let proxy_clone = server.clone();
     move || proxy_clone.clone()
@@ -99,13 +99,12 @@ pub async fn start_streamable_http(
     let factory = create_service_factory(server);
 
     // Create Streamable HTTP server config
-    let server_config =
-        rmcp::transport::streamable_http_server::axum::StreamableHttpServerConfig {
-            bind: bind_address,
-            path: path.to_string(),
-            ct: Default::default(),
-            sse_keep_alive: Some(Duration::from_secs(15)),
-        };
+    let server_config = rmcp::transport::streamable_http_server::axum::StreamableHttpServerConfig {
+        bind: bind_address,
+        path: path.to_string(),
+        ct: Default::default(),
+        sse_keep_alive: Some(Duration::from_secs(15)),
+    };
 
     // Start the Streamable HTTP server
     tracing::info!("Starting Streamable HTTP server...");
@@ -144,7 +143,10 @@ pub async fn start_streamable_http(
 ///
 /// # Returns
 /// * `Result<()>` - Ok if the server started successfully, Err otherwise
-pub async fn start_unified(server: &HttpProxyServer, bind_address: SocketAddr) -> Result<()> {
+pub async fn start_unified(
+    server: &HttpProxyServer,
+    bind_address: SocketAddr,
+) -> Result<()> {
     tracing::info!(
         "Starting unified HTTP server on {} with both Streamable HTTP and SSE support",
         bind_address

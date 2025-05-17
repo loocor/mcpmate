@@ -1,11 +1,12 @@
 // MCP Proxy API routes for MCP server management
 // Contains route definitions for MCP server endpoints
 
-use axum::{
-    routing::{get, post, put},
-    Router,
-};
 use std::sync::Arc;
+
+use axum::{
+    Router,
+    routing::{get, post, put},
+};
 
 use super::AppState;
 use crate::api::handlers::{instance, server};

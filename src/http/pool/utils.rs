@@ -1,13 +1,17 @@
 // Utility functions for UpstreamConnectionPool
 
-use anyhow::Result;
 use std::collections::HashMap;
+
+use anyhow::Result;
 
 use super::UpstreamConnectionPool;
 
 impl UpstreamConnectionPool {
     /// Get status of the default instance of a server
-    pub fn get_server_status(&self, server_name: &str) -> Result<String> {
+    pub fn get_server_status(
+        &self,
+        server_name: &str,
+    ) -> Result<String> {
         // Check if the server exists
         if !self.connections.contains_key(server_name) {
             return Err(anyhow::anyhow!(
@@ -27,7 +31,11 @@ impl UpstreamConnectionPool {
     }
 
     /// Get status of a specific instance of a server
-    pub fn get_instance_status(&self, server_name: &str, instance_id: &str) -> Result<String> {
+    pub fn get_instance_status(
+        &self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<String> {
         let conn = self.get_instance(server_name, instance_id)?;
 
         Ok(conn.status_string())
@@ -35,7 +43,7 @@ impl UpstreamConnectionPool {
 
     /// Get all server instances with cloned connections
     pub fn get_all_server_instances(
-        &self,
+        &self
     ) -> HashMap<String, Vec<(String, crate::core::connection::UpstreamConnection)>> {
         let mut result = HashMap::new();
 
@@ -53,7 +61,10 @@ impl UpstreamConnectionPool {
     }
 
     /// Get server type
-    pub fn get_server_type(&self, server_name: &str) -> Option<String> {
+    pub fn get_server_type(
+        &self,
+        server_name: &str,
+    ) -> Option<String> {
         self.config
             .mcp_servers
             .get(server_name)
@@ -68,8 +79,10 @@ impl UpstreamConnectionPool {
     /// 2. Only hashes essential information needed to detect relevant changes
     /// 3. Uses a more efficient hashing approach for connection status
     pub fn calculate_connection_state_hash(&self) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::{
+            collections::hash_map::DefaultHasher,
+            hash::{Hash, Hasher},
+        };
 
         let mut hasher = DefaultHasher::new();
 

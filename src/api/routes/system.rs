@@ -1,8 +1,9 @@
 // MCP Proxy API routes for system management
 // Contains route definitions for system endpoints
 
-use axum::{routing::get, Router};
 use std::sync::Arc;
+
+use axum::{Router, routing::get};
 
 use super::AppState;
 use crate::api::handlers::system;
