@@ -291,9 +291,7 @@ pub async fn call_tool(
                     ))
                 } else {
                     Err(McpError::invalid_params(
-                        format!(
-                            "Tool '{tool_name_str}' not found or error occurred: {e}"
-                        ),
+                        format!("Tool '{tool_name_str}' not found or error occurred: {e}"),
                         None,
                     ))
                 }
@@ -323,9 +321,7 @@ pub async fn call_tool_on_instance(
             // Check if the connection is ready
             if !conn.is_connected() {
                 return Err(McpError::internal_error(
-                    format!(
-                        "Server '{server_name}' instance '{instance_id}' is not connected"
-                    ),
+                    format!("Server '{server_name}' instance '{instance_id}' is not connected"),
                     None,
                 ));
             }
@@ -357,7 +353,6 @@ pub async fn call_tool_on_instance(
             );
 
             // Call the tool on the upstream server
-            
 
             match conn
                 .service
@@ -388,10 +383,10 @@ pub async fn call_tool_on_instance(
                             );
                             return Err(mcp_err);
                         }
-                        ServiceError::Transport(io_err) => {
-                            // Transport error (network, IO)
+                        ServiceError::TransportSend(io_err) => {
+                            // Transport send error (network, IO)
                             tracing::error!(
-                                "Transport error calling tool '{}' on server '{}' instance '{}': {}",
+                                "Transport send error calling tool '{}' on server '{}' instance '{}': {}",
                                 upstream_tool_name,
                                 server_name,
                                 instance_id,
@@ -399,9 +394,23 @@ pub async fn call_tool_on_instance(
                             );
 
                             // Update connection status to error
-                            conn.update_failed(format!("Transport error: {io_err}"));
+                            conn.update_failed(format!("Transport send error: {io_err}"));
 
                             format!("Network or IO error: {io_err}")
+                        }
+                        ServiceError::TransportClosed => {
+                            // Transport closed error
+                            tracing::error!(
+                                "Transport closed while calling tool '{}' on server '{}' instance '{}'",
+                                upstream_tool_name,
+                                server_name,
+                                instance_id
+                            );
+
+                            // Update connection status to error
+                            conn.update_failed("Transport connection closed".to_string());
+
+                            "Connection closed by upstream server".to_string()
                         }
                         ServiceError::UnexpectedResponse => {
                             // Unexpected response type
@@ -450,9 +459,7 @@ pub async fn call_tool_on_instance(
                     };
 
                     Err(McpError::internal_error(
-                        format!(
-                            "Error calling tool '{client_tool_name}': {error_message}"
-                        ),
+                        format!("Error calling tool '{client_tool_name}': {error_message}"),
                         None,
                     ))
                 }

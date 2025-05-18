@@ -56,7 +56,7 @@ pub async fn connect_stdio_server_with_ct(
     );
 
     // Connect to the server with timeout
-    let connect_result = match TokioChildProcess::new(&mut cmd) {
+    let connect_result = match TokioChildProcess::new(cmd) {
         Ok(child_process) => {
             // Set a timeout for the connection process
             match timeout(connection_timeout, async {

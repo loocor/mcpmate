@@ -1,6 +1,6 @@
 // Core implementation of the HTTP proxy server
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{Context, Result};
 use rmcp::{
@@ -22,13 +22,6 @@ use crate::{
 pub struct HttpProxyServer {
     /// Connection pool for upstream servers
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
-    /// Tool name mapping cache
-    pub(crate) tool_name_mapping_cache:
-        Arc<Mutex<Option<HashMap<String, crate::core::tool::ToolNameMapping>>>>,
-    /// Last time the tool name mapping was updated
-    pub(crate) last_tool_mapping_update: Arc<Mutex<std::time::Instant>>,
-    /// Last connection state hash, used to detect changes in the connection pool
-    pub(crate) last_connection_state_hash: Arc<Mutex<u64>>,
     /// Database connection for tool configuration persistence
     pub database: Option<Arc<Database>>,
     /// Config Suit merge service for tool enablement check
@@ -75,9 +68,6 @@ impl HttpProxyServer {
 
         Self {
             connection_pool,
-            tool_name_mapping_cache: Arc::new(Mutex::new(None)),
-            last_tool_mapping_update: Arc::new(Mutex::new(std::time::Instant::now())),
-            last_connection_state_hash: Arc::new(Mutex::new(0)),
             database: None,                  // Database will be initialized separately
             config_suit_merge_service: None, // Will be initialized after database
         }
@@ -100,22 +90,8 @@ impl HttpProxyServer {
         // Initialize Config Suit merge service
         let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(db_arc));
 
-        // Update the cache
-        if let Err(e) = merge_service.update_cache().await {
-            tracing::error!(
-                "Failed to initialize Config Suit merge service cache: {}",
-                e
-            );
-        } else {
-            tracing::info!("Config Suit merge service cache initialized successfully");
-        }
-
         // Store the Config Suit merge service
-        let merge_service_arc = Arc::clone(&merge_service);
         self.config_suit_merge_service = Some(merge_service);
-
-        // Start background update task
-        crate::core::suit::ConfigSuitMergeService::start_background_update(merge_service_arc);
 
         tracing::info!("Database and Config Suit merge service initialized successfully");
         Ok(())
@@ -138,22 +114,8 @@ impl HttpProxyServer {
         // Initialize Config Suit merge service
         let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(db_arc));
 
-        // Update the cache
-        if let Err(e) = merge_service.update_cache().await {
-            tracing::error!(
-                "Failed to initialize Config Suit merge service cache: {}",
-                e
-            );
-        } else {
-            tracing::info!("Config Suit merge service cache initialized successfully");
-        }
-
         // Store the Config Suit merge service
-        let merge_service_arc = Arc::clone(&merge_service);
         self.config_suit_merge_service = Some(merge_service);
-
-        // Start background update task
-        crate::core::suit::ConfigSuitMergeService::start_background_update(merge_service_arc);
 
         tracing::info!("Database connection and Config Suit merge service set successfully");
         Ok(())

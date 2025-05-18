@@ -50,15 +50,10 @@ pub async fn activate_suit(
             ApiError::InternalError(format!("Failed to activate configuration suit: {e}"))
         })?;
 
-    // Update Config Suit merge service cache
+    // Sync server connections if merge service is available
     if let Some(merge_service) = &state.suit_merge_service {
-        if let Err(e) = merge_service.update_cache().await {
-            tracing::error!("Failed to update Config Suit merge cache: {}", e);
-        } else {
-            // Sync server connections
-            if let Err(e) = merge_service.sync_server_connections(&state).await {
-                tracing::error!("Failed to sync server connections: {}", e);
-            }
+        if let Err(e) = merge_service.sync_server_connections(&state).await {
+            tracing::error!("Failed to sync server connections: {}", e);
         }
     }
 
@@ -121,15 +116,10 @@ pub async fn deactivate_suit(
             ApiError::InternalError(format!("Failed to deactivate configuration suit: {e}"))
         })?;
 
-    // Update Config Suit merge service cache
+    // Sync server connections if merge service is available
     if let Some(merge_service) = &state.suit_merge_service {
-        if let Err(e) = merge_service.update_cache().await {
-            tracing::error!("Failed to update Config Suit merge cache: {}", e);
-        } else {
-            // Sync server connections
-            if let Err(e) = merge_service.sync_server_connections(&state).await {
-                tracing::error!("Failed to sync server connections: {}", e);
-            }
+        if let Err(e) = merge_service.sync_server_connections(&state).await {
+            tracing::error!("Failed to sync server connections: {}", e);
         }
     }
 
@@ -193,16 +183,11 @@ pub async fn batch_activate_suits(
         }
     }
 
-    // Update Config Suit merge service cache if any suits were activated
+    // Sync server connections if merge service is available and any suits were activated
     if !successful_ids.is_empty() {
         if let Some(merge_service) = &state.suit_merge_service {
-            if let Err(e) = merge_service.update_cache().await {
-                tracing::error!("Failed to update Config Suit merge cache: {}", e);
-            } else {
-                // Sync server connections
-                if let Err(e) = merge_service.sync_server_connections(&state).await {
-                    tracing::error!("Failed to sync server connections: {}", e);
-                }
+            if let Err(e) = merge_service.sync_server_connections(&state).await {
+                tracing::error!("Failed to sync server connections: {}", e);
             }
         }
     }
@@ -261,16 +246,11 @@ pub async fn batch_deactivate_suits(
         }
     }
 
-    // Update Config Suit merge service cache if any suits were deactivated
+    // Sync server connections if merge service is available and any suits were deactivated
     if !successful_ids.is_empty() {
         if let Some(merge_service) = &state.suit_merge_service {
-            if let Err(e) = merge_service.update_cache().await {
-                tracing::error!("Failed to update Config Suit merge cache: {}", e);
-            } else {
-                // Sync server connections
-                if let Err(e) = merge_service.sync_server_connections(&state).await {
-                    tracing::error!("Failed to sync server connections: {}", e);
-                }
+            if let Err(e) = merge_service.sync_server_connections(&state).await {
+                tracing::error!("Failed to sync server connections: {}", e);
             }
         }
     }

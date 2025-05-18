@@ -194,10 +194,10 @@ pub async fn call_upstream_tool(
                     );
                     format!("MCP protocol error: {mcp_err}")
                 }
-                ServiceError::Transport(io_err) => {
-                    // Transport error (network, IO)
+                ServiceError::TransportSend(io_err) => {
+                    // Transport send error (network, IO)
                     tracing::error!(
-                        "Transport error calling tool '{}' on server '{}' instance '{}': {}",
+                        "Transport send error calling tool '{}' on server '{}' instance '{}': {}",
                         upstream_tool_name,
                         server_name,
                         instance_id,
@@ -205,9 +205,23 @@ pub async fn call_upstream_tool(
                     );
 
                     // Update connection status to error
-                    conn.update_failed(format!("Transport error: {io_err}"));
+                    conn.update_failed(format!("Transport send error: {io_err}"));
 
                     format!("Network or IO error: {io_err}")
+                }
+                ServiceError::TransportClosed => {
+                    // Transport closed error
+                    tracing::error!(
+                        "Transport closed while calling tool '{}' on server '{}' instance '{}'",
+                        upstream_tool_name,
+                        server_name,
+                        instance_id
+                    );
+
+                    // Update connection status to error
+                    conn.update_failed("Transport connection closed".to_string());
+
+                    "Connection closed by upstream server".to_string()
                 }
                 ServiceError::UnexpectedResponse => {
                     // Unexpected response type

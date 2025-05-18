@@ -156,9 +156,6 @@ async fn test_config_suit_merge_service_basic() -> Result<()> {
     // Create configuration suit merge service
     let merge_service = ConfigSuitMergeService::new(db.clone());
 
-    // Update cache
-    merge_service.update_cache().await?;
-
     // Get merged servers
     let merged_servers = merge_service.get_merged_servers().await?;
 

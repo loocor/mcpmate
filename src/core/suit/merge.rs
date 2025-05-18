@@ -4,11 +4,9 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
-    time::Instant,
 };
 
 use anyhow::{Context, Result};
-use tokio::sync::RwLock;
 use tracing;
 
 use crate::{
@@ -28,58 +26,16 @@ use crate::{
 pub struct ConfigSuitMergeService {
     /// Database reference
     pub db: Arc<Database>,
-    /// Cache of merged servers (server_id -> Server)
-    merged_servers: RwLock<HashMap<String, Server>>,
-    /// Cache of merged tools (server_id -> (tool_id -> ConfigSuitTool))
-    merged_tools: RwLock<HashMap<String, HashMap<String, ConfigSuitTool>>>,
-    /// Last time the cache was updated
-    last_updated: RwLock<Instant>,
 }
 
 impl ConfigSuitMergeService {
     /// Create a new ConfigSuitMergeService
     pub fn new(db: Arc<Database>) -> Self {
-        Self {
-            db,
-            merged_servers: RwLock::new(HashMap::new()),
-            merged_tools: RwLock::new(HashMap::new()),
-            last_updated: RwLock::new(Instant::now()),
-        }
+        Self { db }
     }
 
-    /// Start a background task to periodically update the cache
-    pub fn start_background_update(service: Arc<Self>) {
-        tokio::spawn(async move {
-            let update_interval = std::time::Duration::from_secs(30); // Update every 30 seconds
-
-            loop {
-                // Sleep first to avoid immediate update after initialization
-                tokio::time::sleep(update_interval).await;
-
-                // Update the cache
-                if let Err(e) = service.update_cache().await {
-                    tracing::error!(
-                        "Failed to update Config Suit merge cache in background task: {}",
-                        e
-                    );
-                } else {
-                    tracing::debug!(
-                        "Config Suit merge cache updated successfully in background task"
-                    );
-                }
-            }
-        });
-
-        tracing::info!("Started background task for Config Suit merge cache updates");
-    }
-
-    /// Update the cache of merged servers and tools
-    ///
-    /// This function fetches all active configuration suits, merges their servers and tools,
-    /// and updates the cache.
-    pub async fn update_cache(&self) -> Result<()> {
-        tracing::debug!("Updating ConfigSuitMergeService cache");
-
+    /// Get all merged servers
+    pub async fn get_merged_servers(&self) -> Result<Vec<Server>> {
         // Get all active configuration suits
         let active_suits = get_active_config_suits(&self.db.pool)
             .await
@@ -90,37 +46,8 @@ impl ConfigSuitMergeService {
         // Merge servers from all active suits
         let merged_servers = self.merge_servers(&active_suits).await?;
 
-        // Merge tools for each server
-        let mut merged_tools = HashMap::new();
-        for server_id in merged_servers.keys() {
-            let tools = self.merge_tools(&active_suits, server_id).await?;
-            merged_tools.insert(server_id.clone(), tools);
-        }
-
-        // Update the cache
-        {
-            let mut servers_lock = self.merged_servers.write().await;
-            *servers_lock = merged_servers;
-        }
-
-        {
-            let mut tools_lock = self.merged_tools.write().await;
-            *tools_lock = merged_tools;
-        }
-
-        {
-            let mut time_lock = self.last_updated.write().await;
-            *time_lock = Instant::now();
-        }
-
-        tracing::debug!("ConfigSuitMergeService cache updated successfully");
-        Ok(())
-    }
-
-    /// Get all merged servers
-    pub async fn get_merged_servers(&self) -> Result<Vec<Server>> {
-        let servers_lock = self.merged_servers.read().await;
-        let servers = servers_lock.values().cloned().collect();
+        // Convert to Vec
+        let servers = merged_servers.values().cloned().collect();
         Ok(servers)
     }
 
@@ -129,14 +56,17 @@ impl ConfigSuitMergeService {
         &self,
         server_id: &str,
     ) -> Result<Vec<ConfigSuitTool>> {
-        let tools_lock = self.merged_tools.read().await;
+        // Get all active configuration suits
+        let active_suits = get_active_config_suits(&self.db.pool)
+            .await
+            .context("Failed to get active configuration suits")?;
 
-        if let Some(server_tools) = tools_lock.get(server_id) {
-            let tools = server_tools.values().cloned().collect();
-            Ok(tools)
-        } else {
-            Ok(Vec::new())
-        }
+        // Merge tools for the server
+        let tools = self.merge_tools(&active_suits, server_id).await?;
+
+        // Convert to Vec
+        let tools_vec = tools.values().cloned().collect();
+        Ok(tools_vec)
     }
 
     /// Check if a tool is enabled
@@ -145,12 +75,17 @@ impl ConfigSuitMergeService {
         server_id: &str,
         tool_id: &str,
     ) -> Result<bool> {
-        let tools_lock = self.merged_tools.read().await;
+        // Get all active configuration suits
+        let active_suits = get_active_config_suits(&self.db.pool)
+            .await
+            .context("Failed to get active configuration suits")?;
 
-        if let Some(server_tools) = tools_lock.get(server_id) {
-            if let Some(tool) = server_tools.get(tool_id) {
-                return Ok(tool.enabled);
-            }
+        // Merge tools for the server
+        let tools = self.merge_tools(&active_suits, server_id).await?;
+
+        // Check if the tool is enabled
+        if let Some(tool) = tools.get(tool_id) {
+            return Ok(tool.enabled);
         }
 
         // If the tool is not found, it's considered disabled

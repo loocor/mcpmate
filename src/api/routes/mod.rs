@@ -71,22 +71,6 @@ pub fn create_router_with_proxy(
     // Create Config Suit merge service if database is available
     let config_suit_merge_service = if let Some(db) = http_proxy.database.clone() {
         let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(db));
-
-        // Initialize the merge service cache
-        tokio::spawn({
-            let merge_service = merge_service.clone();
-            async move {
-                if let Err(e) = merge_service.update_cache().await {
-                    tracing::error!(
-                        "Failed to initialize Config Suit merge service cache: {}",
-                        e
-                    );
-                } else {
-                    tracing::info!("Config Suit merge service cache initialized successfully");
-                }
-            }
-        });
-
         Some(merge_service)
     } else {
         tracing::warn!("Database not available, Config Suit merge service will not be initialized");
