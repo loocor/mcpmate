@@ -179,44 +179,11 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
   - **Parameters**: Server name, instance ID
   - **Response**: Operation result
 
-### 2. Tool Management
 
-- **GET /api/mcp/tools/**
-  - **Function**: List all tools
-  - **Response**: List of tools from all servers
 
-- **GET /api/mcp/tools/{server_name}**
-  - **Function**: List tools for a specific server
-  - **Parameters**: Server name
-  - **Response**: List of tools for the specified server
+### 2. Config Suit Management
 
-- **POST /api/mcp/tools/{server_name}/refresh**
-  - **Function**: Refresh the tool list for a server
-  - **Parameters**: Server name
-  - **Response**: Operation result
-
-- **GET /api/mcp/tools/{server_name}/{tool_name}**
-  - **Function**: Get detailed information about a specific tool
-  - **Parameters**: Server name, tool name
-  - **Response**: Detailed tool information
-
-- **POST /api/mcp/tools/{server_name}/{tool_name}**
-  - **Function**: Update tool configuration
-  - **Parameters**: Server name, tool name
-  - **Request**: Updated tool configuration
-  - **Response**: Updated tool information
-
-- **POST /api/mcp/tools/{server_name}/{tool_name}/enable**
-  - **Function**: Enable a tool
-  - **Parameters**: Server name, tool name
-  - **Response**: Operation result
-
-- **POST /api/mcp/tools/{server_name}/{tool_name}/disable**
-  - **Function**: Disable a tool
-  - **Parameters**: Server name, tool name
-  - **Response**: Operation result
-
-### 3. Config Suit Management
+> **Note**: Tool enabling/disabling should be managed through Config Suits. This is the primary interface for managing tool availability.
 
 #### Basic Config Suit Operations
 - **GET /api/mcp/suits/**
@@ -572,23 +539,25 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-### 4. Specification-Compliant API
+### 3. Specification-Compliant API
+
+> **Note**: These endpoints are the primary means for tool discovery and information retrieval. They provide tool information in the standard MCP specification format.
 
 - **GET /api/mcp/specs/tools/**
-  - **Function**: List all tools (in MCP specification format)
+  - **Function**: List all tools across all connected servers
   - **Response**: List of tools in MCP specification format
 
 - **GET /api/mcp/specs/tools/{server_name}**
-  - **Function**: List tools for a specific server (in MCP specification format)
+  - **Function**: List tools for a specific server
   - **Parameters**: Server name
   - **Response**: List of tools in MCP specification format
 
 - **GET /api/mcp/specs/tools/{server_name}/{tool_name}**
-  - **Function**: Get detailed information about a specific tool (in MCP specification format)
+  - **Function**: Get detailed information about a specific tool
   - **Parameters**: Server name, tool name
   - **Response**: Detailed tool information in MCP specification format
 
-### 5. System Management
+### 4. System Management
 
 - **GET /api/system/status**
   - **Function**: Get system status
@@ -598,7 +567,7 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
   - **Function**: Get system metrics
   - **Response**: System performance metrics, such as CPU usage, memory usage, etc.
 
-### 6. Notification Management
+### 5. Notification Management
 
 - **POST /api/notifications/tools/changed**
   - **Function**: Notify that the tool list has changed

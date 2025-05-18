@@ -5,7 +5,6 @@ pub mod mcp;
 pub mod notifs;
 pub mod suit;
 pub mod system;
-pub mod tool;
 
 /// Generic success response
 #[derive(serde::Serialize)]

@@ -6,7 +6,6 @@ pub mod notifs;
 pub mod specs;
 pub mod suit;
 pub mod system;
-pub mod tool;
 
 use std::sync::Arc;
 
@@ -54,7 +53,6 @@ pub fn create_router(connection_pool: Arc<Mutex<UpstreamConnectionPool>>) -> Rou
         .merge(notifs::routes(state.clone()))
         .merge(specs::routes(state.clone()))
         .merge(suit::routes(state.clone()))
-        .merge(tool::routes(state))
 }
 
 /// Create the API router with all routes and HTTP proxy server reference
@@ -108,5 +106,4 @@ pub fn create_router_with_proxy(
         .merge(notifs::routes(state.clone()))
         .merge(specs::routes(state.clone()))
         .merge(suit::routes(state.clone()))
-        .merge(tool::routes(state))
 }
