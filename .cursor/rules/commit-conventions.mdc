@@ -16,6 +16,18 @@ Follow conventional commits pattern:
 - `test:` - Adding or updating tests
 - `chore:` - Changes to build process or auxiliary tools
 
+> **Tip:** Before writing your commit message, first try to summarize the main theme and motivation of your staged changes (the "why" and "core focus"). This helps ensure your commit message highlights the real intent and impact of the change, making the subject and body more focused and valuable. For AI-assisted commit generation, always let the AI attempt this summary step first.
+
+## Commit Subject Focus Principles
+
+- The commit subject (title) should concisely highlight the "core focus" or the most important substantive change of the commit.
+- Avoid generic descriptions like "update docs" or "fix bug"; the title should make the main purpose and impact of the commit clear at a glance.
+- If the change involves bilingual documentation, syncing with code implementation, or architectural adjustments, make this explicit in the title.
+- Recommended format: "what was done + why/for what". For example:
+  - `docs: sync EN/CN README and align config docs with codebase`
+  - `feat: support multi-suit config management for flexible scenarios`
+  - `fix: resolve SSE connection issue in bridge module`
+
 Example:
 ```
 Feature: Expand MCP API documentation with detailed instance and system management
