@@ -137,6 +137,8 @@ pub struct ConfigSuitServersResponse {
 pub struct ConfigSuitToolResponse {
     /// Tool ID
     pub id: String,
+    /// Server ID
+    pub server_id: String,
     /// Server name
     pub server_name: String,
     /// Tool name

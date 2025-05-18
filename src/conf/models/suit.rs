@@ -144,6 +144,8 @@ pub struct ConfigSuitTool {
     pub config_suit_id: String,
     /// Server ID
     pub server_id: String,
+    /// Server name
+    pub server_name: String,
     /// Tool name
     pub tool_name: String,
     /// Prefixed/qualified name for the tool (to avoid conflicts)

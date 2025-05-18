@@ -35,7 +35,8 @@ pub async fn list_tools(
 
         tool_responses.push(ConfigSuitToolResponse {
             id: config.id.unwrap_or_default(),
-            server_name: config.server_id.clone(),
+            server_id: config.server_id.clone(),
+            server_name: config.server_name.clone(),
             tool_name: config.tool_name.clone(),
             prefixed_name: config.prefixed_name.clone(),
             enabled: config.enabled,
