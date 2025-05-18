@@ -6,7 +6,7 @@ use rmcp::{
     RoleClient,
     model::Tool,
     service::{RunningService, ServiceExt},
-    transport::sse::SseTransport,
+    transport::SseClientTransport,
 };
 use tokio::time::timeout;
 
@@ -21,7 +21,7 @@ pub async fn connect_sse_server(
     // Get URL
     let url = server_config
         .url
-        .as_ref()
+        .as_deref()
         .context("URL not specified for SSE server")?;
 
     // Get timeouts
@@ -38,16 +38,14 @@ pub async fn connect_sse_server(
     );
 
     // Connect to the server with timeout
-    let transport_result = match timeout(connection_timeout, SseTransport::start(url)).await {
+    let transport_result = match timeout(connection_timeout, SseClientTransport::start(url)).await {
         Ok(Ok(transport)) => Ok(transport),
         Ok(Err(e)) => {
             let error_msg = format!("Failed to create SSE transport: {e}");
             Err(anyhow::anyhow!(error_msg))
         }
         Err(_) => {
-            let error_msg = format!(
-                "Timeout creating SSE transport for server '{server_name}'"
-            );
+            let error_msg = format!("Timeout creating SSE transport for server '{server_name}'");
             tracing::warn!("{}", error_msg);
             Err(anyhow::anyhow!(error_msg))
         }

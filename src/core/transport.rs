@@ -8,7 +8,7 @@ use rmcp::{
     RoleClient,
     model::Tool,
     service::{RunningService, ServiceExt},
-    transport::sse::SseTransport,
+    transport::SseClientTransport,
 };
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
@@ -76,24 +76,24 @@ pub async fn connect_http_server(
 
     // Connect to the server with timeout based on transport type
     let transport_result = match transport_type {
-        TransportType::Sse => match timeout(connection_timeout, SseTransport::start(url)).await {
-            Ok(Ok(transport)) => Ok(transport),
-            Ok(Err(e)) => {
-                let error_msg = format!("Failed to create SSE transport: {e}");
-                Err(anyhow::anyhow!(error_msg))
-            }
-            Err(_) => {
-                let error_msg = format!(
-                    "Timeout creating SSE transport for server '{server_name}'"
-                );
-                tracing::warn!("{}", error_msg);
-                Err(anyhow::anyhow!(error_msg))
-            }
-        },
+        TransportType::Sse =>
+            match timeout(connection_timeout, SseClientTransport::start(url.as_str())).await {
+                Ok(Ok(transport)) => Ok(transport),
+                Ok(Err(e)) => {
+                    let error_msg = format!("Failed to create SSE transport: {e}");
+                    Err(anyhow::anyhow!(error_msg))
+                }
+                Err(_) => {
+                    let error_msg =
+                        format!("Timeout creating SSE transport for server '{server_name}'");
+                    tracing::warn!("{}", error_msg);
+                    Err(anyhow::anyhow!(error_msg))
+                }
+            },
         TransportType::StreamableHttp => {
             // Currently, we don't have a separate StreamableHttpTransport in the client
-            // So we use SseTransport for both SSE and Streamable HTTP
-            match timeout(connection_timeout, SseTransport::start(url)).await {
+            // So we use SseClientTransport for both SSE and Streamable HTTP
+            match timeout(connection_timeout, SseClientTransport::start(url.as_str())).await {
                 Ok(Ok(transport)) => Ok(transport),
                 Ok(Err(e)) => {
                     let error_msg = format!("Failed to create Streamable HTTP transport: {e}");

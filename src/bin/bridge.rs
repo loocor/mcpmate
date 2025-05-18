@@ -11,7 +11,7 @@ use rmcp::{
     },
     serve_server,
     service::{RequestContext, ServiceExt},
-    transport::{SseTransport, io},
+    transport::{SseClientTransport, io},
 };
 use tokio::sync::Mutex;
 use tracing_subscriber::{self, EnvFilter};
@@ -163,7 +163,7 @@ impl BridgeServer {
         let client_handler = BridgeClient::new();
 
         // create SSE transport
-        let sse_transport = match SseTransport::start(&self.sse_url).await {
+        let sse_transport = match SseClientTransport::start(self.sse_url.as_str()).await {
             Ok(transport) => {
                 tracing::info!("Successfully connected to SSE server");
                 transport
