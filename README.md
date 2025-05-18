@@ -38,36 +38,37 @@ One of the core components of the project is the `proxy`, a high-performance MCP
 - Minimalist design, only requires service address configuration
 - Suitable for clients that only support stdio mode (such as Claude Desktop)
 
-## Configuration File
+## Configuration Management
 
-The project uses the `mcp.json` configuration file to define server settings. The format is as follows:
+MCPMate now uses a database-driven configuration management system, centered around the concept of **Config Suits**. All server, tool, and configuration suit information is stored in a local SQLite database (`config/mcpmate.db`). This enables flexible, dynamic, and persistent management of MCP servers and tools, supporting advanced features such as multi-suit activation, scenario-based switching, and team collaboration.
 
-```json
+### Key Concepts
+
+- **Config Suit**: A configuration suit is a collection of MCP servers and tools tailored for specific scenarios or applications. Users can create, activate, and switch between multiple config suits to dynamically change the available services and tools without restarting MCPMate.
+- **Database Storage**: All configuration data is stored in structured tables (e.g., `server_config`, `server_args`, `config_suit`, etc.) within the SQLite database. Direct editing of the database is not recommended; use the provided APIs.
+- **API-Driven Management**: All configuration operations (create, update, enable/disable servers and tools, manage config suits, etc.) are performed via RESTful APIs. See [API Documentation](./src/api/README.md) for details and examples.
+- **Legacy mcp.json**: The `mcp.json` file is now only used for initial migration or backward compatibility. On first startup, if the database is empty and `mcp.json` exists, MCPMate will automatically migrate its contents to the database. Ongoing configuration should be managed via the database and APIs.
+
+#### Example: Creating a New MCP Server via API
+
+To add a new MCP server, use the following API endpoint:
+
+```http
+POST /api/mcp/servers
+Content-Type: application/json
+
 {
-  "mcpServers": {
-    "server_name": {
-      "kind": "stdio",
-      "command": "npx",
-      "commandPath": "./runtime/node-darwin-arm64/bin",  // Optional, specify the path of the command
-      "args": [
-        "--loglevel", "verbose",  // Note: parameters and values must be separated
-        "-y", "package-name"
-      ],
-      "env": {
-        "ENV_VAR": "value"
-      }
-    }
-  }
+  "name": "python-server",
+  "kind": "stdio", // or "sse", "streamable_http"
+  "command": "python", // for stdio servers
+  "url": "http://example.com/sse", // for sse/streamable_http servers
+  "args": ["-m", "mcp_server"],
+  "env": { "DEBUG": "true" },
+  "enabled": true
 }
 ```
 
-Configuration options explained:
-
-- `kind`: Server type, supports "stdio", "sse", and "streamable_http"
-- `command`: The command to execute (usually `npx`)
-- `commandPath`: (Optional) Path to the command, if specified, will be joined with `command` to form the full path
-- `args`: Array of command-line arguments. **Important**: Parameters and values must be separate array elements, e.g., `["--loglevel", "verbose"]` instead of `["--loglevel verbose"]`
-- `env`: Environment variable object
+For more details on configuration suits and API usage, see [Configuration Management](./docs/features/configuration_management.md) and [API Documentation](./src/api/README.md).
 
 ### MCPMate Desktop
 

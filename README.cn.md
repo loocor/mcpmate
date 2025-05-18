@@ -38,36 +38,37 @@ MCPMate 旨在通过集中化的配置管理、智能化的服务调度和增强
 - 极简设计，只需配置服务地址
 - 适用于仅支持stdio模式的客户端（如Claude Desktop）
 
-## 配置文件
+## 配置管理
 
-项目使用 `mcp.json` 配置文件来定义服务器设置。以下是配置文件的格式：
+MCPMate 现已采用以数据库为核心的配置管理系统，围绕“配置套装（Config Suit）”概念展开。所有服务器、工具和配置套装信息均存储在本地 SQLite 数据库（`config/mcpmate.db`）中。这种方式支持灵活、动态和持久化的服务与工具管理，具备多套装激活、场景切换、团队协作等高级能力。
 
-```json
+### 关键概念
+
+- **配置套装（Config Suit）**：配置套装是一组为特定场景或应用定制的 MCP 服务器与工具集合。用户可创建、激活和切换多个配置套装，无需重启 MCPMate 即可动态变更可用服务和工具。
+- **数据库存储**：所有配置信息均以结构化表（如 `server_config`、`server_args`、`config_suit` 等）形式存储于 SQLite 数据库中。不建议直接编辑数据库，请通过 API 管理。
+- **API 驱动管理**：所有配置操作（如创建、更新、启用/禁用服务器和工具、管理配置套装等）均通过 RESTful API 完成。详见 [API 文档](./src/api/README.md)。
+- **mcp.json 兼容说明**：`mcp.json` 文件现仅用于首次迁移或兼容旧版本。首次启动时，如数据库为空且存在 mcp.json，MCPMate 会自动迁移其内容到数据库。后续配置请通过数据库和 API 管理。
+
+#### 示例：通过 API 创建新 MCP 服务器
+
+添加新 MCP 服务器可使用如下 API 接口：
+
+```http
+POST /api/mcp/servers
+Content-Type: application/json
+
 {
-  "mcpServers": {
-    "server_name": {
-      "kind": "stdio",
-      "command": "npx",
-      "commandPath": "./runtime/node-darwin-arm64/bin",  // 可选，指定命令的路径
-      "args": [
-        "--loglevel", "verbose",  // 注意：参数和值必须分开
-        "-y", "package-name"
-      ],
-      "env": {
-        "ENV_VAR": "value"
-      }
-    }
-  }
+  "name": "python-server",
+  "kind": "stdio", // 或 "sse", "streamable_http"
+  "command": "python", // stdio 服务器用
+  "url": "http://example.com/sse", // sse/streamable_http 服务器用
+  "args": ["-m", "mcp_server"],
+  "env": { "DEBUG": "true" },
+  "enabled": true
 }
 ```
 
-配置选项说明：
-
-- `kind`: 服务器类型，支持 "stdio"、"sse" 和 "streamable_http"
-- `command`: 要执行的命令（通常是 `npx`）
-- `commandPath`: （可选）命令的路径，如果指定，将与 `command` 拼接形成完整路径
-- `args`: 命令行参数数组。**重要**：参数和值必须作为单独的数组元素，例如 `["--loglevel", "verbose"]` 而不是 `["--loglevel verbose"]`
-- `env`: 环境变量对象
+更多关于配置套装和 API 用法，详见 [配置管理](./docs/features/configuration_management.md) 和 [API 文档](./src/api/README.md)。
 
 ### MCPMate Desktop
 
