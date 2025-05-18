@@ -259,36 +259,3 @@ pub async fn read_config(path: &PathBuf) -> Result<ServerConfig> {
     // Implementation
 }
 ```
-
-## Commit Conventions
-
-Follow conventional commits pattern:
-
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation change
-- `style:` - Formatting, missing semicolons, etc.
-- `refactor:` - Code change that neither fixes a bug nor adds a feature
-- `perf:` - Performance improvement
-- `test:` - Adding or updating tests
-- `chore:` - Changes to build process or auxiliary tools
-
-Example:
-```
-Feature: Expand MCP API documentation with detailed instance and system management
-
-Where:
-- Updated README.md files across the API, handlers, models, and routes directories to include comprehensive details on new instance and system management functionalities.
-- Added specific sections for MCP handlers, models, and routes to clarify the operations available for managing servers and instances.
-
-Why:
-- To enhance the clarity and usability of the API documentation, ensuring users can easily understand and utilize the new features.
-
-What:
-- Documented new API endpoints for instance management, including listing, retrieving, and managing instance health.
-- Provided detailed descriptions of the handlers and models associated with MCP server and instance management.
-- Updated routing information to reflect the new structure and capabilities of the API.
-
-Issues:
-- This documentation update supports ongoing development and user engagement by providing clear guidance on the API's capabilities.
-```
