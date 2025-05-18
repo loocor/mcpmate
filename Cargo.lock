@@ -2579,7 +2579,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2858,7 +2858,6 @@ dependencies = [
 [[package]]
 name = "rmcp"
 version = "0.1.5"
-source = "git+https://github.com/modelcontextprotocol/rust-sdk?branch=main#9a771fb157056b4daa332626b2fa41b16a523756"
 dependencies = [
  "axum 0.8.4",
  "base64 0.21.7",
@@ -2878,14 +2877,12 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
- "url",
  "uuid",
 ]
 
 [[package]]
 name = "rmcp-macros"
 version = "0.1.5"
-source = "git+https://github.com/modelcontextprotocol/rust-sdk?branch=main#9a771fb157056b4daa332626b2fa41b16a523756"
 dependencies = [
  "proc-macro2",
  "quote",
