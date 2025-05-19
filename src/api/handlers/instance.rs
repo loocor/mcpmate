@@ -11,7 +11,7 @@ use axum::{
 use super::ApiError;
 use crate::{
     api::{
-        models::mcp::{InstanceHealthResponse, OperationResponse, ServerInstanceResponse},
+        models::server::{InstanceHealthResponse, OperationResponse, ServerInstanceResponse},
         routes::AppState,
     },
     core::types::{ConnectionStatus, ErrorType},
@@ -42,7 +42,7 @@ pub async fn get_instance(
     let conn = pool.get_instance(&name, &id)?;
 
     // Create instance details
-    let details = crate::api::models::mcp::ServerInstanceDetails {
+    let details = crate::api::models::server::ServerInstanceDetails {
         connection_attempts: conn.connection_attempts,
         last_connected_seconds: if conn.is_connected() {
             Some(conn.time_since_last_connection().as_secs())

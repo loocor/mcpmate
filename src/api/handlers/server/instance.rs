@@ -48,7 +48,7 @@ pub async fn list_instances(
                 None
             };
 
-            crate::api::models::mcp::ServerInstanceSummary {
+            crate::api::models::server::ServerInstanceSummary {
                 id: id.clone(),
                 status: conn.status_string(),
                 started_at: Some(

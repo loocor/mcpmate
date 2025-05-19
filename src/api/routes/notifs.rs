@@ -10,9 +10,9 @@ use crate::api::handlers::notifs;
 
 /// Create notification routes
 pub fn routes(state: Arc<AppState>) -> Router {
-    let notifications_router = Router::new()
+    let notifs_router = Router::new()
         .route("/tools/changed", post(notifs::notify_tools_changed))
         .with_state(state);
 
-    Router::new().nest("/api/notifications", notifications_router)
+    Router::new().nest("/api/notifs", notifs_router)
 }

@@ -35,7 +35,7 @@ pub(crate) mod common {
     pub use crate::{
         api::{
             handlers::ApiError,
-            models::suit::{
+            models::suits::{
                 BatchOperationRequest, BatchOperationResponse, ConfigSuitListResponse,
                 ConfigSuitResponse, ConfigSuitServerResponse, ConfigSuitServersResponse,
                 ConfigSuitToolResponse, ConfigSuitToolsResponse, CreateConfigSuitRequest,

@@ -27,7 +27,7 @@ pub(crate) mod common {
     pub use crate::{
         api::{
             handlers::ApiError,
-            models::mcp::{
+            models::server::{
                 CreateServerRequest, ImportServersRequest, ImportServersResponse,
                 OperationResponse, ServerInstanceSummary, ServerInstancesResponse,
                 ServerListResponse, ServerResponse, UpdateServerRequest,
