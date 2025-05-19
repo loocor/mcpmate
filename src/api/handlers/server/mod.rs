@@ -4,7 +4,7 @@
 // Re-export all public functions from submodules
 pub use self::{
     basic::{get_server, list_servers},
-    crud::{create_server, import_servers, update_server},
+    crud::{create_server, delete_server, import_servers, update_server},
     instance::list_instances,
     mgmt::{disable_server, enable_server},
 };

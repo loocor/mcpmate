@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
 };
 
 use super::AppState;
@@ -19,6 +19,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/import", post(server::import_servers))
         .route("/{name}", get(server::get_server))
         .route("/{name}", put(server::update_server))
+        .route("/{name}", delete(server::delete_server))
         .route("/{name}/enable", post(server::enable_server))
         .route("/{name}/disable", post(server::disable_server))
         .route("/{name}/instances", get(server::list_instances));

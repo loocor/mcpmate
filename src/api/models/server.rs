@@ -48,8 +48,43 @@ pub struct ServerResponse {
     pub name: String,
     /// Is enabled in configuration
     pub enabled: bool,
+    /// Server type (stdio, sse, streamable_http)
+    pub server_type: String,
+    /// Command to execute (for stdio servers)
+    pub command: Option<String>,
+    /// URL (for sse and streamable_http servers)
+    pub url: Option<String>,
+    /// Arguments to pass to the command (for stdio servers)
+    pub args: Option<Vec<String>>,
+    /// Environment variables to set (for stdio servers)
+    pub env: Option<HashMap<String, String>>,
+    /// Server metadata
+    pub meta: Option<ServerMetaInfo>,
+    /// When the configuration was created
+    pub created_at: Option<String>,
+    /// When the configuration was last updated
+    pub updated_at: Option<String>,
     /// Summary of instances
     pub instances: Vec<ServerInstanceSummary>,
+}
+
+/// Server Metadata Information
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServerMetaInfo {
+    /// Description of the server
+    pub description: Option<String>,
+    /// Author of the server
+    pub author: Option<String>,
+    /// Website of the server
+    pub website: Option<String>,
+    /// Repository URL of the server
+    pub repository: Option<String>,
+    /// Category of the server
+    pub category: Option<String>,
+    /// Recommended scenario for the server
+    pub recommended_scenario: Option<String>,
+    /// Rating of the server (1-5)
+    pub rating: Option<i32>,
 }
 
 /// Server Instances Response

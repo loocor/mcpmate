@@ -105,7 +105,15 @@ impl UpstreamConnectionPool {
 
         // Get the server type
         let server_type = {
-            let server_config = self.config.mcp_servers.get(server_name).unwrap();
+            let server_config = match self.config.mcp_servers.get(server_name) {
+                Some(config) => config,
+                None => {
+                    let error_msg = format!("Server configuration for '{}' not found", server_name);
+                    let conn = self.get_instance_mut(server_name, instance_id)?;
+                    conn.update_failed(error_msg.clone());
+                    return Err(anyhow::anyhow!(error_msg));
+                }
+            };
             server_config.kind.clone()
         };
 
@@ -191,7 +199,15 @@ impl UpstreamConnectionPool {
         instance_id: &str,
     ) -> Result<()> {
         // Get server configuration
-        let server_config = self.config.mcp_servers.get(server_name).unwrap();
+        let server_config = match self.config.mcp_servers.get(server_name) {
+            Some(config) => config,
+            None => {
+                let error_msg = format!("Server configuration for '{}' not found", server_name);
+                let conn = self.get_instance_mut(server_name, instance_id)?;
+                conn.update_failed(error_msg.clone());
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         // Create a new cancellation token
         let ct = CancellationToken::new();
@@ -246,7 +262,15 @@ impl UpstreamConnectionPool {
         instance_id: &str,
     ) -> Result<()> {
         // Get server configuration
-        let server_config = self.config.mcp_servers.get(server_name).unwrap();
+        let server_config = match self.config.mcp_servers.get(server_name) {
+            Some(config) => config,
+            None => {
+                let error_msg = format!("Server configuration for '{}' not found", server_name);
+                let conn = self.get_instance_mut(server_name, instance_id)?;
+                conn.update_failed(error_msg.clone());
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         // Get transport type
         let transport_type = server_config.get_transport_type();

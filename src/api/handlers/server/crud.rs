@@ -3,7 +3,7 @@
 
 use super::{common::*, instance::list_instances};
 use crate::{
-    api::handlers::ApiError,
+    api::{handlers::ApiError, models::server::ServerMetaInfo},
     conf::{
         database::Database,
         models::{ConfigSuit, ConfigSuitType, ServerMeta},
@@ -197,8 +197,16 @@ pub async fn create_server(
 
     // Return success response
     Ok(Json(ServerResponse {
-        name: payload.name,
+        name: payload.name.clone(),
         enabled,
+        server_type: payload.kind.clone(),
+        command: payload.command.clone(),
+        url: payload.url.clone(),
+        args: payload.args.clone(),
+        env: payload.env.clone(),
+        meta: None, // No metadata yet
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
         instances: Vec::new(), // No instances yet
     }))
 }
@@ -320,10 +328,91 @@ pub async fn update_server(
         Err(_) => Vec::new(), // No instances or error
     };
 
+    // Get server ID
+    let server_id = updated_server.id.clone().unwrap_or_default();
+
+    // Get server arguments if available
+    let args = if !server_id.is_empty() {
+        match crate::conf::operations::get_server_args(&db.pool, &server_id).await {
+            Ok(server_args) => {
+                if server_args.is_empty() {
+                    None
+                } else {
+                    // Sort arguments by index and collect values
+                    let mut sorted_args: Vec<_> = server_args.into_iter().collect();
+                    sorted_args.sort_by_key(|arg| arg.arg_index);
+                    Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect())
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get arguments for server '{}': {}", name, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Get server environment variables if available
+    let env = if !server_id.is_empty() {
+        match crate::conf::operations::get_server_env(&db.pool, &server_id).await {
+            Ok(env_map) =>
+                if env_map.is_empty() {
+                    None
+                } else {
+                    Some(env_map)
+                },
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get environment variables for server '{}': {}",
+                    name,
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Get server metadata if available
+    let meta = if !server_id.is_empty() {
+        match crate::conf::operations::get_server_meta(&db.pool, &server_id).await {
+            Ok(Some(server_meta)) => Some(ServerMetaInfo {
+                description: server_meta.description,
+                author: server_meta.author,
+                website: server_meta.website,
+                repository: server_meta.repository,
+                category: server_meta.category,
+                recommended_scenario: server_meta.recommended_scenario,
+                rating: server_meta.rating,
+            }),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!("Failed to get metadata for server '{}': {}", name, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Format timestamps
+    let created_at = updated_server.created_at.map(|dt| dt.to_rfc3339());
+    let updated_at = updated_server.updated_at.map(|dt| dt.to_rfc3339());
+
     // Return success response
     Ok(Json(ServerResponse {
         name,
         enabled: payload.enabled.unwrap_or(true), // Default to true if not provided
+        server_type: updated_server.server_type.clone(), // Use the existing or updated server type
+        command: updated_server.command.clone(),
+        url: updated_server.url.clone(),
+        args,
+        env,
+        meta,
+        created_at,
+        updated_at,
         instances: instances_response,
     }))
 }
@@ -419,5 +508,183 @@ pub async fn import_servers(
         imported_count: imported_servers.len(),
         imported_servers,
         failed_servers,
+    }))
+}
+
+/// Delete an existing MCP server
+pub async fn delete_server(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<OperationResponse>, ApiError> {
+    // Get database reference
+    let db = get_database_from_state(&state)?;
+
+    // Check if the server exists
+    let existing_server = crate::conf::operations::get_server(&db.pool, &name)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to check server: {e}")))?;
+
+    let existing_server = match existing_server {
+        Some(server) => server,
+        None => {
+            return Err(ApiError::NotFound(format!("Server '{name}' not found")));
+        }
+    };
+
+    // Get the server ID
+    let server_id = match &existing_server.id {
+        Some(id) => id.clone(),
+        None => {
+            return Err(ApiError::InternalError("Server ID not found".to_string()));
+        }
+    };
+
+    // First, disconnect all instances of this server if it's in the connection pool
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
+
+    if let Ok(mut pool) = pool_result {
+        // Check if the server exists in the connection pool
+        if let Some(instances) = pool.connections.get(&name) {
+            // Get all instance IDs first to avoid borrowing issues
+            let instance_ids: Vec<String> = instances.keys().cloned().collect();
+
+            // Disconnect each instance
+            for instance_id in instance_ids {
+                if let Err(e) = pool.disconnect(&name, &instance_id).await {
+                    tracing::warn!(
+                        "Failed to disconnect instance '{}' of server '{}': {}",
+                        instance_id,
+                        name,
+                        e
+                    );
+                    // Continue anyway, we still want to delete the server
+                }
+            }
+        }
+    } else {
+        tracing::warn!(
+            "Timed out waiting for connection pool lock, proceeding with server deletion anyway"
+        );
+    }
+
+    // Start a transaction for deleting all related records
+    let mut tx = db
+        .pool
+        .begin()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to begin transaction: {e}")))?;
+
+    // 1. Delete server from all config suits
+    // First, get all config suits that contain this server
+    let config_suits = crate::conf::operations::get_all_config_suits(&db.pool)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get config suits: {e}")))?;
+
+    for suit in config_suits {
+        if let Some(suit_id) = &suit.id {
+            // Delete server from this config suit
+            sqlx::query(
+                r#"
+                DELETE FROM config_suit_server
+                WHERE config_suit_id = ? AND server_id = ?
+                "#,
+            )
+            .bind(suit_id)
+            .bind(&server_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                ApiError::InternalError(format!("Failed to delete server from config suit: {e}"))
+            })?;
+
+            // Delete all tools associated with this server from this config suit
+            sqlx::query(
+                r#"
+                DELETE FROM config_suit_tool
+                WHERE config_suit_id = ? AND server_id = ?
+                "#,
+            )
+            .bind(suit_id)
+            .bind(&server_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                ApiError::InternalError(format!(
+                    "Failed to delete server tools from config suit: {e}"
+                ))
+            })?;
+        }
+    }
+
+    // 2. Delete server metadata
+    sqlx::query(
+        r#"
+        DELETE FROM server_meta
+        WHERE server_id = ?
+        "#,
+    )
+    .bind(&server_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::InternalError(format!("Failed to delete server metadata: {e}")))?;
+
+    // 3. Delete server environment variables
+    sqlx::query(
+        r#"
+        DELETE FROM server_env
+        WHERE server_id = ?
+        "#,
+    )
+    .bind(&server_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        ApiError::InternalError(format!(
+            "Failed to delete server environment variables: {e}"
+        ))
+    })?;
+
+    // 4. Delete server arguments
+    sqlx::query(
+        r#"
+        DELETE FROM server_args
+        WHERE server_id = ?
+        "#,
+    )
+    .bind(&server_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::InternalError(format!("Failed to delete server arguments: {e}")))?;
+
+    // 5. Finally, delete the server itself
+    sqlx::query(
+        r#"
+        DELETE FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(&server_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::InternalError(format!("Failed to delete server: {e}")))?;
+
+    // Commit the transaction
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to commit transaction: {e}")))?;
+
+    tracing::info!("Successfully deleted server '{}'", name);
+
+    // Return success response
+    Ok(Json(OperationResponse {
+        id: server_id,
+        name,
+        result: "Successfully deleted server".to_string(),
+        status: "Deleted".to_string(),
+        allowed_operations: Vec::new(), // No operations allowed on deleted server
     }))
 }

@@ -45,6 +45,14 @@ impl UpstreamConnectionPool {
         }
     }
 
+    /// Update the configuration
+    pub fn set_config(
+        &mut self,
+        config: Arc<Config>,
+    ) {
+        self.config = config;
+    }
+
     /// Initialize the connection pool with all servers
     pub fn initialize(&mut self) {
         for name in self.config.mcp_servers.keys() {

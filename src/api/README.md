@@ -44,6 +44,22 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     {
       "name": "string",
       "enabled": boolean,
+      "server_type": "string",
+      "command": "string (optional, for stdio servers)",
+      "url": "string (optional, for sse and streamable_http servers)",
+      "args": ["string", "..."] (optional, for stdio servers),
+      "env": { "key": "value", ... } (optional, for stdio servers),
+      "meta": {
+        "description": "string (optional)",
+        "author": "string (optional)",
+        "website": "string (optional)",
+        "repository": "string (optional)",
+        "category": "string (optional)",
+        "recommended_scenario": "string (optional)",
+        "rating": number (optional)
+      } (optional),
+      "created_at": "string (ISO 8601 format, optional)",
+      "updated_at": "string (ISO 8601 format, optional)",
       "instances": [] // Empty array for new servers
     }
     ```
@@ -112,6 +128,22 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     {
       "name": "string",
       "enabled": boolean,
+      "server_type": "string",
+      "command": "string (optional, for stdio servers)",
+      "url": "string (optional, for sse and streamable_http servers)",
+      "args": ["string", "..."] (optional, for stdio servers),
+      "env": { "key": "value", ... } (optional, for stdio servers),
+      "meta": {
+        "description": "string (optional)",
+        "author": "string (optional)",
+        "website": "string (optional)",
+        "repository": "string (optional)",
+        "category": "string (optional)",
+        "recommended_scenario": "string (optional)",
+        "rating": number (optional)
+      } (optional),
+      "created_at": "string (ISO 8601 format, optional)",
+      "updated_at": "string (ISO 8601 format, optional)",
       "instances": [
         {
           "id": "string",

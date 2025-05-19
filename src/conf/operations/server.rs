@@ -6,7 +6,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
 
-use crate::conf::models::{Server, ServerArg, ServerEnv, ServerMeta};
+use crate::conf::{
+    models::{Server, ServerArg, ServerEnv, ServerMeta},
+    operations::utils::{get_server_name, get_server_name_with_tx},
+};
 
 /// Get all servers from the database
 pub async fn get_all_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
@@ -218,14 +221,14 @@ pub async fn upsert_server_args(
     );
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-    upsert_server_args_tx(&mut tx, server_id, args).await?;
+    upsert_server_args_inner(&mut tx, server_id, args).await?;
     tx.commit().await.context("Failed to commit transaction")?;
 
     Ok(())
 }
 
-/// Create or update server arguments in the database (transaction version)
-pub async fn upsert_server_args_tx(
+/// Core logic for upserting server arguments, used internally with a transaction
+async fn upsert_server_args_inner(
     tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
     args: &[String],
@@ -242,27 +245,8 @@ pub async fn upsert_server_args_tx(
     .await
     .context("Failed to delete existing server arguments")?;
 
-    // Get the server name
-    let server_name = match sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT name FROM server_config
-        WHERE id = ?
-        "#,
-    )
-    .bind(server_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .context("Failed to get server name")?
-    {
-        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
-        None => {
-            tracing::warn!(
-                "Server ID {} not found, using 'unknown' as server_name",
-                server_id
-            );
-            "unknown".to_string()
-        }
-    };
+    // Get the server name using transaction
+    let server_name = get_server_name_with_tx(tx, server_id).await?;
 
     // Insert new arguments
     for (index, arg) in args.iter().enumerate() {
@@ -335,14 +319,14 @@ pub async fn upsert_server_env(
     );
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-    upsert_server_env_tx(&mut tx, server_id, env).await?;
+    upsert_server_env_inner(&mut tx, server_id, env).await?;
     tx.commit().await.context("Failed to commit transaction")?;
 
     Ok(())
 }
 
-/// Create or update server environment variables in the database (transaction version)
-pub async fn upsert_server_env_tx(
+/// Core logic for upserting server environment variables, used internally with a transaction
+async fn upsert_server_env_inner(
     tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
     env: &HashMap<String, String>,
@@ -359,27 +343,8 @@ pub async fn upsert_server_env_tx(
     .await
     .context("Failed to delete existing server environment variables")?;
 
-    // Get the server name
-    let server_name = match sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT name FROM server_config
-        WHERE id = ?
-        "#,
-    )
-    .bind(server_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .context("Failed to get server name")?
-    {
-        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
-        None => {
-            tracing::warn!(
-                "Server ID {} not found, using 'unknown' as server_name",
-                server_id
-            );
-            "unknown".to_string()
-        }
-    };
+    // Get the server name using transaction
+    let server_name = get_server_name_with_tx(tx, server_id).await?;
 
     // Insert new environment variables
     for (key, value) in env {
@@ -450,26 +415,7 @@ pub async fn upsert_server_meta(
     };
 
     // Get the server name
-    let server_name = match sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT name FROM server_config
-        WHERE id = ?
-        "#,
-    )
-    .bind(&meta.server_id)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to get server name")?
-    {
-        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
-        None => {
-            tracing::warn!(
-                "Server ID {} not found, using 'unknown' as server_name",
-                meta.server_id
-            );
-            "unknown".to_string()
-        }
-    };
+    let server_name = get_server_name(pool, &meta.server_id).await?;
 
     let result = sqlx::query(
         r#"
@@ -667,4 +613,99 @@ async fn get_enabled_servers_from_suit(
     );
 
     Ok(enabled_servers)
+}
+
+/// Check if a server is enabled in any active config suit
+///
+/// This function checks if a server is enabled in any active config suit.
+/// Returns true if the server is enabled in at least one active suit, false otherwise.
+pub async fn is_server_enabled_in_any_suit(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<bool> {
+    // Get all active config suits
+    let active_suits = crate::conf::operations::suit::get_active_config_suits(pool).await?;
+
+    // If there are no active suits, try to get the default suit
+    if active_suits.is_empty() {
+        let default_suit = crate::conf::operations::suit::get_default_config_suit(pool).await?;
+
+        // If there's no default suit, try the legacy "default" named suit
+        if default_suit.is_none() {
+            let legacy_default =
+                crate::conf::operations::get_config_suit_by_name(pool, "default").await?;
+
+            // If there's no legacy default suit either, return false (not enabled)
+            if legacy_default.is_none() {
+                tracing::debug!("No active or default config suits found, server is not enabled");
+                return Ok(false);
+            }
+
+            // Use the legacy default suit
+            let suit_id = legacy_default.unwrap().id.unwrap();
+            return is_server_enabled_in_suit(pool, server_id, &suit_id).await;
+        }
+
+        // Use the default suit
+        let suit_id = default_suit.unwrap().id.unwrap();
+        return is_server_enabled_in_suit(pool, server_id, &suit_id).await;
+    }
+
+    // Check each active suit
+    for suit in active_suits {
+        if let Some(suit_id) = &suit.id {
+            if is_server_enabled_in_suit(pool, server_id, suit_id).await? {
+                return Ok(true);
+            }
+        }
+    }
+
+    // Server is not enabled in any active suit
+    Ok(false)
+}
+
+/// Check if a server is enabled in a specific config suit
+///
+/// This function checks if a server is enabled in a specific config suit.
+/// Returns true if the server is enabled in the suit, false otherwise.
+async fn is_server_enabled_in_suit(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    suit_id: &str,
+) -> Result<bool> {
+    // Get all server configs in this suit
+    let server_configs = crate::conf::operations::get_config_suit_servers(pool, suit_id).await?;
+
+    // Check if the server is enabled in this suit
+    for server_config in server_configs {
+        if server_config.server_id == server_id {
+            return Ok(server_config.enabled);
+        }
+    }
+
+    // Server is not in this suit, so it's not enabled
+    Ok(false)
+}
+
+/// Check if a server is in a specific config suit
+///
+/// This function checks if a server is in a specific config suit, regardless of enabled status.
+/// Returns true if the server is in the suit, false otherwise.
+pub async fn is_server_in_suit(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    suit_id: &str,
+) -> Result<bool> {
+    // Get all server configs in this suit
+    let server_configs = crate::conf::operations::get_config_suit_servers(pool, suit_id).await?;
+
+    // Check if the server is in this suit
+    for server_config in server_configs {
+        if server_config.server_id == server_id {
+            return Ok(true);
+        }
+    }
+
+    // Server is not in this suit
+    Ok(false)
 }

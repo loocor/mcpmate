@@ -1,120 +1,371 @@
 // MCPMate Proxy API handlers for MCP server management operations
 // Contains handler functions for enabling and disabling servers
+//
+// Server Status Synchronization Policy:
+// 1. API operations have priority over config suit settings
+// 2. When a server is disabled via API, it is disabled in all config suits
+// 3. When a server is enabled via API, it is only enabled in the default config suit
+// 4. Changes to server status in config suits trigger connection/disconnection operations
+// 5. This creates a one-way synchronization where API operations take priority
 
-use super::{common::*, instance::list_instances};
+use sqlx::{Pool, Sqlite};
+
+use super::common::*;
+
+// Helper functions for server management operations
+
+/// Get database reference from AppState
+async fn get_database(
+    state: &Arc<AppState>
+) -> Result<Arc<crate::conf::database::Database>, ApiError> {
+    match state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
+        Some(db) => Ok(db),
+        None => Err(ApiError::InternalError(
+            "Database not available".to_string(),
+        )),
+    }
+}
+
+/// Get server information by name
+async fn get_server_info(
+    pool: &Pool<Sqlite>,
+    server_name: &str,
+) -> Result<(crate::conf::models::Server, String), ApiError> {
+    // Get the server
+    let server = crate::conf::operations::get_server(pool, server_name)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
+
+    let server = match server {
+        Some(server) => server,
+        None => {
+            return Err(ApiError::NotFound(format!(
+                "Server '{server_name}' not found"
+            )));
+        }
+    };
+
+    let server_id = match &server.id {
+        Some(id) => id.clone(),
+        None => {
+            return Err(ApiError::InternalError(format!(
+                "Server '{}' has no ID",
+                server_name
+            )));
+        }
+    };
+
+    Ok((server, server_id))
+}
+
+/// Get or create default config suit
+async fn get_or_create_default_suit(pool: &Pool<Sqlite>) -> Result<String, ApiError> {
+    // Get or create the default config suit
+    let default_suit = crate::conf::operations::get_config_suit_by_name(pool, "default")
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get default config suit: {e}")))?;
+
+    let suit_id = if let Some(suit) = default_suit {
+        suit.id.unwrap()
+    } else {
+        // Create default config suit if it doesn't exist
+        let new_suit = crate::conf::models::ConfigSuit::new(
+            "default".to_string(),
+            crate::conf::models::ConfigSuitType::Shared,
+        );
+        crate::conf::operations::upsert_config_suit(pool, &new_suit)
+            .await
+            .map_err(|e| {
+                ApiError::InternalError(format!("Failed to create default config suit: {e}"))
+            })?
+    };
+
+    Ok(suit_id)
+}
+
+/// Update server status in config suit
+async fn update_server_in_suit(
+    pool: &Pool<Sqlite>,
+    suit_id: &str,
+    server_id: &str,
+    enabled: bool,
+) -> Result<(), ApiError> {
+    crate::conf::operations::add_server_to_config_suit(pool, suit_id, server_id, enabled)
+        .await
+        .map_err(|e| {
+            ApiError::InternalError(format!(
+                "Failed to {} server in config suit: {e}",
+                if enabled { "enable" } else { "disable" }
+            ))
+        })?;
+
+    Ok(())
+}
+
+/// Disable server in all active config suits
+async fn disable_server_in_all_suits(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+) -> Result<(), ApiError> {
+    // Get all active config suits
+    let active_suits = crate::conf::operations::suit::get_active_config_suits(pool)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get active config suits: {e}")))?;
+
+    // Disable the server in all active config suits
+    for suit in active_suits {
+        if let Some(suit_id) = &suit.id {
+            // Check if the server is in this suit
+            let server_in_suit =
+                crate::conf::operations::is_server_in_suit(pool, server_id, suit_id)
+                    .await
+                    .map_err(|e| {
+                        ApiError::InternalError(format!(
+                            "Failed to check if server is in suit: {e}"
+                        ))
+                    })?;
+
+            if server_in_suit {
+                // Disable the server in this suit
+                update_server_in_suit(pool, suit_id, server_id, false).await?;
+
+                tracing::info!(
+                    "Disabled server '{}' in config suit '{}'",
+                    server_name,
+                    suit.name
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Sync server connections
+async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> {
+    if let Some(merge_service) = &state.suit_merge_service {
+        if let Err(e) = merge_service.sync_server_connections(state).await {
+            tracing::error!("Failed to sync server connections: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Get connection pool with timeout
+async fn get_connection_pool(
+    state: &Arc<AppState>
+) -> Result<tokio::sync::MutexGuard<crate::http::pool::UpstreamConnectionPool>, ApiError> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await
+    {
+        Ok(pool) => Ok(pool),
+        Err(_) => Err(ApiError::InternalError(
+            "Timed out waiting for connection pool lock".to_string(),
+        )),
+    }
+}
+
+/// Create operation response
+fn create_operation_response(
+    id: String,
+    name: String,
+    result: String,
+    status: String,
+    is_enabled: bool,
+) -> Result<Json<OperationResponse>, ApiError> {
+    let allowed_operations = if is_enabled {
+        vec!["disable".to_string()]
+    } else {
+        vec!["enable".to_string()]
+    };
+
+    Ok(Json(OperationResponse {
+        id,
+        name,
+        result,
+        status,
+        allowed_operations,
+    }))
+}
 
 /// Enable a server by reconnecting existing instances or creating a new one if needed
 pub async fn enable_server(
     state: State<Arc<AppState>>,
     Path(server_name): Path<String>,
 ) -> Result<Json<OperationResponse>, ApiError> {
-    // call list_instances to check if there are any instance records
-    let instances_response = list_instances(state.clone(), Path(server_name.clone())).await?;
-    let instances = instances_response.0.instances;
+    // Get database reference
+    let db = get_database(&state).await?;
 
-    // Update config_suit to enable server
-    if let Some(db) = &state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
-        // Get the server ID
-        let server = crate::conf::operations::get_server(&db.pool, &server_name)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
+    // Get the server information
+    let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
-        if let Some(server) = server {
-            if let Some(server_id) = server.id {
-                // Get or create the default config suit
-                let default_suit =
-                    crate::conf::operations::get_config_suit_by_name(&db.pool, "default")
-                        .await
-                        .map_err(|e| {
-                            ApiError::InternalError(format!(
-                                "Failed to get default config suit: {e}"
-                            ))
-                        })?;
+    // Get or create the default config suit
+    let suit_id = get_or_create_default_suit(&db.pool).await?;
 
-                let suit_id = if let Some(suit) = default_suit {
-                    suit.id.unwrap()
-                } else {
-                    // Create default config suit if it doesn't exist
-                    let new_suit = crate::conf::models::ConfigSuit::new(
-                        "default".to_string(),
-                        crate::conf::models::ConfigSuitType::Shared,
+    // Enable the server in the config suit
+    update_server_in_suit(&db.pool, &suit_id, &server_id, true).await?;
+    tracing::info!("Enabled server '{}' in default config suit", server_name);
+
+    // Sync server connections
+    sync_server_connections(&state).await?;
+
+    // Get connection pool
+    let mut pool = get_connection_pool(&state).await?;
+
+    // Load the server configuration from the database
+    // This will update the connection pool's configuration with the latest server information
+    if let Some(http_proxy) = &state.http_proxy {
+        if let Some(db) = &http_proxy.database {
+            // Load server configuration from database
+            match crate::core::loader::load_server_config(db).await {
+                Ok(config) => {
+                    // Create a new Config with the loaded configuration
+                    let new_config = std::sync::Arc::new(config);
+
+                    // Update the connection pool's configuration
+                    pool.set_config(new_config);
+
+                    tracing::info!(
+                        "Updated connection pool configuration with latest server information"
                     );
-                    crate::conf::operations::upsert_config_suit(&db.pool, &new_suit)
-                        .await
-                        .map_err(|e| {
-                            ApiError::InternalError(format!(
-                                "Failed to create default config suit: {e}"
-                            ))
-                        })?
-                };
-
-                // Enable the server in the config suit
-                crate::conf::operations::add_server_to_config_suit(
-                    &db.pool, &suit_id, &server_id, true,
-                )
-                .await
-                .map_err(|e| {
-                    ApiError::InternalError(format!(
-                        "Failed to enable server in config suit: {e}"
-                    ))
-                })?;
-
-                tracing::info!("Enabled server '{}' in default config suit", server_name);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load server configuration: {}", e);
+                }
             }
         }
     }
 
-    if instances.is_empty() {
-        // no instance records, return error
-        return Err(ApiError::NotFound(format!(
-            "No instances found for server '{server_name}'"
-        )));
-    }
+    // Check if the server exists in the connection pool
+    if !pool.connections.contains_key(&server_name) {
+        // Server not in connection pool, add it
+        let connection = crate::core::UpstreamConnection::new(server_name.clone());
+        let instance_id = connection.id.clone();
 
-    // find if there is a ready instance
-    let ready_instance = instances.iter().find(|instance| instance.status == "Ready");
+        // Add to connection pool
+        pool.connections
+            .entry(server_name.clone())
+            .or_insert_with(std::collections::HashMap::new)
+            .insert(instance_id.clone(), connection);
 
-    if let Some(instance) = ready_instance {
-        // already has a ready instance, return success
-        return Ok(Json(OperationResponse {
-            id: instance.id.clone(),
-            name: server_name,
-            result: format!("Server already enabled with instance '{}'", instance.id),
-            status: instance.status.clone(),
-            allowed_operations: vec!["disable".to_string()],
-        }));
-    }
+        // Try to connect
+        if let Err(e) = pool.connect(&server_name, &instance_id).await {
+            tracing::warn!("Failed to connect to server '{}': {}", server_name, e);
 
-    // no ready instance, try to reconnect the first instance
-    let first_instance = &instances[0];
-
-    // call reset_reconnect to reconnect
-    match crate::api::handlers::instance::reset_reconnect(
-        state.clone(),
-        Path((server_name.clone(), first_instance.id.clone())),
-    )
-    .await
-    {
-        Ok(response) => {
-            // successfully reconnected
-            Ok(Json(OperationResponse {
-                id: first_instance.id.clone(),
-                name: server_name,
-                result: format!(
-                    "Successfully enabled server by reconnecting instance '{}'",
-                    first_instance.id
+            // Return success anyway, as the server is now enabled in the config suit
+            return create_operation_response(
+                instance_id,
+                server_name,
+                format!(
+                    "Server enabled in configuration but connection failed: {}",
+                    e
                 ),
-                status: response.0.status,
-                allowed_operations: vec!["disable".to_string()],
-            }))
+                "Enabled (Connection Failed)".to_string(),
+                true,
+            );
         }
-        Err(e) => {
-            // failed to reconnect
-            Err(ApiError::BadRequest(format!(
-                "Failed to enable server: {e}"
-            )))
-        }
+
+        // Successfully connected
+        return create_operation_response(
+            instance_id,
+            server_name,
+            "Successfully enabled server with new connection".to_string(),
+            "Enabled".to_string(),
+            true,
+        );
     }
+
+    // Server exists in connection pool, check instances
+    let instances = pool.connections.get(&server_name).unwrap();
+
+    // If there are no instances, create one
+    if instances.is_empty() {
+        let connection = crate::core::UpstreamConnection::new(server_name.clone());
+        let instance_id = connection.id.clone();
+
+        // Add to connection pool
+        pool.connections
+            .get_mut(&server_name)
+            .unwrap()
+            .insert(instance_id.clone(), connection);
+
+        // Try to connect
+        if let Err(e) = pool.connect(&server_name, &instance_id).await {
+            tracing::warn!("Failed to connect to server '{}': {}", server_name, e);
+
+            // Return success anyway, as the server is now enabled in the config suit
+            return create_operation_response(
+                instance_id,
+                server_name,
+                format!(
+                    "Server enabled in configuration but connection failed: {}",
+                    e
+                ),
+                "Enabled (Connection Failed)".to_string(),
+                true,
+            );
+        }
+
+        // Successfully connected
+        return create_operation_response(
+            instance_id,
+            server_name,
+            "Successfully enabled server with new connection".to_string(),
+            "Enabled".to_string(),
+            true,
+        );
+    }
+
+    // Check if there's already a ready instance
+    let ready_instance = instances
+        .iter()
+        .find(|(_, conn)| conn.is_connected())
+        .map(|(id, _)| id.clone());
+
+    if let Some(instance_id) = ready_instance {
+        // Already has a ready instance, return success
+        return create_operation_response(
+            instance_id,
+            server_name,
+            "Server already enabled with active connection".to_string(),
+            "Enabled".to_string(),
+            true,
+        );
+    }
+
+    // No ready instance, try to reconnect the first instance
+    let first_instance_id = instances.keys().next().unwrap().clone();
+
+    // Try to connect
+    if let Err(e) = pool.connect(&server_name, &first_instance_id).await {
+        tracing::warn!("Failed to connect to server '{}': {}", server_name, e);
+
+        // Return success anyway, as the server is now enabled in the config suit
+        return create_operation_response(
+            first_instance_id,
+            server_name,
+            format!(
+                "Server enabled in configuration but connection failed: {}",
+                e
+            ),
+            "Enabled (Connection Failed)".to_string(),
+            true,
+        );
+    }
+
+    // Successfully connected
+    create_operation_response(
+        first_instance_id,
+        server_name,
+        "Successfully enabled server by reconnecting instance".to_string(),
+        "Enabled".to_string(),
+        true,
+    )
 }
 
 /// Disable a server by force disconnecting all instances
@@ -122,115 +373,97 @@ pub async fn disable_server(
     state: State<Arc<AppState>>,
     Path(server_name): Path<String>,
 ) -> Result<Json<OperationResponse>, ApiError> {
-    // call list_instances to check if there are any instance records
-    let instances_response = list_instances(state.clone(), Path(server_name.clone())).await?;
-    let instances = instances_response.0.instances;
+    // Get database reference
+    let db = get_database(&state).await?;
 
-    // Update config_suit to disable server
-    if let Some(db) = &state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
-        // Get the server ID
-        let server = crate::conf::operations::get_server(&db.pool, &server_name)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
+    // Get the server information
+    let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
-        if let Some(server) = server {
-            if let Some(server_id) = server.id {
-                // Get or create the default config suit
-                let default_suit =
-                    crate::conf::operations::get_config_suit_by_name(&db.pool, "default")
-                        .await
-                        .map_err(|e| {
-                            ApiError::InternalError(format!(
-                                "Failed to get default config suit: {e}"
-                            ))
-                        })?;
+    // Disable the server in all active config suits
+    disable_server_in_all_suits(&db.pool, &server_id, &server_name).await?;
 
-                let suit_id = if let Some(suit) = default_suit {
-                    suit.id.unwrap()
-                } else {
-                    // Create default config suit if it doesn't exist
-                    let new_suit = crate::conf::models::ConfigSuit::new(
-                        "default".to_string(),
-                        crate::conf::models::ConfigSuitType::Shared,
-                    );
-                    crate::conf::operations::upsert_config_suit(&db.pool, &new_suit)
-                        .await
-                        .map_err(|e| {
-                            ApiError::InternalError(format!(
-                                "Failed to create default config suit: {e}"
-                            ))
-                        })?
-                };
+    // Sync server connections
+    sync_server_connections(&state).await?;
 
-                // Disable the server in the config suit
-                crate::conf::operations::add_server_to_config_suit(
-                    &db.pool, &suit_id, &server_id, false,
-                )
-                .await
-                .map_err(|e| {
-                    ApiError::InternalError(format!(
-                        "Failed to disable server in config suit: {e}"
-                    ))
-                })?;
+    // Get connection pool
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await;
 
-                tracing::info!("Disabled server '{}' in default config suit", server_name);
-            }
+    let mut pool = match pool_result {
+        Ok(pool) => pool,
+        Err(_) => {
+            // If we can't get the connection pool, just return success
+            // The server is already disabled in the config suits
+            return create_operation_response(
+                "all".to_string(),
+                server_name,
+                "Server disabled in configuration (connection pool unavailable)".to_string(),
+                "Disabled".to_string(),
+                false,
+            );
         }
+    };
+
+    // Check if the server exists in the connection pool
+    if !pool.connections.contains_key(&server_name) {
+        // Server not in connection pool, already disabled
+        return create_operation_response(
+            "all".to_string(),
+            server_name,
+            "Server already disabled (not in connection pool)".to_string(),
+            "Disabled".to_string(),
+            false,
+        );
     }
 
-    if instances.is_empty() {
-        // no instance records, return success (already disabled)
-        return Ok(Json(OperationResponse {
-            id: "".to_string(),
-            name: server_name.clone(),
-            result: format!(
-                "Server '{server_name}' already disabled (no instances found)"
-            ),
-            status: "Disabled".to_string(),
-            allowed_operations: vec!["enable".to_string()],
-        }));
+    // Get all instance IDs
+    let instance_ids: Vec<String> = pool
+        .connections
+        .get(&server_name)
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+
+    if instance_ids.is_empty() {
+        // No instances, already disabled
+        return create_operation_response(
+            "all".to_string(),
+            server_name,
+            "Server already disabled (no instances)".to_string(),
+            "Disabled".to_string(),
+            false,
+        );
     }
 
-    // track the number of instances successfully disconnected
+    // Track the number of instances successfully disconnected
     let mut success_count = 0;
-    let total_count = instances.len();
+    let total_count = instance_ids.len();
 
-    // force disconnect each instance
-    for instance in &instances {
-        match crate::api::handlers::instance::force_disconnect(
-            state.clone(),
-            Path((server_name.clone(), instance.id.clone())),
-        )
-        .await
-        {
-            Ok(_) => {
-                success_count += 1;
-                tracing::info!(
-                    "Successfully disconnected server '{}' instance '{}'",
-                    server_name,
-                    instance.id
-                );
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to disconnect server '{}' instance '{}': {}",
-                    server_name,
-                    instance.id,
-                    e
-                );
-            }
+    // Disconnect each instance
+    for instance_id in &instance_ids {
+        if let Err(e) = pool.disconnect(&server_name, instance_id).await {
+            tracing::error!(
+                "Failed to disconnect server '{}' instance '{}': {}",
+                server_name,
+                instance_id,
+                e
+            );
+        } else {
+            success_count += 1;
+            tracing::info!(
+                "Successfully disconnected server '{}' instance '{}'",
+                server_name,
+                instance_id
+            );
         }
     }
 
-    // call list_instances again to check if all instances are disconnected
-    let updated_instances_response =
-        list_instances(state.clone(), Path(server_name.clone())).await?;
-    let updated_instances = updated_instances_response.0.instances;
-
-    // check if all instances are disconnected
-    let all_disconnected = updated_instances
-        .iter()
-        .all(|instance| instance.status != "Ready");
+    // Check if all instances are disconnected
+    let all_disconnected = success_count == total_count;
 
     let status = if all_disconnected {
         "Disabled"
@@ -238,13 +471,13 @@ pub async fn disable_server(
         "Partially Disabled"
     };
 
-    Ok(Json(OperationResponse {
-        id: "all".to_string(),
-        name: server_name,
-        result: format!(
+    create_operation_response(
+        "all".to_string(),
+        server_name,
+        format!(
             "Successfully disabled server ({success_count} of {total_count} instances disconnected)"
         ),
-        status: status.to_string(),
-        allowed_operations: vec!["enable".to_string()],
-    }))
+        status.to_string(),
+        false,
+    )
 }

@@ -2,38 +2,68 @@
 // Contains handler functions for listing and getting servers
 
 use super::common::*;
+use crate::api::models::server::ServerMetaInfo;
 
 /// List all MCP servers
 pub async fn list_servers(
     State(state): State<Arc<AppState>>
 ) -> Result<Json<ServerListResponse>, ApiError> {
-    // Use a timeout to avoid blocking indefinitely
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await;
-
-    let pool = match pool_result {
-        Ok(pool) => pool,
-        Err(_) => {
+    // Get database reference
+    let db = match state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
+        Some(db) => db,
+        None => {
             return Err(ApiError::InternalError(
-                "Timed out waiting for connection pool lock".to_string(),
+                "Database not available".to_string(),
             ));
         }
     };
 
-    let instances_map = pool.get_all_server_instances();
+    // Get all servers from the database
+    let all_servers = crate::conf::operations::get_all_servers(&db.pool)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
 
-    let servers = instances_map
-        .into_iter()
-        .map(|(name, instances)| {
-            // All servers are enabled by default
-            let enabled = true;
+    // Get instance information from connection pool if available
+    let instances_map = if let Ok(pool) = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await
+    {
+        pool.get_all_server_instances()
+    } else {
+        // If we can't get the connection pool, just use an empty map
+        std::collections::HashMap::new()
+    };
 
-            // Create instance summaries
-            let instances = instances
-                .into_iter()
+    // Create server responses
+    let mut servers = Vec::new();
+    for server in all_servers {
+        let name = server.name.clone();
+
+        // Get server ID (clone before using unwrap_or_default to avoid move)
+        let server_id = match &server.id {
+            Some(id) => id.clone(),
+            None => String::new(),
+        };
+
+        // Get server enabled status from config suits
+        let enabled = match crate::conf::operations::is_server_enabled_in_any_suit(
+            &db.pool, &server_id,
+        )
+        .await
+        {
+            Ok(enabled) => enabled,
+            Err(e) => {
+                tracing::warn!("Failed to check if server '{}' is enabled: {}", name, e);
+                false // Default to false if there's an error
+            }
+        };
+
+        // Get instances for this server if available
+        let instances = if let Some(instances) = instances_map.get(&name) {
+            instances
+                .iter()
                 .map(|(id, conn)| {
                     // Format connected time if available
                     let connected_at = if conn.is_connected() {
@@ -56,22 +86,103 @@ pub async fn list_servers(
                     );
 
                     ServerInstanceSummary {
-                        id,
+                        id: id.clone(),
                         status: conn.status_string(),
                         started_at,
                         connected_at,
                     }
                 })
-                .collect();
+                .collect()
+        } else {
+            // No instances for this server
+            Vec::new()
+        };
 
-            // Create server response
-            ServerResponse {
-                name,
-                enabled,
-                instances,
+        // Get server arguments if available
+        let args = if !server_id.is_empty() {
+            match crate::conf::operations::get_server_args(&db.pool, &server_id).await {
+                Ok(server_args) => {
+                    if server_args.is_empty() {
+                        None
+                    } else {
+                        // Sort arguments by index and collect values
+                        let mut sorted_args: Vec<_> = server_args.into_iter().collect();
+                        sorted_args.sort_by_key(|arg| arg.arg_index);
+                        Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect())
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get arguments for server '{}': {}", name, e);
+                    None
+                }
             }
-        })
-        .collect();
+        } else {
+            None
+        };
+
+        // Get server environment variables if available
+        let env = if !server_id.is_empty() {
+            match crate::conf::operations::get_server_env(&db.pool, &server_id).await {
+                Ok(env_map) =>
+                    if env_map.is_empty() {
+                        None
+                    } else {
+                        Some(env_map)
+                    },
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to get environment variables for server '{}': {}",
+                        name,
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Get server metadata if available
+        let meta = if !server_id.is_empty() {
+            match crate::conf::operations::get_server_meta(&db.pool, &server_id).await {
+                Ok(Some(server_meta)) => Some(ServerMetaInfo {
+                    description: server_meta.description,
+                    author: server_meta.author,
+                    website: server_meta.website,
+                    repository: server_meta.repository,
+                    category: server_meta.category,
+                    recommended_scenario: server_meta.recommended_scenario,
+                    rating: server_meta.rating,
+                }),
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!("Failed to get metadata for server '{}': {}", name, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Format timestamps
+        let created_at = server.created_at.map(|dt| dt.to_rfc3339());
+        let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
+
+        // Create server response
+        servers.push(ServerResponse {
+            name,
+            enabled,
+            server_type: server.server_type.clone(),
+            command: server.command.clone(),
+            url: server.url.clone(),
+            args,
+            env,
+            meta,
+            created_at,
+            updated_at,
+            instances,
+        });
+    }
 
     Ok(Json(ServerListResponse { servers }))
 }
@@ -81,66 +192,179 @@ pub async fn get_server(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> Result<Json<ServerResponse>, ApiError> {
-    // Use a timeout to avoid blocking indefinitely
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await;
-
-    let pool = match pool_result {
-        Ok(pool) => pool,
-        Err(_) => {
+    // Get database reference
+    let db = match state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
+        Some(db) => db,
+        None => {
             return Err(ApiError::InternalError(
-                "Timed out waiting for connection pool lock".to_string(),
+                "Database not available".to_string(),
             ));
         }
     };
 
+    // Get the server from the database
+    let server = crate::conf::operations::get_server(&db.pool, &name)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
+
     // Check if the server exists
-    if !pool.connections.contains_key(&name) {
-        return Err(ApiError::NotFound(format!("Server '{name}' not found")));
-    }
+    let server = match server {
+        Some(server) => server,
+        None => {
+            return Err(ApiError::NotFound(format!("Server '{name}' not found")));
+        }
+    };
 
-    // Get all instances for this server
-    let instances = pool.connections.get(&name).unwrap();
+    // Get server ID (clone before using unwrap_or_default to avoid move)
+    let server_id = match &server.id {
+        Some(id) => id.clone(),
+        None => String::new(),
+    };
 
-    // All servers are enabled by default
-    let enabled = true;
-
-    // Create instance summaries
-    let instances = instances
-        .iter()
-        .map(|(id, conn)| {
-            // Format connected time if available
-            let connected_at = if conn.is_connected() {
-                Some(
-                    chrono::DateTime::<chrono::Utc>::from(
-                        std::time::SystemTime::now() - conn.time_since_last_connection(),
-                    )
-                    .to_rfc3339(),
-                )
-            } else {
-                None
-            };
-
-            ServerInstanceSummary {
-                id: id.clone(),
-                status: conn.status_string(),
-                started_at: Some(
-                    chrono::DateTime::<chrono::Utc>::from(
-                        std::time::SystemTime::now() - conn.time_since_creation(),
-                    )
-                    .to_rfc3339(),
-                ),
-                connected_at,
+    // Get server enabled status from config suits
+    let enabled =
+        match crate::conf::operations::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
+            Ok(enabled) => enabled,
+            Err(e) => {
+                tracing::warn!("Failed to check if server '{}' is enabled: {}", name, e);
+                false // Default to false if there's an error
             }
-        })
-        .collect();
+        };
+
+    // Get instance information from connection pool if available
+    let instances = if let Ok(pool) = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.connection_pool.lock(),
+    )
+    .await
+    {
+        // Check if the server exists in the connection pool
+        if let Some(instances) = pool.connections.get(&name) {
+            // Create instance summaries
+            instances
+                .iter()
+                .map(|(id, conn)| {
+                    // Format connected time if available
+                    let connected_at = if conn.is_connected() {
+                        Some(
+                            chrono::DateTime::<chrono::Utc>::from(
+                                std::time::SystemTime::now() - conn.time_since_last_connection(),
+                            )
+                            .to_rfc3339(),
+                        )
+                    } else {
+                        None
+                    };
+
+                    ServerInstanceSummary {
+                        id: id.clone(),
+                        status: conn.status_string(),
+                        started_at: Some(
+                            chrono::DateTime::<chrono::Utc>::from(
+                                std::time::SystemTime::now() - conn.time_since_creation(),
+                            )
+                            .to_rfc3339(),
+                        ),
+                        connected_at,
+                    }
+                })
+                .collect()
+        } else {
+            // No instances for this server
+            Vec::new()
+        }
+    } else {
+        // If we can't get the connection pool, just use an empty vector
+        Vec::new()
+    };
+
+    // Get server ID (clone before using unwrap_or_default to avoid move)
+    let server_id = match &server.id {
+        Some(id) => id.clone(),
+        None => String::new(),
+    };
+
+    // Get server arguments if available
+    let args = if !server_id.is_empty() {
+        match crate::conf::operations::get_server_args(&db.pool, &server_id).await {
+            Ok(server_args) => {
+                if server_args.is_empty() {
+                    None
+                } else {
+                    // Sort arguments by index and collect values
+                    let mut sorted_args: Vec<_> = server_args.into_iter().collect();
+                    sorted_args.sort_by_key(|arg| arg.arg_index);
+                    Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect())
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get arguments for server '{}': {}", name, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Get server environment variables if available
+    let env = if !server_id.is_empty() {
+        match crate::conf::operations::get_server_env(&db.pool, &server_id).await {
+            Ok(env_map) =>
+                if env_map.is_empty() {
+                    None
+                } else {
+                    Some(env_map)
+                },
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get environment variables for server '{}': {}",
+                    name,
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Get server metadata if available
+    let meta = if !server_id.is_empty() {
+        match crate::conf::operations::get_server_meta(&db.pool, &server_id).await {
+            Ok(Some(server_meta)) => Some(ServerMetaInfo {
+                description: server_meta.description,
+                author: server_meta.author,
+                website: server_meta.website,
+                repository: server_meta.repository,
+                category: server_meta.category,
+                recommended_scenario: server_meta.recommended_scenario,
+                rating: server_meta.rating,
+            }),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!("Failed to get metadata for server '{}': {}", name, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Format timestamps
+    let created_at = server.created_at.map(|dt| dt.to_rfc3339());
+    let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
 
     Ok(Json(ServerResponse {
         name,
         enabled,
+        server_type: server.server_type.clone(),
+        command: server.command.clone(),
+        url: server.url.clone(),
+        args,
+        env,
+        meta,
+        created_at,
+        updated_at,
         instances,
     }))
 }
