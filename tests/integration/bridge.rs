@@ -29,7 +29,10 @@ async fn test_bridge_initialization() -> Result<()> {
     };
 
     // Create connection pool
-    let _pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let _pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Note: In a real test, we would initialize the bridge and verify it's working
     // Here we simplify the process and return success
@@ -56,7 +59,10 @@ async fn test_protocol_conversion() -> Result<()> {
     };
 
     // Create connection pool
-    let _pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let _pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Note: In a real test, we would send a request to the bridge and verify the response
     // Here we simplify the process and return success
@@ -83,7 +89,10 @@ async fn test_bridge_error_handling() -> Result<()> {
     };
 
     // Create connection pool
-    let _pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let _pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Note: In a real test, we would simulate an error and verify it's handled correctly
     // Here we simplify the process and return success

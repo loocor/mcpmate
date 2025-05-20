@@ -4,6 +4,7 @@
 // Module declarations
 pub mod connection;
 pub mod error;
+pub mod events;
 pub mod loader;
 pub mod models;
 pub mod monitor;

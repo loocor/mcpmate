@@ -155,6 +155,12 @@ impl Database {
         }
 
         tracing::info!("Database initialization completed successfully");
+
+        // Publish DatabaseChanged event
+        crate::core::events::EventBus::global()
+            .publish(crate::core::events::Event::DatabaseChanged);
+        tracing::info!("Published DatabaseChanged event");
+
         Ok(db)
     }
 
@@ -268,6 +274,12 @@ impl Database {
         }
 
         tracing::info!("Database initialized with default values");
+
+        // Publish DatabaseChanged event
+        crate::core::events::EventBus::global()
+            .publish(crate::core::events::Event::DatabaseChanged);
+        tracing::info!("Published DatabaseChanged event after initializing defaults");
+
         Ok(())
     }
 

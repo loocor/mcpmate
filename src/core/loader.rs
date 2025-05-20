@@ -94,5 +94,10 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
         "Successfully loaded {} enabled servers from database",
         config.mcp_servers.len()
     );
+
+    // Publish ConfigReloaded event
+    crate::core::events::EventBus::global().publish(crate::core::events::Event::ConfigReloaded);
+    tracing::info!("Published ConfigReloaded event");
+
     Ok(config)
 }

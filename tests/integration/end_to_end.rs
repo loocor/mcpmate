@@ -34,7 +34,10 @@ async fn test_tool_calling_workflow() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Add mock connection to connection pool
     {
@@ -82,7 +85,10 @@ async fn test_config_suit_workflow() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Create test application
     let _app = create_router(pool);
@@ -112,7 +118,10 @@ async fn test_server_management_workflow() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Create test application
     let _app = create_router(pool);

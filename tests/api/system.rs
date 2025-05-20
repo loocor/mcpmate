@@ -21,7 +21,10 @@ async fn test_system_status() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Create test application
     let _app = create_router(pool);
@@ -47,7 +50,10 @@ async fn test_system_metrics() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Create test application
     let _app = create_router(pool);

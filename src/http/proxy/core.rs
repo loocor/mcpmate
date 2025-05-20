@@ -3,6 +3,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{Context, Result};
+use once_cell::sync::OnceCell;
 use rmcp::{
     Error as McpError, ServerHandler,
     model::{CallToolRequestParam, CallToolResult, ServerInfo},
@@ -17,6 +18,9 @@ use crate::{
     core::{TransportType, UpstreamConnectionPool, models::Config},
 };
 
+/// Global instance of the HTTP proxy server
+static GLOBAL_PROXY_SERVER: OnceCell<Arc<Mutex<HttpProxyServer>>> = OnceCell::new();
+
 /// HTTP Proxy Server that aggregates tools from multiple MCP servers
 #[derive(Debug, Clone)]
 pub struct HttpProxyServer {
@@ -30,6 +34,57 @@ pub struct HttpProxyServer {
 
 #[tool(tool_box)]
 impl HttpProxyServer {
+    /// Set the global instance of the HTTP proxy server
+    pub fn set_global(server: Arc<Mutex<HttpProxyServer>>) {
+        if GLOBAL_PROXY_SERVER.set(server).is_err() {
+            tracing::warn!("Global proxy server instance already set, ignoring");
+        } else {
+            tracing::info!("Global proxy server instance set");
+        }
+    }
+
+    /// Get the global instance of the HTTP proxy server
+    pub fn global() -> Option<Arc<Mutex<HttpProxyServer>>> {
+        GLOBAL_PROXY_SERVER.get().cloned()
+    }
+
+    /// Synchronize server connections based on current configuration
+    ///
+    /// This method is called by event handlers when server status changes
+    pub async fn sync_server_connections() -> Result<()> {
+        if let Some(server) = Self::global() {
+            let server = server.lock().await;
+
+            // Check if we have a config suit merge service
+            if let Some(merge_service) = &server.config_suit_merge_service {
+                tracing::info!("Synchronizing server connections");
+
+                // Create AppState for the merge service
+                let app_state = Arc::new(crate::api::routes::AppState {
+                    connection_pool: server.connection_pool.clone(),
+                    metrics_collector: Arc::new(crate::system::SystemMetricsCollector::new(
+                        std::time::Duration::from_secs(5),
+                    )),
+                    http_proxy: None,
+                    suit_merge_service: Some(merge_service.clone()),
+                });
+
+                // Call sync_server_connections with the app state
+                merge_service.sync_server_connections(&app_state).await?;
+                tracing::info!("Server connections synchronized successfully");
+            } else {
+                tracing::warn!(
+                    "Cannot sync server connections: config suit merge service not initialized"
+                );
+            }
+
+            Ok(())
+        } else {
+            tracing::warn!("Cannot sync server connections: global proxy server instance not set");
+            Ok(())
+        }
+    }
+
     /// Send a tool list changed notification to all connected clients
     ///
     /// This method is used by the API server to notify clients when the tool list has changed
@@ -55,8 +110,8 @@ impl HttpProxyServer {
 
     /// Create a new HTTP proxy server
     pub fn new(config: Arc<Config>) -> Self {
-        // Create connection pool
-        let mut pool = UpstreamConnectionPool::new(config);
+        // Create connection pool with no database reference initially
+        let mut pool = UpstreamConnectionPool::new(config, None);
 
         // Initialize the pool
         pool.initialize();
@@ -70,6 +125,34 @@ impl HttpProxyServer {
             connection_pool,
             database: None,                  // Database will be initialized separately
             config_suit_merge_service: None, // Will be initialized after database
+        }
+    }
+
+    /// Create a new HTTP proxy server with database
+    pub fn new_with_database(
+        config: Arc<Config>,
+        database: Arc<Database>,
+    ) -> Self {
+        // Create connection pool with database reference
+        let mut pool = UpstreamConnectionPool::new(config, Some(database.clone()));
+
+        // Initialize the pool
+        pool.initialize();
+
+        let connection_pool = Arc::new(Mutex::new(pool));
+
+        // Start health check task
+        UpstreamConnectionPool::start_health_check(connection_pool.clone());
+
+        // Create Config Suit merge service
+        let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(
+            database.clone(),
+        ));
+
+        Self {
+            connection_pool,
+            database: Some(database),
+            config_suit_merge_service: Some(merge_service),
         }
     }
 
@@ -95,10 +178,10 @@ impl HttpProxyServer {
         // Store the Config Suit merge service
         self.config_suit_merge_service = Some(merge_service);
 
-        // Set the database reference in the connection pool
+        // Update the database reference in the connection pool
         {
             let mut pool = self.connection_pool.lock().await;
-            pool.set_database(db_arc);
+            pool.database = Some(db_arc);
         }
 
         tracing::info!("Database and Config Suit merge service initialized successfully");
@@ -127,10 +210,10 @@ impl HttpProxyServer {
         // Store the Config Suit merge service
         self.config_suit_merge_service = Some(merge_service);
 
-        // Set the database reference in the connection pool
+        // Update the database reference in the connection pool
         {
             let mut pool = self.connection_pool.lock().await;
-            pool.set_database(db_arc);
+            pool.database = Some(db_arc);
         }
 
         tracing::info!("Database connection and Config Suit merge service set successfully");

@@ -103,7 +103,9 @@ impl UpstreamConnectionPool {
             self.log_connection_event("info", server_name, instance_id, "Triggering connection to");
         }
 
-        // Get the server type and check global availability
+        // Get the server type
+        // Note: Global availability check has been moved to merge_servers function in src/core/suit/merge.rs
+        // This ensures servers are filtered out before connection attempts are made
         let server_type = {
             let server_config = match self.config.mcp_servers.get(server_name) {
                 Some(config) => config,
@@ -114,45 +116,6 @@ impl UpstreamConnectionPool {
                     return Err(anyhow::anyhow!(error_msg));
                 }
             };
-
-            // Check if the server is globally enabled
-            if let Some(db) = &self.database {
-                // Get server ID
-                if let Ok(Some(server)) =
-                    crate::conf::operations::get_server(&db.pool, server_name).await
-                {
-                    if let Some(server_id) = server.id {
-                        // Check global enabled status
-                        match crate::conf::operations::server::get_server_global_status(
-                            &db.pool, &server_id,
-                        )
-                        .await
-                        {
-                            Ok(Some(enabled)) =>
-                                if !enabled {
-                                    let error_msg =
-                                        format!("Server '{}' is globally disabled", server_name);
-                                    let conn = self.get_instance_mut(server_name, instance_id)?;
-                                    conn.update_failed(error_msg.clone());
-                                    return Err(anyhow::anyhow!(error_msg));
-                                },
-                            Ok(None) => {
-                                tracing::warn!(
-                                    "Server '{}' global status not found, assuming enabled",
-                                    server_name
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to get server '{}' global status: {}",
-                                    server_name,
-                                    e
-                                );
-                            }
-                        }
-                    }
-                }
-            }
 
             server_config.kind.clone()
         };

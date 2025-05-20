@@ -23,7 +23,10 @@ async fn test_list_suits() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Create test application
     let _app = create_router(pool);
@@ -49,7 +52,10 @@ async fn test_get_suit() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Create test application
     let _app = create_router(pool);
@@ -75,7 +81,10 @@ async fn test_create_suit() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Create test application
     let _app = create_router(pool);
@@ -115,7 +124,10 @@ async fn test_update_suit() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Create test application
     let _app = create_router(pool);

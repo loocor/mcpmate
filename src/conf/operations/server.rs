@@ -714,6 +714,7 @@ pub async fn is_server_in_suit(
 ///
 /// This function updates the global enabled status of a server in the database.
 /// Returns true if the server was updated, false if the server was not found.
+/// If the status is updated, it also publishes a ServerGlobalStatusChanged event.
 pub async fn update_server_global_status(
     pool: &Pool<Sqlite>,
     server_id: &str,
@@ -738,7 +739,30 @@ pub async fn update_server_global_status(
     .await
     .context("Failed to update server global status")?;
 
-    Ok(result.rows_affected() > 0)
+    let updated = result.rows_affected() > 0;
+
+    // If the server was updated, publish an event
+    if updated {
+        // Get the server name
+        if let Ok(Some(server)) = get_server_by_id(pool, server_id).await {
+            // Publish the event
+            crate::core::events::EventBus::global().publish(
+                crate::core::events::Event::ServerGlobalStatusChanged {
+                    server_id: server_id.to_string(),
+                    server_name: server.name,
+                    enabled,
+                },
+            );
+
+            tracing::info!(
+                "Published ServerGlobalStatusChanged event for server ID {} ({})",
+                server_id,
+                enabled
+            );
+        }
+    }
+
+    Ok(updated)
 }
 
 /// Get a server's global enabled status

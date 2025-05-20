@@ -5,7 +5,7 @@ use clap::Parser;
 use mcpmate::{
     api::{ApiServer, handlers::system::initialize_server_start_time},
     conf::database::Database,
-    core::{ConnectionStatus, TransportType, loader::load_server_config},
+    core::{ConnectionStatus, TransportType, events, loader::load_server_config},
     http::HttpProxyServer,
 };
 use tracing_subscriber::{self, EnvFilter};
@@ -98,7 +98,14 @@ async fn main() -> Result<()> {
 
     // Create an Arc for the proxy server and set the global instance
     let proxy_arc = Arc::new(proxy.clone());
-    mcpmate::http::proxy::set_proxy_server(proxy_arc);
+    mcpmate::http::proxy::set_proxy_server(proxy_arc.clone());
+
+    // Set the global instance for the event system
+    let proxy_mutex = Arc::new(tokio::sync::Mutex::new(proxy.clone()));
+    HttpProxyServer::set_global(proxy_mutex);
+
+    // Initialize the event system
+    events::init();
 
     // Get a reference to the connection pool
     let connection_pool = Arc::clone(&proxy.connection_pool);

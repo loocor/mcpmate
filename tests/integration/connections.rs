@@ -19,9 +19,10 @@ async fn test_connection_pool_creation() -> Result<()> {
     let empty_config = Config {
         mcp_servers: HashMap::new(),
     };
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(
-        empty_config,
-    ))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(empty_config),
+        None,
+    )));
 
     // Add test connections to connection pool
     {

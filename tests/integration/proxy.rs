@@ -33,7 +33,10 @@ async fn test_tool_mapping() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Add mock connection to connection pool
     {
@@ -79,7 +82,10 @@ async fn test_tool_calling() -> Result<()> {
     };
 
     // Create connection pool
-    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Add mock connection to connection pool
     {
@@ -131,7 +137,10 @@ async fn test_error_handling() -> Result<()> {
     };
 
     // Create connection pool
-    let _pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config))));
+    let _pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        None,
+    )));
 
     // Test error handling
     // Note: This is a placeholder test since the actual function is private

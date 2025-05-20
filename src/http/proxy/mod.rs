@@ -6,7 +6,7 @@
 use std::sync::{Arc, OnceLock};
 
 // Module declarations
-mod core;
+pub mod core;
 mod handler;
 mod mapping;
 mod transport;

@@ -193,6 +193,9 @@ pub async fn upsert_config_suit(
 }
 
 /// Set a configuration suit as active or inactive
+///
+/// This function updates the active status of a configuration suit in the database.
+/// If the status is updated, it also publishes a ConfigSuitStatusChanged event.
 pub async fn set_config_suit_active(
     pool: &Pool<Sqlite>,
     suit_id: &str,
@@ -248,6 +251,21 @@ pub async fn set_config_suit_active(
     .context("Failed to update configuration suit active status")?;
 
     tx.commit().await.context("Failed to commit transaction")?;
+
+    // Publish the event
+    crate::core::events::EventBus::global().publish(
+        crate::core::events::Event::ConfigSuitStatusChanged {
+            suit_id: suit_id.to_string(),
+            enabled: active,
+        },
+    );
+
+    tracing::info!(
+        "Published ConfigSuitStatusChanged event for suit ID {} ({})",
+        suit_id,
+        active
+    );
+
     Ok(())
 }
 
@@ -399,6 +417,9 @@ pub async fn get_config_suit_servers(
 }
 
 /// Add a server to a configuration suit in the database
+///
+/// This function adds a server to a configuration suit in the database.
+/// If the server is added or updated, it also publishes a ServerEnabledInSuitChanged event.
 pub async fn add_server_to_config_suit(
     pool: &Pool<Sqlite>,
     config_suit_id: &str,
@@ -437,6 +458,19 @@ pub async fn add_server_to_config_suit(
         }
     };
 
+    // Check if the server already exists in the suit and get its current enabled status
+    let existing_enabled = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT enabled FROM config_suit_server
+        WHERE config_suit_id = ? AND server_id = ?
+        "#,
+    )
+    .bind(config_suit_id)
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to get existing server enabled status")?;
+
     let result = sqlx::query(
         r#"
         INSERT INTO config_suit_server (id, config_suit_id, server_id, server_name, enabled)
@@ -456,9 +490,12 @@ pub async fn add_server_to_config_suit(
     .await
     .context("Failed to add server to configuration suit")?;
 
-    if result.rows_affected() == 0 {
+    let is_new = result.rows_affected() > 0;
+    let id_to_return = if is_new {
+        association_id.clone()
+    } else {
         // If no rows were affected, get the existing ID
-        let existing_id = sqlx::query_scalar::<_, String>(
+        sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM config_suit_server
             WHERE config_suit_id = ? AND server_id = ?
@@ -468,12 +505,43 @@ pub async fn add_server_to_config_suit(
         .bind(server_id)
         .fetch_one(pool)
         .await
-        .context("Failed to get configuration suit server association ID")?;
+        .context("Failed to get configuration suit server association ID")?
+    };
 
-        return Ok(existing_id);
+    // Publish event if the server is new or its enabled status has changed
+    if is_new || existing_enabled.map_or(true, |e| e != enabled) {
+        // Get the original server name (without underscore replacement)
+        let original_server_name = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT name FROM server_config
+            WHERE id = ?
+            "#,
+        )
+        .bind(server_id)
+        .fetch_optional(pool)
+        .await
+        .context("Failed to get original server name")?
+        .unwrap_or_else(|| "unknown".to_string());
+
+        // Publish the event
+        crate::core::events::EventBus::global().publish(
+            crate::core::events::Event::ServerEnabledInSuitChanged {
+                server_id: server_id.to_string(),
+                server_name: original_server_name,
+                suit_id: config_suit_id.to_string(),
+                enabled,
+            },
+        );
+
+        tracing::info!(
+            "Published ServerEnabledInSuitChanged event for server ID {} in suit ID {} ({})",
+            server_id,
+            config_suit_id,
+            enabled
+        );
     }
 
-    Ok(association_id)
+    Ok(id_to_return)
 }
 
 /// Remove a server from a configuration suit in the database
@@ -534,6 +602,9 @@ pub async fn get_config_suit_tools(
 }
 
 /// Add a tool to a configuration suit in the database
+///
+/// This function adds a tool to a configuration suit in the database.
+/// If the tool is added or updated, it also publishes a ToolEnabledInSuitChanged event.
 pub async fn add_tool_to_config_suit(
     pool: &Pool<Sqlite>,
     config_suit_id: &str,
@@ -565,6 +636,20 @@ pub async fn add_tool_to_config_suit(
     .fetch_optional(pool)
     .await
     .context("Failed to get existing prefixed name")?;
+
+    // Check if the tool already exists in the suit and get its current enabled status
+    let existing_enabled = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT enabled FROM config_suit_tool
+        WHERE config_suit_id = ? AND server_id = ? AND tool_name = ?
+        "#,
+    )
+    .bind(config_suit_id)
+    .bind(server_id)
+    .bind(tool_name)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to get existing tool enabled status")?;
 
     // Keep the existing prefixed name if there is one
     let prefixed_name = existing_prefixed_name;
@@ -613,9 +698,12 @@ pub async fn add_tool_to_config_suit(
     .await
     .context("Failed to add tool to configuration suit")?;
 
-    if result.rows_affected() == 0 {
+    let is_new = result.rows_affected() > 0;
+    let id_to_return = if is_new {
+        tool_id.clone()
+    } else {
         // If no rows were affected, get the existing ID
-        let existing_id = sqlx::query_scalar::<_, String>(
+        sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM config_suit_tool
             WHERE config_suit_id = ? AND server_id = ? AND tool_name = ?
@@ -626,12 +714,30 @@ pub async fn add_tool_to_config_suit(
         .bind(tool_name)
         .fetch_one(pool)
         .await
-        .context("Failed to get configuration suit tool association ID")?;
+        .context("Failed to get configuration suit tool association ID")?
+    };
 
-        return Ok(existing_id);
+    // Publish event if the tool is new or its enabled status has changed
+    if is_new || existing_enabled.map_or(true, |e| e != enabled) {
+        // Publish the event
+        crate::core::events::EventBus::global().publish(
+            crate::core::events::Event::ToolEnabledInSuitChanged {
+                tool_id: id_to_return.clone(),
+                tool_name: tool_name.to_string(),
+                suit_id: config_suit_id.to_string(),
+                enabled,
+            },
+        );
+
+        tracing::info!(
+            "Published ToolEnabledInSuitChanged event for tool '{}' in suit ID {} ({})",
+            tool_name,
+            config_suit_id,
+            enabled
+        );
     }
 
-    Ok(tool_id)
+    Ok(id_to_return)
 }
 
 /// Remove a tool from a configuration suit in the database

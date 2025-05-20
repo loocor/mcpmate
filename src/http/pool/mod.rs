@@ -32,7 +32,14 @@ pub struct UpstreamConnectionPool {
 
 impl UpstreamConnectionPool {
     /// Create a new connection pool
-    pub fn new(config: Arc<Config>) -> Self {
+    ///
+    /// # Arguments
+    /// * `config` - The server configuration
+    /// * `database` - Optional database reference for checking server status
+    pub fn new(
+        config: Arc<Config>,
+        database: Option<Arc<crate::conf::database::Database>>,
+    ) -> Self {
         // Create process monitor with 5 second update interval
         let process_monitor = Arc::new(ProcessMonitor::new(Duration::from_secs(5)));
 
@@ -44,7 +51,7 @@ impl UpstreamConnectionPool {
             config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
-            database: None,
+            database,
         }
     }
 
@@ -54,14 +61,6 @@ impl UpstreamConnectionPool {
         config: Arc<Config>,
     ) {
         self.config = config;
-    }
-
-    /// Set the database reference
-    pub fn set_database(
-        &mut self,
-        database: Arc<crate::conf::database::Database>,
-    ) {
-        self.database = Some(database);
     }
 
     /// Initialize the connection pool with all servers
