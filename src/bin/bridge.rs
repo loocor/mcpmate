@@ -26,8 +26,6 @@ static SSE_CLIENT: OnceCell<
 struct BridgeClient {
     /// Flag indicating whether the tool list has changed
     tool_list_changed: Arc<Mutex<bool>>,
-    /// The peer for sending requests and notifications
-    peer: Option<rmcp::service::Peer<RoleClient>>,
 }
 
 impl BridgeClient {
@@ -35,23 +33,11 @@ impl BridgeClient {
     fn new() -> Self {
         Self {
             tool_list_changed: Arc::new(Mutex::new(false)),
-            peer: None,
         }
     }
 }
 
 impl ClientHandler for BridgeClient {
-    fn get_peer(&self) -> Option<rmcp::service::Peer<RoleClient>> {
-        self.peer.clone()
-    }
-
-    fn set_peer(
-        &mut self,
-        peer: rmcp::service::Peer<RoleClient>,
-    ) {
-        self.peer = Some(peer);
-    }
-
     fn get_info(&self) -> ClientInfo {
         ClientInfo {
             protocol_version: ProtocolVersion::V_2024_11_05,
@@ -72,6 +58,55 @@ impl ClientHandler for BridgeClient {
 
         // The notification will be forwarded to downstream clients
         // when they call list_tools or call_tool
+    }
+
+    // Implement other notification handlers with default behavior
+    // These are provided by the trait with default implementations,
+    // but we're explicitly implementing them for clarity
+
+    async fn on_resource_list_changed(&self) {
+        tracing::debug!("Received resource list changed notification (ignored)");
+        // We don't handle resource list changes in the bridge
+    }
+
+    async fn on_prompt_list_changed(&self) {
+        tracing::debug!("Received prompt list changed notification (ignored)");
+        // We don't handle prompt list changes in the bridge
+    }
+
+    async fn on_resource_updated(
+        &self,
+        params: rmcp::model::ResourceUpdatedNotificationParam,
+    ) {
+        tracing::debug!(
+            "Received resource updated notification for URI: {} (ignored)",
+            params.uri
+        );
+        // We don't handle resource updates in the bridge
+    }
+
+    async fn on_progress(
+        &self,
+        params: rmcp::model::ProgressNotificationParam,
+    ) {
+        tracing::debug!("Received progress notification: {:?} (ignored)", params);
+        // We don't handle progress notifications in the bridge
+    }
+
+    async fn on_cancelled(
+        &self,
+        params: rmcp::model::CancelledNotificationParam,
+    ) {
+        tracing::debug!("Received cancelled notification: {:?} (ignored)", params);
+        // We don't handle cancelled notifications in the bridge
+    }
+
+    async fn on_logging_message(
+        &self,
+        params: rmcp::model::LoggingMessageNotificationParam,
+    ) {
+        tracing::debug!("Received logging message: {:?} (ignored)", params);
+        // We don't handle logging messages in the bridge
     }
 }
 
