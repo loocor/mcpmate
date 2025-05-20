@@ -58,90 +58,6 @@ async fn get_server_info(
     Ok((server, server_id))
 }
 
-/// Get or create default config suit
-async fn get_or_create_default_suit(pool: &Pool<Sqlite>) -> Result<String, ApiError> {
-    // Get or create the default config suit
-    let default_suit = crate::conf::operations::get_config_suit_by_name(pool, "default")
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get default config suit: {e}")))?;
-
-    let suit_id = if let Some(suit) = default_suit {
-        suit.id.unwrap()
-    } else {
-        // Create default config suit if it doesn't exist
-        let new_suit = crate::conf::models::ConfigSuit::new(
-            "default".to_string(),
-            crate::conf::models::ConfigSuitType::Shared,
-        );
-        crate::conf::operations::upsert_config_suit(pool, &new_suit)
-            .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to create default config suit: {e}"))
-            })?
-    };
-
-    Ok(suit_id)
-}
-
-/// Update server status in config suit
-async fn update_server_in_suit(
-    pool: &Pool<Sqlite>,
-    suit_id: &str,
-    server_id: &str,
-    enabled: bool,
-) -> Result<(), ApiError> {
-    crate::conf::operations::add_server_to_config_suit(pool, suit_id, server_id, enabled)
-        .await
-        .map_err(|e| {
-            ApiError::InternalError(format!(
-                "Failed to {} server in config suit: {e}",
-                if enabled { "enable" } else { "disable" }
-            ))
-        })?;
-
-    Ok(())
-}
-
-/// Disable server in all active config suits
-async fn disable_server_in_all_suits(
-    pool: &Pool<Sqlite>,
-    server_id: &str,
-    server_name: &str,
-) -> Result<(), ApiError> {
-    // Get all active config suits
-    let active_suits = crate::conf::operations::suit::get_active_config_suits(pool)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get active config suits: {e}")))?;
-
-    // Disable the server in all active config suits
-    for suit in active_suits {
-        if let Some(suit_id) = &suit.id {
-            // Check if the server is in this suit
-            let server_in_suit =
-                crate::conf::operations::is_server_in_suit(pool, server_id, suit_id)
-                    .await
-                    .map_err(|e| {
-                        ApiError::InternalError(format!(
-                            "Failed to check if server is in suit: {e}"
-                        ))
-                    })?;
-
-            if server_in_suit {
-                // Disable the server in this suit
-                update_server_in_suit(pool, suit_id, server_id, false).await?;
-
-                tracing::info!(
-                    "Disabled server '{}' in config suit '{}'",
-                    server_name,
-                    suit.name
-                );
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Sync server connections
 async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> {
     if let Some(merge_service) = &state.suit_merge_service {
@@ -193,7 +109,7 @@ fn create_operation_response(
     }))
 }
 
-/// Enable a server by reconnecting existing instances or creating a new one if needed
+/// Enable a server by setting its global availability to enabled
 pub async fn enable_server(
     state: State<Arc<AppState>>,
     Path(server_name): Path<String>,
@@ -204,12 +120,29 @@ pub async fn enable_server(
     // Get the server information
     let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
-    // Get or create the default config suit
-    let suit_id = get_or_create_default_suit(&db.pool).await?;
-
-    // Enable the server in the config suit
-    update_server_in_suit(&db.pool, &suit_id, &server_id, true).await?;
-    tracing::info!("Enabled server '{}' in default config suit", server_name);
+    // Update the server's global enabled status
+    match crate::conf::operations::server::update_server_global_status(&db.pool, &server_id, true)
+        .await
+    {
+        Ok(true) => {
+            tracing::info!(
+                "Set server '{}' global availability to enabled",
+                server_name
+            );
+        }
+        Ok(false) => {
+            return Err(ApiError::NotFound(format!(
+                "Server '{}' not found when updating global status",
+                server_name
+            )));
+        }
+        Err(e) => {
+            return Err(ApiError::InternalError(format!(
+                "Failed to update server '{}' global status: {}",
+                server_name, e
+            )));
+        }
+    }
 
     // Sync server connections
     sync_server_connections(&state).await?;
@@ -368,7 +301,7 @@ pub async fn enable_server(
     )
 }
 
-/// Disable a server by force disconnecting all instances
+/// Disable a server by setting its global availability to disabled
 pub async fn disable_server(
     state: State<Arc<AppState>>,
     Path(server_name): Path<String>,
@@ -379,8 +312,29 @@ pub async fn disable_server(
     // Get the server information
     let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
-    // Disable the server in all active config suits
-    disable_server_in_all_suits(&db.pool, &server_id, &server_name).await?;
+    // Update the server's global enabled status
+    match crate::conf::operations::server::update_server_global_status(&db.pool, &server_id, false)
+        .await
+    {
+        Ok(true) => {
+            tracing::info!(
+                "Set server '{}' global availability to disabled",
+                server_name
+            );
+        }
+        Ok(false) => {
+            return Err(ApiError::NotFound(format!(
+                "Server '{}' not found when updating global status",
+                server_name
+            )));
+        }
+        Err(e) => {
+            return Err(ApiError::InternalError(format!(
+                "Failed to update server '{}' global status: {}",
+                server_name, e
+            )));
+        }
+    }
 
     // Sync server connections
     sync_server_connections(&state).await?;

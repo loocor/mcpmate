@@ -20,6 +20,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
             command TEXT,
             url TEXT,
             transport_type TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )

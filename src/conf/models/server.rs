@@ -20,6 +20,8 @@ pub struct Server {
     pub url: Option<String>,
     /// Transport type
     pub transport_type: Option<String>,
+    /// Whether the server is globally enabled
+    pub enabled: Option<bool>,
     /// When the configuration was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the configuration was last updated
@@ -39,6 +41,7 @@ impl Server {
             command: None,
             url: None,
             transport_type: None,
+            enabled: Some(true), // Default to enabled
             created_at: None,
             updated_at: None,
         }
@@ -56,6 +59,7 @@ impl Server {
             command,
             url: None,
             transport_type: Some("Stdio".to_string()),
+            enabled: Some(true), // Default to enabled
             created_at: None,
             updated_at: None,
         }
@@ -73,6 +77,7 @@ impl Server {
             command: None,
             url,
             transport_type: Some("Sse".to_string()),
+            enabled: Some(true), // Default to enabled
             created_at: None,
             updated_at: None,
         }
@@ -90,6 +95,7 @@ impl Server {
             command: None,
             url,
             transport_type: Some("StreamableHttp".to_string()),
+            enabled: Some(true), // Default to enabled
             created_at: None,
             updated_at: None,
         }

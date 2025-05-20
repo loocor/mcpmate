@@ -211,7 +211,7 @@ impl ConfigSuitMergeService {
 
                 // Process each server
                 for server_config in suit_servers {
-                    // Only include enabled servers
+                    // Only include enabled servers in the config suit
                     if server_config.enabled {
                         // Get server details
                         if let Ok(Some(server)) = crate::conf::operations::get_server_by_id(
@@ -220,9 +220,43 @@ impl ConfigSuitMergeService {
                         )
                         .await
                         {
-                            // Add to merged servers, using server_id as the key
-                            if let Some(server_id) = &server.id {
-                                merged_servers.insert(server_id.clone(), server);
+                            // Check if the server is globally enabled
+                            let globally_enabled =
+                                match crate::conf::operations::server::get_server_global_status(
+                                    &self.db.pool,
+                                    &server_config.server_id,
+                                )
+                                .await
+                                {
+                                    Ok(Some(enabled)) => enabled,
+                                    Ok(None) => {
+                                        tracing::warn!(
+                                            "Server '{}' global status not found, assuming disabled",
+                                            server.name
+                                        );
+                                        false
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to get server '{}' global status: {}",
+                                            server.name,
+                                            e
+                                        );
+                                        false
+                                    }
+                                };
+
+                            // Only include servers that are both globally enabled and enabled in the config suit
+                            if globally_enabled {
+                                // Add to merged servers, using server_id as the key
+                                if let Some(server_id) = &server.id {
+                                    merged_servers.insert(server_id.clone(), server);
+                                }
+                            } else {
+                                tracing::debug!(
+                                    "Server '{}' is enabled in config suit but globally disabled, skipping",
+                                    server.name
+                                );
                             }
                         }
                     }

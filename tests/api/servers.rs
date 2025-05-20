@@ -88,6 +88,7 @@ async fn test_create_server() -> Result<()> {
         command: Some("echo".to_string()),
         url: None,
         transport_type: None,
+        enabled: Some(true),
         created_at: Some(chrono::Utc::now()),
         updated_at: Some(chrono::Utc::now()),
     };

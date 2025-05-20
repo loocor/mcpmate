@@ -79,6 +79,7 @@ async fn create_test_servers(_db: &Database) -> Result<Vec<Server>> {
         command: Some("echo".to_string()),
         url: None,
         transport_type: None,
+        enabled: Some(true),
         created_at: Some(chrono::Utc::now()),
         updated_at: Some(chrono::Utc::now()),
     };
@@ -91,6 +92,7 @@ async fn create_test_servers(_db: &Database) -> Result<Vec<Server>> {
         command: None,
         url: Some("http://localhost:8080/sse".to_string()),
         transport_type: None,
+        enabled: Some(true),
         created_at: Some(chrono::Utc::now()),
         updated_at: Some(chrono::Utc::now()),
     };

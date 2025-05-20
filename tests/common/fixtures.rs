@@ -166,6 +166,7 @@ impl ServerFixture {
             command: self.command.clone(),
             url: self.url.clone(),
             transport_type: None,
+            enabled: Some(true),
             created_at: Some(chrono::Utc::now()),
             updated_at: Some(chrono::Utc::now()),
         };
@@ -202,6 +203,7 @@ impl ServerFixture {
             command: self.command.clone(),
             url: self.url.clone(),
             transport_type: None,
+            enabled: Some(true),
             created_at: Some(chrono::Utc::now()),
             updated_at: Some(chrono::Utc::now()),
         }

@@ -709,3 +709,58 @@ pub async fn is_server_in_suit(
     // Server is not in this suit
     Ok(false)
 }
+
+/// Update a server's global enabled status
+///
+/// This function updates the global enabled status of a server in the database.
+/// Returns true if the server was updated, false if the server was not found.
+pub async fn update_server_global_status(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    enabled: bool,
+) -> Result<bool> {
+    tracing::debug!(
+        "Updating global enabled status for server ID {} to {}",
+        server_id,
+        enabled
+    );
+
+    let result = sqlx::query(
+        r#"
+        UPDATE server_config
+        SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+    )
+    .bind(enabled)
+    .bind(server_id)
+    .execute(pool)
+    .await
+    .context("Failed to update server global status")?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Get a server's global enabled status
+///
+/// This function retrieves the global enabled status of a server from the database.
+/// Returns Some(bool) if the server was found, None if the server was not found.
+pub async fn get_server_global_status(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<Option<bool>> {
+    tracing::debug!("Getting global enabled status for server ID {}", server_id);
+
+    let enabled = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT enabled FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to get server global status")?;
+
+    Ok(enabled)
+}

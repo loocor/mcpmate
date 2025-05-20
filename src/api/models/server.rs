@@ -46,8 +46,12 @@ pub struct ServerInstanceSummary {
 pub struct ServerResponse {
     /// Server name
     pub name: String,
-    /// Is enabled in configuration
+    /// Is enabled in configuration (for backward compatibility, same as enabled_in_suits)
     pub enabled: bool,
+    /// Is globally enabled (server_config.enabled)
+    pub globally_enabled: bool,
+    /// Is enabled in any active config suit (config_suit_server.enabled)
+    pub enabled_in_suits: bool,
     /// Server type (stdio, sse, streamable_http)
     pub server_type: String,
     /// Command to execute (for stdio servers)

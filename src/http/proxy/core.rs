@@ -88,10 +88,18 @@ impl HttpProxyServer {
         self.database = Some(db_arc.clone());
 
         // Initialize Config Suit merge service
-        let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(db_arc));
+        let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(
+            db_arc.clone(),
+        ));
 
         // Store the Config Suit merge service
         self.config_suit_merge_service = Some(merge_service);
+
+        // Set the database reference in the connection pool
+        {
+            let mut pool = self.connection_pool.lock().await;
+            pool.set_database(db_arc);
+        }
 
         tracing::info!("Database and Config Suit merge service initialized successfully");
         Ok(())
@@ -112,10 +120,18 @@ impl HttpProxyServer {
         self.database = Some(db_arc.clone());
 
         // Initialize Config Suit merge service
-        let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(db_arc));
+        let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(
+            db_arc.clone(),
+        ));
 
         // Store the Config Suit merge service
         self.config_suit_merge_service = Some(merge_service);
+
+        // Set the database reference in the connection pool
+        {
+            let mut pool = self.connection_pool.lock().await;
+            pool.set_database(db_arc);
+        }
 
         tracing::info!("Database connection and Config Suit merge service set successfully");
         Ok(())

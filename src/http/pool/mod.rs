@@ -26,6 +26,8 @@ pub struct UpstreamConnectionPool {
     pub cancellation_tokens: HashMap<String, HashMap<String, CancellationToken>>,
     /// Process monitor for tracking resource usage
     pub process_monitor: Option<Arc<ProcessMonitor>>,
+    /// Database reference for checking server status
+    pub database: Option<Arc<crate::conf::database::Database>>,
 }
 
 impl UpstreamConnectionPool {
@@ -42,6 +44,7 @@ impl UpstreamConnectionPool {
             config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
+            database: None,
         }
     }
 
@@ -51,6 +54,14 @@ impl UpstreamConnectionPool {
         config: Arc<Config>,
     ) {
         self.config = config;
+    }
+
+    /// Set the database reference
+    pub fn set_database(
+        &mut self,
+        database: Arc<crate::conf::database::Database>,
+    ) {
+        self.database = Some(database);
     }
 
     /// Initialize the connection pool with all servers

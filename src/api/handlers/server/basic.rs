@@ -47,18 +47,44 @@ pub async fn list_servers(
             None => String::new(),
         };
 
-        // Get server enabled status from config suits
-        let enabled = match crate::conf::operations::is_server_enabled_in_any_suit(
+        // Get server enabled status from config suits (enabled_in_suits)
+        let enabled_in_suits = match crate::conf::operations::is_server_enabled_in_any_suit(
             &db.pool, &server_id,
         )
         .await
         {
             Ok(enabled) => enabled,
             Err(e) => {
-                tracing::warn!("Failed to check if server '{}' is enabled: {}", name, e);
+                tracing::warn!(
+                    "Failed to check if server '{}' is enabled in suits: {}",
+                    name,
+                    e
+                );
                 false // Default to false if there's an error
             }
         };
+
+        // Get server global enabled status
+        let globally_enabled =
+            match crate::conf::operations::server::get_server_global_status(&db.pool, &server_id)
+                .await
+            {
+                Ok(Some(enabled)) => enabled,
+                Ok(None) => {
+                    tracing::warn!(
+                        "Server '{}' global status not found, assuming enabled",
+                        name
+                    );
+                    true // Default to true for backward compatibility
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get server '{}' global status: {}", name, e);
+                    true // Default to true for backward compatibility
+                }
+            };
+
+        // For backward compatibility, enabled is true if the server is both globally enabled and enabled in suits
+        let enabled = globally_enabled && enabled_in_suits;
 
         // Get instances for this server if available
         let instances = if let Some(instances) = instances_map.get(&name) {
@@ -172,6 +198,8 @@ pub async fn list_servers(
         servers.push(ServerResponse {
             name,
             enabled,
+            globally_enabled,
+            enabled_in_suits,
             server_type: server.server_type.clone(),
             command: server.command.clone(),
             url: server.url.clone(),
@@ -221,15 +249,40 @@ pub async fn get_server(
         None => String::new(),
     };
 
-    // Get server enabled status from config suits
-    let enabled =
+    // Get server enabled status from config suits (enabled_in_suits)
+    let enabled_in_suits =
         match crate::conf::operations::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
             Ok(enabled) => enabled,
             Err(e) => {
-                tracing::warn!("Failed to check if server '{}' is enabled: {}", name, e);
+                tracing::warn!(
+                    "Failed to check if server '{}' is enabled in suits: {}",
+                    name,
+                    e
+                );
                 false // Default to false if there's an error
             }
         };
+
+    // Get server global enabled status
+    let globally_enabled =
+        match crate::conf::operations::server::get_server_global_status(&db.pool, &server_id).await
+        {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => {
+                tracing::warn!(
+                    "Server '{}' global status not found, assuming enabled",
+                    name
+                );
+                true // Default to true for backward compatibility
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get server '{}' global status: {}", name, e);
+                true // Default to true for backward compatibility
+            }
+        };
+
+    // For backward compatibility, enabled is true if the server is both globally enabled and enabled in suits
+    let enabled = globally_enabled && enabled_in_suits;
 
     // Get instance information from connection pool if available
     let instances = if let Ok(pool) = tokio::time::timeout(
@@ -357,6 +410,8 @@ pub async fn get_server(
     Ok(Json(ServerResponse {
         name,
         enabled,
+        globally_enabled,
+        enabled_in_suits,
         server_type: server.server_type.clone(),
         command: server.command.clone(),
         url: server.url.clone(),

@@ -78,6 +78,7 @@ pub async fn migrate_from_files(
             command: server_config.command.clone(),
             url: server_config.url.clone(),
             transport_type: server_config.transport_type.map(|t| format!("{t:?}")),
+            enabled: Some(true), // Default to enabled
             created_at: None,
             updated_at: None,
         };

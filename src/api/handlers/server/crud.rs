@@ -199,6 +199,8 @@ pub async fn create_server(
     Ok(Json(ServerResponse {
         name: payload.name.clone(),
         enabled,
+        globally_enabled: true, // New servers are globally enabled by default
+        enabled_in_suits: enabled, // Same as enabled for new servers
         server_type: payload.kind.clone(),
         command: payload.command.clone(),
         url: payload.url.clone(),
@@ -401,10 +403,47 @@ pub async fn update_server(
     let created_at = updated_server.created_at.map(|dt| dt.to_rfc3339());
     let updated_at = updated_server.updated_at.map(|dt| dt.to_rfc3339());
 
+    // Get server global enabled status
+    let globally_enabled =
+        match crate::conf::operations::server::get_server_global_status(&db.pool, &server_id).await
+        {
+            Ok(Some(enabled)) => enabled,
+            Ok(None) => {
+                tracing::warn!(
+                    "Server '{}' global status not found, assuming enabled",
+                    name
+                );
+                true // Default to true for backward compatibility
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get server '{}' global status: {}", name, e);
+                true // Default to true for backward compatibility
+            }
+        };
+
+    // Get server enabled status in config suits
+    let enabled_in_suits =
+        match crate::conf::operations::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
+            Ok(enabled) => enabled,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to check if server '{}' is enabled in suits: {}",
+                    name,
+                    e
+                );
+                false // Default to false if there's an error
+            }
+        };
+
+    // For backward compatibility, enabled is the value from the payload or true if not provided
+    let enabled = payload.enabled.unwrap_or(true);
+
     // Return success response
     Ok(Json(ServerResponse {
         name,
-        enabled: payload.enabled.unwrap_or(true), // Default to true if not provided
+        enabled,
+        globally_enabled,
+        enabled_in_suits,
         server_type: updated_server.server_type.clone(), // Use the existing or updated server type
         command: updated_server.command.clone(),
         url: updated_server.url.clone(),
