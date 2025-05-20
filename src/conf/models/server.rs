@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+use crate::common::types::{EnabledStatus, ServerType, TransportType};
+
 /// Server configuration model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Server {
@@ -13,15 +15,15 @@ pub struct Server {
     /// Name of the server
     pub name: String,
     /// Type of the server (stdio, sse, streamable_http)
-    pub server_type: String,
+    pub server_type: ServerType,
     /// Command to execute (for stdio servers)
     pub command: Option<String>,
     /// URL (for sse and streamable_http servers)
     pub url: Option<String>,
     /// Transport type
-    pub transport_type: Option<String>,
+    pub transport_type: Option<TransportType>,
     /// Whether the server is globally enabled
-    pub enabled: Option<bool>,
+    pub enabled: EnabledStatus,
     /// When the configuration was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the configuration was last updated
@@ -29,10 +31,66 @@ pub struct Server {
 }
 
 impl Server {
+    /// Get the server type (for backward compatibility)
+    pub fn get_server_type(&self) -> ServerType {
+        self.server_type
+    }
+
+    /// Get the transport type (for backward compatibility)
+    pub fn get_transport_type(&self) -> Option<TransportType> {
+        self.transport_type
+    }
+
+    /// Get the enabled status (for backward compatibility)
+    pub fn get_enabled_status(&self) -> EnabledStatus {
+        self.enabled
+    }
+
+    /// Set the server type
+    pub fn set_server_type(
+        &mut self,
+        server_type: ServerType,
+    ) {
+        self.server_type = server_type;
+    }
+
+    /// Set the transport type
+    pub fn set_transport_type(
+        &mut self,
+        transport_type: Option<TransportType>,
+    ) {
+        self.transport_type = transport_type;
+    }
+
+    /// Set the enabled status
+    pub fn set_enabled_status(
+        &mut self,
+        enabled: EnabledStatus,
+    ) {
+        self.enabled = enabled;
+    }
+
+    /// Get server type as string (for API compatibility)
+    pub fn server_type_string(&self) -> String {
+        self.server_type.to_string()
+    }
+
+    /// Get transport type as string (for API compatibility)
+    pub fn transport_type_string(&self) -> Option<String> {
+        self.transport_type.map(|t| t.to_string())
+    }
+
+    /// Get enabled as boolean (for API compatibility)
+    pub fn enabled_bool(&self) -> Option<bool> {
+        Some(self.enabled.as_bool())
+    }
+}
+
+impl Server {
     /// Create a new server configuration
     pub fn new(
         name: String,
-        server_type: String,
+        server_type: ServerType,
     ) -> Self {
         Self {
             id: None,
@@ -41,7 +99,7 @@ impl Server {
             command: None,
             url: None,
             transport_type: None,
-            enabled: Some(true), // Default to enabled
+            enabled: EnabledStatus::Enabled, // Default to enabled
             created_at: None,
             updated_at: None,
         }
@@ -55,11 +113,11 @@ impl Server {
         Self {
             id: None,
             name,
-            server_type: "stdio".to_string(),
+            server_type: ServerType::Stdio,
             command,
             url: None,
-            transport_type: Some("Stdio".to_string()),
-            enabled: Some(true), // Default to enabled
+            transport_type: Some(TransportType::Stdio),
+            enabled: EnabledStatus::Enabled, // Default to enabled
             created_at: None,
             updated_at: None,
         }
@@ -73,11 +131,11 @@ impl Server {
         Self {
             id: None,
             name,
-            server_type: "sse".to_string(),
+            server_type: ServerType::Sse,
             command: None,
             url,
-            transport_type: Some("Sse".to_string()),
-            enabled: Some(true), // Default to enabled
+            transport_type: Some(TransportType::Sse),
+            enabled: EnabledStatus::Enabled, // Default to enabled
             created_at: None,
             updated_at: None,
         }
@@ -91,11 +149,11 @@ impl Server {
         Self {
             id: None,
             name,
-            server_type: "streamable_http".to_string(),
+            server_type: ServerType::StreamableHttp,
             command: None,
             url,
-            transport_type: Some("StreamableHttp".to_string()),
-            enabled: Some(true), // Default to enabled
+            transport_type: Some(TransportType::StreamableHttp),
+            enabled: EnabledStatus::Enabled, // Default to enabled
             created_at: None,
             updated_at: None,
         }

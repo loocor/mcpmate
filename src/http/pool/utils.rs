@@ -68,7 +68,7 @@ impl UpstreamConnectionPool {
         self.config
             .mcp_servers
             .get(server_name)
-            .map(|cfg| cfg.kind.clone())
+            .map(|cfg| cfg.kind.to_string())
     }
 
     /// Calculate a hash value representing the current state of the connection pool

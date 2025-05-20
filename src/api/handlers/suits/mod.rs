@@ -43,7 +43,8 @@ pub(crate) mod common {
             },
             routes::AppState,
         },
-        conf::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool, ConfigSuitType},
+        common::types::ConfigSuitType,
+        conf::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool},
     };
 
     /// Get database reference from AppState
@@ -77,7 +78,7 @@ pub(crate) mod common {
             id: suit.id.clone().unwrap_or_default(),
             name: suit.name.clone(),
             description: suit.description.clone(),
-            suit_type: suit.suit_type.clone(),
+            suit_type: suit.suit_type_string(),
             multi_select: suit.multi_select,
             priority: suit.priority,
             is_active: suit.is_active,

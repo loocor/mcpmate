@@ -7,7 +7,10 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, migrate::MigrateDatabase, sqlite::SqlitePoolOptions};
 use tracing;
 
-use crate::conf::{initialization, migration, models, operations};
+use crate::{
+    common::types::ConfigSuitType,
+    conf::{initialization, migration, models, operations},
+};
 
 /// Database URL for SQLite
 const DB_URL: &str = "sqlite:./config/mcpmate.db";
@@ -200,7 +203,7 @@ impl Database {
             let mut new_suit = models::ConfigSuit::new_with_description(
                 "default".to_string(),
                 Some("Default configuration suit".to_string()),
-                models::ConfigSuitType::Shared,
+                ConfigSuitType::Shared,
             );
 
             // Set active and default flags

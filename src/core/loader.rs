@@ -65,15 +65,11 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
             None
         };
 
-        // Parse transport type
-        let transport_type = server.transport_type.as_deref().map(|t| match t {
-            "Stdio" => TransportType::Stdio,
-            "Sse" => TransportType::Sse,
-            "StreamableHttp" => TransportType::StreamableHttp,
-            _ => {
-                tracing::warn!("Unknown transport type: {}, defaulting to SSE", t);
-                TransportType::Sse
-            }
+        // Get transport type from the server model
+        let transport_type = server.transport_type.map(|t| match t {
+            crate::common::types::TransportType::Stdio => TransportType::Stdio,
+            crate::common::types::TransportType::Sse => TransportType::Sse,
+            crate::common::types::TransportType::StreamableHttp => TransportType::StreamableHttp,
         });
 
         // Create MCPServerConfig

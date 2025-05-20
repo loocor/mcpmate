@@ -4,7 +4,10 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
 
-use crate::conf::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool, ConfigSuitType};
+use crate::{
+    common::types::ConfigSuitType,
+    conf::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool},
+};
 
 /// Get all configuration suits from the database
 pub async fn get_all_config_suits(pool: &Pool<Sqlite>) -> Result<Vec<ConfigSuit>> {

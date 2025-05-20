@@ -5,6 +5,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::common::types::ServerType;
+
 // API Model
 //
 
@@ -53,7 +55,7 @@ pub struct ServerResponse {
     /// Is enabled in any active config suit (config_suit_server.enabled)
     pub enabled_in_suits: bool,
     /// Server type (stdio, sse, streamable_http)
-    pub server_type: String,
+    pub server_type: ServerType,
     /// Command to execute (for stdio servers)
     pub command: Option<String>,
     /// URL (for sse and streamable_http servers)
@@ -112,7 +114,7 @@ pub struct ServerInstanceDetails {
     /// Error message if status is Error
     pub error_message: Option<String>,
     /// Server type (stdio, sse, etc.)
-    pub server_type: String,
+    pub server_type: ServerType,
     /// Process ID
     pub process_id: Option<u32>,
     /// CPU usage percentage of the instance process
@@ -215,7 +217,7 @@ pub struct ServerDetailsResponse {
     /// Server status summary
     pub status: String,
     /// Server type (stdio, sse, etc.)
-    pub server_type: String,
+    pub server_type: ServerType,
     /// Is enabled in configuration
     pub is_enabled: bool,
     /// List of instances

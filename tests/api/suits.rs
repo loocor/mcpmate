@@ -94,7 +94,7 @@ async fn test_create_suit() -> Result<()> {
         id: Some(Uuid::new_v4().to_string()),
         name: "Test Suit".to_string(),
         description: Some("Test configuration suit".to_string()),
-        suit_type: "Scenario".to_string(),
+        suit_type: mcpmate::common::types::ConfigSuitType::Scenario,
         multi_select: true,
         priority: 10,
         is_active: true,

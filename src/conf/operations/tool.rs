@@ -41,7 +41,7 @@ pub async fn set_tool_enabled(
                         let mut new_suit = crate::conf::models::ConfigSuit::new_with_description(
                             "default".to_string(),
                             Some("Default configuration suit".to_string()),
-                            crate::conf::models::ConfigSuitType::Shared,
+                            crate::common::types::ConfigSuitType::Shared,
                         );
 
                         // Set active and default flags
@@ -168,7 +168,7 @@ pub async fn update_tool_prefixed_name(
                         let mut new_suit = crate::conf::models::ConfigSuit::new_with_description(
                             "default".to_string(),
                             Some("Default configuration suit".to_string()),
-                            crate::conf::models::ConfigSuitType::Shared,
+                            crate::common::types::ConfigSuitType::Shared,
                         );
 
                         // Set active and default flags

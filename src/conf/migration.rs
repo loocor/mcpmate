@@ -74,11 +74,18 @@ pub async fn migrate_from_files(
         let server = Server {
             id: None,
             name: name.clone(),
-            server_type: server_config.kind.clone(),
+            server_type: server_config.kind,
             command: server_config.command.clone(),
             url: server_config.url.clone(),
-            transport_type: server_config.transport_type.map(|t| format!("{t:?}")),
-            enabled: Some(true), // Default to enabled
+            transport_type: server_config.transport_type.map(|t| match t {
+                crate::core::transport::TransportType::Stdio =>
+                    crate::common::types::TransportType::Stdio,
+                crate::core::transport::TransportType::Sse =>
+                    crate::common::types::TransportType::Sse,
+                crate::core::transport::TransportType::StreamableHttp =>
+                    crate::common::types::TransportType::StreamableHttp,
+            }),
+            enabled: crate::common::types::EnabledStatus::Enabled,
             created_at: None,
             updated_at: None,
         };

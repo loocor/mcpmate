@@ -4,9 +4,10 @@
 use super::{common::*, instance::list_instances};
 use crate::{
     api::{handlers::ApiError, models::server::ServerMetaInfo},
+    common::types::{ConfigSuitType, ServerType},
     conf::{
         database::Database,
-        models::{ConfigSuit, ConfigSuitType, ServerMeta},
+        models::{ConfigSuit, ServerMeta},
         operations,
     },
 };
@@ -201,7 +202,7 @@ pub async fn create_server(
         enabled,
         globally_enabled: true, // New servers are globally enabled by default
         enabled_in_suits: enabled, // Same as enabled for new servers
-        server_type: payload.kind.clone(),
+        server_type: payload.kind.parse().unwrap_or(ServerType::Stdio),
         command: payload.command.clone(),
         url: payload.url.clone(),
         args: payload.args.clone(),
@@ -268,13 +269,14 @@ pub async fn update_server(
     // Create updated server model
     let mut updated_server = existing_server.clone();
     if let Some(kind) = payload.kind {
-        updated_server.server_type = kind.clone();
+        // Update server type based on kind string
+        updated_server.server_type = kind.parse().unwrap_or(updated_server.server_type);
+
         // Update transport type based on server type
-        updated_server.transport_type = match kind.as_str() {
-            "stdio" => Some("Stdio".to_string()),
-            "sse" => Some("Sse".to_string()),
-            "streamable_http" => Some("StreamableHttp".to_string()),
-            _ => None,
+        updated_server.transport_type = match updated_server.server_type {
+            ServerType::Stdio => Some(crate::common::types::TransportType::Stdio),
+            ServerType::Sse => Some(crate::common::types::TransportType::Sse),
+            ServerType::StreamableHttp => Some(crate::common::types::TransportType::StreamableHttp),
         };
     }
     if let Some(command) = payload.command {
@@ -444,7 +446,7 @@ pub async fn update_server(
         enabled,
         globally_enabled,
         enabled_in_suits,
-        server_type: updated_server.server_type.clone(), // Use the existing or updated server type
+        server_type: updated_server.server_type, // Use the existing or updated server type
         command: updated_server.command.clone(),
         url: updated_server.url.clone(),
         args,

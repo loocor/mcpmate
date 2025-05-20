@@ -23,7 +23,7 @@ async fn test_tool_mapping() -> Result<()> {
     // Create test configuration
     let config = Config {
         mcp_servers: HashMap::from([("test_server".to_string(), MCPServerConfig {
-            kind: "stdio".to_string(),
+            kind: mcpmate::common::types::ServerType::Stdio,
             command: Some("echo".to_string()),
             args: None,
             url: None,
@@ -72,7 +72,7 @@ async fn test_tool_calling() -> Result<()> {
     // Create test configuration
     let config = Config {
         mcp_servers: HashMap::from([("test_server".to_string(), MCPServerConfig {
-            kind: "stdio".to_string(),
+            kind: mcpmate::common::types::ServerType::Stdio,
             command: Some("echo".to_string()),
             args: None,
             url: None,
@@ -127,7 +127,7 @@ async fn test_error_handling() -> Result<()> {
     // Create test configuration
     let config = Config {
         mcp_servers: HashMap::from([("test_server".to_string(), MCPServerConfig {
-            kind: "stdio".to_string(),
+            kind: mcpmate::common::types::ServerType::Stdio,
             command: Some("echo".to_string()),
             args: None,
             url: None,

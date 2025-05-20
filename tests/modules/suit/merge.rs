@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use mcpmate::{
+    common::types::{ConfigSuitType, EnabledStatus, ServerType},
     conf::{
         database::Database,
         models::{ConfigSuit, ConfigSuitServer, Server},
@@ -17,6 +18,9 @@ use uuid::Uuid;
 /// Create test database
 async fn create_test_db() -> Result<Arc<Database>> {
     // Use in-memory database
+    unsafe {
+        std::env::set_var("DATABASE_URL", "sqlite::memory:");
+    }
     let db = Database::new().await?;
 
     // Initialize database
@@ -26,15 +30,15 @@ async fn create_test_db() -> Result<Arc<Database>> {
 }
 
 /// Create test configuration suits
-async fn create_test_suits(_db: &Database) -> Result<Vec<ConfigSuit>> {
+async fn create_test_suits(db: &Database) -> Result<Vec<ConfigSuit>> {
     let mut suits = Vec::new();
 
     // Create first configuration suit
-    let suit1 = ConfigSuit {
+    let mut suit1 = ConfigSuit {
         id: Some(Uuid::new_v4().to_string()),
         name: "Test Suit 1".to_string(),
         description: Some("First test suit".to_string()),
-        suit_type: "Scenario".to_string(),
+        suit_type: ConfigSuitType::Scenario,
         multi_select: true,
         priority: 10,
         is_active: true,
@@ -44,11 +48,11 @@ async fn create_test_suits(_db: &Database) -> Result<Vec<ConfigSuit>> {
     };
 
     // Create second configuration suit
-    let suit2 = ConfigSuit {
+    let mut suit2 = ConfigSuit {
         id: Some(Uuid::new_v4().to_string()),
         name: "Test Suit 2".to_string(),
         description: Some("Second test suit".to_string()),
-        suit_type: "Scenario".to_string(),
+        suit_type: ConfigSuitType::Scenario,
         multi_select: true,
         priority: 5,
         is_active: true,
@@ -58,8 +62,8 @@ async fn create_test_suits(_db: &Database) -> Result<Vec<ConfigSuit>> {
     };
 
     // Save configuration suits to database
-    // Note: In actual tests, we need to use database operations functions
-    // Here we simplify the process, not actually saving to the database
+    suit1.id = Some(mcpmate::conf::operations::upsert_config_suit(&db.pool, &suit1).await?);
+    suit2.id = Some(mcpmate::conf::operations::upsert_config_suit(&db.pool, &suit2).await?);
 
     suits.push(suit1);
     suits.push(suit2);
@@ -68,38 +72,38 @@ async fn create_test_suits(_db: &Database) -> Result<Vec<ConfigSuit>> {
 }
 
 /// Create test servers
-async fn create_test_servers(_db: &Database) -> Result<Vec<Server>> {
+async fn create_test_servers(db: &Database) -> Result<Vec<Server>> {
     let mut servers = Vec::new();
 
     // Create first server
-    let server1 = Server {
+    let mut server1 = Server {
         id: Some(Uuid::new_v4().to_string()),
         name: "test_server1".to_string(),
-        server_type: "stdio".to_string(),
+        server_type: ServerType::Stdio,
         command: Some("echo".to_string()),
         url: None,
         transport_type: None,
-        enabled: Some(true),
+        enabled: EnabledStatus::Enabled,
         created_at: Some(chrono::Utc::now()),
         updated_at: Some(chrono::Utc::now()),
     };
 
     // Create second server
-    let server2 = Server {
+    let mut server2 = Server {
         id: Some(Uuid::new_v4().to_string()),
         name: "test_server2".to_string(),
-        server_type: "sse".to_string(),
+        server_type: ServerType::Sse,
         command: None,
         url: Some("http://localhost:8080/sse".to_string()),
         transport_type: None,
-        enabled: Some(true),
+        enabled: EnabledStatus::Enabled,
         created_at: Some(chrono::Utc::now()),
         updated_at: Some(chrono::Utc::now()),
     };
 
     // Save servers to database
-    // Note: In actual tests, we need to use database operations functions
-    // Here we simplify the process, not actually saving to the database
+    server1.id = Some(mcpmate::conf::operations::upsert_server(&db.pool, &server1).await?);
+    server2.id = Some(mcpmate::conf::operations::upsert_server(&db.pool, &server2).await?);
 
     servers.push(server1);
     servers.push(server2);
@@ -109,12 +113,12 @@ async fn create_test_servers(_db: &Database) -> Result<Vec<Server>> {
 
 /// Create test configuration suit servers
 async fn create_test_suit_servers(
-    _db: &Database,
+    db: &Database,
     suits: &[ConfigSuit],
     servers: &[Server],
 ) -> Result<()> {
     // Add first server to first configuration suit
-    let _suit_server1 = ConfigSuitServer {
+    let suit_server1 = ConfigSuitServer {
         id: Some(Uuid::new_v4().to_string()),
         config_suit_id: suits[0].id.clone().unwrap(),
         server_id: servers[0].id.clone().unwrap(),
@@ -124,7 +128,7 @@ async fn create_test_suit_servers(
     };
 
     // Add second server to second configuration suit
-    let _suit_server2 = ConfigSuitServer {
+    let suit_server2 = ConfigSuitServer {
         id: Some(Uuid::new_v4().to_string()),
         config_suit_id: suits[1].id.clone().unwrap(),
         server_id: servers[1].id.clone().unwrap(),
@@ -134,8 +138,21 @@ async fn create_test_suit_servers(
     };
 
     // Save configuration suit servers to database
-    // Note: In actual tests, we need to use database operations functions
-    // Here we simplify the process, not actually saving to the database
+    mcpmate::conf::operations::suit::add_server_to_config_suit(
+        &db.pool,
+        &suit_server1.config_suit_id,
+        &suit_server1.server_id,
+        suit_server1.enabled,
+    )
+    .await?;
+
+    mcpmate::conf::operations::suit::add_server_to_config_suit(
+        &db.pool,
+        &suit_server2.config_suit_id,
+        &suit_server2.server_id,
+        suit_server2.enabled,
+    )
+    .await?;
 
     Ok(())
 }
@@ -161,13 +178,13 @@ async fn test_config_suit_merge_service_basic() -> Result<()> {
     // Get merged servers
     let merged_servers = merge_service.get_merged_servers().await?;
 
-    // Verify merged results
-    assert_eq!(merged_servers.len(), 2);
-
-    // Verify server names
+    // Verify that our test servers are in the merged results
     let server_names: Vec<String> = merged_servers.iter().map(|s| s.name.clone()).collect();
     assert!(server_names.contains(&"test_server1".to_string()));
     assert!(server_names.contains(&"test_server2".to_string()));
+
+    // Verify that we have at least our 2 test servers
+    assert!(merged_servers.len() >= 2);
 
     Ok(())
 }

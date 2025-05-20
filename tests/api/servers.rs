@@ -93,11 +93,11 @@ async fn test_create_server() -> Result<()> {
     let _server = Server {
         id: Some(Uuid::new_v4().to_string()),
         name: "test_server".to_string(),
-        server_type: "stdio".to_string(),
+        server_type: mcpmate::common::types::ServerType::Stdio,
         command: Some("echo".to_string()),
         url: None,
         transport_type: None,
-        enabled: Some(true),
+        enabled: mcpmate::common::types::EnabledStatus::Enabled,
         created_at: Some(chrono::Utc::now()),
         updated_at: Some(chrono::Utc::now()),
     };

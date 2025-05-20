@@ -230,9 +230,7 @@ pub async fn update_suit(
                 crate::conf::operations::suit::get_config_suit_by_name(&db.pool, &name)
                     .await
                     .map_err(|e| {
-                        ApiError::InternalError(format!(
-                            "Failed to check configuration suit: {e}"
-                        ))
+                        ApiError::InternalError(format!("Failed to check configuration suit: {e}"))
                     })?;
 
             if let Some(existing) = existing_suit {
@@ -260,7 +258,7 @@ pub async fn update_suit(
                 )));
             }
         };
-        suit.suit_type = parsed_type.as_str().to_string();
+        suit.suit_type = parsed_type;
     }
 
     if let Some(multi_select) = payload.multi_select {

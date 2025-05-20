@@ -14,6 +14,7 @@ use crate::{
         models::server::{InstanceHealthResponse, OperationResponse, ServerInstanceResponse},
         routes::AppState,
     },
+    common::types::ServerType,
     core::types::{ConnectionStatus, ErrorType},
 };
 
@@ -54,7 +55,11 @@ pub async fn get_instance(
             ConnectionStatus::Error(err) => Some(err.message.clone()),
             _ => None,
         },
-        server_type: pool.get_server_type(&name).unwrap_or_default(),
+        server_type: pool
+            .get_server_type(&name)
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(ServerType::Stdio),
         process_id: conn.process_id,
         cpu_usage: conn.cpu_usage,
         memory_usage: conn.memory_usage,

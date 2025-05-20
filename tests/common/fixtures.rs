@@ -10,7 +10,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use mcpmate::{conf::models::Server, http::pool::UpstreamConnectionPool};
+use mcpmate::{
+    common::types::{EnabledStatus, ServerType},
+    conf::models::Server,
+    http::pool::UpstreamConnectionPool,
+};
 use rmcp::model::Tool;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -92,7 +96,7 @@ pub struct ServerFixture {
     pub name: String,
 
     /// Server type (stdio, sse, etc.)
-    pub kind: String,
+    pub kind: ServerType,
 
     /// Server command (for stdio servers)
     pub command: Option<String>,
@@ -108,11 +112,11 @@ impl ServerFixture {
     /// Create a new server fixture
     pub fn new(
         name: &str,
-        kind: &str,
+        kind: ServerType,
     ) -> Self {
         Self {
             name: name.to_string(),
-            kind: kind.to_string(),
+            kind,
             command: None,
             url: None,
             tools: Vec::new(),
@@ -162,11 +166,11 @@ impl ServerFixture {
         let _server = Server {
             id: Some(Uuid::new_v4().to_string()),
             name: self.name.clone(),
-            server_type: self.kind.clone(),
+            server_type: self.kind,
             command: self.command.clone(),
             url: self.url.clone(),
             transport_type: None,
-            enabled: Some(true),
+            enabled: EnabledStatus::Enabled,
             created_at: Some(chrono::Utc::now()),
             updated_at: Some(chrono::Utc::now()),
         };
@@ -199,11 +203,11 @@ impl ServerFixture {
         Server {
             id: Some(Uuid::new_v4().to_string()),
             name: self.name.clone(),
-            server_type: self.kind.clone(),
+            server_type: self.kind,
             command: self.command.clone(),
             url: self.url.clone(),
             transport_type: None,
-            enabled: Some(true),
+            enabled: EnabledStatus::Enabled,
             created_at: Some(chrono::Utc::now()),
             updated_at: Some(chrono::Utc::now()),
         }

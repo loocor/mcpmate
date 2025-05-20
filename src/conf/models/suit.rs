@@ -1,50 +1,13 @@
 // Config Suit models for MCPMate
 // Contains data models for configuration suits
 
-use std::str::FromStr;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-/// Configuration suit type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ConfigSuitType {
-    /// Host application configuration
-    HostApp,
-    /// Scenario-based configuration
-    Scenario,
-    /// Shared configuration
-    Shared,
-}
+use crate::common::types::ConfigSuitType;
 
-impl ConfigSuitType {
-    /// Convert to string
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ConfigSuitType::HostApp => "host_app",
-            ConfigSuitType::Scenario => "scenario",
-            ConfigSuitType::Shared => "shared",
-        }
-    }
-}
-
-/// Error type for ConfigSuitType parsing
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseConfigSuitTypeError;
-
-impl FromStr for ConfigSuitType {
-    type Err = ParseConfigSuitTypeError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "host_app" => Ok(ConfigSuitType::HostApp),
-            "scenario" => Ok(ConfigSuitType::Scenario),
-            "shared" => Ok(ConfigSuitType::Shared),
-            _ => Err(ParseConfigSuitTypeError),
-        }
-    }
-}
+// Use ConfigSuitType from common::types instead of defining it here
 
 /// Configuration suit model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -57,7 +20,7 @@ pub struct ConfigSuit {
     pub description: Option<String>,
     /// Type of the configuration suit
     #[sqlx(rename = "type")]
-    pub suit_type: String,
+    pub suit_type: ConfigSuitType,
     /// Whether multiple configuration suits can be selected simultaneously
     pub multi_select: bool,
     /// Priority of the configuration suit (higher priority wins in case of conflicts)
@@ -82,7 +45,7 @@ impl ConfigSuit {
             id: None,
             name,
             description: None,
-            suit_type: suit_type.as_str().to_string(),
+            suit_type,
             multi_select: false,
             priority: 0,
             is_active: false,
@@ -102,7 +65,7 @@ impl ConfigSuit {
             id: None,
             name,
             description,
-            suit_type: suit_type.as_str().to_string(),
+            suit_type,
             multi_select: false,
             priority: 0,
             is_active: false,
@@ -112,9 +75,14 @@ impl ConfigSuit {
         }
     }
 
-    /// Get the configuration suit type
+    /// Get the configuration suit type (for backward compatibility)
     pub fn get_type(&self) -> Option<ConfigSuitType> {
-        ConfigSuitType::from_str(&self.suit_type).ok()
+        Some(self.suit_type)
+    }
+
+    /// Get the configuration suit type as string (for API compatibility)
+    pub fn suit_type_string(&self) -> String {
+        self.suit_type.to_string()
     }
 }
 

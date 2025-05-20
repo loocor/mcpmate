@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::transport::TransportType;
+use crate::{common::types::ServerType, core::transport::TransportType};
 
 /// MCP server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,7 +20,7 @@ pub struct Config {
 pub struct MCPServerConfig {
     /// Type of the server (stdio, sse, streamable_http)
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: ServerType,
     /// Command to execute (for stdio servers)
     pub command: Option<String>,
     /// Arguments to pass to the command (for stdio servers)
@@ -44,15 +44,10 @@ impl MCPServerConfig {
         }
 
         // Otherwise, infer from the 'kind' field for backward compatibility
-        match self.kind.as_str() {
-            "stdio" => TransportType::Stdio,
-            "sse" => TransportType::Sse,
-            "streamable_http" | "streamablehttp" => TransportType::StreamableHttp,
-            _ => {
-                // Default to SSE for unknown types
-                tracing::warn!("Unknown server type: {}, defaulting to SSE", self.kind);
-                TransportType::Sse
-            }
+        match self.kind {
+            ServerType::Stdio => TransportType::Stdio,
+            ServerType::Sse => TransportType::Sse,
+            ServerType::StreamableHttp => TransportType::StreamableHttp,
         }
     }
 }
