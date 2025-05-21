@@ -59,7 +59,7 @@ pub async fn build_tool_mapping(
         }
     }
 
-    tracing::info!("Built tool mapping with {} tools", tool_mapping.len());
+    tracing::debug!("Built tool mapping with {} tools", tool_mapping.len());
     tool_mapping
 }
 

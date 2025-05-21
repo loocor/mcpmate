@@ -143,8 +143,6 @@ pub struct ConfigSuitToolResponse {
     pub server_name: String,
     /// Tool name
     pub tool_name: String,
-    /// Prefixed name
-    pub prefixed_name: Option<String>,
     /// Whether the tool is enabled in this configuration suit
     pub enabled: bool,
     /// Allowed operations on this tool

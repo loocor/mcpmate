@@ -185,7 +185,7 @@ impl UpstreamConnectionPool {
     ) {
         // Update the connection with the service and tools
         let conn = self.get_instance_mut(server_name, instance_id).unwrap();
-        conn.update_connected(service, tools);
+        conn.update_connected(service, tools.clone());
 
         tracing::info!(
             "Connected to server '{}' instance '{}', found {} tools",
@@ -193,6 +193,148 @@ impl UpstreamConnectionPool {
             instance_id,
             conn.tools.len()
         );
+
+        // Sync tools to database if database reference is available
+        if let Some(db) = &self.database {
+            // Spawn a task to sync tools to database to avoid blocking the connection process
+            let db_clone = db.clone();
+            let server_name_clone = server_name.to_string();
+            let tools_clone = tools.clone();
+
+            tokio::spawn(async move {
+                if let Err(e) =
+                    Self::sync_tools_to_database(&db_clone, &server_name_clone, &tools_clone).await
+                {
+                    tracing::error!("Failed to sync tools to database: {}", e);
+                }
+            });
+        }
+    }
+
+    /// Sync tools to database
+    ///
+    /// This function syncs tools from a server to the database.
+    /// It adds tools to all config suits that have the server enabled.
+    async fn sync_tools_to_database(
+        db: &Arc<crate::conf::database::Database>,
+        server_name: &str,
+        tools: &[Tool],
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        tracing::info!(
+            "Syncing {} tools from server '{}' to database",
+            tools.len(),
+            server_name
+        );
+
+        // Get the server ID
+        let server = crate::conf::operations::get_server(&db.pool, server_name)
+            .await
+            .context(format!("Failed to get server '{}'", server_name))?;
+
+        if let Some(server) = server {
+            if let Some(server_id) = &server.id {
+                // Get all config suits that have this server enabled
+                let all_suits = crate::conf::operations::get_all_config_suits(&db.pool)
+                    .await
+                    .context("Failed to get all config suits")?;
+
+                let mut suits_with_server = Vec::new();
+
+                for suit in all_suits {
+                    if let Some(suit_id) = &suit.id {
+                        // Get all servers in this suit
+                        let suit_servers =
+                            crate::conf::operations::get_config_suit_servers(&db.pool, suit_id)
+                                .await
+                                .context(format!("Failed to get servers for suit '{}'", suit_id))?;
+
+                        // Check if this server is in the suit
+                        for suit_server in suit_servers {
+                            if suit_server.server_id == *server_id {
+                                suits_with_server.push(suit.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                tracing::info!(
+                    "Found {} config suits with server '{}' enabled",
+                    suits_with_server.len(),
+                    server_name
+                );
+
+                // For each suit, add all tools
+                for suit in suits_with_server {
+                    if let Some(suit_id) = &suit.id {
+                        // Get existing tools in this suit for this server
+                        let existing_tools =
+                            crate::conf::operations::get_config_suit_tools(&db.pool, suit_id)
+                                .await
+                                .context(format!("Failed to get tools for suit '{}'", suit_id))?;
+
+                        let existing_tool_names: std::collections::HashSet<String> = existing_tools
+                            .iter()
+                            .filter(|t| t.server_id == *server_id)
+                            .map(|t| t.tool_name.clone())
+                            .collect();
+
+                        // Add new tools to the suit
+                        for tool in tools {
+                            let tool_name = tool.name.to_string();
+
+                            // Skip if tool already exists in this suit
+                            if existing_tool_names.contains(&tool_name) {
+                                continue;
+                            }
+
+                            // Add the tool to the suit (enabled by default)
+                            match crate::conf::operations::suit::add_tool_to_config_suit(
+                                &db.pool, suit_id, server_id, &tool_name, true,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    tracing::debug!(
+                                        "Added tool '{}' from server '{}' to suit '{}'",
+                                        tool_name,
+                                        server_name,
+                                        suit.name
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to add tool '{}' from server '{}' to suit '{}': {}",
+                                        tool_name,
+                                        server_name,
+                                        suit.name,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+
+                        tracing::info!(
+                            "Synced tools from server '{}' to suit '{}'",
+                            server_name,
+                            suit.name
+                        );
+                    }
+                }
+
+                tracing::info!(
+                    "Successfully synced {} tools from server '{}' to database",
+                    tools.len(),
+                    server_name
+                );
+
+                return Ok(());
+            }
+        }
+
+        Err(anyhow::anyhow!("Server '{}' not found", server_name))
     }
 
     /// Connect to a stdio server

@@ -22,8 +22,8 @@ pub use sse::connect_sse_server;
 pub use stdio::connect_stdio_server;
 pub use suit::ConfigSuitMergeService;
 pub use tool::{
-    ToolMapping, ToolNameMapping, build_name_mapping, build_tool_mapping, call_upstream_tool,
-    detect_common_prefix, find_tool_in_server, get_all_tools, get_all_with_prefix, parse_tool_name,
+    ToolMapping, ToolNameMapping, build_tool_mapping, call_upstream_tool, find_tool_in_server,
+    get_all_tools,
 };
 pub use transport::{TransportType, connect_http_server};
 pub use types::ConnectionStatus;

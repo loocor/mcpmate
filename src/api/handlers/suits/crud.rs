@@ -144,7 +144,6 @@ pub async fn create_suit(
                 server_id: tool_config.server_id.clone(),
                 server_name: tool_config.server_name.clone(),
                 tool_name: tool_config.tool_name.clone(),
-                prefixed_name: tool_config.prefixed_name.clone(),
                 enabled: tool_config.enabled,
                 created_at: None,
                 updated_at: None,
@@ -152,8 +151,8 @@ pub async fn create_suit(
 
             sqlx::query(
                 r#"
-                INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, prefixed_name, enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, enabled)
+                VALUES (?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(new_tool_config.id.as_ref().unwrap())
@@ -161,7 +160,6 @@ pub async fn create_suit(
             .bind(&new_tool_config.server_id)
             .bind(&new_tool_config.server_name)
             .bind(&new_tool_config.tool_name)
-            .bind(&new_tool_config.prefixed_name)
             .bind(new_tool_config.enabled)
             .execute(&mut *tx)
             .await

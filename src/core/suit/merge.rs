@@ -73,7 +73,7 @@ impl ConfigSuitMergeService {
     pub async fn is_tool_enabled(
         &self,
         server_id: &str,
-        tool_id: &str,
+        tool_name: &str,
     ) -> Result<bool> {
         // Get all active configuration suits
         let active_suits = get_active_config_suits(&self.db.pool)
@@ -83,12 +83,17 @@ impl ConfigSuitMergeService {
         // Merge tools for the server
         let tools = self.merge_tools(&active_suits, server_id).await?;
 
-        // Check if the tool is enabled
-        if let Some(tool) = tools.get(tool_id) {
-            return Ok(tool.enabled);
+        // Check if the tool is enabled by looking for a tool with matching name
+        // Note: tools HashMap is keyed by tool_id, not tool_name, so we need to iterate
+        for tool in tools.values() {
+            if tool.tool_name == tool_name {
+                return Ok(tool.enabled);
+            }
         }
 
         // If the tool is not found, it's considered disabled
+        // This is a change from the semi-blacklist mode in operations::tool::is_tool_enabled
+        // but is consistent with the behavior in the rest of the merge service
         Ok(false)
     }
 

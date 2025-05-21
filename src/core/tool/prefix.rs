@@ -7,14 +7,13 @@ use rmcp::model::Tool;
 use tokio::sync::Mutex;
 use tracing;
 
-use super::{mapping::build_tool_mapping, types::ToolNameMapping};
+use super::types::ToolNameMapping;
 use crate::http::pool::UpstreamConnectionPool;
 
 /// Parse a tool name to extract server prefix if present
 ///
 /// This function parses a tool name to extract the server prefix if present.
 /// For example, "server_tool" would be parsed as (Some("server"), "tool").
-/// It also handles cases like "server_server_tool" where the prefix is repeated.
 ///
 /// # Arguments
 /// * `tool_name` - The tool name to parse
@@ -26,23 +25,12 @@ pub fn parse_tool_name(tool_name: &str) -> (Option<&str>, &str) {
         let server_prefix = &tool_name[0..pos];
         let remaining = &tool_name[pos + 1..];
 
-        // Check if the remaining part starts with the same prefix
-        // This handles cases like "playwright_playwright_navigate"
-        let prefix_repeated = remaining.starts_with(&format!("{server_prefix}_"));
-
-        if prefix_repeated {
-            // Skip the repeated prefix
-            if let Some(second_pos) = remaining.find('_') {
-                let original_tool_name = &remaining[second_pos + 1..];
-                tracing::debug!(
-                    "Detected repeated prefix in tool name: '{}' -> server: '{}', tool: '{}'",
-                    tool_name,
-                    server_prefix,
-                    original_tool_name
-                );
-                return (Some(server_prefix), original_tool_name);
-            }
-        }
+        tracing::debug!(
+            "Parsed tool name: '{}' -> server: '{}', tool: '{}'",
+            tool_name,
+            server_prefix,
+            remaining
+        );
 
         (Some(server_prefix), remaining)
     } else {
@@ -123,268 +111,85 @@ pub fn detect_common_prefix(
     false
 }
 
-/// Get all tools with smart prefixing to avoid name conflicts
+/// Get all tools from all connected servers
 ///
-/// This function retrieves all tools from all connected servers and applies
-/// smart prefixing to avoid name conflicts. It is used to build a comprehensive
-/// list of available tools with unique names.
+/// This function retrieves all tools from all connected servers without any
+/// modification to their names. It is used to build a comprehensive list of available tools.
 ///
 /// # Arguments
 /// * `connection_pool` - The connection pool to use
 ///
 /// # Returns
-/// * `Vec<Tool>` - A list of all tools with smart prefixing
-pub async fn get_all_with_prefix(
+/// * `Vec<Tool>` - A list of all tools from all connected servers
+pub async fn get_all_tools_without_prefix(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
 ) -> Vec<Tool> {
     // Lock the connection pool to access it
     let pool = connection_pool.lock().await;
 
-    // First, collect all tools by server
-    let mut tools_by_server: HashMap<String, Vec<Tool>> = HashMap::new();
-    let mut all_tool_names: HashMap<String, (String, String)> = HashMap::new(); // tool_name -> (server_name, instance_id)
+    // Collect all tools from all connected servers
+    let mut result_tools = Vec::new();
+    let mut processed_names = std::collections::HashSet::new();
 
-    // Try to get custom prefixed names from database if available
-    let mut custom_prefixed_names = HashMap::new();
-
-    // Try to get the database from the proxy server
-    if let Some(proxy) = crate::http::proxy::get_proxy_server() {
-        if let Some(db) = &proxy.database {
-            match super::db::get_custom_prefixed_names(&db.pool).await {
-                Ok(names) => {
-                    tracing::debug!("Loaded {} custom prefixed names from database", names.len());
-                    custom_prefixed_names = names;
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load custom prefixed names from database: {}", e);
-                }
-            }
-        } else {
-            tracing::debug!("No database connection available in proxy server");
-        }
-    } else {
-        tracing::debug!("Could not get proxy server instance");
-    }
-
-    // Collect tools and check for name conflicts
+    // Collect tools from all servers
     for (server_name, instances) in &pool.connections {
-        for (instance_id, conn) in instances {
+        for (_instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
                 continue;
             }
 
-            // Add all tools from this instance to the server's collection
-            let server_tools = tools_by_server.entry(server_name.clone()).or_default();
-
+            // Add all tools from this instance to the result
             for tool in &conn.tools {
-                server_tools.push(tool.clone());
+                let processed_tool = tool.clone();
 
-                // Convert Cow<str> to String for HashMap key
-                let tool_name_string = tool.name.to_string();
+                // Log the original tool name for debugging
+                tracing::info!(
+                    "Processing tool: '{}' from server '{}'",
+                    processed_tool.name,
+                    server_name
+                );
 
-                // Track tool names for conflict detection
-                if let Some((existing_server, existing_instance)) =
-                    all_tool_names.get(&tool_name_string)
-                {
+                // Check for duplicate names
+                if processed_names.contains(&processed_tool.name) {
                     tracing::warn!(
-                        "Tool name conflict: '{}' is provided by both '{}' (instance '{}') and '{}' (instance '{}')",
-                        tool_name_string,
-                        existing_server,
-                        existing_instance,
-                        server_name,
-                        instance_id
+                        "Duplicate tool name: '{}' from server '{}'",
+                        processed_tool.name,
+                        server_name
                     );
-                } else {
-                    all_tool_names
-                        .insert(tool_name_string, (server_name.clone(), instance_id.clone()));
+                    continue;
                 }
+
+                // Add the tool to the result
+                processed_names.insert(processed_tool.name.clone());
+                result_tools.push(processed_tool);
             }
-        }
-    }
-
-    // Detect common prefixes for each server's tools
-    let mut server_has_prefix: HashMap<String, bool> = HashMap::new();
-    for (server_name, tools) in &tools_by_server {
-        let has_common_prefix = detect_common_prefix(tools, server_name);
-        server_has_prefix.insert(server_name.clone(), has_common_prefix);
-
-        tracing::debug!(
-            "Server '{}' tools {} a common prefix",
-            server_name,
-            if has_common_prefix {
-                "have"
-            } else {
-                "do not have"
-            }
-        );
-    }
-
-    // Process tools with smart prefixing
-    let mut result_tools = Vec::new();
-    let mut processed_names = std::collections::HashSet::new();
-    let mut name_conflicts = std::collections::HashSet::new();
-
-    // First pass: identify conflicts
-    for (tool_name, (_, _)) in &all_tool_names {
-        let count = all_tool_names
-            .iter()
-            .filter(|(name, _)| *name == tool_name)
-            .count();
-
-        if count > 1 {
-            name_conflicts.insert(tool_name.clone());
-        }
-    }
-
-    // Second pass: process tools with smart prefixing
-    for (server_name, tools) in &tools_by_server {
-        let has_prefix = *server_has_prefix.get(server_name).unwrap_or(&false);
-        let is_single_tool_server = tools.len() == 1;
-
-        for tool in tools {
-            let mut processed_tool = tool.clone();
-
-            // Convert tool name to string for easier manipulation
-            let tool_name_string = tool.name.to_string();
-
-            // Check if there's a custom prefixed name for this tool
-            let custom_name =
-                custom_prefixed_names.get(&(server_name.clone(), tool_name_string.clone()));
-
-            if let Some(custom_prefixed_name) = custom_name {
-                // Use the custom prefixed name from the database
-                processed_tool.name = custom_prefixed_name.clone().into();
-
-                tracing::debug!(
-                    "Using custom prefixed name for tool: '{}' -> '{}'",
-                    tool_name_string,
-                    custom_prefixed_name
-                );
-
-                // Update description to indicate source
-                if !processed_tool
-                    .description
-                    .as_ref()
-                    .is_some_and(|desc| desc.contains(&format!("[{server_name}]")))
-                {
-                    let desc = processed_tool
-                        .description
-                        .as_ref()
-                        .map_or("".to_string(), |d| d.to_string());
-                    processed_tool.description = Some(format!("[{server_name}] {desc}").into());
-                }
-            } else {
-                // No custom name, apply smart prefixing logic
-
-                // Check if the tool already has the server prefix
-                let server_prefix = format!("{}_", server_name.to_lowercase());
-                let already_has_server_prefix =
-                    tool_name_string.to_lowercase().starts_with(&server_prefix);
-
-                // Check if the tool has any prefix that matches another server name
-                let has_other_server_prefix = server_has_prefix
-                    .iter()
-                    .filter(|(other_server, _)| *other_server != server_name)
-                    .any(|(other_server, _)| {
-                        let other_prefix = format!("{}_", other_server.to_lowercase());
-                        tool_name_string.to_lowercase().starts_with(&other_prefix)
-                    });
-
-                // Determine if we need to add a prefix
-                let needs_prefix = if has_prefix || already_has_server_prefix {
-                    // Already has prefix, no need to add
-                    false
-                } else if has_other_server_prefix {
-                    // Has prefix from another server, need to replace with correct prefix
-                    true
-                } else if is_single_tool_server && !name_conflicts.contains(&tool_name_string) {
-                    // Single tool server with no conflicts, no need to add prefix
-                    false
-                } else {
-                    // Either multi-tool server without prefix or has conflicts
-                    true
-                };
-
-                if needs_prefix {
-                    // If the tool already has a prefix from another server, we need to remove it first
-                    let original_name = if has_other_server_prefix {
-                        // Find the underscore and get the part after it
-                        if let Some(pos) = tool_name_string.find('_') {
-                            &tool_name_string[pos + 1..]
-                        } else {
-                            &tool_name_string
-                        }
-                    } else {
-                        &tool_name_string
-                    };
-
-                    // Add prefix with proper conversion to Cow<str>
-                    processed_tool.name = format!("{server_name}_{original_name}").into();
-
-                    tracing::debug!(
-                        "Added prefix to tool: '{}' -> '{}'",
-                        tool_name_string,
-                        processed_tool.name
-                    );
-
-                    // Update description to indicate source
-                    if !processed_tool
-                        .description
-                        .as_ref()
-                        .is_some_and(|desc| desc.contains(&format!("[{server_name}]")))
-                    {
-                        let desc = processed_tool
-                            .description
-                            .as_ref()
-                            .map_or("".to_string(), |d| d.to_string());
-                        processed_tool.description =
-                            Some(format!("[{server_name}] {desc}").into());
-                    }
-                }
-            }
-
-            // Check for duplicate processed names
-            if processed_names.contains(&processed_tool.name) {
-                tracing::warn!(
-                    "Duplicate processed tool name: '{}' after smart prefixing",
-                    processed_tool.name
-                );
-                continue;
-            }
-
-            processed_names.insert(processed_tool.name.clone());
-            result_tools.push(processed_tool);
         }
     }
 
     tracing::info!(
-        "Processed {} tools with smart prefixing",
+        "Processed {} tools from all connected servers",
         result_tools.len()
     );
 
     result_tools
 }
 
-/// Build a mapping of client-facing tool names to upstream tool names
+/// Build a mapping of tool names to server information
 ///
-/// This function builds a mapping of client-facing tool names (which may include
-/// a prefix) to the actual upstream tool names. It is used to handle tool name
-/// prefixing and routing tool calls to the appropriate upstream server.
+/// This function builds a mapping of tool names to server information.
+/// It is used to route tool calls to the appropriate upstream server.
 ///
 /// # Arguments
 /// * `connection_pool` - The connection pool to use
 ///
 /// # Returns
-/// * `HashMap<String, ToolNameMapping>` - A mapping of client-facing tool names to upstream tool names
-pub async fn build_name_mapping(
+/// * `HashMap<String, ToolNameMapping>` - A mapping of tool names to server information
+pub async fn build_tool_server_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
 ) -> HashMap<String, ToolNameMapping> {
-    // Get all tools with smart prefixing
-    let prefixed_tools = get_all_with_prefix(connection_pool).await;
-
-    // Build the original tool mapping
-    let original_mapping = build_tool_mapping(connection_pool).await;
+    // Get all tools from all connected servers
+    let tools = get_all_tools_without_prefix(connection_pool).await;
 
     // Create the tool name mapping
     let mut name_mapping = HashMap::new();
@@ -392,59 +197,38 @@ pub async fn build_name_mapping(
     // Lock the connection pool to access it
     let pool = connection_pool.lock().await;
 
-    // Process each prefixed tool
-    for prefixed_tool in &prefixed_tools {
-        let client_tool_name = prefixed_tool.name.to_string();
+    // Process each tool
+    for tool in &tools {
+        let tool_name = tool.name.to_string();
 
-        // Find the original tool and server information
+        // Find the server information for this tool
         for (server_name, instances) in &pool.connections {
             for (instance_id, conn) in instances {
                 if !conn.is_connected() {
                     continue;
                 }
 
-                // Look for the original tool in this instance
-                for original_tool in &conn.tools {
-                    // Check if this is the same tool (by comparing descriptions or other properties)
-                    // This is a heuristic and might need improvement
-                    if prefixed_tool.description.as_ref().is_some_and(|desc| {
-                        original_tool
-                            .description
-                            .as_ref()
-                            .is_some_and(|orig_desc| desc.contains(&orig_desc.to_string()))
-                    }) || (prefixed_tool
-                        .name
-                        .to_string()
-                        .contains(&original_tool.name.to_string())
-                        && prefixed_tool.name != original_tool.name)
-                    {
-                        // Found the original tool
-                        name_mapping.insert(client_tool_name.clone(), ToolNameMapping {
-                            client_tool_name: client_tool_name.clone(),
+                // Look for the tool in this instance
+                for server_tool in &conn.tools {
+                    if server_tool.name == tool.name {
+                        // Found the tool
+                        name_mapping.insert(tool_name.clone(), ToolNameMapping {
+                            client_tool_name: tool_name.clone(),
                             server_name: server_name.clone(),
                             instance_id: instance_id.clone(),
-                            upstream_tool_name: original_tool.name.to_string(),
+                            upstream_tool_name: server_tool.name.to_string(),
                         });
+
+                        tracing::info!(
+                            "Mapped tool: '{}' to server: '{}', instance: '{}'",
+                            tool_name,
+                            server_name,
+                            instance_id
+                        );
+
                         break;
                     }
                 }
-            }
-        }
-    }
-
-    // Add any tools that weren't processed (e.g., single tool servers without conflicts)
-    for prefixed_tool in &prefixed_tools {
-        let client_tool_name = prefixed_tool.name.to_string();
-
-        if !name_mapping.contains_key(&client_tool_name) {
-            // This tool wasn't processed, which means it's the same as the original
-            if let Some(mapping) = original_mapping.get(&client_tool_name) {
-                name_mapping.insert(client_tool_name.clone(), ToolNameMapping {
-                    client_tool_name: client_tool_name.clone(),
-                    server_name: mapping.server_name.clone(),
-                    instance_id: mapping.instance_id.clone(),
-                    upstream_tool_name: mapping.upstream_tool_name.clone(),
-                });
             }
         }
     }

@@ -37,15 +37,14 @@ pub async fn list_all(
             for tool in &conn.tools {
                 let tool_name = tool.name.to_string();
 
-                // Get tool status (ID, prefixed name, enabled status)
-                let (_, prefixed_name, enabled) =
-                    get_tool_status(&db.pool, server_name, &tool_name).await?;
+                // Get tool status (ID, enabled status)
+                let (_, _, enabled) = get_tool_status(&db.pool, server_name, &tool_name).await?;
 
                 // Only include enabled tools
                 if enabled {
                     // Convert to SDK Tool type
                     let sdk_tool = rmcp::model::Tool {
-                        name: prefixed_name.unwrap_or_else(|| tool_name.clone()).into(),
+                        name: tool_name.clone().into(),
                         description: Some(
                             format!("Tool provided by server '{server_name}'").into(),
                         ),
@@ -102,15 +101,14 @@ pub async fn list_server(
             for tool in &conn.tools {
                 let tool_name = tool.name.to_string();
 
-                // Get tool status (ID, prefixed name, enabled status)
-                let (_, prefixed_name, enabled) =
-                    get_tool_status(&db.pool, &server_name, &tool_name).await?;
+                // Get tool status (ID, enabled status)
+                let (_, _, enabled) = get_tool_status(&db.pool, &server_name, &tool_name).await?;
 
                 // Only include enabled tools
                 if enabled {
                     // Convert to SDK Tool type
                     let sdk_tool = rmcp::model::Tool {
-                        name: prefixed_name.unwrap_or_else(|| tool_name.clone()).into(),
+                        name: tool_name.clone().into(),
                         description: Some(
                             format!("Tool provided by server '{server_name}'").into(),
                         ),
@@ -156,8 +154,8 @@ pub async fn get_tool(
         )));
     }
 
-    // Get tool status (ID, prefixed name, enabled status)
-    let (_, prefixed_name, enabled) = get_tool_status(&db.pool, &server_name, &tool_name).await?;
+    // Get tool status (ID, enabled status)
+    let (_, _, enabled) = get_tool_status(&db.pool, &server_name, &tool_name).await?;
 
     // Check if the tool is enabled
     if !enabled {
@@ -190,7 +188,7 @@ pub async fn get_tool(
             if tool.name == tool_name {
                 // Found the tool, return its MCP specification-compliant information
                 let sdk_tool = rmcp::model::Tool {
-                    name: prefixed_name.unwrap_or_else(|| tool_name.clone()).into(),
+                    name: tool_name.clone().into(),
                     description: Some(format!("Tool provided by server '{server_name}'").into()),
                     input_schema: tool.input_schema.clone(), // Already an Arc<JsonObject>
                     annotations: None,
@@ -241,7 +239,7 @@ pub async fn get_context(
     Ok((proxy, db))
 }
 
-/// Helper function to get tool status (ID, prefixed name, enabled status)
+/// Helper function to get tool status (ID, enabled status)
 pub async fn get_tool_status(
     pool: &sqlx::Pool<sqlx::Sqlite>,
     server_name: &str,
@@ -316,7 +314,6 @@ pub async fn get_tool_status(
             if let Some(server) = server {
                 if let Some(server_id) = &server.id {
                     // Add the tool to the config suit
-
                     operations::suit::add_tool_to_config_suit(
                         pool, &suit_id, server_id, tool_name, true,
                     )
@@ -342,15 +339,6 @@ pub async fn get_tool_status(
         }
     };
 
-    // Get the prefixed name
-    let prefixed_name =
-        match operations::tool::get_tool_prefixed_name(pool, server_name, tool_name).await {
-            Ok(prefixed_name) => prefixed_name,
-            Err(e) => {
-                tracing::warn!("Failed to get tool prefixed name: {}, using None", e);
-                None
-            }
-        };
-
-    Ok((tool_id, prefixed_name, enabled))
+    // Return None for prefixed_name as we no longer use it
+    Ok((tool_id, None, enabled))
 }

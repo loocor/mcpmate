@@ -8,10 +8,7 @@ use rmcp::model::{CallToolRequestParam, CallToolResult};
 use tokio::sync::Mutex;
 use tracing;
 
-use super::{
-    mapping::{build_tool_mapping, find_tool_in_server},
-    prefix::parse_tool_name,
-};
+use super::mapping::build_tool_mapping;
 use crate::http::pool::UpstreamConnectionPool;
 
 /// Call a tool on the appropriate upstream server
@@ -34,45 +31,13 @@ pub async fn call_upstream_tool(
     // Extract the tool name from the request
     let tool_name = request.name.to_string();
 
-    // Try to parse the tool name to extract server prefix if present
-    let (server_prefix, original_tool_name) = parse_tool_name(&tool_name);
-
-    tracing::debug!(
-        "Parsed tool name '{}' -> prefix: {:?}, original: '{}'",
-        tool_name,
-        server_prefix,
-        original_tool_name
-    );
-
     // Build the tool mapping to find the server for this tool
     let tool_mapping = build_tool_mapping(connection_pool).await;
 
     // Find the mapping for this tool
-    let mapping = if let Some(server_prefix) = server_prefix {
-        // If we have a server prefix, try to find the tool with the original name in that server
-        match find_tool_in_server(connection_pool, server_prefix, original_tool_name).await {
-            Ok(mapping) => mapping,
-            Err(e) => {
-                tracing::debug!(
-                    "Could not find tool '{}' in server '{}', trying with full name: {}",
-                    original_tool_name,
-                    server_prefix,
-                    e
-                );
-
-                // If we couldn't find the tool with the original name, try with the full name
-                // This handles cases where the prefix detection might be incorrect
-                tool_mapping.get(&tool_name).cloned().context(format!(
-                    "Tool '{tool_name}' not found in any connected server"
-                ))?
-            }
-        }
-    } else {
-        // Otherwise, try to find the tool directly
-        tool_mapping.get(&tool_name).cloned().context(format!(
-            "Tool '{tool_name}' not found in any connected server"
-        ))?
-    };
+    let mapping = tool_mapping.get(&tool_name).cloned().context(format!(
+        "Tool '{tool_name}' not found in any connected server"
+    ))?;
 
     // Get the server and instance
     let server_name = &mapping.server_name;
@@ -87,7 +52,7 @@ pub async fn call_upstream_tool(
             if let Some(server_id) = &server.id {
                 // Check if the tool is enabled
                 let is_enabled = merge_service
-                    .is_tool_enabled(server_id, original_tool_name)
+                    .is_tool_enabled(server_id, &tool_name)
                     .await
                     .unwrap_or(true); // Default to enabled if check fails
 
@@ -101,26 +66,8 @@ pub async fn call_upstream_tool(
         }
     }
 
-    // Determine the actual tool name to call on the upstream server
-    let upstream_tool_name = if let Some(prefix) = server_prefix {
-        // If the server name matches the prefix, use the original tool name
-        if prefix.to_lowercase() == server_name.to_lowercase() {
-            original_tool_name
-        } else {
-            // If the prefix doesn't match the server, use the original tool name
-            // but log a warning
-            tracing::warn!(
-                "Tool prefix '{}' doesn't match server name '{}', using original name '{}'",
-                prefix,
-                server_name,
-                original_tool_name
-            );
-            original_tool_name
-        }
-    } else {
-        // Otherwise, use the tool name as is
-        &tool_name
-    };
+    // Use the tool name as is for upstream server
+    let upstream_tool_name = &tool_name;
 
     tracing::info!(
         "Routing tool call '{}' to server '{}' instance '{}' (upstream tool name: '{}')",

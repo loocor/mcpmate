@@ -15,10 +15,7 @@ use tokio::sync::Mutex;
 use super::get_tool_name_mapping;
 use crate::{
     conf::operations,
-    core::{
-        ConnectionStatus,
-        tool::{call_upstream_tool, get_all_with_prefix, parse_tool_name},
-    },
+    core::{ConnectionStatus, tool::call_upstream_tool},
     http::proxy::core::HttpProxyServer,
 };
 
@@ -42,8 +39,8 @@ pub async fn list_tools(
     _request: Option<PaginatedRequestParam>,
     _context: RequestContext<RoleServer>,
 ) -> Result<ListToolsResult, McpError> {
-    // Get tools with smart prefixing
-    let all_tools = get_all_with_prefix(&server.connection_pool).await;
+    // Get all tools from all connected servers
+    let all_tools = crate::core::tool::get_all_tools(&server.connection_pool).await;
 
     // Filter disabled tools if database is available
     let tools = if let Some(db) = &server.database {
@@ -59,48 +56,32 @@ pub async fn list_tools(
         );
 
         for tool in all_tools {
-            // Parse the tool name to extract server prefix if present
-            let (server_prefix, original_tool_name) = parse_tool_name(&tool.name);
+            // Get server information from the tool name mapping
 
-            // Log the parsed tool name
-            tracing::debug!(
-                "Parsed tool name: '{}' -> prefix: {:?}, original: '{}'",
-                tool.name,
-                server_prefix,
-                original_tool_name
-            );
-
-            // Get the server name (either from prefix or from the tool name mapping)
-            let server_name = if let Some(prefix) = server_prefix {
-                prefix.to_string()
+            // Get the server name from the tool name mapping
+            let tool_name_mapping = get_tool_name_mapping(server).await;
+            let server_name = if let Some(mapping) = tool_name_mapping.get(&tool.name.to_string()) {
+                mapping.server_name.clone()
             } else {
-                // If no prefix, try to get the server name from the tool name mapping
-                let tool_name_mapping = get_tool_name_mapping(server).await;
-                if let Some(mapping) = tool_name_mapping.get(&tool.name.to_string()) {
-                    mapping.server_name.clone()
-                } else {
-                    // If we can't determine the server, include the tool by default
-                    tracing::warn!(
-                        "Could not determine server for tool '{}', including by default",
-                        tool.name
-                    );
-                    unknown_server_count += 1;
-                    filtered_tools.push(tool);
-                    continue;
-                }
+                // If we can't determine the server, include the tool by default
+                tracing::warn!(
+                    "Could not determine server for tool '{}', including by default",
+                    tool.name
+                );
+                unknown_server_count += 1;
+                filtered_tools.push(tool);
+                continue;
             };
 
-            // Determine the correct tool name to use for database check
-            // If the tool name already has a server prefix, use the full name
-            // Otherwise, use the original tool name
-            let tool_name_for_db_check =
-                if server_prefix.is_some() && server_prefix.unwrap() == server_name {
-                    // The tool name already has the correct server prefix, use the full name
-                    tool.name.to_string()
-                } else {
-                    // No prefix or different prefix, use the original tool name
-                    original_tool_name.to_string()
-                };
+            // Use the tool name for database check
+            let tool_name_for_db_check = tool.name.to_string();
+
+            // Log the tool name used for database check
+            tracing::debug!(
+                "Using tool name for database check: server='{}', tool_name='{}'",
+                server_name,
+                tool_name_for_db_check
+            );
 
             tracing::debug!(
                 "Checking if tool is enabled: server='{}', tool_name='{}'",
@@ -116,7 +97,7 @@ pub async fn list_tools(
                     if enabled {
                         tracing::debug!(
                             "Including enabled tool '{}' from server '{}'",
-                            original_tool_name,
+                            tool_name_for_db_check,
                             server_name
                         );
                         enabled_count += 1;
@@ -124,7 +105,7 @@ pub async fn list_tools(
                     } else {
                         tracing::info!(
                             "Filtering out disabled tool '{}' from server '{}'",
-                            original_tool_name,
+                            tool_name_for_db_check,
                             server_name
                         );
                         disabled_count += 1;
@@ -133,7 +114,7 @@ pub async fn list_tools(
                     // Log the error but include the tool by default
                     tracing::warn!(
                         "Error checking if tool '{}' from server '{}' is enabled: {}. Including by default.",
-                        original_tool_name,
+                        tool_name_for_db_check,
                         server_name,
                         e
                     );
@@ -195,20 +176,15 @@ pub async fn call_tool(
 
         // Check if the tool is enabled if database is available
         if let Some(db) = &server.database {
-            // Parse the tool name to extract original name
-            let (server_prefix, original_tool_name) = parse_tool_name(&mapping.upstream_tool_name);
+            // Use the upstream tool name for database check
+            let tool_name_for_db_check = mapping.upstream_tool_name.to_string();
 
-            // Determine the correct tool name to use for database check
-            // If the tool name already has a server prefix, use the full name
-            // Otherwise, use the original tool name
-            let tool_name_for_db_check =
-                if server_prefix.is_some() && server_prefix.unwrap() == mapping.server_name {
-                    // The tool name already has the correct server prefix, use the full name
-                    mapping.upstream_tool_name.clone()
-                } else {
-                    // No prefix or different prefix, use the original tool name
-                    original_tool_name.to_string()
-                };
+            // Log the tool name used for database check
+            tracing::info!(
+                "Using tool name for database check in call_tool: server='{}', tool_name='{}'",
+                mapping.server_name,
+                tool_name_for_db_check
+            );
 
             tracing::debug!(
                 "Checking if tool is enabled for call: server='{}', tool_name='{}'",
@@ -235,7 +211,7 @@ pub async fn call_tool(
                     // Log the error but allow the tool call to proceed
                     tracing::warn!(
                         "Error checking if tool '{}' is enabled: {}. Allowing by default.",
-                        original_tool_name,
+                        tool_name_for_db_check,
                         e
                     );
                 }
@@ -260,8 +236,7 @@ pub async fn call_tool(
             tool_name_str
         );
 
-        // Try to parse the tool name to extract server prefix if present
-        let (server_prefix, original_tool_name) = parse_tool_name(&tool_name_str);
+        // Use the tool name directly
 
         // Get Config Suit merge service if available
         let config_suit_merge_service = server.config_suit_merge_service.as_ref();
@@ -281,20 +256,11 @@ pub async fn call_tool(
             Err(e) => {
                 tracing::error!("Error calling tool '{}': {}", tool_name_str, e);
 
-                // Provide a more helpful error message if we have a server prefix
-                if let Some(server_prefix) = server_prefix {
-                    Err(McpError::invalid_params(
-                        format!(
-                            "Error calling tool '{original_tool_name}' on server '{server_prefix}': {e}"
-                        ),
-                        None,
-                    ))
-                } else {
-                    Err(McpError::invalid_params(
-                        format!("Tool '{tool_name_str}' not found or error occurred: {e}"),
-                        None,
-                    ))
-                }
+                // Provide a generic error message
+                Err(McpError::invalid_params(
+                    format!("Tool '{tool_name_str}' not found or error occurred: {e}"),
+                    None,
+                ))
             }
         }
     }

@@ -536,12 +536,12 @@ pub async fn add_server_to_config_suit(
             },
         );
 
-        tracing::info!(
-            "Published ServerEnabledInSuitChanged event for server ID {} in suit ID {} ({})",
-            server_id,
-            config_suit_id,
-            enabled
-        );
+        // tracing::info!(
+        //     "Published ServerEnabledInSuitChanged event for server ID {} in suit ID {} ({})",
+        //     server_id,
+        //     config_suit_id,
+        //     enabled
+        // );
     }
 
     Ok(id_to_return)
@@ -626,20 +626,6 @@ pub async fn add_tool_to_config_suit(
     // Generate a UUID for the tool
     let tool_id = uuid::Uuid::new_v4().to_string();
 
-    // Get the existing prefixed name if any
-    let existing_prefixed_name = sqlx::query_scalar::<_, Option<String>>(
-        r#"
-        SELECT prefixed_name FROM config_suit_tool
-        WHERE config_suit_id = ? AND server_id = ? AND tool_name = ?
-        "#,
-    )
-    .bind(config_suit_id)
-    .bind(server_id)
-    .bind(tool_name)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to get existing prefixed name")?;
-
     // Check if the tool already exists in the suit and get its current enabled status
     let existing_enabled = sqlx::query_scalar::<_, bool>(
         r#"
@@ -653,9 +639,6 @@ pub async fn add_tool_to_config_suit(
     .fetch_optional(pool)
     .await
     .context("Failed to get existing tool enabled status")?;
-
-    // Keep the existing prefixed name if there is one
-    let prefixed_name = existing_prefixed_name;
 
     // Get the server name
     let server_name = match sqlx::query_scalar::<_, String>(
@@ -681,12 +664,11 @@ pub async fn add_tool_to_config_suit(
 
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, prefixed_name, enabled)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, enabled)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(config_suit_id, server_id, tool_name) DO UPDATE SET
             server_name = excluded.server_name,
             enabled = excluded.enabled,
-            prefixed_name = excluded.prefixed_name,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -695,7 +677,6 @@ pub async fn add_tool_to_config_suit(
     .bind(server_id)
     .bind(&server_name)
     .bind(tool_name)
-    .bind(&prefixed_name)
     .bind(enabled)
     .execute(pool)
     .await

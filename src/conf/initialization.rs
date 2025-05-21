@@ -190,7 +190,6 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
             server_id TEXT NOT NULL,
             server_name TEXT NOT NULL,
             tool_name TEXT NOT NULL,
-            prefixed_name TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

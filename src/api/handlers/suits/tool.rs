@@ -19,9 +19,7 @@ pub async fn list_tools(
     // Get all tools in the suit
     let tool_configs = crate::conf::operations::tool::get_tools_by_suit_id(&db.pool, &id)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get tool configurations: {e}"))
-        })?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get tool configurations: {e}")))?;
 
     // Convert to response format
     let mut tool_responses = Vec::new();
@@ -38,7 +36,6 @@ pub async fn list_tools(
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             tool_name: config.tool_name.clone(),
-            prefixed_name: config.prefixed_name.clone(),
             enabled: config.enabled,
             allowed_operations,
         });
@@ -82,9 +79,7 @@ pub async fn enable_tool(
     crate::conf::operations::tool::set_tool_enabled_by_id(&db.pool, &tool_id, true)
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!(
-                "Failed to enable tool in configuration suit: {e}"
-            ))
+            ApiError::InternalError(format!("Failed to enable tool in configuration suit: {e}"))
         })?;
 
     // Return success response
@@ -127,9 +122,7 @@ pub async fn disable_tool(
     crate::conf::operations::tool::set_tool_enabled_by_id(&db.pool, &tool_id, false)
         .await
         .map_err(|e| {
-            ApiError::InternalError(format!(
-                "Failed to disable tool in configuration suit: {e}"
-            ))
+            ApiError::InternalError(format!("Failed to disable tool in configuration suit: {e}"))
         })?;
 
     // Return success response
@@ -256,8 +249,7 @@ pub async fn batch_disable_tools(
                         successful_ids.push(tool_id.clone());
                     }
                     Err(e) => {
-                        failed_ids
-                            .insert(tool_id.clone(), format!("Failed to disable tool: {e}"));
+                        failed_ids.insert(tool_id.clone(), format!("Failed to disable tool: {e}"));
                     }
                 }
             }

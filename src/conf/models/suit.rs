@@ -116,8 +116,6 @@ pub struct ConfigSuitTool {
     pub server_name: String,
     /// Tool name
     pub tool_name: String,
-    /// Prefixed/qualified name for the tool (to avoid conflicts)
-    pub prefixed_name: Option<String>,
     /// Whether the tool is enabled in this configuration suit
     pub enabled: bool,
     /// When the association was created
