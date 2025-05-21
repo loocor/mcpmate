@@ -175,6 +175,23 @@ impl UnifiedHttpServer {
             self.config.sse_message_path
         );
 
+        // Publish server ready events for both Streamable HTTP and SSE servers
+        crate::core::events::EventBus::global().publish(
+            crate::core::events::Event::ServerTransportReady {
+                transport_type: crate::core::transport::TransportType::StreamableHttp,
+                ready: true,
+            },
+        );
+
+        crate::core::events::EventBus::global().publish(
+            crate::core::events::Event::ServerTransportReady {
+                transport_type: crate::core::transport::TransportType::Sse,
+                ready: true,
+            },
+        );
+
+        tracing::debug!("Published server ready events for both Streamable HTTP and SSE servers");
+
         Ok(())
     }
 }

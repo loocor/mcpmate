@@ -102,6 +102,17 @@ pub struct ServerInstancesResponse {
     pub instances: Vec<ServerInstanceSummary>,
 }
 
+/// Resource metrics for an instance
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResourceMetrics {
+    /// CPU usage percentage of the instance process
+    pub cpu_usage: Option<f32>,
+    /// Memory usage in bytes of the instance process
+    pub memory_usage: Option<u64>,
+    /// Process ID of the instance
+    pub process_id: Option<u32>,
+}
+
 /// Server Instance Details
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ServerInstanceDetails {
@@ -155,10 +166,10 @@ pub struct InstanceHealthResponse {
     pub status: String,
     /// Last health check time (ISO 8601 format)
     pub checked_at: String,
-    // TODO: Consider adding the following fields in the future:
-    // - resource_metrics: Option<ResourceMetrics> - Resource usage metrics for the instance
-    // - connection_stability: Option<f32> - Stability score based on connection history
-    // - health_history: Option<Vec<HealthRecord>> - Recent health check history
+    /// Resource usage metrics for the instance
+    pub resource_metrics: Option<ResourceMetrics>,
+    /// Stability score based on connection history (0.0-1.0)
+    pub connection_stability: Option<f32>,
 }
 
 /// Operation Request

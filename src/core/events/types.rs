@@ -50,4 +50,12 @@ pub enum Event {
 
     /// Configuration was reloaded
     ConfigReloaded,
+
+    /// Server transport layer is ready
+    ServerTransportReady {
+        /// Transport type (SSE, StreamableHttp)
+        transport_type: crate::core::transport::TransportType,
+        /// Ready status
+        ready: bool,
+    },
 }

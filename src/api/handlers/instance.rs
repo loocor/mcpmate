@@ -127,6 +127,34 @@ pub async fn check_health(
     // Get current time as ISO 8601 string
     let checked_at = chrono::Local::now().to_rfc3339();
 
+    // Create resource metrics
+    let resource_metrics = Some(crate::api::models::server::ResourceMetrics {
+        cpu_usage: conn.cpu_usage,
+        memory_usage: conn.memory_usage,
+        process_id: conn.process_id,
+    });
+
+    // Calculate connection stability score
+    let connection_stability = if let ConnectionStatus::Error(err) = &conn.status {
+        // Higher failure count means lower stability
+        // We use an exponential decay formula: stability = e^(-k * failure_count)
+        // where k is a constant that controls how quickly stability decays
+        let k = 0.2; // This can be adjusted based on desired sensitivity
+        Some((-(k * err.failure_count as f32)).exp())
+    } else if conn.connection_attempts == 0 {
+        // If no connection attempts, we don't have enough data
+        None
+    } else {
+        // For non-error states, base stability on connection attempts
+        // More connection attempts could indicate previous issues
+        let base_score = 1.0f32;
+        let penalty_per_attempt = 0.05f32;
+        let max_penalty = 0.5f32; // Maximum penalty from connection attempts
+
+        let penalty = (conn.connection_attempts as f32 * penalty_per_attempt).min(max_penalty);
+        Some((base_score - penalty).max(0.0))
+    };
+
     Ok(Json(InstanceHealthResponse {
         id,
         name,
@@ -134,6 +162,8 @@ pub async fn check_health(
         message,
         status: conn.status_string(),
         checked_at,
+        resource_metrics,
+        connection_stability,
     }))
 }
 

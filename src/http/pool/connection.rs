@@ -417,8 +417,24 @@ impl UpstreamConnectionPool {
             }
         };
 
-        // Get transport type
+        // Get transport type (core::TransportType)
         let transport_type = server_config.get_transport_type();
+
+        // Check if we need to wait for the server ready event
+        let server_type = server_config.kind.as_str();
+        if crate::core::events::needs_transport_ready_wait(server_type, transport_type) {
+            // Wait for the server transport layer to be ready, max 1000ms
+            // Timeout is not an error, it just means the service might not have started yet
+            if let Err(e) =
+                crate::core::events::wait_for_transport_ready(transport_type, 1000).await
+            {
+                tracing::warn!(
+                    "Waiting for {:?} transport layer to be ready failed: {}，continue to connect",
+                    transport_type,
+                    e
+                );
+            }
+        }
 
         // Choose the appropriate connection function based on transport type
         let connect_result = if transport_type == TransportType::Sse {

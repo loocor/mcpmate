@@ -15,6 +15,23 @@ use crate::api::{
 pub async fn get_status(
     State(state): State<Arc<AppState>>
 ) -> Result<Json<StatusResponse>, ApiError> {
+    // Get all servers count (including disabled)
+    let mut total_servers = 0;
+    if let Some(http_proxy) = &state.http_proxy {
+        if let Some(db) = &http_proxy.database {
+            // Use database connection to get server count
+            match crate::conf::operations::server::get_all_servers(&db.pool).await {
+                Ok(servers) => {
+                    total_servers = servers.len();
+                }
+                Err(e) => {
+                    tracing::error!("Failed to get servers from database: {}", e);
+                    // Don't update total_servers if it fails
+                }
+            }
+        }
+    }
+
     // Use timeout to avoid blocking indefinitely
     let pool_result = tokio::time::timeout(
         std::time::Duration::from_secs(1),
@@ -30,13 +47,18 @@ pub async fn get_status(
             return Ok(Json(StatusResponse {
                 status: "running".to_string(),
                 uptime: get_uptime_seconds(),
-                total_servers: 0,
+                total_servers,
                 connected_servers: 0,
             }));
         }
     };
 
-    let total_servers = instances_map.len();
+    // If we can't get the server count from the database, use the number of instances
+    // in the connection pool as a fallback
+    if total_servers == 0 {
+        total_servers = instances_map.len();
+    }
+
     let connected_servers = instances_map
         .values()
         .filter(|instances| instances.iter().any(|(_, conn)| conn.is_connected()))

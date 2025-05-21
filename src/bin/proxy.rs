@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use mcpmate::{
     api::{ApiServer, handlers::system::initialize_server_start_time},
-    conf::database::Database,
+    conf::{database::Database, operations::server},
     core::{ConnectionStatus, TransportType, events, loader::load_server_config},
     http::HttpProxyServer,
 };
@@ -109,11 +109,12 @@ async fn main() -> Result<()> {
 
     // Get a reference to the connection pool
     let connection_pool = Arc::clone(&proxy.connection_pool);
+    let proxy_arc_clone = Arc::clone(&proxy_arc);
 
     // Connect to all servers in the background
     tokio::spawn(async move {
         // Wait for a short time to ensure the SSE server is started
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
 
         // Connect to all servers
         let mut pool = connection_pool.lock().await;
@@ -122,6 +123,19 @@ async fn main() -> Result<()> {
         if let Err(e) = pool.connect_all().await {
             tracing::error!("Error in parallel connection process: {}", e);
         }
+
+        // Get the total number of servers in the database
+        let total_server_count_in_db = if let Some(db) = &proxy_arc_clone.database {
+            match server::get_all_servers(&db.pool).await {
+                Ok(servers) => servers.len(),
+                Err(e) => {
+                    tracing::error!("Failed to get servers from database: {}", e);
+                    0 // If failed, use 0 and we'll fall back to connections.len() below
+                }
+            }
+        } else {
+            0 // If database not available, use 0
+        };
 
         // Record the connection status
         let connected_count = pool
@@ -134,10 +148,19 @@ async fn main() -> Result<()> {
             })
             .count();
 
+        // Use database count if available, otherwise fall back to connections length
+        let total_count = if total_server_count_in_db > 0 {
+            total_server_count_in_db
+        } else {
+            pool.connections.len()
+        };
+
+        // Display system-wide server count, showing ratio of connected vs all configured servers
+        // This is consistent with the /api/system/status endpoint which shows total_servers as all servers in the system
         tracing::info!(
             "Connected to {}/{} upstream servers",
             connected_count,
-            pool.connections.len()
+            total_count
         );
     });
 

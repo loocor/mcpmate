@@ -177,9 +177,6 @@ async fn apply_tool_changes(
                             }
                         }
 
-                        // TODO: Implement tool-level enable/disable
-                        tracing::warn!("Tool-level enable/disable not yet implemented");
-
                         Ok((affected_service_ids.len(), tool_count))
                     } else {
                         // This should not happen due to validation

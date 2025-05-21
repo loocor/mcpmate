@@ -551,9 +551,11 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
         .into_iter()
         .filter(|server| {
             if let Some(id) = &server.id {
+                // Check both the suit-level enabled status AND the global enabled status
                 enabled_server_map
                     .get(id)
                     .is_some_and(|(enabled, _)| *enabled)
+                    && server.enabled.as_bool() // Add this check for global enabled status
             } else {
                 false // Server without ID is not enabled
             }
@@ -599,7 +601,8 @@ async fn get_enabled_servers_from_suit(
         .iter()
         .filter(|server| {
             if let Some(id) = &server.id {
-                enabled_server_ids.contains(id)
+                // Check both the suit-level enabled status AND the global enabled status
+                enabled_server_ids.contains(id) && server.enabled.as_bool()
             } else {
                 false // Server without ID is not enabled
             }
@@ -680,6 +683,13 @@ async fn is_server_enabled_in_suit(
     // Check if the server is enabled in this suit
     for server_config in server_configs {
         if server_config.server_id == server_id {
+            // We found the server in this suit, now we need to check the global status
+            let server = get_server_by_id(pool, server_id).await?;
+            if let Some(server) = server {
+                // Return true only if both the suit-level and global status are enabled
+                return Ok(server_config.enabled && server.enabled.as_bool());
+            }
+            // If we couldn't find the server (shouldn't happen), just return the suit status
             return Ok(server_config.enabled);
         }
     }

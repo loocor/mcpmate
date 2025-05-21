@@ -67,6 +67,16 @@ pub async fn start_sse(
         bind_address,
         sse_path
     );
+
+    // Publish server ready event
+    crate::core::events::EventBus::global().publish(
+        crate::core::events::Event::ServerTransportReady {
+            transport_type: crate::core::transport::TransportType::Sse,
+            ready: true,
+        },
+    );
+    tracing::debug!("Published SSE server ready event");
+
     Ok(())
 }
 
@@ -123,6 +133,16 @@ pub async fn start_streamable_http(
         bind_address,
         path
     );
+
+    // Publish server ready event
+    crate::core::events::EventBus::global().publish(
+        crate::core::events::Event::ServerTransportReady {
+            transport_type: crate::core::transport::TransportType::StreamableHttp,
+            ready: true,
+        },
+    );
+    tracing::debug!("Published Streamable HTTP server ready event");
+
     Ok(())
 }
 
