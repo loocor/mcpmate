@@ -37,14 +37,17 @@ pub async fn list_all(
             for tool in &conn.tools {
                 let tool_name = tool.name.to_string();
 
-                // Get tool status (ID, enabled status)
-                let (_, _, enabled) = get_tool_status(&db.pool, server_name, &tool_name).await?;
+                // Get tool status (ID, unique_name, enabled status)
+                let (_, unique_name, enabled) = get_tool_status(&db.pool, server_name, &tool_name).await?;
 
                 // Only include enabled tools
                 if enabled {
+                    // Use unique_name if available, otherwise use original tool name
+                    let display_name = unique_name.unwrap_or_else(|| tool_name.clone());
+
                     // Convert to SDK Tool type
                     let sdk_tool = rmcp::model::Tool {
-                        name: tool_name.clone().into(),
+                        name: display_name.into(),
                         description: Some(
                             format!("Tool provided by server '{server_name}'").into(),
                         ),
@@ -101,14 +104,17 @@ pub async fn list_server(
             for tool in &conn.tools {
                 let tool_name = tool.name.to_string();
 
-                // Get tool status (ID, enabled status)
-                let (_, _, enabled) = get_tool_status(&db.pool, &server_name, &tool_name).await?;
+                // Get tool status (ID, unique_name, enabled status)
+                let (_, unique_name, enabled) = get_tool_status(&db.pool, &server_name, &tool_name).await?;
 
                 // Only include enabled tools
                 if enabled {
+                    // Use unique_name if available, otherwise use original tool name
+                    let display_name = unique_name.unwrap_or_else(|| tool_name.clone());
+
                     // Convert to SDK Tool type
                     let sdk_tool = rmcp::model::Tool {
-                        name: tool_name.clone().into(),
+                        name: display_name.into(),
                         description: Some(
                             format!("Tool provided by server '{server_name}'").into(),
                         ),
@@ -154,8 +160,8 @@ pub async fn get_tool(
         )));
     }
 
-    // Get tool status (ID, enabled status)
-    let (_, _, enabled) = get_tool_status(&db.pool, &server_name, &tool_name).await?;
+    // Get tool status (ID, unique_name, enabled status)
+    let (_, unique_name, enabled) = get_tool_status(&db.pool, &server_name, &tool_name).await?;
 
     // Check if the tool is enabled
     if !enabled {
@@ -187,8 +193,11 @@ pub async fn get_tool(
         for tool in &conn.tools {
             if tool.name == tool_name {
                 // Found the tool, return its MCP specification-compliant information
+                // Use unique_name if available, otherwise use original tool name
+                let display_name = unique_name.unwrap_or_else(|| tool_name.clone());
+
                 let sdk_tool = rmcp::model::Tool {
-                    name: tool_name.clone().into(),
+                    name: display_name.into(),
                     description: Some(format!("Tool provided by server '{server_name}'").into()),
                     input_schema: tool.input_schema.clone(), // Already an Arc<JsonObject>
                     annotations: None,
@@ -239,7 +248,7 @@ pub async fn get_context(
     Ok((proxy, db))
 }
 
-/// Helper function to get tool status (ID, enabled status)
+/// Helper function to get tool status (ID, unique name, enabled status)
 pub async fn get_tool_status(
     pool: &sqlx::Pool<sqlx::Sqlite>,
     server_name: &str,
@@ -339,6 +348,20 @@ pub async fn get_tool_status(
         }
     };
 
-    // Return None for prefixed_name as we no longer use it
-    Ok((tool_id, None, enabled))
+    // Get the unique name for the tool
+    let unique_name = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT unique_name
+        FROM config_suit_tool
+        WHERE server_name = ? AND tool_name = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(server_name)
+    .bind(tool_name)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError::InternalError(format!("Failed to get unique name: {e}")))?;
+
+    Ok((tool_id, unique_name, enabled))
 }

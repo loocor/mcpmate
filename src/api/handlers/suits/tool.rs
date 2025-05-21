@@ -36,6 +36,7 @@ pub async fn list_tools(
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             tool_name: config.tool_name.clone(),
+            unique_name: config.unique_name.clone(),
             enabled: config.enabled,
             allowed_operations,
         });

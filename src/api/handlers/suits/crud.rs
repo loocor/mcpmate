@@ -138,12 +138,19 @@ pub async fn create_suit(
                 })?;
 
         for tool_config in tool_configs {
+            // Generate a unique name for the tool
+            let unique_name = crate::core::tool::generate_unique_name(
+                &tool_config.server_name,
+                &tool_config.tool_name,
+            );
+
             let new_tool_config = ConfigSuitTool {
                 id: Some(Uuid::new_v4().to_string()),
                 config_suit_id: suit_id.clone(),
                 server_id: tool_config.server_id.clone(),
                 server_name: tool_config.server_name.clone(),
                 tool_name: tool_config.tool_name.clone(),
+                unique_name: Some(unique_name),
                 enabled: tool_config.enabled,
                 created_at: None,
                 updated_at: None,
@@ -151,8 +158,8 @@ pub async fn create_suit(
 
             sqlx::query(
                 r#"
-                INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, enabled)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, unique_name, enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(new_tool_config.id.as_ref().unwrap())
@@ -160,6 +167,7 @@ pub async fn create_suit(
             .bind(&new_tool_config.server_id)
             .bind(&new_tool_config.server_name)
             .bind(&new_tool_config.tool_name)
+            .bind(&new_tool_config.unique_name)
             .bind(new_tool_config.enabled)
             .execute(&mut *tx)
             .await

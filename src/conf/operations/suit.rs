@@ -662,12 +662,26 @@ pub async fn add_tool_to_config_suit(
         }
     };
 
+    // Generate a unique name for the tool
+    let base_unique_name = crate::core::tool::generate_unique_name(&server_name, tool_name);
+
+    // Ensure the unique name doesn't conflict with existing names
+    let unique_name = crate::core::tool::ensure_unique_name(
+        pool,
+        &base_unique_name,
+        server_id,
+        tool_name,
+    )
+    .await
+    .context("Failed to ensure unique name for tool")?;
+
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, enabled)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, unique_name, enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(config_suit_id, server_id, tool_name) DO UPDATE SET
             server_name = excluded.server_name,
+            unique_name = excluded.unique_name,
             enabled = excluded.enabled,
             updated_at = CURRENT_TIMESTAMP
         "#,
@@ -677,6 +691,7 @@ pub async fn add_tool_to_config_suit(
     .bind(server_id)
     .bind(&server_name)
     .bind(tool_name)
+    .bind(&unique_name)
     .bind(enabled)
     .execute(pool)
     .await

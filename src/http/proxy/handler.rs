@@ -1,5 +1,6 @@
 // ServerHandler implementation for the HTTP proxy server
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use rmcp::{
@@ -43,7 +44,7 @@ pub async fn list_tools(
     let all_tools = crate::core::tool::get_all_tools(&server.connection_pool).await;
 
     // Filter disabled tools if database is available
-    let tools = if let Some(db) = &server.database {
+    let mut tools = if let Some(db) = &server.database {
         let mut filtered_tools = Vec::new();
         let mut enabled_count = 0;
         let mut disabled_count = 0;
@@ -141,6 +142,11 @@ pub async fn list_tools(
         );
         all_tools
     };
+
+    // Update tool names with unique names from database before returning
+    if let Some(db) = &server.database {
+        update_tool_names_with_unique_names(&mut tools, &db.pool).await;
+    }
 
     tracing::info!("Returning {} aggregated tools to client", tools.len());
 
@@ -438,5 +444,94 @@ pub async fn call_tool_on_instance(
                 None,
             ))
         }
+    }
+}
+
+/// Update tool names in the tool list with unique names from the database
+///
+/// This function queries the database for unique names and replaces the original names in the tool list.
+///
+/// # Arguments
+/// * `tools` - The tool list to update
+/// * `pool` - The database connection pool
+async fn update_tool_names_with_unique_names(
+    tools: &mut Vec<rmcp::model::Tool>,
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+) {
+    // If the tool list is empty, return immediately
+    if tools.is_empty() {
+        return;
+    }
+
+    // Get all tool configurations
+    let tool_configs = match sqlx::query_as::<_, (String, String, String)>(
+        r#"
+        SELECT server_name, tool_name, unique_name
+        FROM config_suit_tool
+        WHERE unique_name IS NOT NULL
+        "#
+    )
+    .fetch_all(pool)
+    .await {
+        Ok(configs) => configs,
+        Err(e) => {
+            tracing::error!("Failed to query tool configurations: {}", e);
+            return;
+        }
+    };
+
+    // Create mapping: (server_name, tool_name) -> unique_name
+    let mut name_map = HashMap::new();
+    for (server_name, tool_name, unique_name) in tool_configs {
+        name_map.insert((server_name, tool_name), unique_name);
+    }
+
+    // Get tool name mapping
+    let tool_name_mapping = match get_tool_name_mapping_for_tools().await {
+        Ok(mapping) => mapping,
+        Err(e) => {
+            tracing::error!("Failed to get tool name mapping: {}", e);
+            return;
+        }
+    };
+
+    // Update tool names
+    for tool in tools.iter_mut() {
+        let tool_name = tool.name.to_string();
+
+        // Get server name and original tool name from mapping
+        if let Some(mapping) = tool_name_mapping.get(&tool_name) {
+            let server_name = &mapping.server_name;
+            let original_tool_name = &mapping.upstream_tool_name;
+
+            // Look up unique name
+            if let Some(unique_name) = name_map.get(&(server_name.clone(), original_tool_name.clone())) {
+                // Log name change
+                tracing::debug!(
+                    "Updating tool name: '{}' -> '{}'",
+                    tool.name,
+                    unique_name
+                );
+
+                // Update tool name
+                tool.name = unique_name.clone().into();
+            }
+        }
+    }
+}
+
+/// Get tool name mapping for tools
+///
+/// This function creates a tool name mapping for the tool list.
+///
+/// # Returns
+/// * `Result<HashMap<String, ToolMapping>>` - The tool name mapping
+async fn get_tool_name_mapping_for_tools() -> Result<HashMap<String, crate::core::tool::ToolMapping>, anyhow::Error> {
+    // Use global proxy server instance to get tool mapping
+    if let Some(server) = crate::http::proxy::get_proxy_server() {
+        let mapping = get_tool_name_mapping(&server).await;
+        Ok(mapping)
+    } else {
+        Err(anyhow::anyhow!("Failed to get proxy server instance"))
     }
 }

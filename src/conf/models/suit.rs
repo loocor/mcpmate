@@ -114,8 +114,10 @@ pub struct ConfigSuitTool {
     pub server_id: String,
     /// Server name
     pub server_name: String,
-    /// Tool name
+    /// Tool name (original name from upstream server)
     pub tool_name: String,
+    /// Unique name for external display and routing
+    pub unique_name: Option<String>,
     /// Whether the tool is enabled in this configuration suit
     pub enabled: bool,
     /// When the association was created

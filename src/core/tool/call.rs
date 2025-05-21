@@ -28,50 +28,114 @@ pub async fn call_upstream_tool(
     request: CallToolRequestParam,
     config_suit_merge_service: Option<&Arc<crate::core::suit::ConfigSuitMergeService>>,
 ) -> Result<CallToolResult> {
-    // Extract the tool name from the request
-    let tool_name = request.name.to_string();
+    // Extract the unique name from the request
+    let unique_name = request.name.to_string();
 
-    // Build the tool mapping to find the server for this tool
-    let tool_mapping = build_tool_mapping(connection_pool).await;
+    // Variables to store resolved server name and original tool name
+    let (server_name, original_tool_name);
 
-    // Find the mapping for this tool
-    let mapping = tool_mapping.get(&tool_name).cloned().context(format!(
-        "Tool '{tool_name}' not found in any connected server"
+    // Try to resolve the unique name using the database if config_suit_merge_service is available
+    if let Some(merge_service) = config_suit_merge_service {
+        match crate::core::tool::resolve_unique_name(&merge_service.db.pool, &unique_name).await {
+            Ok((server, tool)) => {
+                server_name = server;
+                original_tool_name = tool;
+
+                tracing::debug!(
+                    "Resolved unique name '{}' to server '{}' and tool '{}'",
+                    unique_name,
+                    server_name,
+                    original_tool_name
+                );
+            },
+            Err(e) => {
+                // If resolution fails, fall back to the tool mapping
+                tracing::warn!(
+                    "Failed to resolve unique name '{}': {}, falling back to tool mapping",
+                    unique_name,
+                    e
+                );
+
+                // Build the tool mapping to find the server for this tool
+                let tool_mapping = build_tool_mapping(connection_pool).await;
+
+                // Find the mapping for this tool
+                let mapping = tool_mapping.get(&unique_name).cloned().context(format!(
+                    "Tool '{unique_name}' not found in any connected server"
+                ))?;
+
+                server_name = mapping.server_name;
+                original_tool_name = unique_name.clone();
+            }
+        }
+    } else {
+        // If no config_suit_merge_service is available, use the tool mapping
+        // Build the tool mapping to find the server for this tool
+        let tool_mapping = build_tool_mapping(connection_pool).await;
+
+        // Find the mapping for this tool
+        let mapping = tool_mapping.get(&unique_name).cloned().context(format!(
+            "Tool '{unique_name}' not found in any connected server"
+        ))?;
+
+        server_name = mapping.server_name;
+        original_tool_name = unique_name.clone();
+    }
+
+    // Get the instance
+    let connection_pool_guard = connection_pool.lock().await;
+    let instances = connection_pool_guard.connections.get(&server_name).context(format!(
+        "Server '{server_name}' not found in connection pool"
     ))?;
 
-    // Get the server and instance
-    let server_name = &mapping.server_name;
-    let instance_id = &mapping.instance_id;
+    // Find a connected instance
+    let mut instance_id = String::new();
+    for (id, conn) in instances {
+        if conn.is_connected() {
+            instance_id = id.clone();
+            break;
+        }
+    }
+
+    if instance_id.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No connected instance found for server '{}'",
+            server_name
+        ));
+    }
+
+    // Release the connection pool guard
+    drop(connection_pool_guard);
 
     // Check if the tool is enabled in the config suit
     if let Some(merge_service) = config_suit_merge_service {
         // Get server ID from database
         if let Ok(Some(server)) =
-            crate::conf::operations::get_server(&merge_service.db.pool, server_name).await
+            crate::conf::operations::get_server(&merge_service.db.pool, &server_name).await
         {
             if let Some(server_id) = &server.id {
                 // Check if the tool is enabled
                 let is_enabled = merge_service
-                    .is_tool_enabled(server_id, &tool_name)
+                    .is_tool_enabled(server_id, &original_tool_name)
                     .await
                     .unwrap_or(true); // Default to enabled if check fails
 
                 if !is_enabled {
                     return Err(anyhow::anyhow!(
                         "Tool '{}' is disabled in the active configuration suits",
-                        tool_name
+                        unique_name
                     ));
                 }
             }
         }
     }
 
-    // Use the tool name as is for upstream server
-    let upstream_tool_name = &tool_name;
+    // Use the original tool name for upstream server
+    let upstream_tool_name = &original_tool_name;
 
     tracing::info!(
         "Routing tool call '{}' to server '{}' instance '{}' (upstream tool name: '{}')",
-        tool_name,
+        unique_name,
         server_name,
         instance_id,
         upstream_tool_name
@@ -81,7 +145,7 @@ pub async fn call_upstream_tool(
     let mut pool = connection_pool.lock().await;
 
     // Get the instance
-    let conn = pool.get_instance_mut(server_name, instance_id)?;
+    let conn = pool.get_instance_mut(&server_name, &instance_id)?;
 
     // Check if the connection is ready
     if !conn.is_connected() {
@@ -219,7 +283,7 @@ pub async fn call_upstream_tool(
             // Create a detailed error message
             Err(anyhow::anyhow!(
                 "Error calling tool '{}' (upstream: '{}') on server '{}' instance '{}': {}",
-                tool_name,
+                unique_name,
                 upstream_tool_name,
                 server_name,
                 instance_id,

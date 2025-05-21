@@ -190,6 +190,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
             server_id TEXT NOT NULL,
             server_name TEXT NOT NULL,
             tool_name TEXT NOT NULL,
+            unique_name TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -207,6 +208,28 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
             tracing::error!("Failed to create config_suit_tool table: {}", e);
             return Err(anyhow::anyhow!(
                 "Failed to create config_suit_tool table: {}",
+                e
+            ));
+        }
+    };
+
+    // Create unique index on unique_name if it doesn't exist
+    tracing::debug!("Creating unique index on config_suit_tool.unique_name if it doesn't exist");
+    match sqlx::query(
+        r#"
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_config_suit_tool_unique_name
+        ON config_suit_tool(unique_name)
+        WHERE unique_name IS NOT NULL
+        "#,
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(_) => tracing::debug!("Unique index on config_suit_tool.unique_name created or already exists"),
+        Err(e) => {
+            tracing::error!("Failed to create unique index on config_suit_tool.unique_name: {}", e);
+            return Err(anyhow::anyhow!(
+                "Failed to create unique index on config_suit_tool.unique_name: {}",
                 e
             ));
         }
