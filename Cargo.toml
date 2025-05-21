@@ -65,7 +65,6 @@ tokio = { version = "1.44", features = [
 tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1.7", features = ["v4", "serde"] }
 sysinfo = "0.30.5"
 # SQLite dependencies
 sqlx = { version = "0.8.1", features = [
@@ -74,6 +73,7 @@ sqlx = { version = "0.8.1", features = [
   "migrate",
   "chrono",
 ] }
+nanoid = "0.4.0"
 
 [[bin]]
 name = "proxy"

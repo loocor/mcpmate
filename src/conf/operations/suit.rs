@@ -2,6 +2,7 @@
 // Contains CRUD operations for configuration suits
 
 use anyhow::{Context, Result};
+use nanoid::nanoid;
 use sqlx::{Pool, Sqlite, Transaction};
 
 use crate::{
@@ -316,11 +317,11 @@ pub async fn upsert_config_suit_tx(
     tx: &mut Transaction<'_, Sqlite>,
     suit: &ConfigSuit,
 ) -> Result<String> {
-    // Generate a UUID for the suit if it doesn't have one
+    // Generate an ID for the suit if it doesn't have one
     let suit_id = if let Some(id) = &suit.id {
         id.clone()
     } else {
-        uuid::Uuid::new_v4().to_string()
+        format!("suit{}", nanoid!(12))
     };
 
     let result = sqlx::query(
@@ -436,8 +437,8 @@ pub async fn add_server_to_config_suit(
         enabled
     );
 
-    // Generate a UUID for the association
-    let association_id = uuid::Uuid::new_v4().to_string();
+    // Generate an ID for the association
+    let association_id = format!("ssrv{}", nanoid!(12));
 
     // Get the server name
     let server_name = match sqlx::query_scalar::<_, String>(
@@ -623,8 +624,8 @@ pub async fn add_tool_to_config_suit(
         enabled
     );
 
-    // Generate a UUID for the tool
-    let tool_id = uuid::Uuid::new_v4().to_string();
+    // Generate an ID for the suit tool
+    let tool_id = format!("stol{}", nanoid!(12));
 
     // Check if the tool already exists in the suit and get its current enabled status
     let existing_enabled = sqlx::query_scalar::<_, bool>(
@@ -666,14 +667,10 @@ pub async fn add_tool_to_config_suit(
     let base_unique_name = crate::core::tool::generate_unique_name(&server_name, tool_name);
 
     // Ensure the unique name doesn't conflict with existing names
-    let unique_name = crate::core::tool::ensure_unique_name(
-        pool,
-        &base_unique_name,
-        server_id,
-        tool_name,
-    )
-    .await
-    .context("Failed to ensure unique name for tool")?;
+    let unique_name =
+        crate::core::tool::ensure_unique_name(pool, &base_unique_name, server_id, tool_name)
+            .await
+            .context("Failed to ensure unique name for tool")?;
 
     let result = sqlx::query(
         r#"
@@ -728,7 +725,7 @@ pub async fn add_tool_to_config_suit(
             },
         );
 
-        tracing::info!(
+        tracing::debug!(
             "Published ToolEnabledInSuitChanged event for tool '{}' in suit ID {} ({})",
             tool_name,
             config_suit_id,

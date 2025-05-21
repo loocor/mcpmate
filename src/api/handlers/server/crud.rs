@@ -1,6 +1,7 @@
 // MCPMate Proxy API handlers for MCP server CRUD operations
 // Contains handler functions for creating, updating, and importing servers
 
+use std::collections::HashMap;
 use super::{common::*, instance::list_instances};
 use crate::{
     api::{handlers::ApiError, models::server::ServerMetaInfo},
@@ -120,7 +121,7 @@ pub async fn create_server(
 
     if existing_server.is_some() {
         return Err(ApiError::Conflict(format!(
-            "Server with name '{}' already exists",
+            "Server with name '{}' already exists. Please choose a different name for your server.",
             payload.name
         )));
     }
@@ -234,6 +235,10 @@ pub async fn update_server(
             return Err(ApiError::NotFound(format!("Server '{name}' not found")));
         }
     };
+
+    // Note: The server name cannot be changed through the update_server endpoint
+    // The name is part of the URL path and is used to identify the server
+    // If a name change is needed, the client should create a new server and delete the old one
 
     // Get the server ID
     let server_id = match &existing_server.id {
@@ -468,9 +473,31 @@ pub async fn import_servers(
 
     let mut imported_servers = Vec::new();
     let mut failed_servers = Vec::new();
+    let mut error_details = HashMap::new();
 
     // Process each server in the payload
     for (name, config) in payload.mcp_servers {
+        // Check if a server with the same name already exists
+        let existing_server = match crate::conf::operations::get_server(&db.pool, &name).await {
+            Ok(server) => server,
+            Err(e) => {
+                failed_servers.push(name.clone());
+                let error_msg = format!("Failed to check if server exists: {}", e);
+                error_details.insert(name.clone(), error_msg.clone());
+                tracing::error!("Failed to check if server '{}' exists: {}", name, e);
+                continue;
+            }
+        };
+
+        // If the server already exists, add it to the failed list and continue
+        if existing_server.is_some() {
+            failed_servers.push(name.clone());
+            let error_msg = format!("Server with name '{}' already exists. Please choose a different name.", name);
+            error_details.insert(name.clone(), error_msg.clone());
+            tracing::error!("Server with name '{}' already exists. Skipping import.", name);
+            continue;
+        }
+
         // Create server model
         let server = match config.kind.as_str() {
             "stdio" => Server::new_stdio(name.clone(), config.command.clone()),
@@ -478,6 +505,8 @@ pub async fn import_servers(
             "streamable_http" => Server::new_streamable_http(name.clone(), config.url.clone()),
             _ => {
                 failed_servers.push(name.clone());
+                let error_msg = format!("Invalid server type: '{}'. Must be one of: stdio, sse, streamable_http", config.kind);
+                error_details.insert(name.clone(), error_msg.clone());
                 tracing::error!("Invalid server type for '{}': {}", name, config.kind);
                 continue;
             }
@@ -488,6 +517,8 @@ pub async fn import_servers(
             Ok(id) => id,
             Err(e) => {
                 failed_servers.push(name.clone());
+                let error_msg = format!("Failed to create server: {}", e);
+                error_details.insert(name.clone(), error_msg.clone());
                 tracing::error!("Failed to create server '{}': {}", name, e);
                 continue;
             }
@@ -549,6 +580,7 @@ pub async fn import_servers(
         imported_count: imported_servers.len(),
         imported_servers,
         failed_servers,
+        error_details: if error_details.is_empty() { None } else { Some(error_details) },
     }))
 }
 

@@ -3,8 +3,8 @@
 
 use std::time::{Duration, Instant};
 
+use nanoid::nanoid;
 use rmcp::{RoleClient, model::Tool, service::RunningService};
-use uuid::Uuid;
 
 use super::types::ConnectionStatus;
 
@@ -63,7 +63,7 @@ impl UpstreamConnection {
     pub fn new(server_name: String) -> Self {
         let now = Instant::now();
         Self {
-            id: Uuid::new_v4().to_string(),
+            id: format!("upsv{}", nanoid!(12)),
             server_name,
             service: None,
             tools: Vec::new(),

@@ -2013,6 +2013,7 @@ dependencies = [
  "json5",
  "log",
  "mockall",
+ "nanoid",
  "once_cell",
  "predicates",
  "rmcp",
@@ -2030,7 +2031,6 @@ dependencies = [
  "tower 0.5.2",
  "tracing",
  "tracing-subscriber",
- "uuid",
  "wiremock",
 ]
 
@@ -2111,6 +2111,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
+]
+
+[[package]]
+name = "nanoid"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
+dependencies = [
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -4057,7 +4066,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
 dependencies = [
  "getrandom 0.3.3",
- "serde",
 ]
 
 [[package]]

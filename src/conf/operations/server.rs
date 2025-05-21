@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
+use nanoid::nanoid;
 use sqlx::{Pool, Sqlite, Transaction};
 
 use crate::conf::{
@@ -109,11 +110,11 @@ pub async fn upsert_server_tx(
     tx: &mut Transaction<'_, Sqlite>,
     server: &Server,
 ) -> Result<String> {
-    // Generate a UUID for the server if it doesn't have one
+    // Generate an ID for the server if it doesn't have one
     let server_id = if let Some(id) = &server.id {
         id.clone()
     } else {
-        uuid::Uuid::new_v4().to_string()
+        format!("serv{}", nanoid!(12))
     };
 
     let result = sqlx::query(
@@ -250,8 +251,8 @@ async fn upsert_server_args_inner(
 
     // Insert new arguments
     for (index, arg) in args.iter().enumerate() {
-        // Generate a UUID for the argument
-        let arg_id = uuid::Uuid::new_v4().to_string();
+        // Generate an ID for the argument
+        let arg_id = format!("sarg{}", nanoid!(12));
 
         sqlx::query(
             r#"
@@ -348,8 +349,8 @@ async fn upsert_server_env_inner(
 
     // Insert new environment variables
     for (key, value) in env {
-        // Generate a UUID for the environment variable
-        let env_id = uuid::Uuid::new_v4().to_string();
+        // Generate an ID for the environment variable
+        let env_id = format!("senv{}", nanoid!(12));
 
         sqlx::query(
             r#"
@@ -407,11 +408,11 @@ pub async fn upsert_server_meta(
 ) -> Result<String> {
     tracing::debug!("Upserting metadata for server ID {}", meta.server_id);
 
-    // Generate a UUID for the metadata if it doesn't have one
+    // Generate an ID for the metadata if it doesn't have one
     let meta_id = if let Some(id) = &meta.id {
         id.clone()
     } else {
-        uuid::Uuid::new_v4().to_string()
+        format!("smet{}", nanoid!(12))
     };
 
     // Get the server name

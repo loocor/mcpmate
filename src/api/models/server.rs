@@ -293,4 +293,7 @@ pub struct ImportServersResponse {
     pub imported_servers: Vec<String>,
     /// List of servers that failed to import
     pub failed_servers: Vec<String>,
+    /// Detailed error information for failed servers
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_details: Option<HashMap<String, String>>,
 }

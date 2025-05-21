@@ -16,9 +16,9 @@ use mcpmate::{
     http::pool::UpstreamConnectionPool,
 };
 use rmcp::model::Tool;
+use nanoid::nanoid;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 /// Configuration fixture for tests
 ///
@@ -164,7 +164,7 @@ impl ServerFixture {
     ) -> Result<()> {
         // Create a server config
         let _server = Server {
-            id: Some(Uuid::new_v4().to_string()),
+            id: Some(format!("ssrv{}", nanoid!(12))),
             name: self.name.clone(),
             server_type: self.kind,
             command: self.command.clone(),
@@ -201,7 +201,7 @@ impl ServerFixture {
     /// Convert to a Server model
     pub fn to_server(&self) -> Server {
         Server {
-            id: Some(Uuid::new_v4().to_string()),
+            id: Some(format!("ssrv{}", nanoid!(12))),
             name: self.name.clone(),
             server_type: self.kind,
             command: self.command.clone(),

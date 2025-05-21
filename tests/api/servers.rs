@@ -9,8 +9,8 @@ use mcpmate::{
     api::routes::create_router, conf::models::Server, core::models::Config,
     http::pool::UpstreamConnectionPool,
 };
+use nanoid::nanoid;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 /// Test listing servers
 ///
@@ -91,7 +91,7 @@ async fn test_create_server() -> Result<()> {
 
     // Create test server data
     let _server = Server {
-        id: Some(Uuid::new_v4().to_string()),
+        id: Some(format!("ssrv{}", nanoid!(12))),
         name: "test_server".to_string(),
         server_type: mcpmate::common::types::ServerType::Stdio,
         command: Some("echo".to_string()),

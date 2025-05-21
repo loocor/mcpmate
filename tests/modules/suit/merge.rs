@@ -13,7 +13,7 @@ use mcpmate::{
     },
     core::suit::ConfigSuitMergeService,
 };
-use uuid::Uuid;
+use nanoid::nanoid;
 
 /// Create test database
 async fn create_test_db() -> Result<Arc<Database>> {
@@ -35,7 +35,7 @@ async fn create_test_suits(db: &Database) -> Result<Vec<ConfigSuit>> {
 
     // Create first configuration suit
     let mut suit1 = ConfigSuit {
-        id: Some(Uuid::new_v4().to_string()),
+        id: Some(format!("suit{}", nanoid!(12))),
         name: "Test Suit 1".to_string(),
         description: Some("First test suit".to_string()),
         suit_type: ConfigSuitType::Scenario,
@@ -49,7 +49,7 @@ async fn create_test_suits(db: &Database) -> Result<Vec<ConfigSuit>> {
 
     // Create second configuration suit
     let mut suit2 = ConfigSuit {
-        id: Some(Uuid::new_v4().to_string()),
+        id: Some(format!("suit{}", nanoid!(12))),
         name: "Test Suit 2".to_string(),
         description: Some("Second test suit".to_string()),
         suit_type: ConfigSuitType::Scenario,
@@ -77,7 +77,7 @@ async fn create_test_servers(db: &Database) -> Result<Vec<Server>> {
 
     // Create first server
     let mut server1 = Server {
-        id: Some(Uuid::new_v4().to_string()),
+        id: Some(format!("ssrv{}", nanoid!(12))),
         name: "test_server1".to_string(),
         server_type: ServerType::Stdio,
         command: Some("echo".to_string()),
@@ -90,7 +90,7 @@ async fn create_test_servers(db: &Database) -> Result<Vec<Server>> {
 
     // Create second server
     let mut server2 = Server {
-        id: Some(Uuid::new_v4().to_string()),
+        id: Some(format!("ssrv{}", nanoid!(12))),
         name: "test_server2".to_string(),
         server_type: ServerType::Sse,
         command: None,
@@ -119,7 +119,7 @@ async fn create_test_suit_servers(
 ) -> Result<()> {
     // Add first server to first configuration suit
     let suit_server1 = ConfigSuitServer {
-        id: Some(Uuid::new_v4().to_string()),
+        id: Some(format!("suit{}", nanoid!(12))),
         config_suit_id: suits[0].id.clone().unwrap(),
         server_id: servers[0].id.clone().unwrap(),
         enabled: true,
@@ -129,7 +129,7 @@ async fn create_test_suit_servers(
 
     // Add second server to second configuration suit
     let suit_server2 = ConfigSuitServer {
-        id: Some(Uuid::new_v4().to_string()),
+        id: Some(format!("suit{}", nanoid!(12))),
         config_suit_id: suits[1].id.clone().unwrap(),
         server_id: servers[1].id.clone().unwrap(),
         enabled: true,

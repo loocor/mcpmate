@@ -9,8 +9,8 @@ use mcpmate::{
     api::routes::create_router, conf::models::ConfigSuit, core::models::Config,
     http::pool::UpstreamConnectionPool,
 };
+use nanoid::nanoid;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 /// Test listing configuration suits
 ///
@@ -91,7 +91,7 @@ async fn test_create_suit() -> Result<()> {
 
     // Create test configuration suit data
     let _suit = ConfigSuit {
-        id: Some(Uuid::new_v4().to_string()),
+        id: Some(format!("suit{}", nanoid!(12))),
         name: "Test Suit".to_string(),
         description: Some("Test configuration suit".to_string()),
         suit_type: mcpmate::common::types::ConfigSuitType::Scenario,

@@ -3,7 +3,7 @@
 
 use std::str::FromStr;
 
-use uuid::Uuid;
+use nanoid::nanoid;
 
 use super::common::*;
 
@@ -62,8 +62,8 @@ pub async fn create_suit(
         new_suit.is_default = is_default;
     }
 
-    // Generate UUID for the new suit
-    let suit_id = Uuid::new_v4().to_string();
+    // Generate an id for the new suit
+    let suit_id = format!("suit{}", nanoid!(12));
     new_suit.id = Some(suit_id.clone());
 
     // If cloning from existing suit, copy server and tool associations
@@ -104,7 +104,7 @@ pub async fn create_suit(
 
         for server_config in server_configs {
             let new_server_config = ConfigSuitServer {
-                id: Some(Uuid::new_v4().to_string()),
+                id: Some(format!("ssrv{}", nanoid!(12))),
                 config_suit_id: suit_id.clone(),
                 server_id: server_config.server_id.clone(),
                 enabled: server_config.enabled,
@@ -145,7 +145,7 @@ pub async fn create_suit(
             );
 
             let new_tool_config = ConfigSuitTool {
-                id: Some(Uuid::new_v4().to_string()),
+                id: Some(format!("stol{}", nanoid!(12))),
                 config_suit_id: suit_id.clone(),
                 server_id: tool_config.server_id.clone(),
                 server_name: tool_config.server_name.clone(),
