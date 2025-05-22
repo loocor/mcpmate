@@ -2,6 +2,7 @@
 // Contains handler functions for creating, updating, and importing servers
 
 use std::collections::HashMap;
+
 use super::{common::*, instance::list_instances};
 use crate::{
     api::{handlers::ApiError, models::server::ServerMetaInfo},
@@ -482,7 +483,7 @@ pub async fn import_servers(
             Ok(server) => server,
             Err(e) => {
                 failed_servers.push(name.clone());
-                let error_msg = format!("Failed to check if server exists: {}", e);
+                let error_msg = format!("Failed to check if server exists: {e}");
                 error_details.insert(name.clone(), error_msg.clone());
                 tracing::error!("Failed to check if server '{}' exists: {}", name, e);
                 continue;
@@ -492,9 +493,14 @@ pub async fn import_servers(
         // If the server already exists, add it to the failed list and continue
         if existing_server.is_some() {
             failed_servers.push(name.clone());
-            let error_msg = format!("Server with name '{}' already exists. Please choose a different name.", name);
+            let error_msg = format!(
+                "Server with name '{name}' already exists. Please choose a different name."
+            );
             error_details.insert(name.clone(), error_msg.clone());
-            tracing::error!("Server with name '{}' already exists. Skipping import.", name);
+            tracing::error!(
+                "Server with name '{}' already exists. Skipping import.",
+                name
+            );
             continue;
         }
 
@@ -505,7 +511,10 @@ pub async fn import_servers(
             "streamable_http" => Server::new_streamable_http(name.clone(), config.url.clone()),
             _ => {
                 failed_servers.push(name.clone());
-                let error_msg = format!("Invalid server type: '{}'. Must be one of: stdio, sse, streamable_http", config.kind);
+                let error_msg = format!(
+                    "Invalid server type: '{}'. Must be one of: stdio, sse, streamable_http",
+                    config.kind
+                );
                 error_details.insert(name.clone(), error_msg.clone());
                 tracing::error!("Invalid server type for '{}': {}", name, config.kind);
                 continue;
@@ -517,7 +526,7 @@ pub async fn import_servers(
             Ok(id) => id,
             Err(e) => {
                 failed_servers.push(name.clone());
-                let error_msg = format!("Failed to create server: {}", e);
+                let error_msg = format!("Failed to create server: {e}");
                 error_details.insert(name.clone(), error_msg.clone());
                 tracing::error!("Failed to create server '{}': {}", name, e);
                 continue;
@@ -580,7 +589,11 @@ pub async fn import_servers(
         imported_count: imported_servers.len(),
         imported_servers,
         failed_servers,
-        error_details: if error_details.is_empty() { None } else { Some(error_details) },
+        error_details: if error_details.is_empty() {
+            None
+        } else {
+            Some(error_details)
+        },
     }))
 }
 

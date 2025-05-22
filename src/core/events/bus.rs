@@ -11,7 +11,7 @@ use super::types::Event;
 const MAX_EVENTS: usize = 100;
 
 /// Type alias for event handler function
-type EventHandler = Box<dyn Fn(Event) -> () + Send + Sync + 'static>;
+type EventHandler = Box<dyn Fn(Event) + Send + Sync + 'static>;
 
 /// Global event bus singleton
 static EVENT_BUS: once_cell::sync::Lazy<EventBus> = once_cell::sync::Lazy::new(|| {
@@ -26,6 +26,12 @@ pub struct EventBus {
     sender: broadcast::Sender<Event>,
     /// Event handlers
     handlers: Arc<RwLock<Vec<EventHandler>>>,
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventBus {
@@ -68,7 +74,7 @@ impl EventBus {
         &self,
         handler: F,
     ) where
-        F: Fn(Event) -> () + Send + Sync + 'static,
+        F: Fn(Event) + Send + Sync + 'static,
     {
         if let Ok(mut handlers) = self.handlers.write() {
             handlers.push(Box::new(handler));

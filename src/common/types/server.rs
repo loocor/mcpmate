@@ -105,8 +105,7 @@ impl<'de> Visitor<'de> for ServerTypeVisitor {
     where
         E: de::Error,
     {
-        ServerType::from_str(value)
-            .map_err(|_| E::custom(format!("invalid server type: {}", value)))
+        ServerType::from_str(value).map_err(|_| E::custom(format!("invalid server type: {value}")))
     }
 }
 
@@ -235,7 +234,7 @@ impl<'de> Visitor<'de> for TransportTypeVisitor {
         E: de::Error,
     {
         TransportType::from_str(value)
-            .map_err(|_| E::custom(format!("invalid transport type: {}", value)))
+            .map_err(|_| E::custom(format!("invalid transport type: {value}")))
     }
 }
 

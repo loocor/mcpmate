@@ -106,7 +106,7 @@ impl<'de> Visitor<'de> for ConfigSuitTypeVisitor {
         E: de::Error,
     {
         ConfigSuitType::from_str(value)
-            .map_err(|_| E::custom(format!("invalid configuration suit type: {}", value)))
+            .map_err(|_| E::custom(format!("invalid configuration suit type: {value}")))
     }
 }
 

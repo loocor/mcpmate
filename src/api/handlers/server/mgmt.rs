@@ -49,8 +49,7 @@ async fn get_server_info(
         Some(id) => id.clone(),
         None => {
             return Err(ApiError::InternalError(format!(
-                "Server '{}' has no ID",
-                server_name
+                "Server '{server_name}' has no ID"
             )));
         }
     };
@@ -132,14 +131,12 @@ pub async fn enable_server(
         }
         Ok(false) => {
             return Err(ApiError::NotFound(format!(
-                "Server '{}' not found when updating global status",
-                server_name
+                "Server '{server_name}' not found when updating global status"
             )));
         }
         Err(e) => {
             return Err(ApiError::InternalError(format!(
-                "Failed to update server '{}' global status: {}",
-                server_name, e
+                "Failed to update server '{server_name}' global status: {e}"
             )));
         }
     }
@@ -194,10 +191,7 @@ pub async fn enable_server(
             return create_operation_response(
                 instance_id,
                 server_name,
-                format!(
-                    "Server enabled in configuration but connection failed: {}",
-                    e
-                ),
+                format!("Server enabled in configuration but connection failed: {e}"),
                 "Enabled (Connection Failed)".to_string(),
                 true,
             );
@@ -235,10 +229,7 @@ pub async fn enable_server(
             return create_operation_response(
                 instance_id,
                 server_name,
-                format!(
-                    "Server enabled in configuration but connection failed: {}",
-                    e
-                ),
+                format!("Server enabled in configuration but connection failed: {e}"),
                 "Enabled (Connection Failed)".to_string(),
                 true,
             );
@@ -282,10 +273,7 @@ pub async fn enable_server(
         return create_operation_response(
             first_instance_id,
             server_name,
-            format!(
-                "Server enabled in configuration but connection failed: {}",
-                e
-            ),
+            format!("Server enabled in configuration but connection failed: {e}"),
             "Enabled (Connection Failed)".to_string(),
             true,
         );
@@ -324,14 +312,12 @@ pub async fn disable_server(
         }
         Ok(false) => {
             return Err(ApiError::NotFound(format!(
-                "Server '{}' not found when updating global status",
-                server_name
+                "Server '{server_name}' not found when updating global status"
             )));
         }
         Err(e) => {
             return Err(ApiError::InternalError(format!(
-                "Failed to update server '{}' global status: {}",
-                server_name, e
+                "Failed to update server '{server_name}' global status: {e}"
             )));
         }
     }

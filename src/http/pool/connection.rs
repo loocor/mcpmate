@@ -110,14 +110,14 @@ impl UpstreamConnectionPool {
             let server_config = match self.config.mcp_servers.get(server_name) {
                 Some(config) => config,
                 None => {
-                    let error_msg = format!("Server configuration for '{}' not found", server_name);
+                    let error_msg = format!("Server configuration for '{server_name}' not found");
                     let conn = self.get_instance_mut(server_name, instance_id)?;
                     conn.update_failed(error_msg.clone());
                     return Err(anyhow::anyhow!(error_msg));
                 }
             };
 
-            server_config.kind.clone()
+            server_config.kind
         };
 
         // Connect based on server type
@@ -231,7 +231,7 @@ impl UpstreamConnectionPool {
         // Get the server ID
         let server = crate::conf::operations::get_server(&db.pool, server_name)
             .await
-            .context(format!("Failed to get server '{}'", server_name))?;
+            .context(format!("Failed to get server '{server_name}'"))?;
 
         if let Some(server) = server {
             if let Some(server_id) = &server.id {
@@ -248,7 +248,7 @@ impl UpstreamConnectionPool {
                         let suit_servers =
                             crate::conf::operations::get_config_suit_servers(&db.pool, suit_id)
                                 .await
-                                .context(format!("Failed to get servers for suit '{}'", suit_id))?;
+                                .context(format!("Failed to get servers for suit '{suit_id}'"))?;
 
                         // Check if this server is in the suit
                         for suit_server in suit_servers {
@@ -273,7 +273,7 @@ impl UpstreamConnectionPool {
                         let existing_tools =
                             crate::conf::operations::get_config_suit_tools(&db.pool, suit_id)
                                 .await
-                                .context(format!("Failed to get tools for suit '{}'", suit_id))?;
+                                .context(format!("Failed to get tools for suit '{suit_id}'"))?;
 
                         let existing_tool_names: std::collections::HashSet<String> = existing_tools
                             .iter()
@@ -347,7 +347,7 @@ impl UpstreamConnectionPool {
         let server_config = match self.config.mcp_servers.get(server_name) {
             Some(config) => config,
             None => {
-                let error_msg = format!("Server configuration for '{}' not found", server_name);
+                let error_msg = format!("Server configuration for '{server_name}' not found");
                 let conn = self.get_instance_mut(server_name, instance_id)?;
                 conn.update_failed(error_msg.clone());
                 return Err(anyhow::anyhow!(error_msg));
@@ -410,7 +410,7 @@ impl UpstreamConnectionPool {
         let server_config = match self.config.mcp_servers.get(server_name) {
             Some(config) => config,
             None => {
-                let error_msg = format!("Server configuration for '{}' not found", server_name);
+                let error_msg = format!("Server configuration for '{server_name}' not found");
                 let conn = self.get_instance_mut(server_name, instance_id)?;
                 conn.update_failed(error_msg.clone());
                 return Err(anyhow::anyhow!(error_msg));

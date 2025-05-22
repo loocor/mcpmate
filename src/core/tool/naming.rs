@@ -29,14 +29,14 @@ pub fn generate_unique_name(server_name: &str, original_tool_name: &str) -> Stri
     let normalized_server = server_name.to_lowercase().replace(' ', "_");
     
     // Check if the tool name already contains the server name as a prefix
-    let server_prefix = format!("{}_", normalized_server);
+    let server_prefix = format!("{normalized_server}_");
     
     if original_tool_name.to_lowercase().starts_with(&server_prefix) {
         // Tool name already has the server name as a prefix, use it as is
         original_tool_name.to_string()
     } else {
         // Add the server name as a prefix
-        format!("{}_{}", normalized_server, original_tool_name)
+        format!("{normalized_server}_{original_tool_name}")
     }
 }
 
@@ -66,7 +66,7 @@ pub async fn resolve_unique_name(
     .bind(unique_name)
     .fetch_optional(pool)
     .await
-    .context(format!("Failed to query unique name: {}", unique_name))?;
+    .context(format!("Failed to query unique name: {unique_name}"))?;
     
     match result {
         Some((server_name, tool_name)) => {
@@ -122,7 +122,7 @@ pub async fn ensure_unique_name(
     .bind(tool_name)
     .fetch_one(pool)
     .await
-    .context(format!("Failed to check for name conflicts: {}", base_name))?;
+    .context(format!("Failed to check for name conflicts: {base_name}"))?;
     
     if !conflict {
         // No conflict, use the base name
@@ -132,7 +132,7 @@ pub async fn ensure_unique_name(
     // If there's a conflict, add a numeric suffix
     let mut counter = 1;
     loop {
-        let suffixed_name = format!("{}_{}", base_name, counter);
+        let suffixed_name = format!("{base_name}_{counter}");
         
         let conflict = sqlx::query_scalar::<_, bool>(
             r#"
@@ -145,7 +145,7 @@ pub async fn ensure_unique_name(
         .bind(&suffixed_name)
         .fetch_one(pool)
         .await
-        .context(format!("Failed to check for name conflicts: {}", suffixed_name))?;
+        .context(format!("Failed to check for name conflicts: {suffixed_name}"))?;
         
         if !conflict {
             // No conflict, use this name

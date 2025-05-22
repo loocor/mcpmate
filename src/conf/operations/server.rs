@@ -131,10 +131,10 @@ pub async fn upsert_server_tx(
     )
     .bind(&server_id)
     .bind(&server.name)
-    .bind(&server.server_type)
+    .bind(server.server_type)
     .bind(&server.command)
     .bind(&server.url)
-    .bind(&server.transport_type)
+    .bind(server.transport_type)
     .execute(&mut **tx)
     .await
     .context("Failed to upsert server")?;

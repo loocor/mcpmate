@@ -455,7 +455,7 @@ pub async fn call_tool_on_instance(
 /// * `tools` - The tool list to update
 /// * `pool` - The database connection pool
 async fn update_tool_names_with_unique_names(
-    tools: &mut Vec<rmcp::model::Tool>,
+    tools: &mut [rmcp::model::Tool],
     pool: &sqlx::Pool<sqlx::Sqlite>,
 ) {
     // If the tool list is empty, return immediately

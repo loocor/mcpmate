@@ -341,7 +341,7 @@ pub async fn upsert_config_suit_tx(
     .bind(&suit_id)
     .bind(&suit.name)
     .bind(&suit.description)
-    .bind(&suit.suit_type)
+    .bind(suit.suit_type)
     .bind(suit.multi_select)
     .bind(suit.priority)
     .bind(suit.is_active)
@@ -513,7 +513,7 @@ pub async fn add_server_to_config_suit(
     };
 
     // Publish event if the server is new or its enabled status has changed
-    if is_new || existing_enabled.map_or(true, |e| e != enabled) {
+    if is_new || (existing_enabled != Some(enabled)) {
         // Get the original server name (without underscore replacement)
         let original_server_name = sqlx::query_scalar::<_, String>(
             r#"
@@ -714,7 +714,7 @@ pub async fn add_tool_to_config_suit(
     };
 
     // Publish event if the tool is new or its enabled status has changed
-    if is_new || existing_enabled.map_or(true, |e| e != enabled) {
+    if is_new || (existing_enabled != Some(enabled)) {
         // Publish the event
         crate::core::events::EventBus::global().publish(
             crate::core::events::Event::ToolEnabledInSuitChanged {
