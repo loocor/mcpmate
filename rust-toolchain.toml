@@ -1,5 +1,5 @@
 [toolchain]
-channel = "nightly"
+channel = "stable"
 components = [
   "rustc",
   "rust-std",
@@ -9,11 +9,12 @@ components = [
   "rust-docs",
   "rust-analyzer",
 ]
+
 targets = [
-    "x86_64-pc-windows-msvc",
-    "i686-pc-windows-msvc",
-    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnullvm",
+    "aarch64-pc-windows-gnullvm",
     "x86_64-apple-darwin",
-    "aarch64-linux-gnu",
-    "x86_64-linux-gnu",
+    "aarch64-apple-darwin"
 ]

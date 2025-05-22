@@ -82,3 +82,10 @@ path = "src/bin/proxy.rs"
 [[bin]]
 name = "bridge"
 path = "src/bin/bridge.rs"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+opt-level = 3
+strip = true
+debug = 0
