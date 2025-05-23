@@ -31,8 +31,11 @@ axum-test = "14.0"
 anyhow = "1.0"
 async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
+dirs = "5.0"
 dotenvy = "0.15.7"
+flate2 = "1.0"
 json5 = "0.4"
+reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-features = false }
 rmcp = { path = "./sdk/crates/rmcp", features = [
   "__reqwest",
   "client",
@@ -53,6 +56,7 @@ serde_json = "1.0"
 axum = "0.8.3"
 chrono = "0.4"
 once_cell = "1.19"
+tar = "0.4"
 thiserror = "1.0"
 tokio = { version = "1.44", features = [
   "net",
@@ -66,6 +70,7 @@ tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sysinfo = "0.30.5"
+zip = "2.1"
 # SQLite dependencies
 sqlx = { version = "0.8.1", features = [
   "runtime-tokio",
@@ -82,6 +87,10 @@ path = "src/bin/proxy.rs"
 [[bin]]
 name = "bridge"
 path = "src/bin/bridge.rs"
+
+[[bin]]
+name = "runtime"
+path = "src/bin/runtime.rs"
 
 [profile.release]
 panic = "abort"
