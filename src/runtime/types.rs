@@ -189,6 +189,14 @@ impl DownloadProgress {
 pub enum DownloadStage {
     /// Initializing download
     Initializing,
+    /// Resolving DNS
+    ResolvingDns,
+    /// Establishing connection
+    Connecting,
+    /// Sending HTTP request
+    SendingRequest,
+    /// Waiting for response
+    WaitingResponse,
     /// Downloading file
     Downloading,
     /// Extracting archive
@@ -208,6 +216,10 @@ impl fmt::Display for DownloadStage {
     ) -> fmt::Result {
         match self {
             DownloadStage::Initializing => write!(f, "Initializing"),
+            DownloadStage::ResolvingDns => write!(f, "Resolving DNS"),
+            DownloadStage::Connecting => write!(f, "Connecting"),
+            DownloadStage::SendingRequest => write!(f, "Sending request"),
+            DownloadStage::WaitingResponse => write!(f, "Waiting for response"),
             DownloadStage::Downloading => write!(f, "Downloading"),
             DownloadStage::Extracting => write!(f, "Extracting"),
             DownloadStage::PostProcessing => write!(f, "Post-processing"),
@@ -230,6 +242,8 @@ pub struct DownloadConfig {
     pub progress_callback: Option<ProgressCallback>,
     /// Enable verbose logging
     pub verbose: bool,
+    /// Enable interactive mode for timeout handling
+    pub interactive: bool,
 }
 
 impl std::fmt::Debug for DownloadConfig {
@@ -245,6 +259,7 @@ impl std::fmt::Debug for DownloadConfig {
                 &self.progress_callback.as_ref().map(|_| "<callback>"),
             )
             .field("verbose", &self.verbose)
+            .field("interactive", &self.interactive)
             .finish()
     }
 }
@@ -256,6 +271,7 @@ impl Default for DownloadConfig {
             max_retries: 3,
             progress_callback: None,
             verbose: false,
+            interactive: false,
         }
     }
 }
@@ -326,6 +342,9 @@ pub enum Commands {
         /// Enable verbose logging
         #[arg(long)]
         verbose: bool,
+        /// Enable interactive mode for timeout handling
+        #[arg(long)]
+        interactive: bool,
     },
     /// List installed runtime environments
     List,

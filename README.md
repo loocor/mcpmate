@@ -38,6 +38,38 @@ One of the core components of the project is the `proxy`, a high-performance MCP
 - Minimalist design, only requires service address configuration
 - Suitable for clients that only support stdio mode (such as Claude Desktop)
 
+### Runtime Manager
+
+`runtime` is an intelligent runtime environment management tool that provides automated installation and management of various runtime environments:
+
+- **Smart Download System**: 15-second intelligent timeout with automatic network diagnostics
+- **Progress Tracking**: Real-time progress bars with download speed and stage information
+- **Interactive Timeout Handling**: User-friendly timeout resolution with diagnostic reports
+- **Multi-Runtime Support**: Node.js, uv (Python), and Bun.js runtime management
+- **Environment Integration**: Automatic environment variable configuration for seamless MCP server usage
+- **Network Diagnostics**: DNS resolution and connection testing with troubleshooting suggestions
+
+#### Quick Start with Runtime Manager
+
+```bash
+# Install Node.js for JavaScript MCP servers
+runtime install node
+
+# Install uv for Python MCP servers
+runtime install uv
+
+# Install with interactive timeout handling
+runtime install node --interactive --verbose
+
+# List installed runtimes
+runtime list
+
+# Check runtime status
+runtime check node
+```
+
+For detailed documentation, see [Runtime Manager Guide](./docs/runtime-manager.md).
+
 ## Configuration Management
 
 MCPMate now uses a database-driven configuration management system, centered around the concept of **Config Suits**. All server, tool, and configuration suit information is stored in a local SQLite database (`config/mcpmate.db`). This enables flexible, dynamic, and persistent management of MCP servers and tools, supporting advanced features such as multi-suit activation, scenario-based switching, and team collaboration.

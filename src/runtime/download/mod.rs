@@ -1,7 +1,9 @@
 //! Runtime download and installation module
 
+mod diagnostics;
 mod downloader;
 mod extractor;
+mod interactive;
 mod progress;
 
 use crate::runtime::{
@@ -13,8 +15,15 @@ use crate::runtime::{
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
+pub use diagnostics::{
+    NetworkDiagnostics, NetworkDiagnosticsRunner, get_diagnostic_suggestions,
+    quick_connectivity_test,
+};
 pub use downloader::FileDownloader;
 pub use extractor::ArchiveExtractor;
+pub use interactive::{
+    InteractiveHandler, TimeoutAction, get_user_confirmation, supports_interactive,
+};
 pub use progress::{InlineProgressBar, MultiLineProgress, supports_inline_progress};
 
 /// Main runtime downloader that coordinates all installers

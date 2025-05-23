@@ -14,6 +14,7 @@ use clap::Parser;
 use mcpmate::runtime::{
     Commands, DownloadConfig, InlineProgressBar, MultiLineProgress, RuntimeManager, RuntimeType,
     download_runtime_with_config, list_runtime, show_runtime_path, supports_inline_progress,
+    supports_interactive,
 };
 use std::sync::{Arc, Mutex};
 
@@ -28,13 +29,16 @@ including Node.js, uv (Python), and Bun.js. This enhanced version includes:
 • Progress tracking with visual indicators
 • Configurable download timeouts and retries
 • Verbose logging for troubleshooting
+• Interactive timeout handling with network diagnostics
+• Intelligent network connectivity analysis
 
 Examples:
   runtime install node --verbose                    # Install Node.js with verbose output
-  runtime install uv --timeout 600 --max-retries 5 # Install uv with custom settings
-  runtime list                                      # List all installed runtimes
-  runtime check node                                # Check if Node.js is installed
-  runtime path node                                 # Show path to Node.js installation
+  runtime install uv --timeout 600 --interactive    # Install uv with extended timeout and interactive mode
+  runtime install bun --max-retries 5               # Install Bun with more retry attempts
+  runtime list                                       # List all installed runtimes
+  runtime check node                                 # Check Node.js installation
+  runtime path uv                                    # Get uv installation path
 ")]
 struct Cli {
     #[command(subcommand)]
@@ -44,9 +48,7 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
 
@@ -57,123 +59,126 @@ async fn main() -> Result<()> {
             timeout,
             max_retries,
             verbose,
+            interactive,
         } => {
-            install_runtime_enhanced(
-                runtime_type,
-                version.as_deref(),
-                timeout,
+            println!("Installing {} runtime...", runtime_type);
+
+            // Check if interactive mode is requested but not supported
+            if interactive && !supports_interactive() {
+                println!("⚠️  Interactive mode requested but not supported in this environment");
+                println!("💡 Running in non-interactive mode");
+            }
+
+            // Create progress bar based on terminal support
+            let progress_bar = if supports_inline_progress() {
+                Some(Arc::new(Mutex::new(InlineProgressBar::new())))
+            } else {
+                None
+            };
+
+            let progress_bar_clone = progress_bar.clone();
+            let config = DownloadConfig {
+                timeout: Some(timeout),
                 max_retries,
                 verbose,
-            )
-            .await
+                interactive: interactive && supports_interactive(),
+                progress_callback: Some(Box::new(move |progress| {
+                    if let Some(bar) = &progress_bar_clone {
+                        if let Ok(mut bar) = bar.lock() {
+                            bar.update(&progress);
+                        }
+                    } else {
+                        // Fallback to multi-line progress
+                        MultiLineProgress::update(&progress);
+                    }
+                })),
+            };
+
+            match download_runtime_with_config(runtime_type, version.as_deref(), config).await {
+                Ok(path) => {
+                    if let Some(bar) = progress_bar {
+                        if let Ok(bar) = bar.lock() {
+                            bar.clear();
+                        }
+                    }
+                    println!("Runtime installed successfully at: {}", path.display());
+                }
+                Err(e) => {
+                    if let Some(bar) = progress_bar {
+                        if let Ok(bar) = bar.lock() {
+                            bar.clear();
+                        }
+                    }
+                    eprintln!("Failed to install runtime: {}", e);
+
+                    // Provide helpful suggestions based on error type
+                    let error_str = e.to_string();
+                    if error_str.contains("timeout") {
+                        eprintln!();
+                        eprintln!("💡 Timeout suggestions:");
+                        eprintln!("   • Use --timeout <seconds> to increase timeout duration");
+                        eprintln!("   • Use --interactive flag for timeout handling options");
+                        eprintln!("   • Check your network connection");
+                    } else if error_str.contains("network") || error_str.contains("DNS") {
+                        eprintln!();
+                        eprintln!("💡 Network suggestions:");
+                        eprintln!("   • Check your internet connection");
+                        eprintln!("   • Try using a different DNS server (8.8.8.8, 1.1.1.1)");
+                        eprintln!("   • Check if you're behind a firewall or proxy");
+                    }
+
+                    std::process::exit(1);
+                }
+            }
         }
-        Commands::List => list_all_runtimes().await,
+        Commands::List => {
+            let manager = RuntimeManager::new()?;
+            println!("Installed runtime environments:");
+
+            // List Node.js environments
+            println!("\nNode.js:");
+            list_runtime(&manager, RuntimeType::Node)?;
+
+            // List uv/Python environments
+            println!("\nuv/Python:");
+            list_runtime(&manager, RuntimeType::Uv)?;
+
+            // List Bun.js environments
+            println!("\nBun.js:");
+            list_runtime(&manager, RuntimeType::Bun)?;
+        }
         Commands::Check {
             runtime_type,
             version,
-        } => check_runtime(runtime_type, version.as_deref()).await,
+        } => {
+            let manager = RuntimeManager::new()?;
+            match manager.is_runtime_available(runtime_type, version.as_deref()) {
+                Ok(true) => {
+                    println!("✓ {} is available", runtime_type);
+                    if let Ok(path) = manager.get_runtime_path(runtime_type, version.as_deref()) {
+                        println!("  Path: {}", path.display());
+                    }
+                }
+                Ok(false) => {
+                    println!("✗ {} is not installed", runtime_type);
+                    println!("  Run 'runtime install {}' to install it", runtime_type);
+                }
+                Err(e) => {
+                    eprintln!("Error checking runtime: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         Commands::Path {
             runtime_type,
             version,
-        } => show_runtime_path(runtime_type, version.as_deref()),
-    }
-}
-
-/// Enhanced install with progress tracking and configurable options
-async fn install_runtime_enhanced(
-    runtime_type: RuntimeType,
-    version: Option<&str>,
-    timeout: u64,
-    max_retries: u32,
-    verbose: bool,
-) -> Result<()> {
-    println!("Installing {} runtime...", runtime_type);
-
-    // check if inline progress is supported
-    let use_inline_progress = supports_inline_progress() && !verbose;
-    let progress_bar = if use_inline_progress {
-        Some(Arc::new(Mutex::new(InlineProgressBar::new())))
-    } else {
-        None
-    };
-
-    let progress_bar_clone = progress_bar.clone();
-    let config = DownloadConfig {
-        timeout: Some(timeout),
-        max_retries,
-        progress_callback: Some(Box::new(move |progress| {
-            if let Some(bar) = &progress_bar_clone {
-                if let Ok(mut bar) = bar.lock() {
-                    bar.update(&progress);
-                }
-            } else {
-                // fallback to multi-line mode
-                MultiLineProgress::update(&progress);
+        } => match show_runtime_path(runtime_type, version.as_deref()) {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("Error getting runtime path: {}", e);
+                std::process::exit(1);
             }
-        })),
-        verbose,
-    };
-
-    let result = download_runtime_with_config(runtime_type, version, config).await?;
-
-    // finish progress bar display
-    if let Some(bar) = progress_bar {
-        if let Ok(bar) = bar.lock() {
-            bar.finish(&format!(
-                "Runtime installed successfully at: {}",
-                result.display()
-            ));
-        }
-    } else {
-        println!("Runtime installed successfully at: {}", result.display());
-    }
-
-    Ok(())
-}
-
-/// List all installed runtime environments
-async fn list_all_runtimes() -> Result<()> {
-    println!("Installed runtime environments:");
-
-    let runtime_manager = RuntimeManager::new()?;
-
-    // list Node.js environments
-    println!("\nNode.js:");
-    list_runtime(&runtime_manager, RuntimeType::Node)?;
-
-    // list uv/Python environments
-    println!("\nuv/Python:");
-    list_runtime(&runtime_manager, RuntimeType::Uv)?;
-
-    // list Bun.js environments
-    println!("\nBun.js:");
-    list_runtime(&runtime_manager, RuntimeType::Bun)?;
-
-    Ok(())
-}
-
-/// Check if a specific runtime is available
-async fn check_runtime(
-    runtime_type: RuntimeType,
-    version: Option<&str>,
-) -> Result<()> {
-    let runtime_manager = RuntimeManager::new()?;
-
-    let available = runtime_manager.is_runtime_available(runtime_type, version)?;
-    if available {
-        let path = runtime_manager.get_runtime_path(runtime_type, version)?;
-        println!(
-            "✓ {} {} installed: {}",
-            runtime_type.as_str(),
-            version.unwrap_or(runtime_type.default_version()),
-            path.display()
-        );
-    } else {
-        println!(
-            "✗ {} {} not installed",
-            runtime_type.as_str(),
-            version.unwrap_or(runtime_type.default_version())
-        );
+        },
     }
 
     Ok(())

@@ -18,8 +18,10 @@ mod types; // Type definitions
 pub use constants::*; // Export all path constants
 pub use detection::{Environment, detect_environment};
 pub use download::{
-    InlineProgressBar, MultiLineProgress, RuntimeDownloader, download_runtime,
-    download_runtime_with_config, supports_inline_progress,
+    InlineProgressBar, InteractiveHandler, MultiLineProgress, NetworkDiagnostics,
+    NetworkDiagnosticsRunner, RuntimeDownloader, TimeoutAction, download_runtime,
+    download_runtime_with_config, get_diagnostic_suggestions, get_user_confirmation,
+    quick_connectivity_test, supports_inline_progress, supports_interactive,
 };
 pub use installers::{bun::BunInstaller, node::NodeInstaller, uv::UvInstaller};
 pub use list::list_runtime;
