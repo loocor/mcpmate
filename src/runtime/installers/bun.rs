@@ -76,12 +76,12 @@ impl BunInstaller {
         std::fs::create_dir_all(&bin_dir)?;
 
         // Check if bun executable exists in the root directory
-        let bun_exe_name = get_executable_name(RuntimeType::Bun);
-        let bun_exe_path = target_dir.join(bun_exe_name);
+        let bun_exe_name = RuntimeType::Bun.executable_name();
+        let bun_exe_path = target_dir.join(&bun_exe_name);
 
+        // Move to bin directory
         if bun_exe_path.exists() {
-            // Move to bin directory
-            std::fs::rename(&bun_exe_path, bin_dir.join(bun_exe_name))?;
+            std::fs::rename(&bun_exe_path, bin_dir.join(&bun_exe_name))?;
         }
 
         // Check for other common locations
@@ -96,10 +96,10 @@ impl BunInstaller {
         for dir in possible_dirs.iter() {
             if dir.exists() {
                 // Check for bun executable
-                let dir_bun_path = dir.join(bun_exe_name);
+                let dir_bun_path = dir.join(&bun_exe_name);
                 if dir_bun_path.exists() {
                     // Move to bin directory
-                    std::fs::rename(&dir_bun_path, bin_dir.join(bun_exe_name))?;
+                    std::fs::rename(&dir_bun_path, bin_dir.join(&bun_exe_name))?;
                     // Clean up directory
                     std::fs::remove_dir_all(dir)?;
                     break;

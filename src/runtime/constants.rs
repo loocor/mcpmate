@@ -30,38 +30,7 @@ pub fn get_default_version(runtime_type: RuntimeType) -> &'static str {
 
 /// get the directory name of the runtime
 pub fn get_runtime_dir_name(runtime_type: RuntimeType) -> &'static str {
-    match runtime_type {
-        RuntimeType::Node => "node",
-        RuntimeType::Bun => "bun",
-        RuntimeType::Uv => "uv",
-    }
-}
-
-/// get the executable name (platform dependent)
-pub fn get_executable_name(runtime_type: RuntimeType) -> &'static str {
-    match runtime_type {
-        RuntimeType::Node => {
-            if cfg!(windows) {
-                "node.exe"
-            } else {
-                "node"
-            }
-        }
-        RuntimeType::Bun => {
-            if cfg!(windows) {
-                "bun.exe"
-            } else {
-                "bun"
-            }
-        }
-        RuntimeType::Uv => {
-            if cfg!(windows) {
-                "uv.exe"
-            } else {
-                "uv"
-            }
-        }
-    }
+    runtime_type.as_str()
 }
 
 /// get the MCPMate user directory
@@ -105,10 +74,10 @@ pub fn get_runtime_executable_path(
 ) -> Result<PathBuf, anyhow::Error> {
     let version_dir = get_runtime_version_dir(runtime_type, version)?;
     let bin_dir = version_dir.join(BIN_DIR_NAME);
-    let exe_name = get_executable_name(runtime_type);
+    let exe_name = runtime_type.executable_name();
 
     // check the bin directory first
-    let bin_exe_path = bin_dir.join(exe_name);
+    let bin_exe_path = bin_dir.join(&exe_name);
     if bin_exe_path.exists() {
         return Ok(bin_exe_path);
     }
@@ -128,13 +97,13 @@ pub fn get_runtime_executable_path(
                             .starts_with("node-")
                     {
                         // check the bin sub directory first (macOS/Linux)
-                        let node_version_bin_path = path.join("bin").join(exe_name);
+                        let node_version_bin_path = path.join("bin").join(&exe_name);
                         if node_version_bin_path.exists() {
                             return Ok(node_version_bin_path);
                         }
 
                         // then check the root directory (Windows)
-                        let node_version_root_path = path.join(exe_name);
+                        let node_version_root_path = path.join(&exe_name);
                         if node_version_root_path.exists() {
                             return Ok(node_version_root_path);
                         }
@@ -144,7 +113,7 @@ pub fn get_runtime_executable_path(
         }
         RuntimeType::Bun => {
             // check the root directory
-            let root_exe_path = version_dir.join(exe_name);
+            let root_exe_path = version_dir.join(&exe_name);
             if root_exe_path.exists() {
                 return Ok(root_exe_path);
             }
@@ -160,7 +129,7 @@ pub fn get_runtime_executable_path(
 
             for dir in possible_dirs.iter() {
                 if dir.exists() {
-                    let dir_exe_path = dir.join(exe_name);
+                    let dir_exe_path = dir.join(&exe_name);
                     if dir_exe_path.exists() {
                         return Ok(dir_exe_path);
                     }
@@ -169,7 +138,7 @@ pub fn get_runtime_executable_path(
         }
         RuntimeType::Uv => {
             // check the root directory
-            let root_exe_path = version_dir.join(exe_name);
+            let root_exe_path = version_dir.join(&exe_name);
             if root_exe_path.exists() {
                 return Ok(root_exe_path);
             }
@@ -203,8 +172,8 @@ pub fn is_runtime_installed(
 
     // check if the executable file exists
     let bin_dir = version_dir.join(BIN_DIR_NAME);
-    let exe_name = get_executable_name(runtime_type);
-    let bin_exe_path = bin_dir.join(exe_name);
+    let exe_name = runtime_type.executable_name();
+    let bin_exe_path = bin_dir.join(&exe_name);
 
     if bin_exe_path.exists() {
         return Ok(true);
@@ -214,7 +183,7 @@ pub fn is_runtime_installed(
     match runtime_type {
         RuntimeType::Node => {
             // check the standard Node.js directory structure
-            let node_bin_path = version_dir.join(NODE_DIR_NAME).join("bin").join(exe_name);
+            let node_bin_path = version_dir.join(NODE_DIR_NAME).join("bin").join(&exe_name);
             if node_bin_path.exists() {
                 return Ok(true);
             }
@@ -230,13 +199,13 @@ pub fn is_runtime_installed(
                             .to_string_lossy()
                             .starts_with("node-")
                     {
-                        let node_version_bin_path = path.join("bin").join(exe_name);
+                        let node_version_bin_path = path.join("bin").join(&exe_name);
                         if node_version_bin_path.exists() {
                             return Ok(true);
                         }
 
                         // then check the root directory (Windows)
-                        let node_version_root_path = path.join(exe_name);
+                        let node_version_root_path = path.join(&exe_name);
                         if node_version_root_path.exists() {
                             return Ok(true);
                         }
@@ -246,7 +215,7 @@ pub fn is_runtime_installed(
         }
         RuntimeType::Bun => {
             // check the root directory
-            let root_exe_path = version_dir.join(exe_name);
+            let root_exe_path = version_dir.join(&exe_name);
             if root_exe_path.exists() {
                 return Ok(true);
             }
@@ -262,7 +231,7 @@ pub fn is_runtime_installed(
 
             for dir in possible_dirs.iter() {
                 if dir.exists() {
-                    let dir_exe_path = dir.join(exe_name);
+                    let dir_exe_path = dir.join(&exe_name);
                     if dir_exe_path.exists() {
                         return Ok(true);
                     }
@@ -271,7 +240,7 @@ pub fn is_runtime_installed(
         }
         RuntimeType::Uv => {
             // check the root directory
-            let root_exe_path = version_dir.join(exe_name);
+            let root_exe_path = version_dir.join(&exe_name);
             if root_exe_path.exists() {
                 return Ok(true);
             }

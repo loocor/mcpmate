@@ -35,9 +35,12 @@ impl RuntimeType {
     }
 
     /// Get the executable name
-    pub fn executable_name(&self) -> &'static str {
-        use crate::runtime::constants::*;
-        get_executable_name(*self)
+    pub fn executable_name(&self) -> String {
+        if cfg!(windows) {
+            format!("{}.exe", self.as_str())
+        } else {
+            self.as_str().to_string()
+        }
     }
 
     /// Get the download URL for this runtime type and version

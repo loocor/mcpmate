@@ -107,17 +107,19 @@ impl UvInstaller {
         let uv_dir_name = format!("uv-{}", target_triple);
         let uv_dir = target_dir.join(&uv_dir_name);
 
+        // Get executable name once at the top
+        let uv_exe_name = RuntimeType::Uv.executable_name();
+
         if uv_dir.exists() {
             // Create bin directory and move executable files
             let bin_dir = target_dir.join(BIN_DIR_NAME);
             std::fs::create_dir_all(&bin_dir)?;
 
             // Move uv executable file
-            let uv_exe_name = get_executable_name(RuntimeType::Uv);
-            let uv_exe = uv_dir.join(uv_exe_name);
+            let uv_exe = uv_dir.join(&uv_exe_name);
 
             if uv_exe.exists() {
-                std::fs::rename(&uv_exe, bin_dir.join(uv_exe_name))?;
+                std::fs::rename(&uv_exe, bin_dir.join(&uv_exe_name))?;
             }
 
             // uvx is typically a symlink or copy of uv, create it if it doesn't exist
@@ -127,7 +129,7 @@ impl UvInstaller {
             if !uvx_exe_path.exists() {
                 // On Windows, copy the file; on Unix, create a symlink
                 if cfg!(windows) {
-                    std::fs::copy(bin_dir.join(uv_exe_name), &uvx_exe_path)?;
+                    std::fs::copy(bin_dir.join(&uv_exe_name), &uvx_exe_path)?;
                 } else {
                     #[cfg(unix)]
                     {
@@ -140,21 +142,20 @@ impl UvInstaller {
             std::fs::remove_dir_all(&uv_dir)?;
         } else {
             // If the expected directory doesn't exist, check if files are directly in target_dir
-            let uv_exe_name = get_executable_name(RuntimeType::Uv);
-            let direct_uv_exe = target_dir.join(uv_exe_name);
+            let direct_uv_exe = target_dir.join(&uv_exe_name);
 
             if direct_uv_exe.exists() {
                 // Create bin directory and move the file
                 let bin_dir = target_dir.join(BIN_DIR_NAME);
                 std::fs::create_dir_all(&bin_dir)?;
-                std::fs::rename(&direct_uv_exe, bin_dir.join(uv_exe_name))?;
+                std::fs::rename(&direct_uv_exe, bin_dir.join(&uv_exe_name))?;
 
                 // Create uvx
                 let uvx_exe_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
                 let uvx_exe_path = bin_dir.join(uvx_exe_name);
 
                 if cfg!(windows) {
-                    std::fs::copy(bin_dir.join(uv_exe_name), &uvx_exe_path)?;
+                    std::fs::copy(bin_dir.join(&uv_exe_name), &uvx_exe_path)?;
                 } else {
                     #[cfg(unix)]
                     {
