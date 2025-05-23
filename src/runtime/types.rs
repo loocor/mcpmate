@@ -151,6 +151,115 @@ impl fmt::Display for RuntimeVersion {
     }
 }
 
+/// Download progress information
+#[derive(Debug, Clone)]
+pub struct DownloadProgress {
+    /// Current downloaded bytes
+    pub downloaded: u64,
+    /// Total bytes to download (if known)
+    pub total: Option<u64>,
+    /// Download speed in bytes per second
+    pub speed: Option<u64>,
+    /// Current stage of the download process
+    pub stage: DownloadStage,
+    /// Stage-specific message
+    pub message: Option<String>,
+}
+
+impl DownloadProgress {
+    /// Calculate download percentage (0-100)
+    pub fn percentage(&self) -> Option<f64> {
+        self.total.map(|total| {
+            if total == 0 {
+                100.0
+            } else {
+                (self.downloaded as f64 / total as f64) * 100.0
+            }
+        })
+    }
+
+    /// Check if download is complete
+    pub fn is_complete(&self) -> bool {
+        matches!(self.stage, DownloadStage::Complete)
+    }
+}
+
+/// Download stages
+#[derive(Debug, Clone, PartialEq)]
+pub enum DownloadStage {
+    /// Initializing download
+    Initializing,
+    /// Downloading file
+    Downloading,
+    /// Extracting archive
+    Extracting,
+    /// Post-processing
+    PostProcessing,
+    /// Download complete
+    Complete,
+    /// Download failed
+    Failed(String),
+}
+
+impl fmt::Display for DownloadStage {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        match self {
+            DownloadStage::Initializing => write!(f, "Initializing"),
+            DownloadStage::Downloading => write!(f, "Downloading"),
+            DownloadStage::Extracting => write!(f, "Extracting"),
+            DownloadStage::PostProcessing => write!(f, "Post-processing"),
+            DownloadStage::Complete => write!(f, "Complete"),
+            DownloadStage::Failed(err) => write!(f, "Failed: {}", err),
+        }
+    }
+}
+
+/// Progress callback type
+pub type ProgressCallback = Box<dyn Fn(DownloadProgress) + Send + Sync>;
+
+/// Download configuration
+pub struct DownloadConfig {
+    /// Request timeout in seconds
+    pub timeout: Option<u64>,
+    /// Maximum number of retry attempts
+    pub max_retries: u32,
+    /// Progress callback
+    pub progress_callback: Option<ProgressCallback>,
+    /// Enable verbose logging
+    pub verbose: bool,
+}
+
+impl std::fmt::Debug for DownloadConfig {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.debug_struct("DownloadConfig")
+            .field("timeout", &self.timeout)
+            .field("max_retries", &self.max_retries)
+            .field(
+                "progress_callback",
+                &self.progress_callback.as_ref().map(|_| "<callback>"),
+            )
+            .field("verbose", &self.verbose)
+            .finish()
+    }
+}
+
+impl Default for DownloadConfig {
+    fn default() -> Self {
+        Self {
+            timeout: Some(300), // 5 minutes default
+            max_retries: 3,
+            progress_callback: None,
+            verbose: false,
+        }
+    }
+}
+
 /// Runtime related errors
 #[derive(Error, Debug)]
 pub enum RuntimeError {
@@ -169,6 +278,12 @@ pub enum RuntimeError {
     #[error("Download failed: {0}")]
     DownloadFailed(String),
 
+    #[error("Download timeout after {seconds} seconds")]
+    DownloadTimeout { seconds: u64 },
+
+    #[error("Download cancelled by user")]
+    DownloadCancelled,
+
     #[error("Extraction failed: {0}")]
     ExtractionFailed(String),
 
@@ -180,6 +295,9 @@ pub enum RuntimeError {
 
     #[error("Path error: {0}")]
     PathError(String),
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }
 
 /// Parse runtime type from string
@@ -199,6 +317,15 @@ pub enum Commands {
         /// Version number (optional, default to recommended version)
         #[arg(short, long)]
         version: Option<String>,
+        /// Request timeout in seconds
+        #[arg(short, long, default_value = "300")]
+        timeout: u64,
+        /// Maximum retry attempts
+        #[arg(short, long, default_value = "3")]
+        max_retries: u32,
+        /// Enable verbose logging
+        #[arg(long)]
+        verbose: bool,
     },
     /// List installed runtime environments
     List,

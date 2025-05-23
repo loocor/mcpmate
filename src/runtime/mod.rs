@@ -17,11 +17,16 @@ mod types; // Type definitions
 // Re-export main types and functions
 pub use constants::*; // Export all path constants
 pub use detection::{Environment, detect_environment};
-pub use download::{RuntimeDownloader, download_runtime};
+pub use download::{
+    InlineProgressBar, MultiLineProgress, RuntimeDownloader, download_runtime,
+    download_runtime_with_config, supports_inline_progress,
+};
 pub use installers::{bun::BunInstaller, node::NodeInstaller, uv::UvInstaller};
 pub use list::list_runtime;
-pub use paths::{RuntimePaths, get_runtime_path};
-pub use types::{Commands, RuntimeError, RuntimeType};
+pub use paths::{RuntimePaths, get_runtime_path, show_runtime_path};
+pub use types::{
+    Commands, DownloadConfig, DownloadProgress, DownloadStage, RuntimeError, RuntimeType,
+};
 
 use anyhow::Result;
 use std::path::PathBuf;

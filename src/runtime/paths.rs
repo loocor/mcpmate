@@ -1,5 +1,5 @@
-use crate::runtime::constants::*;
 use crate::runtime::types::RuntimeType;
+use crate::runtime::{RuntimeManager, constants::*};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
@@ -102,4 +102,15 @@ pub fn get_runtime_path(
     version: Option<&str>,
 ) -> Result<PathBuf> {
     get_runtime_executable_path(runtime_type, version)
+}
+
+/// Show the path to a runtime installation
+pub fn show_runtime_path(
+    runtime_type: RuntimeType,
+    version: Option<&str>,
+) -> Result<()> {
+    let runtime_manager = RuntimeManager::new()?;
+    let path = runtime_manager.get_runtime_path(runtime_type, version)?;
+    println!("{}", path.display());
+    Ok(())
 }
