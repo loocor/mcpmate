@@ -117,25 +117,19 @@ impl UvInstaller {
 
             // Move uv executable file
             let uv_exe = uv_dir.join(&uv_exe_name);
-
             if uv_exe.exists() {
                 std::fs::rename(&uv_exe, bin_dir.join(&uv_exe_name))?;
             }
 
-            // uvx is typically a symlink or copy of uv, create it if it doesn't exist
+            // Move uvx executable file (uvx is a separate executable, not a symlink)
             let uvx_exe_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
-            let uvx_exe_path = bin_dir.join(uvx_exe_name);
-
-            if !uvx_exe_path.exists() {
-                // On Windows, copy the file; on Unix, create a symlink
-                if cfg!(windows) {
-                    std::fs::copy(bin_dir.join(&uv_exe_name), &uvx_exe_path)?;
-                } else {
-                    #[cfg(unix)]
-                    {
-                        std::os::unix::fs::symlink("uv", &uvx_exe_path)?;
-                    }
-                }
+            let uvx_exe = uv_dir.join(uvx_exe_name);
+            if uvx_exe.exists() {
+                std::fs::rename(&uvx_exe, bin_dir.join(uvx_exe_name))?;
+            } else {
+                tracing::warn!(
+                    "uvx executable not found in extracted archive, this may cause issues"
+                );
             }
 
             // Clean up original directory
@@ -150,17 +144,16 @@ impl UvInstaller {
                 std::fs::create_dir_all(&bin_dir)?;
                 std::fs::rename(&direct_uv_exe, bin_dir.join(&uv_exe_name))?;
 
-                // Create uvx
+                // Move uvx executable (should be in the same directory as uv)
                 let uvx_exe_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
-                let uvx_exe_path = bin_dir.join(uvx_exe_name);
+                let direct_uvx_exe = target_dir.join(uvx_exe_name);
 
-                if cfg!(windows) {
-                    std::fs::copy(bin_dir.join(&uv_exe_name), &uvx_exe_path)?;
+                if direct_uvx_exe.exists() {
+                    std::fs::rename(&direct_uvx_exe, bin_dir.join(uvx_exe_name))?;
                 } else {
-                    #[cfg(unix)]
-                    {
-                        std::os::unix::fs::symlink("uv", &uvx_exe_path)?;
-                    }
+                    tracing::warn!(
+                        "uvx executable not found in extracted archive, this may cause issues"
+                    );
                 }
             }
         }
