@@ -35,5 +35,5 @@ pub fn routes(state: Arc<AppState>) -> Router {
 
     let combined_router = servers_router.nest("/{name}/instances", instances_router);
 
-    Router::new().nest("/api/mcp/servers", combined_router.with_state(state))
+    Router::new().nest("/mcp/servers", combined_router.with_state(state))
 }

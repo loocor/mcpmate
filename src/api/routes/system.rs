@@ -10,10 +10,8 @@ use crate::api::handlers::system;
 
 /// Create system management routes
 pub fn routes(state: Arc<AppState>) -> Router {
-    let system_router = Router::new()
-        .route("/status", get(system::get_status))
-        .route("/metrics", get(system::get_metrics))
-        .with_state(state);
-
-    Router::new().nest("/api/system", system_router)
+    Router::new()
+        .route("/system/status", get(system::get_status))
+        .route("/system/metrics", get(system::get_metrics))
+        .with_state(state)
 }

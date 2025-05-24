@@ -47,6 +47,6 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .nest("/{id}/tools", tools_router);
 
     Router::new()
-        .nest("/api/mcp/suits", combined_router)
+        .nest("/mcp/suits", combined_router)
         .with_state(state)
 }

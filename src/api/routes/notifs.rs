@@ -14,5 +14,5 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/tools/changed", post(notifs::notify_tools_changed))
         .with_state(state);
 
-    Router::new().nest("/api/notifs", notifs_router)
+    Router::new().nest("/notifs", notifs_router)
 }
