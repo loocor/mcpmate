@@ -102,8 +102,9 @@ impl UpstreamConnection {
     ) {
         // Check if we're already in an error state
         let (failure_count, first_failure_time) = match &self.status {
-            ConnectionStatus::Error(details) =>
-                (details.failure_count + 1, details.first_failure_time),
+            ConnectionStatus::Error(details) => {
+                (details.failure_count + 1, details.first_failure_time)
+            }
             _ => (1, chrono::Local::now().timestamp() as u64),
         };
 
@@ -191,21 +192,26 @@ impl UpstreamConnection {
         self.status.should_monitor()
     }
 
-    /// Check if a specific operation is allowed in the current state
-    pub fn can_perform_operation(
+    /// Check if a specific operation is allowed in the current state (type-safe version)
+    pub fn can_perform_typed_operation(
         &self,
-        operation: &str,
+        operation: crate::common::types::ConnectionOperation,
     ) -> bool {
         self.status.can_perform_operation(operation)
     }
 
-    /// Get the allowed operations for this connection
+    /// Get the allowed operations for this connection (string version for backward compatibility)
     pub fn allowed_operations(&self) -> Vec<String> {
         self.status
             .allowed_operations()
             .into_iter()
-            .map(|s| s.to_string())
+            .map(|op| op.as_str().to_string())
             .collect()
+    }
+
+    /// Get the allowed operations for this connection (enum version)
+    pub fn allowed_typed_operations(&self) -> Vec<crate::common::types::ConnectionOperation> {
+        self.status.allowed_operations()
     }
 
     /// Reset connection attempts counter

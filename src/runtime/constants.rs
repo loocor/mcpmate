@@ -74,7 +74,37 @@ pub fn get_runtime_executable_path(
 ) -> Result<PathBuf, anyhow::Error> {
     let version_dir = get_runtime_version_dir(runtime_type, version)?;
     let bin_dir = version_dir.join(BIN_DIR_NAME);
-    let exe_name = runtime_type.executable_name();
+
+    // For Node.js and Uv, prioritize the execution wrappers over base commands
+    let exe_name = match runtime_type {
+        RuntimeType::Node => {
+            // Check for npx first (preferred for MCP servers)
+            let npx_path = bin_dir.join("npx");
+            if npx_path.exists() {
+                return Ok(npx_path);
+            }
+            // Fall back to node if npx doesn't exist
+            runtime_type.executable_name()
+        }
+        RuntimeType::Uv => {
+            // Check for uvx first (preferred for MCP servers)
+            let uvx_path = bin_dir.join("uvx");
+            if uvx_path.exists() {
+                return Ok(uvx_path);
+            }
+            // Fall back to uv if uvx doesn't exist
+            runtime_type.executable_name()
+        }
+        RuntimeType::Bun => {
+            // Check for bunx first (preferred for MCP servers)
+            let bunx_path = bin_dir.join("bunx");
+            if bunx_path.exists() {
+                return Ok(bunx_path);
+            }
+            // Fall back to bun if bunx doesn't exist
+            runtime_type.executable_name()
+        }
+    };
 
     // check the bin directory first
     let bin_exe_path = bin_dir.join(&exe_name);
@@ -96,6 +126,12 @@ pub fn get_runtime_executable_path(
                             .to_string_lossy()
                             .starts_with("node-")
                     {
+                        // For Node.js, prioritize npx over node in subdirectories too
+                        let npx_path = path.join("bin").join("npx");
+                        if npx_path.exists() {
+                            return Ok(npx_path);
+                        }
+
                         // check the bin sub directory first (macOS/Linux)
                         let node_version_bin_path = path.join("bin").join(&exe_name);
                         if node_version_bin_path.exists() {

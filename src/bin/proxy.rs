@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use mcpmate::{
     api::{ApiServer, handlers::system::initialize_server_start_time},
@@ -77,6 +77,28 @@ async fn main() -> Result<()> {
             return Err(anyhow::anyhow!("Failed to initialize database: {}", e));
         }
     };
+
+    // Migrate runtime configurations to ensure consistent path formats
+    if let Err(e) = mcpmate::runtime::migration::migrate_runtime_configs(&db.pool).await {
+        tracing::warn!("Failed to migrate runtime configurations: {}", e);
+        tracing::warn!("This may cause issues with runtime environment management");
+    } else {
+        tracing::info!("Runtime configurations migrated successfully");
+    }
+
+    // Initialize runtime environment on first startup
+    if let Err(e) = initialize_runtime_environment(&db).await {
+        tracing::warn!("Runtime environment initialization failed: {}", e);
+        tracing::info!(
+            "MCPMate will continue startup - runtime environments can be installed later"
+        );
+    }
+
+    // Detect and install missing runtimes (prioritize MCPMate-managed runtimes)
+    if let Err(e) = detect_and_install_missing_runtimes(&db).await {
+        tracing::warn!("Runtime detection and installation failed: {}", e);
+        tracing::info!("MCPMate will continue startup - runtimes can be installed later");
+    }
 
     // Note: Migration from files to database is automatically performed if the database is empty and config/mcp.json exists
 
@@ -253,6 +275,299 @@ async fn main() -> Result<()> {
         pool.disconnect_all().await?;
         tracing::info!("Disconnected from all upstream servers");
     }
+
+    Ok(())
+}
+
+/// Initialize runtime environment on first startup
+/// This function checks for common runtime requirements and attempts to install them
+async fn initialize_runtime_environment(_db: &mcpmate::conf::database::Database) -> Result<()> {
+    use mcpmate::runtime::{RuntimeManager, RuntimePaths, RuntimeType};
+
+    tracing::info!("Initializing runtime environment...");
+
+    // Create necessary directories
+    let runtime_paths = RuntimePaths::new().context("Failed to create runtime paths manager")?;
+
+    // Create directories for Node.js and uv
+    if let Err(e) = runtime_paths.create_directories(RuntimeType::Node, None) {
+        tracing::warn!("Failed to create Node.js runtime directories: {}", e);
+        tracing::warn!("This may cause issues with Node.js runtime environment");
+    }
+
+    if let Err(e) = runtime_paths.create_directories(RuntimeType::Uv, None) {
+        tracing::warn!("Failed to create uv runtime directories: {}", e);
+        tracing::warn!("This may cause issues with Python runtime environment");
+    }
+
+    tracing::info!("Runtime directories created successfully");
+
+    // Create runtime manager
+    let runtime_manager = RuntimeManager::new().context("Failed to create runtime manager")?;
+
+    // Critical runtimes list
+    let critical_runtimes = [
+        (RuntimeType::Node, "Node.js (for npx commands)"),
+        (RuntimeType::Uv, "uv (for Python package management)"),
+    ];
+
+    // Check each runtime and output status
+    for (runtime_type, description) in critical_runtimes.iter() {
+        match runtime_manager.is_runtime_available(*runtime_type, None) {
+            Ok(true) => {
+                let path = runtime_manager.get_runtime_path(*runtime_type, None)?;
+                tracing::info!(
+                    "✓ Runtime {} is available at {}",
+                    description,
+                    path.display()
+                );
+            }
+            Ok(false) => {
+                tracing::info!(
+                    "✗ Runtime {} is not available - will be installed when needed",
+                    description
+                );
+            }
+            Err(e) => {
+                tracing::warn!("! Failed to check runtime {}: {}", description, e);
+            }
+        }
+    }
+
+    tracing::info!("Runtime environment check completed");
+    tracing::info!("Missing runtimes will be automatically installed when first needed");
+
+    Ok(())
+}
+
+/// Detect and install missing runtimes with proper priority strategy
+/// Priority: MCPMate-managed runtimes > System runtimes
+async fn detect_and_install_missing_runtimes(db: &mcpmate::conf::database::Database) -> Result<()> {
+    use mcpmate::runtime::constants::get_mcpmate_dir;
+    use mcpmate::runtime::{RuntimeManager, RuntimeType};
+
+    tracing::info!("Detecting and installing missing runtimes with priority strategy...");
+
+    let runtime_manager = RuntimeManager::new().context("Failed to create runtime manager")?;
+    let mcpmate_dir = get_mcpmate_dir().context("Failed to get MCPMate directory")?;
+
+    // Runtime types to check
+    let runtime_types = [RuntimeType::Node, RuntimeType::Uv, RuntimeType::Bun];
+    let mut installed_count = 0;
+
+    for runtime_type in runtime_types {
+        tracing::debug!("Processing runtime: {:?}", runtime_type);
+
+        // Strategy 1: Check for MCPMate-managed runtime (highest priority)
+        let managed_available = runtime_manager
+            .is_runtime_available(runtime_type, None)
+            .unwrap_or(false);
+
+        if managed_available {
+            // MCPMate-managed runtime exists, register it
+            if let Ok(managed_path) = runtime_manager.get_runtime_path(runtime_type, None) {
+                if let Err(e) = register_runtime_in_database(
+                    &db.pool,
+                    runtime_type,
+                    &managed_path,
+                    "latest",
+                    &mcpmate_dir,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to register managed {:?} runtime: {}",
+                        runtime_type,
+                        e
+                    );
+                } else {
+                    tracing::info!(
+                        "✓ Using managed {:?} runtime: {}",
+                        runtime_type,
+                        managed_path.display()
+                    );
+                    installed_count += 1;
+                }
+                continue;
+            }
+        }
+
+        // Strategy 2: MCPMate-managed runtime not available, try to install it
+        tracing::info!(
+            "MCPMate-managed {:?} runtime not found, attempting to install...",
+            runtime_type
+        );
+
+        // Convert RuntimeType to command string
+        let command_str = match runtime_type {
+            RuntimeType::Node => "npx",
+            RuntimeType::Uv => "uvx",
+            RuntimeType::Bun => "bunx",
+        };
+
+        match runtime_manager
+            .ensure_runtime_for_command(command_str, Some(&db.pool))
+            .await
+        {
+            Ok(_) => {
+                // Installation successful, register the managed runtime
+                if let Ok(managed_path) = runtime_manager.get_runtime_path(runtime_type, None) {
+                    if let Err(e) = register_runtime_in_database(
+                        &db.pool,
+                        runtime_type,
+                        &managed_path,
+                        "latest",
+                        &mcpmate_dir,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "Failed to register newly installed {:?} runtime: {}",
+                            runtime_type,
+                            e
+                        );
+                    } else {
+                        tracing::info!(
+                            "✓ Successfully installed and registered managed {:?} runtime: {}",
+                            runtime_type,
+                            managed_path.display()
+                        );
+                        installed_count += 1;
+                    }
+                    continue;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to install managed {:?} runtime: {}",
+                    runtime_type,
+                    e
+                );
+            }
+        }
+
+        // Strategy 3: Fallback to system runtime (lowest priority)
+        tracing::info!("Falling back to system runtime for {:?}...", runtime_type);
+        if let Some(system_path) = check_system_runtime(runtime_type).await {
+            if let Err(e) = register_runtime_in_database(
+                &db.pool,
+                runtime_type,
+                &system_path,
+                "system",
+                &mcpmate_dir,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to register system {:?} runtime: {}",
+                    runtime_type,
+                    e
+                );
+            } else {
+                tracing::info!(
+                    "⚠ Using system {:?} runtime as fallback: {}",
+                    runtime_type,
+                    system_path.display()
+                );
+                installed_count += 1;
+            }
+        } else {
+            tracing::warn!(
+                "No {:?} runtime available (neither managed nor system)",
+                runtime_type
+            );
+        }
+    }
+
+    tracing::info!(
+        "Runtime detection and installation completed: {} runtimes registered",
+        installed_count
+    );
+    Ok(())
+}
+
+/// Check for system runtime
+async fn check_system_runtime(
+    runtime_type: mcpmate::runtime::RuntimeType
+) -> Option<std::path::PathBuf> {
+    // Try to find the system runtime executable
+    let executable_path = match runtime_type {
+        mcpmate::runtime::RuntimeType::Node => {
+            // Try to find npx first, then node
+            if let Ok(npx_path) = which::which("npx") {
+                npx_path
+            } else if let Ok(node_path) = which::which("node") {
+                node_path
+            } else {
+                tracing::debug!("Neither npx nor node found in system PATH");
+                return None;
+            }
+        }
+        mcpmate::runtime::RuntimeType::Uv => {
+            // Try to find uvx first, then uv
+            if let Ok(uvx_path) = which::which("uvx") {
+                uvx_path
+            } else if let Ok(uv_path) = which::which("uv") {
+                uv_path
+            } else {
+                tracing::debug!("Neither uvx nor uv found in system PATH");
+                return None;
+            }
+        }
+        mcpmate::runtime::RuntimeType::Bun => {
+            if let Ok(bun_path) = which::which("bun") {
+                bun_path
+            } else {
+                tracing::debug!("bun not found in system PATH");
+                return None;
+            }
+        }
+    };
+
+    tracing::debug!(
+        "Found system runtime for {:?}: {}",
+        runtime_type,
+        executable_path.display()
+    );
+    Some(executable_path)
+}
+
+/// Register runtime in database
+async fn register_runtime_in_database(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    runtime_type: mcpmate::runtime::RuntimeType,
+    runtime_path: &std::path::Path,
+    version: &str,
+    mcpmate_dir: &std::path::Path,
+) -> Result<()> {
+    use mcpmate::runtime::config::{RuntimeConfig, save_config};
+
+    // Determine the path to store in database
+    let relative_path = if runtime_path.starts_with(mcpmate_dir) {
+        // Managed runtime - store relative path (relative to mcpmate_dir)
+        runtime_path
+            .strip_prefix(mcpmate_dir)
+            .unwrap_or(runtime_path)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        // System runtime - store absolute path as-is
+        // The runtime_env module will handle this correctly
+        runtime_path.to_string_lossy().to_string()
+    };
+
+    // Create runtime config
+    let config = RuntimeConfig::new(runtime_type, version, &relative_path);
+
+    // Save to database (this will upsert - insert or update)
+    save_config(pool, &config).await?;
+
+    tracing::debug!(
+        "Registered {:?} runtime in database: {} -> {}",
+        runtime_type,
+        runtime_path.display(),
+        relative_path
+    );
 
     Ok(())
 }

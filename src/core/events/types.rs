@@ -58,4 +58,66 @@ pub enum Event {
         /// Ready status
         ready: bool,
     },
+
+    /// Runtime environment check started
+    RuntimeCheckStarted {
+        /// Runtime type (node, uv, bun)
+        runtime_type: String,
+        /// Target version (optional)
+        version: Option<String>,
+    },
+
+    /// Runtime environment check succeeded
+    RuntimeCheckSuccess {
+        /// Runtime type (node, uv, bun)
+        runtime_type: String,
+        /// Found version
+        version: String,
+        /// Binary path
+        bin_path: String,
+    },
+
+    /// Runtime environment check failed
+    RuntimeCheckFailed {
+        /// Runtime type (node, uv, bun)
+        runtime_type: String,
+        /// Error message
+        error: String,
+    },
+
+    /// Runtime download started
+    RuntimeDownloadStarted {
+        /// Runtime type (node, uv, bun)
+        runtime_type: String,
+        /// Version to download
+        version: String,
+    },
+
+    /// Runtime download completed
+    RuntimeDownloadCompleted {
+        /// Runtime type (node, uv, bun)
+        runtime_type: String,
+        /// Downloaded version
+        version: String,
+        /// Installation path
+        install_path: String,
+    },
+
+    /// Runtime environment is ready for use
+    RuntimeReady {
+        /// Runtime type (node, uv, bun)
+        runtime_type: String,
+        /// Available version
+        version: String,
+        /// Binary path
+        bin_path: String,
+    },
+
+    /// Runtime setup failed
+    RuntimeSetupFailed {
+        /// Runtime type (node, uv, bun)
+        runtime_type: String,
+        /// Error message
+        error: String,
+    },
 }

@@ -30,6 +30,8 @@ pub struct HttpProxyServer {
     pub database: Option<Arc<Database>>,
     /// Config Suit merge service for tool enablement check
     pub config_suit_merge_service: Option<Arc<crate::core::suit::ConfigSuitMergeService>>,
+    /// Runtime cache for fast runtime queries
+    pub runtime_cache: Arc<crate::runtime::RuntimeCache>,
 }
 
 #[tool(tool_box)]
@@ -125,6 +127,7 @@ impl HttpProxyServer {
             connection_pool,
             database: None,                  // Database will be initialized separately
             config_suit_merge_service: None, // Will be initialized after database
+            runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
         }
     }
 
@@ -153,6 +156,7 @@ impl HttpProxyServer {
             connection_pool,
             database: Some(database),
             config_suit_merge_service: Some(merge_service),
+            runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
         }
     }
 
@@ -210,11 +214,28 @@ impl HttpProxyServer {
         // Store the Config Suit merge service
         self.config_suit_merge_service = Some(merge_service);
 
-        // Update the database reference in the connection pool
+        // Update the database reference and runtime cache in the connection pool
         {
             let mut pool = self.connection_pool.lock().await;
-            pool.database = Some(db_arc);
+            pool.database = Some(db_arc.clone());
+            pool.runtime_cache = Some(self.runtime_cache.clone());
         }
+
+        // Initialize runtime cache from database
+        if let Err(e) = self
+            .runtime_cache
+            .initialize_from_database(&db_arc.pool)
+            .await
+        {
+            tracing::warn!("Failed to initialize runtime cache from database: {}", e);
+            tracing::info!("Runtime cache will start empty and be populated as needed");
+        }
+
+        // Start background maintenance for runtime cache
+        crate::runtime::RuntimeCache::start_background_maintenance(
+            self.runtime_cache.clone(),
+            db_arc.pool.clone(),
+        );
 
         tracing::info!("Database connection and Config Suit merge service set successfully");
         Ok(())

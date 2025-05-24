@@ -225,11 +225,93 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     .execute(pool)
     .await
     {
-        Ok(_) => tracing::debug!("Unique index on config_suit_tool.unique_name created or already exists"),
+        Ok(_) => tracing::debug!(
+            "Unique index on config_suit_tool.unique_name created or already exists"
+        ),
         Err(e) => {
-            tracing::error!("Failed to create unique index on config_suit_tool.unique_name: {}", e);
+            tracing::error!(
+                "Failed to create unique index on config_suit_tool.unique_name: {}",
+                e
+            );
             return Err(anyhow::anyhow!(
                 "Failed to create unique index on config_suit_tool.unique_name: {}",
+                e
+            ));
+        }
+    };
+
+    // Create runtime_config table if it doesn't exist
+    tracing::debug!("Creating runtime_config table if it doesn't exist");
+    match sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS runtime_config (
+            id TEXT PRIMARY KEY,
+            runtime_type TEXT NOT NULL UNIQUE,
+            version TEXT NOT NULL,
+            relative_bin_path TEXT NOT NULL,
+            relative_cache_path TEXT,
+            sub_runtime_type TEXT,
+            sub_runtime_version TEXT,
+            is_default BOOLEAN NOT NULL DEFAULT 0,
+            platform TEXT,
+            architecture TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(_) => tracing::debug!("runtime_config table created or already exists"),
+        Err(e) => {
+            tracing::error!("Failed to create runtime_config table: {}", e);
+            return Err(anyhow::anyhow!(
+                "Failed to create runtime_config table: {}",
+                e
+            ));
+        }
+    };
+
+    // Create indexes on runtime_config table
+    tracing::debug!("Creating indexes on runtime_config table");
+    match sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_runtime_config_type_version
+        ON runtime_config(runtime_type, version)
+        "#,
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(_) => tracing::debug!(
+            "Index on runtime_config(runtime_type, version) created or already exists"
+        ),
+        Err(e) => {
+            tracing::error!("Failed to create index on runtime_config: {}", e);
+            return Err(anyhow::anyhow!(
+                "Failed to create index on runtime_config: {}",
+                e
+            ));
+        }
+    };
+
+    match sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_runtime_config_default
+        ON runtime_config(runtime_type, is_default)
+        "#,
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(_) => tracing::debug!(
+            "Index on runtime_config(runtime_type, is_default) created or already exists"
+        ),
+        Err(e) => {
+            tracing::error!("Failed to create index on runtime_config: {}", e);
+            return Err(anyhow::anyhow!(
+                "Failed to create index on runtime_config: {}",
                 e
             ));
         }
@@ -244,6 +326,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
         "config_suit",
         "config_suit_server",
         "config_suit_tool",
+        "runtime_config",
     ];
 
     for table in tables {

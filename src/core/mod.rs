@@ -27,6 +27,6 @@ pub use tool::{
 };
 pub use transport::{TransportType, connect_http_server};
 pub use types::ConnectionStatus;
-pub use utils::{get_connection_timeout, get_tools_timeout, prepare_command_env};
+pub use utils::{get_connection_timeout, get_tools_timeout};
 
 pub use crate::http::pool::UpstreamConnectionPool;

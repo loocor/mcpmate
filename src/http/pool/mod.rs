@@ -28,6 +28,8 @@ pub struct UpstreamConnectionPool {
     pub process_monitor: Option<Arc<ProcessMonitor>>,
     /// Database reference for checking server status
     pub database: Option<Arc<crate::conf::database::Database>>,
+    /// Runtime cache for fast runtime queries
+    pub runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
 }
 
 impl UpstreamConnectionPool {
@@ -52,6 +54,7 @@ impl UpstreamConnectionPool {
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
             database,
+            runtime_cache: None, // Will be set by the proxy server
         }
     }
 

@@ -4,10 +4,12 @@
 //! These types are designed to replace string constants with type-safe enums.
 
 // Re-export all types for convenience
-pub mod server;
 pub mod config;
+pub mod connection;
+pub mod server;
 pub mod status;
 
-pub use server::{ServerType, TransportType};
 pub use config::ConfigSuitType;
+pub use connection::ConnectionOperation;
+pub use server::{ServerType, TransportType};
 pub use status::EnabledStatus;

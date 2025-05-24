@@ -1,0 +1,55 @@
+//! Configuration constants for MCPMate
+//!
+//! This module contains constants used throughout the configuration system,
+//! particularly for runtime environment management.
+
+/// Runtime command constants
+pub mod commands {
+    /// Node.js package executor command
+    pub const NPX: &str = "npx";
+
+    /// UV package executor command
+    pub const UVX: &str = "uvx";
+
+    /// Bun package executor command
+    pub const BUNX: &str = "bunx";
+
+    /// Docker command
+    pub const DOCKER: &str = "docker";
+}
+
+/// Environment variable name constants
+pub mod env_vars {
+    /// Generic runtime binary path
+    pub const MCP_RUNTIME_BIN: &str = "MCP_RUNTIME_BIN";
+
+    /// Node.js specific binary path
+    pub const NPX_BIN_PATH: &str = "NPX_BIN_PATH";
+
+    /// UV specific binary path
+    pub const UVX_BIN_PATH: &str = "UVX_BIN_PATH";
+
+    /// Bun specific binary path
+    pub const BUNX_BIN_PATH: &str = "BUNX_BIN_PATH";
+
+    /// NPM cache directory
+    pub const NPM_CONFIG_CACHE: &str = "NPM_CONFIG_CACHE";
+
+    /// UV cache directory
+    pub const UV_CACHE_DIR: &str = "UV_CACHE_DIR";
+
+    /// Bun cache directory
+    pub const BUN_INSTALL_CACHE_DIR: &str = "BUN_INSTALL_CACHE_DIR";
+
+    /// System PATH environment variable
+    pub const PATH: &str = "PATH";
+}
+
+/// Path separator constants
+pub mod separators {
+    /// Windows path separator
+    pub const WINDOWS: &str = ";";
+
+    /// Unix-like path separator
+    pub const UNIX: &str = ":";
+}

@@ -1,7 +1,7 @@
 // Configuration module for MCPMate
 // Contains database connection and configuration management
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, migrate::MigrateDatabase, sqlite::SqlitePoolOptions};
@@ -10,25 +10,54 @@ use tracing;
 use crate::{
     common::types::ConfigSuitType,
     conf::{initialization, migration, models, operations},
+    runtime::constants::get_mcpmate_dir,
 };
 
-/// Database URL for SQLite
-const DB_URL: &str = "sqlite:./config/mcpmate.db";
+/// Get the database file path in user directory
+fn get_database_path() -> Result<PathBuf> {
+    let mcpmate_dir = get_mcpmate_dir()?;
+    Ok(mcpmate_dir.join("config.db"))
+}
+
+/// Get the database URL for SQLite
+fn get_database_url() -> Result<String> {
+    // Check environment variable first
+    if let Ok(db_url) = std::env::var("DATABASE_URL") {
+        return Ok(db_url);
+    }
+
+    // Use default path in user directory
+    let db_path = get_database_path()?;
+    Ok(format!("sqlite:{}", db_path.display()))
+}
 
 /// Database connection pool
 #[derive(Debug)]
 pub struct Database {
     /// SQLite connection pool
     pub pool: Pool<Sqlite>,
+    /// Database file path
+    pub path: PathBuf,
 }
 
 impl Database {
     /// Create a new database connection
     pub async fn new() -> Result<Self> {
-        // Get database URL from environment or use default
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| DB_URL.to_string());
+        // Get database URL from environment or use default in user directory
+        let database_url = get_database_url()?;
+        let db_path = if database_url.starts_with("sqlite:") {
+            PathBuf::from(database_url.strip_prefix("sqlite:").unwrap())
+        } else {
+            get_database_path()?
+        };
 
         tracing::info!("Initializing database connection to {}", database_url);
+
+        // Ensure the parent directory exists
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create database directory: {}", parent.display()))?;
+        }
 
         // Check if database exists
         let db_exists = match Sqlite::database_exists(&database_url).await {
@@ -89,7 +118,7 @@ impl Database {
         }
 
         // Create database instance
-        let db = Self { pool };
+        let db = Self { pool, path: db_path };
 
         // Check if we need to migrate configuration from files
         let default_config_path = std::path::Path::new("config/mcp.json");
@@ -165,6 +194,11 @@ impl Database {
         tracing::info!("Published DatabaseChanged event");
 
         Ok(db)
+    }
+
+    /// Get the database file path
+    pub fn get_path(&self) -> &Path {
+        &self.path
     }
 
     /// Migrate configuration from files to database

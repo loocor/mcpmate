@@ -7,7 +7,7 @@ use tokio::time::timeout;
 use tracing::debug;
 
 use super::{Event, EventBus};
-use crate::core::transport::TransportType;
+use crate::{common::types::ServerType, core::transport::TransportType};
 
 /// Wait for the transport layer of a specific server type to be ready
 ///
@@ -50,11 +50,12 @@ pub async fn wait_for_transport_ready(
                 Ok(Event::ServerTransportReady {
                     transport_type: event_type,
                     ready,
-                }) =>
+                }) => {
                     if event_type == transport_type && ready {
                         debug!("Received {:?} transport layer ready event", transport_type);
                         return Ok(());
-                    },
+                    }
+                }
                 Ok(_) => {
                     // Ignore other types of events
                     continue;
@@ -86,20 +87,19 @@ pub async fn wait_for_transport_ready(
 /// Check if the specified server type needs to wait for the transport layer to be ready
 ///
 /// # Parameters
-/// * `server_type` - The server type
+/// * `server_type` - The server type enum
 /// * `transport_type` - The transport type
 ///
 /// # Returns
 /// * `bool` - If the server type needs to wait for the transport layer to be ready, return true
 pub fn needs_transport_ready_wait(
-    server_type: &str,
+    server_type: ServerType,
     transport_type: TransportType,
 ) -> bool {
     match (server_type, transport_type) {
         // SSE and StreamableHttp type servers need to wait for the transport layer to be ready
-        ("sse", TransportType::Sse) => true,
-        ("streamable_http", TransportType::StreamableHttp) => true,
-        ("streamablehttp", TransportType::StreamableHttp) => true,
+        (ServerType::Sse, TransportType::Sse) => true,
+        (ServerType::StreamableHttp, TransportType::StreamableHttp) => true,
         // Other types do not need to wait
         _ => false,
     }

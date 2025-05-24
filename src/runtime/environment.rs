@@ -125,27 +125,23 @@ pub fn prepare_environment(
             // uv 环境变量控制，让 uv 自动管理 Python
             let mcpmate_dir = get_mcpmate_dir()?;
             let uv_cache_dir = cache_dir;
-            let uv_python_cache_dir = mcpmate_dir.join("cache").join("uv-python");
-            let uv_python_install_dir = mcpmate_dir.join("runtimes").join("uv-python");
-            let uv_data_dir = mcpmate_dir.join("data").join("uv");
+            let uv_python_cache_dir = mcpmate_dir.join("cache").join("uv");
+            let uv_python_install_dir = mcpmate_dir.join("runtimes").join("uv");
 
             // 确保目录存在
             std::fs::create_dir_all(&uv_python_cache_dir)?;
             std::fs::create_dir_all(&uv_python_install_dir)?;
-            std::fs::create_dir_all(&uv_data_dir)?;
 
             // 设置 uv 环境变量
             command.env("UV_CACHE_DIR", uv_cache_dir);
             command.env("UV_PYTHON_CACHE_DIR", uv_python_cache_dir);
             command.env("UV_PYTHON_INSTALL_DIR", uv_python_install_dir);
-            command.env("XDG_DATA_HOME", uv_data_dir);
 
             tracing::debug!(
-                "Set uv environment variables: UV_CACHE_DIR={}, UV_PYTHON_CACHE_DIR={}, UV_PYTHON_INSTALL_DIR={}, XDG_DATA_HOME={}",
+                "Set uv environment variables: UV_CACHE_DIR={}, UV_PYTHON_CACHE_DIR={}, UV_PYTHON_INSTALL_DIR={}",
                 uv_cache_dir.display(),
                 uv_python_cache_dir.display(),
                 uv_python_install_dir.display(),
-                uv_data_dir.display()
             );
         }
     }

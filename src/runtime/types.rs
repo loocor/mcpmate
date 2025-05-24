@@ -7,6 +7,8 @@ use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
 
+use crate::conf::constants::commands;
+
 /// Supported runtime types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RuntimeType {
@@ -30,16 +32,39 @@ impl RuntimeType {
 
     /// Get the default version
     pub fn default_version(&self) -> &'static str {
-        use crate::runtime::constants::*;
-        get_default_version(*self)
+        match self {
+            RuntimeType::Node => "latest",
+            RuntimeType::Uv => "latest",
+            RuntimeType::Bun => "latest",
+        }
     }
 
     /// Get the executable name
     pub fn executable_name(&self) -> String {
+        let base_name = self.as_str();
         if cfg!(windows) {
-            format!("{}.exe", self.as_str())
+            format!("{}.exe", base_name)
         } else {
-            self.as_str().to_string()
+            base_name.to_string()
+        }
+    }
+
+    /// Get the executable name for a specific command
+    pub fn executable_name_for_command(
+        &self,
+        command: &str,
+    ) -> String {
+        let exe_name = match command {
+            commands::NPX => "npx",
+            commands::UVX => "uv",
+            commands::BUNX => "bunx",
+            _ => self.as_str(),
+        };
+
+        if cfg!(windows) {
+            format!("{}.exe", exe_name)
+        } else {
+            exe_name.to_string()
         }
     }
 
@@ -56,55 +81,41 @@ impl RuntimeType {
                     RuntimeVersion::Latest => "latest",
                     RuntimeVersion::Specific(v) => v,
                 };
-
-                let platform_str = match platform {
-                    "windows" => "win",
-                    "macos" => "darwin",
-                    _ => "linux",
-                };
-
-                let arch_str = match arch {
-                    "aarch64" | "arm64" => "arm64",
-                    _ => "x64",
-                };
-
                 format!(
                     "https://nodejs.org/dist/{}/node-{}-{}-{}.tar.gz",
-                    version_str, version_str, platform_str, arch_str
+                    version_str, version_str, platform, arch
                 )
             }
             RuntimeType::Bun => {
-                let platform_str = match platform {
-                    "windows" => "win",
-                    "macos" => "darwin",
-                    _ => "linux",
+                let version_str = match version {
+                    RuntimeVersion::Latest => "latest",
+                    RuntimeVersion::Specific(v) => v,
                 };
-
-                let arch_str = match arch {
-                    "aarch64" | "arm64" => "aarch64",
-                    _ => "x64",
-                };
-
                 format!(
-                    "https://github.com/oven-sh/bun/releases/latest/download/bun-{}-{}.zip",
-                    platform_str, arch_str
+                    "https://github.com/oven-sh/bun/releases/{}/download/bun-{}-{}.zip",
+                    if version_str == "latest" {
+                        "latest".to_string()
+                    } else {
+                        format!("tag/bun-v{}", version_str)
+                    },
+                    platform,
+                    arch
                 )
             }
             RuntimeType::Uv => {
-                let platform_str = match platform {
-                    "windows" => "windows",
-                    "macos" => "macos",
-                    _ => "linux",
+                let version_str = match version {
+                    RuntimeVersion::Latest => "latest",
+                    RuntimeVersion::Specific(v) => v,
                 };
-
-                let arch_str = match arch {
-                    "aarch64" | "arm64" => "aarch64",
-                    _ => "x64",
-                };
-
                 format!(
-                    "https://github.com/astral-sh/uv/releases/latest/download/uv-{}-{}.tar.gz",
-                    platform_str, arch_str
+                    "https://github.com/astral-sh/uv/releases/{}/download/uv-{}-{}.tar.gz",
+                    if version_str == "latest" {
+                        "latest".to_string()
+                    } else {
+                        format!("tag/{}", version_str)
+                    },
+                    platform,
+                    arch
                 )
             }
         }
@@ -125,8 +136,8 @@ impl FromStr for RuntimeType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "node" | "nodejs" | "npx" | "npm" => Ok(RuntimeType::Node),
-            "uv" | "uvx" => Ok(RuntimeType::Uv),
+            "node" | "nodejs" | commands::NPX | "npm" => Ok(RuntimeType::Node),
+            "uv" | commands::UVX => Ok(RuntimeType::Uv),
             "bun" | "bunjs" => Ok(RuntimeType::Bun),
             _ => Err(RuntimeError::UnsupportedRuntimeType(s.to_string())),
         }
@@ -348,6 +359,12 @@ pub enum Commands {
         /// Enable interactive mode for timeout handling
         #[arg(long)]
         interactive: bool,
+        /// Enable quiet mode (minimal output, send events only)
+        #[arg(short, long)]
+        quiet: bool,
+        /// Database file path (for saving runtime config in quiet mode)
+        #[arg(long)]
+        database: Option<String>,
     },
     /// List installed runtime environments
     List,

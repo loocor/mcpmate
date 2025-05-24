@@ -3,6 +3,8 @@
 
 use std::fmt;
 
+use crate::common::types::ConnectionOperation;
+
 /// Connection status for an upstream server
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionStatus {
@@ -95,13 +97,15 @@ impl ConnectionStatus {
         matches!(self, ConnectionStatus::Ready | ConnectionStatus::Error(_))
     }
 
-    /// Get the allowed operations for this status
-    pub fn allowed_operations(&self) -> Vec<&'static str> {
-        let mut ops = vec!["disconnect", "reconnect"]; // Most states share these operations
+    /// Get the allowed operations for this status (returns enum variants)
+    pub fn allowed_operations(&self) -> Vec<ConnectionOperation> {
+        use ConnectionOperation::*;
+
+        let mut ops = vec![Disconnect, Reconnect]; // Most states share these operations
 
         match self {
             Self::Initializing => {
-                ops.push("cancel"); // Can cancel initialization
+                ops.push(Cancel); // Can cancel initialization
             }
             Self::Ready => {
                 // No special operations
@@ -114,30 +118,50 @@ impl ConnectionStatus {
             }
             Self::Shutdown => {
                 ops.clear(); // Clear shared operations
-                ops.push("reconnect"); // Only reconnect is allowed
+                ops.push(Reconnect); // Only reconnect is allowed
             }
         }
 
         ops
     }
 
-    /// Check if a specific operation is allowed in the current state
+    /// Check if a specific operation is allowed in the current state (type-safe version)
     pub fn can_perform_operation(
         &self,
-        operation: &str,
+        operation: ConnectionOperation,
     ) -> bool {
-        self.allowed_operations().contains(&operation)
+        use ConnectionOperation::*;
+
+        match (self, operation) {
+            // Force disconnect is allowed in all states except Shutdown
+            (Self::Shutdown, ForceDisconnect) => false,
+            (_, ForceDisconnect) => true,
+
+            // Reset reconnect is allowed in all states
+            (_, ResetReconnect) => true,
+
+            // Standard operations - check against allowed operations
+            (_, op) => self.allowed_operations().contains(&op),
+        }
     }
 
     /// Check if force disconnect is allowed
+    /// DEPRECATED: Use can_perform_operation(ConnectionOperation::ForceDisconnect) instead
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use can_perform_operation(ConnectionOperation::ForceDisconnect) instead"
+    )]
     pub fn can_force_disconnect(&self) -> bool {
-        // Force disconnect is allowed in all states except Shutdown
-        !matches!(self, Self::Shutdown)
+        self.can_perform_operation(ConnectionOperation::ForceDisconnect)
     }
 
     /// Check if reset reconnect is allowed
+    /// DEPRECATED: Use can_perform_operation(ConnectionOperation::ResetReconnect) instead
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use can_perform_operation(ConnectionOperation::ResetReconnect) instead"
+    )]
     pub fn can_reset_reconnect(&self) -> bool {
-        // Reset reconnect is allowed in all states
-        true
+        self.can_perform_operation(ConnectionOperation::ResetReconnect)
     }
 }

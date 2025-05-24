@@ -9,40 +9,48 @@ use tokio_util::sync::CancellationToken;
 use tracing;
 
 use super::UpstreamConnectionPool;
-use crate::core::{
-    connect_http_server, connect_sse_server, stdio::connect_stdio_server_with_ct,
-    transport::TransportType, types::ConnectionStatus,
+use crate::{
+    common::types::{ConnectionOperation, ServerType},
+    core::{
+        connect_http_server, connect_sse_server, transport::TransportType, types::ConnectionStatus,
+    },
 };
 
 impl UpstreamConnectionPool {
     /// Helper function to log connection-related events
     fn log_connection_event(
         &self,
-        level: &str,
+        level: tracing::Level,
         server_name: &str,
         instance_id: &str,
         message: &str,
     ) {
         match level {
-            "info" => tracing::info!(
+            tracing::Level::INFO => tracing::info!(
                 "{} for server '{}' instance '{}'",
                 message,
                 server_name,
                 instance_id
             ),
-            "error" => tracing::error!(
+            tracing::Level::ERROR => tracing::error!(
                 "{} for server '{}' instance '{}'",
                 message,
                 server_name,
                 instance_id
             ),
-            "warn" => tracing::warn!(
+            tracing::Level::WARN => tracing::warn!(
                 "{} for server '{}' instance '{}'",
                 message,
                 server_name,
                 instance_id
             ),
-            _ => tracing::debug!(
+            tracing::Level::DEBUG => tracing::debug!(
+                "{} for server '{}' instance '{}'",
+                message,
+                server_name,
+                instance_id
+            ),
+            tracing::Level::TRACE => tracing::trace!(
                 "{} for server '{}' instance '{}'",
                 message,
                 server_name,
@@ -98,9 +106,19 @@ impl UpstreamConnectionPool {
 
         // Log appropriate message based on mode
         if wait_for_result {
-            self.log_connection_event("info", server_name, instance_id, "Connecting to");
+            self.log_connection_event(
+                tracing::Level::INFO,
+                server_name,
+                instance_id,
+                "Connecting to",
+            );
         } else {
-            self.log_connection_event("info", server_name, instance_id, "Triggering connection to");
+            self.log_connection_event(
+                tracing::Level::INFO,
+                server_name,
+                instance_id,
+                "Triggering connection to",
+            );
         }
 
         // Get the server type
@@ -120,18 +138,11 @@ impl UpstreamConnectionPool {
             server_config.kind
         };
 
-        // Connect based on server type
-        let result = match server_type.as_str() {
-            "stdio" => self.connect_stdio(server_name, instance_id).await,
-            "sse" => self.connect_http(server_name, instance_id).await,
-            "streamable_http" | "streamablehttp" =>
-                self.connect_http(server_name, instance_id).await,
-            _ => {
-                let error_msg = format!("Unsupported server type: {server_type}");
-                let conn = self.get_instance_mut(server_name, instance_id)?;
-                conn.update_failed(error_msg.clone());
-                Err(anyhow::anyhow!(error_msg))
-            }
+        // Connect based on server type using enum matching
+        let result = match server_type {
+            ServerType::Stdio => self.connect_stdio(server_name, instance_id).await,
+            ServerType::Sse => self.connect_http(server_name, instance_id).await,
+            ServerType::StreamableHttp => self.connect_http(server_name, instance_id).await,
         };
 
         // Handle result based on mode
@@ -141,7 +152,7 @@ impl UpstreamConnectionPool {
                 let conn = self.get_instance_mut(server_name, instance_id)?;
                 conn.update_failed(e.to_string());
                 self.log_connection_event(
-                    "error",
+                    tracing::Level::ERROR,
                     server_name,
                     instance_id,
                     &format!("Failed to connect: {e}"),
@@ -364,7 +375,38 @@ impl UpstreamConnectionPool {
             .insert(instance_id.to_string(), ct.clone());
 
         // Connect to the server using the proxy module function with cancellation token
-        match connect_stdio_server_with_ct(server_name, server_config, ct).await {
+        let database_pool = self.database.as_ref().map(|db| &db.pool);
+
+        // Use runtime cache if available, otherwise fallback to old method
+        tracing::debug!("Runtime cache available: {}", self.runtime_cache.is_some());
+        let connect_result = if let Some(runtime_cache) = &self.runtime_cache {
+            tracing::debug!(
+                "Using runtime cache for stdio connection to '{}'",
+                server_name
+            );
+            crate::core::stdio::connect_stdio_server_with_runtime_cache(
+                server_name,
+                server_config,
+                ct,
+                database_pool,
+                runtime_cache,
+            )
+            .await
+        } else {
+            tracing::debug!(
+                "Runtime cache not available, using fallback method for '{}'",
+                server_name
+            );
+            crate::core::stdio::connect_stdio_server_with_ct_and_db(
+                server_name,
+                server_config,
+                ct,
+                database_pool,
+            )
+            .await
+        };
+
+        match connect_result {
             Ok((service, tools, pid)) => {
                 // Update connection
                 self.update_connection(server_name, instance_id, service, tools);
@@ -421,7 +463,7 @@ impl UpstreamConnectionPool {
         let transport_type = server_config.get_transport_type();
 
         // Check if we need to wait for the server ready event
-        let server_type = server_config.kind.as_str();
+        let server_type = server_config.kind;
         if crate::core::events::needs_transport_ready_wait(server_type, transport_type) {
             // Wait for the server transport layer to be ready, max 1000ms
             // Timeout is not an error, it just means the service might not have started yet
@@ -583,18 +625,27 @@ impl UpstreamConnectionPool {
         instance_id: &str,
         operation: &str,
     ) -> Result<()> {
+        // Parse the operation string into enum
+        let operation_type = operation
+            .parse::<ConnectionOperation>()
+            .map_err(|_| anyhow::anyhow!("Invalid operation: {}", operation))?;
+
+        self.perform_instance_operation_typed(server_name, instance_id, operation_type)
+            .await
+    }
+
+    /// Perform a typed operation on a specific instance (internal method)
+    async fn perform_instance_operation_typed(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+        operation: ConnectionOperation,
+    ) -> Result<()> {
         // Get the instance
         let conn = self.get_instance_mut(server_name, instance_id)?;
 
-        // Check if the operation is allowed
-        let is_allowed = match operation {
-            "disconnect" => conn.status.can_perform_operation("disconnect"),
-            "force_disconnect" => conn.status.can_force_disconnect(),
-            "reconnect" => conn.status.can_perform_operation("reconnect"),
-            "cancel" => conn.status.can_perform_operation("cancel"),
-            "reset_reconnect" => conn.status.can_reset_reconnect(),
-            _ => false,
-        };
+        // Check if the operation is allowed using the new type-safe API
+        let is_allowed = conn.status.can_perform_operation(operation);
 
         if !is_allowed {
             return Err(anyhow::anyhow!(
@@ -604,17 +655,13 @@ impl UpstreamConnectionPool {
             ));
         }
 
-        // Perform the operation
+        // Perform the operation using enum matching
         match operation {
-            "disconnect" => self.disconnect(server_name, instance_id).await,
-
-            "force_disconnect" => self.disconnect(server_name, instance_id).await,
-
-            "reconnect" => self.reconnect(server_name, instance_id).await,
-
-            "cancel" => self.disconnect(server_name, instance_id).await,
-
-            "reset_reconnect" => {
+            ConnectionOperation::Disconnect => self.disconnect(server_name, instance_id).await,
+            ConnectionOperation::ForceDisconnect => self.disconnect(server_name, instance_id).await,
+            ConnectionOperation::Reconnect => self.reconnect(server_name, instance_id).await,
+            ConnectionOperation::Cancel => self.disconnect(server_name, instance_id).await,
+            ConnectionOperation::ResetReconnect => {
                 // First disconnect if needed
                 if !matches!(conn.status, ConnectionStatus::Shutdown) {
                     if let Err(e) = self.disconnect(server_name, instance_id).await {
@@ -629,8 +676,6 @@ impl UpstreamConnectionPool {
                 // Then reconnect
                 self.trigger_connect(server_name, instance_id).await
             }
-
-            _ => Err(anyhow::anyhow!("Unknown operation: {}", operation)),
         }
     }
 

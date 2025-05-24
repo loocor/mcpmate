@@ -1,14 +1,12 @@
 //! Runtime configuration management
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Sqlite};
-use std::path::PathBuf;
 use thiserror::Error;
 
-use super::constants::*;
-use super::types::{RuntimeType, RuntimeVersion};
+use super::types::RuntimeType;
 
 /// Runtime configuration error
 #[derive(Debug, Error)]
@@ -30,10 +28,10 @@ pub enum RuntimeConfigError {
     Other(String),
 }
 
-/// Runtime configuration
+/// Runtime configuration stored in database
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct RuntimeConfig {
-    /// Unique ID
+    /// Unique identifier
     pub id: Option<String>,
     /// Runtime type (node, bun, uv)
     pub runtime_type: String,
@@ -41,11 +39,11 @@ pub struct RuntimeConfig {
     pub version: String,
     /// Binary path relative to user directory
     pub relative_bin_path: String,
-    /// Cache path relative to user directory
+    /// Cache path relative to user directory (optional)
     pub relative_cache_path: Option<String>,
-    /// Sub-runtime type (e.g., python for uv)
+    /// Sub runtime type (e.g., 'python' for uv)
     pub sub_runtime_type: Option<String>,
-    /// Sub-runtime version (e.g., 3.10 for python)
+    /// Sub runtime version (e.g., Python version for uv)
     pub sub_runtime_version: Option<String>,
     /// Whether this is the default version for this runtime type
     pub is_default: bool,
@@ -53,9 +51,9 @@ pub struct RuntimeConfig {
     pub platform: Option<String>,
     /// Architecture (x86_64, aarch64)
     pub architecture: Option<String>,
-    /// When the configuration was created
+    /// When the record was created
     pub created_at: Option<DateTime<Utc>>,
-    /// When the configuration was last updated
+    /// When the record was last updated
     pub updated_at: Option<DateTime<Utc>>,
 }
 
@@ -64,21 +62,19 @@ impl RuntimeConfig {
     pub fn new(
         runtime_type: RuntimeType,
         version: &str,
-        is_default: bool,
+        relative_bin_path: &str,
     ) -> Self {
         let runtime_type_str = runtime_type.as_str().to_string();
-        let relative_bin_path = format!("runtimes/{}/{}/bin", runtime_type_str, version);
-        let relative_cache_path = format!("cache/{}", runtime_type_str);
 
         Self {
             id: None,
             runtime_type: runtime_type_str,
             version: version.to_string(),
-            relative_bin_path,
-            relative_cache_path: Some(relative_cache_path),
+            relative_bin_path: relative_bin_path.to_string(),
+            relative_cache_path: None,
             sub_runtime_type: None,
             sub_runtime_version: None,
-            is_default,
+            is_default: false,
             platform: None,
             architecture: None,
             created_at: None,
@@ -86,77 +82,12 @@ impl RuntimeConfig {
         }
     }
 
-    /// Create a new runtime configuration with sub-runtime
-    pub fn new_with_sub_runtime(
-        runtime_type: RuntimeType,
-        version: &str,
-        sub_runtime_type: &str,
-        sub_runtime_version: &str,
-        is_default: bool,
-    ) -> Self {
-        let mut config = Self::new(runtime_type, version, is_default);
-        config.sub_runtime_type = Some(sub_runtime_type.to_string());
-        config.sub_runtime_version = Some(sub_runtime_version.to_string());
-        config
-    }
-
     /// Get the runtime type
     pub fn get_runtime_type(&self) -> Result<RuntimeType, RuntimeConfigError> {
         self.runtime_type
             .parse::<RuntimeType>()
-            .map_err(|e| RuntimeConfigError::InvalidRuntimeType(self.runtime_type.clone()))
+            .map_err(|_e| RuntimeConfigError::InvalidRuntimeType(self.runtime_type.clone()))
     }
-}
-
-/// Create runtime_config table if it doesn't exist
-pub async fn create_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating runtime_config table if it doesn't exist");
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS runtime_config (
-            id TEXT PRIMARY KEY,
-            runtime_type TEXT NOT NULL,
-            version TEXT NOT NULL,
-            relative_bin_path TEXT NOT NULL,
-            relative_cache_path TEXT,
-            sub_runtime_type TEXT,
-            sub_runtime_version TEXT,
-            is_default BOOLEAN NOT NULL DEFAULT 0,
-            platform TEXT,
-            architecture TEXT,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .context("Failed to create runtime_config table")?;
-
-    // Create index on runtime_type and version
-    sqlx::query(
-        r#"
-        CREATE INDEX IF NOT EXISTS idx_runtime_config_type_version
-        ON runtime_config(runtime_type, version)
-        "#,
-    )
-    .execute(pool)
-    .await
-    .context("Failed to create index on runtime_config")?;
-
-    // Create index on is_default
-    sqlx::query(
-        r#"
-        CREATE INDEX IF NOT EXISTS idx_runtime_config_default
-        ON runtime_config(runtime_type, is_default)
-        "#,
-    )
-    .execute(pool)
-    .await
-    .context("Failed to create index on runtime_config")?;
-
-    tracing::debug!("runtime_config table created or already exists");
-    Ok(())
 }
 
 /// Save a runtime configuration to the database
@@ -164,29 +95,15 @@ pub async fn save_config(
     pool: &Pool<Sqlite>,
     config: &RuntimeConfig,
 ) -> Result<String, RuntimeConfigError> {
-    let id = if let Some(id) = &config.id {
-        id.clone()
-    } else {
-        // Generate a new ID with 'runt' prefix
-        format!("runt{}", nanoid::nanoid!(12))
-    };
+    use nanoid::nanoid;
 
-    // If this is set as default, unset any other default for this runtime type
-    if config.is_default {
-        sqlx::query(
-            r#"
-            UPDATE runtime_config
-            SET is_default = 0
-            WHERE runtime_type = ? AND is_default = 1
-            "#,
-        )
-        .bind(&config.runtime_type)
-        .execute(pool)
-        .await
-        .map_err(RuntimeConfigError::DatabaseError)?;
-    }
+    // Generate ID if not provided
+    let id = config
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("runt{}", nanoid!(12)));
 
-    // Insert or update the configuration
+    // Insert or update the configuration using runtime_type as unique constraint
     sqlx::query(
         r#"
         INSERT INTO runtime_config (
@@ -194,8 +111,7 @@ pub async fn save_config(
             sub_runtime_type, sub_runtime_version, is_default, platform, architecture
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            runtime_type = excluded.runtime_type,
+        ON CONFLICT(runtime_type) DO UPDATE SET
             version = excluded.version,
             relative_bin_path = excluded.relative_bin_path,
             relative_cache_path = excluded.relative_cache_path,
@@ -214,35 +130,19 @@ pub async fn save_config(
     .bind(&config.relative_cache_path)
     .bind(&config.sub_runtime_type)
     .bind(&config.sub_runtime_version)
-    .bind(&config.is_default)
+    .bind(config.is_default)
     .bind(&config.platform)
     .bind(&config.architecture)
     .execute(pool)
     .await
     .map_err(RuntimeConfigError::DatabaseError)?;
 
-    Ok(id)
+    // Return the runtime_type as the identifier
+    Ok(config.runtime_type.clone())
 }
 
-/// Get a runtime configuration by ID
-pub async fn get_config_by_id(
-    pool: &Pool<Sqlite>,
-    id: &str,
-) -> Result<RuntimeConfig, RuntimeConfigError> {
-    sqlx::query_as::<_, RuntimeConfig>(
-        r#"
-        SELECT * FROM runtime_config WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(RuntimeConfigError::DatabaseError)?
-    .ok_or_else(|| RuntimeConfigError::NotFound(id.to_string()))
-}
-
-/// Get the default runtime configuration for a runtime type
-pub async fn get_default_config(
+/// Get a runtime configuration by runtime type
+pub async fn get_config_by_type(
     pool: &Pool<Sqlite>,
     runtime_type: RuntimeType,
 ) -> Result<RuntimeConfig, RuntimeConfigError> {
@@ -250,42 +150,27 @@ pub async fn get_default_config(
 
     sqlx::query_as::<_, RuntimeConfig>(
         r#"
-        SELECT * FROM runtime_config
-        WHERE runtime_type = ? AND is_default = 1
+        SELECT * FROM runtime_config WHERE runtime_type = ?
         "#,
     )
     .bind(runtime_type_str)
     .fetch_optional(pool)
     .await
     .map_err(RuntimeConfigError::DatabaseError)?
-    .ok_or_else(|| {
-        RuntimeConfigError::NotFound(format!("Default configuration for {}", runtime_type_str))
-    })
+    .ok_or_else(|| RuntimeConfigError::NotFound(runtime_type_str.to_string()))
 }
 
-/// Get a runtime configuration by type and version
-pub async fn get_config(
-    pool: &Pool<Sqlite>,
-    runtime_type: RuntimeType,
-    version: &str,
-) -> Result<RuntimeConfig, RuntimeConfigError> {
-    let runtime_type_str = runtime_type.as_str();
-
+/// Get all runtime configurations
+pub async fn get_all_configs(
+    pool: &Pool<Sqlite>
+) -> Result<Vec<RuntimeConfig>, RuntimeConfigError> {
     sqlx::query_as::<_, RuntimeConfig>(
         r#"
         SELECT * FROM runtime_config
-        WHERE runtime_type = ? AND version = ?
+        ORDER BY runtime_type
         "#,
     )
-    .bind(runtime_type_str)
-    .bind(version)
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await
-    .map_err(RuntimeConfigError::DatabaseError)?
-    .ok_or_else(|| {
-        RuntimeConfigError::NotFound(format!(
-            "Configuration for {} {}",
-            runtime_type_str, version
-        ))
-    })
+    .map_err(RuntimeConfigError::DatabaseError)
 }
