@@ -83,14 +83,68 @@ impl NodeInstaller {
         let node_dir = target_dir.join(&node_dir_name);
 
         if node_dir.exists() {
-            // Move entire Node.js directory to correct location
-            let final_dir = target_dir.join("node");
-            if final_dir.exists() {
-                std::fs::remove_dir_all(&final_dir)?;
+            // Create bin directory for consistent structure
+            let bin_dir = target_dir.join("bin");
+            std::fs::create_dir_all(&bin_dir)?;
+
+            // Handle different platforms
+            match self.environment.os {
+                crate::runtime::detection::OperatingSystem::Windows => {
+                    // On Windows, copy executables to bin directory
+                    let node_exe = node_dir.join("node.exe");
+                    let npm_exe = node_dir.join("npm.cmd");
+                    let npx_exe = node_dir.join("npx.cmd");
+
+                    if node_exe.exists() {
+                        std::fs::copy(&node_exe, bin_dir.join("node.exe"))?;
+                    }
+                    if npm_exe.exists() {
+                        std::fs::copy(&npm_exe, bin_dir.join("npm.cmd"))?;
+                    }
+                    if npx_exe.exists() {
+                        std::fs::copy(&npx_exe, bin_dir.join("npx.cmd"))?;
+                    }
+
+                    // Also check for .exe versions of npm/npx
+                    let npm_exe_alt = node_dir.join("npm.exe");
+                    let npx_exe_alt = node_dir.join("npx.exe");
+                    if npm_exe_alt.exists() {
+                        std::fs::copy(&npm_exe_alt, bin_dir.join("npm.exe"))?;
+                    }
+                    if npx_exe_alt.exists() {
+                        std::fs::copy(&npx_exe_alt, bin_dir.join("npx.exe"))?;
+                    }
+                }
+                _ => {
+                    // On Unix-like systems, move the bin directory
+                    let source_bin = node_dir.join("bin");
+                    if source_bin.exists() {
+                        // Copy all files from source bin to target bin
+                        for entry in std::fs::read_dir(&source_bin)? {
+                            let entry = entry?;
+                            let source_file = entry.path();
+                            let target_file = bin_dir.join(entry.file_name());
+                            if source_file.is_file() {
+                                std::fs::copy(&source_file, &target_file)?;
+                                // Make executable on Unix
+                                #[cfg(unix)]
+                                {
+                                    use std::os::unix::fs::PermissionsExt;
+                                    let mut perms = std::fs::metadata(&target_file)?.permissions();
+                                    perms.set_mode(0o755);
+                                    std::fs::set_permissions(&target_file, perms)?;
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            std::fs::rename(&node_dir, &final_dir)?;
+
+            // Clean up original directory
+            std::fs::remove_dir_all(&node_dir)?;
         }
 
+        tracing::info!("Node.js installation completed successfully");
         Ok(())
     }
 }

@@ -79,16 +79,29 @@ pub fn get_runtime_executable_path(
     let exe_name = match runtime_type {
         RuntimeType::Node => {
             // Check for npx first (preferred for MCP servers)
-            let npx_path = bin_dir.join("npx");
-            if npx_path.exists() {
-                return Ok(npx_path);
+            if cfg!(windows) {
+                // On Windows, check for both .exe and .cmd versions
+                let npx_exe = bin_dir.join("npx.exe");
+                if npx_exe.exists() {
+                    return Ok(npx_exe);
+                }
+                let npx_cmd = bin_dir.join("npx.cmd");
+                if npx_cmd.exists() {
+                    return Ok(npx_cmd);
+                }
+            } else {
+                let npx_path = bin_dir.join("npx");
+                if npx_path.exists() {
+                    return Ok(npx_path);
+                }
             }
             // Fall back to node if npx doesn't exist
             runtime_type.executable_name()
         }
         RuntimeType::Uv => {
             // Check for uvx first (preferred for MCP servers)
-            let uvx_path = bin_dir.join("uvx");
+            let uvx_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
+            let uvx_path = bin_dir.join(uvx_name);
             if uvx_path.exists() {
                 return Ok(uvx_path);
             }
@@ -97,7 +110,8 @@ pub fn get_runtime_executable_path(
         }
         RuntimeType::Bun => {
             // Check for bunx first (preferred for MCP servers)
-            let bunx_path = bin_dir.join("bunx");
+            let bunx_name = if cfg!(windows) { "bunx.exe" } else { "bunx" };
+            let bunx_path = bin_dir.join(bunx_name);
             if bunx_path.exists() {
                 return Ok(bunx_path);
             }
@@ -127,7 +141,8 @@ pub fn get_runtime_executable_path(
                             .starts_with("node-")
                     {
                         // For Node.js, prioritize npx over node in subdirectories too
-                        let npx_path = path.join("bin").join("npx");
+                        let npx_name = if cfg!(windows) { "npx.exe" } else { "npx" };
+                        let npx_path = path.join("bin").join(npx_name);
                         if npx_path.exists() {
                             return Ok(npx_path);
                         }
@@ -142,6 +157,14 @@ pub fn get_runtime_executable_path(
                         let node_version_root_path = path.join(&exe_name);
                         if node_version_root_path.exists() {
                             return Ok(node_version_root_path);
+                        }
+
+                        // For Windows, also check for npx in the root directory
+                        if cfg!(windows) {
+                            let npx_root_path = path.join("npx.exe");
+                            if npx_root_path.exists() {
+                                return Ok(npx_root_path);
+                            }
                         }
                     }
                 }

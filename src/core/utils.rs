@@ -1,5 +1,6 @@
 use std::{future::Future, time::Duration};
 
+use tokio::process::Command;
 use tokio::time::timeout;
 
 use super::error::{ProxyError, Result};
@@ -10,7 +11,8 @@ pub fn get_connection_timeout(command: &str) -> std::time::Duration {
     match command {
         commands::DOCKER => std::time::Duration::from_secs(120), // Docker operations can take longer
         commands::NPX => std::time::Duration::from_secs(60),     // npm operations can take time
-        _ => std::time::Duration::from_secs(60), // Increased default timeout to 60 seconds
+        commands::UVX | commands::BUNX => std::time::Duration::from_secs(30), // Runtime commands may need more time
+        _ => std::time::Duration::from_secs(10),                              // Regular commands
     }
 }
 
@@ -18,8 +20,9 @@ pub fn get_connection_timeout(command: &str) -> std::time::Duration {
 pub fn get_tools_timeout(command: &str) -> Duration {
     match command {
         commands::DOCKER => Duration::from_secs(60), // Docker operations can take longer
-        commands::NPX => Duration::from_secs(60),    // Increased npm timeout to 60 seconds
-        _ => Duration::from_secs(60),                // Increased default timeout to 60 seconds
+        commands::NPX => Duration::from_secs(60),    // npm timeout
+        commands::UVX | commands::BUNX => Duration::from_secs(20), // Runtime commands may need more time
+        _ => Duration::from_secs(10),                              // Regular commands
     }
 }
 
@@ -137,4 +140,65 @@ pub enum TimeoutErrorType {
     Service,
     /// Transport creation timeout
     Transport,
+}
+
+/// Prepare a command for cross-platform execution
+/// On Windows, this may wrap the command with appropriate shell prefixes
+/// On Unix-like systems, this returns the command as-is
+pub fn prepare_command(
+    command_str: &str,
+    args: Option<&Vec<String>>,
+) -> Command {
+    #[cfg(windows)]
+    {
+        // Check if this is a runtime command that might need special handling
+        let needs_shell_wrapper = matches!(command_str, "npx" | "uvx" | "bunx")
+            || command_str.ends_with(".js")
+            || command_str.ends_with(".py")
+            || command_str.ends_with(".ts");
+
+        if needs_shell_wrapper {
+            // Use PowerShell for better compatibility with modern Windows
+            let mut cmd = Command::new("powershell");
+            cmd.arg("-NoProfile").arg("-NonInteractive").arg("-Command");
+
+            // Build the command string
+            let mut full_command = command_str.to_string();
+            if let Some(args) = args {
+                for arg in args {
+                    // Escape arguments that contain spaces
+                    if arg.contains(' ') {
+                        full_command.push_str(&format!(" \"{}\"", arg));
+                    } else {
+                        full_command.push_str(&format!(" {}", arg));
+                    }
+                }
+            }
+
+            cmd.arg(full_command);
+            tracing::debug!("Windows: Wrapping command with PowerShell: {}", command_str);
+            cmd
+        } else {
+            // For regular executables, use them directly
+            let mut cmd = Command::new(command_str);
+            if let Some(args) = args {
+                cmd.args(args);
+            }
+            cmd
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new(command_str);
+        if let Some(args) = args {
+            cmd.args(args);
+        }
+        cmd
+    }
+}
+
+/// Check if a command needs runtime environment setup
+pub fn needs_runtime_setup(command: &str) -> bool {
+    matches!(command, "npx" | "uvx" | "bunx")
 }

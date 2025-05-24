@@ -9,7 +9,7 @@ use rmcp::{
     transport::TokioChildProcess,
 };
 use sysinfo;
-use tokio::{process::Command, time::timeout};
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use super::utils::{get_connection_timeout, get_tools_timeout};
@@ -32,13 +32,8 @@ async fn connect_stdio_server_core(
     // Log the command being executed
     tracing::debug!("Executing command: {}", command);
 
-    // Create command
-    let mut cmd = Command::new(command);
-
-    // Add arguments if any
-    if let Some(args) = &server_config.args {
-        cmd.args(args);
-    }
+    // Create command with cross-platform support
+    let mut cmd = crate::core::utils::prepare_command(command, server_config.args.as_ref());
 
     // Add environment variables if any
     if let Some(env) = &server_config.env {
@@ -57,14 +52,10 @@ async fn connect_stdio_server_core(
                 runtime_path.display()
             );
 
-            // Update command to use the cached runtime path
+            // Update command to use the cached runtime path with cross-platform support
             let runtime_command = runtime_path.to_string_lossy();
-            cmd = Command::new(runtime_command.as_ref());
-
-            // Re-add arguments if any
-            if let Some(args) = &server_config.args {
-                cmd.args(args);
-            }
+            cmd =
+                crate::core::utils::prepare_command(&runtime_command, server_config.args.as_ref());
 
             // Re-add environment variables if any
             if let Some(env) = &server_config.env {
@@ -102,8 +93,7 @@ async fn connect_stdio_server_core(
 
     // Prepare environment variables based on runtime configuration
     if let Err(e) =
-        crate::conf::runtime::prepare_command_env_with_db(&mut cmd, command, database_pool)
-            .await
+        crate::conf::runtime::prepare_command_env_with_db(&mut cmd, command, database_pool).await
     {
         tracing::warn!(
             "Failed to prepare environment for command '{}': {}",

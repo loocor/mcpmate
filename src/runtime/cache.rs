@@ -142,7 +142,64 @@ impl RuntimeCache {
             _ => return None,
         };
 
-        self.get_available_path(runtime_type).await
+        // Get the base runtime path
+        let base_path = self.get_available_path(runtime_type).await?;
+
+        // For commands like npx, uvx, bunx, we need to find the correct executable
+        // The base_path might point to node.exe, but we need npx.cmd on Windows
+        match command {
+            "npx" => {
+                // Try to find npx in the same directory as the base runtime
+                let parent_dir = base_path.parent()?;
+
+                // On Windows, check for both .exe and .cmd versions
+                if cfg!(windows) {
+                    let npx_exe = parent_dir.join("npx.exe");
+                    if npx_exe.exists() {
+                        return Some(npx_exe);
+                    }
+                    let npx_cmd = parent_dir.join("npx.cmd");
+                    if npx_cmd.exists() {
+                        return Some(npx_cmd);
+                    }
+                } else {
+                    let npx_path = parent_dir.join("npx");
+                    if npx_path.exists() {
+                        return Some(npx_path);
+                    }
+                }
+
+                // If npx is not found, fall back to the base path
+                Some(base_path)
+            }
+            "uvx" => {
+                // Try to find uvx in the same directory as the base runtime
+                let parent_dir = base_path.parent()?;
+
+                let uvx_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
+                let uvx_path = parent_dir.join(uvx_name);
+                if uvx_path.exists() {
+                    return Some(uvx_path);
+                }
+
+                // If uvx is not found, fall back to the base path
+                Some(base_path)
+            }
+            "bunx" => {
+                // Try to find bunx in the same directory as the base runtime
+                let parent_dir = base_path.parent()?;
+
+                let bunx_name = if cfg!(windows) { "bunx.exe" } else { "bunx" };
+                let bunx_path = parent_dir.join(bunx_name);
+                if bunx_path.exists() {
+                    return Some(bunx_path);
+                }
+
+                // If bunx is not found, fall back to the base path
+                Some(base_path)
+            }
+            _ => Some(base_path),
+        }
     }
 
     /// Get all unavailable runtimes for background maintenance
