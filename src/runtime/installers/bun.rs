@@ -107,6 +107,52 @@ impl BunInstaller {
             }
         }
 
+        // Create bunx script/executable
+        self.create_bunx_script(&bin_dir)?;
+
+        Ok(())
+    }
+
+    /// Create bunx script that calls 'bun x'
+    fn create_bunx_script(
+        &self,
+        bin_dir: &Path,
+    ) -> Result<()> {
+        let bun_exe_path = bin_dir.join(RuntimeType::Bun.executable_name());
+
+        if !bun_exe_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Bun executable not found at {}",
+                bun_exe_path.display()
+            ));
+        }
+
+        let bunx_path = if cfg!(windows) {
+            // On Windows, create a batch file
+            let bunx_path = bin_dir.join("bunx.cmd");
+            let script_content = format!("@echo off\r\n\"{}\" x %*\r\n", bun_exe_path.display());
+            std::fs::write(&bunx_path, script_content)?;
+            bunx_path
+        } else {
+            // On Unix-like systems, create a shell script
+            let bunx_path = bin_dir.join("bunx");
+            let script_content =
+                format!("#!/bin/sh\nexec \"{}\" x \"$@\"\n", bun_exe_path.display());
+            std::fs::write(&bunx_path, script_content)?;
+
+            // Make it executable
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&bunx_path)?.permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&bunx_path, perms)?;
+            }
+
+            bunx_path
+        };
+
+        tracing::debug!("Created bunx script at: {}", bunx_path.display());
         Ok(())
     }
 }

@@ -2,12 +2,16 @@
 //!
 //! This module provides functions for preparing command environment variables
 //! based on runtime configurations stored in the database.
+//!
+//! Now uses the shared environment management system for consistency.
 
 use anyhow::Result;
 use sqlx::{Pool, Sqlite};
-use std::{env, path::PathBuf};
+use std::path::PathBuf;
 use tokio::process::Command;
 
+use crate::common::env::prepare_command_environment;
+use crate::common::paths::global_paths;
 use crate::runtime::{RuntimeType, config::get_config_by_type};
 
 /// Prepare command environment variables based on runtime configurations in the database
@@ -15,7 +19,7 @@ use crate::runtime::{RuntimeType, config::get_config_by_type};
 /// This function:
 /// 1. Determines the runtime type based on the command string
 /// 2. Queries the database for the default configuration for that runtime type
-/// 3. Sets the appropriate environment variables (PATH, cache directories, etc.)
+/// 3. Uses the shared environment management system to set appropriate variables
 /// 4. Falls back to environment variables if database query fails
 pub async fn prepare_command_env_with_db(
     command: &mut Command,
@@ -42,11 +46,10 @@ pub async fn prepare_command_env_with_db(
         if let Ok(config) = get_config_by_type(pool, rt_type).await {
             let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
 
-            // Set PATH to include the runtime binary directory
-            // Handle both absolute paths (system runtimes) and relative paths (managed runtimes)
+            // Convert relative path to absolute path
             let bin_path = if config.relative_bin_path.starts_with('/') {
                 // Absolute path (system runtime) - use as-is
-                std::path::PathBuf::from(&config.relative_bin_path)
+                PathBuf::from(&config.relative_bin_path)
             } else if config.relative_bin_path.starts_with(".mcpmate/") {
                 // Already properly formatted relative path
                 home_dir.join(&config.relative_bin_path)
@@ -57,199 +60,173 @@ pub async fn prepare_command_env_with_db(
 
             // Check if the binary file exists
             if bin_path.exists() {
-                if bin_path.is_file() {
+                let (actual_bin_path, version) = if bin_path.is_file() {
                     // The bin_path points directly to the executable file
-                    // We need to add the parent directory to PATH
-                    if let Some(bin_dir) = bin_path.parent() {
-                        let old_path = env::var("PATH").unwrap_or_default();
-                        let new_path = if cfg!(windows) {
-                            format!("{};{}", bin_dir.display(), old_path)
-                        } else {
-                            format!("{}:{}", bin_dir.display(), old_path)
-                        };
-                        command.env("PATH", new_path);
-                        tracing::debug!(
-                            "Set PATH to include: {} (for executable: {})",
-                            bin_dir.display(),
-                            bin_path.display()
-                        );
-                    } else {
-                        tracing::warn!(
-                            "Could not get parent directory for executable: {}",
-                            bin_path.display()
-                        );
-                    }
+                    (bin_path, "latest")
                 } else {
-                    // bin_path is a directory, use the old logic
-                    let executable_exists = match command_str {
-                        "npx" => {
-                            let npx_path = bin_path.join("npx");
-                            let node_path = bin_path.join("node");
-                            let exists = npx_path.exists() || node_path.exists();
-                            if !exists {
-                                tracing::warn!(
-                                    "Neither npx nor node executable found in: {}",
-                                    bin_path.display()
-                                );
-                            }
-                            exists
-                        }
-                        "uvx" => {
-                            let uv_path = bin_path.join("uv");
-                            let exists = uv_path.exists();
-                            if !exists {
-                                tracing::warn!(
-                                    "uv executable not found in: {}",
-                                    bin_path.display()
-                                );
-                            }
-                            exists
-                        }
-                        "bunx" => {
-                            let bun_path = bin_path.join("bun");
-                            let exists = bun_path.exists();
-                            if !exists {
-                                tracing::warn!(
-                                    "bun executable not found in: {}",
-                                    bin_path.display()
-                                );
-                            }
-                            exists
-                        }
-                        _ => true,
-                    };
+                    // bin_path is a directory, find the appropriate executable
+                    let executable_path = find_runtime_executable(&bin_path, command_str)?;
+                    (executable_path, "latest")
+                };
 
-                    if executable_exists {
-                        let old_path = env::var("PATH").unwrap_or_default();
-                        let new_path = if cfg!(windows) {
-                            format!("{};{}", bin_path.display(), old_path)
-                        } else {
-                            format!("{}:{}", bin_path.display(), old_path)
-                        };
-                        command.env("PATH", new_path);
-                        tracing::debug!("Set PATH to include: {}", bin_path.display());
-                    }
+                // Use shared environment management system
+                let runtime_type_str = match rt_type {
+                    RuntimeType::Node => "node",
+                    RuntimeType::Uv => "uv",
+                    RuntimeType::Bun => "bun",
+                };
+
+                if let Err(e) = prepare_command_environment(
+                    command,
+                    runtime_type_str,
+                    &actual_bin_path,
+                    version,
+                ) {
+                    tracing::warn!("Failed to prepare runtime environment: {}, falling back", e);
+                    prepare_command_env_fallback(command, command_str);
+                } else {
+                    tracing::debug!(
+                        "Successfully prepared {} environment using shared system",
+                        runtime_type_str
+                    );
                 }
             } else {
-                tracing::warn!("Binary path does not exist: {}", bin_path.display());
+                tracing::warn!(
+                    "Binary path does not exist: {}, falling back",
+                    bin_path.display()
+                );
+                prepare_command_env_fallback(command, command_str);
             }
-
-            // Set cache path based on runtime type
-            let cache_dir = match rt_type {
-                RuntimeType::Node => home_dir.join(".mcpmate/cache/npm"),
-                RuntimeType::Uv => home_dir.join(".mcpmate/cache/uv"),
-                RuntimeType::Bun => home_dir.join(".mcpmate/cache/bun"),
-            };
-
-            // Create cache directory if it doesn't exist
-            if !cache_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                    tracing::warn!(
-                        "Failed to create cache directory {}: {}",
-                        cache_dir.display(),
-                        e
-                    );
-                }
-            }
-
-            match rt_type {
-                RuntimeType::Node => {
-                    command.env("NPM_CONFIG_CACHE", cache_dir.display().to_string());
-                    tracing::debug!("Set NPM_CONFIG_CACHE to: {}", cache_dir.display());
-                }
-                RuntimeType::Uv => {
-                    command.env("UV_CACHE_DIR", cache_dir.display().to_string());
-                    tracing::debug!("Set UV_CACHE_DIR to: {}", cache_dir.display());
-
-                    // Additional uv-specific environment variables
-                    let mcpmate_dir = home_dir.join(".mcpmate");
-                    let uv_python_cache_dir = mcpmate_dir.join("cache").join("python");
-                    let uv_python_install_dir = mcpmate_dir.join("runtimes").join("python");
-
-                    // Create directories
-                    for dir in [&uv_python_cache_dir, &uv_python_install_dir] {
-                        if !dir.exists() {
-                            if let Err(e) = std::fs::create_dir_all(dir) {
-                                tracing::warn!(
-                                    "Failed to create directory {}: {}",
-                                    dir.display(),
-                                    e
-                                );
-                            }
-                        }
-                    }
-
-                    command.env(
-                        "UV_PYTHON_CACHE_DIR",
-                        uv_python_cache_dir.display().to_string(),
-                    );
-                    command.env(
-                        "UV_PYTHON_INSTALL_DIR",
-                        uv_python_install_dir.display().to_string(),
-                    );
-
-                    tracing::debug!(
-                        "Set uv environment variables: UV_CACHE_DIR={}, UV_PYTHON_CACHE_DIR={}, UV_PYTHON_INSTALL_DIR={}",
-                        cache_dir.display(),
-                        uv_python_cache_dir.display(),
-                        uv_python_install_dir.display()
-                    );
-                }
-                RuntimeType::Bun => {
-                    command.env("BUN_INSTALL_CACHE_DIR", cache_dir.display().to_string());
-                    tracing::debug!("Set BUN_INSTALL_CACHE_DIR to: {}", cache_dir.display());
-                }
-            }
-
-            return Ok(());
         } else {
             tracing::debug!(
-                "Failed to get runtime config from database, falling back to environment variables"
+                "No database configuration found for {}, falling back",
+                command_str
             );
+            prepare_command_env_fallback(command, command_str);
         }
+    } else {
+        tracing::debug!(
+            "No runtime type or database pool, falling back for {}",
+            command_str
+        );
+        prepare_command_env_fallback(command, command_str);
     }
 
-    // 3. Fall back to environment variables
-    prepare_command_env_fallback(command, command_str);
     Ok(())
 }
 
-/// Fall back to environment variables for command environment preparation
+/// Find the appropriate executable in a runtime directory
+fn find_runtime_executable(
+    bin_dir: &PathBuf,
+    command_str: &str,
+) -> Result<PathBuf> {
+    let executable_name = match command_str {
+        "npx" => {
+            // Try npx first, then fall back to node
+            let npx_path = bin_dir.join(if cfg!(windows) { "npx.cmd" } else { "npx" });
+            if npx_path.exists() {
+                return Ok(npx_path);
+            }
+            if cfg!(windows) { "node.exe" } else { "node" }
+        }
+        "uvx" => {
+            // Try uvx first, then fall back to uv
+            let uvx_path = bin_dir.join(if cfg!(windows) { "uvx.exe" } else { "uvx" });
+            if uvx_path.exists() {
+                return Ok(uvx_path);
+            }
+            if cfg!(windows) { "uv.exe" } else { "uv" }
+        }
+        "bunx" => {
+            // Try bunx first, then fall back to bun
+            let bunx_path = bin_dir.join(if cfg!(windows) { "bunx.exe" } else { "bunx" });
+            if bunx_path.exists() {
+                return Ok(bunx_path);
+            }
+            if cfg!(windows) { "bun.exe" } else { "bun" }
+        }
+        _ => return Err(anyhow::anyhow!("Unknown command: {}", command_str)),
+    };
+
+    let executable_path = bin_dir.join(executable_name);
+    if executable_path.exists() {
+        Ok(executable_path)
+    } else {
+        Err(anyhow::anyhow!(
+            "Executable {} not found in {}",
+            executable_name,
+            bin_dir.display()
+        ))
+    }
+}
+
+/// Fallback environment preparation when database configuration is not available
+///
+/// This function provides basic environment setup without database configuration
 fn prepare_command_env_fallback(
     command: &mut Command,
     command_str: &str,
 ) {
-    // Set binary path
-    let bin_var = match command_str {
-        "npx" => "NPX_BIN_PATH",
-        "uvx" => "UVX_BIN_PATH",
-        "bunx" => "BUNX_BIN_PATH",
-        _ => "MCP_RUNTIME_BIN",
-    };
+    tracing::debug!(
+        "Using fallback environment preparation for: {}",
+        command_str
+    );
 
-    if let Ok(bin_path) = env::var(bin_var) {
-        let old_path = env::var("PATH").unwrap_or_default();
-        let new_path = if cfg!(windows) {
-            format!("{};{}", bin_path, old_path)
-        } else {
-            format!("{}:{}", bin_path, old_path)
-        };
-        command.env("PATH", new_path);
-        tracing::debug!("Fallback: Set PATH to include: {}", bin_path);
-    }
+    let paths = global_paths();
 
-    // Set cache directory
-    let cache_var = match command_str {
-        "npx" => "NPM_CONFIG_CACHE",
-        "uvx" => "UV_CACHE_DIR",
-        "bunx" => "BUN_INSTALL_CACHE_DIR",
-        _ => "",
-    };
+    // Set basic cache directories based on command type
+    match command_str {
+        "npx" => {
+            let cache_dir = paths.runtime_cache_dir("npm");
+            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                tracing::warn!("Failed to create npm cache directory: {}", e);
+            } else {
+                command.env("NPM_CONFIG_CACHE", cache_dir.to_string_lossy().as_ref());
+                tracing::debug!("Set NPM_CONFIG_CACHE to: {}", cache_dir.display());
+            }
+        }
+        "uvx" => {
+            let cache_dir = paths.runtime_cache_dir("uv");
+            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                tracing::warn!("Failed to create uv cache directory: {}", e);
+            } else {
+                command.env("UV_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
+                tracing::debug!("Set UV_CACHE_DIR to: {}", cache_dir.display());
 
-    if !cache_var.is_empty() {
-        if let Ok(cache_path) = env::var(cache_var) {
-            command.env(cache_var, &cache_path);
-            tracing::debug!("Fallback: Set {} to: {}", cache_var, cache_path);
+                // Additional uv-specific environment variables
+                let python_cache_dir = paths.cache_dir().join("uv").join("python");
+                let python_install_dir = paths.runtimes_dir().join("uv").join("python");
+
+                for dir in [&python_cache_dir, &python_install_dir] {
+                    if let Err(e) = std::fs::create_dir_all(dir) {
+                        tracing::warn!("Failed to create directory {}: {}", dir.display(), e);
+                    }
+                }
+
+                command.env(
+                    "UV_PYTHON_CACHE_DIR",
+                    python_cache_dir.to_string_lossy().as_ref(),
+                );
+                command.env(
+                    "UV_PYTHON_INSTALL_DIR",
+                    python_install_dir.to_string_lossy().as_ref(),
+                );
+            }
+        }
+        "bunx" => {
+            let cache_dir = paths.runtime_cache_dir("bun");
+            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                tracing::warn!("Failed to create bun cache directory: {}", e);
+            } else {
+                command.env(
+                    "BUN_INSTALL_CACHE_DIR",
+                    cache_dir.to_string_lossy().as_ref(),
+                );
+                tracing::debug!("Set BUN_INSTALL_CACHE_DIR to: {}", cache_dir.display());
+            }
+        }
+        _ => {
+            tracing::debug!("No specific environment setup for command: {}", command_str);
         }
     }
 }

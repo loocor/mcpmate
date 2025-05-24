@@ -1,23 +1,31 @@
+//! Runtime path management
+//!
+//! This module provides path management for runtime installations,
+//! now using the shared path management system.
+
+use crate::common::paths::{MCPMatePaths, global_paths};
 use crate::runtime::types::RuntimeType;
 use crate::runtime::{RuntimeManager, constants::*};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// Runtime path manager
+///
+/// This is now a thin wrapper around the shared path management system
 #[derive(Debug)]
 pub struct RuntimePaths {
-    base_dir: PathBuf,
+    paths: &'static MCPMatePaths,
 }
 
 impl RuntimePaths {
     /// Create a new path manager
     pub fn new() -> Result<Self> {
-        let base_dir = get_mcpmate_dir()?;
+        let paths = global_paths();
 
         // Ensure base directory exists
-        std::fs::create_dir_all(&base_dir)?;
+        paths.ensure_directories()?;
 
-        Ok(Self { base_dir })
+        Ok(Self { paths })
     }
 
     /// Get the installation path of the runtime
@@ -35,14 +43,9 @@ impl RuntimePaths {
         runtime_type: RuntimeType,
         version: Option<&str>,
     ) -> PathBuf {
-        get_runtime_version_dir(runtime_type, version).unwrap_or_else(|_| {
-            // if error, fallback to the old implementation
-            let version = version.unwrap_or_else(|| get_default_version(runtime_type));
-            self.base_dir
-                .join(RUNTIMES_DIR_NAME)
-                .join(get_runtime_dir_name(runtime_type))
-                .join(version)
-        })
+        let version = version.unwrap_or_else(|| get_default_version(runtime_type));
+        let runtime_name = get_runtime_dir_name(runtime_type);
+        self.paths.runtime_version_dir(runtime_name, version)
     }
 
     /// Get the cache directory
@@ -50,20 +53,13 @@ impl RuntimePaths {
         &self,
         runtime_type: RuntimeType,
     ) -> PathBuf {
-        get_cache_dir(runtime_type).unwrap_or_else(|_| {
-            // if error, fallback to the old implementation
-            self.base_dir
-                .join(CACHE_DIR_NAME)
-                .join(get_runtime_dir_name(runtime_type))
-        })
+        let runtime_name = get_runtime_dir_name(runtime_type);
+        self.paths.runtime_cache_dir(runtime_name)
     }
 
     /// Get the temporary download directory
     pub fn get_temp_dir(&self) -> PathBuf {
-        get_temp_download_dir().unwrap_or_else(|_| {
-            // if error, fallback to the old implementation
-            self.base_dir.join(TMP_DIR_NAME).join(DOWNLOADS_DIR_NAME)
-        })
+        self.paths.downloads_dir()
     }
 
     /// Create all necessary directories
@@ -72,28 +68,36 @@ impl RuntimePaths {
         runtime_type: RuntimeType,
         version: Option<&str>,
     ) -> Result<()> {
-        let runtime_dir = self.get_runtime_dir(runtime_type, version);
-        let cache_dir = self.get_cache_dir(runtime_type);
-        let temp_dir = self.get_temp_dir();
+        let version = version.unwrap_or_else(|| get_default_version(runtime_type));
+        let runtime_name = get_runtime_dir_name(runtime_type);
 
-        std::fs::create_dir_all(&runtime_dir)?;
-        std::fs::create_dir_all(&cache_dir)?;
-        std::fs::create_dir_all(&temp_dir)?;
+        self.paths
+            .ensure_runtime_directories(runtime_name, version)?;
 
         Ok(())
     }
 
     /// Get the base directory
     pub fn base_dir(&self) -> &Path {
-        &self.base_dir
+        self.paths.base_dir()
+    }
+
+    /// Get the bin directory for a specific runtime version
+    pub fn get_bin_dir(
+        &self,
+        runtime_type: RuntimeType,
+        version: Option<&str>,
+    ) -> PathBuf {
+        let version = version.unwrap_or_else(|| get_default_version(runtime_type));
+        let runtime_name = get_runtime_dir_name(runtime_type);
+        self.paths.runtime_bin_dir(runtime_name, version)
     }
 }
 
-/// Get MCPMate's user directory
-pub fn get_mcpmate_dir() -> Result<PathBuf> {
-    let home_dir =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot get user home directory"))?;
-    Ok(home_dir.join(MCPMATE_DIR_NAME))
+impl Default for RuntimePaths {
+    fn default() -> Self {
+        Self::new().expect("Failed to create RuntimePaths")
+    }
 }
 
 /// Convenience function: get runtime path

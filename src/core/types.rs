@@ -99,13 +99,14 @@ impl ConnectionStatus {
 
     /// Get the allowed operations for this status (returns enum variants)
     pub fn allowed_operations(&self) -> Vec<ConnectionOperation> {
-        use ConnectionOperation::*;
-
-        let mut ops = vec![Disconnect, Reconnect]; // Most states share these operations
+        let mut ops = vec![
+            ConnectionOperation::Disconnect,
+            ConnectionOperation::Reconnect,
+        ]; // Most states share these operations
 
         match self {
             Self::Initializing => {
-                ops.push(Cancel); // Can cancel initialization
+                ops.push(ConnectionOperation::Cancel); // Can cancel initialization
             }
             Self::Ready => {
                 // No special operations
@@ -118,7 +119,7 @@ impl ConnectionStatus {
             }
             Self::Shutdown => {
                 ops.clear(); // Clear shared operations
-                ops.push(Reconnect); // Only reconnect is allowed
+                ops.push(ConnectionOperation::Reconnect); // Only reconnect is allowed
             }
         }
 
