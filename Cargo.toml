@@ -2,6 +2,7 @@
 name = "mcpmate"
 version = "0.1.0"
 edition = "2024"
+default-run = "mcpmate"
 description = "MCPMate - A comprehensive management center for Model Context Protocol (MCP) servers"
 authors = ["Loocor <loocor@gmail.com>"]
 
@@ -87,10 +88,6 @@ which = "6.0"
 # Static file serving
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tower = { version = "0.5", features = ["util"] }
-
-[[bin]]
-name = "proxy"
-path = "src/bin/proxy.rs"
 
 [[bin]]
 name = "bridge"
