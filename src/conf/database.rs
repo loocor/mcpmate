@@ -9,7 +9,7 @@ use tracing;
 
 use crate::{
     common::types::ConfigSuitType,
-    conf::{initialization, migration, models, operations},
+    conf::{initialization, migration, models, operations, server},
     runtime::constants::get_mcpmate_dir,
 };
 
@@ -55,8 +55,9 @@ impl Database {
 
         // Ensure the parent directory exists
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create database directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create database directory: {}", parent.display())
+            })?;
         }
 
         // Check if database exists
@@ -118,7 +119,10 @@ impl Database {
         }
 
         // Create database instance
-        let db = Self { pool, path: db_path };
+        let db = Self {
+            pool,
+            path: db_path,
+        };
 
         // Check if we need to migrate configuration from files
         let default_config_path = std::path::Path::new("config/mcp.json");
@@ -258,7 +262,7 @@ impl Database {
             tracing::info!("Adding servers to default configuration suit");
 
             // Get all servers from the database
-            let all_servers = operations::get_all_servers(&self.pool).await?;
+            let all_servers = server::get_all_servers(&self.pool).await?;
             let server_count = all_servers.len();
 
             tracing::info!(

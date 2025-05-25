@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use sqlx::{Pool, Sqlite};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use crate::common::env::prepare_command_environment;
@@ -117,7 +117,7 @@ pub async fn prepare_command_env_with_db(
 
 /// Find the appropriate executable in a runtime directory
 fn find_runtime_executable(
-    bin_dir: &PathBuf,
+    bin_dir: &Path,
     command_str: &str,
 ) -> Result<PathBuf> {
     let executable_name = match command_str {

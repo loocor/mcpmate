@@ -8,10 +8,8 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
 use crate::{
-    conf::{
-        models::{Server, ServerMeta},
-        operations::{upsert_server, upsert_server_args, upsert_server_env, upsert_server_meta},
-    },
+    conf::models::{Server, ServerMeta},
+    conf::server::{upsert_server, upsert_server_args, upsert_server_env, upsert_server_meta},
     core::models::Config,
 };
 
@@ -78,12 +76,15 @@ pub async fn migrate_from_files(
             command: server_config.command.clone(),
             url: server_config.url.clone(),
             transport_type: server_config.transport_type.map(|t| match t {
-                crate::core::transport::TransportType::Stdio =>
-                    crate::common::types::TransportType::Stdio,
-                crate::core::transport::TransportType::Sse =>
-                    crate::common::types::TransportType::Sse,
-                crate::core::transport::TransportType::StreamableHttp =>
-                    crate::common::types::TransportType::StreamableHttp,
+                crate::core::transport::TransportType::Stdio => {
+                    crate::common::types::TransportType::Stdio
+                }
+                crate::core::transport::TransportType::Sse => {
+                    crate::common::types::TransportType::Sse
+                }
+                crate::core::transport::TransportType::StreamableHttp => {
+                    crate::common::types::TransportType::StreamableHttp
+                }
             }),
             enabled: crate::common::types::EnabledStatus::Enabled,
             created_at: None,

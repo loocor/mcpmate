@@ -240,7 +240,7 @@ impl UpstreamConnectionPool {
         );
 
         // Get the server ID
-        let server = crate::conf::operations::get_server(&db.pool, server_name)
+        let server = crate::conf::server::get_server(&db.pool, server_name)
             .await
             .context(format!("Failed to get server '{server_name}'"))?;
 

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use crate::{
     conf::{
         database::Database,
-        operations::{get_enabled_servers, get_server_args, get_server_env},
+        server::{get_enabled_servers, get_server_args, get_server_env},
     },
     core::{
         models::{Config, MCPServerConfig},

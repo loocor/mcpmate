@@ -20,7 +20,7 @@ pub async fn get_status(
     if let Some(http_proxy) = &state.http_proxy {
         if let Some(db) = &http_proxy.database {
             // Use database connection to get server count
-            match crate::conf::operations::server::get_all_servers(&db.pool).await {
+            match crate::conf::server::get_all_servers(&db.pool).await {
                 Ok(servers) => {
                     total_servers = servers.len();
                 }

@@ -19,7 +19,7 @@ pub async fn list_servers(
     };
 
     // Get all servers from the database
-    let all_servers = crate::conf::operations::get_all_servers(&db.pool)
+    let all_servers = crate::conf::server::get_all_servers(&db.pool)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
 
@@ -48,7 +48,7 @@ pub async fn list_servers(
         };
 
         // Get server enabled status from config suits (enabled_in_suits)
-        let enabled_in_suits = match crate::conf::operations::is_server_enabled_in_any_suit(
+        let enabled_in_suits = match crate::conf::server::is_server_enabled_in_any_suit(
             &db.pool, &server_id,
         )
         .await
@@ -66,7 +66,7 @@ pub async fn list_servers(
 
         // Get server global enabled status
         let globally_enabled =
-            match crate::conf::operations::server::get_server_global_status(&db.pool, &server_id)
+            match crate::conf::server::get_server_global_status(&db.pool, &server_id)
                 .await
             {
                 Ok(Some(enabled)) => enabled,
@@ -126,7 +126,7 @@ pub async fn list_servers(
 
         // Get server arguments if available
         let args = if !server_id.is_empty() {
-            match crate::conf::operations::get_server_args(&db.pool, &server_id).await {
+            match crate::conf::server::get_server_args(&db.pool, &server_id).await {
                 Ok(server_args) => {
                     if server_args.is_empty() {
                         None
@@ -148,7 +148,7 @@ pub async fn list_servers(
 
         // Get server environment variables if available
         let env = if !server_id.is_empty() {
-            match crate::conf::operations::get_server_env(&db.pool, &server_id).await {
+            match crate::conf::server::get_server_env(&db.pool, &server_id).await {
                 Ok(env_map) =>
                     if env_map.is_empty() {
                         None
@@ -170,7 +170,7 @@ pub async fn list_servers(
 
         // Get server metadata if available
         let meta = if !server_id.is_empty() {
-            match crate::conf::operations::get_server_meta(&db.pool, &server_id).await {
+            match crate::conf::server::get_server_meta(&db.pool, &server_id).await {
                 Ok(Some(server_meta)) => Some(ServerMetaInfo {
                     description: server_meta.description,
                     author: server_meta.author,
@@ -231,7 +231,7 @@ pub async fn get_server(
     };
 
     // Get the server from the database
-    let server = crate::conf::operations::get_server(&db.pool, &name)
+    let server = crate::conf::server::get_server(&db.pool, &name)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -251,7 +251,7 @@ pub async fn get_server(
 
     // Get server enabled status from config suits (enabled_in_suits)
     let enabled_in_suits =
-        match crate::conf::operations::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
+        match crate::conf::server::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
             Ok(enabled) => enabled,
             Err(e) => {
                 tracing::warn!(
@@ -265,7 +265,7 @@ pub async fn get_server(
 
     // Get server global enabled status
     let globally_enabled =
-        match crate::conf::operations::server::get_server_global_status(&db.pool, &server_id).await
+        match crate::conf::server::get_server_global_status(&db.pool, &server_id).await
         {
             Ok(Some(enabled)) => enabled,
             Ok(None) => {
@@ -339,7 +339,7 @@ pub async fn get_server(
 
     // Get server arguments if available
     let args = if !server_id.is_empty() {
-        match crate::conf::operations::get_server_args(&db.pool, &server_id).await {
+        match crate::conf::server::get_server_args(&db.pool, &server_id).await {
             Ok(server_args) => {
                 if server_args.is_empty() {
                     None
@@ -361,7 +361,7 @@ pub async fn get_server(
 
     // Get server environment variables if available
     let env = if !server_id.is_empty() {
-        match crate::conf::operations::get_server_env(&db.pool, &server_id).await {
+        match crate::conf::server::get_server_env(&db.pool, &server_id).await {
             Ok(env_map) =>
                 if env_map.is_empty() {
                     None
@@ -383,7 +383,7 @@ pub async fn get_server(
 
     // Get server metadata if available
     let meta = if !server_id.is_empty() {
-        match crate::conf::operations::get_server_meta(&db.pool, &server_id).await {
+        match crate::conf::server::get_server_meta(&db.pool, &server_id).await {
             Ok(Some(server_meta)) => Some(ServerMetaInfo {
                 description: server_meta.description,
                 author: server_meta.author,

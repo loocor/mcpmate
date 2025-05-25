@@ -10,7 +10,7 @@ use axum::{
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    conf::operations,
+    conf::{operations, server},
     http::HttpProxyServer,
 };
 
@@ -38,7 +38,8 @@ pub async fn list_all(
                 let tool_name = tool.name.to_string();
 
                 // Get tool status (ID, unique_name, enabled status)
-                let (_, unique_name, enabled) = get_tool_status(&db.pool, server_name, &tool_name).await?;
+                let (_, unique_name, enabled) =
+                    get_tool_status(&db.pool, server_name, &tool_name).await?;
 
                 // Only include enabled tools
                 if enabled {
@@ -78,7 +79,7 @@ pub async fn list_server(
     let (proxy, db) = get_context(&state).await?;
 
     // Check if the server exists
-    let server = operations::get_server(&db.pool, &server_name)
+    let server = server::get_server(&db.pool, &server_name)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -105,7 +106,8 @@ pub async fn list_server(
                 let tool_name = tool.name.to_string();
 
                 // Get tool status (ID, unique_name, enabled status)
-                let (_, unique_name, enabled) = get_tool_status(&db.pool, &server_name, &tool_name).await?;
+                let (_, unique_name, enabled) =
+                    get_tool_status(&db.pool, &server_name, &tool_name).await?;
 
                 // Only include enabled tools
                 if enabled {
@@ -150,7 +152,7 @@ pub async fn get_tool(
     let (proxy, db) = get_context(&state).await?;
 
     // Check if the server exists
-    let server = operations::get_server(&db.pool, &server_name)
+    let server = server::get_server(&db.pool, &server_name)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -316,7 +318,7 @@ pub async fn get_tool_status(
             };
 
             // Get the server ID
-            let server = operations::get_server(pool, server_name)
+            let server = server::get_server(pool, server_name)
                 .await
                 .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 

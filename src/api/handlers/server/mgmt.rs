@@ -32,7 +32,7 @@ async fn get_server_info(
     server_name: &str,
 ) -> Result<(crate::conf::models::Server, String), ApiError> {
     // Get the server
-    let server = crate::conf::operations::get_server(pool, server_name)
+    let server = crate::conf::server::get_server(pool, server_name)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -120,7 +120,7 @@ pub async fn enable_server(
     let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
     // Update the server's global enabled status
-    match crate::conf::operations::server::update_server_global_status(&db.pool, &server_id, true)
+    match crate::conf::server::update_server_global_status(&db.pool, &server_id, true)
         .await
     {
         Ok(true) => {
@@ -301,7 +301,7 @@ pub async fn disable_server(
     let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
     // Update the server's global enabled status
-    match crate::conf::operations::server::update_server_global_status(&db.pool, &server_id, false)
+    match crate::conf::server::update_server_global_status(&db.pool, &server_id, false)
         .await
     {
         Ok(true) => {

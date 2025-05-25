@@ -11,6 +11,7 @@ use crate::{
         database::Database,
         models::{ConfigSuit, ServerMeta},
         operations,
+        server::{self},
     },
 };
 
@@ -100,7 +101,7 @@ async fn create_server_metadata(
     };
 
     // Insert server metadata
-    operations::upsert_server_meta(&db.pool, &meta)
+    server::upsert_server_meta(&db.pool, &meta)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to create server metadata: {e}")))?;
 
@@ -116,7 +117,7 @@ pub async fn create_server(
     let db = get_database_from_state(&state)?;
 
     // Check if a server with the same name already exists
-    let existing_server = crate::conf::operations::get_server(&db.pool, &payload.name)
+    let existing_server = crate::conf::server::get_server(&db.pool, &payload.name)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to check server: {e}")))?;
 
@@ -129,19 +130,21 @@ pub async fn create_server(
 
     // Validate server type
     match payload.kind.as_str() {
-        "stdio" =>
+        "stdio" => {
             if payload.command.is_none() {
                 return Err(ApiError::BadRequest(
                     "Command is required for stdio servers".to_string(),
                 ));
-            },
-        "sse" | "streamable_http" =>
+            }
+        }
+        "sse" | "streamable_http" => {
             if payload.url.is_none() {
                 return Err(ApiError::BadRequest(format!(
                     "URL is required for {} servers",
                     payload.kind
                 )));
-            },
+            }
+        }
         _ => {
             return Err(ApiError::BadRequest(format!(
                 "Invalid server type: {}. Must be one of: stdio, sse, streamable_http",
@@ -159,13 +162,13 @@ pub async fn create_server(
     };
 
     // Insert server into database
-    let server_id = crate::conf::operations::upsert_server(&db.pool, &server)
+    let server_id = crate::conf::server::upsert_server(&db.pool, &server)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to create server: {e}")))?;
 
     // Insert server arguments if provided
     if let Some(args) = &payload.args {
-        crate::conf::operations::upsert_server_args(&db.pool, &server_id, args)
+        crate::conf::server::upsert_server_args(&db.pool, &server_id, args)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!("Failed to create server arguments: {e}"))
@@ -174,7 +177,7 @@ pub async fn create_server(
 
     // Insert server environment variables if provided
     if let Some(env) = &payload.env {
-        crate::conf::operations::upsert_server_env(&db.pool, &server_id, env)
+        crate::conf::server::upsert_server_env(&db.pool, &server_id, env)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!(
@@ -226,7 +229,7 @@ pub async fn update_server(
     let db = get_database_from_state(&state)?;
 
     // Check if the server exists
-    let existing_server = crate::conf::operations::get_server(&db.pool, &name)
+    let existing_server = crate::conf::server::get_server(&db.pool, &name)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to check server: {e}")))?;
 
@@ -252,18 +255,20 @@ pub async fn update_server(
     // Validate server type if provided
     if let Some(kind) = &payload.kind {
         match kind.as_str() {
-            "stdio" =>
+            "stdio" => {
                 if payload.command.is_none() && existing_server.command.is_none() {
                     return Err(ApiError::BadRequest(
                         "Command is required for stdio servers".to_string(),
                     ));
-                },
-            "sse" | "streamable_http" =>
+                }
+            }
+            "sse" | "streamable_http" => {
                 if payload.url.is_none() && existing_server.url.is_none() {
                     return Err(ApiError::BadRequest(format!(
                         "URL is required for {kind} servers"
                     )));
-                },
+                }
+            }
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
@@ -293,13 +298,13 @@ pub async fn update_server(
     }
 
     // Update server in database
-    crate::conf::operations::upsert_server(&db.pool, &updated_server)
+    crate::conf::server::upsert_server(&db.pool, &updated_server)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to update server: {e}")))?;
 
     // Update server arguments if provided
     if let Some(args) = &payload.args {
-        crate::conf::operations::upsert_server_args(&db.pool, &server_id, args)
+        crate::conf::server::upsert_server_args(&db.pool, &server_id, args)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!("Failed to update server arguments: {e}"))
@@ -308,7 +313,7 @@ pub async fn update_server(
 
     // Update server environment variables if provided
     if let Some(env) = &payload.env {
-        crate::conf::operations::upsert_server_env(&db.pool, &server_id, env)
+        crate::conf::server::upsert_server_env(&db.pool, &server_id, env)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!(
@@ -343,7 +348,7 @@ pub async fn update_server(
 
     // Get server arguments if available
     let args = if !server_id.is_empty() {
-        match crate::conf::operations::get_server_args(&db.pool, &server_id).await {
+        match crate::conf::server::get_server_args(&db.pool, &server_id).await {
             Ok(server_args) => {
                 if server_args.is_empty() {
                     None
@@ -365,13 +370,14 @@ pub async fn update_server(
 
     // Get server environment variables if available
     let env = if !server_id.is_empty() {
-        match crate::conf::operations::get_server_env(&db.pool, &server_id).await {
-            Ok(env_map) =>
+        match crate::conf::server::get_server_env(&db.pool, &server_id).await {
+            Ok(env_map) => {
                 if env_map.is_empty() {
                     None
                 } else {
                     Some(env_map)
-                },
+                }
+            }
             Err(e) => {
                 tracing::warn!(
                     "Failed to get environment variables for server '{}': {}",
@@ -387,7 +393,7 @@ pub async fn update_server(
 
     // Get server metadata if available
     let meta = if !server_id.is_empty() {
-        match crate::conf::operations::get_server_meta(&db.pool, &server_id).await {
+        match crate::conf::server::get_server_meta(&db.pool, &server_id).await {
             Ok(Some(server_meta)) => Some(ServerMetaInfo {
                 description: server_meta.description,
                 author: server_meta.author,
@@ -413,8 +419,7 @@ pub async fn update_server(
 
     // Get server global enabled status
     let globally_enabled =
-        match crate::conf::operations::server::get_server_global_status(&db.pool, &server_id).await
-        {
+        match crate::conf::server::get_server_global_status(&db.pool, &server_id).await {
             Ok(Some(enabled)) => enabled,
             Ok(None) => {
                 tracing::warn!(
@@ -431,7 +436,7 @@ pub async fn update_server(
 
     // Get server enabled status in config suits
     let enabled_in_suits =
-        match crate::conf::operations::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
+        match crate::conf::server::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
             Ok(enabled) => enabled,
             Err(e) => {
                 tracing::warn!(
@@ -479,7 +484,7 @@ pub async fn import_servers(
     // Process each server in the payload
     for (name, config) in payload.mcp_servers {
         // Check if a server with the same name already exists
-        let existing_server = match crate::conf::operations::get_server(&db.pool, &name).await {
+        let existing_server = match crate::conf::server::get_server(&db.pool, &name).await {
             Ok(server) => server,
             Err(e) => {
                 failed_servers.push(name.clone());
@@ -522,7 +527,7 @@ pub async fn import_servers(
         };
 
         // Insert server into database
-        let server_id = match crate::conf::operations::upsert_server(&db.pool, &server).await {
+        let server_id = match crate::conf::server::upsert_server(&db.pool, &server).await {
             Ok(id) => id,
             Err(e) => {
                 failed_servers.push(name.clone());
@@ -536,7 +541,7 @@ pub async fn import_servers(
         // Insert server arguments if provided
         if let Some(args) = &config.args {
             if let Err(e) =
-                crate::conf::operations::upsert_server_args(&db.pool, &server_id, args).await
+                crate::conf::server::upsert_server_args(&db.pool, &server_id, args).await
             {
                 tracing::error!("Failed to create arguments for server '{}': {}", name, e);
                 // Continue anyway, this is not a critical error
@@ -545,8 +550,7 @@ pub async fn import_servers(
 
         // Insert server environment variables if provided
         if let Some(env) = &config.env {
-            if let Err(e) =
-                crate::conf::operations::upsert_server_env(&db.pool, &server_id, env).await
+            if let Err(e) = crate::conf::server::upsert_server_env(&db.pool, &server_id, env).await
             {
                 tracing::error!(
                     "Failed to create environment variables for server '{}': {}",
@@ -606,7 +610,7 @@ pub async fn delete_server(
     let db = get_database_from_state(&state)?;
 
     // Check if the server exists
-    let existing_server = crate::conf::operations::get_server(&db.pool, &name)
+    let existing_server = crate::conf::server::get_server(&db.pool, &name)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to check server: {e}")))?;
 

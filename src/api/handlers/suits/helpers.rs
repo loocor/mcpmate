@@ -31,7 +31,7 @@ pub async fn get_server_or_error(
     db: &Database,
     server_id: &str,
 ) -> Result<Server, ApiError> {
-    let server = crate::conf::operations::get_server_by_id(&db.pool, server_id)
+    let server = crate::conf::server::get_server_by_id(&db.pool, server_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 

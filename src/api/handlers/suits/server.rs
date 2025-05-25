@@ -24,7 +24,7 @@ pub async fn list_servers(
         })?;
 
     // Get all servers
-    let all_servers = crate::conf::operations::get_all_servers(&db.pool)
+    let all_servers = crate::conf::server::get_all_servers(&db.pool)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
 
@@ -198,7 +198,7 @@ pub async fn batch_enable_servers(
     // Process each server ID
     for server_id in payload.ids {
         // Get the server to check if it exists
-        let server = crate::conf::operations::get_server_by_id(&db.pool, &server_id)
+        let server = crate::conf::server::get_server_by_id(&db.pool, &server_id)
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -261,7 +261,7 @@ pub async fn batch_disable_servers(
     // Process each server ID
     for server_id in payload.ids {
         // Get the server to check if it exists
-        let server = crate::conf::operations::get_server_by_id(&db.pool, &server_id)
+        let server = crate::conf::server::get_server_by_id(&db.pool, &server_id)
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 

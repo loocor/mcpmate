@@ -102,8 +102,8 @@ async fn create_test_servers(db: &Database) -> Result<Vec<Server>> {
     };
 
     // Save servers to database
-    server1.id = Some(mcpmate::conf::operations::upsert_server(&db.pool, &server1).await?);
-    server2.id = Some(mcpmate::conf::operations::upsert_server(&db.pool, &server2).await?);
+    server1.id = Some(mcpmate::conf::server::upsert_server(&db.pool, &server1).await?);
+    server2.id = Some(mcpmate::conf::server::upsert_server(&db.pool, &server2).await?);
 
     servers.push(server1);
     servers.push(server2);

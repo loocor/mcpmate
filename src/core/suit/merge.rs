@@ -120,7 +120,7 @@ impl ConfigSuitMergeService {
         for (server_name, instances) in &pool.connections {
             // Get server ID
             if let Ok(Some(server)) =
-                crate::conf::operations::get_server(&self.db.pool, server_name).await
+                crate::conf::server::get_server(&self.db.pool, server_name).await
             {
                 if let Some(server_id) = server.id {
                     // Check if any instance is connected
@@ -171,7 +171,7 @@ impl ConfigSuitMergeService {
         for server_id in to_disconnect {
             // Get server name from ID
             if let Ok(Some(server)) =
-                crate::conf::operations::get_server_by_id(&self.db.pool, &server_id).await
+                crate::conf::server::get_server_by_id(&self.db.pool, &server_id).await
             {
                 let name = &server.name;
                 tracing::info!("Disconnecting from server '{}'", name);
@@ -219,7 +219,7 @@ impl ConfigSuitMergeService {
                     // Only include enabled servers in the config suit
                     if server_config.enabled {
                         // Get server details
-                        if let Ok(Some(server)) = crate::conf::operations::get_server_by_id(
+                        if let Ok(Some(server)) = crate::conf::server::get_server_by_id(
                             &self.db.pool,
                             &server_config.server_id,
                         )
@@ -227,7 +227,7 @@ impl ConfigSuitMergeService {
                         {
                             // Check if the server is globally enabled
                             let globally_enabled =
-                                match crate::conf::operations::server::get_server_global_status(
+                                match crate::conf::server::get_server_global_status(
                                     &self.db.pool,
                                     &server_config.server_id,
                                 )

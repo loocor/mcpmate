@@ -14,7 +14,7 @@ pub async fn set_tool_enabled(
     enabled: bool,
 ) -> Result<String> {
     // Get the server ID
-    let server = crate::conf::operations::get_server(pool, server_name).await?;
+    let server = crate::conf::server::get_server(pool, server_name).await?;
 
     if let Some(server) = server {
         if let Some(server_id) = &server.id {
@@ -94,7 +94,7 @@ pub async fn get_tool_id(
     tool_name: &str,
 ) -> Result<Option<String>> {
     // Get the server ID
-    let server = crate::conf::operations::get_server(pool, server_name).await?;
+    let server = crate::conf::server::get_server(pool, server_name).await?;
 
     if let Some(server) = server {
         if let Some(server_id) = &server.id {
@@ -201,7 +201,7 @@ pub async fn is_tool_enabled(
     tool_name: &str,
 ) -> Result<bool> {
     // Get the server ID
-    let server = crate::conf::operations::get_server(pool, server_name).await?;
+    let server = crate::conf::server::get_server(pool, server_name).await?;
 
     if let Some(server) = server {
         if let Some(server_id) = &server.id {

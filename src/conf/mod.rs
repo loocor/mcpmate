@@ -8,3 +8,4 @@ pub mod migration;
 pub mod models;
 pub mod operations;
 pub mod runtime;
+pub mod server;

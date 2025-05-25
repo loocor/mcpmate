@@ -1,7 +1,7 @@
 use anyhow::Result;
 use mcpmate::{
     api::ApiServer,
-    conf::operations::server,
+    conf::server,
     core::{ConnectionStatus, TransportType},
     http::HttpProxyServer,
 };

@@ -1,0 +1,175 @@
+// Basic CRUD operations for server configuration
+// Contains create, read, update, delete operations for servers
+
+use anyhow::{Context, Result};
+use nanoid::nanoid;
+use sqlx::{Pool, Sqlite, Transaction};
+
+use crate::conf::models::Server;
+
+/// Get all servers from the database
+pub async fn get_all_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
+    tracing::debug!("Executing SQL query to get all servers");
+
+    let servers = sqlx::query_as::<_, Server>(
+        r#"
+        SELECT * FROM server_config
+        ORDER BY name
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("Failed to fetch servers")?;
+
+    tracing::debug!(
+        "Successfully fetched {} servers from database",
+        servers.len()
+    );
+    Ok(servers)
+}
+
+/// Get a specific server from the database by name
+pub async fn get_server(
+    pool: &Pool<Sqlite>,
+    name: &str,
+) -> Result<Option<Server>> {
+    tracing::debug!("Executing SQL query to get server '{}'", name);
+
+    let server = sqlx::query_as::<_, Server>(
+        r#"
+        SELECT * FROM server_config
+        WHERE name = ?
+        "#,
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch server")?;
+
+    if let Some(ref s) = server {
+        tracing::debug!("Found server '{}', type: {}", name, s.server_type);
+    } else {
+        tracing::debug!("No server found with name '{}'", name);
+    }
+
+    Ok(server)
+}
+
+/// Get a specific server from the database by ID
+pub async fn get_server_by_id(
+    pool: &Pool<Sqlite>,
+    id: &str,
+) -> Result<Option<Server>> {
+    tracing::debug!("Executing SQL query to get server with ID '{}'", id);
+
+    let server = sqlx::query_as::<_, Server>(
+        r#"
+        SELECT * FROM server_config
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch server by ID")?;
+
+    if let Some(ref s) = server {
+        tracing::debug!("Found server with ID '{}', name: {}", id, s.name);
+    } else {
+        tracing::debug!("No server found with ID '{}'", id);
+    }
+
+    Ok(server)
+}
+
+/// Create or update a server in the database
+pub async fn upsert_server(
+    pool: &Pool<Sqlite>,
+    server: &Server,
+) -> Result<String> {
+    tracing::debug!(
+        "Upserting server '{}', type: {}",
+        server.name,
+        server.server_type
+    );
+
+    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
+    let server_id = upsert_server_tx(&mut tx, server).await?;
+    tx.commit().await.context("Failed to commit transaction")?;
+
+    Ok(server_id)
+}
+
+/// Create or update a server in the database (transaction version)
+pub async fn upsert_server_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    server: &Server,
+) -> Result<String> {
+    // Generate an ID for the server if it doesn't have one
+    let server_id = if let Some(id) = &server.id {
+        id.clone()
+    } else {
+        format!("serv{}", nanoid!(12))
+    };
+
+    let result = sqlx::query(
+        r#"
+        INSERT INTO server_config (id, name, server_type, command, url, transport_type)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            server_type = excluded.server_type,
+            command = excluded.command,
+            url = excluded.url,
+            transport_type = excluded.transport_type,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(&server_id)
+    .bind(&server.name)
+    .bind(server.server_type)
+    .bind(&server.command)
+    .bind(&server.url)
+    .bind(server.transport_type)
+    .execute(&mut **tx)
+    .await
+    .context("Failed to upsert server")?;
+
+    if result.rows_affected() == 0 {
+        // If no rows were affected, get the existing ID
+        let existing_id = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT id FROM server_config
+            WHERE name = ?
+            "#,
+        )
+        .bind(&server.name)
+        .fetch_one(&mut **tx)
+        .await
+        .context("Failed to get server ID")?;
+
+        return Ok(existing_id);
+    }
+
+    Ok(server_id)
+}
+
+/// Delete a server from the database
+pub async fn delete_server(
+    pool: &Pool<Sqlite>,
+    name: &str,
+) -> Result<bool> {
+    tracing::debug!("Deleting server '{}'", name);
+
+    let result = sqlx::query(
+        r#"
+        DELETE FROM server_config
+        WHERE name = ?
+        "#,
+    )
+    .bind(name)
+    .execute(pool)
+    .await
+    .context("Failed to delete server")?;
+
+    Ok(result.rows_affected() > 0)
+}
