@@ -39,11 +39,14 @@ impl BridgeClient {
 
 impl ClientHandler for BridgeClient {
     fn get_info(&self) -> ClientInfo {
+        // get the appid from the environment variable
+        let appid = std::env::var("APPID").unwrap_or_default();
+
         ClientInfo {
             protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
-                name: "mcpmate-bridge-client".to_string(),
+                name: format!("mcpmate-bridge::{appid}"),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
         }
