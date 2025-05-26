@@ -38,8 +38,20 @@ pub fn get_info(_server: &HttpProxyServer) -> ServerInfo {
 pub async fn list_tools(
     server: &HttpProxyServer,
     _request: Option<PaginatedRequestParam>,
-    _context: RequestContext<RoleServer>,
+    context: RequestContext<RoleServer>,
 ) -> Result<ListToolsResult, McpError> {
+    // Get client information for potential schema adaptation
+    let client_name = context
+        .peer
+        .peer_info()
+        .map(|info| info.client_info.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    tracing::info!(
+        "Processing list_tools request from client: '{}'",
+        client_name
+    );
+
     // Get all tools from all connected servers
     let all_tools = crate::core::tool::get_all_tools(&server.connection_pool).await;
 
@@ -94,7 +106,7 @@ pub async fn list_tools(
             match operations::tool::is_tool_enabled(&db.pool, &server_name, &tool_name_for_db_check)
                 .await
             {
-                Ok(enabled) =>
+                Ok(enabled) => {
                     if enabled {
                         tracing::debug!(
                             "Including enabled tool '{}' from server '{}'",
@@ -110,7 +122,8 @@ pub async fn list_tools(
                             server_name
                         );
                         disabled_count += 1;
-                    },
+                    }
+                }
                 Err(e) => {
                     // Log the error but include the tool by default
                     tracing::warn!(
@@ -206,13 +219,14 @@ pub async fn call_tool(
             )
             .await
             {
-                Ok(enabled) =>
+                Ok(enabled) => {
                     if !enabled {
                         return Err(McpError::invalid_params(
                             format!("Tool '{tool_name_str}' is disabled"),
                             None,
                         ));
-                    },
+                    }
+                }
                 Err(e) => {
                     // Log the error but allow the tool call to proceed
                     tracing::warn!(
@@ -469,10 +483,11 @@ async fn update_tool_names_with_unique_names(
         SELECT server_name, tool_name, unique_name
         FROM config_suit_tool
         WHERE unique_name IS NOT NULL
-        "#
+        "#,
     )
     .fetch_all(pool)
-    .await {
+    .await
+    {
         Ok(configs) => configs,
         Err(e) => {
             tracing::error!("Failed to query tool configurations: {}", e);
@@ -505,13 +520,11 @@ async fn update_tool_names_with_unique_names(
             let original_tool_name = &mapping.upstream_tool_name;
 
             // Look up unique name
-            if let Some(unique_name) = name_map.get(&(server_name.clone(), original_tool_name.clone())) {
+            if let Some(unique_name) =
+                name_map.get(&(server_name.clone(), original_tool_name.clone()))
+            {
                 // Log name change
-                tracing::debug!(
-                    "Updating tool name: '{}' -> '{}'",
-                    tool.name,
-                    unique_name
-                );
+                tracing::debug!("Updating tool name: '{}' -> '{}'", tool.name, unique_name);
 
                 // Update tool name
                 tool.name = unique_name.clone().into();
@@ -526,7 +539,8 @@ async fn update_tool_names_with_unique_names(
 ///
 /// # Returns
 /// * `Result<HashMap<String, ToolMapping>>` - The tool name mapping
-async fn get_tool_name_mapping_for_tools() -> Result<HashMap<String, crate::core::tool::ToolMapping>, anyhow::Error> {
+async fn get_tool_name_mapping_for_tools()
+-> Result<HashMap<String, crate::core::tool::ToolMapping>, anyhow::Error> {
     // Use global proxy server instance to get tool mapping
     if let Some(server) = crate::http::proxy::get_proxy_server() {
         let mapping = get_tool_name_mapping(&server).await;
