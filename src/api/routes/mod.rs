@@ -3,6 +3,7 @@
 
 pub mod board;
 pub mod notifs;
+pub mod runtime;
 pub mod server;
 pub mod specs;
 pub mod suits;
@@ -29,6 +30,8 @@ pub struct AppState {
     pub http_proxy: Option<Arc<HttpProxyServer>>,
     /// Config Suit merge service
     pub suit_merge_service: Option<Arc<crate::core::suit::ConfigSuitMergeService>>,
+    /// Database reference for API operations
+    pub database: Option<Arc<crate::conf::database::Database>>,
 }
 
 /// Create the API router with all routes
@@ -72,11 +75,19 @@ fn create_router_internal(
         None
     };
 
+    // Get database reference from HTTP proxy if available
+    let database = if let Some(ref proxy) = http_proxy {
+        proxy.database.clone()
+    } else {
+        None
+    };
+
     let state = Arc::new(AppState {
         connection_pool,
         metrics_collector,
         http_proxy,
         suit_merge_service: config_suit_merge_service,
+        database,
     });
 
     // Create API router
@@ -85,7 +96,8 @@ fn create_router_internal(
         .merge(system::routes(state.clone()))
         .merge(notifs::routes(state.clone()))
         .merge(specs::routes(state.clone()))
-        .merge(suits::routes(state.clone()));
+        .merge(suits::routes(state.clone()))
+        .merge(runtime::routes(state.clone()));
 
     // Create main router with API routes and board static files
     // Note: API routes must come first to avoid being intercepted by board fallback

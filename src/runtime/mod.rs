@@ -33,7 +33,8 @@ pub use installers::{bun::BunInstaller, node::NodeInstaller, uv::UvInstaller};
 pub use list::list_runtime;
 pub use paths::{RuntimePaths, get_runtime_path, show_runtime_path};
 pub use types::{
-    Commands, DownloadConfig, DownloadProgress, DownloadStage, RuntimeError, RuntimeType,
+    Commands, DownloadConfig, DownloadProgress, DownloadStage, ExecutionContext, RuntimeError,
+    RuntimeType,
 };
 
 use anyhow::{Context, Result};

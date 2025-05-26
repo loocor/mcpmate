@@ -69,6 +69,7 @@ impl HttpProxyServer {
                     )),
                     http_proxy: None,
                     suit_merge_service: Some(merge_service.clone()),
+                    database: server.database.clone(),
                 });
 
                 // Call sync_server_connections with the app state

@@ -1,58 +1,88 @@
-//! MCPMate Runtime Manager - Enhanced Edition
+//! MCPMate Runtime Manager - CLI Edition
 //!
-//! This is an enhanced standalone executable for managing MCPMate's runtime environment.
-//! It provides advanced features like:
-//! - Progress tracking with visual progress bars
-//! - Configurable timeouts and retry mechanisms
-//! - Verbose logging and detailed error reporting
-//! - Quiet mode with event publishing for integration with main program
+//! This is a standalone executable for managing MCPMate's runtime environment via CLI.
+//! It focuses on two core commands: `install` and `list`.
 //!
-//! For basic usage, all original commands (install, list, check, path) are supported
-//! with enhanced capabilities.
+//! - `install`: Installs specified runtimes (Node.js, uv, Bun) with progress tracking,
+//!   configurable timeouts, retries, verbose logging, and quiet mode for integration.
+//! - `list`: Displays the status (availability and path) of all managed runtimes.
+//!
+//! This CLI directly reflects the simplified API structure where detailed runtime
+//! information is primarily accessed via the GET /api/runtime/list endpoint.
 
 use anyhow::Result;
 use clap::Parser;
 use mcpmate::runtime::{
-    Commands, RuntimeManager, RuntimeType, cli::handle_install_command, list_runtime,
-    show_runtime_path,
+    Commands, ExecutionContext, RuntimeManager, RuntimeType, cli::handle_install_command,
 };
 
 #[derive(Parser)]
 #[command(name = "runtime")]
-#[command(about = "MCPMate Runtime Manager with enhanced download features")]
+#[command(about = "MCPMate Runtime Manager - CLI Edition (install & list commands only)")]
 #[command(version)]
-#[command(long_about = "
-MCPMate Runtime Manager provides comprehensive management of runtime environments
-including Node.js, uv (Python), and Bun.js. This enhanced version includes:
+#[command(long_about = r#"
+MCPMate Runtime Manager (CLI Edition)
 
-• Progress tracking with visual indicators
-• Configurable download timeouts and retries
-• Verbose logging for troubleshooting
-• Interactive timeout handling with network diagnostics
-• Intelligent network connectivity analysis
-• Quiet mode with event publishing for main program integration
+Manages runtime environments (Node.js, uv, Bun) with two core commands:
+
+1. `install`: Installs runtimes with advanced features:
+   - Progress tracking with visual indicators
+   - Configurable download timeouts and retries
+   - Verbose logging for troubleshooting
+   - Interactive timeout handling with network diagnostics
+   - Quiet mode with event publishing for integration
+
+2. `list`: Displays the status of all managed runtimes:
+   - Availability (installed or not)
+   - Installation path (if available)
+
+API Alignment:
+  This CLI aligns with the simplified API where GET /api/runtime/list (with optional
+  query parameters) provides comprehensive runtime information, replacing separate
+  check/path endpoints.
 
 Examples:
   runtime install node --verbose                    # Install Node.js with verbose output
   runtime install uv --timeout 600 --interactive    # Install uv with extended timeout and interactive mode
   runtime install bun --max-retries 5               # Install Bun with more retry attempts
   runtime install node --quiet --database /path/to/db.sqlite3  # Quiet mode with database integration
-  runtime list                                       # List all installed runtimes
-  runtime check node                                 # Check Node.js installation
-  runtime path uv                                    # Get uv installation path
-")]
+  runtime list                                       # List status of all runtimes (availability and path)
+"#)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+// Helper to display status for a single runtime, used by the list command
+fn display_single_runtime_status(
+    manager: &RuntimeManager,
+    runtime_type: RuntimeType,
+) -> Result<()> {
+    println!("{}:", runtime_type);
+    match manager.is_runtime_available(runtime_type, None) {
+        Ok(true) => {
+            print!("  ✓ Available");
+            if let Ok(path) = manager.get_runtime_path(runtime_type, None) {
+                println!(", Path: {}", path.display());
+            } else {
+                println!(", Path: <Not Found>");
+            }
+        }
+        Ok(false) => {
+            println!("  ✗ Not Installed");
+        }
+        Err(e) => {
+            println!("  ⚠️ Error checking status: {}", e);
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize tracing only if not in quiet mode
     let is_quiet = matches!(cli.command, Commands::Install { quiet: true, .. });
-
     if !is_quiet {
         tracing_subscriber::fmt::init();
     }
@@ -77,57 +107,21 @@ async fn main() -> Result<()> {
                 interactive,
                 quiet,
                 database,
+                ExecutionContext::Cli,
             )
             .await?;
         }
         Commands::List => {
             let manager = RuntimeManager::new()?;
-            println!("Installed runtime environments:");
+            println!("MCPMate Runtime Status (CLI):");
 
-            // List Node.js environments
-            println!("\nNode.js:");
-            list_runtime(&manager, RuntimeType::Node)?;
-
-            // List uv/Python environments
-            println!("\nuv/Python:");
-            list_runtime(&manager, RuntimeType::Uv)?;
-
-            // List Bun.js environments
-            println!("\nBun.js:");
-            list_runtime(&manager, RuntimeType::Bun)?;
-        }
-        Commands::Check {
-            runtime_type,
-            version,
-        } => {
-            let manager = RuntimeManager::new()?;
-            match manager.is_runtime_available(runtime_type, version.as_deref()) {
-                Ok(true) => {
-                    println!("✓ {} is available", runtime_type);
-                    if let Ok(path) = manager.get_runtime_path(runtime_type, version.as_deref()) {
-                        println!("  Path: {}", path.display());
-                    }
-                }
-                Ok(false) => {
-                    println!("✗ {} is not installed", runtime_type);
-                    println!("  Run 'runtime install {}' to install it", runtime_type);
-                }
-                Err(e) => {
-                    eprintln!("Error checking runtime: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::Path {
-            runtime_type,
-            version,
-        } => match show_runtime_path(runtime_type, version.as_deref()) {
-            Ok(()) => {}
-            Err(e) => {
-                eprintln!("Error getting runtime path: {}", e);
-                std::process::exit(1);
-            }
-        },
+            display_single_runtime_status(&manager, RuntimeType::Node)?;
+            println!(); // Add a blank line for separation
+            display_single_runtime_status(&manager, RuntimeType::Uv)?;
+            println!(); // Add a blank line for separation
+            display_single_runtime_status(&manager, RuntimeType::Bun)?;
+        } // Check and Path commands are removed from the Commands enum
+          // and therefore no longer matched here.
     }
 
     Ok(())

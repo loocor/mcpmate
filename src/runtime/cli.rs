@@ -15,6 +15,7 @@ use super::{
         send_runtime_setup_failed_event,
     },
     supports_inline_progress, supports_interactive,
+    types::ExecutionContext,
 };
 
 /// Progress callback type alias
@@ -30,6 +31,7 @@ pub async fn handle_install_command(
     interactive: bool,
     quiet: bool,
     database: Option<String>,
+    context: ExecutionContext,
 ) -> Result<()> {
     // Send start event in quiet mode
     if quiet {
@@ -65,16 +67,25 @@ pub async fn handle_install_command(
         runtime_type,
         version.clone(),
         quiet,
+        context,
     );
 
     // Perform the download
     match download_runtime_with_config(runtime_type, version.as_deref(), config).await {
         Ok(path) => {
-            handle_install_success(runtime_type, version, path, quiet, database, progress_bar)
-                .await?;
+            handle_install_success(
+                runtime_type,
+                version,
+                path,
+                quiet,
+                database,
+                progress_bar,
+                context,
+            )
+            .await?;
         }
         Err(e) => {
-            handle_install_failure(runtime_type, e, quiet, progress_bar).await?;
+            handle_install_failure(runtime_type, e, quiet, progress_bar, context).await?;
         }
     }
 
@@ -91,21 +102,38 @@ fn create_download_config(
     runtime_type: RuntimeType,
     version: Option<String>,
     quiet: bool,
+    context: ExecutionContext,
 ) -> DownloadConfig {
     let progress_callback: Option<ProgressCallback> = Some(Box::new({
         let progress_bar = progress_bar.clone();
         let version = version.clone();
         move |progress: DownloadProgress| {
-            if quiet {
-                // Send events in quiet mode
-                send_download_progress_events(runtime_type, &progress.stage, version.as_deref());
-            } else if let Some(bar) = &progress_bar {
-                if let Ok(mut bar) = bar.lock() {
-                    bar.update(&progress);
+            match context {
+                ExecutionContext::Api => {
+                    // API mode: always send events
+                    send_download_progress_events(
+                        runtime_type,
+                        &progress.stage,
+                        version.as_deref(),
+                    );
                 }
-            } else {
-                // Fallback to multi-line progress
-                MultiLineProgress::update(&progress);
+                ExecutionContext::Cli => {
+                    if quiet {
+                        // CLI quiet mode: send events
+                        send_download_progress_events(
+                            runtime_type,
+                            &progress.stage,
+                            version.as_deref(),
+                        );
+                    } else if let Some(bar) = &progress_bar {
+                        if let Ok(mut bar) = bar.lock() {
+                            bar.update(&progress);
+                        }
+                    } else {
+                        // Fallback to multi-line progress
+                        MultiLineProgress::update(&progress);
+                    }
+                }
             }
         }
     }));
@@ -127,6 +155,7 @@ async fn handle_install_success(
     quiet: bool,
     database: Option<String>,
     progress_bar: Option<Arc<Mutex<InlineProgressBar>>>,
+    context: ExecutionContext,
 ) -> Result<()> {
     if let Some(bar) = progress_bar {
         if let Ok(bar) = bar.lock() {
@@ -136,24 +165,43 @@ async fn handle_install_success(
 
     let version_str = version.unwrap_or_else(|| runtime_type.default_version().to_string());
 
-    if quiet {
-        // Save to database if database path provided
-        if let Some(db_path) = database {
-            if let Err(e) =
-                save_runtime_config_to_db(&db_path, runtime_type, &version_str, &path).await
-            {
-                send_runtime_setup_failed_event(
-                    runtime_type,
-                    &format!("Failed to save config to database: {}", e),
-                );
-                std::process::exit(1);
+    match context {
+        ExecutionContext::Api => {
+            // API mode: save to database if provided, return error on failure
+            if let Some(db_path) = database {
+                if let Err(e) =
+                    save_runtime_config_to_db(&db_path, runtime_type, &version_str, &path).await
+                {
+                    send_runtime_setup_failed_event(
+                        runtime_type,
+                        &format!("Failed to save config to database: {}", e),
+                    );
+                    return Err(e);
+                }
+            }
+            // Send success event
+            send_runtime_ready_event(runtime_type, &version_str, &path);
+        }
+        ExecutionContext::Cli => {
+            if quiet {
+                // Save to database if database path provided
+                if let Some(db_path) = database {
+                    if let Err(e) =
+                        save_runtime_config_to_db(&db_path, runtime_type, &version_str, &path).await
+                    {
+                        send_runtime_setup_failed_event(
+                            runtime_type,
+                            &format!("Failed to save config to database: {}", e),
+                        );
+                        std::process::exit(1);
+                    }
+                }
+                // Send success event
+                send_runtime_ready_event(runtime_type, &version_str, &path);
+            } else {
+                println!("Runtime installed successfully at: {}", path.display());
             }
         }
-
-        // Send success event
-        send_runtime_ready_event(runtime_type, &version_str, &path);
-    } else {
-        println!("Runtime installed successfully at: {}", path.display());
     }
 
     Ok(())
@@ -165,6 +213,7 @@ async fn handle_install_failure(
     e: anyhow::Error,
     quiet: bool,
     progress_bar: Option<Arc<Mutex<InlineProgressBar>>>,
+    context: ExecutionContext,
 ) -> Result<()> {
     if let Some(bar) = progress_bar {
         if let Ok(bar) = bar.lock() {
@@ -172,27 +221,36 @@ async fn handle_install_failure(
         }
     }
 
-    if quiet {
-        send_runtime_setup_failed_event(runtime_type, &e.to_string());
-    } else {
-        eprintln!("Failed to install runtime: {}", e);
+    match context {
+        ExecutionContext::Api => {
+            // API mode: send event and return error
+            send_runtime_setup_failed_event(runtime_type, &e.to_string());
+            Err(e)
+        }
+        ExecutionContext::Cli => {
+            // CLI mode: handle as before with exit
+            if quiet {
+                send_runtime_setup_failed_event(runtime_type, &e.to_string());
+            } else {
+                eprintln!("Failed to install runtime: {}", e);
 
-        // Provide helpful suggestions based on error type
-        let error_str = e.to_string();
-        if error_str.contains("timeout") {
-            eprintln!();
-            eprintln!("💡 Timeout suggestions:");
-            eprintln!("   • Use --timeout <seconds> to increase timeout duration");
-            eprintln!("   • Use --interactive flag for timeout handling options");
-            eprintln!("   • Check your network connection");
-        } else if error_str.contains("network") || error_str.contains("DNS") {
-            eprintln!();
-            eprintln!("💡 Network suggestions:");
-            eprintln!("   • Check your internet connection");
-            eprintln!("   • Try using a different DNS server (8.8.8.8, 1.1.1.1)");
-            eprintln!("   • Check if you're behind a firewall or proxy");
+                // Provide helpful suggestions based on error type
+                let error_str = e.to_string();
+                if error_str.contains("timeout") {
+                    eprintln!();
+                    eprintln!("💡 Timeout suggestions:");
+                    eprintln!("   • Use --timeout <seconds> to increase timeout duration");
+                    eprintln!("   • Use --interactive flag for timeout handling options");
+                    eprintln!("   • Check your network connection");
+                } else if error_str.contains("network") || error_str.contains("DNS") {
+                    eprintln!();
+                    eprintln!("💡 Network suggestions:");
+                    eprintln!("   • Check your internet connection");
+                    eprintln!("   • Try using a different DNS server (8.8.8.8, 1.1.1.1)");
+                    eprintln!("   • Check if you're behind a firewall or proxy");
+                }
+            }
+            std::process::exit(1);
         }
     }
-
-    std::process::exit(1);
 }

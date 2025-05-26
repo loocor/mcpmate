@@ -127,8 +127,22 @@ impl fmt::Display for RuntimeType {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        write!(f, "{}", self.as_str())
+        match self {
+            RuntimeType::Node => write!(f, "node"),
+            RuntimeType::Uv => write!(f, "uv"),
+            RuntimeType::Bun => write!(f, "bun"),
+        }
     }
+}
+
+/// Execution context for runtime operations
+/// Determines whether operations are running in CLI or API mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionContext {
+    /// CLI mode - allows process exit and console output
+    Cli,
+    /// API mode - returns errors, no console output
+    Api,
 }
 
 impl FromStr for RuntimeType {
@@ -368,22 +382,6 @@ pub enum Commands {
     },
     /// List installed runtime environments
     List,
-    /// Check runtime environment status
-    Check {
-        /// Runtime type (node, uv, bun)
-        #[arg(value_parser = parse_runtime_type)]
-        runtime_type: RuntimeType,
-        /// Version number (optional)
-        #[arg(short, long)]
-        version: Option<String>,
-    },
-    /// Get runtime environment path
-    Path {
-        /// Runtime type (node, uv, bun)
-        #[arg(value_parser = parse_runtime_type)]
-        runtime_type: RuntimeType,
-        /// Version number (optional)
-        #[arg(short, long)]
-        version: Option<String>,
-    },
+    // Check and Path commands are removed to align with simplified API structure
+    // Functionality is covered by `list` in API, and CLI `list` shows all details.
 }

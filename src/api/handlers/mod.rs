@@ -3,6 +3,7 @@
 
 pub mod instance;
 pub mod notifs;
+pub mod runtime;
 pub mod server;
 pub mod specs;
 pub mod suits;
