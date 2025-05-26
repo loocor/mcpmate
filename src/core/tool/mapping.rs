@@ -49,12 +49,15 @@ pub async fn build_tool_mapping(
                 }
 
                 // Add the tool to the mapping
-                tool_mapping.insert(tool.name.to_string(), ToolMapping {
-                    server_name: server_name.clone(),
-                    instance_id: instance_id.clone(),
-                    tool: tool.clone(),
-                    upstream_tool_name: tool.name.to_string(),
-                });
+                tool_mapping.insert(
+                    tool.name.to_string(),
+                    ToolMapping {
+                        server_name: server_name.clone(),
+                        instance_id: instance_id.clone(),
+                        tool: tool.clone(),
+                        upstream_tool_name: tool.name.to_string(),
+                    },
+                );
             }
         }
     }

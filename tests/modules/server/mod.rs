@@ -1,5 +1,5 @@
 //! Server tests
-//! 
+//!
 //! Tests for server connection and lifecycle management.
 
 // Server test modules

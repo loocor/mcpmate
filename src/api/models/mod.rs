@@ -1,8 +1,8 @@
 // MCP Proxy API models module
 // Contains data models for API requests and responses
 
-pub mod server;
 pub mod notifs;
+pub mod server;
 pub mod suits;
 pub mod system;
 

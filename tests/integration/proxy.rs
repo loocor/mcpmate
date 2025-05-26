@@ -22,14 +22,17 @@ use tokio::sync::Mutex;
 async fn test_tool_mapping() -> Result<()> {
     // Create test configuration
     let config = Config {
-        mcp_servers: HashMap::from([("test_server".to_string(), MCPServerConfig {
-            kind: mcpmate::common::types::ServerType::Stdio,
-            command: Some("echo".to_string()),
-            args: None,
-            url: None,
-            env: None,
-            transport_type: None,
-        })]),
+        mcp_servers: HashMap::from([(
+            "test_server".to_string(),
+            MCPServerConfig {
+                kind: mcpmate::common::types::ServerType::Stdio,
+                command: Some("echo".to_string()),
+                args: None,
+                url: None,
+                env: None,
+                transport_type: None,
+            },
+        )]),
     };
 
     // Create connection pool
@@ -71,14 +74,17 @@ async fn test_tool_mapping() -> Result<()> {
 async fn test_tool_calling() -> Result<()> {
     // Create test configuration
     let config = Config {
-        mcp_servers: HashMap::from([("test_server".to_string(), MCPServerConfig {
-            kind: mcpmate::common::types::ServerType::Stdio,
-            command: Some("echo".to_string()),
-            args: None,
-            url: None,
-            env: None,
-            transport_type: None,
-        })]),
+        mcp_servers: HashMap::from([(
+            "test_server".to_string(),
+            MCPServerConfig {
+                kind: mcpmate::common::types::ServerType::Stdio,
+                command: Some("echo".to_string()),
+                args: None,
+                url: None,
+                env: None,
+                transport_type: None,
+            },
+        )]),
     };
 
     // Create connection pool
@@ -126,14 +132,17 @@ async fn test_tool_calling() -> Result<()> {
 async fn test_error_handling() -> Result<()> {
     // Create test configuration
     let config = Config {
-        mcp_servers: HashMap::from([("test_server".to_string(), MCPServerConfig {
-            kind: mcpmate::common::types::ServerType::Stdio,
-            command: Some("echo".to_string()),
-            args: None,
-            url: None,
-            env: None,
-            transport_type: None,
-        })]),
+        mcp_servers: HashMap::from([(
+            "test_server".to_string(),
+            MCPServerConfig {
+                kind: mcpmate::common::types::ServerType::Stdio,
+                command: Some("echo".to_string()),
+                args: None,
+                url: None,
+                env: None,
+                transport_type: None,
+            },
+        )]),
     };
 
     // Create connection pool

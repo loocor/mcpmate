@@ -48,27 +48,22 @@ pub async fn list_servers(
         };
 
         // Get server enabled status from config suits (enabled_in_suits)
-        let enabled_in_suits = match crate::conf::server::is_server_enabled_in_any_suit(
-            &db.pool, &server_id,
-        )
-        .await
-        {
-            Ok(enabled) => enabled,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to check if server '{}' is enabled in suits: {}",
-                    name,
-                    e
-                );
-                false // Default to false if there's an error
-            }
-        };
+        let enabled_in_suits =
+            match crate::conf::server::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
+                Ok(enabled) => enabled,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to check if server '{}' is enabled in suits: {}",
+                        name,
+                        e
+                    );
+                    false // Default to false if there's an error
+                }
+            };
 
         // Get server global enabled status
         let globally_enabled =
-            match crate::conf::server::get_server_global_status(&db.pool, &server_id)
-                .await
-            {
+            match crate::conf::server::get_server_global_status(&db.pool, &server_id).await {
                 Ok(Some(enabled)) => enabled,
                 Ok(None) => {
                     tracing::warn!(
@@ -149,12 +144,13 @@ pub async fn list_servers(
         // Get server environment variables if available
         let env = if !server_id.is_empty() {
             match crate::conf::server::get_server_env(&db.pool, &server_id).await {
-                Ok(env_map) =>
+                Ok(env_map) => {
                     if env_map.is_empty() {
                         None
                     } else {
                         Some(env_map)
-                    },
+                    }
+                }
                 Err(e) => {
                     tracing::warn!(
                         "Failed to get environment variables for server '{}': {}",
@@ -265,8 +261,7 @@ pub async fn get_server(
 
     // Get server global enabled status
     let globally_enabled =
-        match crate::conf::server::get_server_global_status(&db.pool, &server_id).await
-        {
+        match crate::conf::server::get_server_global_status(&db.pool, &server_id).await {
             Ok(Some(enabled)) => enabled,
             Ok(None) => {
                 tracing::warn!(
@@ -362,12 +357,13 @@ pub async fn get_server(
     // Get server environment variables if available
     let env = if !server_id.is_empty() {
         match crate::conf::server::get_server_env(&db.pool, &server_id).await {
-            Ok(env_map) =>
+            Ok(env_map) => {
                 if env_map.is_empty() {
                     None
                 } else {
                     Some(env_map)
-                },
+                }
+            }
             Err(e) => {
                 tracing::warn!(
                     "Failed to get environment variables for server '{}': {}",

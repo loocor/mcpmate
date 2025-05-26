@@ -2,13 +2,10 @@
 // Contains operations for managing server metadata (description, author, etc.)
 
 use anyhow::{Context, Result};
-use nanoid::nanoid;
 use sqlx::{Pool, Sqlite};
 
-use crate::conf::{
-    models::ServerMeta,
-    operations::utils::get_server_name,
-};
+use crate::conf::{models::ServerMeta, operations::utils::get_server_name};
+use crate::generate_id;
 
 /// Get server metadata from the database
 pub async fn get_server_meta(
@@ -51,7 +48,7 @@ pub async fn upsert_server_meta(
     let meta_id = if let Some(id) = &meta.id {
         id.clone()
     } else {
-        format!("smet{}", nanoid!(12))
+        generate_id!("smet")
     };
 
     // Get the server name

@@ -1,13 +1,14 @@
 use anyhow::Result;
-use mcpmate::{
-    api::ApiServer,
-    conf::server,
-    core::{ConnectionStatus, TransportType},
-    http::HttpProxyServer,
-};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use super::Args;
+
+// Import required types and modules from our library crate
+use mcpmate::api::ApiServer;
+use mcpmate::conf::server;
+use mcpmate::core::{ConnectionStatus, TransportType};
+use mcpmate::http::HttpProxyServer;
+use mcpmate::http::pool::UpstreamConnectionPool;
 
 /// Start background connections to all configured servers
 pub async fn start_background_connections(
@@ -15,7 +16,8 @@ pub async fn start_background_connections(
     proxy_arc: Arc<HttpProxyServer>,
 ) -> Result<()> {
     // Get a reference to the connection pool
-    let connection_pool = Arc::clone(&proxy.connection_pool);
+    let connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>> =
+        Arc::clone(&proxy.connection_pool);
     let proxy_arc_clone = Arc::clone(&proxy_arc);
 
     // Connect to all servers in the background
@@ -32,7 +34,7 @@ pub async fn start_background_connections(
         }
 
         // Get the total number of servers in the database
-        let total_server_count_in_db = if let Some(db) = &proxy_arc_clone.database {
+        let total_server_count_in_db = if let Some(db) = &(proxy_arc_clone).database {
             match server::get_all_servers(&db.pool).await {
                 Ok(servers) => servers.len(),
                 Err(e) => {
@@ -75,7 +77,10 @@ pub async fn start_background_connections(
 }
 
 /// Start the MCP proxy server with specified transport
-pub async fn start_proxy_server(proxy: &mut HttpProxyServer, args: &Args) -> Result<()> {
+pub async fn start_proxy_server(
+    proxy: &mut HttpProxyServer,
+    args: &Args,
+) -> Result<()> {
     // Start proxy server with specified transport
     let mcp_bind_address = format!("127.0.0.1:{}", args.port).parse()?;
 

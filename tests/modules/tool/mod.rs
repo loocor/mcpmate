@@ -1,5 +1,5 @@
 //! Tool tests
-//! 
+//!
 //! Tests for tool calling, mapping, and routing.
 
 // Tool test modules

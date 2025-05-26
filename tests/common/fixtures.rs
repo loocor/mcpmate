@@ -10,13 +10,13 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use mcpmate::generate_id;
 use mcpmate::{
     common::types::{EnabledStatus, ServerType},
     conf::models::Server,
     http::pool::UpstreamConnectionPool,
 };
 use rmcp::model::Tool;
-use nanoid::nanoid;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
 
@@ -164,7 +164,7 @@ impl ServerFixture {
     ) -> Result<()> {
         // Create a server config
         let _server = Server {
-            id: Some(format!("ssrv{}", nanoid!(12))),
+            id: Some(generate_id!("ssrv")),
             name: self.name.clone(),
             server_type: self.kind,
             command: self.command.clone(),
@@ -201,7 +201,7 @@ impl ServerFixture {
     /// Convert to a Server model
     pub fn to_server(&self) -> Server {
         Server {
-            id: Some(format!("ssrv{}", nanoid!(12))),
+            id: Some(generate_id!("ssrv")),
             name: self.name.clone(),
             server_type: self.kind,
             command: self.command.clone(),

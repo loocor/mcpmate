@@ -19,19 +19,18 @@ pub async fn set_tool_enabled(
     if let Some(server) = server {
         if let Some(server_id) = &server.id {
             // Get all active config suits
-            let active_suits = crate::conf::operations::suit::get_active_config_suits(pool).await?;
+            let active_suits = crate::conf::suit::get_active_config_suits(pool).await?;
 
             // If there are no active suits, try to get the default suit
             if active_suits.is_empty() {
-                let default_suit =
-                    crate::conf::operations::suit::get_default_config_suit(pool).await?;
+                let default_suit = crate::conf::suit::get_default_config_suit(pool).await?;
 
                 // If there's no default suit, try the legacy "default" named suit
                 let suit_id = if let Some(suit) = default_suit {
                     suit.id.unwrap()
                 } else {
                     let legacy_default =
-                        crate::conf::operations::get_config_suit_by_name(pool, "default").await?;
+                        crate::conf::suit::get_config_suit_by_name(pool, "default").await?;
 
                     // If there's no legacy default suit either, create a new default suit
                     if let Some(suit) = legacy_default {
@@ -48,12 +47,12 @@ pub async fn set_tool_enabled(
                         new_suit.is_active = true;
                         new_suit.is_default = true;
                         new_suit.multi_select = true;
-                        crate::conf::operations::upsert_config_suit(pool, &new_suit).await?
+                        crate::conf::suit::upsert_config_suit(pool, &new_suit).await?
                     }
                 };
 
                 // Add the tool to the config suit
-                let tool_id = crate::conf::operations::suit::add_tool_to_config_suit(
+                let tool_id = crate::conf::suit::add_tool_to_config_suit(
                     pool, &suit_id, server_id, tool_name, enabled,
                 )
                 .await?;
@@ -67,7 +66,7 @@ pub async fn set_tool_enabled(
             for suit in active_suits {
                 if let Some(suit_id) = &suit.id {
                     // Add the tool to the config suit
-                    let tool_id = crate::conf::operations::suit::add_tool_to_config_suit(
+                    let tool_id = crate::conf::suit::add_tool_to_config_suit(
                         pool, suit_id, server_id, tool_name, enabled,
                     )
                     .await?;
@@ -99,14 +98,14 @@ pub async fn get_tool_id(
     if let Some(server) = server {
         if let Some(server_id) = &server.id {
             // Get the default config suit
-            let default_suit = crate::conf::operations::suit::get_default_config_suit(pool).await?;
+            let default_suit = crate::conf::suit::get_default_config_suit(pool).await?;
 
             // If there's no default suit, try the legacy "default" named suit
             let suit_id = if let Some(suit) = default_suit {
                 suit.id.unwrap()
             } else {
                 let legacy_default =
-                    crate::conf::operations::get_config_suit_by_name(pool, "default").await?;
+                    crate::conf::suit::get_config_suit_by_name(pool, "default").await?;
 
                 // If there's no legacy default suit either, return None
                 if legacy_default.is_none() {
@@ -117,7 +116,7 @@ pub async fn get_tool_id(
             };
 
             // Get all tools in this suit
-            let tools = crate::conf::operations::get_config_suit_tools(pool, &suit_id).await?;
+            let tools = crate::conf::suit::get_config_suit_tools(pool, &suit_id).await?;
 
             // Find the tool in this suit
             for tool_config in tools {
@@ -206,17 +205,16 @@ pub async fn is_tool_enabled(
     if let Some(server) = server {
         if let Some(server_id) = &server.id {
             // Get all active config suits
-            let active_suits = crate::conf::operations::suit::get_active_config_suits(pool).await?;
+            let active_suits = crate::conf::suit::get_active_config_suits(pool).await?;
 
             // If there are no active suits, try to get the default suit
             if active_suits.is_empty() {
-                let default_suit =
-                    crate::conf::operations::suit::get_default_config_suit(pool).await?;
+                let default_suit = crate::conf::suit::get_default_config_suit(pool).await?;
 
                 // If there's no default suit, try the legacy "default" named suit
                 if default_suit.is_none() {
                     let legacy_default =
-                        crate::conf::operations::get_config_suit_by_name(pool, "default").await?;
+                        crate::conf::suit::get_config_suit_by_name(pool, "default").await?;
 
                     // If there's no legacy default suit either, the tool is enabled by default
                     if legacy_default.is_none() {
@@ -246,7 +244,7 @@ pub async fn is_tool_enabled(
                 if let Some(suit_id) = &suit.id {
                     // Check server status in this suit
                     let server_configs =
-                        crate::conf::operations::get_config_suit_servers(pool, suit_id).await?;
+                        crate::conf::suit::get_config_suit_servers(pool, suit_id).await?;
 
                     for server_config in server_configs {
                         if server_config.server_id == *server_id {
@@ -261,8 +259,7 @@ pub async fn is_tool_enabled(
                     }
 
                     // Check tool status in this suit
-                    let tools =
-                        crate::conf::operations::get_config_suit_tools(pool, suit_id).await?;
+                    let tools = crate::conf::suit::get_config_suit_tools(pool, suit_id).await?;
 
                     for tool_config in tools {
                         if tool_config.server_id == *server_id && tool_config.tool_name == tool_name
@@ -309,8 +306,7 @@ pub async fn is_tool_enabled(
 
                 for suit in &active_suits {
                     if let Some(suit_id) = &suit.id {
-                        let tools =
-                            crate::conf::operations::get_config_suit_tools(pool, suit_id).await?;
+                        let tools = crate::conf::suit::get_config_suit_tools(pool, suit_id).await?;
                         if tools.iter().any(|t| t.server_id == *server_id) {
                             has_tool_configs = true;
                             break;
@@ -358,7 +354,7 @@ async fn is_tool_enabled_in_suit(
     suit_id: &str,
 ) -> Result<bool> {
     // Get server configuration in this suit
-    let servers = crate::conf::operations::get_config_suit_servers(pool, suit_id).await?;
+    let servers = crate::conf::suit::get_config_suit_servers(pool, suit_id).await?;
 
     // Find the server in this suit
     for server_config in servers {
@@ -375,7 +371,7 @@ async fn is_tool_enabled_in_suit(
             }
 
             // Check if there's a specific tool configuration in this suit
-            let tools = crate::conf::operations::get_config_suit_tools(pool, suit_id).await?;
+            let tools = crate::conf::suit::get_config_suit_tools(pool, suit_id).await?;
 
             // Count tools for this server
             let server_tools = tools.iter().filter(|t| t.server_id == *server_id).count();

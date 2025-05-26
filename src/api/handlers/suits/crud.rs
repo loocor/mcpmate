@@ -3,9 +3,8 @@
 
 use std::str::FromStr;
 
-use nanoid::nanoid;
-
 use super::common::*;
+use crate::generate_id;
 
 /// Create a new configuration suit
 pub async fn create_suit(
@@ -16,12 +15,9 @@ pub async fn create_suit(
     let db = get_database(&state).await?;
 
     // Check if a suit with the same name already exists
-    let existing_suit =
-        crate::conf::operations::suit::get_config_suit_by_name(&db.pool, &payload.name)
-            .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to check configuration suit: {e}"))
-            })?;
+    let existing_suit = crate::conf::suit::get_config_suit_by_name(&db.pool, &payload.name)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to check configuration suit: {e}")))?;
 
     if existing_suit.is_some() {
         return Err(ApiError::Conflict(format!(
@@ -63,13 +59,13 @@ pub async fn create_suit(
     }
 
     // Generate an id for the new suit
-    let suit_id = format!("suit{}", nanoid!(12));
+    let suit_id = generate_id!("suit");
     new_suit.id = Some(suit_id.clone());
 
     // If cloning from existing suit, copy server and tool associations
     if let Some(clone_from_id) = payload.clone_from_id {
         // Check if the source suit exists
-        let source_suit = crate::conf::operations::suit::get_config_suit(&db.pool, &clone_from_id)
+        let source_suit = crate::conf::suit::get_config_suit(&db.pool, &clone_from_id)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!("Failed to get source configuration suit: {e}"))
@@ -88,23 +84,22 @@ pub async fn create_suit(
             })?;
 
         // Insert the new suit
-        crate::conf::operations::suit::upsert_config_suit_tx(&mut tx, &new_suit)
+        crate::conf::suit::upsert_config_suit_tx(&mut tx, &new_suit)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!("Failed to create configuration suit: {e}"))
             })?;
 
         // Copy server associations
-        let server_configs =
-            crate::conf::operations::get_config_suit_servers(&db.pool, &clone_from_id)
-                .await
-                .map_err(|e| {
-                    ApiError::InternalError(format!("Failed to get server configurations: {e}"))
-                })?;
+        let server_configs = crate::conf::suit::get_config_suit_servers(&db.pool, &clone_from_id)
+            .await
+            .map_err(|e| {
+                ApiError::InternalError(format!("Failed to get server configurations: {e}"))
+            })?;
 
         for server_config in server_configs {
             let new_server_config = ConfigSuitServer {
-                id: Some(format!("ssrv{}", nanoid!(12))),
+                id: Some(generate_id!("ssrv")),
                 config_suit_id: suit_id.clone(),
                 server_id: server_config.server_id.clone(),
                 enabled: server_config.enabled,
@@ -145,7 +140,7 @@ pub async fn create_suit(
             );
 
             let new_tool_config = ConfigSuitTool {
-                id: Some(format!("stol{}", nanoid!(12))),
+                id: Some(generate_id!("stol")),
                 config_suit_id: suit_id.clone(),
                 server_id: tool_config.server_id.clone(),
                 server_name: tool_config.server_name.clone(),
@@ -182,7 +177,7 @@ pub async fn create_suit(
             .map_err(|e| ApiError::InternalError(format!("Failed to commit transaction: {e}")))?;
     } else {
         // Insert the new suit without cloning
-        crate::conf::operations::suit::upsert_config_suit(&db.pool, &new_suit)
+        crate::conf::suit::upsert_config_suit(&db.pool, &new_suit)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!("Failed to create configuration suit: {e}"))
@@ -190,7 +185,7 @@ pub async fn create_suit(
     }
 
     // Get the created suit
-    let created_suit = crate::conf::operations::suit::get_config_suit(&db.pool, &suit_id)
+    let created_suit = crate::conf::suit::get_config_suit(&db.pool, &suit_id)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to get created configuration suit: {e}"))
@@ -214,7 +209,7 @@ pub async fn update_suit(
     let db = get_database(&state).await?;
 
     // Get the existing suit
-    let existing_suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
+    let existing_suit = crate::conf::suit::get_config_suit(&db.pool, &id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
@@ -232,12 +227,11 @@ pub async fn update_suit(
     if let Some(name) = payload.name {
         // Check if the new name is already used by another suit
         if name != suit.name {
-            let existing_suit =
-                crate::conf::operations::suit::get_config_suit_by_name(&db.pool, &name)
-                    .await
-                    .map_err(|e| {
-                        ApiError::InternalError(format!("Failed to check configuration suit: {e}"))
-                    })?;
+            let existing_suit = crate::conf::suit::get_config_suit_by_name(&db.pool, &name)
+                .await
+                .map_err(|e| {
+                    ApiError::InternalError(format!("Failed to check configuration suit: {e}"))
+                })?;
 
             if let Some(existing) = existing_suit {
                 if existing.id != suit.id {
@@ -284,14 +278,14 @@ pub async fn update_suit(
     }
 
     // Update the suit
-    crate::conf::operations::suit::upsert_config_suit(&db.pool, &suit)
+    crate::conf::suit::upsert_config_suit(&db.pool, &suit)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to update configuration suit: {e}"))
         })?;
 
     // Get the updated suit
-    let updated_suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
+    let updated_suit = crate::conf::suit::get_config_suit(&db.pool, &id)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to get updated configuration suit: {e}"))
@@ -314,7 +308,7 @@ pub async fn delete_suit(
     let db = get_database(&state).await?;
 
     // Get the suit to check if it exists and get its name
-    let suit = crate::conf::operations::suit::get_config_suit(&db.pool, &id)
+    let suit = crate::conf::suit::get_config_suit(&db.pool, &id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
@@ -336,7 +330,7 @@ pub async fn delete_suit(
     }
 
     // Delete the suit
-    let deleted = crate::conf::operations::suit::delete_config_suit(&db.pool, &id)
+    let deleted = crate::conf::suit::delete_config_suit(&db.pool, &id)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to delete configuration suit: {e}"))

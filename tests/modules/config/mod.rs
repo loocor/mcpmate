@@ -1,5 +1,5 @@
 //! Configuration tests
-//! 
+//!
 //! Tests for configuration loading and validation.
 
 // Config test modules

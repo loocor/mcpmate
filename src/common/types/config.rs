@@ -112,7 +112,9 @@ impl<'de> Visitor<'de> for ConfigSuitTypeVisitor {
 
 impl<'de> Deserialize<'de> for ConfigSuitType {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         deserializer.deserialize_str(ConfigSuitTypeVisitor)
     }
 }

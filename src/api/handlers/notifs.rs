@@ -75,9 +75,7 @@ pub async fn notify_tools_changed(
 
     Ok(Json(NotificationResponse {
         notified_clients: notified_count,
-        message: format!(
-            "Notified {notified_count} clients about tools list change"
-        ),
+        message: format!("Notified {notified_count} clients about tools list change"),
         details: ToolsChangedDetails {
             operation: format!("{:?}", request.operation),
             scope: format!("{:?}", request.scope),

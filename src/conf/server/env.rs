@@ -4,13 +4,10 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use nanoid::nanoid;
 use sqlx::{Pool, Sqlite, Transaction};
 
-use crate::conf::{
-    models::ServerEnv,
-    operations::utils::get_server_name_with_tx,
-};
+use crate::conf::{models::ServerEnv, operations::utils::get_server_name_with_tx};
+use crate::generate_id;
 
 /// Get all environment variables for a server from the database
 pub async fn get_server_env(
@@ -89,7 +86,7 @@ async fn upsert_server_env_inner(
     // Insert new environment variables
     for (key, value) in env {
         // Generate an ID for the environment variable
-        let env_id = format!("senv{}", nanoid!(12));
+        let env_id = generate_id!("senv");
 
         sqlx::query(
             r#"

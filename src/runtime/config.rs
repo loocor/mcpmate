@@ -7,6 +7,7 @@ use sqlx::{FromRow, Pool, Sqlite};
 use thiserror::Error;
 
 use super::types::RuntimeType;
+use crate::generate_id;
 
 /// Runtime configuration error
 #[derive(Debug, Error)]
@@ -95,13 +96,8 @@ pub async fn save_config(
     pool: &Pool<Sqlite>,
     config: &RuntimeConfig,
 ) -> Result<String, RuntimeConfigError> {
-    use nanoid::nanoid;
-
     // Generate ID if not provided
-    let id = config
-        .id
-        .clone()
-        .unwrap_or_else(|| format!("runt{}", nanoid!(12)));
+    let id = config.id.clone().unwrap_or_else(|| generate_id!("runt"));
 
     // Insert or update the configuration using runtime_type as unique constraint
     sqlx::query(

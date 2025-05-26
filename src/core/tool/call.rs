@@ -47,7 +47,7 @@ pub async fn call_upstream_tool(
                     server_name,
                     original_tool_name
                 );
-            },
+            }
             Err(e) => {
                 // If resolution fails, fall back to the tool mapping
                 tracing::warn!(
@@ -84,9 +84,12 @@ pub async fn call_upstream_tool(
 
     // Get the instance
     let connection_pool_guard = connection_pool.lock().await;
-    let instances = connection_pool_guard.connections.get(&server_name).context(format!(
-        "Server '{server_name}' not found in connection pool"
-    ))?;
+    let instances = connection_pool_guard
+        .connections
+        .get(&server_name)
+        .context(format!(
+            "Server '{server_name}' not found in connection pool"
+        ))?;
 
     // Find a connected instance
     let mut instance_id = String::new();

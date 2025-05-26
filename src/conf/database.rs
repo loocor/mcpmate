@@ -9,7 +9,7 @@ use tracing;
 
 use crate::{
     common::types::ConfigSuitType,
-    conf::{initialization, migration, models, operations, server},
+    conf::{initialization, migration, models, server, suit},
     runtime::constants::get_mcpmate_dir,
 };
 
@@ -216,7 +216,7 @@ impl Database {
     /// Initialize the database with some default values
     pub async fn initialize_defaults(&self) -> Result<()> {
         // Create default configuration suit if it doesn't exist
-        let default_suit = operations::get_config_suit_by_name(&self.pool, "default").await?;
+        let default_suit = suit::get_config_suit_by_name(&self.pool, "default").await?;
 
         let suit_id = if let Some(suit) = default_suit {
             // Check if the default suit is active and default
@@ -227,10 +227,10 @@ impl Database {
 
                 // Set the suit as active and default
                 if !suit.is_active {
-                    operations::suit::set_config_suit_active(&self.pool, &id, true).await?;
+                    suit::set_config_suit_active(&self.pool, &id, true).await?;
                 }
                 if !suit.is_default {
-                    operations::suit::set_config_suit_default(&self.pool, &id).await?;
+                    suit::set_config_suit_default(&self.pool, &id).await?;
                 }
             }
             id
@@ -250,13 +250,13 @@ impl Database {
             new_suit.multi_select = true;
 
             // Insert the default suit
-            let id = operations::upsert_config_suit(&self.pool, &new_suit).await?;
+            let id = suit::upsert_config_suit(&self.pool, &new_suit).await?;
             tracing::info!("Created default configuration suit with ID {}", id);
             id
         };
 
         // Check if we need to add servers to the default configuration suit
-        let suit_servers = operations::suit::get_config_suit_servers(&self.pool, &suit_id).await?;
+        let suit_servers = suit::get_config_suit_servers(&self.pool, &suit_id).await?;
 
         if suit_servers.is_empty() {
             tracing::info!("Adding servers to default configuration suit");
@@ -283,10 +283,7 @@ impl Database {
             for server in &all_servers {
                 if let Some(server_id) = &server.id {
                     // Add the server to the default configuration suit with enabled=true
-                    operations::suit::add_server_to_config_suit(
-                        &self.pool, &suit_id, server_id, true,
-                    )
-                    .await?;
+                    suit::add_server_to_config_suit(&self.pool, &suit_id, server_id, true).await?;
 
                     tracing::debug!(
                         "Added server '{}' to default configuration suit",
@@ -302,7 +299,7 @@ impl Database {
         }
 
         // Verify that servers were added to the default configuration suit
-        let suit_servers = operations::suit::get_config_suit_servers(&self.pool, &suit_id).await?;
+        let suit_servers = suit::get_config_suit_servers(&self.pool, &suit_id).await?;
         if suit_servers.is_empty() {
             tracing::warn!(
                 "No servers were added to the default configuration suit. This may indicate a database issue."

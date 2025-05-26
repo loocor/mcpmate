@@ -2,13 +2,10 @@
 // Contains operations for managing server command-line arguments
 
 use anyhow::{Context, Result};
-use nanoid::nanoid;
 use sqlx::{Pool, Sqlite, Transaction};
 
-use crate::conf::{
-    models::ServerArg,
-    operations::utils::get_server_name_with_tx,
-};
+use crate::conf::{models::ServerArg, operations::utils::get_server_name_with_tx};
+use crate::generate_id;
 
 /// Get all arguments for a server from the database
 pub async fn get_server_args(
@@ -83,7 +80,7 @@ async fn upsert_server_args_inner(
     // Insert new arguments
     for (index, arg) in args.iter().enumerate() {
         // Generate an ID for the argument
-        let arg_id = format!("sarg{}", nanoid!(12));
+        let arg_id = generate_id!("sarg");
 
         sqlx::query(
             r#"

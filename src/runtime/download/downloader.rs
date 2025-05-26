@@ -102,7 +102,7 @@ impl FileDownloader {
 
             match self
                 .download_with_progress(url, &temp_file, start_time)
-            .await
+                .await
             {
                 Ok(_) => {
                     self.report_progress(DownloadProgress {

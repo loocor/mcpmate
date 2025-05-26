@@ -1,5 +1,5 @@
 //! Connection tests
-//! 
+//!
 //! Tests for connection management functionality.
 
 // Connection test modules

@@ -111,7 +111,9 @@ impl<'de> Visitor<'de> for ServerTypeVisitor {
 
 impl<'de> Deserialize<'de> for ServerType {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         deserializer.deserialize_str(ServerTypeVisitor)
     }
 }
@@ -193,8 +195,9 @@ impl FromStr for TransportType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "StreamableHttp" | "streamable_http" | "streamablehttp" =>
-                Ok(TransportType::StreamableHttp),
+            "StreamableHttp" | "streamable_http" | "streamablehttp" => {
+                Ok(TransportType::StreamableHttp)
+            }
             "Sse" | "sse" => Ok(TransportType::Sse),
             "Stdio" | "stdio" => Ok(TransportType::Stdio),
             _ => Err(ParseTransportTypeError),
@@ -240,7 +243,9 @@ impl<'de> Visitor<'de> for TransportTypeVisitor {
 
 impl<'de> Deserialize<'de> for TransportType {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         deserializer.deserialize_str(TransportTypeVisitor)
     }
 }

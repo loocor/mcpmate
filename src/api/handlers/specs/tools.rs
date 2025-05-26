@@ -10,7 +10,7 @@ use axum::{
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    conf::{operations, server},
+    conf::{operations, server, suit},
     http::HttpProxyServer,
 };
 
@@ -274,17 +274,15 @@ pub async fn get_tool_status(
         Ok(None) => {
             // Tool not found in database, create a new record
             // Get the default config suit
-            let default_suit = operations::suit::get_default_config_suit(pool)
-                .await
-                .map_err(|e| {
-                    ApiError::InternalError(format!("Failed to get default config suit: {e}"))
-                })?;
+            let default_suit = suit::get_default_config_suit(pool).await.map_err(|e| {
+                ApiError::InternalError(format!("Failed to get default config suit: {e}"))
+            })?;
 
             // If there's no default suit, try the legacy "default" named suit
             let suit_id = if let Some(suit) = default_suit {
                 suit.id.unwrap()
             } else {
-                let legacy_default = operations::get_config_suit_by_name(pool, "default")
+                let legacy_default = suit::get_config_suit_by_name(pool, "default")
                     .await
                     .map_err(|e| {
                         ApiError::InternalError(format!(
@@ -307,7 +305,7 @@ pub async fn get_tool_status(
                     new_suit.is_active = true;
                     new_suit.is_default = true;
                     new_suit.multi_select = true;
-                    operations::upsert_config_suit(pool, &new_suit)
+                    suit::upsert_config_suit(pool, &new_suit)
                         .await
                         .map_err(|e| {
                             ApiError::InternalError(format!(
@@ -325,13 +323,13 @@ pub async fn get_tool_status(
             if let Some(server) = server {
                 if let Some(server_id) = &server.id {
                     // Add the tool to the config suit
-                    operations::suit::add_tool_to_config_suit(
-                        pool, &suit_id, server_id, tool_name, true,
-                    )
-                    .await
-                    .map_err(|e| {
-                        ApiError::InternalError(format!("Failed to add tool to config suit: {e}"))
-                    })?
+                    suit::add_tool_to_config_suit(pool, &suit_id, server_id, tool_name, true)
+                        .await
+                        .map_err(|e| {
+                            ApiError::InternalError(format!(
+                                "Failed to add tool to config suit: {e}"
+                            ))
+                        })?
                 } else {
                     return Err(ApiError::InternalError(format!(
                         "Server '{server_name}' has no ID"

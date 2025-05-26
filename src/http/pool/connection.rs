@@ -247,7 +247,7 @@ impl UpstreamConnectionPool {
         if let Some(server) = server {
             if let Some(server_id) = &server.id {
                 // Get all config suits that have this server enabled
-                let all_suits = crate::conf::operations::get_all_config_suits(&db.pool)
+                let all_suits = crate::conf::suit::get_all_config_suits(&db.pool)
                     .await
                     .context("Failed to get all config suits")?;
 
@@ -257,7 +257,7 @@ impl UpstreamConnectionPool {
                     if let Some(suit_id) = &suit.id {
                         // Get all servers in this suit
                         let suit_servers =
-                            crate::conf::operations::get_config_suit_servers(&db.pool, suit_id)
+                            crate::conf::suit::get_config_suit_servers(&db.pool, suit_id)
                                 .await
                                 .context(format!("Failed to get servers for suit '{suit_id}'"))?;
 
@@ -282,7 +282,7 @@ impl UpstreamConnectionPool {
                     if let Some(suit_id) = &suit.id {
                         // Get existing tools in this suit for this server
                         let existing_tools =
-                            crate::conf::operations::get_config_suit_tools(&db.pool, suit_id)
+                            crate::conf::suit::get_config_suit_tools(&db.pool, suit_id)
                                 .await
                                 .context(format!("Failed to get tools for suit '{suit_id}'"))?;
 
@@ -302,7 +302,7 @@ impl UpstreamConnectionPool {
                             }
 
                             // Add the tool to the suit (enabled by default)
-                            match crate::conf::operations::suit::add_tool_to_config_suit(
+                            match crate::conf::suit::add_tool_to_config_suit(
                                 &db.pool, suit_id, server_id, &tool_name, true,
                             )
                             .await

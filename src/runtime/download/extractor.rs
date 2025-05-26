@@ -1,8 +1,6 @@
 //! Generic extractor for runtime archives
 
-use crate::runtime::{
-    types::RuntimeError,
-};
+use crate::runtime::types::RuntimeError;
 use anyhow::Result;
 use std::path::Path;
 

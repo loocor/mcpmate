@@ -1,11 +1,14 @@
 // Server models for MCPMate
 // Contains data models for server configuration
 
+use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, Pool, Sqlite};
 
 use crate::common::types::{EnabledStatus, ServerType, TransportType};
+use crate::macros::entity::DatabaseEntity;
 
 /// Server configuration model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -28,6 +31,56 @@ pub struct Server {
     pub created_at: Option<DateTime<Utc>>,
     /// When the configuration was last updated
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[async_trait]
+impl DatabaseEntity for Server {
+    fn table_name() -> &'static str {
+        "server_config"
+    }
+
+    fn get_id(&self) -> Option<String> {
+        self.id.clone()
+    }
+
+    fn set_id(
+        &mut self,
+        id: String,
+    ) {
+        self.id = Some(id);
+    }
+
+    fn get_created_at(&self) -> Option<DateTime<Utc>> {
+        self.created_at
+    }
+
+    fn set_created_at(
+        &mut self,
+        time: DateTime<Utc>,
+    ) {
+        self.created_at = Some(time);
+    }
+
+    fn get_updated_at(&self) -> Option<DateTime<Utc>> {
+        self.updated_at
+    }
+
+    fn set_updated_at(
+        &mut self,
+        time: DateTime<Utc>,
+    ) {
+        self.updated_at = Some(time);
+    }
+
+    async fn find_by(
+        pool: &Pool<Sqlite>,
+        conditions: &str, // Example: "name = 'my_server' AND server_type = 'Stdio'"
+    ) -> Result<Vec<Self>> {
+        // Ensure Self: Sized + Send + Unpin + for<'r> FromRow<'r, sqlx::sqlite::SqliteRow> is met
+        let query_string = format!("SELECT * FROM {} WHERE {}", Self::table_name(), conditions);
+        let servers = sqlx::query_as(&query_string).fetch_all(pool).await?;
+        Ok(servers)
+    }
 }
 
 impl Server {
@@ -84,9 +137,7 @@ impl Server {
     pub fn enabled_bool(&self) -> Option<bool> {
         Some(self.enabled.as_bool())
     }
-}
 
-impl Server {
     /// Create a new server configuration
     pub fn new(
         name: String,
@@ -157,6 +208,56 @@ impl Server {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    /// find server config by name
+    pub async fn find_by_name(
+        pool: &Pool<Sqlite>,
+        name: &str,
+    ) -> Result<Option<Self>> {
+        use sqlx::query_as;
+
+        let server = query_as("SELECT * FROM server_config WHERE name = ?")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(server)
+    }
+
+    /// find server config by type
+    pub async fn find_by_type(
+        pool: &Pool<Sqlite>,
+        server_type: ServerType,
+    ) -> Result<Vec<Self>> {
+        use sqlx::query_as;
+
+        let servers = query_as("SELECT * FROM server_config WHERE server_type = ?")
+            .bind(server_type)
+            .fetch_all(pool)
+            .await?;
+
+        Ok(servers)
+    }
+
+    /// save server config
+    pub async fn save(
+        &mut self,
+        pool: &Pool<Sqlite>,
+    ) -> Result<()> {
+        if self.id.is_none() {
+            self.create(pool).await
+        } else {
+            self.update(pool).await
+        }
+    }
+
+    /// delete server config
+    pub async fn delete(
+        &self,
+        pool: &Pool<Sqlite>,
+    ) -> Result<()> {
+        DatabaseEntity::delete(self, pool).await
     }
 }
 

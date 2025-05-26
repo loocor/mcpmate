@@ -9,3 +9,4 @@ pub mod models;
 pub mod operations;
 pub mod runtime;
 pub mod server;
+pub mod suit;

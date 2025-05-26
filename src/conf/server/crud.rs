@@ -2,10 +2,10 @@
 // Contains create, read, update, delete operations for servers
 
 use anyhow::{Context, Result};
-use nanoid::nanoid;
 use sqlx::{Pool, Sqlite, Transaction};
 
 use crate::conf::models::Server;
+use crate::generate_id;
 
 /// Get all servers from the database
 pub async fn get_all_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
@@ -109,7 +109,7 @@ pub async fn upsert_server_tx(
     let server_id = if let Some(id) = &server.id {
         id.clone()
     } else {
-        format!("serv{}", nanoid!(12))
+        generate_id!("serv")
     };
 
     let result = sqlx::query(

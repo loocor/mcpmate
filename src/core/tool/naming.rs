@@ -24,14 +24,20 @@ use tracing;
 ///
 /// # Returns
 /// * `String` - The generated unique name
-pub fn generate_unique_name(server_name: &str, original_tool_name: &str) -> String {
+pub fn generate_unique_name(
+    server_name: &str,
+    original_tool_name: &str,
+) -> String {
     // Normalize server name (lowercase, replace spaces with underscores)
     let normalized_server = server_name.to_lowercase().replace(' ', "_");
-    
+
     // Check if the tool name already contains the server name as a prefix
     let server_prefix = format!("{normalized_server}_");
-    
-    if original_tool_name.to_lowercase().starts_with(&server_prefix) {
+
+    if original_tool_name
+        .to_lowercase()
+        .starts_with(&server_prefix)
+    {
         // Tool name already has the server name as a prefix, use it as is
         original_tool_name.to_string()
     } else {
@@ -61,13 +67,13 @@ pub async fn resolve_unique_name(
         SELECT server_name, tool_name
         FROM config_suit_tool
         WHERE unique_name = ?
-        "#
+        "#,
     )
     .bind(unique_name)
     .fetch_optional(pool)
     .await
     .context(format!("Failed to query unique name: {unique_name}"))?;
-    
+
     match result {
         Some((server_name, tool_name)) => {
             tracing::debug!(
@@ -77,7 +83,7 @@ pub async fn resolve_unique_name(
                 tool_name
             );
             Ok((server_name, tool_name))
-        },
+        }
         None => {
             // If the unique name is not found in the database, return an error
             Err(anyhow::anyhow!(
@@ -115,7 +121,7 @@ pub async fn ensure_unique_name(
             WHERE unique_name = ?
             AND (server_id != ? OR tool_name != ?)
         )
-        "#
+        "#,
     )
     .bind(base_name)
     .bind(server_id)
@@ -123,38 +129,40 @@ pub async fn ensure_unique_name(
     .fetch_one(pool)
     .await
     .context(format!("Failed to check for name conflicts: {base_name}"))?;
-    
+
     if !conflict {
         // No conflict, use the base name
         return Ok(base_name.to_string());
     }
-    
+
     // If there's a conflict, add a numeric suffix
     let mut counter = 1;
     loop {
         let suffixed_name = format!("{base_name}_{counter}");
-        
+
         let conflict = sqlx::query_scalar::<_, bool>(
             r#"
             SELECT EXISTS(
                 SELECT 1 FROM config_suit_tool
                 WHERE unique_name = ?
             )
-            "#
+            "#,
         )
         .bind(&suffixed_name)
         .fetch_one(pool)
         .await
-        .context(format!("Failed to check for name conflicts: {suffixed_name}"))?;
-        
+        .context(format!(
+            "Failed to check for name conflicts: {suffixed_name}"
+        ))?;
+
         if !conflict {
             // No conflict, use this name
             return Ok(suffixed_name);
         }
-        
+
         // Increment counter and try again
         counter += 1;
-        
+
         // Safety check to prevent infinite loops
         if counter > 1000 {
             return Err(anyhow::anyhow!(

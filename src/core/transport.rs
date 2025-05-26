@@ -76,7 +76,7 @@ pub async fn connect_http_server(
 
     // Connect to the server with timeout based on transport type
     let transport_result = match transport_type {
-        TransportType::Sse =>
+        TransportType::Sse => {
             match timeout(connection_timeout, SseClientTransport::start(url.as_str())).await {
                 Ok(Ok(transport)) => Ok(transport),
                 Ok(Err(e)) => {
@@ -89,7 +89,8 @@ pub async fn connect_http_server(
                     tracing::warn!("{}", error_msg);
                     Err(anyhow::anyhow!(error_msg))
                 }
-            },
+            }
+        }
         TransportType::StreamableHttp => {
             // Currently, we don't have a separate StreamableHttpTransport in the client
             // So we use SseClientTransport for both SSE and Streamable HTTP

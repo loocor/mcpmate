@@ -14,7 +14,7 @@ pub async fn get_suit_or_error(
     db: &Database,
     suit_id: &str,
 ) -> Result<ConfigSuit, ApiError> {
-    let suit = crate::conf::operations::suit::get_config_suit(&db.pool, suit_id)
+    let suit = crate::conf::suit::get_config_suit(&db.pool, suit_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 

@@ -5,7 +5,7 @@ mod proxy;
 
 use proxy::{
     Args,
-    init::{setup_database, setup_environment, setup_logging, setup_proxy_server},
+    init::{setup_database, setup_logging, setup_proxy_server},
     startup::{start_api_server, start_background_connections, start_proxy_server},
 };
 
@@ -16,9 +16,6 @@ async fn main() -> Result<()> {
 
     // Setup logging
     setup_logging(&args)?;
-
-    // Setup environment
-    setup_environment()?;
 
     // Setup database
     let db = setup_database().await?;

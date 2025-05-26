@@ -14,7 +14,7 @@ use crate::{
     conf::{
         database::Database,
         models::{ConfigSuitTool, Server},
-        operations::suit::get_active_config_suits,
+        suit::get_active_config_suits,
     },
 };
 
@@ -210,7 +210,7 @@ impl ConfigSuitMergeService {
             if let Some(suit_id) = &suit.id {
                 // Get all servers in this suit
                 let suit_servers =
-                    crate::conf::operations::get_config_suit_servers(&self.db.pool, suit_id)
+                    crate::conf::suit::get_config_suit_servers(&self.db.pool, suit_id)
                         .await
                         .context(format!("Failed to get servers for suit '{suit_id}'"))?;
 

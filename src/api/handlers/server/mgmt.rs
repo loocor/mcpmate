@@ -120,9 +120,7 @@ pub async fn enable_server(
     let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
     // Update the server's global enabled status
-    match crate::conf::server::update_server_global_status(&db.pool, &server_id, true)
-        .await
-    {
+    match crate::conf::server::update_server_global_status(&db.pool, &server_id, true).await {
         Ok(true) => {
             tracing::info!(
                 "Set server '{}' global availability to enabled",
@@ -301,9 +299,7 @@ pub async fn disable_server(
     let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
     // Update the server's global enabled status
-    match crate::conf::server::update_server_global_status(&db.pool, &server_id, false)
-        .await
-    {
+    match crate::conf::server::update_server_global_status(&db.pool, &server_id, false).await {
         Ok(true) => {
             tracing::info!(
                 "Set server '{}' global availability to disabled",
