@@ -69,6 +69,21 @@ pub async fn prepare_command_env_with_db(
                     (executable_path, "latest")
                 };
 
+                // Determine if this is a system or mcpmate runtime
+                let is_system_runtime = config.relative_bin_path.starts_with('/');
+                let runtime_source = if is_system_runtime {
+                    "System managed runtime"
+                } else {
+                    "MCPMate managed runtime"
+                };
+
+                tracing::info!(
+                    "Using {} runtime for '{}': {}",
+                    runtime_source,
+                    command_str,
+                    actual_bin_path.display()
+                );
+
                 // Use shared environment management system
                 let runtime_type_str = match rt_type {
                     RuntimeType::Node => "node",

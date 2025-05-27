@@ -55,8 +55,110 @@ pub struct InstallResponse {
     pub runtime_type: String,
 }
 
-// Removed CheckRequest, PathRequest, and PathResponse structs
-// Their functionality is now covered by the enhanced list_runtimes endpoint
+/// Sync already installed runtime to database
+async fn sync_existing_runtime_to_db(
+    state: &AppState,
+    manager: &RuntimeManager,
+    runtime_type: RuntimeType,
+    version: Option<&str>,
+) -> Result<(), String> {
+    let Some(db) = &state.database else {
+        return Ok(()); // No database configured, skip sync
+    };
+
+    let runtime_path = manager
+        .get_runtime_path(runtime_type, version)
+        .map_err(|e| format!("Failed to get runtime path: {e}"))?;
+
+    // Create relative path for database storage
+    let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let mcpmate_dir = home_dir.join(".mcpmate");
+
+    let relative_path = if runtime_path.starts_with(&mcpmate_dir) {
+        // MCPMate managed runtime - store relative path
+        runtime_path
+            .strip_prefix(&mcpmate_dir)
+            .unwrap_or(&runtime_path)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        // System runtime - store absolute path
+        runtime_path.to_string_lossy().to_string()
+    };
+
+    // Save to database
+    let version_str = version.unwrap_or_else(|| runtime_type.default_version());
+    let config =
+        crate::runtime::config::RuntimeConfig::new(runtime_type, version_str, &relative_path);
+
+    crate::runtime::config::save_config(&db.pool, &config)
+        .await
+        .map_err(|e| format!("Failed to sync runtime config to database: {e}"))?;
+
+    tracing::info!("Successfully synced {runtime_type} runtime to database");
+    Ok(())
+}
+
+/// Handle runtime installation using CLI
+async fn perform_runtime_installation(
+    state: &AppState,
+    request: &InstallRequest,
+    runtime_type: RuntimeType,
+) -> Result<(), anyhow::Error> {
+    // Get database path from state if available
+    let database = state
+        .database
+        .as_ref()
+        .map(|db| db.path.to_string_lossy().to_string());
+
+    // Call the existing CLI function with API execution context
+    handle_install_command(
+        runtime_type,
+        request.version.clone(),
+        request.timeout.unwrap_or(300),
+        request.max_retries.unwrap_or(3),
+        request.verbose.unwrap_or(false),
+        request.interactive.unwrap_or(false),
+        true,
+        database,
+        ExecutionContext::Api,
+    )
+    .await
+}
+
+/// Create runtime status for a specific runtime type
+fn create_runtime_status(
+    manager: &RuntimeManager,
+    runtime_type: RuntimeType,
+    version: Option<&str>,
+) -> RuntimeStatus {
+    let available = manager
+        .is_runtime_available(runtime_type, version)
+        .unwrap_or(false);
+
+    let path = if available {
+        manager
+            .get_runtime_path(runtime_type, version)
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    let version_display = version.unwrap_or("default");
+    let message = if available {
+        format!("✓ {} ({}) is available", runtime_type, version_display)
+    } else {
+        format!("✗ {} ({}) is not installed", runtime_type, version_display)
+    };
+
+    RuntimeStatus {
+        runtime_type: runtime_type.to_string(),
+        available,
+        path,
+        message,
+    }
+}
 
 /// Install a runtime - POST /api/runtime/install
 pub async fn install_runtime(
@@ -67,36 +169,48 @@ pub async fn install_runtime(
     let runtime_type: RuntimeType = request
         .runtime_type
         .parse()
-        .map_err(|e| ApiError::BadRequest(format!("Invalid runtime type: {}", e)))?;
+        .map_err(|e| ApiError::BadRequest(format!("Invalid runtime type: {e}")))?;
 
-    // Get database path from state if available
-    let database = state.database.as_ref().map(|db| {
-        // Get the actual database path from the Database instance
-        db.path.to_string_lossy().to_string()
-    });
+    // Create runtime manager
+    let manager = RuntimeManager::new()
+        .map_err(|e| ApiError::InternalError(format!("Failed to create runtime manager: {e}")))?;
 
-    // Call the existing CLI function with API execution context
-    match handle_install_command(
-        runtime_type,
-        request.version,
-        request.timeout.unwrap_or(300),
-        request.max_retries.unwrap_or(3),
-        request.verbose.unwrap_or(false),
-        request.interactive.unwrap_or(false),
-        true, // quiet mode for API
-        database,
-        ExecutionContext::Api,
-    )
-    .await
-    {
+    let version = request.version.as_deref();
+    let is_already_installed = manager
+        .is_runtime_available(runtime_type, version)
+        .unwrap_or(false);
+
+    // Handle already installed runtime
+    if is_already_installed {
+        tracing::info!("Runtime {runtime_type} already installed, syncing to database");
+
+        // Attempt to sync to database, but don't fail if it doesn't work
+        if let Err(e) = sync_existing_runtime_to_db(&state, &manager, runtime_type, version).await {
+            tracing::warn!("Failed to sync runtime to database: {e}");
+        }
+
+        return Ok(Json(InstallResponse {
+            success: true,
+            message: format!("Runtime {runtime_type} already installed and synced to database"),
+            runtime_type: request.runtime_type,
+        }));
+    }
+
+    // Handle new runtime installation
+    tracing::info!("Runtime {runtime_type} not found, proceeding with download and installation");
+
+    match perform_runtime_installation(&state, &request, runtime_type).await {
         Ok(()) => Ok(Json(InstallResponse {
             success: true,
-            message: format!("Successfully installed {}", request.runtime_type),
+            message: format!(
+                "Successfully downloaded and installed {}",
+                request.runtime_type
+            ),
             runtime_type: request.runtime_type,
         })),
         Err(e) => Ok(Json(InstallResponse {
             success: false,
-            message: format!("Installation failed: {}", e),
+            message: format!("Installation failed: {e}"),
             runtime_type: request.runtime_type,
         })),
     }
@@ -110,58 +224,25 @@ pub async fn list_runtimes(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, ApiError> {
     let manager = RuntimeManager::new()
-        .map_err(|e| ApiError::InternalError(format!("Failed to create runtime manager: {}", e)))?;
-
-    let mut runtimes = Vec::new();
+        .map_err(|e| ApiError::InternalError(format!("Failed to create runtime manager: {e}")))?;
 
     // Determine which runtime types to check
     let runtime_types_to_check = if let Some(runtime_type_str) = &query.runtime_type {
         // Parse and validate the specific runtime type
         let runtime_type: RuntimeType = runtime_type_str
             .parse()
-            .map_err(|e| ApiError::BadRequest(format!("Invalid runtime type: {}", e)))?;
+            .map_err(|e| ApiError::BadRequest(format!("Invalid runtime type: {e}")))?;
         vec![runtime_type]
     } else {
         // Check all runtime types
         vec![RuntimeType::Node, RuntimeType::Uv, RuntimeType::Bun]
     };
 
-    // Check each runtime type
-    for runtime_type in runtime_types_to_check {
-        let version = query.version.as_deref();
-
-        let available = manager
-            .is_runtime_available(runtime_type, version)
-            .unwrap_or(false);
-
-        let path = if available {
-            manager
-                .get_runtime_path(runtime_type, version)
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-        } else {
-            None
-        };
-
-        let version_display = version.unwrap_or("default");
-        let message = if available {
-            format!("✓ {} ({}) is available", runtime_type, version_display)
-        } else {
-            format!("✗ {} ({}) is not installed", runtime_type, version_display)
-        };
-
-        runtimes.push(RuntimeStatus {
-            runtime_type: runtime_type.to_string(),
-            available,
-            path,
-            message,
-        });
-    }
+    // Check each runtime type and create status
+    let runtimes = runtime_types_to_check
+        .into_iter()
+        .map(|runtime_type| create_runtime_status(&manager, runtime_type, query.version.as_deref()))
+        .collect();
 
     Ok(Json(ListResponse { runtimes }))
 }
-
-// Removed check_runtime and get_runtime_path functions
-// Their functionality is now provided by the enhanced list_runtimes endpoint with query parameters:
-// - GET /api/runtime/list?runtime_type=node&version=v16 (replaces check)
-// - GET /api/runtime/list?runtime_type=node&version=v16 (replaces path)

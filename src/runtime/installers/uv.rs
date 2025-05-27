@@ -159,9 +159,6 @@ impl UvInstaller {
         }
 
         tracing::info!("uv installation completed successfully");
-        tracing::info!(
-            "uv will automatically manage Python installations through environment variables"
-        );
 
         Ok(())
     }

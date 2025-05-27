@@ -249,12 +249,6 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
             runtime_type TEXT NOT NULL UNIQUE,
             version TEXT NOT NULL,
             relative_bin_path TEXT NOT NULL,
-            relative_cache_path TEXT,
-            sub_runtime_type TEXT,
-            sub_runtime_version TEXT,
-            is_default BOOLEAN NOT NULL DEFAULT 0,
-            platform TEXT,
-            architecture TEXT,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -298,15 +292,15 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
 
     match sqlx::query(
         r#"
-        CREATE INDEX IF NOT EXISTS idx_runtime_config_default
-        ON runtime_config(runtime_type, is_default)
+        CREATE INDEX IF NOT EXISTS idx_runtime_config_version
+        ON runtime_config(runtime_type, version)
         "#,
     )
     .execute(pool)
     .await
     {
         Ok(_) => tracing::debug!(
-            "Index on runtime_config(runtime_type, is_default) created or already exists"
+            "Index on runtime_config(runtime_type, version) created or already exists"
         ),
         Err(e) => {
             tracing::error!("Failed to create index on runtime_config: {}", e);

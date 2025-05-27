@@ -40,22 +40,10 @@ pub struct RuntimeConfig {
     pub version: String,
     /// Binary path relative to user directory
     pub relative_bin_path: String,
-    /// Cache path relative to user directory (optional)
-    pub relative_cache_path: Option<String>,
-    /// Sub runtime type (e.g., 'python' for uv)
-    pub sub_runtime_type: Option<String>,
-    /// Sub runtime version (e.g., Python version for uv)
-    pub sub_runtime_version: Option<String>,
-    /// Whether this is the default version for this runtime type
-    pub is_default: bool,
-    /// Platform (windows, macos, linux)
-    pub platform: Option<String>,
-    /// Architecture (x86_64, aarch64)
-    pub architecture: Option<String>,
     /// When the record was created
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
     /// When the record was last updated
-    pub updated_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl RuntimeConfig {
@@ -72,14 +60,8 @@ impl RuntimeConfig {
             runtime_type: runtime_type_str,
             version: version.to_string(),
             relative_bin_path: relative_bin_path.to_string(),
-            relative_cache_path: None,
-            sub_runtime_type: None,
-            sub_runtime_version: None,
-            is_default: false,
-            platform: None,
-            architecture: None,
-            created_at: None,
-            updated_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         }
     }
 
@@ -103,19 +85,12 @@ pub async fn save_config(
     sqlx::query(
         r#"
         INSERT INTO runtime_config (
-            id, runtime_type, version, relative_bin_path, relative_cache_path,
-            sub_runtime_type, sub_runtime_version, is_default, platform, architecture
+            id, runtime_type, version, relative_bin_path
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(runtime_type) DO UPDATE SET
             version = excluded.version,
             relative_bin_path = excluded.relative_bin_path,
-            relative_cache_path = excluded.relative_cache_path,
-            sub_runtime_type = excluded.sub_runtime_type,
-            sub_runtime_version = excluded.sub_runtime_version,
-            is_default = excluded.is_default,
-            platform = excluded.platform,
-            architecture = excluded.architecture,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -123,12 +98,6 @@ pub async fn save_config(
     .bind(&config.runtime_type)
     .bind(&config.version)
     .bind(&config.relative_bin_path)
-    .bind(&config.relative_cache_path)
-    .bind(&config.sub_runtime_type)
-    .bind(&config.sub_runtime_version)
-    .bind(config.is_default)
-    .bind(&config.platform)
-    .bind(&config.architecture)
     .execute(pool)
     .await
     .map_err(RuntimeConfigError::DatabaseError)?;

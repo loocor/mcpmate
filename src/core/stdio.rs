@@ -46,8 +46,8 @@ async fn connect_stdio_server_core(
     if let Some(cache) = runtime_cache {
         // Check if runtime is available in cache
         if let Some(runtime_path) = cache.get_runtime_for_command(command).await {
-            tracing::debug!(
-                "Runtime for command '{}' found in cache: {}",
+            tracing::info!(
+                "Using MCPMate managed runtime for command '{}': {}",
                 command,
                 runtime_path.display()
             );
@@ -64,8 +64,8 @@ async fn connect_stdio_server_core(
                 }
             }
         } else {
-            tracing::debug!(
-                "Runtime for command '{}' not available in cache, using system runtime",
+            tracing::info!(
+                "MCPMate runtime for command '{}' not available in cache, falling back to system runtime",
                 command
             );
         }
@@ -83,11 +83,15 @@ async fn connect_stdio_server_core(
             .ensure_runtime_for_command(command, database_pool)
             .await
         {
-            tracing::warn!("Runtime setup failed for command '{}': {}", command, e);
+            tracing::warn!(
+                "MCPMate runtime setup failed for command '{}': {}",
+                command,
+                e
+            );
             tracing::info!("Attempting to continue with system-installed runtime");
             // Continue anyway - the command might work with system-installed runtimes
         } else {
-            tracing::debug!("Runtime for command '{}' is available", command);
+            tracing::info!("Using MCPMate managed runtime for command '{}'", command);
         }
     }
 

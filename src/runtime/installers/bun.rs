@@ -110,6 +110,8 @@ impl BunInstaller {
         // Create bunx script/executable
         self.create_bunx_script(&bin_dir)?;
 
+        tracing::info!("Bun installation completed successfully");
+
         Ok(())
     }
 
