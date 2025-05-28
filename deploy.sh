@@ -123,9 +123,9 @@ case "$PLATFORM" in
 esac
 
 # Determine binary name and extension
-BINARY_NAME="proxy"
+BINARY_NAME="mcpmate"
 if [[ "$TARGET" == *"windows"* ]]; then
-    BINARY_NAME="proxy.exe"
+    BINARY_NAME="mcpmate.exe"
 fi
 
 # Determine output directory name
@@ -242,7 +242,7 @@ This is a standalone deployment package for MCPMate.
 
 ## How to run:
 
-1. Double-click the \`$BINARY_NAME\` executable (or run \`./proxy\` in terminal)
+1. Double-click the \`$BINARY_NAME\` executable (or run \`./mcpmate\` in terminal)
 2. Your browser should open automatically to: http://localhost:8080
 3. The management dashboard will be available
 
@@ -254,7 +254,7 @@ This is a standalone deployment package for MCPMate.
 ## Requirements:
 
 - No additional dependencies needed
-- The proxy will serve both the API and web interface on port 8080
+- The server will serve both the API and web interface on port 8080
 - Browser will open automatically when started
 
 ## Troubleshooting:
@@ -281,8 +281,8 @@ echo Web interface will be available at: http://localhost:8080
 echo Browser should open automatically
 echo Press Ctrl+C to stop
 
-REM Start the proxy server in background
-start /B proxy.exe
+REM Start the server in background
+start /B mcpmate.exe
 
 REM Wait a moment for server to start
 timeout /t 3 /nobreak >nul
@@ -295,8 +295,8 @@ echo.
 echo MCPMate is running. Press any key to stop...
 pause >nul
 
-REM Kill the proxy process
-taskkill /F /IM proxy.exe >nul 2>&1
+REM Kill the server process
+taskkill /F /IM mcpmate.exe >nul 2>&1
 EOF
 
     cat > "$DIST_DIR/start.sh" << 'EOF'
@@ -309,8 +309,8 @@ echo "Web interface will be available at: http://localhost:8080"
 echo "Browser should open automatically"
 echo "Press Ctrl+C to stop"
 
-# Start the proxy server in background
-./proxy.exe &
+# Start the server in background
+./mcpmate.exe &
 PROXY_PID=$!
 
 # Wait a moment for server to start
@@ -331,7 +331,7 @@ echo
 echo "MCPMate is running. Press any key to stop..."
 read -n 1 -s
 
-# Kill the proxy process
+# Kill the server process
 kill $PROXY_PID 2>/dev/null
 EOF
 else
@@ -367,8 +367,8 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGINT SIGTERM
 
-# Start proxy in background
-./proxy &
+# Start server in background
+./mcpmate &
 PROXY_PID=$!
 
 # Wait for server to start
@@ -377,7 +377,7 @@ sleep 3
 # Open browser
 open_browser
 
-# Wait for proxy process
+# Wait for server process
 wait $PROXY_PID
 EOF
 
@@ -409,10 +409,10 @@ echo ""
 print_status "To test the deployment:"
 print_status "  cd $DIST_DIR"
 if [[ "$TARGET" == *"windows"* ]] || [[ "$BINARY_NAME" == *.exe ]]; then
-    print_status "  ./proxy.exe (or double-click proxy.exe)"
+    print_status "  ./mcpmate.exe (or double-click mcpmate.exe)"
     print_status "  Or use: start.bat"
 else
-    print_status "  ./proxy (or double-click proxy)"
+    print_status "  ./mcpmate (or double-click mcpmate)"
     print_status "  Or use: ./start.sh"
 fi
 print_status "  Browser should open automatically to http://localhost:8080"
