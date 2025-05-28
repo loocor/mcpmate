@@ -109,24 +109,33 @@ pub async fn start_streamable_http(
     let factory = create_service_factory(server);
 
     // Create Streamable HTTP server config
-    let server_config = rmcp::transport::streamable_http_server::axum::StreamableHttpServerConfig {
-        bind: bind_address,
-        path: path.to_string(),
-        ct: Default::default(),
+    let server_config = rmcp::transport::StreamableHttpServerConfig {
         sse_keep_alive: Some(Duration::from_secs(15)),
+        stateful_mode: true,
     };
 
-    // Start the Streamable HTTP server
-    tracing::info!("Starting Streamable HTTP server...");
-    let server =
-        rmcp::transport::streamable_http_server::axum::StreamableHttpServer::serve_with_config(
-            server_config,
-        )
-        .await
-        .context("Failed to start Streamable HTTP server")?;
+    // Create the StreamableHttpService
+    let session_manager = std::sync::Arc::new(
+        rmcp::transport::streamable_http_server::session::local::LocalSessionManager::default(),
+    );
 
-    // Register our service with the server
-    server.with_service(factory);
+    let streamable_service =
+        rmcp::transport::StreamableHttpService::new(factory, session_manager, server_config);
+
+    // Create an Axum router and mount the service
+    let app = axum::Router::new().route_service(path, streamable_service);
+
+    // Start the server
+    tracing::info!("Starting Streamable HTTP server...");
+    let listener = tokio::net::TcpListener::bind(bind_address)
+        .await
+        .context("Failed to bind Streamable HTTP server")?;
+
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            tracing::error!("Streamable HTTP server error: {}", e);
+        }
+    });
 
     tracing::info!(
         "Successfully started Streamable HTTP server on {} at path {}",

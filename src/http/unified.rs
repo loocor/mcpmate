@@ -8,8 +8,9 @@ use axum::Router;
 use rmcp::{
     RoleServer, Service,
     transport::{
+        StreamableHttpServerConfig, StreamableHttpService,
         sse_server::{SseServer, SseServerConfig},
-        streamable_http_server::axum::{StreamableHttpServer, StreamableHttpServerConfig},
+        streamable_http_server::session::local::LocalSessionManager,
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -101,10 +102,8 @@ impl UnifiedHttpServer {
 
         // Create Streamable HTTP server config
         let streamable_http_config = StreamableHttpServerConfig {
-            bind: self.config.bind_address,
-            path: self.config.streamable_http_path.clone(),
-            ct: self.config.cancellation_token.clone(),
             sse_keep_alive: self.config.keep_alive_interval,
+            stateful_mode: true,
         };
 
         // Create SSE server config
@@ -116,15 +115,21 @@ impl UnifiedHttpServer {
             sse_keep_alive: self.config.keep_alive_interval,
         };
 
-        // Create both servers but don't start them yet
-        let (streamable_http_server, streamable_http_router) =
-            StreamableHttpServer::new(streamable_http_config);
+        // Create the StreamableHttpService
+        let session_manager = std::sync::Arc::new(LocalSessionManager::default());
 
+        let streamable_http_service = StreamableHttpService::new(
+            service_factory.clone(),
+            session_manager,
+            streamable_http_config,
+        );
+
+        // Create SSE server
         let (sse_server, sse_router) = SseServer::new(sse_config);
 
-        // Merge the routers
+        // Create the combined router
         let combined_router = Router::new()
-            .merge(streamable_http_router)
+            .route_service(&self.config.streamable_http_path, streamable_http_service)
             .merge(sse_router);
 
         // Start the combined server
@@ -143,11 +148,7 @@ impl UnifiedHttpServer {
             tracing::info!("Unified HTTP server cancelled");
         });
 
-        // Register the service with both servers
-        tracing::info!("Registering service with Streamable HTTP server");
-        let factory_clone = service_factory.clone();
-        streamable_http_server.with_service(factory_clone);
-
+        // Register the service with SSE server
         tracing::info!("Registering service with SSE server");
         sse_server.with_service(service_factory);
 
