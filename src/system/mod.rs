@@ -1,5 +1,10 @@
-// MCPMate system metrics module
-// Contains functionality for collecting system metrics
+// MCPMate system module
+// Contains system-level functionality including metrics, detection, and paths
+
+pub mod detection;
+pub mod paths;
+
+// System metrics functionality
 
 use std::{
     sync::{Arc, Mutex},

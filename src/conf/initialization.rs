@@ -1,6 +1,7 @@
 // Database initialization for MCPMate
 // Contains functions for initializing the database schema
 
+use crate::conf::init::initialize_client_apps;
 use anyhow::Result;
 use sqlx::{Pool, Sqlite};
 use tracing;
@@ -342,6 +343,10 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
             }
         };
     }
+
+    // Initialize client applications tables and data
+    tracing::debug!("Initializing client applications tables and data");
+    initialize_client_apps(pool).await?;
 
     tracing::info!("Database initialization completed successfully");
     Ok(())
