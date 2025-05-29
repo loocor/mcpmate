@@ -10,7 +10,7 @@ use rmcp::{
         ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     serve_server,
-    service::{RequestContext, ServiceExt},
+    service::{NotificationContext, RequestContext, ServiceExt},
     transport::{SseClientTransport, io},
 };
 use tokio::sync::Mutex;
@@ -52,7 +52,10 @@ impl ClientHandler for BridgeClient {
         }
     }
 
-    async fn on_tool_list_changed(&self) {
+    async fn on_tool_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) {
         tracing::info!("Received tool list changed notification from upstream server");
 
         // Set the tool list changed flag
@@ -67,12 +70,18 @@ impl ClientHandler for BridgeClient {
     // These are provided by the trait with default implementations,
     // but we're explicitly implementing them for clarity
 
-    async fn on_resource_list_changed(&self) {
+    async fn on_resource_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) {
         tracing::debug!("Received resource list changed notification (ignored)");
         // We don't handle resource list changes in the bridge
     }
 
-    async fn on_prompt_list_changed(&self) {
+    async fn on_prompt_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) {
         tracing::debug!("Received prompt list changed notification (ignored)");
         // We don't handle prompt list changes in the bridge
     }
@@ -80,6 +89,7 @@ impl ClientHandler for BridgeClient {
     async fn on_resource_updated(
         &self,
         params: rmcp::model::ResourceUpdatedNotificationParam,
+        _context: NotificationContext<RoleClient>,
     ) {
         tracing::debug!(
             "Received resource updated notification for URI: {} (ignored)",
@@ -91,6 +101,7 @@ impl ClientHandler for BridgeClient {
     async fn on_progress(
         &self,
         params: rmcp::model::ProgressNotificationParam,
+        _context: NotificationContext<RoleClient>,
     ) {
         tracing::debug!("Received progress notification: {:?} (ignored)", params);
         // We don't handle progress notifications in the bridge
@@ -99,6 +110,7 @@ impl ClientHandler for BridgeClient {
     async fn on_cancelled(
         &self,
         params: rmcp::model::CancelledNotificationParam,
+        _context: NotificationContext<RoleClient>,
     ) {
         tracing::debug!("Received cancelled notification: {:?} (ignored)", params);
         // We don't handle cancelled notifications in the bridge
@@ -107,6 +119,7 @@ impl ClientHandler for BridgeClient {
     async fn on_logging_message(
         &self,
         params: rmcp::model::LoggingMessageNotificationParam,
+        _context: NotificationContext<RoleClient>,
     ) {
         tracing::debug!("Received logging message: {:?} (ignored)", params);
         // We don't handle logging messages in the bridge
