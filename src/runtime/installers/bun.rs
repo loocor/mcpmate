@@ -1,10 +1,6 @@
 //! Bun specific installer
 
-use crate::runtime::{
-    constants::*,
-    detection::Environment,
-    types::{RuntimeError, RuntimeType},
-};
+use crate::runtime::{constants::*, detection::Environment, types::RuntimeType};
 use anyhow::Result;
 use std::path::Path;
 
@@ -25,28 +21,23 @@ impl BunInstaller {
         &self,
         version: &str,
     ) -> Result<String> {
-        // Check if platform is supported
-        if let (
-            crate::runtime::detection::OperatingSystem::Windows,
-            crate::runtime::detection::Architecture::Aarch64,
-        ) = (self.environment.os, self.environment.arch)
-        {
-            return Err(RuntimeError::UnsupportedPlatform {
-                os: "Windows".to_string(),
-                arch: "ARM64".to_string(),
-            }
-            .into());
-        }
-
         let os = match self.environment.os {
             crate::runtime::detection::OperatingSystem::Windows => "windows",
             crate::runtime::detection::OperatingSystem::MacOS => "darwin",
             crate::runtime::detection::OperatingSystem::Linux => "linux",
         };
 
-        let arch = match self.environment.arch {
-            crate::runtime::detection::Architecture::X86_64 => "x64",
-            crate::runtime::detection::Architecture::Aarch64 => "aarch64",
+        let arch = match (self.environment.os, self.environment.arch) {
+            // Windows ARM uses x64 version through emulation
+            (
+                crate::runtime::detection::OperatingSystem::Windows,
+                crate::runtime::detection::Architecture::Aarch64,
+            ) => {
+                tracing::info!("Windows ARM detected: using alternative x64 version");
+                "x64"
+            }
+            (_, crate::runtime::detection::Architecture::X86_64) => "x64",
+            (_, crate::runtime::detection::Architecture::Aarch64) => "aarch64",
         };
 
         let url = if version == "latest" {
@@ -61,6 +52,7 @@ impl BunInstaller {
             )
         };
 
+        tracing::debug!("Bun download URL: {}", url);
         Ok(url)
     }
 
@@ -85,12 +77,15 @@ impl BunInstaller {
         }
 
         // Check for other common locations
+        // Note: Windows ARM downloads x64 version, so it will extract as bun-windows-x64
         let possible_dirs = [
             target_dir.join("bun-darwin-x64"),
             target_dir.join("bun-darwin-aarch64"),
             target_dir.join("bun-linux-x64"),
             target_dir.join("bun-linux-aarch64"),
-            target_dir.join("bun-win-x64"),
+            target_dir.join("bun-windows-x64"),
+            // Keep this for potential future native Windows ARM support
+            target_dir.join("bun-windows-aarch64"),
         ];
 
         for dir in possible_dirs.iter() {

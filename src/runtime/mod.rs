@@ -22,7 +22,7 @@ mod types; // Type definitions
 // Re-export main types and functions
 pub use cache::{RuntimeCache, RuntimeCacheStats, RuntimeState};
 pub use constants::*; // Export all path constants
-pub use detection::{Environment, detect_environment};
+pub use detection::{Architecture, Environment, OperatingSystem, detect_environment};
 pub use download::{
     InlineProgressBar, InteractiveHandler, MultiLineProgress, NetworkDiagnostics,
     NetworkDiagnosticsRunner, RuntimeDownloader, TimeoutAction, download_runtime,
