@@ -1,16 +1,15 @@
 // Configuration module for MCPMate
 // Contains database connection and configuration management
 
-use std::path::{Path, PathBuf};
-
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, migrate::MigrateDatabase, sqlite::SqlitePoolOptions};
+use std::path::{Path, PathBuf};
 use tracing;
 
 use crate::{
+    common::paths::get_mcpmate_dir,
     common::types::ConfigSuitType,
     config::{initialization, migration, models, server, suit},
-    runtime::constants::get_mcpmate_dir,
 };
 
 /// Get the database file path in user directory

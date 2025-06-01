@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    runtime::{ExecutionContext, RuntimeManager, RuntimeType, cli::handle_install_command},
+    common::paths::global_paths,
+    runtime::{
+        RuntimeType, cli::handle_install_command, get_runtime_path, types::ExecutionContext,
+    },
 };
 
 /// Install runtime request
@@ -58,7 +61,6 @@ pub struct InstallResponse {
 /// Sync already installed runtime to database
 async fn sync_existing_runtime_to_db(
     state: &AppState,
-    manager: &RuntimeManager,
     runtime_type: RuntimeType,
     version: Option<&str>,
 ) -> Result<(), String> {
@@ -66,18 +68,17 @@ async fn sync_existing_runtime_to_db(
         return Ok(()); // No database configured, skip sync
     };
 
-    let runtime_path = manager
-        .get_runtime_path(runtime_type, version)
+    let runtime_path = get_runtime_path(runtime_type, version)
         .map_err(|e| format!("Failed to get runtime path: {e}"))?;
 
     // Create relative path for database storage
-    let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let mcpmate_dir = home_dir.join(".mcpmate");
+    let paths = global_paths();
+    let mcpmate_dir = paths.base_dir();
 
-    let relative_path = if runtime_path.starts_with(&mcpmate_dir) {
+    let relative_path = if runtime_path.starts_with(mcpmate_dir) {
         // MCPMate managed runtime - store relative path
         runtime_path
-            .strip_prefix(&mcpmate_dir)
+            .strip_prefix(mcpmate_dir)
             .unwrap_or(&runtime_path)
             .to_string_lossy()
             .to_string()
@@ -128,22 +129,14 @@ async fn perform_runtime_installation(
 
 /// Create runtime status for a specific runtime type
 fn create_runtime_status(
-    manager: &RuntimeManager,
     runtime_type: RuntimeType,
     version: Option<&str>,
 ) -> RuntimeStatus {
-    let available = manager
-        .is_runtime_available(runtime_type, version)
-        .unwrap_or(false);
+    // Check if runtime is available
+    let path = get_runtime_path(runtime_type, version).ok();
+    let available = path.as_ref().is_some_and(|p| p.exists());
 
-    let path = if available {
-        manager
-            .get_runtime_path(runtime_type, version)
-            .ok()
-            .map(|p| p.to_string_lossy().to_string())
-    } else {
-        None
-    };
+    let path_str = path.map(|p| p.to_string_lossy().to_string());
 
     let version_display = version.unwrap_or("default");
     let message = if available {
@@ -155,7 +148,7 @@ fn create_runtime_status(
     RuntimeStatus {
         runtime_type: runtime_type.to_string(),
         available,
-        path,
+        path: path_str,
         message,
     }
 }
@@ -171,21 +164,18 @@ pub async fn install_runtime(
         .parse()
         .map_err(|e| ApiError::BadRequest(format!("Invalid runtime type: {e}")))?;
 
-    // Create runtime manager
-    let manager = RuntimeManager::new()
-        .map_err(|e| ApiError::InternalError(format!("Failed to create runtime manager: {e}")))?;
-
     let version = request.version.as_deref();
-    let is_already_installed = manager
-        .is_runtime_available(runtime_type, version)
-        .unwrap_or(false);
+
+    // Check if runtime is already installed
+    let runtime_path = get_runtime_path(runtime_type, version);
+    let is_already_installed = runtime_path.as_ref().is_ok_and(|p| p.exists());
 
     // Handle already installed runtime
     if is_already_installed {
         tracing::info!("Runtime {runtime_type} already installed, syncing to database");
 
         // Attempt to sync to database, but don't fail if it doesn't work
-        if let Err(e) = sync_existing_runtime_to_db(&state, &manager, runtime_type, version).await {
+        if let Err(e) = sync_existing_runtime_to_db(&state, runtime_type, version).await {
             tracing::warn!("Failed to sync runtime to database: {e}");
         }
 
@@ -223,9 +213,6 @@ pub async fn list_runtimes(
     State(_state): State<Arc<AppState>>,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, ApiError> {
-    let manager = RuntimeManager::new()
-        .map_err(|e| ApiError::InternalError(format!("Failed to create runtime manager: {e}")))?;
-
     // Determine which runtime types to check
     let runtime_types_to_check = if let Some(runtime_type_str) = &query.runtime_type {
         // Parse and validate the specific runtime type
@@ -241,7 +228,7 @@ pub async fn list_runtimes(
     // Check each runtime type and create status
     let runtimes = runtime_types_to_check
         .into_iter()
-        .map(|runtime_type| create_runtime_status(&manager, runtime_type, query.version.as_deref()))
+        .map(|runtime_type| create_runtime_status(runtime_type, query.version.as_deref()))
         .collect();
 
     Ok(Json(ListResponse { runtimes }))

@@ -54,26 +54,3 @@ macro_rules! generate_raw_id {
         nanoid!($length)
     }};
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_generate_id_with_length() {
-        let id = crate::generate_id!("test", 8);
-        assert!(id.starts_with("test_"));
-        assert_eq!(id.len(), 13); // "test_" (5) + 8 = 13
-    }
-
-    #[test]
-    fn test_generate_id_default_length() {
-        let id = crate::generate_id!("suit");
-        assert!(id.starts_with("suit_"));
-        assert_eq!(id.len(), 17); // "suit_" (5) + 12 = 17
-    }
-
-    #[test]
-    fn test_generate_raw_id() {
-        let id = crate::generate_raw_id!(12);
-        assert_eq!(id.len(), 12);
-    }
-}

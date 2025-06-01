@@ -13,7 +13,10 @@
 use anyhow::Result;
 use clap::Parser;
 use mcpmate::runtime::{
-    Commands, ExecutionContext, RuntimeManager, RuntimeType, cli::handle_install_command,
+    RuntimeType,
+    cli::handle_install_command,
+    get_runtime_path,
+    types::{Commands, ExecutionContext},
 };
 
 #[derive(Parser)]
@@ -54,25 +57,18 @@ struct Cli {
 }
 
 // Helper to display status for a single runtime, used by the list command
-fn display_single_runtime_status(
-    manager: &RuntimeManager,
-    runtime_type: RuntimeType,
-) -> Result<()> {
+fn display_single_runtime_status(runtime_type: RuntimeType) -> Result<()> {
     println!("{}:", runtime_type);
-    match manager.is_runtime_available(runtime_type, None) {
-        Ok(true) => {
-            print!("  ✓ Available");
-            if let Ok(path) = manager.get_runtime_path(runtime_type, None) {
-                println!(", Path: {}", path.display());
+    match get_runtime_path(runtime_type, None) {
+        Ok(path) => {
+            if path.exists() {
+                println!("  ✓ Available, Path: {}", path.display());
             } else {
-                println!(", Path: <Not Found>");
+                println!("  ✗ Not Installed (path not found)");
             }
         }
-        Ok(false) => {
-            println!("  ✗ Not Installed");
-        }
         Err(e) => {
-            println!("  ⚠️ Error checking status: {}", e);
+            println!("  ✗ Not Installed: {}", e);
         }
     }
     Ok(())
@@ -112,14 +108,13 @@ async fn main() -> Result<()> {
             .await?;
         }
         Commands::List => {
-            let manager = RuntimeManager::new()?;
             println!("MCPMate Runtime Status (CLI):");
 
-            display_single_runtime_status(&manager, RuntimeType::Node)?;
+            display_single_runtime_status(RuntimeType::Node)?;
             println!(); // Add a blank line for separation
-            display_single_runtime_status(&manager, RuntimeType::Uv)?;
+            display_single_runtime_status(RuntimeType::Uv)?;
             println!(); // Add a blank line for separation
-            display_single_runtime_status(&manager, RuntimeType::Bun)?;
+            display_single_runtime_status(RuntimeType::Bun)?;
         } // Check and Path commands are removed from the Commands enum
           // and therefore no longer matched here.
     }

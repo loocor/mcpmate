@@ -8,9 +8,8 @@ use sqlx::{Sqlite, SqlitePool, migrate::MigrateDatabase};
 use std::path::Path;
 
 use super::config::{RuntimeConfig, save_config};
-use super::constants::get_mcpmate_dir;
-
 use super::types::RuntimeType;
+use crate::common::paths::get_mcpmate_dir;
 use crate::core::events::{Event, EventBus};
 
 /// Send runtime events to the global event bus

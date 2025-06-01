@@ -1,8 +1,9 @@
 //! Bun specific installer
 
-use crate::runtime::{constants::*, detection::Environment, types::RuntimeType};
 use anyhow::Result;
 use std::path::Path;
+
+use crate::common::env::{Architecture, Environment, OperatingSystem};
 
 /// Bun installer
 #[derive(Debug)]
@@ -16,140 +17,87 @@ impl BunInstaller {
         Self { environment }
     }
 
-    /// Get Bun download URL
+    /// Get download URL
     pub fn get_download_url(
         &self,
         version: &str,
     ) -> Result<String> {
-        let os = match self.environment.os {
-            crate::runtime::detection::OperatingSystem::Windows => "windows",
-            crate::runtime::detection::OperatingSystem::MacOS => "darwin",
-            crate::runtime::detection::OperatingSystem::Linux => "linux",
+        // Determine platform
+        let platform = match self.environment.os {
+            OperatingSystem::Windows => "windows",
+            OperatingSystem::MacOS => "darwin",
+            OperatingSystem::Linux => "linux",
         };
 
-        let arch = match (self.environment.os, self.environment.arch) {
-            // Windows ARM uses x64 version through emulation
-            (
-                crate::runtime::detection::OperatingSystem::Windows,
-                crate::runtime::detection::Architecture::Aarch64,
-            ) => {
-                tracing::info!("Windows ARM detected: using alternative x64 version");
-                "x64"
-            }
-            (_, crate::runtime::detection::Architecture::X86_64) => "x64",
-            (_, crate::runtime::detection::Architecture::Aarch64) => "aarch64",
+        // Check for unsupported platform
+        if platform == "windows"
+            && matches!(
+                (self.environment.os, self.environment.arch),
+                (OperatingSystem::Windows, Architecture::Aarch64),
+            )
+        {
+            return Err(anyhow::anyhow!(
+                "Bun is not available for Windows ARM64 architecture"
+            ));
+        }
+
+        // Determine architecture
+        let arch = match (platform, self.environment.arch) {
+            (_, Architecture::X86_64) => "x64",
+            (_, Architecture::Aarch64) => "aarch64",
         };
 
+        // Construct URL
         let url = if version == "latest" {
             format!(
                 "https://github.com/oven-sh/bun/releases/latest/download/bun-{}-{}.zip",
-                os, arch
+                platform, arch
             )
         } else {
             format!(
                 "https://github.com/oven-sh/bun/releases/download/bun-v{}/bun-{}-{}.zip",
-                version, os, arch
+                version, platform, arch
             )
         };
 
-        tracing::debug!("Bun download URL: {}", url);
         Ok(url)
     }
 
-    /// Post-installation processing for Bun
+    /// Post-installation processing
     pub fn post_install(
         &self,
-        target_dir: &Path,
-        _version: &str,
+        _install_dir: &Path,
+        version: &str,
     ) -> Result<()> {
-        // Bun typically extracts directly to the target directory
-        // Create bin directory for consistency
-        let bin_dir = target_dir.join(BIN_DIR_NAME);
-        std::fs::create_dir_all(&bin_dir)?;
-
-        // Check if bun executable exists in the root directory
-        let bun_exe_name = RuntimeType::Bun.executable_name();
-        let bun_exe_path = target_dir.join(&bun_exe_name);
-
-        // Move to bin directory
-        if bun_exe_path.exists() {
-            std::fs::rename(&bun_exe_path, bin_dir.join(&bun_exe_name))?;
-        }
-
-        // Check for other common locations
-        // Note: Windows ARM downloads x64 version, so it will extract as bun-windows-x64
-        let possible_dirs = [
-            target_dir.join("bun-darwin-x64"),
-            target_dir.join("bun-darwin-aarch64"),
-            target_dir.join("bun-linux-x64"),
-            target_dir.join("bun-linux-aarch64"),
-            target_dir.join("bun-windows-x64"),
-            // Keep this for potential future native Windows ARM support
-            target_dir.join("bun-windows-aarch64"),
-        ];
-
-        for dir in possible_dirs.iter() {
-            if dir.exists() {
-                // Check for bun executable
-                let dir_bun_path = dir.join(&bun_exe_name);
-                if dir_bun_path.exists() {
-                    // Move to bin directory
-                    std::fs::rename(&dir_bun_path, bin_dir.join(&bun_exe_name))?;
-                    // Clean up directory
-                    std::fs::remove_dir_all(dir)?;
-                    break;
-                }
+        // Add platform-specific post-install steps if needed
+        match (self.environment.os, self.environment.arch) {
+            (OperatingSystem::Windows, Architecture::X86_64) => {
+                // Windows-specific steps for x64
+                tracing::debug!("Performing Windows x64 post-install steps for Bun");
+            }
+            (OperatingSystem::Windows, Architecture::Aarch64) => {
+                // Windows-specific steps for ARM64
+                tracing::debug!("Performing Windows ARM64 post-install steps for Bun");
+            }
+            (OperatingSystem::MacOS, Architecture::X86_64) => {
+                // macOS-specific steps for x64
+                tracing::debug!("Performing macOS x64 post-install steps for Bun");
+            }
+            (OperatingSystem::MacOS, Architecture::Aarch64) => {
+                // macOS-specific steps for ARM64
+                tracing::debug!("Performing macOS ARM64 post-install steps for Bun");
+            }
+            (OperatingSystem::Linux, Architecture::X86_64) => {
+                // Linux-specific steps for x64
+                tracing::debug!("Performing Linux x64 post-install steps for Bun");
+            }
+            (OperatingSystem::Linux, Architecture::Aarch64) => {
+                // Linux-specific steps for ARM64
+                tracing::debug!("Performing Linux ARM64 post-install steps for Bun");
             }
         }
 
-        // Create bunx script/executable
-        self.create_bunx_script(&bin_dir)?;
-
-        tracing::info!("Bun installation completed successfully");
-
-        Ok(())
-    }
-
-    /// Create bunx script that calls 'bun x'
-    fn create_bunx_script(
-        &self,
-        bin_dir: &Path,
-    ) -> Result<()> {
-        let bun_exe_path = bin_dir.join(RuntimeType::Bun.executable_name());
-
-        if !bun_exe_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Bun executable not found at {}",
-                bun_exe_path.display()
-            ));
-        }
-
-        let bunx_path = if cfg!(windows) {
-            // On Windows, create a batch file
-            let bunx_path = bin_dir.join("bunx.cmd");
-            let script_content = format!("@echo off\r\n\"{}\" x %*\r\n", bun_exe_path.display());
-            std::fs::write(&bunx_path, script_content)?;
-            bunx_path
-        } else {
-            // On Unix-like systems, create a shell script
-            let bunx_path = bin_dir.join("bunx");
-            let script_content =
-                format!("#!/bin/sh\nexec \"{}\" x \"$@\"\n", bun_exe_path.display());
-            std::fs::write(&bunx_path, script_content)?;
-
-            // Make it executable
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&bunx_path)?.permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&bunx_path, perms)?;
-            }
-
-            bunx_path
-        };
-
-        tracing::debug!("Created bunx script at: {}", bunx_path.display());
+        tracing::info!("Bun {} post-installation complete", version);
         Ok(())
     }
 }

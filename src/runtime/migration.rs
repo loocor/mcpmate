@@ -7,12 +7,12 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use tracing;
 
-use super::constants::get_mcpmate_dir;
+use crate::common::paths::get_mcpmate_dir;
 
 /// Runtime configuration row from database
 #[derive(Debug, sqlx::FromRow)]
 struct RuntimeConfigRow {
-    id: i64,
+    id: Option<String>,
     runtime_type: String,
     version: String,
     relative_bin_path: String,
@@ -69,16 +69,16 @@ pub async fn migrate_runtime_configs(pool: &Pool<Sqlite>) -> Result<()> {
             }
 
             tracing::info!(
-                "Updating bin path for {} {}: '{}' -> '{}'",
+                "Updating bin path for {} {}: '{}'",
                 runtime_type,
                 version,
-                bin_path,
                 new_bin_path
             );
         }
 
         // Update the database if path changed
         if bin_path != new_bin_path {
+            let id_for_error = id.clone();
             // Use query to avoid compile-time verification
             sqlx::query(
                 r#"
@@ -91,7 +91,7 @@ pub async fn migrate_runtime_configs(pool: &Pool<Sqlite>) -> Result<()> {
             .bind(id)
             .execute(pool)
             .await
-            .with_context(|| format!("Failed to update runtime config for {}", id))?;
+            .with_context(|| format!("Failed to update runtime config for {:?}", id_for_error))?;
 
             tracing::info!("Updated runtime config for {} {}", runtime_type, version);
         }

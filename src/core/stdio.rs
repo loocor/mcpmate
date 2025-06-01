@@ -70,43 +70,24 @@ async fn connect_stdio_server_core(
             );
         }
     } else {
-        // Fallback to RuntimeManager for backward compatibility
-        let runtime_manager =
-            crate::runtime::RuntimeManager::new().context("Failed to create runtime manager")?;
+        // Fallback to basic runtime detection
+        tracing::info!("Runtime cache not available, using system runtime for command '{command}'");
 
         // Create necessary directories for runtime
-        let _runtime_paths = crate::runtime::RuntimePaths::new()
-            .context("Failed to create runtime paths manager")?;
-
-        // Ensure runtime is available for command
-        if let Err(e) = runtime_manager
-            .ensure_runtime_for_command(command, database_pool)
-            .await
-        {
-            tracing::warn!(
-                "MCPMate runtime setup failed for command '{}': {}",
-                command,
-                e
-            );
-            tracing::info!("Attempting to continue with system-installed runtime");
-            // Continue anyway - the command might work with system-installed runtimes
-        } else {
-            tracing::info!("Using MCPMate managed runtime for command '{}'", command);
-        }
+        let paths = crate::common::paths::global_paths();
+        paths
+            .ensure_directories()
+            .context("Failed to create necessary directories")?;
     }
 
     // Prepare environment variables based on runtime configuration
     if let Err(e) =
         crate::config::runtime::prepare_command_env_with_db(&mut cmd, command, database_pool).await
     {
-        tracing::warn!(
-            "Failed to prepare environment for command '{}': {}",
-            command,
-            e
-        );
+        tracing::warn!("Failed to prepare environment for command '{command}': {e}");
         tracing::info!("Attempting to continue with default environment");
     } else {
-        tracing::debug!("Environment prepared for command '{}'", command);
+        tracing::debug!("Environment prepared for command '{command}'");
     }
 
     // Determine appropriate timeout based on command type

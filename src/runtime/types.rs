@@ -21,6 +21,11 @@ pub enum RuntimeType {
 }
 
 impl RuntimeType {
+    // Default version constants
+    pub const DEFAULT_NODE_VERSION: &'static str = "latest";
+    pub const DEFAULT_BUN_VERSION: &'static str = "latest";
+    pub const DEFAULT_UV_VERSION: &'static str = "latest";
+
     /// Get the string representation of the runtime type
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -33,9 +38,9 @@ impl RuntimeType {
     /// Get the default version
     pub fn default_version(&self) -> &'static str {
         match self {
-            RuntimeType::Node => "latest",
-            RuntimeType::Uv => "latest",
-            RuntimeType::Bun => "latest",
+            RuntimeType::Node => Self::DEFAULT_NODE_VERSION,
+            RuntimeType::Uv => Self::DEFAULT_UV_VERSION,
+            RuntimeType::Bun => Self::DEFAULT_BUN_VERSION,
         }
     }
 

@@ -1,36 +1,26 @@
 //! Runtime download and installation module
 
-mod diagnostics;
 mod downloader;
 mod extractor;
-mod interactive;
 mod progress;
 
+use crate::common::env::Environment;
+use crate::common::paths::global_paths;
 use crate::runtime::{
-    detection::Environment,
     installers::{bun::BunInstaller, node::NodeInstaller, uv::UvInstaller},
-    paths::RuntimePaths,
     types::{DownloadConfig, DownloadProgress, DownloadStage, RuntimeType},
 };
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-pub use diagnostics::{
-    NetworkDiagnostics, NetworkDiagnosticsRunner, get_diagnostic_suggestions,
-    quick_connectivity_test,
-};
 pub use downloader::FileDownloader;
 pub use extractor::ArchiveExtractor;
-pub use interactive::{
-    InteractiveHandler, TimeoutAction, get_user_confirmation, supports_interactive,
-};
 pub use progress::{InlineProgressBar, MultiLineProgress, supports_inline_progress};
 
 /// Main runtime downloader that coordinates all installers
 #[derive(Debug)]
 pub struct RuntimeDownloader {
     environment: Environment,
-    paths: RuntimePaths,
     file_downloader: FileDownloader,
     extractor: ArchiveExtractor,
 }
@@ -38,13 +28,11 @@ pub struct RuntimeDownloader {
 impl RuntimeDownloader {
     /// Create a new runtime downloader with default configuration
     pub fn new(environment: Environment) -> Result<Self> {
-        let paths = RuntimePaths::new()?;
         let file_downloader = FileDownloader::new(environment.clone());
         let extractor = ArchiveExtractor::new();
 
         Ok(Self {
             environment,
-            paths,
             file_downloader,
             extractor,
         })
@@ -55,13 +43,11 @@ impl RuntimeDownloader {
         environment: Environment,
         config: DownloadConfig,
     ) -> Result<Self> {
-        let paths = RuntimePaths::new()?;
         let file_downloader = FileDownloader::with_config(environment.clone(), config);
         let extractor = ArchiveExtractor::new();
 
         Ok(Self {
             environment,
-            paths,
             file_downloader,
             extractor,
         })
@@ -74,9 +60,10 @@ impl RuntimeDownloader {
         version: Option<&str>,
     ) -> Result<PathBuf> {
         let version = version.unwrap_or(runtime_type.default_version());
+        let paths = global_paths();
 
         // Create necessary directories
-        self.paths.create_directories(runtime_type, Some(version))?;
+        paths.ensure_runtime_directories(runtime_type.as_str(), version)?;
 
         // Get download URL based on runtime type
         let download_url = self.get_download_url(runtime_type, version)?;
@@ -84,12 +71,7 @@ impl RuntimeDownloader {
         // Download file with progress tracking
         let temp_file = self
             .file_downloader
-            .download_file(
-                &download_url,
-                runtime_type,
-                version,
-                &self.paths.get_temp_dir(),
-            )
+            .download_file(&download_url, runtime_type, version, &paths.downloads_dir())
             .await?;
 
         // Report extraction stage
@@ -102,7 +84,7 @@ impl RuntimeDownloader {
         });
 
         // Extract archive
-        let install_dir = self.paths.get_runtime_dir(runtime_type, Some(version));
+        let install_dir = paths.runtime_version_dir(runtime_type.as_str(), version);
         self.extractor.extract(&temp_file, &install_dir)?;
 
         // Report post-processing stage
@@ -136,7 +118,7 @@ impl RuntimeDownloader {
         });
 
         // Return executable file path
-        self.paths.get_runtime_path(runtime_type, Some(version))
+        crate::runtime::executable::get_runtime_executable_path(runtime_type, Some(version))
     }
 
     /// Get download URL for the specified runtime type
@@ -206,7 +188,7 @@ pub async fn download_runtime(
     runtime_type: RuntimeType,
     version: Option<&str>,
 ) -> Result<PathBuf> {
-    use crate::runtime::detection::detect_environment;
+    use crate::common::env::detect_environment;
 
     let environment = detect_environment()?;
     let downloader = RuntimeDownloader::new(environment)?;
@@ -219,9 +201,15 @@ pub async fn download_runtime_with_config(
     version: Option<&str>,
     config: DownloadConfig,
 ) -> Result<PathBuf> {
-    use crate::runtime::detection::detect_environment;
+    use crate::common::env::detect_environment;
 
     let environment = detect_environment()?;
     let downloader = RuntimeDownloader::with_config(environment, config)?;
     downloader.download_and_install(runtime_type, version).await
+}
+
+/// Simple check for interactive support (simplified version)
+pub fn supports_interactive() -> bool {
+    // Simplified: just check if we're in a terminal
+    atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout)
 }

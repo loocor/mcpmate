@@ -8,14 +8,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::{
-    DownloadConfig, DownloadProgress, InlineProgressBar, MultiLineProgress, RuntimeType,
-    download_runtime_with_config,
+    DownloadConfig, DownloadProgress, RuntimeType, download_runtime_with_config,
     integration::{
         save_runtime_config_to_db, send_download_progress_events, send_runtime_ready_event,
         send_runtime_setup_failed_event,
     },
-    supports_inline_progress, supports_interactive,
     types::ExecutionContext,
+};
+
+use super::download::{
+    InlineProgressBar, MultiLineProgress, supports_inline_progress, supports_interactive,
 };
 
 /// Progress callback type alias

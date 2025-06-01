@@ -104,14 +104,6 @@ impl InlineProgressBar {
         io::stdout().flush().unwrap();
     }
 
-    /// Finish the progress bar (move to next line)
-    pub fn finish(
-        &self,
-        final_message: &str,
-    ) {
-        println!("\r{:<width$}", final_message, width = self.terminal_width);
-    }
-
     /// Clear the current line
     pub fn clear(&self) {
         print!("\r{:<width$}\r", "", width = self.terminal_width);

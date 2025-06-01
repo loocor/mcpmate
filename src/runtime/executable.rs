@@ -1,79 +1,21 @@
+//! Runtime executable path utilities
+//!
+//! This module provides runtime-specific executable path resolution and installation checks.
+//! Basic path management is handled by common/paths.rs.
+
+use crate::common::paths::global_paths;
 use crate::runtime::types::RuntimeType;
 use std::path::PathBuf;
 
-// base directory structure
-pub const MCPMATE_DIR_NAME: &str = ".mcpmate";
-pub const RUNTIMES_DIR_NAME: &str = "runtimes";
-pub const CACHE_DIR_NAME: &str = "cache";
-pub const TMP_DIR_NAME: &str = "tmp";
-pub const DOWNLOADS_DIR_NAME: &str = "downloads";
-pub const BIN_DIR_NAME: &str = "bin";
-
-// runtime specific directory specific directory
-pub const NODE_DIR_NAME: &str = "node";
-pub const BUN_DIR_NAME: &str = "bun";
-pub const UV_DIR_NAME: &str = "uv";
-
-// default version
-pub const DEFAULT_NODE_VERSION: &str = "latest";
-pub const DEFAULT_BUN_VERSION: &str = "latest";
-pub const DEFAULT_UV_VERSION: &str = "latest";
-
-/// get the default version of the runtime
-pub fn get_default_version(runtime_type: RuntimeType) -> &'static str {
-    match runtime_type {
-        RuntimeType::Node => DEFAULT_NODE_VERSION,
-        RuntimeType::Bun => DEFAULT_BUN_VERSION,
-        RuntimeType::Uv => DEFAULT_UV_VERSION,
-    }
-}
-
-/// get the directory name of the runtime
-pub fn get_runtime_dir_name(runtime_type: RuntimeType) -> &'static str {
-    runtime_type.as_str()
-}
-
-/// get the MCPMate user directory
-pub fn get_mcpmate_dir() -> Result<PathBuf, anyhow::Error> {
-    let home_dir =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot get user home directory"))?;
-    Ok(home_dir.join(MCPMATE_DIR_NAME))
-}
-
-/// get the runtime root directory
-pub fn get_runtimes_base_dir() -> Result<PathBuf, anyhow::Error> {
-    Ok(get_mcpmate_dir()?.join(RUNTIMES_DIR_NAME))
-}
-
-/// get the directory of the specific runtime
-pub fn get_runtime_type_dir(runtime_type: RuntimeType) -> Result<PathBuf, anyhow::Error> {
-    Ok(get_runtimes_base_dir()?.join(get_runtime_dir_name(runtime_type)))
-}
-
-/// get the directory of the specific runtime version
-pub fn get_runtime_version_dir(
-    runtime_type: RuntimeType,
-    version: Option<&str>,
-) -> Result<PathBuf, anyhow::Error> {
-    let version = version.unwrap_or_else(|| get_default_version(runtime_type));
-    Ok(get_runtime_type_dir(runtime_type)?.join(version))
-}
-
-/// get the bin directory of the specific runtime version
-pub fn get_runtime_bin_dir(
-    runtime_type: RuntimeType,
-    version: Option<&str>,
-) -> Result<PathBuf, anyhow::Error> {
-    Ok(get_runtime_version_dir(runtime_type, version)?.join(BIN_DIR_NAME))
-}
-
-/// get the executable path of the specific runtime version
+/// Get the executable path of the specific runtime version
 pub fn get_runtime_executable_path(
     runtime_type: RuntimeType,
     version: Option<&str>,
 ) -> Result<PathBuf, anyhow::Error> {
-    let version_dir = get_runtime_version_dir(runtime_type, version)?;
-    let bin_dir = version_dir.join(BIN_DIR_NAME);
+    let version = version.unwrap_or_else(|| runtime_type.default_version());
+    let paths = global_paths();
+    let version_dir = paths.runtime_version_dir(runtime_type.as_str(), version);
+    let bin_dir = version_dir.join("bin");
 
     // For Node.js and Uv, prioritize the execution wrappers over base commands
     let exe_name = match runtime_type {
@@ -201,6 +143,33 @@ pub fn get_runtime_executable_path(
             if root_exe_path.exists() {
                 return Ok(root_exe_path);
             }
+
+            // Check for platform-specific subdirectory (e.g., uv-aarch64-apple-darwin)
+            // Look through any directory that starts with "uv-"
+            if let Ok(entries) = std::fs::read_dir(&version_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir()
+                        && path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().starts_with("uv-"))
+                            .unwrap_or(false)
+                    {
+                        // Check for uv executable
+                        let uv_path = path.join(&exe_name);
+                        if uv_path.exists() {
+                            return Ok(uv_path);
+                        }
+
+                        // Also check for uvx executable
+                        let uvx_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
+                        let uvx_path = path.join(uvx_name);
+                        if uvx_path.exists() {
+                            return Ok(uvx_path);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -208,29 +177,17 @@ pub fn get_runtime_executable_path(
     Ok(bin_exe_path)
 }
 
-/// get the cache directory
-pub fn get_cache_dir(runtime_type: RuntimeType) -> Result<PathBuf, anyhow::Error> {
-    Ok(get_mcpmate_dir()?
-        .join(CACHE_DIR_NAME)
-        .join(get_runtime_dir_name(runtime_type)))
-}
-
-/// get the temporary download directory
-pub fn get_temp_download_dir() -> Result<PathBuf, anyhow::Error> {
-    Ok(get_mcpmate_dir()?
-        .join(TMP_DIR_NAME)
-        .join(DOWNLOADS_DIR_NAME))
-}
-
-/// check if the runtime is installed
+/// Check if the runtime is installed
 pub fn is_runtime_installed(
     runtime_type: RuntimeType,
     version: Option<&str>,
 ) -> Result<bool, anyhow::Error> {
-    let version_dir = get_runtime_version_dir(runtime_type, version)?;
+    let version = version.unwrap_or_else(|| runtime_type.default_version());
+    let paths = global_paths();
+    let version_dir = paths.runtime_version_dir(runtime_type.as_str(), version);
 
     // check if the executable file exists
-    let bin_dir = version_dir.join(BIN_DIR_NAME);
+    let bin_dir = version_dir.join("bin");
     let exe_name = runtime_type.executable_name();
     let bin_exe_path = bin_dir.join(&exe_name);
 
@@ -242,7 +199,7 @@ pub fn is_runtime_installed(
     match runtime_type {
         RuntimeType::Node => {
             // check the standard Node.js directory structure
-            let node_bin_path = version_dir.join(NODE_DIR_NAME).join("bin").join(&exe_name);
+            let node_bin_path = version_dir.join("node").join("bin").join(&exe_name);
             if node_bin_path.exists() {
                 return Ok(true);
             }
@@ -302,6 +259,33 @@ pub fn is_runtime_installed(
             let root_exe_path = version_dir.join(&exe_name);
             if root_exe_path.exists() {
                 return Ok(true);
+            }
+
+            // Check for platform-specific subdirectory (e.g., uv-aarch64-apple-darwin)
+            // Look through any directory that starts with "uv-"
+            if let Ok(entries) = std::fs::read_dir(&version_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir()
+                        && path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().starts_with("uv-"))
+                            .unwrap_or(false)
+                    {
+                        // Check for uv executable
+                        let uv_path = path.join(&exe_name);
+                        if uv_path.exists() {
+                            return Ok(true);
+                        }
+
+                        // Also check for uvx executable
+                        let uvx_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
+                        let uvx_path = path.join(uvx_name);
+                        if uvx_path.exists() {
+                            return Ok(true);
+                        }
+                    }
+                }
             }
         }
     }

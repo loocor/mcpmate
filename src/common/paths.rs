@@ -59,9 +59,9 @@ impl MCPMatePaths {
         self.base_dir.join(constants::TMP_DIR_NAME)
     }
 
-    /// Get the downloads directory (~/.mcpmate/tmp/downloads)
+    /// Get the downloads directory (system temp dir)
     pub fn downloads_dir(&self) -> PathBuf {
-        self.tmp_dir().join(constants::DOWNLOADS_DIR_NAME)
+        std::env::temp_dir().join("mcpmate-downloads")
     }
 
     /// Get the database file path (~/.mcpmate/mcpmate.db)
@@ -117,13 +117,19 @@ impl MCPMatePaths {
             self.cache_dir(),
             self.config_dir(),
             self.tmp_dir(),
-            self.downloads_dir(),
         ];
 
         for dir in &dirs {
             std::fs::create_dir_all(dir)
                 .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
         }
+
+        std::fs::create_dir_all(self.downloads_dir()).with_context(|| {
+            format!(
+                "Failed to create downloads directory: {}",
+                self.downloads_dir().display()
+            )
+        })?;
 
         tracing::debug!("Created MCPMate directory structure");
         Ok(())
@@ -215,6 +221,7 @@ pub fn get_cache_dir() -> Result<PathBuf> {
     Ok(global_paths().cache_dir())
 }
 
-pub fn get_temp_download_dir() -> Result<PathBuf> {
-    Ok(global_paths().downloads_dir())
+/// Get the cache directory for a specific runtime
+pub fn get_runtime_cache_dir(runtime_type: &str) -> PathBuf {
+    global_paths().runtime_cache_dir(runtime_type)
 }
