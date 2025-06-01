@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use tracing;
 
 use super::types::ToolMapping;
-use crate::http::pool::UpstreamConnectionPool;
+use crate::core::http::pool::UpstreamConnectionPool;
 
 /// Build a mapping of tool names to server/instance information
 ///

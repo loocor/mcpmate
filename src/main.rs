@@ -1,9 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 
-mod proxy;
-
-use proxy::{
+use mcpmate::core::proxy::{
     Args,
     init::{setup_database, setup_logging, setup_proxy_server},
     startup::{start_api_server, start_background_connections, start_proxy_server},

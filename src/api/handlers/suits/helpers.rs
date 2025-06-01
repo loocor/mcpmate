@@ -3,7 +3,7 @@
 
 use crate::{
     api::handlers::ApiError,
-    conf::{
+    config::{
         database::Database,
         models::{ConfigSuit, ConfigSuitTool, Server},
     },
@@ -14,7 +14,7 @@ pub async fn get_suit_or_error(
     db: &Database,
     suit_id: &str,
 ) -> Result<ConfigSuit, ApiError> {
-    let suit = crate::conf::suit::get_config_suit(&db.pool, suit_id)
+    let suit = crate::config::suit::get_config_suit(&db.pool, suit_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
@@ -31,7 +31,7 @@ pub async fn get_server_or_error(
     db: &Database,
     server_id: &str,
 ) -> Result<Server, ApiError> {
-    let server = crate::conf::server::get_server_by_id(&db.pool, server_id)
+    let server = crate::config::server::get_server_by_id(&db.pool, server_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -48,7 +48,7 @@ pub async fn get_tool_or_error(
     db: &Database,
     tool_id: &str,
 ) -> Result<ConfigSuitTool, ApiError> {
-    let tool = crate::conf::operations::tool::get_config_suit_tool_by_id(&db.pool, tool_id)
+    let tool = crate::config::operations::tool::get_config_suit_tool_by_id(&db.pool, tool_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {e}")))?;
 

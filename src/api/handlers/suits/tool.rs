@@ -17,7 +17,7 @@ pub async fn list_tools(
     let suit = get_suit_or_error(&db, &id).await?;
 
     // Get all tools in the suit
-    let tool_configs = crate::conf::operations::tool::get_tools_by_suit_id(&db.pool, &id)
+    let tool_configs = crate::config::operations::tool::get_tools_by_suit_id(&db.pool, &id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get tool configurations: {e}")))?;
 
@@ -77,7 +77,7 @@ pub async fn enable_tool(
     }
 
     // Enable the tool
-    crate::conf::operations::tool::set_tool_enabled_by_id(&db.pool, &tool_id, true)
+    crate::config::operations::tool::set_tool_enabled_by_id(&db.pool, &tool_id, true)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to enable tool in configuration suit: {e}"))
@@ -120,7 +120,7 @@ pub async fn disable_tool(
     }
 
     // Disable the tool
-    crate::conf::operations::tool::set_tool_enabled_by_id(&db.pool, &tool_id, false)
+    crate::config::operations::tool::set_tool_enabled_by_id(&db.pool, &tool_id, false)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to disable tool in configuration suit: {e}"))
@@ -154,7 +154,7 @@ pub async fn batch_enable_tools(
     // Process each tool ID
     for tool_id in payload.ids {
         // Get the tool to check if it exists
-        let tool = crate::conf::operations::tool::get_config_suit_tool_by_id(&db.pool, &tool_id)
+        let tool = crate::config::operations::tool::get_config_suit_tool_by_id(&db.pool, &tool_id)
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {e}")))?;
 
@@ -175,7 +175,7 @@ pub async fn batch_enable_tools(
                 }
 
                 // Enable the tool
-                match crate::conf::operations::tool::set_tool_enabled_by_id(
+                match crate::config::operations::tool::set_tool_enabled_by_id(
                     &db.pool, &tool_id, true,
                 )
                 .await
@@ -220,7 +220,7 @@ pub async fn batch_disable_tools(
     // Process each tool ID
     for tool_id in payload.ids {
         // Get the tool to check if it exists
-        let tool = crate::conf::operations::tool::get_config_suit_tool_by_id(&db.pool, &tool_id)
+        let tool = crate::config::operations::tool::get_config_suit_tool_by_id(&db.pool, &tool_id)
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {e}")))?;
 
@@ -241,7 +241,7 @@ pub async fn batch_disable_tools(
                 }
 
                 // Disable the tool
-                match crate::conf::operations::tool::set_tool_enabled_by_id(
+                match crate::config::operations::tool::set_tool_enabled_by_id(
                     &db.pool, &tool_id, false,
                 )
                 .await

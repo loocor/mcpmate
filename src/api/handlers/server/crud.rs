@@ -7,7 +7,7 @@ use super::{common::*, instance::list_instances};
 use crate::{
     api::{handlers::ApiError, models::server::ServerMetaInfo},
     common::types::{ConfigSuitType, ServerType},
-    conf::{
+    config::{
         database::Database,
         models::{ConfigSuit, ServerMeta},
         server::{self},
@@ -70,8 +70,8 @@ fn validate_server_config(
 async fn get_existing_server_or_error(
     db: &Database,
     name: &str,
-) -> Result<crate::conf::models::Server, ApiError> {
-    let server = crate::conf::server::get_server(&db.pool, name)
+) -> Result<crate::config::models::Server, ApiError> {
+    let server = crate::config::server::get_server(&db.pool, name)
         .await
         .map_err(db_error)?;
 
@@ -128,7 +128,7 @@ async fn get_server_details(
     let mut details = ServerDetails::default();
 
     // Get server arguments
-    if let Ok(server_args) = crate::conf::server::get_server_args(&db.pool, server_id).await {
+    if let Ok(server_args) = crate::config::server::get_server_args(&db.pool, server_id).await {
         if !server_args.is_empty() {
             let mut sorted_args: Vec<_> = server_args.into_iter().collect();
             sorted_args.sort_by_key(|arg| arg.arg_index);
@@ -137,14 +137,14 @@ async fn get_server_details(
     }
 
     // Get server environment variables
-    if let Ok(env_map) = crate::conf::server::get_server_env(&db.pool, server_id).await {
+    if let Ok(env_map) = crate::config::server::get_server_env(&db.pool, server_id).await {
         if !env_map.is_empty() {
             details.env = Some(env_map);
         }
     }
 
     // Get server metadata
-    if let Ok(Some(server_meta)) = crate::conf::server::get_server_meta(&db.pool, server_id).await {
+    if let Ok(Some(server_meta)) = crate::config::server::get_server_meta(&db.pool, server_id).await {
         details.meta = Some(ServerMetaInfo {
             description: server_meta.description,
             author: server_meta.author,
@@ -157,14 +157,14 @@ async fn get_server_details(
     }
 
     // Get server global enabled status
-    details.globally_enabled = crate::conf::server::get_server_global_status(&db.pool, server_id)
+    details.globally_enabled = crate::config::server::get_server_global_status(&db.pool, server_id)
         .await
         .unwrap_or(Some(true))
         .unwrap_or(true);
 
     // Get server enabled status in config suits
     details.enabled_in_suits =
-        crate::conf::server::is_server_enabled_in_any_suit(&db.pool, server_id)
+        crate::config::server::is_server_enabled_in_any_suit(&db.pool, server_id)
             .await
             .unwrap_or(false);
 
@@ -218,7 +218,7 @@ pub async fn create_server(
     let db = get_database_from_state(&state)?;
 
     // Check if server already exists
-    if crate::conf::server::get_server(&db.pool, &payload.name)
+    if crate::config::server::get_server(&db.pool, &payload.name)
         .await
         .map_err(db_error)?
         .is_some()
@@ -241,20 +241,20 @@ pub async fn create_server(
     );
 
     // Insert server into database
-    let server_id = crate::conf::server::upsert_server(&db.pool, &server)
+    let server_id = crate::config::server::upsert_server(&db.pool, &server)
         .await
         .map_err(db_error)?;
 
     // Insert server arguments if provided
     if let Some(args) = &payload.args {
-        crate::conf::server::upsert_server_args(&db.pool, &server_id, args)
+        crate::config::server::upsert_server_args(&db.pool, &server_id, args)
             .await
             .map_err(db_error)?;
     }
 
     // Insert server environment variables if provided
     if let Some(env) = &payload.env {
-        crate::conf::server::upsert_server_env(&db.pool, &server_id, env)
+        crate::config::server::upsert_server_env(&db.pool, &server_id, env)
             .await
             .map_err(db_error)?;
     }
@@ -331,20 +331,20 @@ pub async fn update_server(
     }
 
     // Update server in database
-    crate::conf::server::upsert_server(&db.pool, &updated_server)
+    crate::config::server::upsert_server(&db.pool, &updated_server)
         .await
         .map_err(db_error)?;
 
     // Update server arguments if provided
     if let Some(args) = &payload.args {
-        crate::conf::server::upsert_server_args(&db.pool, &server_id, args)
+        crate::config::server::upsert_server_args(&db.pool, &server_id, args)
             .await
             .map_err(db_error)?;
     }
 
     // Update server environment variables if provided
     if let Some(env) = &payload.env {
-        crate::conf::server::upsert_server_env(&db.pool, &server_id, env)
+        crate::config::server::upsert_server_env(&db.pool, &server_id, env)
             .await
             .map_err(db_error)?;
     }
@@ -394,7 +394,7 @@ async fn import_single_server(
     config: crate::api::models::server::ImportServerConfig,
 ) -> Result<(), String> {
     // Check if server already exists
-    if crate::conf::server::get_server(&db.pool, &name)
+    if crate::config::server::get_server(&db.pool, &name)
         .await
         .map_err(|e| e.to_string())?
         .is_some()
@@ -415,16 +415,16 @@ async fn import_single_server(
     );
 
     // Insert server into database
-    let server_id = crate::conf::server::upsert_server(&db.pool, &server)
+    let server_id = crate::config::server::upsert_server(&db.pool, &server)
         .await
         .map_err(|e| e.to_string())?;
 
     // Insert optional data (non-critical errors)
     if let Some(args) = &config.args {
-        let _ = crate::conf::server::upsert_server_args(&db.pool, &server_id, args).await;
+        let _ = crate::config::server::upsert_server_args(&db.pool, &server_id, args).await;
     }
     if let Some(env) = &config.env {
-        let _ = crate::conf::server::upsert_server_env(&db.pool, &server_id, env).await;
+        let _ = crate::config::server::upsert_server_env(&db.pool, &server_id, env).await;
     }
     let _ = create_server_metadata(db, &server_id, "Imported via API").await;
 
@@ -515,7 +515,7 @@ async fn delete_server_records(
     let mut tx = db.pool.begin().await.map_err(db_error)?;
 
     // Delete from all config suits
-    let config_suits = crate::conf::suit::get_all_config_suits(&db.pool)
+    let config_suits = crate::config::suit::get_all_config_suits(&db.pool)
         .await
         .map_err(db_error)?;
     for suit in config_suits {

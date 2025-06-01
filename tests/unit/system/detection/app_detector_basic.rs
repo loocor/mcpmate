@@ -1,7 +1,7 @@
 // Basic application detector tests
 
 use anyhow::Result;
-use mcpmate::conf::initialization::run_initialization;
+use mcpmate::config::initialization::run_initialization;
 use mcpmate::system::detection::AppDetector;
 use sqlx::SqlitePool;
 use std::sync::Arc;

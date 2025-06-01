@@ -4,7 +4,7 @@ use std::{net::SocketAddr, time::Duration};
 
 use anyhow::{Context, Result};
 
-use crate::http::proxy::core::HttpProxyServer;
+use crate::core::http::proxy::core::HttpProxyServer;
 
 /// Create a service factory function that returns a new HttpProxyServer instance
 ///
@@ -182,7 +182,7 @@ pub async fn start_unified(
     );
 
     // Import the UnifiedHttpServer
-    use crate::http::unified::{UnifiedHttpServer, UnifiedHttpServerConfig};
+    use crate::core::http::unified::{UnifiedHttpServer, UnifiedHttpServerConfig};
 
     // Create unified server config with standard MCP endpoints
     let config = UnifiedHttpServerConfig {

@@ -4,7 +4,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use super::error::{ProxyError, Result};
-use crate::conf::constants::commands;
+use crate::config::constants::commands;
 
 /// Determine appropriate connection timeout based on command type
 pub fn get_connection_timeout(command: &str) -> std::time::Duration {

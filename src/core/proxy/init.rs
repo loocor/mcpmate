@@ -5,12 +5,12 @@ use tracing_subscriber::{self, EnvFilter};
 use super::Args;
 
 // Import required types and modules from our library crate
-use mcpmate::api::handlers::system;
-use mcpmate::conf::database::Database;
-use mcpmate::core::{events, loader};
-use mcpmate::http::HttpProxyServer;
-use mcpmate::http::proxy;
-use mcpmate::runtime::migration;
+use crate::api::handlers::system;
+use crate::config::database::Database;
+use crate::core::http::HttpProxyServer;
+use crate::core::http::proxy;
+use crate::core::{events, loader};
+use crate::runtime::migration;
 
 /// Setup logging based on command line arguments
 pub fn setup_logging(args: &Args) -> Result<()> {

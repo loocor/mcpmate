@@ -17,19 +17,19 @@ pub async fn list_servers(
     let suit = get_suit_or_error(&db, &id).await?;
 
     // Get all servers in the suit
-    let server_configs = crate::conf::suit::get_config_suit_servers(&db.pool, &id)
+    let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &id)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to get server configurations: {e}"))
         })?;
 
     // Get all servers
-    let all_servers = crate::conf::server::get_all_servers(&db.pool)
+    let all_servers = crate::config::server::get_all_servers(&db.pool)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
 
     // Create a map of server ID to server
-    let server_map: HashMap<String, crate::conf::models::Server> = all_servers
+    let server_map: HashMap<String, crate::config::models::Server> = all_servers
         .into_iter()
         .filter_map(|s| {
             if let Some(id) = &s.id {
@@ -80,7 +80,7 @@ pub async fn enable_server(
     let server = get_server_or_error(&db, &server_id).await?;
 
     // Check if the server is already enabled in the suit
-    let server_configs = crate::conf::suit::get_config_suit_servers(&db.pool, &suit_id)
+    let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &suit_id)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to get server configurations: {e}"))
@@ -99,7 +99,7 @@ pub async fn enable_server(
     }
 
     // Enable the server in the suit
-    crate::conf::suit::add_server_to_config_suit(&db.pool, &suit_id, &server_id, true)
+    crate::config::suit::add_server_to_config_suit(&db.pool, &suit_id, &server_id, true)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!(
@@ -136,7 +136,7 @@ pub async fn disable_server(
     let server = get_server_or_error(&db, &server_id).await?;
 
     // Check if the server is already disabled in the suit
-    let server_configs = crate::conf::suit::get_config_suit_servers(&db.pool, &suit_id)
+    let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &suit_id)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to get server configurations: {e}"))
@@ -155,7 +155,7 @@ pub async fn disable_server(
     }
 
     // Disable the server in the suit
-    crate::conf::suit::add_server_to_config_suit(&db.pool, &suit_id, &server_id, false)
+    crate::config::suit::add_server_to_config_suit(&db.pool, &suit_id, &server_id, false)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!(
@@ -198,7 +198,7 @@ pub async fn batch_enable_servers(
     // Process each server ID
     for server_id in payload.ids {
         // Get the server to check if it exists
-        let server = crate::conf::server::get_server_by_id(&db.pool, &server_id)
+        let server = crate::config::server::get_server_by_id(&db.pool, &server_id)
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -206,7 +206,7 @@ pub async fn batch_enable_servers(
         match server {
             Some(_) => {
                 // Enable the server in the suit
-                match crate::conf::suit::add_server_to_config_suit(
+                match crate::config::suit::add_server_to_config_suit(
                     &db.pool, &suit_id, &server_id, true,
                 )
                 .await
@@ -261,7 +261,7 @@ pub async fn batch_disable_servers(
     // Process each server ID
     for server_id in payload.ids {
         // Get the server to check if it exists
-        let server = crate::conf::server::get_server_by_id(&db.pool, &server_id)
+        let server = crate::config::server::get_server_by_id(&db.pool, &server_id)
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -269,7 +269,7 @@ pub async fn batch_disable_servers(
         match server {
             Some(_) => {
                 // Disable the server in the suit
-                match crate::conf::suit::add_server_to_config_suit(
+                match crate::config::suit::add_server_to_config_suit(
                     &db.pool, &suit_id, &server_id, false,
                 )
                 .await

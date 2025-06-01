@@ -99,7 +99,7 @@ impl RuntimeManager {
         command: &str,
         database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
     ) -> Result<Option<PathBuf>> {
-        use crate::conf::constants::commands;
+        use crate::config::constants::commands;
 
         // Determine if this command needs a runtime
         let runtime_type = match command {

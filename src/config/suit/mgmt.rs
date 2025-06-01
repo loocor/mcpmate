@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
 
-use crate::{conf::models::ConfigSuit, generate_id};
+use crate::{config::models::ConfigSuit, generate_id};
 
 use super::basic::get_config_suit;
 

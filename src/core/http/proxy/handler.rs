@@ -15,9 +15,9 @@ use tokio::sync::Mutex;
 
 use super::get_tool_name_mapping;
 use crate::{
-    conf::operations,
+    config::operations,
+    core::http::proxy::core::HttpProxyServer,
     core::{ConnectionStatus, tool::call_upstream_tool},
-    http::proxy::core::HttpProxyServer,
 };
 
 /// Get server information
@@ -542,7 +542,7 @@ async fn update_tool_names_with_unique_names(
 async fn get_tool_name_mapping_for_tools()
 -> Result<HashMap<String, crate::core::tool::ToolMapping>, anyhow::Error> {
     // Use global proxy server instance to get tool mapping
-    if let Some(server) = crate::http::proxy::get_proxy_server() {
+    if let Some(server) = crate::core::http::proxy::get_proxy_server() {
         let mapping = get_tool_name_mapping(&server).await;
         Ok(mapping)
     } else {

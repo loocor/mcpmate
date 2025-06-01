@@ -5,9 +5,11 @@
 pub mod connection;
 pub mod error;
 pub mod events;
+pub mod http;
 pub mod loader;
 pub mod models;
 pub mod monitor;
+pub mod proxy;
 pub mod sse;
 pub mod stdio;
 pub mod suit;
@@ -29,4 +31,4 @@ pub use transport::{TransportType, connect_http_server};
 pub use types::ConnectionStatus;
 pub use utils::{get_connection_timeout, get_tools_timeout};
 
-pub use crate::http::pool::UpstreamConnectionPool;
+pub use crate::core::http::pool::UpstreamConnectionPool;

@@ -3,7 +3,7 @@
 use tracing::{debug, error, info};
 
 use super::{Event, EventBus};
-use crate::http::proxy::core::HttpProxyServer;
+use crate::core::http::proxy::core::HttpProxyServer;
 
 /// Register all event handlers
 pub fn register_handlers() {

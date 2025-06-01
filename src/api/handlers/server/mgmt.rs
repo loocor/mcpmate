@@ -17,7 +17,7 @@ use super::common::*;
 /// Get database reference from AppState
 async fn get_database(
     state: &Arc<AppState>
-) -> Result<Arc<crate::conf::database::Database>, ApiError> {
+) -> Result<Arc<crate::config::database::Database>, ApiError> {
     match state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
         Some(db) => Ok(db),
         None => Err(ApiError::InternalError(
@@ -30,9 +30,9 @@ async fn get_database(
 async fn get_server_info(
     pool: &Pool<Sqlite>,
     server_name: &str,
-) -> Result<(crate::conf::models::Server, String), ApiError> {
+) -> Result<(crate::config::models::Server, String), ApiError> {
     // Get the server
-    let server = crate::conf::server::get_server(pool, server_name)
+    let server = crate::config::server::get_server(pool, server_name)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
@@ -71,7 +71,7 @@ async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> 
 /// Get connection pool with timeout
 async fn get_connection_pool(
     state: &Arc<AppState>
-) -> Result<tokio::sync::MutexGuard<crate::http::pool::UpstreamConnectionPool>, ApiError> {
+) -> Result<tokio::sync::MutexGuard<crate::core::http::pool::UpstreamConnectionPool>, ApiError> {
     match tokio::time::timeout(
         std::time::Duration::from_secs(1),
         state.connection_pool.lock(),
@@ -120,7 +120,7 @@ pub async fn enable_server(
     let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
     // Update the server's global enabled status
-    match crate::conf::server::update_server_global_status(&db.pool, &server_id, true).await {
+    match crate::config::server::update_server_global_status(&db.pool, &server_id, true).await {
         Ok(true) => {
             tracing::info!(
                 "Set server '{}' global availability to enabled",
@@ -299,7 +299,7 @@ pub async fn disable_server(
     let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
 
     // Update the server's global enabled status
-    match crate::conf::server::update_server_global_status(&db.pool, &server_id, false).await {
+    match crate::config::server::update_server_global_status(&db.pool, &server_id, false).await {
         Ok(true) => {
             tracing::info!(
                 "Set server '{}' global availability to disabled",

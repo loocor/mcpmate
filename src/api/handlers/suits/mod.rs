@@ -44,13 +44,13 @@ pub(crate) mod common {
             routes::AppState,
         },
         common::types::ConfigSuitType,
-        conf::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool},
+        config::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool},
     };
 
     /// Get database reference from AppState
     pub async fn get_database(
         state: &Arc<AppState>
-    ) -> Result<Arc<crate::conf::database::Database>, ApiError> {
+    ) -> Result<Arc<crate::config::database::Database>, ApiError> {
         match state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
             Some(db) => Ok(db),
             None => Err(ApiError::InternalError(

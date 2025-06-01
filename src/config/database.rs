@@ -9,7 +9,7 @@ use tracing;
 
 use crate::{
     common::types::ConfigSuitType,
-    conf::{initialization, migration, models, server, suit},
+    config::{initialization, migration, models, server, suit},
     runtime::constants::get_mcpmate_dir,
 };
 

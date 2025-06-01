@@ -7,6 +7,7 @@ use crate::system::detection::platform::PlatformDetector;
 use crate::system::paths::PathMapper;
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
+use std::str::FromStr;
 use std::sync::Arc;
 
 /// Main application detector service
@@ -278,7 +279,7 @@ impl AppDetector {
         let mut detection_rules = Vec::new();
         for row in rows {
             let detection_method: String = row.get("detection_method");
-            if let Some(method) = DetectionMethod::from_str(&detection_method) {
+            if let Ok(method) = DetectionMethod::from_str(&detection_method) {
                 detection_rules.push(DetectionRule {
                     id: row.get("id"),
                     client_app_id: row.get("client_app_id"),

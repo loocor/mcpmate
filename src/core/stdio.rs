@@ -97,7 +97,7 @@ async fn connect_stdio_server_core(
 
     // Prepare environment variables based on runtime configuration
     if let Err(e) =
-        crate::conf::runtime::prepare_command_env_with_db(&mut cmd, command, database_pool).await
+        crate::config::runtime::prepare_command_env_with_db(&mut cmd, command, database_pool).await
     {
         tracing::warn!(
             "Failed to prepare environment for command '{}': {}",

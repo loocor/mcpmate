@@ -5,7 +5,7 @@ use crate::system::paths::platform::macos::{
     get_applications_directories, get_user_applications_directories,
 };
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// macOS-specific application detector
@@ -33,7 +33,7 @@ impl MacOSDetector {
 
                 if let Some(first_path) = paths.first() {
                     let app_path = PathBuf::from(first_path);
-                    if app_path.exists() && app_path.extension().map_or(false, |ext| ext == "app") {
+                    if app_path.exists() && app_path.extension().is_some_and(|ext| ext == "app") {
                         // Try to get version
                         let version = self.get_app_version(&app_path).await.ok();
 
@@ -64,7 +64,7 @@ impl MacOSDetector {
 
         if path.exists() {
             // For .app bundles, verify it's actually an application
-            if path.extension().map_or(false, |ext| ext == "app") {
+            if path.extension().is_some_and(|ext| ext == "app") {
                 if self.is_valid_app_bundle(&path).await {
                     let version = self.get_app_version(&path).await.ok();
 
@@ -105,7 +105,7 @@ impl MacOSDetector {
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().map_or(false, |ext| ext == "app") {
+                    if path.extension().is_some_and(|ext| ext == "app") {
                         if let Ok(found_bundle_id) = self.get_bundle_id(&path).await {
                             if found_bundle_id == bundle_id {
                                 let version = self.get_app_version(&path).await.ok();
@@ -129,7 +129,7 @@ impl MacOSDetector {
     /// Check if a path is a valid app bundle
     async fn is_valid_app_bundle(
         &self,
-        path: &PathBuf,
+        path: &Path,
     ) -> bool {
         let info_plist = path.join("Contents/Info.plist");
         info_plist.exists()
@@ -138,7 +138,7 @@ impl MacOSDetector {
     /// Get bundle ID from app bundle
     async fn get_bundle_id(
         &self,
-        app_path: &PathBuf,
+        app_path: &Path,
     ) -> Result<String> {
         let output = Command::new("defaults")
             .arg("read")
@@ -158,7 +158,7 @@ impl MacOSDetector {
     /// Get application version from app bundle
     async fn get_app_version(
         &self,
-        app_path: &PathBuf,
+        app_path: &Path,
     ) -> Result<String> {
         // Try CFBundleShortVersionString first
         let output = Command::new("defaults")
@@ -195,7 +195,7 @@ impl MacOSDetector {
     /// Get version from executable file
     async fn get_executable_version(
         &self,
-        _exe_path: &PathBuf,
+        _exe_path: &Path,
     ) -> Result<String> {
         // For now, return unknown. In a full implementation, we might try:
         // - Running the executable with --version flag

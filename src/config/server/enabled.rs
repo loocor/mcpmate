@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
 use super::crud::get_server_by_id;
-use crate::conf::models::Server;
+use crate::config::models::Server;
 
 /// Get all enabled servers from the database based on config suits
 pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
@@ -22,16 +22,16 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
     }
 
     // Get all active config suits
-    let active_suits = crate::conf::suit::get_active_config_suits(pool).await?;
+    let active_suits = crate::config::suit::get_active_config_suits(pool).await?;
 
     // If there are no active suits, try to get the default suit
     if active_suits.is_empty() {
-        let default_suit = crate::conf::suit::get_default_config_suit(pool).await?;
+        let default_suit = crate::config::suit::get_default_config_suit(pool).await?;
 
         // If there's no default suit, try the legacy "default" named suit
         if default_suit.is_none() {
             let legacy_default =
-                crate::conf::suit::get_config_suit_by_name(pool, "default").await?;
+                crate::config::suit::get_config_suit_by_name(pool, "default").await?;
 
             // If there's no legacy default suit either, return no servers (whitelist mode)
             if legacy_default.is_none() {
@@ -59,7 +59,7 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
     for suit in active_suits {
         if let Some(suit_id) = &suit.id {
             // Get all server configs in this suit
-            let server_configs = crate::conf::suit::get_config_suit_servers(pool, suit_id).await?;
+            let server_configs = crate::config::suit::get_config_suit_servers(pool, suit_id).await?;
 
             // Process each server config
             for server_config in server_configs {
@@ -115,7 +115,7 @@ async fn get_enabled_servers_from_suit(
     all_servers: &[Server],
 ) -> Result<Vec<Server>> {
     // Get all enabled servers in the suit
-    let server_configs = crate::conf::suit::get_config_suit_servers(pool, suit_id).await?;
+    let server_configs = crate::config::suit::get_config_suit_servers(pool, suit_id).await?;
 
     // If there are no server configs in the suit, return no servers (whitelist mode)
     if server_configs.is_empty() {
@@ -166,16 +166,16 @@ pub async fn is_server_enabled_in_any_suit(
     server_id: &str,
 ) -> Result<bool> {
     // Get all active config suits
-    let active_suits = crate::conf::suit::get_active_config_suits(pool).await?;
+    let active_suits = crate::config::suit::get_active_config_suits(pool).await?;
 
     // If there are no active suits, try to get the default suit
     if active_suits.is_empty() {
-        let default_suit = crate::conf::suit::get_default_config_suit(pool).await?;
+        let default_suit = crate::config::suit::get_default_config_suit(pool).await?;
 
         // If there's no default suit, try the legacy "default" named suit
         if default_suit.is_none() {
             let legacy_default =
-                crate::conf::suit::get_config_suit_by_name(pool, "default").await?;
+                crate::config::suit::get_config_suit_by_name(pool, "default").await?;
 
             // If there's no legacy default suit either, return false (not enabled)
             if legacy_default.is_none() {
@@ -216,7 +216,7 @@ async fn is_server_enabled_in_suit(
     suit_id: &str,
 ) -> Result<bool> {
     // Get all server configs in this suit
-    let server_configs = crate::conf::suit::get_config_suit_servers(pool, suit_id).await?;
+    let server_configs = crate::config::suit::get_config_suit_servers(pool, suit_id).await?;
 
     // Check if the server is enabled in this suit
     for server_config in server_configs {
@@ -246,7 +246,7 @@ pub async fn is_server_in_suit(
     suit_id: &str,
 ) -> Result<bool> {
     // Get all server configs in this suit
-    let server_configs = crate::conf::suit::get_config_suit_servers(pool, suit_id).await?;
+    let server_configs = crate::config::suit::get_config_suit_servers(pool, suit_id).await?;
 
     // Check if the server is in this suit
     for server_config in server_configs {

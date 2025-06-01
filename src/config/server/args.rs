@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
 
-use crate::conf::{models::ServerArg, operations::utils::get_server_name_with_tx};
+use crate::config::{models::ServerArg, operations::utils::get_server_name_with_tx};
 use crate::generate_id;
 
 /// Get all arguments for a server from the database

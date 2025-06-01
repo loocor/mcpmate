@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
 
-use crate::conf::models::Server;
+use crate::config::models::Server;
 use crate::generate_id;
 
 /// Get all servers from the database

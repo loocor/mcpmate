@@ -4,11 +4,11 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use super::Args;
 
 // Import required types and modules from our library crate
-use mcpmate::api::ApiServer;
-use mcpmate::conf::server;
-use mcpmate::core::{ConnectionStatus, TransportType};
-use mcpmate::http::HttpProxyServer;
-use mcpmate::http::pool::UpstreamConnectionPool;
+use crate::api::ApiServer;
+use crate::config::server;
+use crate::core::http::HttpProxyServer;
+use crate::core::http::pool::UpstreamConnectionPool;
+use crate::core::{ConnectionStatus, TransportType};
 
 /// Start background connections to all configured servers
 pub async fn start_background_connections(
@@ -34,7 +34,7 @@ pub async fn start_background_connections(
         }
 
         // Get the total number of servers in the database
-        let total_server_count_in_db = if let Some(db) = &(proxy_arc_clone).database {
+        let total_server_count_in_db = if let Some(db) = &proxy_arc_clone.database {
             match server::get_all_servers(&db.pool).await {
                 Ok(servers) => servers.len(),
                 Err(e) => {

@@ -3,7 +3,7 @@
 #[cfg(target_os = "macos")]
 mod macos_tests {
     use anyhow::Result;
-    use mcpmate::conf::initialization::run_initialization;
+    use mcpmate::config::initialization::run_initialization;
     use mcpmate::system::detection::AppDetector;
     use mcpmate::system::detection::models::{DetectionMethod, DetectionResult};
     use mcpmate::system::detection::platform::macos::MacOSDetector;

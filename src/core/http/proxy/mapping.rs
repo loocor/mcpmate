@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::{core::tool, http::proxy::core::HttpProxyServer};
+use crate::{core::http::proxy::core::HttpProxyServer, core::tool};
 
 /// Get the tool name mapping directly from the connection pool
 ///

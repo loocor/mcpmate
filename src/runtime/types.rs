@@ -7,7 +7,7 @@ use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
 
-use crate::conf::constants::commands;
+use crate::config::constants::commands;
 
 /// Supported runtime types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 
 use crate::{
-    conf::{
+    config::{
         database::Database,
         server::{get_enabled_servers, get_server_args, get_server_env},
     },

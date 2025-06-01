@@ -11,7 +11,7 @@ use tracing;
 
 use crate::{
     api::routes::AppState,
-    conf::{
+    config::{
         database::Database,
         models::{ConfigSuitTool, Server},
         suit::get_active_config_suits,
@@ -120,7 +120,7 @@ impl ConfigSuitMergeService {
         for (server_name, instances) in &pool.connections {
             // Get server ID
             if let Ok(Some(server)) =
-                crate::conf::server::get_server(&self.db.pool, server_name).await
+                crate::config::server::get_server(&self.db.pool, server_name).await
             {
                 if let Some(server_id) = server.id {
                     // Check if any instance is connected
@@ -171,7 +171,7 @@ impl ConfigSuitMergeService {
         for server_id in to_disconnect {
             // Get server name from ID
             if let Ok(Some(server)) =
-                crate::conf::server::get_server_by_id(&self.db.pool, &server_id).await
+                crate::config::server::get_server_by_id(&self.db.pool, &server_id).await
             {
                 let name = &server.name;
                 tracing::info!("Disconnecting from server '{}'", name);
@@ -201,7 +201,7 @@ impl ConfigSuitMergeService {
     /// Merge servers from all active configuration suits
     async fn merge_servers(
         &self,
-        active_suits: &[crate::conf::models::ConfigSuit],
+        active_suits: &[crate::config::models::ConfigSuit],
     ) -> Result<HashMap<String, Server>> {
         let mut merged_servers = HashMap::new();
 
@@ -210,7 +210,7 @@ impl ConfigSuitMergeService {
             if let Some(suit_id) = &suit.id {
                 // Get all servers in this suit
                 let suit_servers =
-                    crate::conf::suit::get_config_suit_servers(&self.db.pool, suit_id)
+                    crate::config::suit::get_config_suit_servers(&self.db.pool, suit_id)
                         .await
                         .context(format!("Failed to get servers for suit '{suit_id}'"))?;
 
@@ -219,7 +219,7 @@ impl ConfigSuitMergeService {
                     // Only include enabled servers in the config suit
                     if server_config.enabled {
                         // Get server details
-                        if let Ok(Some(server)) = crate::conf::server::get_server_by_id(
+                        if let Ok(Some(server)) = crate::config::server::get_server_by_id(
                             &self.db.pool,
                             &server_config.server_id,
                         )
@@ -227,7 +227,7 @@ impl ConfigSuitMergeService {
                         {
                             // Check if the server is globally enabled
                             let globally_enabled =
-                                match crate::conf::server::get_server_global_status(
+                                match crate::config::server::get_server_global_status(
                                     &self.db.pool,
                                     &server_config.server_id,
                                 )
@@ -275,7 +275,7 @@ impl ConfigSuitMergeService {
     /// Merge tools for a specific server from all active configuration suits
     async fn merge_tools(
         &self,
-        active_suits: &[crate::conf::models::ConfigSuit],
+        active_suits: &[crate::config::models::ConfigSuit],
         server_id: &str,
     ) -> Result<HashMap<String, ConfigSuitTool>> {
         let mut merged_tools = HashMap::new();
@@ -285,7 +285,7 @@ impl ConfigSuitMergeService {
             if let Some(suit_id) = &suit.id {
                 // Get all tools in this suit
                 let suit_tools =
-                    crate::conf::operations::tool::get_tools_by_suit_id(&self.db.pool, suit_id)
+                    crate::config::operations::tool::get_tools_by_suit_id(&self.db.pool, suit_id)
                         .await
                         .context(format!("Failed to get tools for suit '{suit_id}'"))?;
 

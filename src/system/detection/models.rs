@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 /// Represents a client application definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,23 +41,27 @@ pub struct DetectionRule {
 /// Detection methods supported by the system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DetectionMethod {
-    BundleId,    // macOS Bundle ID
-    FilePath,    // File/directory path check
-    Registry,    // Windows registry check
-    Command,     // Command execution check
+    BundleId, // macOS Bundle ID
+    FilePath, // File/directory path check
+    Registry, // Windows registry check
+    Command,  // Command execution check
+}
+
+impl FromStr for DetectionMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "bundle_id" => Ok(Self::BundleId),
+            "file_path" => Ok(Self::FilePath),
+            "registry" => Ok(Self::Registry),
+            "command" => Ok(Self::Command),
+            _ => Err(format!("Unknown detection method: {}", s)),
+        }
+    }
 }
 
 impl DetectionMethod {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "bundle_id" => Some(Self::BundleId),
-            "file_path" => Some(Self::FilePath),
-            "registry" => Some(Self::Registry),
-            "command" => Some(Self::Command),
-            _ => None,
-        }
-    }
-
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::BundleId => "bundle_id",

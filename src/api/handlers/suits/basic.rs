@@ -11,7 +11,7 @@ pub async fn list_suits(
     let db = get_database(&state).await?;
 
     // Get all configuration suits
-    let suits = crate::conf::suit::get_all_config_suits(&db.pool)
+    let suits = crate::config::suit::get_all_config_suits(&db.pool)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suits: {e}")))?;
 
@@ -33,7 +33,7 @@ pub async fn get_suit(
     let db = get_database(&state).await?;
 
     // Get the configuration suit
-    let suit = crate::conf::suit::get_config_suit(&db.pool, &id)
+    let suit = crate::config::suit::get_config_suit(&db.pool, &id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 

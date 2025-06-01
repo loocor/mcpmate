@@ -1,7 +1,7 @@
 // macOS-specific path resolution
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Get standard macOS application directories
 pub fn get_applications_directories() -> Vec<PathBuf> {
@@ -37,7 +37,7 @@ pub fn get_config_directories() -> Result<Vec<PathBuf>> {
 
 /// Resolve application bundle path to executable
 pub fn resolve_bundle_executable(
-    bundle_path: &PathBuf,
+    bundle_path: &Path,
     bundle_id: &str,
 ) -> Result<PathBuf> {
     // For most macOS apps, the executable is at Contents/MacOS/{AppName}
@@ -63,7 +63,7 @@ pub fn resolve_bundle_executable(
     }
 
     // Fallback: try to extract app name from bundle_id
-    let app_name = bundle_id.split('.').last().unwrap_or("Unknown");
+    let app_name = bundle_id.split('.').next_back().unwrap_or("Unknown");
     let executable_path = macos_dir.join(app_name);
 
     if executable_path.exists() {
@@ -77,7 +77,7 @@ pub fn resolve_bundle_executable(
 }
 
 /// Get application version from bundle
-pub fn get_bundle_version(bundle_path: &PathBuf) -> Result<String> {
+pub fn get_bundle_version(bundle_path: &Path) -> Result<String> {
     let info_plist_path = bundle_path.join("Contents/Info.plist");
 
     if !info_plist_path.exists() {

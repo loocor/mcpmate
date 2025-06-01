@@ -34,6 +34,6 @@ pub(crate) mod common {
             },
             routes::AppState,
         },
-        conf::models::Server,
+        config::models::Server,
     };
 }

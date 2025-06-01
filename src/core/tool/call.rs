@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use tracing;
 
 use super::mapping::build_tool_mapping;
-use crate::http::pool::UpstreamConnectionPool;
+use crate::core::http::pool::UpstreamConnectionPool;
 
 /// Call a tool on the appropriate upstream server
 ///
@@ -114,7 +114,7 @@ pub async fn call_upstream_tool(
     if let Some(merge_service) = config_suit_merge_service {
         // Get server ID from database
         if let Ok(Some(server)) =
-            crate::conf::server::get_server(&merge_service.db.pool, &server_name).await
+            crate::config::server::get_server(&merge_service.db.pool, &server_name).await
         {
             if let Some(server_id) = &server.id {
                 // Check if the tool is enabled

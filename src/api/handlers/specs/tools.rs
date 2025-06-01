@@ -10,8 +10,8 @@ use axum::{
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    conf::{operations, server, suit},
-    http::HttpProxyServer,
+    config::{operations, server, suit},
+    core::http::HttpProxyServer,
 };
 
 /// List all MCP specification-compliant tools
@@ -234,7 +234,7 @@ pub async fn get_tool(
 /// * `Result<(&HttpProxyServer, &Database), ApiError>` - The HTTP proxy server and database, or an error
 pub async fn get_context(
     state: &Arc<AppState>
-) -> Result<(&HttpProxyServer, &crate::conf::database::Database), ApiError> {
+) -> Result<(&HttpProxyServer, &crate::config::database::Database), ApiError> {
     // Get the HTTP proxy server
     let proxy = state
         .http_proxy
@@ -295,7 +295,7 @@ pub async fn get_tool_status(
                     suit.id.unwrap()
                 } else {
                     // Create default config suit if it doesn't exist
-                    let mut new_suit = crate::conf::models::ConfigSuit::new_with_description(
+                    let mut new_suit = crate::config::models::ConfigSuit::new_with_description(
                         "default".to_string(),
                         Some("Default configuration suit".to_string()),
                         crate::common::types::ConfigSuitType::Shared,

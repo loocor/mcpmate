@@ -14,7 +14,7 @@ pub async fn activate_suit(
     let db = get_database(&state).await?;
 
     // Get the suit to check if it exists and get its name
-    let suit = crate::conf::suit::get_config_suit(&db.pool, &id)
+    let suit = crate::config::suit::get_config_suit(&db.pool, &id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
@@ -44,7 +44,7 @@ pub async fn activate_suit(
     }
 
     // Activate the suit
-    crate::conf::suit::set_config_suit_active(&db.pool, &id, true)
+    crate::config::suit::set_config_suit_active(&db.pool, &id, true)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to activate configuration suit: {e}"))
@@ -80,7 +80,7 @@ pub async fn deactivate_suit(
     let db = get_database(&state).await?;
 
     // Get the suit to check if it exists and get its name
-    let suit = crate::conf::suit::get_config_suit(&db.pool, &id)
+    let suit = crate::config::suit::get_config_suit(&db.pool, &id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
@@ -110,7 +110,7 @@ pub async fn deactivate_suit(
     }
 
     // Deactivate the suit
-    crate::conf::suit::set_config_suit_active(&db.pool, &id, false)
+    crate::config::suit::set_config_suit_active(&db.pool, &id, false)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to deactivate configuration suit: {e}"))
@@ -151,7 +151,7 @@ pub async fn batch_activate_suits(
     // Process each suit ID
     for id in payload.ids {
         // Get the suit to check if it exists
-        let suit = crate::conf::suit::get_config_suit(&db.pool, &id)
+        let suit = crate::config::suit::get_config_suit(&db.pool, &id)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!("Failed to get configuration suit: {e}"))
@@ -166,7 +166,7 @@ pub async fn batch_activate_suits(
                 }
 
                 // Activate the suit
-                match crate::conf::suit::set_config_suit_active(&db.pool, &id, true).await {
+                match crate::config::suit::set_config_suit_active(&db.pool, &id, true).await {
                     Ok(_) => {
                         successful_ids.push(id.clone());
                     }
@@ -212,7 +212,7 @@ pub async fn batch_deactivate_suits(
     // Process each suit ID
     for id in payload.ids {
         // Get the suit to check if it exists
-        let suit = crate::conf::suit::get_config_suit(&db.pool, &id)
+        let suit = crate::config::suit::get_config_suit(&db.pool, &id)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!("Failed to get configuration suit: {e}"))
@@ -227,7 +227,7 @@ pub async fn batch_deactivate_suits(
                 }
 
                 // Deactivate the suit
-                match crate::conf::suit::set_config_suit_active(&db.pool, &id, false).await {
+                match crate::config::suit::set_config_suit_active(&db.pool, &id, false).await {
                     Ok(_) => {
                         successful_ids.push(id.clone());
                     }

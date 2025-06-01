@@ -27,7 +27,7 @@ pub struct UpstreamConnectionPool {
     /// Process monitor for tracking resource usage
     pub process_monitor: Option<Arc<ProcessMonitor>>,
     /// Database reference for checking server status
-    pub database: Option<Arc<crate::conf::database::Database>>,
+    pub database: Option<Arc<crate::config::database::Database>>,
     /// Runtime cache for fast runtime queries
     pub runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
 }
@@ -40,7 +40,7 @@ impl UpstreamConnectionPool {
     /// * `database` - Optional database reference for checking server status
     pub fn new(
         config: Arc<Config>,
-        database: Option<Arc<crate::conf::database::Database>>,
+        database: Option<Arc<crate::config::database::Database>>,
     ) -> Self {
         // Create process monitor with 5 second update interval
         let process_monitor = Arc::new(ProcessMonitor::new(Duration::from_secs(5)));

@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::{conf::models::ConfigSuitTool, generate_id};
+use crate::{config::models::ConfigSuitTool, generate_id};
 
 /// Get all tools for a configuration suit from the database
 pub async fn get_config_suit_tools(

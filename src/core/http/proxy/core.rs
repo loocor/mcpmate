@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 use super::{handler, start_sse, start_streamable_http, start_unified};
 use crate::{
-    conf::database::Database,
+    config::database::Database,
     core::{TransportType, UpstreamConnectionPool, models::Config},
 };
 

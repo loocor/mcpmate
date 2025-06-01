@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
 use crate::{
-    conf::models::{Server, ServerMeta},
-    conf::server::{upsert_server, upsert_server_args, upsert_server_env, upsert_server_meta},
+    config::models::{Server, ServerMeta},
+    config::server::{upsert_server, upsert_server_args, upsert_server_env, upsert_server_meta},
     core::models::Config,
 };
 

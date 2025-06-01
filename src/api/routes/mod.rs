@@ -15,7 +15,7 @@ use axum::Router;
 use tokio::sync::Mutex;
 
 use crate::{
-    http::{HttpProxyServer, pool::UpstreamConnectionPool},
+    core::http::{HttpProxyServer, pool::UpstreamConnectionPool},
     system::SystemMetricsCollector,
 };
 
@@ -31,7 +31,7 @@ pub struct AppState {
     /// Config Suit merge service
     pub suit_merge_service: Option<Arc<crate::core::suit::ConfigSuitMergeService>>,
     /// Database reference for API operations
-    pub database: Option<Arc<crate::conf::database::Database>>,
+    pub database: Option<Arc<crate::config::database::Database>>,
 }
 
 /// Create the API router with all routes

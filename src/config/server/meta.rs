@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::conf::{models::ServerMeta, operations::utils::get_server_name};
+use crate::config::{models::ServerMeta, operations::utils::get_server_name};
 use crate::generate_id;
 
 /// Get server metadata from the database

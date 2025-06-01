@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use tracing;
 
 use super::routes::{create_router, create_router_with_proxy};
-use crate::http::{HttpProxyServer, pool::UpstreamConnectionPool};
+use crate::core::http::{HttpProxyServer, pool::UpstreamConnectionPool};
 
 /// API server for the MCP Proxy
 #[derive(Debug)]
