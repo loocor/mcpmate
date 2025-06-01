@@ -3,7 +3,7 @@
 
 pub mod constants;
 pub mod database;
-pub mod init;
+pub mod client;
 pub mod initialization;
 pub mod migration;
 pub mod models;

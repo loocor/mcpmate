@@ -5,6 +5,7 @@ pub mod args;
 pub mod crud;
 pub mod enabled;
 pub mod env;
+pub mod init;
 pub mod meta;
 
 // Re-export all public functions for backward compatibility

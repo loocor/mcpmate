@@ -12,6 +12,7 @@ pub mod config; // Runtime configuration management
 pub mod constants; // Path constants and utilities
 mod detection; // Environment detection related functionality
 mod download; // Download management related functionality
+pub mod init; // Runtime database initialization
 mod installers; // Installer related functionality
 pub mod integration; // Runtime integration utilities (database, events)
 mod list; // List installed runtime environments

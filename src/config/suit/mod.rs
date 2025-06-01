@@ -2,6 +2,7 @@
 // Contains CRUD operations for configuration suits, organized by functional domains
 
 pub mod basic;
+pub mod init;
 pub mod mgmt;
 pub mod server;
 pub mod tool;
