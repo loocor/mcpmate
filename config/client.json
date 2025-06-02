@@ -1,0 +1,248 @@
+{
+  "version": "2025.05.31.001",
+  "clients": [
+    {
+      "identifier": "claude_desktop",
+      "display_name": "Claude Desktop",
+      "detection_rules": {
+        "macos": [
+          {
+            "method": "bundle_id",
+            "value": "com.anthropic.claude",
+            "config_path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+            "priority": 1
+          }
+        ],
+        "windows": [
+          {
+            "method": "file_path",
+            "value": "~/AppData/Roaming/Claude/claude_desktop_config.json",
+            "priority": 1
+          }
+        ]
+      },
+      "config_rules": {
+        "is_mixed_config": true,
+        "top_level_key": "mcpServers",
+        "supported_transports": [
+          "stdio"
+        ],
+        "supported_runtimes": {
+          "macos": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "linux": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "windows": [
+            "npx",
+            "uvx",
+            "binary"
+          ]
+        },
+        "format_rules": {
+          "stdio": {
+            "template": {
+              "command": "{{command}}",
+              "args": "{{args}}",
+              "env": "{{env}}"
+            },
+            "requires_type_field": false
+          }
+        }
+      }
+    },
+    {
+      "identifier": "windsurf",
+      "display_name": "Windsurf",
+      "detection_rules": {
+        "macos": [
+          {
+            "method": "file_path",
+            "value": "~/.codeium/windsurf/mcp_config.json",
+            "priority": 1
+          }
+        ],
+        "windows": [
+          {
+            "method": "file_path",
+            "value": "~/AppData/Roaming/Codeium/windsurf/mcp_config.json",
+            "priority": 1
+          }
+        ]
+      },
+      "config_rules": {
+        "top_level_key": "mcpServers",
+        "is_mixed_config": false,
+        "supported_transports": [
+          "stdio",
+          "sse"
+        ],
+        "supported_runtimes": {
+          "macos": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "linux": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "windows": [
+            "npx",
+            "uvx",
+            "binary"
+          ]
+        },
+        "format_rules": {
+          "stdio": {
+            "template": {
+              "type": "stdio",
+              "command": "{{command}}",
+              "args": "{{args}}",
+              "env": "{{env}}"
+            },
+            "requires_type_field": true
+          },
+          "sse": {
+            "template": {
+              "serverUrl": "{{url}}",
+              "headers": "{{headers}}"
+            },
+            "requires_type_field": false
+          }
+        },
+        "security_features": {
+          "supports_inputs": true,
+          "supports_env_file": true
+        }
+      }
+    },
+    {
+      "identifier": "cursor",
+      "display_name": "Cursor",
+      "detection_rules": {
+        "macos": [
+          {
+            "method": "file_path",
+            "value": "~/.cursor/mcp.json",
+            "priority": 1
+          }
+        ]
+      },
+      "config_rules": {
+        "top_level_key": "mcpServers",
+        "is_mixed_config": false,
+        "supported_transports": [
+          "stdio",
+          "sse",
+          "streamableHttp"
+        ],
+        "supported_runtimes": {
+          "macos": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "linux": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "windows": [
+            "npx",
+            "uvx",
+            "binary"
+          ]
+        },
+        "format_rules": {
+          "stdio": {
+            "template": {
+              "type": "stdio",
+              "command": "{{command}}",
+              "args": "{{args}}",
+              "env": "{{env}}"
+            },
+            "requires_type_field": false
+          },
+          "sse": {
+            "template": {
+              "url": "{{url}}",
+              "type": "sse",
+              "headers": "{{headers}}"
+            },
+            "requires_type_field": false
+          },
+          "streamableHttp": {
+            "template": {
+              "type": "streamableHttp",
+              "url": "{{url}}"
+            },
+            "requires_type_field": false
+          }
+        }
+      }
+    },
+    {
+      "identifier": "zed",
+      "display_name": "Zed",
+      "detection_rules": {
+        "macos": [
+          {
+            "method": "file_path",
+            "value": "~/.config/zed/settings.json",
+            "priority": 1
+          }
+        ]
+      },
+      "config_rules": {
+        "top_level_key": "context_servers",
+        "is_mixed_config": true,
+        "supported_transports": [
+          "stdio"
+        ],
+        "supported_runtimes": {
+          "macos": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "linux": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "windows": [
+            "npx",
+            "uvx",
+            "binary"
+          ]
+        },
+        "format_rules": {
+          "stdio": {
+            "template": {
+              "type": "stdio",
+              "command": "{{command}}",
+              "args": "{{args}}",
+              "env": "{{env}}"
+            },
+            "requires_type_field": false
+          }
+        }
+      }
+    }
+  ]
+}

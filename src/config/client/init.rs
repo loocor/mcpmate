@@ -1,6 +1,8 @@
 // Client applications database initialization
 // Handles client_apps and client_detection_rules tables
+// Now supports data-driven initialization from configuration
 
+use crate::config::client::models::{ClientConfigFile, load_client_config};
 use crate::generate_id;
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -8,7 +10,7 @@ use sqlx::SqlitePool;
 /// Initialize client applications related tables and data
 pub async fn initialize_client_apps(pool: &SqlitePool) -> Result<()> {
     create_client_apps_tables(pool).await?;
-    preload_client_apps_data(pool).await?;
+    ensure_default_client_apps(pool).await?;
     Ok(())
 }
 
@@ -93,383 +95,133 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-/// Preload known client applications and their detection rules
-async fn preload_client_apps_data(pool: &SqlitePool) -> Result<()> {
-    let clients = vec![
-        (
-            "claude_desktop",
-            "Claude Desktop",
-            "Anthropic's Claude Desktop App",
-        ),
-        ("cursor", "Cursor", "AI-powered code editor"),
-        ("windsurf", "Windsurf", "High-performance code editor"),
-        ("zed", "Zed", "High-performance text editor"),
-    ];
+/// Ensure default client applications exist in database
+/// Only inserts data if tables are empty (first-time initialization)
+async fn ensure_default_client_apps(pool: &SqlitePool) -> Result<()> {
+    // Check if we already have client apps in the database
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM client_apps")
+        .fetch_one(pool)
+        .await?;
 
-    for (identifier, display_name, description) in clients {
+    if count > 0 {
+        tracing::info!("Client apps already exist in database, skipping initialization");
+        return Ok(());
+    }
+
+    tracing::info!("Initializing default client applications in database");
+
+    // Insert default client applications using SQL migrations
+    // This is the ONLY place where we define default data
+    insert_default_client_apps(pool).await?;
+
+    Ok(())
+}
+
+/// Insert default client applications from config file
+/// This replaces all hardcoded configuration functions
+async fn insert_default_client_apps(pool: &SqlitePool) -> Result<()> {
+    // Try to load from config file first
+    match load_client_config("config/client.json").await {
+        Ok(config) => {
+            tracing::info!("Loading client applications from config/client.json");
+            insert_clients_from_config(pool, &config).await?;
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to load config/client.json: {}, falling back to hardcoded data",
+                e
+            )
+        }
+    }
+
+    Ok(())
+}
+
+/// Insert clients from loaded configuration
+async fn insert_clients_from_config(
+    pool: &SqlitePool,
+    config: &ClientConfigFile,
+) -> Result<()> {
+    for mut client in config.clients.clone() {
         let client_id = generate_id!("capp");
 
-        // Insert client app (ignore if already exists)
+        // Prepare client for database insertion (auto-fills missing DB fields)
+        client.prepare_for_db_insert(client_id.clone());
+
+        // Insert client app
         sqlx::query(
             r#"
-            INSERT OR IGNORE INTO client_apps (id, identifier, display_name, description, enabled)
+            INSERT INTO client_apps (id, identifier, display_name, description, enabled)
             VALUES (?, ?, ?, ?, FALSE)
-        "#,
+            "#,
         )
         .bind(&client_id)
-        .bind(identifier)
-        .bind(display_name)
-        .bind(description)
+        .bind(&client.identifier)
+        .bind(&client.display_name)
+        .bind(client.description.as_ref().unwrap())
         .execute(pool)
         .await?;
 
-        // Get the actual client_id (in case it already existed)
-        let actual_client_id: String =
-            sqlx::query_scalar("SELECT id FROM client_apps WHERE identifier = ?")
-                .bind(identifier)
-                .fetch_one(pool)
+        // Insert detection rules for each platform
+        for rules in client.detection_rules.values() {
+            for rule in rules {
+                sqlx::query(
+                    r#"
+                    INSERT INTO client_detection_rules
+                    (id, client_app_id, client_identifier, platform, detection_method, detection_value, config_path, priority)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(rule.id.as_ref().unwrap())
+                .bind(rule.client_app_id.as_ref().unwrap())
+                .bind(rule.client_identifier.as_ref().unwrap())
+                .bind(rule.platform.as_ref().unwrap())
+                .bind(&rule.detection_method)
+                .bind(&rule.detection_value)
+                .bind(rule.config_path.as_ref().unwrap())
+                .bind(rule.priority)
+                .execute(pool)
                 .await?;
+            }
+        }
 
-        // Preload detection rules for this client
-        preload_detection_rules_for_client(pool, &actual_client_id, identifier).await?;
+        // Insert config rules
+        let supported_transports_json =
+            serde_json::to_string(&client.config_rules.supported_transports)?;
+        let supported_runtimes_json =
+            serde_json::to_string(&client.config_rules.supported_runtimes)?;
+        let format_rules_json = serde_json::to_string(&client.config_rules.format_rules)?;
+        let security_features_json = client
+            .config_rules
+            .security_features
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
 
-        // Preload config rules for this client
-        preload_config_rules_for_client(pool, &actual_client_id, identifier).await?;
-    }
-
-    Ok(())
-}
-
-/// Preload detection rules for a specific client
-async fn preload_detection_rules_for_client(
-    pool: &SqlitePool,
-    client_id: &str,
-    identifier: &str,
-) -> Result<()> {
-    match identifier {
-        "claude_desktop" => {
-            preload_claude_desktop_rules(pool, client_id).await?;
-        }
-        "cursor" => {
-            preload_cursor_rules(pool, client_id).await?;
-        }
-        "windsurf" => {
-            preload_windsurf_rules(pool, client_id).await?;
-        }
-        "zed" => {
-            preload_zed_rules(pool, client_id).await?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-/// Preload config rules for a specific client
-async fn preload_config_rules_for_client(
-    pool: &SqlitePool,
-    client_id: &str,
-    identifier: &str,
-) -> Result<()> {
-    match identifier {
-        "claude_desktop" => {
-            preload_claude_desktop_config_rules(pool, client_id).await?;
-        }
-        "cursor" => {
-            preload_cursor_config_rules(pool, client_id).await?;
-        }
-        "windsurf" => {
-            preload_windsurf_config_rules(pool, client_id).await?;
-        }
-        "zed" => {
-            preload_zed_config_rules(pool, client_id).await?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-/// Preload Claude Desktop detection rules
-async fn preload_claude_desktop_rules(
-    pool: &SqlitePool,
-    client_id: &str,
-) -> Result<()> {
-    let rules = vec![
-        // macOS rules - only one primary method per platform
-        (
-            "macos",
-            "bundle_id",
-            "com.anthropic.claude",
-            "~/Library/Application Support/Claude/claude_desktop_config.json",
-            1,
-        ),
-        // Windows rules
-        (
-            "windows",
-            "file_path",
-            "~/AppData/Roaming/Claude/claude_desktop_config.json",
-            "~/AppData/Roaming/Claude/claude_desktop_config.json",
-            1,
-        ),
-    ];
-
-    for (platform, method, value, config_path, priority) in rules {
         sqlx::query(
             r#"
-            INSERT OR REPLACE INTO client_detection_rules
-            (id, client_app_id, client_identifier, platform, detection_method, detection_value, config_path, priority)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
+            INSERT INTO client_config_rules
+            (id, client_app_id, client_identifier, top_level_key, is_mixed_config,
+             supported_transports, supported_runtimes, format_rules, security_features)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
         )
-        .bind(generate_id!("rule"))
-        .bind(client_id)
-        .bind("claude_desktop")
-        .bind(platform)
-        .bind(method)
-        .bind(value)
-        .bind(config_path)
-        .bind(priority)
+        .bind(client.config_rules.id.as_ref().unwrap())
+        .bind(client.config_rules.client_app_id.as_ref().unwrap())
+        .bind(client.config_rules.client_identifier.as_ref().unwrap())
+        .bind(&client.config_rules.top_level_key)
+        .bind(client.config_rules.is_mixed_config)
+        .bind(supported_transports_json)
+        .bind(supported_runtimes_json)
+        .bind(format_rules_json)
+        .bind(security_features_json)
         .execute(pool)
         .await?;
     }
 
-    Ok(())
-}
-
-/// Preload Cursor detection rules
-async fn preload_cursor_rules(
-    pool: &SqlitePool,
-    client_id: &str,
-) -> Result<()> {
-    let rules = vec![
-        // macOS rules - only one primary method per platform
-        (
-            "macos",
-            "file_path",
-            "~/.cursor/mcp.json",
-            "~/.cursor/mcp.json",
-            1,
-        ),
-    ];
-
-    for (platform, method, value, config_path, priority) in rules {
-        sqlx::query(
-            r#"
-            INSERT OR REPLACE INTO client_detection_rules
-            (id, client_app_id, client_identifier, platform, detection_method, detection_value, config_path, priority)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        )
-        .bind(generate_id!("rule"))
-        .bind(client_id)
-        .bind("cursor")
-        .bind(platform)
-        .bind(method)
-        .bind(value)
-        .bind(config_path)
-        .bind(priority)
-        .execute(pool)
-        .await?;
-    }
-
-    Ok(())
-}
-
-/// Preload Windsurf detection rules
-async fn preload_windsurf_rules(
-    pool: &SqlitePool,
-    client_id: &str,
-) -> Result<()> {
-    let rules = vec![
-        // macOS rules - only one primary method per platform
-        (
-            "macos",
-            "file_path",
-            "~/.codeium/windsurf/mcp_config.json",
-            "~/.codeium/windsurf/mcp_config.json",
-            1,
-        ),
-        // Windows rules
-        (
-            "windows",
-            "file_path",
-            "~/AppData/Roaming/Codeium/windsurf/mcp_config.json",
-            "~/AppData/Roaming/Codeium/windsurf/mcp_config.json",
-            1,
-        ),
-    ];
-
-    for (platform, method, value, config_path, priority) in rules {
-        sqlx::query(
-            r#"
-            INSERT OR REPLACE INTO client_detection_rules
-            (id, client_app_id, client_identifier, platform, detection_method, detection_value, config_path, priority)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        )
-        .bind(generate_id!("rule"))
-        .bind(client_id)
-        .bind("windsurf")
-        .bind(platform)
-        .bind(method)
-        .bind(value)
-        .bind(config_path)
-        .bind(priority)
-        .execute(pool)
-        .await?;
-    }
-
-    Ok(())
-}
-
-/// Preload Zed detection rules
-async fn preload_zed_rules(
-    pool: &SqlitePool,
-    client_id: &str,
-) -> Result<()> {
-    let rules = vec![
-        // macOS rules - only one primary method per platform
-        (
-            "macos",
-            "file_path",
-            "~/.config/zed/settings.json",
-            "~/.config/zed/settings.json",
-            1,
-        ),
-    ];
-
-    for (platform, method, value, config_path, priority) in rules {
-        sqlx::query(
-            r#"
-            INSERT OR REPLACE INTO client_detection_rules
-            (id, client_app_id, client_identifier, platform, detection_method, detection_value, config_path, priority)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        )
-        .bind(generate_id!("rule"))
-        .bind(client_id)
-        .bind("zed")
-        .bind(platform)
-        .bind(method)
-        .bind(value)
-        .bind(config_path)
-        .bind(priority)
-        .execute(pool)
-        .await?;
-    }
-
-    Ok(())
-}
-
-/// Preload Claude Desktop config rules
-async fn preload_claude_desktop_config_rules(
-    pool: &SqlitePool,
-    client_id: &str,
-) -> Result<()> {
-    let supported_transports = r#"["stdio"]"#;
-    let supported_runtimes = r#"{"macos":["npx","uvx","docker","binary"],"linux":["npx","uvx","docker","binary"],"windows":["npx","uvx","binary"]}"#;
-    let format_rules = r#"{"stdio":{"template":{"command":"{{command}}","args":"{{args}}","env":"{{env}}"},"requires_type_field":false}}"#;
-
-    sqlx::query(r#"
-        INSERT OR REPLACE INTO client_config_rules
-        (id, client_app_id, client_identifier, top_level_key, is_mixed_config, supported_transports, supported_runtimes, format_rules)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    "#)
-    .bind(generate_id!("conf"))
-    .bind(client_id)
-    .bind("claude_desktop")
-    .bind("mcpServers")
-    .bind(true)
-    .bind(supported_transports)
-    .bind(supported_runtimes)
-    .bind(format_rules)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-/// Preload Cursor config rules
-async fn preload_cursor_config_rules(
-    pool: &SqlitePool,
-    client_id: &str,
-) -> Result<()> {
-    let supported_transports = r#"["stdio","sse","streamableHttp"]"#;
-    let supported_runtimes = r#"{"macos":["npx","uvx","docker","binary"],"linux":["npx","uvx","docker","binary"],"windows":["npx","uvx","binary"]}"#;
-    let format_rules = r#"{"stdio":{"template":{"type":"stdio","command":"{{command}}","args":"{{args}}","env":"{{env}}"},"requires_type_field":false},"sse":{"template":{"url":"{{url}}","type":"sse","headers":"{{headers}}"},"requires_type_field":false},"streamableHttp":{"template":{"type":"streamableHttp","url":"{{url}}"},"requires_type_field":false}}"#;
-
-    sqlx::query(r#"
-        INSERT OR REPLACE INTO client_config_rules
-        (id, client_app_id, client_identifier, top_level_key, is_mixed_config, supported_transports, supported_runtimes, format_rules)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    "#)
-    .bind(generate_id!("conf"))
-    .bind(client_id)
-    .bind("cursor")
-    .bind("mcpServers")
-    .bind(false)
-    .bind(supported_transports)
-    .bind(supported_runtimes)
-    .bind(format_rules)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-/// Preload Windsurf config rules
-async fn preload_windsurf_config_rules(
-    pool: &SqlitePool,
-    client_id: &str,
-) -> Result<()> {
-    let supported_transports = r#"["stdio","sse"]"#;
-    let supported_runtimes = r#"{"macos":["npx","uvx","docker","binary"],"linux":["npx","uvx","docker","binary"],"windows":["npx","uvx","binary"]}"#;
-    let format_rules = r#"{"stdio":{"template":{"type":"stdio","command":"{{command}}","args":"{{args}}","env":"{{env}}"},"requires_type_field":true},"sse":{"template":{"serverUrl":"{{url}}","headers":"{{headers}}"},"requires_type_field":false}}"#;
-    let security_features = r#"{"supports_inputs":true,"supports_env_file":true}"#;
-
-    sqlx::query(r#"
-        INSERT OR REPLACE INTO client_config_rules
-        (id, client_app_id, client_identifier, top_level_key, is_mixed_config, supported_transports, supported_runtimes, format_rules, security_features)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    "#)
-    .bind(generate_id!("conf"))
-    .bind(client_id)
-    .bind("windsurf")
-    .bind("mcpServers")
-    .bind(false)
-    .bind(supported_transports)
-    .bind(supported_runtimes)
-    .bind(format_rules)
-    .bind(security_features)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-/// Preload Zed config rules
-async fn preload_zed_config_rules(
-    pool: &SqlitePool,
-    client_id: &str,
-) -> Result<()> {
-    let supported_transports = r#"["stdio"]"#;
-    let supported_runtimes = r#"{"macos":["npx","uvx","docker","binary"],"linux":["npx","uvx","docker","binary"],"windows":["npx","uvx","binary"]}"#;
-    let format_rules = r#"{"stdio":{"template":{"type":"stdio","command":"{{command}}","args":"{{args}}","env":"{{env}}"},"requires_type_field":false}}"#;
-
-    sqlx::query(r#"
-        INSERT OR REPLACE INTO client_config_rules
-        (id, client_app_id, client_identifier, top_level_key, is_mixed_config, supported_transports, supported_runtimes, format_rules)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    "#)
-    .bind(generate_id!("conf"))
-    .bind(client_id)
-    .bind("zed")
-    .bind("context_servers")
-    .bind(true)
-    .bind(supported_transports)
-    .bind(supported_runtimes)
-    .bind(format_rules)
-    .execute(pool)
-    .await?;
-
+    tracing::info!(
+        "Inserted {} client applications from config file",
+        config.clients.len()
+    );
     Ok(())
 }
