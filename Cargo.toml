@@ -37,7 +37,7 @@ dirs = "5.0"
 flate2 = "1.0"
 json5 = "0.4"
 reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-features = false }
-rmcp = { path = "./sdk/crates/rmcp", features = [
+rmcp = { path = "../sdk/crates/rmcp", features = [
   "__reqwest",
   "client",
   "macros",
