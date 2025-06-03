@@ -105,3 +105,47 @@ fn test_default_path_mapper() {
     // Just verify we can access variables without panicking
     let _count = variables.len();
 }
+
+#[test]
+fn test_mixed_template_and_tilde() -> Result<()> {
+    // Given: A PathMapper with system variables
+    let mut mapper = PathMapper::new()?;
+    mapper.set_variable("custom_dir".to_string(), "~/Documents".to_string());
+
+    // When: Resolving a template that has both variable and tilde
+    let template = "{{custom_dir}}/test/path";
+    let resolved = mapper.resolve_template(template);
+
+    // Then: Should succeed and resolve both variable and tilde
+    assert!(resolved.is_ok());
+    let resolved_path = resolved?;
+    let path_str = resolved_path.to_string_lossy();
+
+    // Should not contain template syntax or tilde
+    assert!(!path_str.contains("{{"));
+    assert!(!path_str.starts_with('~'));
+    assert!(path_str.contains("Documents/test/path"));
+
+    Ok(())
+}
+
+#[test]
+fn test_direct_tilde_resolution() -> Result<()> {
+    // Given: A PathMapper
+    let mapper = PathMapper::new()?;
+
+    // When: Resolving a template that starts with tilde directly
+    let template = "~/.config/app/settings.json";
+    let resolved = mapper.resolve_template(template);
+
+    // Then: Should succeed and expand tilde
+    assert!(resolved.is_ok());
+    let resolved_path = resolved?;
+    let path_str = resolved_path.to_string_lossy();
+
+    // Should not start with tilde and should contain the relative path
+    assert!(!path_str.starts_with('~'));
+    assert!(path_str.contains(".config/app/settings.json"));
+
+    Ok(())
+}

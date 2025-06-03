@@ -13,8 +13,8 @@ use std::sync::Arc;
 /// Main application detector service
 pub struct AppDetector {
     db_pool: Arc<SqlitePool>,
-    platform_detector: PlatformDetector,
     path_mapper: PathMapper,
+    platform_detector: PlatformDetector,
 }
 
 impl AppDetector {
@@ -25,9 +25,24 @@ impl AppDetector {
 
         Ok(Self {
             db_pool,
-            platform_detector,
             path_mapper,
+            platform_detector,
         })
+    }
+
+    /// Get current platform identifier
+    fn get_current_platform(&self) -> String {
+        #[cfg(target_os = "macos")]
+        return "macos".to_string();
+
+        #[cfg(target_os = "windows")]
+        return "windows".to_string();
+
+        #[cfg(target_os = "linux")]
+        return "linux".to_string();
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        return "unknown".to_string();
     }
 
     /// Get all enabled client applications
@@ -83,37 +98,44 @@ impl AppDetector {
         Ok(apps)
     }
 
-    /// Detect all enabled applications
-    pub async fn detect_enabled_apps(&self) -> Result<Vec<DetectedApp>> {
-        let enabled_apps = self.get_enabled_apps().await?;
-        let mut detected_apps = Vec::new();
+    /// Get detection rules for a client application
+    async fn get_detection_rules_for_client(
+        &self,
+        client_app_id: &str,
+    ) -> Result<Vec<DetectionRule>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, client_app_id, platform, detection_method, detection_value,
+                   config_path, priority, enabled
+            FROM client_detection_rules
+            WHERE client_app_id = ? AND enabled = TRUE
+            ORDER BY priority ASC
+            "#,
+        )
+        .bind(client_app_id)
+        .fetch_all(self.db_pool.as_ref())
+        .await?;
 
-        for app in enabled_apps {
-            if let Ok(Some(detected)) = self.detect_app_by_client(&app).await {
-                detected_apps.push(detected);
+        let mut detection_rules = Vec::new();
+        for row in rows {
+            let detection_method: String = row.get("detection_method");
+            if let Ok(method) = DetectionMethod::from_str(&detection_method) {
+                detection_rules.push(DetectionRule {
+                    id: row.get("id"),
+                    client_app_id: row.get("client_app_id"),
+                    platform: row.get("platform"),
+                    detection_method: method,
+                    detection_value: row.get("detection_value"),
+                    config_path: row
+                        .get::<Option<String>, _>("config_path")
+                        .unwrap_or_default(),
+                    priority: row.get("priority"),
+                    enabled: row.get("enabled"),
+                });
             }
         }
 
-        Ok(detected_apps)
-    }
-
-    /// Scan all known applications and enable those that are detected
-    pub async fn scan_all_known_apps(&self) -> Result<Vec<DetectedApp>> {
-        let all_apps = self.get_all_known_apps().await?;
-        let mut detected_apps = Vec::new();
-
-        for app in all_apps {
-            if let Ok(Some(detected)) = self.detect_app_by_client(&app).await {
-                detected_apps.push(detected);
-
-                // If the app was not enabled, enable it now
-                if !app.enabled {
-                    self.enable_client_app(&app.identifier).await?;
-                }
-            }
-        }
-
-        Ok(detected_apps)
+        Ok(detection_rules)
     }
 
     /// Detect a specific application by identifier
@@ -140,10 +162,109 @@ impl AppDetector {
                 description: row.get("description"),
                 enabled: row.get("enabled"),
             };
-            self.detect_app_by_client(&app).await
+            self.detect_by_client(&app).await
         } else {
             Ok(None)
         }
+    }
+
+    /// Detect an application using its client definition
+    async fn detect_by_client(
+        &self,
+        client_app: &ClientApp,
+    ) -> Result<Option<DetectedApp>> {
+        let detection_rules = self.get_detection_rules_for_client(&client_app.id).await?;
+
+        if detection_rules.is_empty() {
+            return Ok(None);
+        }
+
+        let mut detection_results = Vec::new();
+        let current_platform = self.get_current_platform();
+
+        // Filter rules for current platform and sort by priority
+        let mut platform_rules: Vec<_> = detection_rules
+            .into_iter()
+            .filter(|rule| rule.platform == current_platform && rule.enabled)
+            .collect();
+        platform_rules.sort_by_key(|rule| rule.priority);
+
+        // Try each detection method
+        for rule in &platform_rules {
+            let result = self.execute_detection_rule(rule).await?;
+            if result.success {
+                detection_results.push(result);
+            }
+        }
+
+        if detection_results.is_empty() {
+            return Ok(None);
+        }
+
+        // Calculate overall confidence and combine results
+        let confidence = if detection_results.len() >= 2 {
+            1.0 // High confidence with multiple verification methods
+        } else {
+            0.5 // Partial confidence with single method
+        };
+
+        // Find the best application path result (prefer .app bundles over config files)
+        let app_result = detection_results.iter().find(|result| {
+            if let Some(path) = &result.install_path {
+                path.extension().is_some_and(|ext| ext == "app")
+                    || path.to_string_lossy().contains("/Applications/")
+            } else {
+                false
+            }
+        });
+
+        // Use app result if available, otherwise use the highest confidence result
+        let best_result = app_result.unwrap_or_else(|| {
+            detection_results
+                .iter()
+                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
+                .unwrap()
+        });
+
+        let install_path = best_result.install_path.as_ref().unwrap().clone();
+        let version = best_result.version.clone();
+
+        // Resolve config path from the first rule (they should all have the same template)
+        let config_path = if let Some(first_rule) = platform_rules.first() {
+            self.path_mapper.resolve_template(&first_rule.config_path)?
+        } else {
+            install_path.clone() // Fallback
+        };
+
+        let verified_methods: Vec<String> = detection_results
+            .iter()
+            .map(|r| r.method.as_str().to_string())
+            .collect();
+
+        let detected_app = DetectedApp {
+            client_app: client_app.clone(),
+            version,
+            install_path,
+            config_path,
+            confidence,
+            verified_methods,
+        };
+
+        Ok(Some(detected_app))
+    }
+
+    /// Detect all enabled applications
+    pub async fn detect_enabled_apps(&self) -> Result<Vec<DetectedApp>> {
+        let enabled_apps = self.get_enabled_apps().await?;
+        let mut detected_apps = Vec::new();
+
+        for app in enabled_apps {
+            if let Ok(Some(detected)) = self.detect_by_client(&app).await {
+                detected_apps.push(detected);
+            }
+        }
+
+        Ok(detected_apps)
     }
 
     /// Enable a client application
@@ -184,120 +305,6 @@ impl AppDetector {
         Ok(())
     }
 
-    /// Detect an application using its client definition
-    async fn detect_app_by_client(
-        &self,
-        client_app: &ClientApp,
-    ) -> Result<Option<DetectedApp>> {
-        let detection_rules = self.get_detection_rules_for_client(&client_app.id).await?;
-
-        if detection_rules.is_empty() {
-            return Ok(None);
-        }
-
-        let mut detection_results = Vec::new();
-        let current_platform = self.get_current_platform();
-
-        // Filter rules for current platform and sort by priority
-        let mut platform_rules: Vec<_> = detection_rules
-            .into_iter()
-            .filter(|rule| rule.platform == current_platform && rule.enabled)
-            .collect();
-        platform_rules.sort_by_key(|rule| rule.priority);
-
-        // Try each detection method
-        for rule in &platform_rules {
-            let result = self.execute_detection_rule(rule).await?;
-            if result.success {
-                detection_results.push(result);
-            }
-        }
-
-        if detection_results.is_empty() {
-            return Ok(None);
-        }
-
-        // Calculate overall confidence and combine results
-        let confidence = if detection_results.len() >= 2 {
-            1.0 // High confidence with multiple verification methods
-        } else {
-            0.5 // Partial confidence with single method
-        };
-
-        // Use the result with highest individual confidence for install path
-        let best_result = detection_results
-            .iter()
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
-            .unwrap();
-
-        let install_path = best_result.install_path.as_ref().unwrap().clone();
-        let version = best_result.version.clone();
-
-        // Resolve config path from the first rule (they should all have the same template)
-        let config_path = if let Some(first_rule) = platform_rules.first() {
-            self.path_mapper
-                .resolve_template(&first_rule.config_path_template)?
-        } else {
-            install_path.clone() // Fallback
-        };
-
-        let verified_methods: Vec<String> = detection_results
-            .iter()
-            .map(|r| r.method.as_str().to_string())
-            .collect();
-
-        let detected_app = DetectedApp {
-            client_app: client_app.clone(),
-            version,
-            install_path,
-            config_path,
-            confidence,
-            verified_methods,
-        };
-
-        Ok(Some(detected_app))
-    }
-
-    /// Get detection rules for a client application
-    async fn get_detection_rules_for_client(
-        &self,
-        client_app_id: &str,
-    ) -> Result<Vec<DetectionRule>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, client_app_id, platform, detection_method, detection_value,
-                   config_path_template, priority, enabled
-            FROM client_detection_rules
-            WHERE client_app_id = ? AND enabled = TRUE
-            ORDER BY priority ASC
-            "#,
-        )
-        .bind(client_app_id)
-        .fetch_all(self.db_pool.as_ref())
-        .await?;
-
-        let mut detection_rules = Vec::new();
-        for row in rows {
-            let detection_method: String = row.get("detection_method");
-            if let Ok(method) = DetectionMethod::from_str(&detection_method) {
-                detection_rules.push(DetectionRule {
-                    id: row.get("id"),
-                    client_app_id: row.get("client_app_id"),
-                    platform: row.get("platform"),
-                    detection_method: method,
-                    detection_value: row.get("detection_value"),
-                    config_path_template: row
-                        .get::<Option<String>, _>("config_path_template")
-                        .unwrap_or_default(),
-                    priority: row.get("priority"),
-                    enabled: row.get("enabled"),
-                });
-            }
-        }
-
-        Ok(detection_rules)
-    }
-
     /// Execute a detection rule
     async fn execute_detection_rule(
         &self,
@@ -334,18 +341,22 @@ impl AppDetector {
         }
     }
 
-    /// Get current platform identifier
-    fn get_current_platform(&self) -> String {
-        #[cfg(target_os = "macos")]
-        return "macos".to_string();
+    /// Scan all known applications and enable those that are detected
+    pub async fn scan_all_known_apps(&self) -> Result<Vec<DetectedApp>> {
+        let all_apps = self.get_all_known_apps().await?;
+        let mut detected_apps = Vec::new();
 
-        #[cfg(target_os = "windows")]
-        return "windows".to_string();
+        for app in all_apps {
+            if let Ok(Some(detected)) = self.detect_by_client(&app).await {
+                detected_apps.push(detected);
 
-        #[cfg(target_os = "linux")]
-        return "linux".to_string();
+                // If the app was not enabled, enable it now
+                if !app.enabled {
+                    self.enable_client_app(&app.identifier).await?;
+                }
+            }
+        }
 
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        return "unknown".to_string();
+        Ok(detected_apps)
     }
 }

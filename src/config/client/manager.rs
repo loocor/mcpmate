@@ -2,35 +2,42 @@
 // Provides client application detection, configuration generation, and management
 // Integrates with existing system/detection module
 
+use crate::api::handlers::clients::database::get_client_config_path;
 use crate::config::client::generator::ConfigGenerator;
 use crate::config::client::models::*;
 use crate::system::detection::detector::AppDetector;
 use crate::system::detection::models::{ClientApp, DetectedApp};
+use crate::system::paths::PathMapper;
 use anyhow::Result;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::fs;
+use tokio::sync::Mutex;
 
 /// Main client management interface
 /// Implements lazy loading architecture with Option<T> pattern
 /// Wraps the existing AppDetector for client management functionality
 pub struct ClientManager {
+    db_pool: Arc<SqlitePool>,
     app_detector: Option<AppDetector>,
     config_generator: Option<ConfigGenerator>,
     rule_manager: Option<ClientRuleManager>,
-    db_pool: Arc<SqlitePool>,
+    path_mapper: PathMapper,
+    file_operation_lock: Arc<Mutex<()>>,
 }
 
 impl ClientManager {
     /// Create new client manager with database pool
     pub fn new(db_pool: Arc<SqlitePool>) -> Self {
         Self {
+            db_pool,
             app_detector: None,
             config_generator: None,
             rule_manager: None,
-            db_pool,
+            path_mapper: PathMapper::new().unwrap_or_default(),
+            file_operation_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -202,7 +209,7 @@ impl ClientManager {
 
         let backup_path = format!("{}.backup.{}", config_path.to_string_lossy(), timestamp);
 
-        fs::copy(config_path, &backup_path)?;
+        fs::copy(config_path, &backup_path).await?;
         Ok(backup_path)
     }
 
@@ -212,7 +219,7 @@ impl ClientManager {
         backup_path: &str,
         config_path: &Path,
     ) -> Result<()> {
-        fs::copy(backup_path, config_path)?;
+        fs::copy(backup_path, config_path).await?;
         Ok(())
     }
 
@@ -222,11 +229,25 @@ impl ClientManager {
         &self,
         config: &GeneratedConfig,
     ) -> Result<()> {
-        let config_path = Path::new(&config.config_path);
+        // Use lock for atomic file operations
+        let _lock = self.file_operation_lock.lock().await;
+
+        // Resolve path templates using PathMapper
+        let resolved_path = self
+            .path_mapper
+            .resolve_template(&config.config_path)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to resolve config path '{}': {}",
+                    config.config_path,
+                    e
+                )
+            })?;
+        let config_path = &resolved_path;
 
         // Create parent directories if they don't exist
         if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).await?;
         }
 
         // Check if this is a mixed configuration file (like Zed's settings.json)
@@ -234,7 +255,7 @@ impl ClientManager {
             self.write_mixed_config_file(config_path, config).await?;
         } else {
             // Write standalone configuration file
-            fs::write(config_path, &config.config_content)?;
+            fs::write(config_path, &config.config_content).await?;
         }
 
         Ok(())
@@ -265,7 +286,7 @@ impl ClientManager {
     ) -> Result<()> {
         // Read existing configuration if it exists
         let existing_content = if config_path.exists() {
-            fs::read_to_string(config_path)?
+            fs::read_to_string(config_path).await?
         } else {
             "{}".to_string()
         };
@@ -289,7 +310,7 @@ impl ClientManager {
 
         // Write the merged configuration back
         let merged_content = serde_json::to_string_pretty(&existing_config)?;
-        fs::write(config_path, merged_content)?;
+        fs::write(config_path, merged_content).await?;
 
         Ok(())
     }
@@ -335,5 +356,25 @@ impl ClientManager {
         self.ensure_loaded().await?;
         let rule_manager = self.rule_manager.as_ref().unwrap();
         Ok(rule_manager.current_version().cloned())
+    }
+
+    /// Get current configuration content for a client
+    pub async fn get_current_config(
+        &mut self,
+        client_id: &str,
+    ) -> Result<String> {
+        self.ensure_loaded().await?;
+
+        // Get actual config path from database using unified function (already resolved)
+        let resolved_path = get_client_config_path(client_id, &self.db_pool).await;
+
+        // Try to read the configuration file with proper error handling
+        match fs::read_to_string(&resolved_path).await {
+            Ok(content) => Ok(content),
+            Err(e) => {
+                tracing::warn!("Failed to read config file '{}': {}", resolved_path, e);
+                Ok(String::new())
+            }
+        }
     }
 }

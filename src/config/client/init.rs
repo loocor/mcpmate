@@ -54,7 +54,7 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
             enabled BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (client_app_id) REFERENCES client_apps(id) ON DELETE CASCADE,
-            UNIQUE(client_app_id, platform, detection_method)
+            UNIQUE(client_app_id, platform, detection_method, detection_value)
         )
     "#,
     )
@@ -91,28 +91,6 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_detection_rules_client_platform ON client_detection_rules(client_app_id, platform)")
         .execute(pool)
         .await?;
-
-    Ok(())
-}
-
-/// Ensure default client applications exist in database
-/// Only inserts data if tables are empty (first-time initialization)
-async fn ensure_default_client_apps(pool: &SqlitePool) -> Result<()> {
-    // Check if we already have client apps in the database
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM client_apps")
-        .fetch_one(pool)
-        .await?;
-
-    if count > 0 {
-        tracing::info!("Client apps already exist in database, skipping initialization");
-        return Ok(());
-    }
-
-    tracing::info!("Initializing default client applications in database");
-
-    // Insert default client applications using SQL migrations
-    // This is the ONLY place where we define default data
-    insert_default_client_apps(pool).await?;
 
     Ok(())
 }
@@ -223,5 +201,27 @@ async fn insert_clients_from_config(
         "Inserted {} client applications from config file",
         config.clients.len()
     );
+    Ok(())
+}
+
+/// Ensure default client applications exist in database
+/// Only inserts data if tables are empty (first-time initialization)
+async fn ensure_default_client_apps(pool: &SqlitePool) -> Result<()> {
+    // Check if we already have client apps in the database
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM client_apps")
+        .fetch_one(pool)
+        .await?;
+
+    if count > 0 {
+        tracing::info!("Client apps already exist in database, skipping initialization");
+        return Ok(());
+    }
+
+    tracing::info!("Initializing default client applications in database");
+
+    // Insert default client applications using SQL migrations
+    // This is the ONLY place where we define default data
+    insert_default_client_apps(pool).await?;
+
     Ok(())
 }

@@ -146,7 +146,7 @@ impl ClientRuleManager {
         let metadata = tokio::fs::metadata(&self.config_file_path).await?;
         let modified = metadata.modified()?;
 
-        Ok(self.last_modified.map_or(true, |last| modified > last))
+        Ok(self.last_modified.is_none_or(|last| modified > last))
     }
 
     /// Load or reload rules from file
@@ -294,15 +294,15 @@ pub struct ConfigRule {
     pub top_level_key: String,
     pub is_mixed_config: bool,
     pub supported_transports: Vec<String>,
-    pub supported_runtimes: HashMap<String, Vec<String>>, // platform -> runtimes
-    pub format_rules: HashMap<String, FormatRule>,        // transport -> format rule
+    pub supported_runtimes: HashMap<String, Vec<String>>,
+    pub format_rules: HashMap<String, FormatRule>,
     pub security_features: Option<SecurityFeatures>,
 }
 
 /// Format rule for a specific transport
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormatRule {
-    pub template: HashMap<String, String>, // field -> template
+    pub template: HashMap<String, serde_json::Value>,
     pub requires_type_field: bool,
 }
 

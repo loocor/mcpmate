@@ -8,9 +8,15 @@
         "macos": [
           {
             "method": "bundle_id",
-            "value": "com.anthropic.claude",
+            "value": "com.anthropic.claudefordesktop",
             "config_path": "~/Library/Application Support/Claude/claude_desktop_config.json",
             "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "/Applications/Claude.app",
+            "config_path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+            "priority": 2
           }
         ],
         "windows": [
@@ -65,14 +71,22 @@
         "macos": [
           {
             "method": "file_path",
-            "value": "~/.codeium/windsurf/mcp_config.json",
+            "value": "/Applications/Windsurf.app",
+            "config_path": "~/.codeium/windsurf/mcp_config.json",
             "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/.codeium/windsurf/mcp_config.json",
+            "config_path": "~/.codeium/windsurf/mcp_config.json",
+            "priority": 2
           }
         ],
         "windows": [
           {
             "method": "file_path",
             "value": "~/AppData/Roaming/Codeium/windsurf/mcp_config.json",
+            "config_path": "~/AppData/Roaming/Codeium/windsurf/mcp_config.json",
             "priority": 1
           }
         ]
@@ -134,8 +148,15 @@
         "macos": [
           {
             "method": "file_path",
-            "value": "~/.cursor/mcp.json",
+            "value": "/Applications/Cursor.app",
+            "config_path": "~/.cursor/mcp.json",
             "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/.cursor/mcp.json",
+            "config_path": "~/.cursor/mcp.json",
+            "priority": 2
           }
         ]
       },
@@ -201,8 +222,15 @@
         "macos": [
           {
             "method": "file_path",
-            "value": "~/.config/zed/settings.json",
+            "value": "/Applications/Zed.app",
+            "config_path": "~/.config/zed/settings.json",
             "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/.config/zed/settings.json",
+            "config_path": "~/.config/zed/settings.json",
+            "priority": 2
           }
         ]
       },
@@ -234,10 +262,12 @@
         "format_rules": {
           "stdio": {
             "template": {
-              "type": "stdio",
-              "command": "{{command}}",
-              "args": "{{args}}",
-              "env": "{{env}}"
+              "command": {
+                "path": "{{command}}",
+                "args": "{{args}}",
+                "env": "{{env}}"
+              },
+              "settings": {}
             },
             "requires_type_field": false
           }

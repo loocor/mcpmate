@@ -78,6 +78,34 @@ impl PathMapper {
         Ok(Self { variables })
     }
 
+    /// Get all available variables
+    pub fn get_variables(&self) -> &HashMap<String, String> {
+        &self.variables
+    }
+
+    /// Add or update a variable
+    pub fn set_variable(
+        &mut self,
+        key: String,
+        value: String,
+    ) {
+        self.variables.insert(key, value);
+    }
+
+    /// Expand tilde (~) to home directory if present
+    pub fn expand_tilde(path: &str) -> Result<PathBuf> {
+        if path.starts_with('~') {
+            if let Some(home_dir) = dirs::home_dir() {
+                let expanded = path.replacen('~', &home_dir.to_string_lossy(), 1);
+                Ok(PathBuf::from(expanded))
+            } else {
+                Err(anyhow::anyhow!("Could not determine home directory"))
+            }
+        } else {
+            Ok(PathBuf::from(path))
+        }
+    }
+
     /// Resolve a path template by replacing variables
     pub fn resolve_template(
         &self,
@@ -99,35 +127,8 @@ impl PathMapper {
             ));
         }
 
-        Ok(PathBuf::from(resolved))
-    }
-
-    /// Add or update a variable
-    pub fn set_variable(
-        &mut self,
-        key: String,
-        value: String,
-    ) {
-        self.variables.insert(key, value);
-    }
-
-    /// Get all available variables
-    pub fn get_variables(&self) -> &HashMap<String, String> {
-        &self.variables
-    }
-
-    /// Expand tilde (~) to home directory if present
-    pub fn expand_tilde(path: &str) -> Result<PathBuf> {
-        if path.starts_with('~') {
-            if let Some(home_dir) = dirs::home_dir() {
-                let expanded = path.replacen('~', &home_dir.to_string_lossy(), 1);
-                Ok(PathBuf::from(expanded))
-            } else {
-                Err(anyhow::anyhow!("Could not determine home directory"))
-            }
-        } else {
-            Ok(PathBuf::from(path))
-        }
+        // After template variable replacement, also handle tilde expansion
+        Self::expand_tilde(&resolved)
     }
 }
 

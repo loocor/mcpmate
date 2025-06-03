@@ -2,6 +2,7 @@
 // Contains route definitions for the API server
 
 pub mod board;
+pub mod clients;
 pub mod notifs;
 pub mod runtime;
 pub mod server;
@@ -97,7 +98,8 @@ fn create_router_internal(
         .merge(notifs::routes(state.clone()))
         .merge(specs::routes(state.clone()))
         .merge(suits::routes(state.clone()))
-        .merge(runtime::routes(state.clone()));
+        .merge(runtime::routes(state.clone()))
+        .merge(clients::routes(state.clone()));
 
     // Create main router with API routes and board static files
     // Note: API routes must come first to avoid being intercepted by board fallback

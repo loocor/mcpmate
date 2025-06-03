@@ -212,7 +212,7 @@ mod macos_tests {
     }
 
     #[tokio::test]
-    async fn test_config_path_template_resolution() -> Result<()> {
+    async fn test_config_path_resolution() -> Result<()> {
         // Given: An initialized database and detector
         let db_pool = create_test_database().await?;
         let detector = AppDetector::new(db_pool).await?;

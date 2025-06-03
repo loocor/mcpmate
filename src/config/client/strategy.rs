@@ -1,0 +1,308 @@
+// Transport strategy for configuration generation
+// Handles different transport types and their specific logic
+
+use anyhow::Result;
+use serde_json::{Value, json};
+
+use super::loader::ServerInfo;
+use super::models::{ConfigRule, FormatRule, GenerationMode};
+use super::template::TemplateEngine;
+
+/// Transport strategy handler
+pub struct TransportStrategy {
+    template_engine: TemplateEngine,
+}
+
+impl Default for TransportStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TransportStrategy {
+    /// Create a new transport strategy handler
+    pub fn new() -> Self {
+        Self {
+            template_engine: TemplateEngine::new(),
+        }
+    }
+
+    /// Get the best supported transport type based on priority
+    /// Priority: streamableHttp > sse > stdio
+    pub fn get_best_supported_transport(
+        &self,
+        config_rule: &ConfigRule,
+    ) -> String {
+        let transports = &config_rule.supported_transports;
+
+        if transports.contains(&"streamableHttp".to_string()) {
+            "streamableHttp".to_string()
+        } else if transports.contains(&"sse".to_string()) {
+            "sse".to_string()
+        } else {
+            "stdio".to_string()
+        }
+    }
+
+    /// Generate configuration for a single server based on mode and transport
+    pub async fn generate_server_config(
+        &self,
+        config_rule: &ConfigRule,
+        server: &ServerInfo,
+        mode: &GenerationMode,
+    ) -> Result<Value> {
+        match mode {
+            GenerationMode::Transparent => {
+                self.generate_transparent_config(config_rule, server).await
+            }
+            GenerationMode::Hosted => self.generate_hosted_config(config_rule, server).await,
+        }
+    }
+
+    /// Generate transparent mode configuration (direct connection)
+    async fn generate_transparent_config(
+        &self,
+        config_rule: &ConfigRule,
+        server: &ServerInfo,
+    ) -> Result<Value> {
+        // In transparent mode, skip servers with unsupported transport types
+        if !config_rule
+            .supported_transports
+            .contains(&server.server_type)
+        {
+            return Err(anyhow::anyhow!(
+                "Transport type '{}' is not supported by client in transparent mode",
+                server.server_type
+            ));
+        }
+
+        // Use the server's native transport type
+        let format_rule = config_rule
+            .format_rules
+            .get(&server.server_type)
+            .ok_or_else(|| {
+                anyhow::anyhow!("No format rule for transport: {}", server.server_type)
+            })?;
+
+        self.apply_format_rule(format_rule, server, &server.server_type)
+            .await
+    }
+
+    /// Generate hosted mode configuration
+    async fn generate_hosted_config(
+        &self,
+        config_rule: &ConfigRule,
+        server: &ServerInfo,
+    ) -> Result<Value> {
+        // In hosted mode, use direct endpoints if client supports the transport type,
+        // otherwise fall back to bridge stdio
+        if config_rule
+            .supported_transports
+            .contains(&server.server_type)
+        {
+            // Client supports this transport type, use direct endpoint
+            let format_rule = config_rule
+                .format_rules
+                .get(&server.server_type)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("No format rule for transport: {}", server.server_type)
+                })?;
+
+            self.generate_hosted_endpoint_config(format_rule, server, &server.server_type)
+                .await
+        } else {
+            // Client doesn't support this transport type, use bridge stdio
+            let format_rule = config_rule
+                .format_rules
+                .get("stdio")
+                .ok_or_else(|| anyhow::anyhow!("No stdio format rule for bridge mode"))?;
+
+            self.generate_bridge_config(format_rule, server).await
+        }
+    }
+
+    /// Generate hosted mode configuration with direct endpoints
+    async fn generate_hosted_endpoint_config(
+        &self,
+        format_rule: &FormatRule,
+        server: &ServerInfo,
+        transport: &str,
+    ) -> Result<Value> {
+        let mut config = json!({});
+
+        // For hosted mode with direct endpoints, use MCPMate's endpoints
+        for (key, template) in &format_rule.template {
+            let value = match key.as_str() {
+                "url" | "serverUrl" => match transport {
+                    "sse" => json!(format!("http://localhost:8000/sse/{}", server.id)),
+                    "streamableHttp" => json!(format!("http://localhost:8000/mcp/{}", server.id)),
+                    _ => {
+                        self.template_engine
+                            .apply_template(template, server, transport)
+                            .await?
+                    }
+                },
+                "headers" => json!({}),
+                _ => {
+                    self.template_engine
+                        .apply_template(template, server, transport)
+                        .await?
+                }
+            };
+            config[key] = value;
+        }
+
+        Ok(config)
+    }
+
+    /// Generate bridge configuration for hosted mode
+    async fn generate_bridge_config(
+        &self,
+        format_rule: &FormatRule,
+        server: &ServerInfo,
+    ) -> Result<Value> {
+        let mut config = json!({});
+
+        // For hosted mode bridge, we connect to MCPMate proxy instead of direct server
+        for (key, template) in &format_rule.template {
+            let value = match key.as_str() {
+                "command" => json!("mcpmate"),
+                "args" => json!(["proxy", "--server", &server.id]),
+                "url" => json!(format!("http://localhost:8000/mcp/{}", server.id)),
+                _ => {
+                    self.template_engine
+                        .apply_template(template, server, "stdio")
+                        .await?
+                }
+            };
+            config[key] = value;
+        }
+
+        Ok(config)
+    }
+
+    /// Generate unified endpoint configuration for hosted mode
+    pub async fn generate_unified_endpoint_config(
+        &self,
+        config_rule: &ConfigRule,
+        client_identifier: &str,
+        transport: &str,
+    ) -> Result<Value> {
+        // Use the appropriate format rule for the transport type
+        let format_rule = config_rule
+            .format_rules
+            .get(transport)
+            .ok_or_else(|| anyhow::anyhow!("No format rule for transport: {}", transport))?;
+
+        let mut config = json!({});
+
+        // Create endpoint URL based on transport type
+        let endpoint_url = match transport {
+            "sse" => "http://localhost:8000/sse",
+            "streamableHttp" => "http://localhost:8000/mcp",
+            _ => "http://localhost:8000/mcp",
+        };
+
+        // Create a mock server info for hosted mode endpoint configuration
+        let endpoint_server = TemplateEngine::create_mock_server(
+            "mcpmate-endpoint",
+            "mcpmate",
+            None,
+            Some(endpoint_url.to_string()),
+            vec![],
+            {
+                let mut env = std::collections::HashMap::new();
+                env.insert("X-Client-ID".to_string(), client_identifier.to_string());
+                env
+            },
+            transport,
+        );
+
+        // Generate endpoint configuration using template processing
+        for (key, template) in &format_rule.template {
+            let value = match key.as_str() {
+                "url" | "serverUrl" => json!(endpoint_url),
+                "headers" => {
+                    match transport {
+                        "streamableHttp" => json!({}), // Streamable HTTP doesn't use custom headers in this format
+                        _ => json!({"X-Client-ID": client_identifier}),
+                    }
+                }
+                _ => {
+                    self.template_engine
+                        .apply_template(template, &endpoint_server, transport)
+                        .await?
+                }
+            };
+            config[key] = value;
+        }
+
+        Ok(config)
+    }
+
+    /// Generate unified MCPMate bridge configuration for hosted mode
+    pub async fn generate_unified_bridge_config(
+        &self,
+        config_rule: &ConfigRule,
+        client_identifier: &str,
+    ) -> Result<Value> {
+        // Use stdio format rule for the bridge configuration
+        let format_rule = config_rule
+            .format_rules
+            .get("stdio")
+            .ok_or_else(|| anyhow::anyhow!("No stdio format rule for bridge mode"))?;
+
+        let mut config = json!({});
+
+        // Create a mock server info for hosted mode bridge configuration
+        let bridge_server = TemplateEngine::create_mock_server(
+            "mcpmate-bridge",
+            "mcpmate",
+            Some("/Applications/MCPMate.app/Contents/MacOS/bridge".to_string()),
+            None,
+            vec![],
+            {
+                let mut env = std::collections::HashMap::new();
+                env.insert("APPID".to_string(), client_identifier.to_string());
+                env
+            },
+            "stdio",
+        );
+
+        // Generate unified bridge configuration using template processing
+        for (key, template) in &format_rule.template {
+            let value = match key.as_str() {
+                "type" => json!("stdio"),
+                _ => {
+                    self.template_engine
+                        .apply_template(template, &bridge_server, "stdio")
+                        .await?
+                }
+            };
+            config[key] = value;
+        }
+
+        Ok(config)
+    }
+
+    /// Apply format rule with template processing
+    async fn apply_format_rule(
+        &self,
+        format_rule: &FormatRule,
+        server: &ServerInfo,
+        transport: &str,
+    ) -> Result<Value> {
+        let mut config = json!({});
+
+        // Apply template with actual values
+        for (key, template) in &format_rule.template {
+            let value = self
+                .template_engine
+                .apply_template(template, server, transport)
+                .await?;
+            config[key] = value;
+        }
+
+        Ok(config)
+    }
+}

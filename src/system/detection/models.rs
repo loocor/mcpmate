@@ -33,7 +33,7 @@ pub struct DetectionRule {
     pub platform: String,
     pub detection_method: DetectionMethod,
     pub detection_value: String,
-    pub config_path_template: String,
+    pub config_path: String,
     pub priority: i32,
     pub enabled: bool,
 }
