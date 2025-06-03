@@ -10,10 +10,7 @@ use crate::{
         database::Database,
         server::{get_enabled_servers, get_server_args, get_server_env},
     },
-    core::{
-        models::{Config, MCPServerConfig},
-        transport::TransportType,
-    },
+    core::models::{Config, MCPServerConfig},
 };
 
 /// Load the MCP server configuration from the database
@@ -65,12 +62,8 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
             None
         };
 
-        // Get transport type from the server model
-        let transport_type = server.transport_type.map(|t| match t {
-            crate::common::types::TransportType::Stdio => TransportType::Stdio,
-            crate::common::types::TransportType::Sse => TransportType::Sse,
-            crate::common::types::TransportType::StreamableHttp => TransportType::StreamableHttp,
-        });
+        // Use transport_type directly as it's the same type now
+        let transport_type = server.transport_type;
 
         // Create MCPServerConfig
         let server_config = MCPServerConfig {

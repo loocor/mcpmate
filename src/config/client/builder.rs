@@ -6,9 +6,11 @@ use serde_json::json;
 use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 
-use super::models::{ConfigRule, GeneratedConfig, GenerationMode, GenerationRequest};
 use super::loader::{ServerInfo, ServerLoader};
+use super::models::{ConfigRule, GeneratedConfig, GenerationMode, GenerationRequest};
 use super::strategy::TransportStrategy;
+use crate::common::config::config_keys;
+use crate::common::server::transport_formats;
 
 /// Configuration builder that orchestrates the generation process
 pub struct ConfigBuilder {
@@ -190,42 +192,42 @@ impl ConfigBuilder {
                     .get_best_supported_transport(config_rule);
 
                 match best_transport.as_str() {
-                    "streamableHttp" => {
+                    t if t == transport_formats::STREAMABLE_HTTP => {
                         // Use streamable HTTP endpoint
                         let endpoint_config = self
                             .transport_strategy
                             .generate_unified_endpoint_config(
                                 config_rule,
                                 &request.client_identifier,
-                                "streamableHttp",
+                                transport_formats::STREAMABLE_HTTP,
                             )
                             .await?;
                         config[&config_rule.top_level_key] = json!({
-                            "mcpmate": endpoint_config
+                            config_keys::MCPMATE: endpoint_config
                         });
                     }
-                    "sse" => {
+                    t if t == transport_formats::SSE => {
                         // Use SSE endpoint
                         let endpoint_config = self
                             .transport_strategy
                             .generate_unified_endpoint_config(
                                 config_rule,
                                 &request.client_identifier,
-                                "sse",
+                                transport_formats::SSE,
                             )
                             .await?;
                         config[&config_rule.top_level_key] = json!({
-                            "mcpmate": endpoint_config
+                            config_keys::MCPMATE: endpoint_config
                         });
                     }
-                    "stdio" => {
+                    t if t == transport_formats::STDIO => {
                         // Fallback to bridge for stdio-only clients
                         let bridge_config = self
                             .transport_strategy
                             .generate_unified_bridge_config(config_rule, &request.client_identifier)
                             .await?;
                         config[&config_rule.top_level_key] = json!({
-                            "mcpmate": bridge_config
+                            config_keys::MCPMATE: bridge_config
                         });
                     }
                     _ => {

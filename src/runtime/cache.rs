@@ -112,7 +112,7 @@ impl RuntimeCache {
         pool: &sqlx::Pool<sqlx::Sqlite>,
     ) -> anyhow::Result<()> {
         use super::config::get_all_configs;
-        use crate::common::paths::get_mcpmate_dir;
+        use crate::common::paths::global_paths;
 
         tracing::info!("Initializing runtime cache from database...");
 
@@ -124,7 +124,7 @@ impl RuntimeCache {
             }
         };
 
-        let mcpmate_dir = get_mcpmate_dir()?;
+        let mcpmate_dir = global_paths().base_dir();
         let mut loaded_count = 0;
 
         for config in configs {

@@ -7,9 +7,6 @@ pub mod mgmt;
 pub mod server;
 pub mod tool;
 
-// Re-export all public functions for backward compatibility
-// This ensures that existing code using `crate::conf::suit::*` continues to work
-
 // Basic query operations
 pub use basic::{
     get_active_config_suits, get_all_config_suits, get_config_suit, get_config_suit_by_name,

@@ -40,7 +40,7 @@ pub async fn set_tool_enabled(
                         let mut new_suit = crate::config::models::ConfigSuit::new_with_description(
                             "default".to_string(),
                             Some("Default configuration suit".to_string()),
-                            crate::common::types::ConfigSuitType::Shared,
+                            crate::common::config::ConfigSuitType::Shared,
                         );
 
                         // Set active and default flags
@@ -306,7 +306,8 @@ pub async fn is_tool_enabled(
 
                 for suit in &active_suits {
                     if let Some(suit_id) = &suit.id {
-                        let tools = crate::config::suit::get_config_suit_tools(pool, suit_id).await?;
+                        let tools =
+                            crate::config::suit::get_config_suit_tools(pool, suit_id).await?;
                         if tools.iter().any(|t| t.server_id == *server_id) {
                             has_tool_configs = true;
                             break;

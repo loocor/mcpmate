@@ -2,6 +2,7 @@
 //!
 //! This module contains types related to status and state.
 
+use std::ops::Not;
 use std::{fmt, str::FromStr};
 
 use serde::{
@@ -173,5 +174,35 @@ impl<'r> Decode<'r, Sqlite> for EnabledStatus {
             }),
             Err(e) => Err(e),
         }
+    }
+}
+
+// Implement Not trait to support ! operator
+impl Not for EnabledStatus {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            EnabledStatus::Enabled => EnabledStatus::Disabled,
+            EnabledStatus::Disabled => EnabledStatus::Enabled,
+        }
+    }
+}
+
+// Implement From<bool> for EnabledStatus
+impl From<bool> for EnabledStatus {
+    fn from(value: bool) -> Self {
+        if value {
+            EnabledStatus::Enabled
+        } else {
+            EnabledStatus::Disabled
+        }
+    }
+}
+
+// Implement From<EnabledStatus> for bool
+impl From<EnabledStatus> for bool {
+    fn from(status: EnabledStatus) -> Self {
+        status.as_bool()
     }
 }

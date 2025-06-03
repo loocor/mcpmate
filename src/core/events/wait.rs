@@ -7,7 +7,7 @@ use tokio::time::timeout;
 use tracing::debug;
 
 use super::{Event, EventBus};
-use crate::{common::types::ServerType, core::transport::TransportType};
+use crate::{common::server::ServerType, core::transport::TransportType};
 
 /// Wait for the transport layer of a specific server type to be ready
 ///

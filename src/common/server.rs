@@ -1,6 +1,6 @@
-//! Server-related types for MCPMate
+//! Server-related types and constants for MCPMate
 //!
-//! This module contains types related to server configuration and transport.
+//! This module contains types and constants related to server configuration and transport.
 
 use std::{fmt, str::FromStr};
 
@@ -15,6 +15,24 @@ use sqlx::{
     sqlite::{SqliteArgumentValue, SqliteTypeInfo, SqliteValueRef},
 };
 
+/// Transport format constants for client configuration
+/// These are the string representations used in client config files
+pub mod transport_formats {
+    /// Standard input/output transport format
+    pub const STDIO: &str = "stdio";
+    /// Server-Sent Events transport format
+    pub const SSE: &str = "sse";
+    /// Streamable HTTP transport format (client-side representation)
+    pub const STREAMABLE_HTTP: &str = "streamableHttp";
+}
+
+/// Transport priority order for hosted mode selection
+pub const TRANSPORT_PRIORITY: &[&str] = &[
+    transport_formats::STREAMABLE_HTTP,
+    transport_formats::SSE,
+    transport_formats::STDIO,
+];
+
 /// Server type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ServerType {
@@ -27,12 +45,31 @@ pub enum ServerType {
 }
 
 impl ServerType {
-    /// Convert to string
+    /// Convert to string (database format)
     pub fn as_str(&self) -> &'static str {
         match self {
             ServerType::Stdio => "stdio",
             ServerType::Sse => "sse",
             ServerType::StreamableHttp => "streamable_http",
+        }
+    }
+
+    /// Get the client-side representation (for JSON configs)
+    pub fn client_format(&self) -> &'static str {
+        match self {
+            ServerType::Stdio => transport_formats::STDIO,
+            ServerType::Sse => transport_formats::SSE,
+            ServerType::StreamableHttp => transport_formats::STREAMABLE_HTTP,
+        }
+    }
+
+    /// Create from client format string
+    pub fn from_client_format(s: &str) -> Result<Self, ParseServerTypeError> {
+        match s {
+            s if s == transport_formats::STDIO => Ok(ServerType::Stdio),
+            s if s == transport_formats::SSE => Ok(ServerType::Sse),
+            s if s == transport_formats::STREAMABLE_HTTP => Ok(ServerType::StreamableHttp),
+            _ => Err(ParseServerTypeError),
         }
     }
 }
@@ -142,9 +179,6 @@ impl<'r> Decode<'r, Sqlite> for ServerType {
 }
 
 /// Transport type
-///
-/// This is a re-export of the existing TransportType enum from core/transport.rs.
-/// We'll gradually migrate to using this version instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportType {
     /// Streamable HTTP transport
@@ -162,6 +196,25 @@ impl TransportType {
             TransportType::StreamableHttp => "StreamableHttp",
             TransportType::Sse => "Sse",
             TransportType::Stdio => "Stdio",
+        }
+    }
+
+    /// Get the client-side representation (for JSON configs)
+    pub fn client_format(&self) -> &'static str {
+        match self {
+            TransportType::Stdio => transport_formats::STDIO,
+            TransportType::Sse => transport_formats::SSE,
+            TransportType::StreamableHttp => transport_formats::STREAMABLE_HTTP,
+        }
+    }
+
+    /// Create from client format string
+    pub fn from_client_format(s: &str) -> Result<Self, ParseTransportTypeError> {
+        match s {
+            s if s == transport_formats::STDIO => Ok(TransportType::Stdio),
+            s if s == transport_formats::SSE => Ok(TransportType::Sse),
+            s if s == transport_formats::STREAMABLE_HTTP => Ok(TransportType::StreamableHttp),
+            _ => Err(ParseTransportTypeError),
         }
     }
 }
@@ -270,5 +323,11 @@ impl<'r> Decode<'r, Sqlite> for TransportType {
     fn decode(value: SqliteValueRef<'r>) -> Result<Self, BoxDynError> {
         let s = <String as Decode<Sqlite>>::decode(value)?;
         TransportType::from_str(&s).map_err(|e| Box::new(e) as BoxDynError)
+    }
+}
+
+impl Default for TransportType {
+    fn default() -> Self {
+        Self::Sse
     }
 }

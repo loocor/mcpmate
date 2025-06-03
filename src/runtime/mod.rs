@@ -9,15 +9,13 @@
 pub mod cache; // Runtime state caching
 pub mod cli; // Command-line interface handlers
 pub mod config; // Runtime configuration management
-pub mod executable; // Runtime executable path utilities
-// Detection now in common/env.rs
 mod download; // Download management related functionality
+pub mod executable; // Runtime executable path utilities
 pub mod init; // Runtime database initialization
 mod installers; // Installer related functionality
 pub mod integration; // Runtime integration utilities (database, events)
 pub mod list; // List available runtimes
 pub mod migration; // Runtime migration utilities
-// paths.rs merged into common/paths.rs
 pub mod types; // Type definitions
 
 // Re-export common types from common::env
@@ -37,6 +35,7 @@ pub use crate::runtime::config::RuntimeConfig;
 use crate::common::paths::global_paths;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 /// Get the installation path of the runtime
 pub fn get_runtime_path(
@@ -49,9 +48,6 @@ pub fn get_runtime_path(
 /// Get runtime config for specific path
 pub fn get_runtime_config_for_path(executable_path: &Path) -> Result<RuntimeConfig> {
     let _paths = global_paths();
-
-    // 导入 FromStr trait
-    use std::str::FromStr;
 
     let runtime_type = RuntimeType::from_str(&executable_path.to_string_lossy())
         .map_err(|e| anyhow::anyhow!("Failed to determine runtime type: {}", e))?;
@@ -87,7 +83,9 @@ fn extract_version_from_path(path: &Path) -> Result<String> {
         if let Some(parent_parent) = parent.parent() {
             if let Some(version_dir) = parent_parent.file_name() {
                 let version = version_dir.to_string_lossy();
-                if version.starts_with('v') || version.chars().next().unwrap_or('x').is_ascii_digit() {
+                if version.starts_with('v')
+                    || version.chars().next().unwrap_or('x').is_ascii_digit()
+                {
                     return Ok(version.to_string());
                 }
             }

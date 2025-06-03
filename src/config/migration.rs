@@ -76,17 +76,17 @@ pub async fn migrate_from_files(
             command: server_config.command.clone(),
             url: server_config.url.clone(),
             transport_type: server_config.transport_type.map(|t| match t {
-                crate::core::transport::TransportType::Stdio => {
-                    crate::common::types::TransportType::Stdio
+                crate::common::server::TransportType::Stdio => {
+                    crate::common::server::TransportType::Stdio
                 }
-                crate::core::transport::TransportType::Sse => {
-                    crate::common::types::TransportType::Sse
+                crate::common::server::TransportType::Sse => {
+                    crate::common::server::TransportType::Sse
                 }
-                crate::core::transport::TransportType::StreamableHttp => {
-                    crate::common::types::TransportType::StreamableHttp
+                crate::common::server::TransportType::StreamableHttp => {
+                    crate::common::server::TransportType::StreamableHttp
                 }
             }),
-            enabled: crate::common::types::EnabledStatus::Enabled,
+            enabled: crate::common::status::EnabledStatus::Enabled,
             created_at: None,
             updated_at: None,
         };
@@ -200,5 +200,3 @@ fn load_mcp_config_from_file<P: AsRef<Path>>(path: P) -> Result<Config> {
         }
     }
 }
-
-// Rule configuration is no longer used, as we now use the config_suit system

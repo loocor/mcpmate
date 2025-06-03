@@ -306,11 +306,3 @@ pub async fn connect_stdio_server_with_ct(
 ) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<u32>)> {
     connect_stdio_server_core(server_name, server_config, ct, None, None).await
 }
-
-/// Connect to a stdio server with timeout (backward compatibility wrapper)
-pub async fn connect_stdio_server(
-    server_name: &str,
-    server_config: &MCPServerConfig,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<u32>)> {
-    connect_stdio_server_with_ct(server_name, server_config, CancellationToken::new()).await
-}

@@ -1,11 +1,9 @@
 // Core models for MCPMate
 // Contains data models for core functionality
 
-use std::collections::HashMap;
-
+use crate::common::server::{ServerType, TransportType};
 use serde::{Deserialize, Serialize};
-
-use crate::{common::types::ServerType, core::transport::TransportType};
+use std::collections::HashMap;
 
 /// MCP server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +41,7 @@ impl MCPServerConfig {
             return transport_type;
         }
 
-        // Otherwise, infer from the 'kind' field for backward compatibility
+        // Otherwise, infer from the 'kind' field
         match self.kind {
             ServerType::Stdio => TransportType::Stdio,
             ServerType::Sse => TransportType::Sse,

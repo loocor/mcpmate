@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::common::types::ServerType;
+use crate::common::server::ServerType;
 
 // API Model
 //
@@ -48,7 +48,7 @@ pub struct ServerInstanceSummary {
 pub struct ServerResponse {
     /// Server name
     pub name: String,
-    /// Is enabled in configuration (for backward compatibility, same as enabled_in_suits)
+    /// Is enabled in configuration (combined global and suit status)
     pub enabled: bool,
     /// Is globally enabled (server_config.enabled)
     pub globally_enabled: bool,

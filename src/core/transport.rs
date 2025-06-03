@@ -1,8 +1,6 @@
 // Transport factory for MCP proxy
 // Provides abstractions for different transport types
 
-use std::str::FromStr;
-
 use anyhow::{Context, Result};
 use rmcp::{
     RoleClient,
@@ -10,44 +8,15 @@ use rmcp::{
     service::{RunningService, ServiceExt},
     transport::SseClientTransport,
 };
-use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
+
+// Re-export TransportType from common
+pub use crate::common::server::TransportType;
 
 use super::{
     models::MCPServerConfig,
     utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout},
 };
-
-/// Transport types supported by the proxy
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TransportType {
-    /// Streamable HTTP transport
-    StreamableHttp,
-    /// Server-Sent Events transport
-    Sse,
-    /// Standard input/output transport
-    Stdio,
-}
-
-impl Default for TransportType {
-    fn default() -> Self {
-        Self::Sse // Default to SSE for backward compatibility
-    }
-}
-
-impl FromStr for TransportType {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "streamable_http" | "streamablehttp" => Ok(Self::StreamableHttp),
-            "sse" => Ok(Self::Sse),
-            "stdio" => Ok(Self::Stdio),
-            _ => Err(anyhow::anyhow!("Unknown transport type: {}", s)),
-        }
-    }
-}
 
 /// Connect to an HTTP-based server (SSE or Streamable HTTP) with timeout
 pub async fn connect_http_server(

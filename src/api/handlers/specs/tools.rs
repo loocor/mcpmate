@@ -298,7 +298,7 @@ pub async fn get_tool_status(
                     let mut new_suit = crate::config::models::ConfigSuit::new_with_description(
                         "default".to_string(),
                         Some("Default configuration suit".to_string()),
-                        crate::common::types::ConfigSuitType::Shared,
+                        crate::common::config::ConfigSuitType::Shared,
                     );
 
                     // Set active and default flags

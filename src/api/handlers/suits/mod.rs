@@ -43,7 +43,7 @@ pub(crate) mod common {
             },
             routes::AppState,
         },
-        common::types::ConfigSuitType,
+        common::config::ConfigSuitType,
         config::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool},
     };
 

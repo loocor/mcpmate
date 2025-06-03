@@ -196,22 +196,13 @@ impl UpstreamConnection {
     /// Check if a specific operation is allowed in the current state (type-safe version)
     pub fn can_perform_typed_operation(
         &self,
-        operation: crate::common::types::ConnectionOperation,
+        operation: crate::common::connection::ConnectionOperation,
     ) -> bool {
         self.status.can_perform_operation(operation)
     }
 
-    /// Get the allowed operations for this connection (string version for backward compatibility)
-    pub fn allowed_operations(&self) -> Vec<String> {
-        self.status
-            .allowed_operations()
-            .into_iter()
-            .map(|op| op.as_str().to_string())
-            .collect()
-    }
-
     /// Get the allowed operations for this connection (enum version)
-    pub fn allowed_typed_operations(&self) -> Vec<crate::common::types::ConnectionOperation> {
+    pub fn allowed_typed_operations(&self) -> Vec<crate::common::connection::ConnectionOperation> {
         self.status.allowed_operations()
     }
 

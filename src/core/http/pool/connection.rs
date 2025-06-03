@@ -10,7 +10,7 @@ use tracing;
 
 use super::UpstreamConnectionPool;
 use crate::{
-    common::types::{ConnectionOperation, ServerType},
+    common::{connection::ConnectionOperation, server::ServerType},
     core::{
         connect_http_server, connect_sse_server, transport::TransportType, types::ConnectionStatus,
     },
@@ -480,10 +480,10 @@ impl UpstreamConnectionPool {
 
         // Choose the appropriate connection function based on transport type
         let connect_result = if transport_type == TransportType::Sse {
-            // For backward compatibility, use the old SSE function
+            // Use SSE connection function
             connect_sse_server(server_name, server_config).await
         } else {
-            // Use the new function for Streamable HTTP
+            // Use the Streamable HTTP function
             connect_http_server(server_name, server_config, transport_type).await
         };
 

@@ -6,6 +6,8 @@ use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::common::config::defaults;
+use crate::common::server::transport_formats;
 use crate::config::client::models::GenerationRequest;
 
 /// Server information for configuration generation
@@ -101,10 +103,10 @@ impl ServerLoader {
                 url: row.get::<Option<String>, _>("url"),
                 args,
                 env,
-                runtime: "default".to_string(), // TODO: Load from appropriate table if needed
+                runtime: defaults::RUNTIME.to_string(), // TODO: Load from appropriate table if needed
                 server_type: row
                     .get::<Option<String>, _>("server_type")
-                    .unwrap_or_else(|| "stdio".to_string()),
+                    .unwrap_or_else(|| transport_formats::STDIO.to_string()),
             });
         }
         Ok(servers)
@@ -140,10 +142,10 @@ impl ServerLoader {
                 url: row.get::<Option<String>, _>("url"),
                 args,
                 env,
-                runtime: "default".to_string(), // TODO: Load from appropriate table if needed
+                runtime: defaults::RUNTIME.to_string(), // TODO: Load from appropriate table if needed
                 server_type: row
                     .get::<Option<String>, _>("server_type")
-                    .unwrap_or_else(|| "stdio".to_string()),
+                    .unwrap_or_else(|| transport_formats::STDIO.to_string()),
             });
         }
         Ok(servers)
@@ -180,10 +182,10 @@ impl ServerLoader {
             url: row.get::<Option<String>, _>("url"),
             args,
             env,
-            runtime: "default".to_string(), // TODO: Load from appropriate table if needed
+            runtime: defaults::RUNTIME.to_string(), // TODO: Load from appropriate table if needed
             server_type: row
                 .get::<Option<String>, _>("server_type")
-                .unwrap_or_else(|| "stdio".to_string()),
+                .unwrap_or_else(|| transport_formats::STDIO.to_string()),
         })
     }
 

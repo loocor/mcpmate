@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::config::{RuntimeConfig, save_config};
 use super::types::RuntimeType;
-use crate::common::paths::get_mcpmate_dir;
+use crate::common::paths::global_paths;
 use crate::core::events::{Event, EventBus};
 
 /// Send runtime events to the global event bus
@@ -37,8 +37,8 @@ pub async fn save_runtime_config_to_db(
 
     // Note: runtime_config table is created during database initialization
 
-    // Get relative path from MCPMate directory
-    let mcpmate_dir = get_mcpmate_dir()?;
+    // Get MCPMate base directory
+    let mcpmate_dir = global_paths().base_dir();
 
     // For Node.js, we need to point to the npx executable, not just the bin directory
     let executable_path = match runtime_type {
@@ -78,7 +78,7 @@ pub async fn save_runtime_config_to_db(
     };
 
     let relative_path = executable_path
-        .strip_prefix(&mcpmate_dir)
+        .strip_prefix(mcpmate_dir)
         .unwrap_or(&executable_path)
         .to_string_lossy()
         .to_string();

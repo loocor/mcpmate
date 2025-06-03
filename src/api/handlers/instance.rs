@@ -14,9 +14,20 @@ use crate::{
         models::server::{InstanceHealthResponse, OperationResponse, ServerInstanceResponse},
         routes::AppState,
     },
-    common::types::ServerType,
-    core::types::{ConnectionStatus, ErrorType},
+    common::server::ServerType,
+    core::{
+        UpstreamConnection,
+        types::{ConnectionStatus, ErrorType},
+    },
 };
+
+/// Get the allowed operations for a connection
+fn get_allowed_operations(conn: &UpstreamConnection) -> Vec<String> {
+    conn.allowed_typed_operations()
+        .into_iter()
+        .map(|op| op.as_str().to_string())
+        .collect()
+}
 
 /// Get a specific instance for a specific MCP server
 pub async fn get_instance(
@@ -66,14 +77,11 @@ pub async fn get_instance(
         last_health_check: Some(chrono::Local::now().to_rfc3339()),
     };
 
-    // Get allowed operations
-    let allowed_operations = conn.allowed_operations();
-
     Ok(Json(ServerInstanceResponse {
         id,
         name,
         status: conn.status_string(),
-        allowed_operations,
+        allowed_operations: get_allowed_operations(conn),
         details,
     }))
 }
@@ -188,7 +196,7 @@ pub async fn disconnect(
                 name,
                 result: "Successfully disconnected instance".to_string(),
                 status: conn.status_string(),
-                allowed_operations: conn.allowed_operations(),
+                allowed_operations: get_allowed_operations(conn),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
@@ -218,7 +226,7 @@ pub async fn force_disconnect(
                 name,
                 result: "Successfully force disconnected instance".to_string(),
                 status: conn.status_string(),
-                allowed_operations: conn.allowed_operations(),
+                allowed_operations: get_allowed_operations(conn),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
@@ -248,7 +256,7 @@ pub async fn reconnect(
                 name,
                 result: "Successfully reconnected instance".to_string(),
                 status: conn.status_string(),
-                allowed_operations: conn.allowed_operations(),
+                allowed_operations: get_allowed_operations(conn),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
@@ -278,7 +286,7 @@ pub async fn reset_reconnect(
                 name,
                 result: "Successfully reset and reconnected instance".to_string(),
                 status: conn.status_string(),
-                allowed_operations: conn.allowed_operations(),
+                allowed_operations: get_allowed_operations(conn),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(
@@ -305,7 +313,7 @@ pub async fn cancel(
                 name,
                 result: "Successfully cancelled instance initialization".to_string(),
                 status: conn.status_string(),
-                allowed_operations: conn.allowed_operations(),
+                allowed_operations: get_allowed_operations(conn),
             }))
         }
         Err(e) => Err(ApiError::BadRequest(format!(

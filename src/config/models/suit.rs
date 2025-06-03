@@ -5,9 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::common::types::ConfigSuitType;
-
-// Use ConfigSuitType from common::types instead of defining it here
+use crate::common::config::ConfigSuitType;
 
 /// Configuration suit model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -73,11 +71,6 @@ impl ConfigSuit {
             created_at: None,
             updated_at: None,
         }
-    }
-
-    /// Get the configuration suit type (for backward compatibility)
-    pub fn get_type(&self) -> Option<ConfigSuitType> {
-        Some(self.suit_type)
     }
 
     /// Get the configuration suit type as string (for API compatibility)

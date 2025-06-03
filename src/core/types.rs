@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use crate::common::types::ConnectionOperation;
+use crate::common::connection::ConnectionOperation;
 
 /// Connection status for an upstream server
 #[derive(Debug, Clone, PartialEq)]

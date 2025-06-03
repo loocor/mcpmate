@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use tracing;
 
-use crate::common::paths::get_mcpmate_dir;
+use crate::common::paths::global_paths;
 
 /// Runtime configuration row from database
 #[derive(Debug, sqlx::FromRow)]
@@ -36,8 +36,8 @@ pub async fn migrate_runtime_configs(pool: &Pool<Sqlite>) -> Result<()> {
 
     tracing::info!("Found {} runtime configurations to check", configs.len());
 
-    // Get the MCPMate directory
-    let mcpmate_dir = get_mcpmate_dir()?;
+    // Get the MCPMate directory path
+    let mcpmate_dir = global_paths().base_dir().to_path_buf();
     let mcpmate_dir_str = mcpmate_dir.to_string_lossy().to_string();
 
     // Iterate through configurations and fix paths

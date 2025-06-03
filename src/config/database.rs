@@ -7,16 +7,10 @@ use std::path::{Path, PathBuf};
 use tracing;
 
 use crate::{
-    common::paths::get_mcpmate_dir,
-    common::types::ConfigSuitType,
+    common::config::ConfigSuitType,
+    common::paths::global_paths,
     config::{initialization, migration, models, server, suit},
 };
-
-/// Get the database file path in user directory
-fn get_database_path() -> Result<PathBuf> {
-    let mcpmate_dir = get_mcpmate_dir()?;
-    Ok(mcpmate_dir.join("config.db"))
-}
 
 /// Get the database URL for SQLite
 fn get_database_url() -> Result<String> {
@@ -25,9 +19,8 @@ fn get_database_url() -> Result<String> {
         return Ok(db_url);
     }
 
-    // Use default path in user directory
-    let db_path = get_database_path()?;
-    Ok(format!("sqlite:{}", db_path.display()))
+    // Use centralized path manager for consistency
+    Ok(global_paths().database_url())
 }
 
 /// Database connection pool
@@ -47,7 +40,7 @@ impl Database {
         let db_path = if database_url.starts_with("sqlite:") {
             PathBuf::from(database_url.strip_prefix("sqlite:").unwrap())
         } else {
-            get_database_path()?
+            global_paths().database_path()
         };
 
         tracing::info!("Initializing database connection to {}", database_url);

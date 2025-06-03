@@ -1,6 +1,6 @@
-//! Configuration-related types for MCPMate
+//! Configuration-related types and constants for MCPMate
 //!
-//! This module contains types related to configuration suits and settings.
+//! This module contains types and constants related to configuration suits and settings.
 
 use std::{fmt, str::FromStr};
 
@@ -15,12 +15,46 @@ use sqlx::{
     sqlite::{SqliteArgumentValue, SqliteTypeInfo, SqliteValueRef},
 };
 
+/// Configuration keys used in client configs
+pub mod config_keys {
+    /// Key for MCP tool key in config files
+    pub const MCP_TOOL_KEY: &str = "MCPTool";
+    /// Key for name in config files
+    pub const NAME_KEY: &str = "name";
+    /// Key for type in config files
+    pub const TYPE_KEY: &str = "type";
+    /// Key for transports in config files
+    pub const TRANSPORTS_KEY: &str = "transports";
+    /// Key for parameters in config files
+    pub const PARAMETERS_KEY: &str = "parameters";
+    /// Key for tool settings in config files
+    pub const TOOL_SETTINGS_KEY: &str = "toolSettings";
+    /// Key for tools in config files
+    pub const TOOLS_KEY: &str = "tools";
+    /// Key for MCPMate in config files
+    pub const MCPMATE: &str = "MCPMate";
+}
+
+/// Default values used in configuration
+pub mod defaults {
+    /// Default server port
+    pub const DEFAULT_PORT: u16 = 8033;
+    /// Default server host
+    pub const DEFAULT_HOST: &str = "127.0.0.1";
+    /// Default cache TTL in seconds
+    pub const DEFAULT_CACHE_TTL: u32 = 86400; // 24 hours
+    /// Default requests limit
+    pub const DEFAULT_REQUESTS_LIMIT: u32 = 100;
+    /// Default runtime value
+    pub const RUNTIME: &str = "node";
+}
+
 /// Configuration suit type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConfigSuitType {
-    /// Host application configuration
+    /// Host application specific configuration
     HostApp,
-    /// Scenario-based configuration
+    /// Scenario specific configuration
     Scenario,
     /// Shared configuration
     Shared,
@@ -55,7 +89,7 @@ impl fmt::Display for ParseConfigSuitTypeError {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        write!(f, "invalid configuration suit type")
+        write!(f, "invalid config suit type")
     }
 }
 
@@ -95,7 +129,7 @@ impl<'de> Visitor<'de> for ConfigSuitTypeVisitor {
         &self,
         formatter: &mut fmt::Formatter,
     ) -> fmt::Result {
-        formatter.write_str("a string representing a configuration suit type")
+        formatter.write_str("a string representing a config suit type")
     }
 
     fn visit_str<E>(
@@ -106,7 +140,7 @@ impl<'de> Visitor<'de> for ConfigSuitTypeVisitor {
         E: de::Error,
     {
         ConfigSuitType::from_str(value)
-            .map_err(|_| E::custom(format!("invalid configuration suit type: {value}")))
+            .map_err(|_| E::custom(format!("invalid config suit type: {value}")))
     }
 }
 

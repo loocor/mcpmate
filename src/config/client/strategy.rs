@@ -7,6 +7,10 @@ use serde_json::{Value, json};
 use super::loader::ServerInfo;
 use super::models::{ConfigRule, FormatRule, GenerationMode};
 use super::template::TemplateEngine;
+use crate::common::server::{
+    TRANSPORT_PRIORITY,
+    transport_formats::{SSE, STDIO, STREAMABLE_HTTP},
+};
 
 /// Transport strategy handler
 pub struct TransportStrategy {
@@ -35,13 +39,14 @@ impl TransportStrategy {
     ) -> String {
         let transports = &config_rule.supported_transports;
 
-        if transports.contains(&"streamableHttp".to_string()) {
-            "streamableHttp".to_string()
-        } else if transports.contains(&"sse".to_string()) {
-            "sse".to_string()
-        } else {
-            "stdio".to_string()
+        for transport in TRANSPORT_PRIORITY {
+            if transports.contains(&transport.to_string()) {
+                return transport.to_string();
+            }
         }
+
+        // Fallback to stdio if none of the priority transports are supported
+        STDIO.to_string()
     }
 
     /// Generate configuration for a single server based on mode and transport
@@ -114,7 +119,7 @@ impl TransportStrategy {
             // Client doesn't support this transport type, use bridge stdio
             let format_rule = config_rule
                 .format_rules
-                .get("stdio")
+                .get(STDIO)
                 .ok_or_else(|| anyhow::anyhow!("No stdio format rule for bridge mode"))?;
 
             self.generate_bridge_config(format_rule, server).await
@@ -134,8 +139,12 @@ impl TransportStrategy {
         for (key, template) in &format_rule.template {
             let value = match key.as_str() {
                 "url" | "serverUrl" => match transport {
-                    "sse" => json!(format!("http://localhost:8000/sse/{}", server.id)),
-                    "streamableHttp" => json!(format!("http://localhost:8000/mcp/{}", server.id)),
+                    t if t == SSE => {
+                        json!(format!("http://localhost:8000/sse/{}", server.id))
+                    }
+                    t if t == STREAMABLE_HTTP => {
+                        json!(format!("http://localhost:8000/mcp/{}", server.id))
+                    }
                     _ => {
                         self.template_engine
                             .apply_template(template, server, transport)
@@ -171,7 +180,7 @@ impl TransportStrategy {
                 "url" => json!(format!("http://localhost:8000/mcp/{}", server.id)),
                 _ => {
                     self.template_engine
-                        .apply_template(template, server, "stdio")
+                        .apply_template(template, server, STDIO)
                         .await?
                 }
             };
@@ -198,8 +207,8 @@ impl TransportStrategy {
 
         // Create endpoint URL based on transport type
         let endpoint_url = match transport {
-            "sse" => "http://localhost:8000/sse",
-            "streamableHttp" => "http://localhost:8000/mcp",
+            t if t == SSE => "http://localhost:8000/sse",
+            t if t == STREAMABLE_HTTP => "http://localhost:8000/mcp",
             _ => "http://localhost:8000/mcp",
         };
 
@@ -224,7 +233,7 @@ impl TransportStrategy {
                 "url" | "serverUrl" => json!(endpoint_url),
                 "headers" => {
                     match transport {
-                        "streamableHttp" => json!({}), // Streamable HTTP doesn't use custom headers in this format
+                        t if t == STREAMABLE_HTTP => json!({}), // Streamable HTTP doesn't use custom headers in this format
                         _ => json!({"X-Client-ID": client_identifier}),
                     }
                 }
@@ -249,7 +258,7 @@ impl TransportStrategy {
         // Use stdio format rule for the bridge configuration
         let format_rule = config_rule
             .format_rules
-            .get("stdio")
+            .get(STDIO)
             .ok_or_else(|| anyhow::anyhow!("No stdio format rule for bridge mode"))?;
 
         let mut config = json!({});
@@ -266,16 +275,16 @@ impl TransportStrategy {
                 env.insert("APPID".to_string(), client_identifier.to_string());
                 env
             },
-            "stdio",
+            STDIO,
         );
 
         // Generate unified bridge configuration using template processing
         for (key, template) in &format_rule.template {
             let value = match key.as_str() {
-                "type" => json!("stdio"),
+                "type" => json!(STDIO),
                 _ => {
                     self.template_engine
-                        .apply_template(template, &bridge_server, "stdio")
+                        .apply_template(template, &bridge_server, STDIO)
                         .await?
                 }
             };

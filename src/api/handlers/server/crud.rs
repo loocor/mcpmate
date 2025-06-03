@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::{common::*, instance::list_instances};
 use crate::{
     api::{handlers::ApiError, models::server::ServerMetaInfo},
-    common::types::{ConfigSuitType, ServerType},
+    common::{config::ConfigSuitType, server::ServerType},
     config::{
         database::Database,
         models::{ConfigSuit, ServerMeta},
@@ -144,7 +144,8 @@ async fn get_server_details(
     }
 
     // Get server metadata
-    if let Ok(Some(server_meta)) = crate::config::server::get_server_meta(&db.pool, server_id).await {
+    if let Ok(Some(server_meta)) = crate::config::server::get_server_meta(&db.pool, server_id).await
+    {
         details.meta = Some(ServerMetaInfo {
             description: server_meta.description,
             author: server_meta.author,
@@ -318,9 +319,11 @@ pub async fn update_server(
     if let Some(kind) = payload.kind {
         updated_server.server_type = kind.parse().unwrap_or(updated_server.server_type);
         updated_server.transport_type = match updated_server.server_type {
-            ServerType::Stdio => Some(crate::common::types::TransportType::Stdio),
-            ServerType::Sse => Some(crate::common::types::TransportType::Sse),
-            ServerType::StreamableHttp => Some(crate::common::types::TransportType::StreamableHttp),
+            ServerType::Stdio => Some(crate::common::server::TransportType::Stdio),
+            ServerType::Sse => Some(crate::common::server::TransportType::Sse),
+            ServerType::StreamableHttp => {
+                Some(crate::common::server::TransportType::StreamableHttp)
+            }
         };
     }
     if let Some(command) = payload.command {

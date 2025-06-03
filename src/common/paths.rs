@@ -207,21 +207,3 @@ pub fn global_paths() -> &'static MCPMatePaths {
     GLOBAL_PATHS
         .get_or_init(|| MCPMatePaths::new().expect("Failed to initialize global path manager"))
 }
-
-/// Convenience functions for backward compatibility
-pub fn get_mcpmate_dir() -> Result<PathBuf> {
-    Ok(global_paths().base_dir().to_path_buf())
-}
-
-pub fn get_runtimes_base_dir() -> Result<PathBuf> {
-    Ok(global_paths().runtimes_dir())
-}
-
-pub fn get_cache_dir() -> Result<PathBuf> {
-    Ok(global_paths().cache_dir())
-}
-
-/// Get the cache directory for a specific runtime
-pub fn get_runtime_cache_dir(runtime_type: &str) -> PathBuf {
-    global_paths().runtime_cache_dir(runtime_type)
-}

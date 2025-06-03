@@ -1,5 +1,7 @@
 //! Event types for the MCPMate event system
 
+use crate::common::server::TransportType;
+
 /// Events that can be published in the system
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -54,7 +56,7 @@ pub enum Event {
     /// Server transport layer is ready
     ServerTransportReady {
         /// Transport type (SSE, StreamableHttp)
-        transport_type: crate::core::transport::TransportType,
+        transport_type: TransportType,
         /// Ready status
         ready: bool,
     },

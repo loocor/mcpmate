@@ -7,7 +7,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Sqlite};
 
-use crate::common::types::{EnabledStatus, ServerType, TransportType};
+use crate::common::{
+    server::{ServerType, TransportType},
+    status::EnabledStatus,
+};
 use crate::macros::entity::DatabaseEntity;
 
 /// Server configuration model
@@ -84,21 +87,6 @@ impl DatabaseEntity for Server {
 }
 
 impl Server {
-    /// Get the server type (for backward compatibility)
-    pub fn get_server_type(&self) -> ServerType {
-        self.server_type
-    }
-
-    /// Get the transport type (for backward compatibility)
-    pub fn get_transport_type(&self) -> Option<TransportType> {
-        self.transport_type
-    }
-
-    /// Get the enabled status (for backward compatibility)
-    pub fn get_enabled_status(&self) -> EnabledStatus {
-        self.enabled
-    }
-
     /// Set the server type
     pub fn set_server_type(
         &mut self,

@@ -48,18 +48,21 @@ pub async fn list_servers(
         };
 
         // Get server enabled status from config suits (enabled_in_suits)
-        let enabled_in_suits =
-            match crate::config::server::is_server_enabled_in_any_suit(&db.pool, &server_id).await {
-                Ok(enabled) => enabled,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to check if server '{}' is enabled in suits: {}",
-                        name,
-                        e
-                    );
-                    false // Default to false if there's an error
-                }
-            };
+        let enabled_in_suits = match crate::config::server::is_server_enabled_in_any_suit(
+            &db.pool, &server_id,
+        )
+        .await
+        {
+            Ok(enabled) => enabled,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to check if server '{}' is enabled in suits: {}",
+                    name,
+                    e
+                );
+                false // Default to false if there's an error
+            }
+        };
 
         // Get server global enabled status
         let globally_enabled =
@@ -70,15 +73,15 @@ pub async fn list_servers(
                         "Server '{}' global status not found, assuming enabled",
                         name
                     );
-                    true // Default to true for backward compatibility
+                    true
                 }
                 Err(e) => {
                     tracing::warn!("Failed to get server '{}' global status: {}", name, e);
-                    true // Default to true for backward compatibility
+                    true
                 }
             };
 
-        // For backward compatibility, enabled is true if the server is both globally enabled and enabled in suits
+        // Enabled is true if the server is both globally enabled and enabled in suits
         let enabled = globally_enabled && enabled_in_suits;
 
         // Get instances for this server if available
@@ -268,15 +271,15 @@ pub async fn get_server(
                     "Server '{}' global status not found, assuming enabled",
                     name
                 );
-                true // Default to true for backward compatibility
+                true
             }
             Err(e) => {
                 tracing::warn!("Failed to get server '{}' global status: {}", name, e);
-                true // Default to true for backward compatibility
+                true
             }
         };
 
-    // For backward compatibility, enabled is true if the server is both globally enabled and enabled in suits
+    // Enabled is true if the server is both globally enabled and enabled in suits
     let enabled = globally_enabled && enabled_in_suits;
 
     // Get instance information from connection pool if available
