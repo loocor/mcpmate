@@ -1,20 +1,39 @@
 {
   "mcpServers": {
-    "blender": {
+    "21magic": {
       "args": [
-        "blender-mcp"
+        "-y",
+        "@21st-dev/magic@latest",
+        "API_KEY=\"c5dc57e6cec36564e6d056af192bb264551ba5911168eb25f1a7f08b9b2ca1d7\""
+      ],
+      "command": "npx",
+      "type": "stdio"
+    },
+    "context7": {
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ],
+      "command": "npx",
+      "type": "stdio"
+    },
+    "deepwiki": {
+      "args": [
+        "-y",
+        "mcp-deepwiki@latest"
+      ],
+      "command": "npx",
+      "type": "stdio"
+    },
+    "fetch": {
+      "args": [
+        "mcp-server-fetch"
       ],
       "command": "uvx",
       "type": "stdio"
     },
-    "fetch": {
-      "type": "sse",
-      "url": "https://mcp.api-inference.modelscope.cn/sse/a9a8baa3ba534a"
-    },
     "firecrawl": {
       "args": [
-        "--loglevel",
-        "verbose",
         "-y",
         "firecrawl-mcp"
       ],
@@ -37,8 +56,6 @@
     },
     "playwright": {
       "args": [
-        "--loglevel",
-        "verbose",
         "-y",
         "@executeautomation/playwright-mcp-server"
       ],
