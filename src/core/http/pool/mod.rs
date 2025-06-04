@@ -13,6 +13,7 @@ use crate::core::{connection::UpstreamConnection, models::Config, monitor::Proce
 mod connection;
 mod health;
 mod monitoring;
+mod sync;
 mod utils;
 
 /// Pool of connections to upstream MCP servers

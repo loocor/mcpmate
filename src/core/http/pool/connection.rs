@@ -18,72 +18,6 @@ use crate::{
 };
 
 impl UpstreamConnectionPool {
-    /// Helper function to log connection-related events
-    fn log_connection_event(
-        &self,
-        level: tracing::Level,
-        server_name: &str,
-        instance_id: &str,
-        message: &str,
-    ) {
-        match level {
-            tracing::Level::INFO => tracing::info!(
-                "{} for server '{}' instance '{}'",
-                message,
-                server_name,
-                instance_id
-            ),
-            tracing::Level::ERROR => tracing::error!(
-                "{} for server '{}' instance '{}'",
-                message,
-                server_name,
-                instance_id
-            ),
-            tracing::Level::WARN => tracing::warn!(
-                "{} for server '{}' instance '{}'",
-                message,
-                server_name,
-                instance_id
-            ),
-            tracing::Level::DEBUG => tracing::debug!(
-                "{} for server '{}' instance '{}'",
-                message,
-                server_name,
-                instance_id
-            ),
-            tracing::Level::TRACE => tracing::trace!(
-                "{} for server '{}' instance '{}'",
-                message,
-                server_name,
-                instance_id
-            ),
-        }
-    }
-
-    /// Helper function to get the default instance ID
-    fn get_default_instance_id(
-        &self,
-        server_name: &str,
-    ) -> Result<String> {
-        let (id, _) = self.get_default_instance(server_name)?;
-        Ok(id)
-    }
-
-    /// Trigger connection to all servers in the pool without waiting for completion
-    pub async fn trigger_connect_all(&mut self) {
-        // Get all server names
-        let server_names: Vec<String> = self.connections.keys().cloned().collect();
-
-        // Trigger connection for each server
-        for name in server_names {
-            if let Ok(instance_id) = self.get_default_instance_id(&name) {
-                if let Err(e) = self.trigger_connect(&name, &instance_id).await {
-                    tracing::warn!("Failed to trigger connection to server '{}': {}", name, e);
-                }
-            }
-        }
-    }
-
     /// Core connection function that handles both trigger and wait modes
     async fn connect_core(
         &mut self,
@@ -178,6 +112,21 @@ impl UpstreamConnectionPool {
         self.connect_core(server_name, instance_id, false).await
     }
 
+    /// Trigger connection to all servers in the pool without waiting for completion
+    pub async fn trigger_connect_all(&mut self) {
+        // Get all server names
+        let server_names: Vec<String> = self.connections.keys().cloned().collect();
+
+        // Trigger connection for each server
+        for name in server_names {
+            if let Ok(instance_id) = self.get_default_instance_id(&name) {
+                if let Err(e) = self.trigger_connect(&name, &instance_id).await {
+                    tracing::warn!("Failed to trigger connection to server '{}': {}", name, e);
+                }
+            }
+        }
+    }
+
     /// Connect to a specific server instance (blocking version)
     pub async fn connect(
         &mut self,
@@ -185,6 +134,15 @@ impl UpstreamConnectionPool {
         instance_id: &str,
     ) -> Result<()> {
         self.connect_core(server_name, instance_id, true).await
+    }
+
+    /// Connect to all servers in parallel
+    pub async fn connect_all(&mut self) -> Result<()> {
+        // First trigger connection for all servers without waiting
+        self.trigger_connect_all().await;
+
+        // Return immediately, connections will happen in the background
+        Ok(())
     }
 
     /// Helper function to update connection after successful connection
@@ -281,286 +239,6 @@ impl UpstreamConnectionPool {
                 });
             }
         }
-    }
-
-    /// Sync tools to database
-    ///
-    /// This function syncs tools from a server to the database.
-    /// It adds tools to all config suits that have the server enabled.
-    async fn sync_tools_to_database(
-        db: &Arc<crate::config::database::Database>,
-        server_name: &str,
-        tools: &[Tool],
-    ) -> anyhow::Result<()> {
-        use anyhow::Context;
-
-        tracing::info!(
-            "Syncing {} tools from server '{}' to database",
-            tools.len(),
-            server_name
-        );
-
-        // Get the server ID
-        let server = crate::config::server::get_server(&db.pool, server_name)
-            .await
-            .context(format!("Failed to get server '{server_name}'"))?;
-
-        if let Some(server) = server {
-            if let Some(server_id) = &server.id {
-                // Get all config suits that have this server enabled
-                let all_suits = crate::config::suit::get_all_config_suits(&db.pool)
-                    .await
-                    .context("Failed to get all config suits")?;
-
-                let mut suits_with_server = Vec::new();
-
-                for suit in all_suits {
-                    if let Some(suit_id) = &suit.id {
-                        // Get all servers in this suit
-                        let suit_servers =
-                            crate::config::suit::get_config_suit_servers(&db.pool, suit_id)
-                                .await
-                                .context(format!("Failed to get servers for suit '{suit_id}'"))?;
-
-                        // Check if this server is in the suit
-                        for suit_server in suit_servers {
-                            if suit_server.server_id == *server_id {
-                                suits_with_server.push(suit.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                tracing::info!(
-                    "Found {} config suits with server '{}' enabled",
-                    suits_with_server.len(),
-                    server_name
-                );
-
-                // For each suit, add all tools
-                for suit in suits_with_server {
-                    if let Some(suit_id) = &suit.id {
-                        // Get existing tools in this suit for this server
-                        let existing_tools =
-                            crate::config::suit::get_config_suit_tools(&db.pool, suit_id)
-                                .await
-                                .context(format!("Failed to get tools for suit '{suit_id}'"))?;
-
-                        let existing_tool_names: std::collections::HashSet<String> = existing_tools
-                            .iter()
-                            .filter(|t| t.server_id == *server_id)
-                            .map(|t| t.tool_name.clone())
-                            .collect();
-
-                        // Add new tools to the suit
-                        for tool in tools {
-                            let tool_name = tool.name.to_string();
-
-                            // Skip if tool already exists in this suit
-                            if existing_tool_names.contains(&tool_name) {
-                                continue;
-                            }
-
-                            // Add the tool to the suit (enabled by default)
-                            match crate::config::suit::add_tool_to_config_suit(
-                                &db.pool, suit_id, server_id, &tool_name, true,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    tracing::debug!(
-                                        "Added tool '{}' from server '{}' to suit '{}'",
-                                        tool_name,
-                                        server_name,
-                                        suit.name
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Failed to add tool '{}' from server '{}' to suit '{}': {}",
-                                        tool_name,
-                                        server_name,
-                                        suit.name,
-                                        e
-                                    );
-                                }
-                            }
-                        }
-
-                        tracing::info!(
-                            "Synced tools from server '{}' to suit '{}'",
-                            server_name,
-                            suit.name
-                        );
-                    }
-                }
-
-                tracing::info!(
-                    "Successfully synced {} tools from server '{}' to database",
-                    tools.len(),
-                    server_name
-                );
-
-                return Ok(());
-            }
-        }
-
-        Err(anyhow::anyhow!("Server '{}' not found", server_name))
-    }
-
-    /// Sync resources to database using a service directly
-    ///
-    /// This function syncs resources from a server to the database using a service directly.
-    /// It adds resources to all config suits that have the server enabled.
-    async fn sync_resources_to_database_with_service(
-        db: &Arc<crate::config::database::Database>,
-        server_name: &str,
-        instance_id: &str,
-        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
-    ) -> anyhow::Result<()> {
-        use anyhow::Context;
-
-        tracing::info!(
-            "Syncing resources from server '{}' (instance: {}) to database",
-            server_name,
-            instance_id
-        );
-
-        // Get the server ID
-        let server = crate::config::server::get_server(&db.pool, server_name)
-            .await
-            .context(format!("Failed to get server '{server_name}'"))?;
-
-        if let Some(server) = server {
-            if let Some(server_id) = &server.id {
-                // Get all config suits that have this server enabled
-                let all_suits = crate::config::suit::get_all_config_suits(&db.pool)
-                    .await
-                    .context("Failed to get all config suits")?;
-
-                let mut suits_with_server = Vec::new();
-
-                for suit in all_suits {
-                    if let Some(suit_id) = &suit.id {
-                        // Get all servers in this suit
-                        let suit_servers =
-                            crate::config::suit::get_config_suit_servers(&db.pool, suit_id)
-                                .await
-                                .context(format!("Failed to get servers for suit '{suit_id}'"))?;
-
-                        // Check if this server is in the suit
-                        for suit_server in suit_servers {
-                            if suit_server.server_id == *server_id {
-                                suits_with_server.push(suit.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                tracing::info!(
-                    "Found {} config suits with server '{}' enabled",
-                    suits_with_server.len(),
-                    server_name
-                );
-
-                // Get resources directly from the service
-                let server_resources = match service.list_all_resources().await {
-                    Ok(resources) => resources
-                        .into_iter()
-                        .map(|r| r.uri.clone())
-                        .collect::<Vec<String>>(),
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to list resources from server '{}' (instance: {}): {}",
-                            server_name,
-                            instance_id,
-                            e
-                        );
-                        Vec::new()
-                    }
-                };
-
-                tracing::info!(
-                    "Found {} resources from server '{}' (instance: {})",
-                    server_resources.len(),
-                    server_name,
-                    instance_id
-                );
-
-                // For each suit, add all resources
-                for suit in suits_with_server {
-                    if let Some(suit_id) = &suit.id {
-                        // Get existing resources in this suit for this server
-                        let existing_resources =
-                            crate::config::suit::get_resources_for_config_suit(&db.pool, suit_id)
-                                .await
-                                .context(format!("Failed to get resources for suit '{suit_id}'"))?;
-
-                        let existing_resource_uris: std::collections::HashSet<String> =
-                            existing_resources
-                                .iter()
-                                .filter(|r| r.server_id == *server_id)
-                                .map(|r| r.resource_uri.clone())
-                                .collect();
-
-                        // Add new resources to the suit
-                        for resource_uri in &server_resources {
-                            // Skip if resource already exists in this suit
-                            if existing_resource_uris.contains(resource_uri) {
-                                continue;
-                            }
-
-                            // Add the resource to the suit (enabled by default)
-                            match crate::config::suit::add_resource_to_config_suit(
-                                &db.pool,
-                                suit_id,
-                                server_id,
-                                resource_uri,
-                                true,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    tracing::debug!(
-                                        "Added resource '{}' from server '{}' to suit '{}'",
-                                        resource_uri,
-                                        server_name,
-                                        suit.name
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Failed to add resource '{}' from server '{}' to suit '{}': {}",
-                                        resource_uri,
-                                        server_name,
-                                        suit.name,
-                                        e
-                                    );
-                                }
-                            }
-                        }
-
-                        tracing::info!(
-                            "Synced resources from server '{}' to suit '{}'",
-                            server_name,
-                            suit.name
-                        );
-                    }
-                }
-
-                tracing::info!(
-                    "Successfully synced {} resources from server '{}' to database",
-                    server_resources.len(),
-                    server_name
-                );
-
-                return Ok(());
-            }
-        }
-
-        Err(anyhow::anyhow!("Server '{}' not found", server_name))
     }
 
     /// Connect to a stdio server
@@ -713,6 +391,94 @@ impl UpstreamConnectionPool {
         }
     }
 
+    /// Reconnect to a specific instance of a server
+    pub async fn reconnect(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        // First disconnect
+        self.disconnect(server_name, instance_id).await?;
+
+        // Get connection for backoff calculation
+        let conn = self.get_instance(server_name, instance_id)?;
+
+        // Calculate backoff time using exponential backoff, MAX 30 seconds, MIN 2^5=32 seconds
+        let backoff = std::cmp::min(30, 2u64.pow(std::cmp::min(5, conn.connection_attempts)));
+
+        tracing::info!(
+            "Waiting {}s before reconnecting to '{}' instance '{}'",
+            backoff,
+            server_name,
+            instance_id
+        );
+        sleep(Duration::from_secs(backoff)).await;
+
+        // Reconnect
+        self.trigger_connect(server_name, instance_id).await
+    }
+
+    /// Perform an operation on a specific instance
+    pub async fn perform_instance_operation(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+        operation: &str,
+    ) -> Result<()> {
+        // Parse the operation string into enum
+        let operation_type = operation
+            .parse::<ConnectionOperation>()
+            .map_err(|_| anyhow::anyhow!("Invalid operation: {}", operation))?;
+
+        self.perform_instance_operation_typed(server_name, instance_id, operation_type)
+            .await
+    }
+
+    /// Perform a typed operation on a specific instance (internal method)
+    async fn perform_instance_operation_typed(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+        operation: ConnectionOperation,
+    ) -> Result<()> {
+        // Get the instance
+        let conn = self.get_instance_mut(server_name, instance_id)?;
+
+        // Check if the operation is allowed using the new type-safe API
+        let is_allowed = conn.status.can_perform_operation(operation);
+
+        if !is_allowed {
+            return Err(anyhow::anyhow!(
+                "Operation '{}' is not allowed in the current state: {}",
+                operation,
+                conn.status
+            ));
+        }
+
+        // Perform the operation using enum matching
+        match operation {
+            ConnectionOperation::Disconnect => self.disconnect(server_name, instance_id).await,
+            ConnectionOperation::ForceDisconnect => self.disconnect(server_name, instance_id).await,
+            ConnectionOperation::Reconnect => self.reconnect(server_name, instance_id).await,
+            ConnectionOperation::Cancel => self.disconnect(server_name, instance_id).await,
+            ConnectionOperation::ResetReconnect => {
+                // First disconnect if needed
+                if !matches!(conn.status, ConnectionStatus::Shutdown) {
+                    if let Err(e) = self.disconnect(server_name, instance_id).await {
+                        tracing::warn!("Error during reset_reconnect disconnect phase: {}", e);
+                    }
+                }
+
+                // Reset connection attempts counter
+                let conn = self.get_instance_mut(server_name, instance_id)?;
+                conn.reset_connection_attempts();
+
+                // Then reconnect
+                self.trigger_connect(server_name, instance_id).await
+            }
+        }
+    }
+
     /// Disconnect from a specific instance of a server
     pub async fn disconnect(
         &mut self,
@@ -777,42 +543,6 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
-    /// Reconnect to a specific instance of a server
-    pub async fn reconnect(
-        &mut self,
-        server_name: &str,
-        instance_id: &str,
-    ) -> Result<()> {
-        // First disconnect
-        self.disconnect(server_name, instance_id).await?;
-
-        // Get connection for backoff calculation
-        let conn = self.get_instance(server_name, instance_id)?;
-
-        // Calculate backoff time using exponential backoff, MAX 30 seconds, MIN 2^5=32 seconds
-        let backoff = std::cmp::min(30, 2u64.pow(std::cmp::min(5, conn.connection_attempts)));
-
-        tracing::info!(
-            "Waiting {}s before reconnecting to '{}' instance '{}'",
-            backoff,
-            server_name,
-            instance_id
-        );
-        sleep(Duration::from_secs(backoff)).await;
-
-        // Reconnect
-        self.trigger_connect(server_name, instance_id).await
-    }
-
-    /// Connect to all servers in parallel
-    pub async fn connect_all(&mut self) -> Result<()> {
-        // First trigger connection for all servers without waiting
-        self.trigger_connect_all().await;
-
-        // Return immediately, connections will happen in the background
-        Ok(())
-    }
-
     /// Disconnect from all servers
     pub async fn disconnect_all(&mut self) -> Result<()> {
         for server_name in self.connections.keys().cloned().collect::<Vec<_>>() {
@@ -831,67 +561,6 @@ impl UpstreamConnectionPool {
             }
         }
         Ok(())
-    }
-
-    /// Perform an operation on a specific instance
-    pub async fn perform_instance_operation(
-        &mut self,
-        server_name: &str,
-        instance_id: &str,
-        operation: &str,
-    ) -> Result<()> {
-        // Parse the operation string into enum
-        let operation_type = operation
-            .parse::<ConnectionOperation>()
-            .map_err(|_| anyhow::anyhow!("Invalid operation: {}", operation))?;
-
-        self.perform_instance_operation_typed(server_name, instance_id, operation_type)
-            .await
-    }
-
-    /// Perform a typed operation on a specific instance (internal method)
-    async fn perform_instance_operation_typed(
-        &mut self,
-        server_name: &str,
-        instance_id: &str,
-        operation: ConnectionOperation,
-    ) -> Result<()> {
-        // Get the instance
-        let conn = self.get_instance_mut(server_name, instance_id)?;
-
-        // Check if the operation is allowed using the new type-safe API
-        let is_allowed = conn.status.can_perform_operation(operation);
-
-        if !is_allowed {
-            return Err(anyhow::anyhow!(
-                "Operation '{}' is not allowed in the current state: {}",
-                operation,
-                conn.status
-            ));
-        }
-
-        // Perform the operation using enum matching
-        match operation {
-            ConnectionOperation::Disconnect => self.disconnect(server_name, instance_id).await,
-            ConnectionOperation::ForceDisconnect => self.disconnect(server_name, instance_id).await,
-            ConnectionOperation::Reconnect => self.reconnect(server_name, instance_id).await,
-            ConnectionOperation::Cancel => self.disconnect(server_name, instance_id).await,
-            ConnectionOperation::ResetReconnect => {
-                // First disconnect if needed
-                if !matches!(conn.status, ConnectionStatus::Shutdown) {
-                    if let Err(e) = self.disconnect(server_name, instance_id).await {
-                        tracing::warn!("Error during reset_reconnect disconnect phase: {}", e);
-                    }
-                }
-
-                // Reset connection attempts counter
-                let conn = self.get_instance_mut(server_name, instance_id)?;
-                conn.reset_connection_attempts();
-
-                // Then reconnect
-                self.trigger_connect(server_name, instance_id).await
-            }
-        }
     }
 
     /// Wait for a service to exit and handle the exit reason
@@ -936,160 +605,54 @@ impl UpstreamConnectionPool {
         }
     }
 
-    /// Sync prompts to database using a service directly
-    ///
-    /// This function syncs prompts from a server to the database using a service directly.
-    /// It adds prompts to all config suits that have the server enabled.
-    async fn sync_prompts_to_database_with_service(
-        db: &Arc<crate::config::database::Database>,
+    /// Helper function to get the default instance ID
+    fn get_default_instance_id(
+        &self,
+        server_name: &str,
+    ) -> Result<String> {
+        let (id, _) = self.get_default_instance(server_name)?;
+        Ok(id)
+    }
+
+    /// Helper function to log connection-related events
+    fn log_connection_event(
+        &self,
+        level: tracing::Level,
         server_name: &str,
         instance_id: &str,
-        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
-    ) -> anyhow::Result<()> {
-        use anyhow::Context;
-
-        tracing::info!(
-            "Syncing prompts from server '{}' (instance: {}) to database",
-            server_name,
-            instance_id
-        );
-
-        // Get the server ID
-        let server = crate::config::server::get_server(&db.pool, server_name)
-            .await
-            .context(format!("Failed to get server '{server_name}'"))?;
-
-        if let Some(server) = server {
-            if let Some(server_id) = &server.id {
-                // Get all config suits that have this server enabled
-                let all_suits = crate::config::suit::get_all_config_suits(&db.pool)
-                    .await
-                    .context("Failed to get all config suits")?;
-
-                let mut suits_with_server = Vec::new();
-
-                for suit in all_suits {
-                    if let Some(suit_id) = &suit.id {
-                        // Get all servers in this suit
-                        let suit_servers =
-                            crate::config::suit::get_config_suit_servers(&db.pool, suit_id)
-                                .await
-                                .context(format!("Failed to get servers for suit '{suit_id}'"))?;
-
-                        // Check if this server is in the suit
-                        for suit_server in suit_servers {
-                            if suit_server.server_id == *server_id {
-                                suits_with_server.push(suit.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                tracing::info!(
-                    "Found {} config suits with server '{}' enabled",
-                    suits_with_server.len(),
-                    server_name
-                );
-
-                // Collect all prompts from the server with pagination
-                let mut all_prompts = Vec::new();
-                let mut cursor = None;
-
-                loop {
-                    let result = service
-                        .list_prompts(Some(rmcp::model::PaginatedRequestParam { cursor }))
-                        .await
-                        .context("Failed to list prompts from upstream server")?;
-
-                    all_prompts.extend(result.prompts);
-
-                    cursor = result.next_cursor;
-                    if cursor.is_none() {
-                        break;
-                    }
-                }
-
-                tracing::info!(
-                    "Found {} prompts from server '{}' (instance: {})",
-                    all_prompts.len(),
-                    server_name,
-                    instance_id
-                );
-
-                // For each suit, add all prompts
-                for suit in suits_with_server {
-                    if let Some(suit_id) = &suit.id {
-                        // Get existing prompts in this suit for this server
-                        let existing_prompts =
-                            crate::config::suit::get_prompts_for_config_suit(&db.pool, suit_id)
-                                .await
-                                .context(format!("Failed to get prompts for suit '{suit_id}'"))?;
-
-                        let existing_prompt_names: std::collections::HashSet<String> =
-                            existing_prompts
-                                .iter()
-                                .filter(|p| p.server_id == *server_id)
-                                .map(|p| p.prompt_name.clone())
-                                .collect();
-
-                        // Add new prompts to the suit
-                        for prompt in &all_prompts {
-                            let prompt_name = &prompt.name;
-
-                            // Skip if prompt already exists in this suit
-                            if existing_prompt_names.contains(prompt_name) {
-                                continue;
-                            }
-
-                            // Add the prompt to the suit (enabled by default)
-                            match crate::config::suit::add_prompt_to_config_suit(
-                                &db.pool,
-                                suit_id,
-                                server_id,
-                                prompt_name,
-                                true,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    tracing::debug!(
-                                        "Added prompt '{}' from server '{}' to suit '{}'",
-                                        prompt_name,
-                                        server_name,
-                                        suit.name
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Failed to add prompt '{}' from server '{}' to suit '{}': {}",
-                                        prompt_name,
-                                        server_name,
-                                        suit.name,
-                                        e
-                                    );
-                                }
-                            }
-                        }
-
-                        tracing::info!(
-                            "Synced prompts from server '{}' to suit '{}'",
-                            server_name,
-                            suit.name
-                        );
-                    }
-                }
-
-                tracing::info!(
-                    "Successfully synced {} prompts from server '{}' to database",
-                    all_prompts.len(),
-                    server_name
-                );
-
-                return Ok(());
-            }
+        message: &str,
+    ) {
+        match level {
+            tracing::Level::INFO => tracing::info!(
+                "{} for server '{}' instance '{}'",
+                message,
+                server_name,
+                instance_id
+            ),
+            tracing::Level::ERROR => tracing::error!(
+                "{} for server '{}' instance '{}'",
+                message,
+                server_name,
+                instance_id
+            ),
+            tracing::Level::WARN => tracing::warn!(
+                "{} for server '{}' instance '{}'",
+                message,
+                server_name,
+                instance_id
+            ),
+            tracing::Level::DEBUG => tracing::debug!(
+                "{} for server '{}' instance '{}'",
+                message,
+                server_name,
+                instance_id
+            ),
+            tracing::Level::TRACE => tracing::trace!(
+                "{} for server '{}' instance '{}'",
+                message,
+                server_name,
+                instance_id
+            ),
         }
-
-        Err(anyhow::anyhow!("Server '{}' not found", server_name))
     }
 }
