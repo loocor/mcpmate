@@ -6,7 +6,8 @@ use std::sync::Arc;
 use rmcp::{
     Error as McpError, RoleServer, ServiceError,
     model::{
-        CallToolRequestParam, CallToolResult, ListToolsResult, PaginatedRequestParam,
+        CallToolRequestParam, CallToolResult, ListResourceTemplatesResult, ListResourcesResult,
+        ListToolsResult, PaginatedRequestParam, ReadResourceRequestParam, ReadResourceResult,
         ServerCapabilities, ServerInfo,
     },
     service::RequestContext,
@@ -29,6 +30,8 @@ pub fn get_info(_server: &HttpProxyServer) -> ServerInfo {
         capabilities: ServerCapabilities::builder()
             .enable_tools()
             .enable_tool_list_changed()
+            .enable_resources()
+            .enable_resources_list_changed()
             .build(),
         ..Default::default()
     }
@@ -547,5 +550,149 @@ async fn get_tool_name_mapping_for_tools()
         Ok(mapping)
     } else {
         Err(anyhow::anyhow!("Failed to get proxy server instance"))
+    }
+}
+
+/// List all available resources
+pub async fn list_resources(
+    server: &HttpProxyServer,
+    _request: Option<PaginatedRequestParam>,
+    context: RequestContext<RoleServer>,
+) -> Result<ListResourcesResult, McpError> {
+    // Get client information for logging
+    let client_name = context
+        .peer
+        .peer_info()
+        .map(|info| info.client_info.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    tracing::info!(
+        "Processing list_resources request from client: '{}'",
+        client_name
+    );
+
+    // Build resource mapping from all connected servers
+    let resource_mapping = crate::core::resource::build_resource_mapping(
+        &server.connection_pool,
+        server.database.as_ref(),
+    )
+    .await;
+
+    // Convert resource mapping to list of resources
+    let resources: Vec<rmcp::model::Resource> = resource_mapping
+        .into_values()
+        .map(|mapping| mapping.resource)
+        .collect();
+
+    tracing::info!(
+        "Returning {} aggregated resources to client",
+        resources.len()
+    );
+
+    Ok(ListResourcesResult {
+        next_cursor: None,
+        resources,
+    })
+}
+
+/// List all available resource templates
+pub async fn list_resource_templates(
+    server: &HttpProxyServer,
+    _request: Option<PaginatedRequestParam>,
+    context: RequestContext<RoleServer>,
+) -> Result<ListResourceTemplatesResult, McpError> {
+    // Get client information for logging
+    let client_name = context
+        .peer
+        .peer_info()
+        .map(|info| info.client_info.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    tracing::info!(
+        "Processing list_resource_templates request from client: '{}'",
+        client_name
+    );
+
+    // Build resource template mapping from all connected servers
+    let resource_template_mapping =
+        crate::core::resource::build_resource_template_mapping(&server.connection_pool).await;
+
+    // Convert resource template mapping to list of resource templates
+    let resource_templates: Vec<rmcp::model::ResourceTemplate> = resource_template_mapping
+        .into_iter()
+        .map(|mapping| mapping.resource_template)
+        .collect();
+
+    tracing::info!(
+        "Returning {} aggregated resource templates to client",
+        resource_templates.len()
+    );
+
+    Ok(ListResourceTemplatesResult {
+        next_cursor: None,
+        resource_templates,
+    })
+}
+
+/// Read a resource from the appropriate upstream server
+pub async fn read_resource(
+    server: &HttpProxyServer,
+    request: ReadResourceRequestParam,
+    context: RequestContext<RoleServer>,
+) -> Result<ReadResourceResult, McpError> {
+    // Get client information for logging
+    let client_name = context
+        .peer
+        .peer_info()
+        .map(|info| info.client_info.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let uri = &request.uri;
+
+    tracing::info!(
+        "Processing read_resource request for URI '{}' from client: '{}'",
+        uri,
+        client_name
+    );
+
+    // Validate the resource URI
+    if let Err(e) = crate::core::resource::validate_resource_uri(uri) {
+        tracing::warn!("Invalid resource URI '{}': {}", uri, e);
+        return Err(McpError::invalid_params(
+            format!("Invalid resource URI: {}", e),
+            None,
+        ));
+    }
+
+    // Build resource mapping from all connected servers
+    let resource_mapping = crate::core::resource::build_resource_mapping(
+        &server.connection_pool,
+        server.database.as_ref(),
+    )
+    .await;
+
+    // Read the resource from the appropriate upstream server
+    match crate::core::resource::read_upstream_resource(
+        &server.connection_pool,
+        &resource_mapping,
+        uri,
+    )
+    .await
+    {
+        Ok(result) => {
+            tracing::info!(
+                "Successfully read resource '{}' for client '{}'",
+                uri,
+                client_name
+            );
+            Ok(result)
+        }
+        Err(e) => {
+            tracing::error!("Error reading resource '{}': {}", uri, e);
+            Err(McpError::invalid_params(
+                format!("Resource '{}' not found or error occurred: {}", uri, e),
+                None,
+            ))
+        }
     }
 }

@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use rmcp::{
     RoleClient,
-    model::Tool,
+    model::{ServerCapabilities, Tool},
     service::{RunningService, ServiceExt},
     transport::SseClientTransport,
 };
@@ -23,7 +23,11 @@ pub async fn connect_http_server(
     server_name: &str,
     server_config: &MCPServerConfig,
     transport_type: TransportType,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>)> {
+) -> Result<(
+    RunningService<RoleClient, ()>,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+)> {
     // Get URL
     let url = server_config
         .url
@@ -112,12 +116,19 @@ pub async fn connect_http_server(
                     // Set a timeout for listing tools
                     match timeout(tools_timeout, service.list_all_tools()).await {
                         Ok(Ok(tools)) => {
+                            // Get server capabilities from peer info
+                            let capabilities =
+                                service.peer_info().map(|info| info.capabilities.clone());
+
                             tracing::info!(
-                                "Connected to server '{}', found {} tools",
+                                "Connected to server '{}', found {} tools, capabilities: {:?}",
                                 server_name,
-                                tools.len()
+                                tools.len(),
+                                capabilities
+                                    .as_ref()
+                                    .map(|c| format!("resources={}", c.resources.is_some()))
                             );
-                            Ok((service, tools))
+                            Ok((service, tools, capabilities))
                         }
                         Ok(Err(e)) => {
                             let error_msg = format!("Failed to list tools: {e}");

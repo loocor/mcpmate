@@ -10,6 +10,7 @@ pub mod loader;
 pub mod models;
 pub mod monitor;
 pub mod proxy;
+pub mod resource;
 pub mod sse;
 pub mod stdio;
 pub mod suit;
@@ -22,6 +23,10 @@ pub mod utils;
 pub use crate::common::server::TransportType;
 pub use crate::core::http::pool::UpstreamConnectionPool;
 pub use connection::UpstreamConnection;
+pub use resource::{
+    ResourceMapping, ResourceTemplateMapping, build_resource_mapping,
+    build_resource_template_mapping, read_upstream_resource, validate_resource_uri,
+};
 pub use sse::connect_sse_server;
 pub use suit::ConfigSuitMergeService;
 pub use tool::{

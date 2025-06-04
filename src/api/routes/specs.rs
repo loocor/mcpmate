@@ -15,7 +15,21 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/{server_name}", get(specs::tools::list_server))
         .route("/{server_name}/{tool_name}", get(specs::tools::get_tool));
 
-    let specs_router = Router::new().nest("/tools", tools_router);
+    let resources_router = Router::new()
+        .route("/", get(specs::resources::list_all))
+        .route("/{server_name}", get(specs::resources::list_server));
+
+    let resource_templates_router = Router::new()
+        .route("/", get(specs::resources::list_templates))
+        .route(
+            "/{server_name}",
+            get(specs::resources::list_server_templates),
+        );
+
+    let specs_router = Router::new()
+        .nest("/tools", tools_router)
+        .nest("/resources", resources_router)
+        .nest("/resource_templates", resource_templates_router);
 
     Router::new()
         .nest("/mcp/specs", specs_router)

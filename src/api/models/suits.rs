@@ -161,3 +161,31 @@ pub struct ConfigSuitToolsResponse {
     /// List of tools in this configuration suit
     pub tools: Vec<ConfigSuitToolResponse>,
 }
+
+/// Config Suit resource response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigSuitResourceResponse {
+    /// Resource ID
+    pub id: String,
+    /// Server ID
+    pub server_id: String,
+    /// Server name
+    pub server_name: String,
+    /// Resource URI (original URI from upstream server)
+    pub resource_uri: String,
+    /// Whether the resource is enabled in this configuration suit
+    pub enabled: bool,
+    /// Allowed operations on this resource
+    pub allowed_operations: Vec<String>,
+}
+
+/// Config Suit resources list response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigSuitResourcesResponse {
+    /// Configuration suit ID
+    pub suit_id: String,
+    /// Configuration suit name
+    pub suit_name: String,
+    /// List of resources in this configuration suit
+    pub resources: Vec<ConfigSuitResourceResponse>,
+}

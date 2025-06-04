@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use rmcp::{
     RoleClient,
-    model::Tool,
+    model::{ServerCapabilities, Tool},
     service::{RunningService, serve_client_with_ct},
     transport::TokioChildProcess,
 };
@@ -22,7 +22,12 @@ async fn connect_stdio_server_core(
     ct: CancellationToken,
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
     runtime_cache: Option<&crate::runtime::RuntimeCache>,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<u32>)> {
+) -> Result<(
+    RunningService<RoleClient, ()>,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+    Option<u32>,
+)> {
     // Get command and arguments
     let command = server_config
         .command
@@ -139,14 +144,20 @@ async fn connect_stdio_server_core(
                     // Try to get the process ID
                     let pid = get_process_id_for_server(server_name, server_config).await;
 
+                    // Get server capabilities from peer info
+                    let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+
                     tracing::info!(
-                        "Connected to server '{}', found {} tools, process ID: {:?}",
+                        "Connected to server '{}', found {} tools, capabilities: {:?}, process ID: {:?}",
                         server_name,
                         tools.len(),
+                        capabilities
+                            .as_ref()
+                            .map(|c| format!("resources={}", c.resources.is_some())),
                         pid
                     );
 
-                    Ok((service, tools, pid))
+                    Ok((service, tools, capabilities, pid))
                 }
                 Ok(Err(e)) => {
                     let error_msg = format!("Failed to list tools: {e}");
@@ -275,7 +286,12 @@ pub async fn connect_stdio_server_with_ct_and_db(
     server_config: &MCPServerConfig,
     ct: CancellationToken,
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<u32>)> {
+) -> Result<(
+    RunningService<RoleClient, ()>,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+    Option<u32>,
+)> {
     connect_stdio_server_core(server_name, server_config, ct, database_pool, None).await
 }
 
@@ -287,7 +303,12 @@ pub async fn connect_stdio_server_with_runtime_cache(
     ct: CancellationToken,
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
     runtime_cache: &crate::runtime::RuntimeCache,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<u32>)> {
+) -> Result<(
+    RunningService<RoleClient, ()>,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+    Option<u32>,
+)> {
     connect_stdio_server_core(
         server_name,
         server_config,
@@ -303,6 +324,11 @@ pub async fn connect_stdio_server_with_ct(
     server_name: &str,
     server_config: &MCPServerConfig,
     ct: CancellationToken,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<u32>)> {
+) -> Result<(
+    RunningService<RoleClient, ()>,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+    Option<u32>,
+)> {
     connect_stdio_server_core(server_name, server_config, ct, None, None).await
 }

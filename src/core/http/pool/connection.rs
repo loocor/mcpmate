@@ -4,6 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use rmcp::{RoleClient, model::Tool, service::RunningService};
+
 use tokio::{sync::Mutex, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing;
@@ -193,20 +194,30 @@ impl UpstreamConnectionPool {
         instance_id: &str,
         service: RunningService<RoleClient, ()>,
         tools: Vec<Tool>,
+        capabilities: Option<rmcp::model::ServerCapabilities>,
     ) {
+        // Clone the service for resource sync before moving it into the connection
+        let service_for_resources = service.clone();
+
         // Update the connection with the service and tools
         let conn = self.get_instance_mut(server_name, instance_id).unwrap();
-        conn.update_connected(service, tools.clone());
+        conn.update_connected(service, tools.clone(), capabilities.clone());
+
+        let supports_resources = conn.supports_resources();
 
         tracing::info!(
-            "Connected to server '{}' instance '{}', found {} tools",
+            "Connected to server '{}' instance '{}', found {} tools, supports resources: {}",
             server_name,
             instance_id,
-            conn.tools.len()
+            conn.tools.len(),
+            supports_resources
         );
 
+        // Clone database reference to avoid borrowing conflicts
+        let database_clone = self.database.clone();
+
         // Sync tools to database if database reference is available
-        if let Some(db) = &self.database {
+        if let Some(db) = database_clone.as_ref() {
             // Spawn a task to sync tools to database to avoid blocking the connection process
             let db_clone = db.clone();
             let server_name_clone = server_name.to_string();
@@ -219,6 +230,29 @@ impl UpstreamConnectionPool {
                     tracing::error!("Failed to sync tools to database: {}", e);
                 }
             });
+        }
+
+        // Sync resources to database if database reference is available and server supports resources
+        if let Some(db) = database_clone.as_ref() {
+            if supports_resources {
+                let db_clone = db.clone();
+                let server_name_clone = server_name.to_string();
+                let instance_id_clone = instance_id.to_string();
+
+                // Use the cloned service directly instead of getting from connection pool
+                tokio::spawn(async move {
+                    if let Err(e) = Self::sync_resources_to_database_with_service(
+                        &db_clone,
+                        &server_name_clone,
+                        &instance_id_clone,
+                        &service_for_resources,
+                    )
+                    .await
+                    {
+                        tracing::error!("Failed to sync resources to database: {}", e);
+                    }
+                });
+            }
         }
     }
 
@@ -348,6 +382,160 @@ impl UpstreamConnectionPool {
         Err(anyhow::anyhow!("Server '{}' not found", server_name))
     }
 
+    /// Sync resources to database using a service directly
+    ///
+    /// This function syncs resources from a server to the database using a service directly.
+    /// It adds resources to all config suits that have the server enabled.
+    async fn sync_resources_to_database_with_service(
+        db: &Arc<crate::config::database::Database>,
+        server_name: &str,
+        instance_id: &str,
+        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        tracing::info!(
+            "Syncing resources from server '{}' (instance: {}) to database",
+            server_name,
+            instance_id
+        );
+
+        // Get the server ID
+        let server = crate::config::server::get_server(&db.pool, server_name)
+            .await
+            .context(format!("Failed to get server '{server_name}'"))?;
+
+        if let Some(server) = server {
+            if let Some(server_id) = &server.id {
+                // Get all config suits that have this server enabled
+                let all_suits = crate::config::suit::get_all_config_suits(&db.pool)
+                    .await
+                    .context("Failed to get all config suits")?;
+
+                let mut suits_with_server = Vec::new();
+
+                for suit in all_suits {
+                    if let Some(suit_id) = &suit.id {
+                        // Get all servers in this suit
+                        let suit_servers =
+                            crate::config::suit::get_config_suit_servers(&db.pool, suit_id)
+                                .await
+                                .context(format!("Failed to get servers for suit '{suit_id}'"))?;
+
+                        // Check if this server is in the suit
+                        for suit_server in suit_servers {
+                            if suit_server.server_id == *server_id {
+                                suits_with_server.push(suit.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                tracing::info!(
+                    "Found {} config suits with server '{}' enabled",
+                    suits_with_server.len(),
+                    server_name
+                );
+
+                // Get resources directly from the service
+                let server_resources = match service.list_all_resources().await {
+                    Ok(resources) => resources
+                        .into_iter()
+                        .map(|r| r.uri.clone())
+                        .collect::<Vec<String>>(),
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to list resources from server '{}' (instance: {}): {}",
+                            server_name,
+                            instance_id,
+                            e
+                        );
+                        Vec::new()
+                    }
+                };
+
+                tracing::info!(
+                    "Found {} resources from server '{}' (instance: {})",
+                    server_resources.len(),
+                    server_name,
+                    instance_id
+                );
+
+                // For each suit, add all resources
+                for suit in suits_with_server {
+                    if let Some(suit_id) = &suit.id {
+                        // Get existing resources in this suit for this server
+                        let existing_resources =
+                            crate::config::suit::get_resources_for_config_suit(&db.pool, suit_id)
+                                .await
+                                .context(format!("Failed to get resources for suit '{suit_id}'"))?;
+
+                        let existing_resource_uris: std::collections::HashSet<String> =
+                            existing_resources
+                                .iter()
+                                .filter(|r| r.server_id == *server_id)
+                                .map(|r| r.resource_uri.clone())
+                                .collect();
+
+                        // Add new resources to the suit
+                        for resource_uri in &server_resources {
+                            // Skip if resource already exists in this suit
+                            if existing_resource_uris.contains(resource_uri) {
+                                continue;
+                            }
+
+                            // Add the resource to the suit (enabled by default)
+                            match crate::config::suit::add_resource_to_config_suit(
+                                &db.pool,
+                                suit_id,
+                                server_id,
+                                resource_uri,
+                                true,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    tracing::debug!(
+                                        "Added resource '{}' from server '{}' to suit '{}'",
+                                        resource_uri,
+                                        server_name,
+                                        suit.name
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to add resource '{}' from server '{}' to suit '{}': {}",
+                                        resource_uri,
+                                        server_name,
+                                        suit.name,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+
+                        tracing::info!(
+                            "Synced resources from server '{}' to suit '{}'",
+                            server_name,
+                            suit.name
+                        );
+                    }
+                }
+
+                tracing::info!(
+                    "Successfully synced {} resources from server '{}' to database",
+                    server_resources.len(),
+                    server_name
+                );
+
+                return Ok(());
+            }
+        }
+
+        Err(anyhow::anyhow!("Server '{}' not found", server_name))
+    }
+
     /// Connect to a stdio server
     async fn connect_stdio(
         &mut self,
@@ -407,9 +595,9 @@ impl UpstreamConnectionPool {
         };
 
         match connect_result {
-            Ok((service, tools, pid)) => {
-                // Update connection
-                self.update_connection(server_name, instance_id, service, tools);
+            Ok((service, tools, capabilities, pid)) => {
+                // Now stdio connections also return capabilities!
+                self.update_connection(server_name, instance_id, service, tools, capabilities);
 
                 // If we have a process ID, update resource monitoring
                 if let Some(pid) = pid {
@@ -489,9 +677,9 @@ impl UpstreamConnectionPool {
 
         // Handle the connection result
         match connect_result {
-            Ok((service, tools)) => {
+            Ok((service, tools, capabilities)) => {
                 // Update connection
-                self.update_connection(server_name, instance_id, service, tools);
+                self.update_connection(server_name, instance_id, service, tools, capabilities);
                 Ok(())
             }
             Err(e) => Err(e),

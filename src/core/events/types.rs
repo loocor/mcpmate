@@ -47,6 +47,18 @@ pub enum Event {
         enabled: bool,
     },
 
+    /// Resource enabled status changed in a config suit
+    ResourceEnabledInSuitChanged {
+        /// Resource ID
+        resource_id: String,
+        /// Resource URI
+        resource_uri: String,
+        /// Config suit ID
+        suit_id: String,
+        /// New enabled status
+        enabled: bool,
+    },
+
     /// Database was initialized or changed
     DatabaseChanged,
 

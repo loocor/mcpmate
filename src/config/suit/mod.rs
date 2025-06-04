@@ -4,6 +4,7 @@
 pub mod basic;
 pub mod init;
 pub mod mgmt;
+pub mod resource;
 pub mod server;
 pub mod tool;
 
@@ -22,6 +23,13 @@ pub use mgmt::{
 // Server association operations
 pub use server::{
     add_server_to_config_suit, get_config_suit_servers, remove_server_from_config_suit,
+};
+
+// Resource association operations
+pub use resource::{
+    add_resource_to_config_suit, get_enabled_resources_for_config_suit,
+    get_resources_for_config_suit, remove_resource_from_config_suit,
+    update_resource_enabled_status,
 };
 
 // Tool association operations

@@ -18,6 +18,12 @@ pub fn register_handlers() {
     // Register handler for server enabled in suit changes
     EventBus::global().subscribe(handle_server_enabled_in_suit_changed);
 
+    // Register handler for tool enabled in suit changes
+    EventBus::global().subscribe(handle_tool_enabled_in_suit_changed);
+
+    // Register handler for resource enabled in suit changes
+    EventBus::global().subscribe(handle_resource_enabled_in_suit_changed);
+
     // Register handler for database changes
     EventBus::global().subscribe(handle_database_changed);
 
@@ -85,6 +91,44 @@ fn handle_server_enabled_in_suit_changed(event: Event) {
                 error!("Failed to sync server connections: {}", e);
             }
         });
+    }
+}
+
+/// Handle tool enabled in suit changed events
+fn handle_tool_enabled_in_suit_changed(event: Event) {
+    if let Event::ToolEnabledInSuitChanged {
+        tool_id,
+        tool_name,
+        suit_id,
+        enabled,
+    } = event
+    {
+        debug!(
+            "Handling tool enabled in suit changed event: tool_id={}, tool_name={}, suit_id={}, enabled={}",
+            tool_id, tool_name, suit_id, enabled
+        );
+
+        // Tool changes don't require server connection sync, but we log the event
+        // The tool filtering is handled at the mapping level
+    }
+}
+
+/// Handle resource enabled in suit changed events
+fn handle_resource_enabled_in_suit_changed(event: Event) {
+    if let Event::ResourceEnabledInSuitChanged {
+        resource_id,
+        resource_uri,
+        suit_id,
+        enabled,
+    } = event
+    {
+        debug!(
+            "Handling resource enabled in suit changed event: resource_id={}, resource_uri={}, suit_id={}, enabled={}",
+            resource_id, resource_uri, suit_id, enabled
+        );
+
+        // Resource changes don't require server connection sync, but we log the event
+        // The resource filtering is handled at the mapping level
     }
 }
 

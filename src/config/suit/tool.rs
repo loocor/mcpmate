@@ -72,27 +72,10 @@ pub async fn add_tool_to_config_suit(
     .await
     .context("Failed to get existing tool enabled status")?;
 
-    // Get the server name
-    let server_name = match sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT name FROM server_config
-        WHERE id = ?
-        "#,
-    )
-    .bind(server_id)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to get server name")?
-    {
-        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
-        None => {
-            tracing::warn!(
-                "Server ID {} not found, using 'unknown' as server_name",
-                server_id
-            );
-            "unknown".to_string()
-        }
-    };
+    // Get the server name (safe version with underscores)
+    let server_name = crate::config::operations::server::get_server_name_safe(pool, server_id)
+        .await
+        .context("Failed to get server name")?;
 
     // Generate a unique name for the tool
     let base_unique_name = crate::core::tool::generate_unique_name(&server_name, tool_name);

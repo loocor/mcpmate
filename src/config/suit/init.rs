@@ -13,6 +13,8 @@ pub async fn initialize_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
     create_config_suit_server_table(pool).await?;
     create_config_suit_tool_table(pool).await?;
     create_config_suit_tool_index(pool).await?;
+    create_config_suit_resource_table(pool).await?;
+    create_config_suit_resource_index(pool).await?;
 
     verify_suit_tables(pool).await?;
 
@@ -23,7 +25,7 @@ pub async fn initialize_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
 /// Create config_suit table if it doesn't exist
 async fn create_config_suit_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating config_suit table if it doesn't exist");
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS config_suit (
@@ -54,7 +56,7 @@ async fn create_config_suit_table(pool: &Pool<Sqlite>) -> Result<()> {
 /// Create config_suit_server table if it doesn't exist
 async fn create_config_suit_server_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating config_suit_server table if it doesn't exist");
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_server (
@@ -85,7 +87,7 @@ async fn create_config_suit_server_table(pool: &Pool<Sqlite>) -> Result<()> {
 /// Create config_suit_tool table if it doesn't exist
 async fn create_config_suit_tool_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating config_suit_tool table if it doesn't exist");
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_tool (
@@ -118,7 +120,7 @@ async fn create_config_suit_tool_table(pool: &Pool<Sqlite>) -> Result<()> {
 /// Create unique index on config_suit_tool.unique_name if it doesn't exist
 async fn create_config_suit_tool_index(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating unique index on config_suit_tool.unique_name if it doesn't exist");
-    
+
     sqlx::query(
         r#"
         CREATE UNIQUE INDEX IF NOT EXISTS idx_config_suit_tool_unique_name
@@ -129,11 +131,70 @@ async fn create_config_suit_tool_index(pool: &Pool<Sqlite>) -> Result<()> {
     .execute(pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to create unique index on config_suit_tool.unique_name: {}", e);
-        anyhow::anyhow!("Failed to create unique index on config_suit_tool.unique_name: {}", e)
+        tracing::error!(
+            "Failed to create unique index on config_suit_tool.unique_name: {}",
+            e
+        );
+        anyhow::anyhow!(
+            "Failed to create unique index on config_suit_tool.unique_name: {}",
+            e
+        )
     })?;
 
     tracing::debug!("Unique index on config_suit_tool.unique_name created or already exists");
+    Ok(())
+}
+
+/// Create config_suit_resource table if it doesn't exist
+async fn create_config_suit_resource_table(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating config_suit_resource table if it doesn't exist");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS config_suit_resource (
+            id TEXT PRIMARY KEY,
+            config_suit_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
+            resource_uri TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (config_suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
+            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
+            UNIQUE(config_suit_id, server_id, resource_uri)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create config_suit_resource table: {}", e);
+        anyhow::anyhow!("Failed to create config_suit_resource table: {}", e)
+    })?;
+
+    tracing::debug!("config_suit_resource table created or already exists");
+    Ok(())
+}
+
+/// Create index on config_suit_resource for performance
+async fn create_config_suit_resource_index(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating index on config_suit_resource for performance");
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_config_suit_resource_lookup
+        ON config_suit_resource(config_suit_id, enabled)
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create index on config_suit_resource: {}", e);
+        anyhow::anyhow!("Failed to create index on config_suit_resource: {}", e)
+    })?;
+
+    tracing::debug!("Index on config_suit_resource created or already exists");
     Ok(())
 }
 
@@ -143,6 +204,7 @@ async fn verify_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
         "config_suit",
         "config_suit_server",
         "config_suit_tool",
+        "config_suit_resource",
     ];
 
     for table in tables {

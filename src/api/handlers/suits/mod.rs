@@ -6,9 +6,14 @@ pub use self::{
     basic::{get_suit, list_suits},
     crud::{create_suit, delete_suit, update_suit},
     helpers::{
-        check_tool_belongs_to_suit, get_server_or_error, get_suit_or_error, get_tool_or_error,
+        check_resource_belongs_to_suit, check_tool_belongs_to_suit, get_resource_by_id,
+        get_resource_or_error, get_server_or_error, get_suit_or_error, get_tool_or_error,
     },
     mgmt::{activate_suit, batch_activate_suits, batch_deactivate_suits, deactivate_suit},
+    resource::{
+        batch_disable_resources, batch_enable_resources, disable_resource, enable_resource,
+        list_resources,
+    },
     server::{
         batch_disable_servers, batch_enable_servers, disable_server, enable_server, list_servers,
     },
@@ -20,6 +25,7 @@ mod basic;
 mod crud;
 mod helpers;
 mod mgmt;
+mod resource;
 mod server;
 mod tool;
 
@@ -37,9 +43,10 @@ pub(crate) mod common {
             handlers::ApiError,
             models::suits::{
                 BatchOperationRequest, BatchOperationResponse, ConfigSuitListResponse,
-                ConfigSuitResponse, ConfigSuitServerResponse, ConfigSuitServersResponse,
-                ConfigSuitToolResponse, ConfigSuitToolsResponse, CreateConfigSuitRequest,
-                SuitOperationResponse, UpdateConfigSuitRequest,
+                ConfigSuitResourceResponse, ConfigSuitResourcesResponse, ConfigSuitResponse,
+                ConfigSuitServerResponse, ConfigSuitServersResponse, ConfigSuitToolResponse,
+                ConfigSuitToolsResponse, CreateConfigSuitRequest, SuitOperationResponse,
+                UpdateConfigSuitRequest,
             },
             routes::AppState,
         },

@@ -41,10 +41,19 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/batch/enable", post(suits::batch_enable_tools))
         .route("/batch/disable", post(suits::batch_disable_tools));
 
+    // Resource management in Config Suits
+    let resources_router = Router::new()
+        .route("/", get(suits::list_resources))
+        .route("/{resource_id}/enable", post(suits::enable_resource))
+        .route("/{resource_id}/disable", post(suits::disable_resource))
+        .route("/batch/enable", post(suits::batch_enable_resources))
+        .route("/batch/disable", post(suits::batch_disable_resources));
+
     // Combine all routers
     let combined_router = suits_router
         .nest("/{id}/servers", servers_router)
-        .nest("/{id}/tools", tools_router);
+        .nest("/{id}/tools", tools_router)
+        .nest("/{id}/resources", resources_router);
 
     Router::new()
         .nest("/mcp/suits", combined_router)

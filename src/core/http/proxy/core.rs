@@ -6,7 +6,10 @@ use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
 use rmcp::{
     Error as McpError, ServerHandler,
-    model::{CallToolRequestParam, CallToolResult, ServerInfo},
+    model::{
+        CallToolRequestParam, CallToolResult, ListResourceTemplatesResult, ListResourcesResult,
+        PaginatedRequestParam, ReadResourceRequestParam, ReadResourceResult, ServerInfo,
+    },
     service::RequestContext,
     tool,
 };
@@ -351,5 +354,29 @@ impl ServerHandler for HttpProxyServer {
         context: RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         handler::call_tool(self, request, context).await
+    }
+
+    async fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        handler::list_resources(self, request, context).await
+    }
+
+    async fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        handler::list_resource_templates(self, request, context).await
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParam,
+        context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        handler::read_resource(self, request, context).await
     }
 }

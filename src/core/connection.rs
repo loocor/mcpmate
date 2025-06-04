@@ -3,7 +3,11 @@
 
 use std::time::{Duration, Instant};
 
-use rmcp::{RoleClient, model::Tool, service::RunningService};
+use rmcp::{
+    RoleClient,
+    model::{ServerCapabilities, Tool},
+    service::RunningService,
+};
 
 use crate::generate_id;
 
@@ -18,6 +22,8 @@ pub struct UpstreamConnection {
     pub server_name: String,
     /// Active service connection
     pub service: Option<RunningService<RoleClient, ()>>,
+    /// Server capabilities (resources, tools, etc.)
+    pub capabilities: Option<ServerCapabilities>,
     /// Tools provided by this server
     pub tools: Vec<Tool>,
     /// Time when the connection was created
@@ -46,6 +52,7 @@ impl Clone for UpstreamConnection {
             id: self.id.clone(),
             server_name: self.server_name.clone(),
             service: None, // We don't clone the service
+            capabilities: self.capabilities.clone(),
             tools: self.tools.clone(),
             created_at: self.created_at,
             last_connected: self.last_connected,
@@ -67,6 +74,7 @@ impl UpstreamConnection {
             id: generate_id!("upsv"),
             server_name,
             service: None,
+            capabilities: None,
             tools: Vec::new(),
             created_at: now,
             last_connected: now,
@@ -84,14 +92,24 @@ impl UpstreamConnection {
         matches!(self.status, ConnectionStatus::Ready)
     }
 
+    /// Check if the server supports resources
+    pub fn supports_resources(&self) -> bool {
+        self.capabilities
+            .as_ref()
+            .and_then(|caps| caps.resources.as_ref())
+            .is_some()
+    }
+
     /// Update connection with successful connection details
     pub fn update_connected(
         &mut self,
         service: RunningService<RoleClient, ()>,
         tools: Vec<Tool>,
+        capabilities: Option<ServerCapabilities>,
     ) {
         self.service = Some(service);
         self.tools = tools;
+        self.capabilities = capabilities;
         self.status = ConnectionStatus::Ready;
         self.last_connected = Instant::now();
     }
