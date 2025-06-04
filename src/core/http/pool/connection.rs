@@ -204,13 +204,15 @@ impl UpstreamConnectionPool {
         conn.update_connected(service, tools.clone(), capabilities.clone());
 
         let supports_resources = conn.supports_resources();
+        let supports_prompts = conn.supports_prompts();
 
         tracing::info!(
-            "Connected to server '{}' instance '{}', found {} tools, supports resources: {}",
+            "Connected to server '{}' instance '{}', found {} tools, supports resources: {}, supports prompts: {}",
             server_name,
             instance_id,
             conn.tools.len(),
-            supports_resources
+            supports_resources,
+            supports_prompts
         );
 
         // Clone database reference to avoid borrowing conflicts
@@ -238,6 +240,7 @@ impl UpstreamConnectionPool {
                 let db_clone = db.clone();
                 let server_name_clone = server_name.to_string();
                 let instance_id_clone = instance_id.to_string();
+                let service_for_resources_clone = service_for_resources.clone();
 
                 // Use the cloned service directly instead of getting from connection pool
                 tokio::spawn(async move {
@@ -245,11 +248,35 @@ impl UpstreamConnectionPool {
                         &db_clone,
                         &server_name_clone,
                         &instance_id_clone,
-                        &service_for_resources,
+                        &service_for_resources_clone,
                     )
                     .await
                     {
                         tracing::error!("Failed to sync resources to database: {}", e);
+                    }
+                });
+            }
+        }
+
+        // Sync prompts to database if database reference is available and server supports prompts
+        if let Some(db) = database_clone.as_ref() {
+            if supports_prompts {
+                let db_clone = db.clone();
+                let server_name_clone = server_name.to_string();
+                let instance_id_clone = instance_id.to_string();
+                let service_for_prompts = service_for_resources.clone();
+
+                // Use the cloned service directly instead of getting from connection pool
+                tokio::spawn(async move {
+                    if let Err(e) = Self::sync_prompts_to_database_with_service(
+                        &db_clone,
+                        &server_name_clone,
+                        &instance_id_clone,
+                        &service_for_prompts,
+                    )
+                    .await
+                    {
+                        tracing::error!("Failed to sync prompts to database: {}", e);
                     }
                 });
             }
@@ -907,5 +934,162 @@ impl UpstreamConnectionPool {
                 }
             }
         }
+    }
+
+    /// Sync prompts to database using a service directly
+    ///
+    /// This function syncs prompts from a server to the database using a service directly.
+    /// It adds prompts to all config suits that have the server enabled.
+    async fn sync_prompts_to_database_with_service(
+        db: &Arc<crate::config::database::Database>,
+        server_name: &str,
+        instance_id: &str,
+        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        tracing::info!(
+            "Syncing prompts from server '{}' (instance: {}) to database",
+            server_name,
+            instance_id
+        );
+
+        // Get the server ID
+        let server = crate::config::server::get_server(&db.pool, server_name)
+            .await
+            .context(format!("Failed to get server '{server_name}'"))?;
+
+        if let Some(server) = server {
+            if let Some(server_id) = &server.id {
+                // Get all config suits that have this server enabled
+                let all_suits = crate::config::suit::get_all_config_suits(&db.pool)
+                    .await
+                    .context("Failed to get all config suits")?;
+
+                let mut suits_with_server = Vec::new();
+
+                for suit in all_suits {
+                    if let Some(suit_id) = &suit.id {
+                        // Get all servers in this suit
+                        let suit_servers =
+                            crate::config::suit::get_config_suit_servers(&db.pool, suit_id)
+                                .await
+                                .context(format!("Failed to get servers for suit '{suit_id}'"))?;
+
+                        // Check if this server is in the suit
+                        for suit_server in suit_servers {
+                            if suit_server.server_id == *server_id {
+                                suits_with_server.push(suit.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                tracing::info!(
+                    "Found {} config suits with server '{}' enabled",
+                    suits_with_server.len(),
+                    server_name
+                );
+
+                // Collect all prompts from the server with pagination
+                let mut all_prompts = Vec::new();
+                let mut cursor = None;
+
+                loop {
+                    let result = service
+                        .list_prompts(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                        .await
+                        .context("Failed to list prompts from upstream server")?;
+
+                    all_prompts.extend(result.prompts);
+
+                    cursor = result.next_cursor;
+                    if cursor.is_none() {
+                        break;
+                    }
+                }
+
+                tracing::info!(
+                    "Found {} prompts from server '{}' (instance: {})",
+                    all_prompts.len(),
+                    server_name,
+                    instance_id
+                );
+
+                // For each suit, add all prompts
+                for suit in suits_with_server {
+                    if let Some(suit_id) = &suit.id {
+                        // Get existing prompts in this suit for this server
+                        let existing_prompts =
+                            crate::config::suit::get_prompts_for_config_suit(&db.pool, suit_id)
+                                .await
+                                .context(format!("Failed to get prompts for suit '{suit_id}'"))?;
+
+                        let existing_prompt_names: std::collections::HashSet<String> =
+                            existing_prompts
+                                .iter()
+                                .filter(|p| p.server_id == *server_id)
+                                .map(|p| p.prompt_name.clone())
+                                .collect();
+
+                        // Add new prompts to the suit
+                        for prompt in &all_prompts {
+                            let prompt_name = &prompt.name;
+
+                            // Skip if prompt already exists in this suit
+                            if existing_prompt_names.contains(prompt_name) {
+                                continue;
+                            }
+
+                            // Add the prompt to the suit (enabled by default)
+                            match crate::config::suit::add_prompt_to_config_suit(
+                                &db.pool,
+                                suit_id,
+                                server_id,
+                                prompt_name,
+                                true,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    tracing::debug!(
+                                        "Added prompt '{}' from server '{}' to suit '{}'",
+                                        prompt_name,
+                                        server_name,
+                                        suit.name
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to add prompt '{}' from server '{}' to suit '{}': {}",
+                                        prompt_name,
+                                        server_name,
+                                        suit.name,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+
+                        tracing::info!(
+                            "Synced prompts from server '{}' to suit '{}'",
+                            server_name,
+                            suit.name
+                        );
+                    }
+                }
+
+                tracing::info!(
+                    "Successfully synced {} prompts from server '{}' to database",
+                    all_prompts.len(),
+                    server_name
+                );
+
+                return Ok(());
+            }
+        }
+
+        Err(anyhow::anyhow!("Server '{}' not found", server_name))
     }
 }

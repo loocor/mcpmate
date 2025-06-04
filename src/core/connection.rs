@@ -100,6 +100,14 @@ impl UpstreamConnection {
             .is_some()
     }
 
+    /// Check if the server supports prompts
+    pub fn supports_prompts(&self) -> bool {
+        self.capabilities
+            .as_ref()
+            .and_then(|caps| caps.prompts.as_ref())
+            .is_some()
+    }
+
     /// Update connection with successful connection details
     pub fn update_connected(
         &mut self,

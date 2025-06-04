@@ -4,6 +4,7 @@
 pub mod basic;
 pub mod init;
 pub mod mgmt;
+pub mod prompt;
 pub mod resource;
 pub mod server;
 pub mod tool;
@@ -18,6 +19,12 @@ pub use basic::{
 pub use mgmt::{
     delete_config_suit, set_config_suit_active, set_config_suit_default, upsert_config_suit,
     upsert_config_suit_tx,
+};
+
+// Prompt association operations
+pub use prompt::{
+    add_prompt_to_config_suit, get_enabled_prompts_for_config_suit, get_prompts_for_config_suit,
+    remove_prompt_from_config_suit, update_prompt_enabled_status,
 };
 
 // Server association operations

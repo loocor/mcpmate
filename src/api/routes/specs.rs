@@ -15,6 +15,10 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/{server_name}", get(specs::tools::list_server))
         .route("/{server_name}/{tool_name}", get(specs::tools::get_tool));
 
+    let prompts_router = Router::new()
+        .route("/", get(specs::prompts::list_all))
+        .route("/{server_name}", get(specs::prompts::list_server));
+
     let resources_router = Router::new()
         .route("/", get(specs::resources::list_all))
         .route("/{server_name}", get(specs::resources::list_server));
@@ -28,6 +32,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
 
     let specs_router = Router::new()
         .nest("/tools", tools_router)
+        .nest("/prompts", prompts_router)
         .nest("/resources", resources_router)
         .nest("/resource_templates", resource_templates_router);
 

@@ -9,6 +9,7 @@ pub mod http;
 pub mod loader;
 pub mod models;
 pub mod monitor;
+pub mod prompt;
 pub mod proxy;
 pub mod resource;
 pub mod sse;

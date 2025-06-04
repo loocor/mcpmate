@@ -25,6 +25,14 @@
       "command": "npx",
       "type": "stdio"
     },
+    "everything": {
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-everything"
+      ],
+      "command": "npx",
+      "type": "stdio"
+    },
     "fetch": {
       "args": [
         "mcp-server-fetch"

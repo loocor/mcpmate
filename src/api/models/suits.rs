@@ -189,3 +189,31 @@ pub struct ConfigSuitResourcesResponse {
     /// List of resources in this configuration suit
     pub resources: Vec<ConfigSuitResourceResponse>,
 }
+
+/// Config Suit prompt response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigSuitPromptResponse {
+    /// Prompt ID
+    pub id: String,
+    /// Server ID
+    pub server_id: String,
+    /// Server name
+    pub server_name: String,
+    /// Prompt name (original name from upstream server)
+    pub prompt_name: String,
+    /// Whether the prompt is enabled in this configuration suit
+    pub enabled: bool,
+    /// Allowed operations on this prompt
+    pub allowed_operations: Vec<String>,
+}
+
+/// Config Suit prompts list response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigSuitPromptsResponse {
+    /// Configuration suit ID
+    pub suit_id: String,
+    /// Configuration suit name
+    pub suit_name: String,
+    /// List of prompts in this configuration suit
+    pub prompts: Vec<ConfigSuitPromptResponse>,
+}

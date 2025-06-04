@@ -15,6 +15,8 @@ pub async fn initialize_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
     create_config_suit_tool_index(pool).await?;
     create_config_suit_resource_table(pool).await?;
     create_config_suit_resource_index(pool).await?;
+    create_config_suit_prompt_table(pool).await?;
+    create_config_suit_prompt_index(pool).await?;
 
     verify_suit_tables(pool).await?;
 
@@ -198,6 +200,59 @@ async fn create_config_suit_resource_index(pool: &Pool<Sqlite>) -> Result<()> {
     Ok(())
 }
 
+/// Create config_suit_prompt table if it doesn't exist
+async fn create_config_suit_prompt_table(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating config_suit_prompt table if it doesn't exist");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS config_suit_prompt (
+            id TEXT PRIMARY KEY,
+            config_suit_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
+            prompt_name TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (config_suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
+            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
+            UNIQUE(config_suit_id, server_id, prompt_name)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create config_suit_prompt table: {}", e);
+        anyhow::anyhow!("Failed to create config_suit_prompt table: {}", e)
+    })?;
+
+    tracing::debug!("config_suit_prompt table created or already exists");
+    Ok(())
+}
+
+/// Create index on config_suit_prompt for performance
+async fn create_config_suit_prompt_index(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating index on config_suit_prompt for performance");
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_config_suit_prompt_lookup
+        ON config_suit_prompt(config_suit_id, enabled)
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create index on config_suit_prompt: {}", e);
+        anyhow::anyhow!("Failed to create index on config_suit_prompt: {}", e)
+    })?;
+
+    tracing::debug!("Index on config_suit_prompt created or already exists");
+    Ok(())
+}
+
 /// Verify that all config suit tables were created successfully
 async fn verify_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
     let tables = vec![
@@ -205,6 +260,7 @@ async fn verify_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
         "config_suit_server",
         "config_suit_tool",
         "config_suit_resource",
+        "config_suit_prompt",
     ];
 
     for table in tables {

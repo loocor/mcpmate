@@ -7,8 +7,9 @@ use once_cell::sync::OnceCell;
 use rmcp::{
     Error as McpError, ServerHandler,
     model::{
-        CallToolRequestParam, CallToolResult, ListResourceTemplatesResult, ListResourcesResult,
-        PaginatedRequestParam, ReadResourceRequestParam, ReadResourceResult, ServerInfo,
+        CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult,
+        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParam,
+        ReadResourceRequestParam, ReadResourceResult, ServerInfo,
     },
     service::RequestContext,
     tool,
@@ -378,5 +379,21 @@ impl ServerHandler for HttpProxyServer {
         context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         handler::read_resource(self, request, context).await
+    }
+
+    async fn list_prompts(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        handler::list_prompts(self, request, context).await
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        handler::get_prompt(self, request, context).await
     }
 }

@@ -41,6 +41,14 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/batch/enable", post(suits::batch_enable_tools))
         .route("/batch/disable", post(suits::batch_disable_tools));
 
+    // Prompt management in Config Suits
+    let prompts_router = Router::new()
+        .route("/", get(suits::list_prompts))
+        .route("/{prompt_id}/enable", post(suits::enable_prompt))
+        .route("/{prompt_id}/disable", post(suits::disable_prompt))
+        .route("/batch/enable", post(suits::batch_enable_prompts))
+        .route("/batch/disable", post(suits::batch_disable_prompts));
+
     // Resource management in Config Suits
     let resources_router = Router::new()
         .route("/", get(suits::list_resources))
@@ -53,6 +61,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
     let combined_router = suits_router
         .nest("/{id}/servers", servers_router)
         .nest("/{id}/tools", tools_router)
+        .nest("/{id}/prompts", prompts_router)
         .nest("/{id}/resources", resources_router);
 
     Router::new()

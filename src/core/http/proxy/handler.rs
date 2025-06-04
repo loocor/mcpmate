@@ -6,9 +6,10 @@ use std::sync::Arc;
 use rmcp::{
     Error as McpError, RoleServer, ServiceError,
     model::{
-        CallToolRequestParam, CallToolResult, ListResourceTemplatesResult, ListResourcesResult,
-        ListToolsResult, PaginatedRequestParam, ReadResourceRequestParam, ReadResourceResult,
-        ServerCapabilities, ServerInfo,
+        CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult,
+        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+        PaginatedRequestParam, ReadResourceRequestParam, ReadResourceResult, ServerCapabilities,
+        ServerInfo,
     },
     service::RequestContext,
 };
@@ -17,8 +18,10 @@ use tokio::sync::Mutex;
 use super::get_tool_name_mapping;
 use crate::{
     config::operations,
-    core::http::proxy::core::HttpProxyServer,
-    core::{ConnectionStatus, tool::call_upstream_tool},
+    core::{
+        ConnectionStatus, UpstreamConnectionPool, http::proxy::core::HttpProxyServer,
+        tool::call_upstream_tool,
+    },
 };
 
 /// Get server information
@@ -30,6 +33,8 @@ pub fn get_info(_server: &HttpProxyServer) -> ServerInfo {
         capabilities: ServerCapabilities::builder()
             .enable_tools()
             .enable_tool_list_changed()
+            .enable_prompts()
+            .enable_prompts_list_changed()
             .enable_resources()
             .enable_resources_list_changed()
             .build(),
@@ -632,6 +637,178 @@ pub async fn list_resource_templates(
         next_cursor: None,
         resource_templates,
     })
+}
+
+/// List all available prompts
+pub async fn list_prompts(
+    server: &HttpProxyServer,
+    _request: Option<PaginatedRequestParam>,
+    context: RequestContext<RoleServer>,
+) -> Result<ListPromptsResult, McpError> {
+    // Get client information for logging
+    let client_name = context
+        .peer
+        .peer_info()
+        .map(|info| info.client_info.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    tracing::info!(
+        "Processing list_prompts request from client: '{}'",
+        client_name
+    );
+
+    // Build prompt mapping from all connected servers
+    let prompt_mapping = crate::core::prompt::build_prompt_mapping(
+        &server.connection_pool,
+        server.database.as_ref(),
+    )
+    .await;
+
+    // Convert prompt mapping to list of prompts
+    let prompts: Vec<rmcp::model::Prompt> = prompt_mapping
+        .into_values()
+        .map(|mapping| mapping.prompt)
+        .collect();
+
+    tracing::info!("Returning {} aggregated prompts to client", prompts.len());
+
+    Ok(ListPromptsResult {
+        next_cursor: None,
+        prompts,
+    })
+}
+
+/// Get a specific prompt from the appropriate upstream server
+pub async fn get_prompt(
+    server: &HttpProxyServer,
+    request: GetPromptRequestParam,
+    _context: RequestContext<RoleServer>,
+) -> Result<GetPromptResult, McpError> {
+    let prompt_name = &request.name;
+    let arguments = request.arguments.clone();
+
+    tracing::info!(
+        "Processing get_prompt request for prompt: '{}' with arguments: {:?}",
+        prompt_name,
+        arguments
+    );
+
+    // Build prompt mapping from all connected servers
+    let prompt_mapping = crate::core::prompt::build_prompt_mapping(
+        &server.connection_pool,
+        server.database.as_ref(),
+    )
+    .await;
+
+    // Look up the prompt in the mapping
+    if let Some(mapping) = prompt_mapping.get(prompt_name) {
+        tracing::info!(
+            "Found prompt '{}' in mapping -> server: '{}', instance: '{}'",
+            prompt_name,
+            mapping.server_name,
+            mapping.instance_id
+        );
+
+        // Check if the prompt is enabled (if database is available)
+        if let Some(db) = &server.database {
+            match crate::core::prompt::is_prompt_enabled(
+                &db.pool,
+                &mapping.server_name,
+                prompt_name,
+            )
+            .await
+            {
+                Ok(enabled) => {
+                    if !enabled {
+                        return Err(McpError::invalid_params(
+                            format!("Prompt '{prompt_name}' is disabled"),
+                            None,
+                        ));
+                    }
+                }
+                Err(e) => {
+                    // Log the error but allow the prompt call to proceed
+                    tracing::warn!(
+                        "Error checking if prompt '{}' is enabled: {}. Allowing by default.",
+                        prompt_name,
+                        e
+                    );
+                }
+            }
+        }
+
+        // Get the prompt from the mapped server and instance
+        get_prompt_from_instance(
+            &server.connection_pool,
+            &mapping.server_name,
+            &mapping.instance_id,
+            prompt_name,
+            arguments,
+        )
+        .await
+    } else {
+        // Prompt not found in mapping
+        tracing::warn!("Prompt '{}' not found in mapping", prompt_name);
+
+        Err(McpError::invalid_params(
+            format!("Prompt '{prompt_name}' not found"),
+            None,
+        ))
+    }
+}
+
+/// Get a prompt from a specific instance
+async fn get_prompt_from_instance(
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    server_name: &str,
+    instance_id: &str,
+    prompt_name: &str,
+    arguments: Option<serde_json::Map<String, serde_json::Value>>,
+) -> Result<GetPromptResult, McpError> {
+    tracing::debug!(
+        "Getting prompt '{}' from instance {} (server: {})",
+        prompt_name,
+        instance_id,
+        server_name
+    );
+
+    // Lock the connection pool
+    let pool = connection_pool.lock().await;
+
+    // Get the server instances
+    let instances = pool.connections.get(server_name).ok_or_else(|| {
+        McpError::invalid_params(format!("Server '{server_name}' not found"), None)
+    })?;
+
+    // Get the specific instance
+    let connection = instances.get(instance_id).ok_or_else(|| {
+        McpError::invalid_params(
+            format!("Instance '{instance_id}' not found for server '{server_name}'"),
+            None,
+        )
+    })?;
+
+    // Check if the connection is active
+    if !connection.is_connected() {
+        return Err(McpError::invalid_params(
+            format!("Instance '{instance_id}' for server '{server_name}' is not connected"),
+            None,
+        ));
+    }
+
+    // Get the prompt from the upstream server
+    crate::core::prompt::get_upstream_prompt(connection, prompt_name, arguments)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "Error getting prompt '{}' from instance {} (server: {}): {}",
+                prompt_name,
+                instance_id,
+                server_name,
+                e
+            );
+            McpError::invalid_params(format!("Error getting prompt '{prompt_name}': {e}"), None)
+        })
 }
 
 /// Read a resource from the appropriate upstream server

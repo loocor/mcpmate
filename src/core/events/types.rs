@@ -59,6 +59,18 @@ pub enum Event {
         enabled: bool,
     },
 
+    /// Prompt enabled status changed in a config suit
+    PromptEnabledInSuitChanged {
+        /// Prompt ID
+        prompt_id: String,
+        /// Prompt name
+        prompt_name: String,
+        /// Config suit ID
+        suit_id: String,
+        /// New enabled status
+        enabled: bool,
+    },
+
     /// Database was initialized or changed
     DatabaseChanged,
 
