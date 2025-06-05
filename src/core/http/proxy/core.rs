@@ -36,6 +36,8 @@ pub struct HttpProxyServer {
     pub config_suit_merge_service: Option<Arc<crate::core::suit::ConfigSuitMergeService>>,
     /// Runtime cache for fast runtime queries
     pub runtime_cache: Arc<crate::runtime::RuntimeCache>,
+    /// Paginator for aggregated results
+    pub paginator: crate::core::ProxyPaginator,
 }
 
 #[tool(tool_box)]
@@ -118,7 +120,7 @@ impl HttpProxyServer {
     /// Create a new HTTP proxy server
     pub fn new(config: Arc<Config>) -> Self {
         // Create connection pool with no database reference initially
-        let mut pool = UpstreamConnectionPool::new(config, None);
+        let mut pool = UpstreamConnectionPool::new(config.clone(), None);
 
         // Initialize the pool
         pool.initialize();
@@ -128,11 +130,19 @@ impl HttpProxyServer {
         // Start health check task
         UpstreamConnectionPool::start_health_check(connection_pool.clone());
 
+        // Create paginator with config if available, otherwise use default
+        let paginator = if let Some(pagination_config) = &config.pagination {
+            crate::core::ProxyPaginator::with_config(pagination_config.clone())
+        } else {
+            crate::core::ProxyPaginator::new()
+        };
+
         Self {
             connection_pool,
             database: None,                  // Database will be initialized separately
             config_suit_merge_service: None, // Will be initialized after database
             runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
+            paginator,
         }
     }
 
@@ -142,7 +152,7 @@ impl HttpProxyServer {
         database: Arc<Database>,
     ) -> Self {
         // Create connection pool with database reference
-        let mut pool = UpstreamConnectionPool::new(config, Some(database.clone()));
+        let mut pool = UpstreamConnectionPool::new(config.clone(), Some(database.clone()));
 
         // Initialize the pool
         pool.initialize();
@@ -157,11 +167,19 @@ impl HttpProxyServer {
             database.clone(),
         ));
 
+        // Create paginator with config if available, otherwise use default
+        let paginator = if let Some(pagination_config) = &config.pagination {
+            crate::core::ProxyPaginator::with_config(pagination_config.clone())
+        } else {
+            crate::core::ProxyPaginator::new()
+        };
+
         Self {
             connection_pool,
             database: Some(database),
             config_suit_merge_service: Some(merge_service),
             runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
+            paginator,
         }
     }
 

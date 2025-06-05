@@ -2,6 +2,7 @@
 // Contains data models for core functionality
 
 use crate::common::server::{ServerType, TransportType};
+use crate::core::pagination::PaginationConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -11,6 +12,9 @@ pub struct Config {
     /// Map of MCP server name to configuration
     #[serde(rename = "mcpServers")]
     pub mcp_servers: HashMap<String, MCPServerConfig>,
+    /// Pagination configuration for proxy responses
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<PaginationConfig>,
 }
 
 /// MCP server configuration

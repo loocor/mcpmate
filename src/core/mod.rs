@@ -9,6 +9,7 @@ pub mod http;
 pub mod loader;
 pub mod models;
 pub mod monitor;
+pub mod pagination;
 pub mod prompt;
 pub mod proxy;
 pub mod resource;
@@ -24,6 +25,7 @@ pub mod utils;
 pub use crate::common::server::TransportType;
 pub use crate::core::http::pool::UpstreamConnectionPool;
 pub use connection::UpstreamConnection;
+pub use pagination::{PaginationConfig, ProxyPaginator};
 pub use resource::{
     ResourceMapping, ResourceTemplateMapping, build_resource_mapping,
     build_resource_template_mapping, read_upstream_resource, validate_resource_uri,

@@ -22,9 +22,10 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
         .await
         .context("Failed to get enabled servers from database")?;
 
-    // Create a new Config object
+    // Create a new Config object with default pagination settings
     let mut config = Config {
         mcp_servers: HashMap::new(),
+        pagination: None, // Use default pagination settings
     };
 
     // Convert each server to MCPServerConfig

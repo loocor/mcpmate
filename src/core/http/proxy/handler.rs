@@ -45,7 +45,7 @@ pub fn get_info(_server: &HttpProxyServer) -> ServerInfo {
 /// List all available tools
 pub async fn list_tools(
     server: &HttpProxyServer,
-    _request: Option<PaginatedRequestParam>,
+    request: Option<PaginatedRequestParam>,
     context: RequestContext<RoleServer>,
 ) -> Result<ListToolsResult, McpError> {
     // Get client information for potential schema adaptation
@@ -169,11 +169,18 @@ pub async fn list_tools(
         update_tool_names_with_unique_names(&mut tools, &db.pool).await;
     }
 
-    tracing::info!("Returning {} aggregated tools to client", tools.len());
+    // Apply pagination to the filtered tools
+    let pagination_result = server.paginator.paginate_tools(&request, tools)?;
+
+    tracing::info!(
+        "Returning {} tools on current page (pagination enabled: {})",
+        pagination_result.items.len(),
+        server.paginator.config().enabled
+    );
 
     Ok(ListToolsResult {
-        next_cursor: None,
-        tools,
+        next_cursor: pagination_result.next_cursor,
+        tools: pagination_result.items,
     })
 }
 
@@ -561,7 +568,7 @@ async fn get_tool_name_mapping_for_tools()
 /// List all available resources
 pub async fn list_resources(
     server: &HttpProxyServer,
-    _request: Option<PaginatedRequestParam>,
+    request: Option<PaginatedRequestParam>,
     context: RequestContext<RoleServer>,
 ) -> Result<ListResourcesResult, McpError> {
     // Get client information for logging
@@ -589,21 +596,25 @@ pub async fn list_resources(
         .map(|mapping| mapping.resource)
         .collect();
 
+    // Apply pagination to the resources
+    let pagination_result = server.paginator.paginate_resources(&request, resources)?;
+
     tracing::info!(
-        "Returning {} aggregated resources to client",
-        resources.len()
+        "Returning {} resources on current page (pagination enabled: {})",
+        pagination_result.items.len(),
+        server.paginator.config().enabled
     );
 
     Ok(ListResourcesResult {
-        next_cursor: None,
-        resources,
+        next_cursor: pagination_result.next_cursor,
+        resources: pagination_result.items,
     })
 }
 
 /// List all available resource templates
 pub async fn list_resource_templates(
     server: &HttpProxyServer,
-    _request: Option<PaginatedRequestParam>,
+    request: Option<PaginatedRequestParam>,
     context: RequestContext<RoleServer>,
 ) -> Result<ListResourceTemplatesResult, McpError> {
     // Get client information for logging
@@ -628,21 +639,27 @@ pub async fn list_resource_templates(
         .map(|mapping| mapping.resource_template)
         .collect();
 
+    // Apply pagination to the resource templates
+    let pagination_result = server
+        .paginator
+        .paginate_resource_templates(&request, resource_templates)?;
+
     tracing::info!(
-        "Returning {} aggregated resource templates to client",
-        resource_templates.len()
+        "Returning {} resource templates on current page (pagination enabled: {})",
+        pagination_result.items.len(),
+        server.paginator.config().enabled
     );
 
     Ok(ListResourceTemplatesResult {
-        next_cursor: None,
-        resource_templates,
+        next_cursor: pagination_result.next_cursor,
+        resource_templates: pagination_result.items,
     })
 }
 
 /// List all available prompts
 pub async fn list_prompts(
     server: &HttpProxyServer,
-    _request: Option<PaginatedRequestParam>,
+    request: Option<PaginatedRequestParam>,
     context: RequestContext<RoleServer>,
 ) -> Result<ListPromptsResult, McpError> {
     // Get client information for logging
@@ -670,11 +687,18 @@ pub async fn list_prompts(
         .map(|mapping| mapping.prompt)
         .collect();
 
-    tracing::info!("Returning {} aggregated prompts to client", prompts.len());
+    // Apply pagination to the prompts
+    let pagination_result = server.paginator.paginate_prompts(&request, prompts)?;
+
+    tracing::info!(
+        "Returning {} prompts on current page (pagination enabled: {})",
+        pagination_result.items.len(),
+        server.paginator.config().enabled
+    );
 
     Ok(ListPromptsResult {
-        next_cursor: None,
-        prompts,
+        next_cursor: pagination_result.next_cursor,
+        prompts: pagination_result.items,
     })
 }
 
