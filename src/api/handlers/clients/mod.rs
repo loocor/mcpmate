@@ -4,6 +4,7 @@
 pub mod config;
 pub mod database;
 pub mod handlers;
+pub mod import;
 pub mod models;
 
 // Re-export the main handler functions for use in routes

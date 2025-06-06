@@ -50,14 +50,34 @@ impl TemplateEngine {
                     "stdio" => {
                         // For stdio servers, use command and args
                         if let Some(command) = &server.command {
-                            let (final_command, final_args) =
-                                self.apply_platform_wrapper(command, &server.args)?;
+                            // Special handling for command with args concatenation (for Augment style)
+                            if result.contains("{{command}}{{args}}") {
+                                // For Augment, we need to combine command and args into a single string
+                                let mut cmd_string = command.clone();
+                                for arg in &server.args {
+                                    cmd_string.push(' ');
+                                    // Add quotes if the arg contains spaces
+                                    if arg.contains(' ') {
+                                        cmd_string.push_str(&format!("\"{}\"", arg));
+                                    } else {
+                                        cmd_string.push_str(arg);
+                                    }
+                                }
+                                result = result.replace("{{command}}{{args}}", &cmd_string);
+                            } else {
+                                // Normal command/args separation for other clients
+                                let (final_command, final_args) =
+                                    self.apply_platform_wrapper(command, &server.args)?;
 
-                            result = result
-                                .replace("{{command}}", &final_command)
-                                .replace("{{args}}", &serde_json::to_string(&final_args)?);
+                                result = result
+                                    .replace("{{command}}", &final_command)
+                                    .replace("{{args}}", &serde_json::to_string(&final_args)?);
+                            }
                         } else {
-                            result = result.replace("{{command}}", "").replace("{{args}}", "[]");
+                            result = result
+                                .replace("{{command}}", "")
+                                .replace("{{args}}", "[]")
+                                .replace("{{command}}{{args}}", "");
                         }
                     }
                     "sse" => {

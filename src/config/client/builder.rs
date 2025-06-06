@@ -2,7 +2,7 @@
 // Handles the high-level configuration building logic
 
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 
@@ -81,7 +81,7 @@ impl ConfigBuilder {
     ) -> Result<ConfigRule> {
         let row = sqlx::query(
             r#"
-            SELECT id, client_app_id, client_identifier, top_level_key, is_mixed_config,
+            SELECT id, client_app_id, client_identifier, top_level_key, is_mixed_config, is_array_config,
                    supported_transports, supported_runtimes, format_rules, security_features
             FROM client_config_rules
             WHERE client_identifier = ?
@@ -110,6 +110,7 @@ impl ConfigBuilder {
             client_identifier: row.get("client_identifier"),
             top_level_key: row.get("top_level_key"),
             is_mixed_config: row.get("is_mixed_config"),
+            is_array_config: row.get("is_array_config"),
             supported_transports,
             supported_runtimes,
             format_rules,
@@ -122,16 +123,37 @@ impl ConfigBuilder {
         &self,
         client_identifier: &str,
     ) -> Result<String> {
+        // Get current platform
+        let current_platform = {
+            #[cfg(target_os = "macos")]
+            {
+                "macos"
+            }
+            #[cfg(target_os = "windows")]
+            {
+                "windows"
+            }
+            #[cfg(target_os = "linux")]
+            {
+                "linux"
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+            {
+                "unknown"
+            }
+        };
+
         let row = sqlx::query(
             r#"
             SELECT config_path
             FROM client_detection_rules
-            WHERE client_identifier = ? AND enabled = TRUE
+            WHERE client_identifier = ? AND platform = ? AND enabled = TRUE
             ORDER BY priority ASC
             LIMIT 1
             "#,
         )
         .bind(client_identifier)
+        .bind(current_platform)
         .fetch_one(self.db_pool.as_ref())
         .await?;
 
@@ -145,101 +167,217 @@ impl ConfigBuilder {
         servers: &[ServerInfo],
         request: &GenerationRequest,
     ) -> Result<String> {
+        // process array config or object config based on the rule
+        let json_value = if config_rule.is_array_config {
+            self.generate_array_config_value(config_rule, servers, request)
+                .await?
+        } else {
+            self.generate_object_config_value(config_rule, servers, request)
+                .await?
+        };
+
+        // Pretty print JSON with proper formatting
+        Ok(serde_json::to_string_pretty(&json_value)?)
+    }
+
+    /// Generate the object config JSON value
+    async fn generate_object_config_value(
+        &self,
+        config_rule: &ConfigRule,
+        servers: &[ServerInfo],
+        request: &GenerationRequest,
+    ) -> Result<Value> {
         let mut config = json!({});
 
         match request.mode {
             GenerationMode::Transparent => {
-                // Transparent mode: generate individual server configurations
-                let mut servers_config = json!({});
-                let mut skipped_servers = Vec::new();
+                // Handle transparent mode (direct server configs)
+                let (servers_config, skipped_servers) = self
+                    .process_transparent_servers(config_rule, servers, request, false)
+                    .await?;
 
-                for server in servers {
-                    match self
-                        .transport_strategy
-                        .generate_server_config(config_rule, server, &request.mode)
-                        .await
-                    {
-                        Ok(server_config) => {
-                            servers_config[&server.name] = server_config;
-                        }
-                        Err(e) => {
-                            // Log skipped server (unsupported transport in transparent mode)
-                            tracing::warn!(
-                                "Skipping server '{}' with transport '{}': {}",
-                                server.name,
-                                server.server_type,
-                                e
-                            );
-                            skipped_servers.push(server.name.clone());
-                        }
-                    }
-                }
+                // Log skipped servers if any
+                self.log_skipped_servers(&skipped_servers);
 
-                if !skipped_servers.is_empty() {
-                    tracing::info!(
-                        "Skipped {} servers in transparent mode due to unsupported transport types: {}",
-                        skipped_servers.len(),
-                        skipped_servers.join(", ")
-                    );
-                }
-
+                // Add servers to the top-level key
                 config[&config_rule.top_level_key] = servers_config;
             }
             GenerationMode::Hosted => {
-                // Hosted mode: choose the best transport type based on client capabilities
-                let best_transport = self
-                    .transport_strategy
-                    .get_best_supported_transport(config_rule);
+                // Handle hosted mode (unified endpoint)
+                let endpoint_config = self
+                    .get_unified_endpoint_config(config_rule, &request.client_identifier)
+                    .await?;
 
-                match best_transport.as_str() {
-                    t if t == transport_formats::STREAMABLE_HTTP => {
-                        // Use streamable HTTP endpoint
-                        let endpoint_config = self
-                            .transport_strategy
-                            .generate_unified_endpoint_config(
-                                config_rule,
-                                &request.client_identifier,
-                                transport_formats::STREAMABLE_HTTP,
-                            )
-                            .await?;
-                        config[&config_rule.top_level_key] = json!({
-                            config_keys::MCPMATE: endpoint_config
-                        });
-                    }
-                    t if t == transport_formats::SSE => {
-                        // Use SSE endpoint
-                        let endpoint_config = self
-                            .transport_strategy
-                            .generate_unified_endpoint_config(
-                                config_rule,
-                                &request.client_identifier,
-                                transport_formats::SSE,
-                            )
-                            .await?;
-                        config[&config_rule.top_level_key] = json!({
-                            config_keys::MCPMATE: endpoint_config
-                        });
-                    }
-                    t if t == transport_formats::STDIO => {
-                        // Fallback to bridge for stdio-only clients
-                        let bridge_config = self
-                            .transport_strategy
-                            .generate_unified_bridge_config(config_rule, &request.client_identifier)
-                            .await?;
-                        config[&config_rule.top_level_key] = json!({
-                            config_keys::MCPMATE: bridge_config
-                        });
-                    }
-                    _ => {
-                        return Err(anyhow::anyhow!(
-                            "No supported transport types found for client"
-                        ));
-                    }
-                }
+                // Add the endpoint config to the top-level key
+                config[&config_rule.top_level_key] = json!({
+                    config_keys::MCPMATE: endpoint_config
+                });
             }
         }
 
-        // Pretty print JSON with proper formatting
-        Ok(serde_json::to_string_pretty(&config)?)
+        Ok(config)
+    }
+
+    /// Generate the array config JSON value
+    async fn generate_array_config_value(
+        &self,
+        config_rule: &ConfigRule,
+        servers: &[ServerInfo],
+        request: &GenerationRequest,
+    ) -> Result<Value> {
+        match request.mode {
+            GenerationMode::Transparent => {
+                // Handle transparent mode (direct server configs)
+                let (server_configs, skipped_servers) = self
+                    .process_transparent_servers(config_rule, servers, request, true)
+                    .await?;
+
+                // Log skipped servers if any
+                self.log_skipped_servers(&skipped_servers);
+
+                // For array configs, the result is already the array
+                Ok(server_configs)
+            }
+            GenerationMode::Hosted => {
+                // Handle hosted mode (unified endpoint)
+                let endpoint_config = self
+                    .get_unified_endpoint_config(config_rule, &request.client_identifier)
+                    .await?;
+
+                // Create a MCPMate config object and add to array
+                let mut mcpmate_config = endpoint_config.as_object().cloned().unwrap_or_default();
+                mcpmate_config.insert("name".to_string(), json!(config_keys::MCPMATE));
+
+                // Return as an array with a single element
+                Ok(json!([mcpmate_config]))
+            }
+        }
+    }
+
+    /// Process servers for transparent mode, returning the config and skipped servers
+    async fn process_transparent_servers(
+        &self,
+        config_rule: &ConfigRule,
+        servers: &[ServerInfo],
+        request: &GenerationRequest,
+        is_array: bool,
+    ) -> Result<(Value, Vec<String>)> {
+        let mut skipped_servers = Vec::new();
+
+        if is_array {
+            // For array configs, build a vector of server configs
+            let mut server_configs = Vec::new();
+
+            for server in servers {
+                match self
+                    .transport_strategy
+                    .generate_server_config(config_rule, server, &request.mode)
+                    .await
+                {
+                    Ok(server_config) => {
+                        // Add server name to the config
+                        let mut config_with_name =
+                            server_config.as_object().cloned().unwrap_or_default();
+                        config_with_name.insert("name".to_string(), json!(server.name));
+                        server_configs.push(json!(config_with_name));
+                    }
+                    Err(e) => {
+                        self.log_skipped_server(server, &e);
+                        skipped_servers.push(server.name.clone());
+                    }
+                }
+            }
+
+            Ok((json!(server_configs), skipped_servers))
+        } else {
+            // For object configs, build a map of server name to config
+            let mut servers_config = json!({});
+
+            for server in servers {
+                match self
+                    .transport_strategy
+                    .generate_server_config(config_rule, server, &request.mode)
+                    .await
+                {
+                    Ok(server_config) => {
+                        servers_config[&server.name] = server_config;
+                    }
+                    Err(e) => {
+                        self.log_skipped_server(server, &e);
+                        skipped_servers.push(server.name.clone());
+                    }
+                }
+            }
+
+            Ok((servers_config, skipped_servers))
+        }
+    }
+
+    /// Get unified endpoint configuration for hosted mode
+    async fn get_unified_endpoint_config(
+        &self,
+        config_rule: &ConfigRule,
+        client_identifier: &str,
+    ) -> Result<Value> {
+        let best_transport = self
+            .transport_strategy
+            .get_best_supported_transport(config_rule);
+
+        match best_transport.as_str() {
+            t if t == transport_formats::STREAMABLE_HTTP => {
+                self.transport_strategy
+                    .generate_unified_endpoint_config(
+                        config_rule,
+                        client_identifier,
+                        transport_formats::STREAMABLE_HTTP,
+                    )
+                    .await
+            }
+            t if t == transport_formats::SSE => {
+                self.transport_strategy
+                    .generate_unified_endpoint_config(
+                        config_rule,
+                        client_identifier,
+                        transport_formats::SSE,
+                    )
+                    .await
+            }
+            t if t == transport_formats::STDIO => {
+                self.transport_strategy
+                    .generate_unified_bridge_config(config_rule, client_identifier)
+                    .await
+            }
+            _ => Err(anyhow::anyhow!(
+                "No supported transport types found for client"
+            )),
+        }
+    }
+
+    /// Log a skipped server with warning
+    fn log_skipped_server(
+        &self,
+        server: &ServerInfo,
+        error: &anyhow::Error,
+    ) {
+        tracing::warn!(
+            "Skipping server '{}' with transport '{}': {}",
+            server.name,
+            server.server_type,
+            error
+        );
+    }
+
+    /// Log summary of skipped servers
+    fn log_skipped_servers(
+        &self,
+        skipped_servers: &[String],
+    ) {
+        if !skipped_servers.is_empty() {
+            tracing::info!(
+                "Skipped {} servers in transparent mode due to unsupported transport types: {}",
+                skipped_servers.len(),
+                skipped_servers.join(", ")
+            );
+        }
     }
 }

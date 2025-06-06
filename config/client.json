@@ -273,6 +273,141 @@
           }
         }
       }
+    },
+    {
+      "identifier": "augment",
+      "display_name": "Augment (Extension)",
+      "detection_rules": {
+        "macos": [
+          {
+            "method": "file_path",
+            "value": "~/Library/Application Support/Cursor/User/globalStorage/augment.vscode-augment/augment-global-state/mcpServers.json",
+            "config_path": "~/Library/Application Support/Cursor/User/globalStorage/augment.vscode-augment/augment-global-state/mcpServers.json",
+            "priority": 1
+          }
+        ],
+        "windows": [
+          {
+            "method": "file_path",
+            "value": "~/AppData/Roaming/Cursor/User/globalStorage/augment.vscode-augment/augment-global-state/mcpServers.json",
+            "config_path": "~/AppData/Roaming/Cursor/User/globalStorage/augment.vscode-augment/augment-global-state/mcpServers.json",
+            "priority": 1
+          }
+        ]
+      },
+      "config_rules": {
+        "top_level_key": "",
+        "is_array_config": true,
+        "is_mixed_config": false,
+        "supported_transports": [
+          "stdio"
+        ],
+        "supported_runtimes": {
+          "macos": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "linux": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "windows": [
+            "npx",
+            "uvx",
+            "binary"
+          ]
+        },
+        "format_rules": {
+          "stdio": {
+            "template": {
+              "name": "{{name}}",
+              "command": "{{command}}{{args}}",
+              "env": "{{env}}"
+            },
+            "requires_type_field": false
+          }
+        }
+      }
+    },
+    {
+      "identifier": "cline",
+      "display_name": "Cline",
+      "detection_rules": {
+        "macos": [
+          {
+            "method": "file_path",
+            "value": "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+            "config_path": "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+            "priority": 1
+          }
+        ],
+        "windows": [
+          {
+            "method": "file_path",
+            "value": "~/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+            "config_path": "~/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+            "priority": 1
+          }
+        ]
+      },
+      "config_rules": {
+        "top_level_key": "mcpServers",
+        "is_mixed_config": false,
+        "supported_transports": [
+          "stdio",
+          "sse",
+          "streamableHttp"
+        ],
+        "supported_runtimes": {
+          "macos": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "linux": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "windows": [
+            "npx",
+            "uvx",
+            "binary"
+          ]
+        },
+        "format_rules": {
+          "stdio": {
+            "template": {
+              "type": "stdio",
+              "command": "{{command}}",
+              "args": "{{args}}",
+              "env": "{{env}}"
+            },
+            "requires_type_field": false
+          },
+          "sse": {
+            "template": {
+              "url": "{{url}}",
+              "type": "sse",
+              "headers": "{{headers}}"
+            },
+            "requires_type_field": false
+          },
+          "streamableHttp": {
+            "template": {
+              "type": "streamableHttp",
+              "url": "{{url}}"
+            },
+            "requires_type_field": false
+          }
+        }
+      }
     }
   ]
 }

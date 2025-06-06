@@ -5,6 +5,8 @@ use super::database::{
     get_all_client_apps, get_client_config_path, get_supported_runtimes, get_supported_transports,
     perform_client_detection, update_client_detection_status,
 };
+
+use super::import::import_servers_from_config;
 use super::models::ClientsQuery;
 use crate::api::models::clients::*;
 use crate::api::routes::AppState;
@@ -179,6 +181,7 @@ pub async fn get_clients(
 /// Returns current configuration content
 pub async fn get_config(
     Path(client_identifier): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
     State(app_state): State<Arc<AppState>>,
 ) -> Result<Json<ApiResponse<ConfigViewResponse>>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
@@ -230,6 +233,19 @@ pub async fn get_config(
             // Get file modification time
             let last_modified = get_config_last_modified(&config_path);
 
+            // Check if import is requested
+            let imported_servers = if query.get("import").map(|v| v == "true").unwrap_or(false) {
+                match import_servers_from_config(&json_content, &db_pool).await {
+                    Ok(servers) => Some(servers),
+                    Err(e) => {
+                        tracing::warn!("Failed to import servers from config: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
             let response = ConfigViewResponse {
                 config_path,
                 config_exists,
@@ -237,6 +253,7 @@ pub async fn get_config(
                 has_mcp_config,
                 mcp_servers_count,
                 last_modified,
+                imported_servers,
             };
 
             Ok(Json(ApiResponse::success(response)))
@@ -348,9 +365,9 @@ pub async fn manage_config(
 
         match client_manager.apply_config(&application_request).await {
             Ok(result) => {
-                response.applied = true;
+                response.applied = result.success;
                 response.backup_path = result.backup_path;
-                // Note: ApplicationResult doesn't have warnings field
+                // If application failed, add error message to warnings
                 if !result.success {
                     response
                         .warnings

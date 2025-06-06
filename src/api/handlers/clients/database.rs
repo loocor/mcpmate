@@ -124,18 +124,40 @@ pub async fn get_client_config_path(
     client_id: &str,
     db_pool: &sqlx::SqlitePool,
 ) -> String {
-    // Query the database for the config path from detection rules
+    // Get current platform
+    let current_platform = {
+        #[cfg(target_os = "macos")]
+        {
+            "macos"
+        }
+        #[cfg(target_os = "windows")]
+        {
+            "windows"
+        }
+        #[cfg(target_os = "linux")]
+        {
+            "linux"
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        {
+            "unknown"
+        }
+    };
+
+    // Query the database for the config path from detection rules for current platform
     let query = "
         SELECT config_path
         FROM client_detection_rules
         WHERE client_app_id = (
             SELECT id FROM client_apps WHERE identifier = ?
-        )
+        ) AND platform = ?
+        ORDER BY priority ASC
         LIMIT 1
     ";
 
     match sqlx::query_scalar::<_, String>(query)
         .bind(client_id)
+        .bind(current_platform)
         .fetch_optional(db_pool)
         .await
     {

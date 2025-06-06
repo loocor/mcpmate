@@ -63,6 +63,17 @@ pub struct ConfigViewResponse {
     pub has_mcp_config: bool,
     pub mcp_servers_count: u32,
     pub last_modified: Option<String>,
+    pub imported_servers: Option<Vec<ImportedServer>>,
+}
+
+/// Information about an imported server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedServer {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: std::collections::HashMap<String, String>,
+    pub transport_type: String,
 }
 
 /// Standard API response wrapper

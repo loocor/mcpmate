@@ -70,6 +70,7 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
             client_identifier TEXT NOT NULL,
             top_level_key TEXT NOT NULL,
             is_mixed_config BOOLEAN DEFAULT FALSE,
+            is_array_config BOOLEAN DEFAULT FALSE,
             supported_transports TEXT NOT NULL,
             supported_runtimes TEXT NOT NULL,
             format_rules TEXT NOT NULL,
@@ -179,9 +180,9 @@ async fn insert_clients_from_config(
         sqlx::query(
             r#"
             INSERT INTO client_config_rules
-            (id, client_app_id, client_identifier, top_level_key, is_mixed_config,
+            (id, client_app_id, client_identifier, top_level_key, is_mixed_config, is_array_config,
              supported_transports, supported_runtimes, format_rules, security_features)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(client.config_rules.id.as_ref().unwrap())
@@ -189,6 +190,7 @@ async fn insert_clients_from_config(
         .bind(client.config_rules.client_identifier.as_ref().unwrap())
         .bind(&client.config_rules.top_level_key)
         .bind(client.config_rules.is_mixed_config)
+        .bind(client.config_rules.is_array_config)
         .bind(supported_transports_json)
         .bind(supported_runtimes_json)
         .bind(format_rules_json)

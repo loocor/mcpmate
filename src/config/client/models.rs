@@ -94,6 +94,8 @@ pub struct ConfigRulesDefinition {
     pub top_level_key: String,
     #[serde(default)]
     pub is_mixed_config: bool,
+    #[serde(default)]
+    pub is_array_config: bool,
     pub supported_transports: Vec<String>,
     pub supported_runtimes: HashMap<String, Vec<String>>,
     pub format_rules: HashMap<String, serde_json::Value>,
@@ -293,6 +295,7 @@ pub struct ConfigRule {
     pub client_identifier: String,
     pub top_level_key: String,
     pub is_mixed_config: bool,
+    pub is_array_config: bool,
     pub supported_transports: Vec<String>,
     pub supported_runtimes: HashMap<String, Vec<String>>,
     pub format_rules: HashMap<String, FormatRule>,

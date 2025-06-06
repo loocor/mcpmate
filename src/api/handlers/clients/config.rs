@@ -1,5 +1,7 @@
 // Configuration file processing for client handlers
 
+use sqlx::Row;
+
 /// Helper function to check if a config file contains MCP configuration
 /// Now supports client-specific top-level keys
 pub async fn check_mcp_config_exists(
@@ -31,32 +33,61 @@ pub async fn analyze_config_content(
         return (false, 0);
     }
 
-    // Get the top-level key for this specific client
-    let top_level_key = match get_client_top_level_key(client_identifier, db_pool).await {
-        Ok(key) => key,
+    // Get the client configuration details
+    let client_config = match get_client_config_details(client_identifier, db_pool).await {
+        Ok((top_level_key, is_array_config)) => (top_level_key, is_array_config),
         Err(_) => {
             return analyze_with_fallback_keys(content);
         }
     };
 
+    let (top_level_key, is_array_config) = client_config;
+
     // Try to parse as JSON
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(json) => {
-            // Check for MCP servers using the client-specific top-level key
+            // Check if this is an array configuration (Augment style)
+            if is_array_config {
+                // For array config (like Augment), the JSON itself should be an array
+                if let Some(arr) = json.as_array() {
+                    // Consider it as MCP config if it's a non-empty array with objects that have common MCP fields
+                    let has_mcp_items = !arr.is_empty()
+                        && arr.iter().any(|item| {
+                            item.get("name").is_some()
+                                && (item.get("command").is_some() || item.get("url").is_some())
+                        });
+
+                    return (has_mcp_items, arr.len() as u32);
+                }
+
+                return (false, 0);
+            }
+
+            // For object configs with a top-level key
             if let Some(servers) = json.get(&top_level_key) {
                 if let Some(obj) = servers.as_object() {
-                    (true, obj.len() as u32)
+                    return (true, obj.len() as u32);
                 } else {
-                    (true, 0)
+                    return (true, 0);
                 }
-            } else {
-                (false, 0)
             }
+
+            (false, 0)
         }
         Err(_) => {
-            // If not valid JSON, do simple text search with the specific key
-            let has_mcp = content.contains(&top_level_key);
-            (has_mcp, 0)
+            // If not valid JSON, do simple text search
+            if is_array_config {
+                // For array configs like Augment, look for typical array patterns
+                let has_mcp = content.contains("[{")
+                    && (content.contains("\"command\"") || content.contains("\"url\""));
+                return (has_mcp, 0);
+            } else if !top_level_key.is_empty() {
+                // For object configs, look for the top-level key
+                let has_mcp = content.contains(&top_level_key);
+                return (has_mcp, 0);
+            }
+
+            (false, 0)
         }
     }
 }
@@ -93,19 +124,22 @@ fn analyze_with_fallback_keys(content: &str) -> (bool, u32) {
     }
 }
 
-/// Get the top-level key for a specific client from database
-async fn get_client_top_level_key(
+/// Get the configuration details for a specific client from database
+async fn get_client_config_details(
     client_identifier: &str,
     db_pool: &sqlx::SqlitePool,
-) -> Result<String, sqlx::Error> {
-    let top_level_key: String = sqlx::query_scalar(
-        "SELECT top_level_key FROM client_config_rules WHERE client_identifier = ?",
+) -> Result<(String, bool), sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT top_level_key, is_array_config FROM client_config_rules WHERE client_identifier = ?",
     )
     .bind(client_identifier)
     .fetch_one(db_pool)
     .await?;
 
-    Ok(top_level_key)
+    let top_level_key: String = row.get("top_level_key");
+    let is_array_config: bool = row.get("is_array_config");
+
+    Ok((top_level_key, is_array_config))
 }
 
 /// Helper function to get file modification time
