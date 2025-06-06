@@ -364,6 +364,14 @@ pub struct ApplicationResult {
     pub error_message: Option<String>,
 }
 
+/// Batch configuration application result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchApplicationResult {
+    pub success_count: usize,
+    pub successful_clients: Vec<String>,
+    pub failed_clients: std::collections::HashMap<String, String>,
+}
+
 /// Client runtime status (extends ClientApp with runtime info)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientStatus {

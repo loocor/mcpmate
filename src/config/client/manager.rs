@@ -197,6 +197,75 @@ impl ClientManager {
         }
     }
 
+    /// Apply configuration to all enabled clients (batch operation)
+    pub async fn apply_config_batch(
+        &mut self,
+        config_suit_id: Option<String>,
+    ) -> Result<BatchApplicationResult> {
+        self.ensure_loaded().await?;
+
+        let mut successful_clients = Vec::new();
+        let mut failed_clients = std::collections::HashMap::new();
+
+        // Get all enabled clients
+        let enabled_clients = self.get_enabled_clients().await?;
+
+        for client in enabled_clients {
+            // Generate configuration for this client
+            let generation_request = GenerationRequest {
+                client_identifier: client.identifier.clone(),
+                mode: GenerationMode::Transparent,
+                config_suit_id: config_suit_id.clone(),
+                servers: None, // Use all servers from the suit
+            };
+
+            // Generate config
+            let generated_config = match self.generate_config(&generation_request).await {
+                Ok(config) => config,
+                Err(e) => {
+                    failed_clients.insert(
+                        client.identifier.clone(),
+                        format!("Failed to generate config: {}", e),
+                    );
+                    continue;
+                }
+            };
+
+            // Apply config
+            let application_request = ApplicationRequest {
+                client_identifier: client.identifier.clone(),
+                config: generated_config,
+                create_backup: true,
+                dry_run: false,
+            };
+
+            match self.apply_config(&application_request).await {
+                Ok(result) => {
+                    if result.success {
+                        successful_clients.push(client.identifier);
+                    } else {
+                        failed_clients.insert(
+                            client.identifier,
+                            result
+                                .error_message
+                                .unwrap_or_else(|| "Unknown error".to_string()),
+                        );
+                    }
+                }
+                Err(e) => {
+                    failed_clients
+                        .insert(client.identifier, format!("Failed to apply config: {}", e));
+                }
+            }
+        }
+
+        Ok(BatchApplicationResult {
+            success_count: successful_clients.len(),
+            successful_clients,
+            failed_clients,
+        })
+    }
+
     /// Create backup of existing configuration file
     async fn create_backup(
         &self,

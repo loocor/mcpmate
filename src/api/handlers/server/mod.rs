@@ -21,7 +21,7 @@ pub(crate) mod common {
 
     pub use axum::{
         Json,
-        extract::{Path, State},
+        extract::{Path, Query, State},
     };
 
     pub use crate::{

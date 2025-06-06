@@ -200,10 +200,13 @@ async fn apply_service_change(
 ) -> Result<(), ApiError> {
     let state_clone = State(state.clone());
     let service_path = Path(service_id.to_string());
+    let empty_query = axum::extract::Query(std::collections::HashMap::new());
 
     if enable {
         // Enable the service
-        match crate::api::handlers::server::enable_server(state_clone, service_path).await {
+        match crate::api::handlers::server::enable_server(state_clone, service_path, empty_query)
+            .await
+        {
             Ok(_) => {
                 tracing::info!("Successfully enabled service '{}'", service_id);
                 Ok(())
@@ -215,7 +218,10 @@ async fn apply_service_change(
         }
     } else {
         // Disable the service
-        match crate::api::handlers::server::disable_server(state_clone, service_path).await {
+        let empty_query = axum::extract::Query(std::collections::HashMap::new());
+        match crate::api::handlers::server::disable_server(state_clone, service_path, empty_query)
+            .await
+        {
             Ok(_) => {
                 tracing::info!("Successfully disabled service '{}'", service_id);
                 Ok(())

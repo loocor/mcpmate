@@ -68,6 +68,45 @@ async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> 
     Ok(())
 }
 
+/// Sync client configurations using the client manager
+async fn sync_client_configurations(
+    state: &Arc<AppState>,
+    config_suit_id: Option<String>,
+) -> Result<(), ApiError> {
+    // Get database reference
+    let db = get_database(state).await?;
+
+    // Create client manager
+    let mut client_manager =
+        crate::config::client::manager::ClientManager::new(Arc::new(db.pool.clone()));
+
+    // Apply configuration to all enabled clients
+    match client_manager.apply_config_batch(config_suit_id).await {
+        Ok(result) => {
+            tracing::info!(
+                "Synced configurations to {} clients, {} failed",
+                result.success_count,
+                result.failed_clients.len()
+            );
+
+            if !result.failed_clients.is_empty() {
+                for (client, error) in result.failed_clients {
+                    tracing::warn!("Failed to sync config for client {}: {}", client, error);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to sync client configurations: {}", e);
+            return Err(ApiError::InternalError(format!(
+                "Failed to sync client configurations: {}",
+                e
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Get connection pool with timeout
 async fn get_connection_pool(
     state: &Arc<AppState>
@@ -112,6 +151,7 @@ fn create_operation_response(
 pub async fn enable_server(
     state: State<Arc<AppState>>,
     Path(server_name): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
@@ -141,6 +181,18 @@ pub async fn enable_server(
 
     // Sync server connections
     sync_server_connections(&state).await?;
+
+    // Check if sync parameter is true
+    let should_sync = query.get("sync").map(|v| v == "true").unwrap_or(false);
+    if should_sync {
+        // Spawn async task to sync client configurations
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = sync_client_configurations(&state_clone, None).await {
+                tracing::warn!("Failed to sync client configurations: {}", e);
+            }
+        });
+    }
 
     // Get connection pool
     let mut pool = get_connection_pool(&state).await?;
@@ -291,6 +343,7 @@ pub async fn enable_server(
 pub async fn disable_server(
     state: State<Arc<AppState>>,
     Path(server_name): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
@@ -320,6 +373,18 @@ pub async fn disable_server(
 
     // Sync server connections
     sync_server_connections(&state).await?;
+
+    // Check if sync parameter is true
+    let should_sync = query.get("sync").map(|v| v == "true").unwrap_or(false);
+    if should_sync {
+        // Spawn async task to sync client configurations
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = sync_client_configurations(&state_clone, None).await {
+                tracing::warn!("Failed to sync client configurations: {}", e);
+            }
+        });
+    }
 
     // Get connection pool
     let pool_result = tokio::time::timeout(
