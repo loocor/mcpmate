@@ -1,5 +1,6 @@
 // Configuration file processing for client handlers
 
+use crate::config::client::utils::get_nested_value;
 use sqlx::Row;
 
 /// Helper function to check if a config file contains MCP configuration
@@ -63,8 +64,8 @@ pub async fn analyze_config_content(
                 return (false, 0);
             }
 
-            // For object configs with a top-level key
-            if let Some(servers) = json.get(&top_level_key) {
+            // For object configs with a top-level key (supports nested paths like "mcp.servers")
+            if let Some(servers) = get_nested_value(&json, &top_level_key) {
                 if let Some(obj) = servers.as_object() {
                     return (true, obj.len() as u32);
                 } else {
@@ -82,8 +83,17 @@ pub async fn analyze_config_content(
                     && (content.contains("\"command\"") || content.contains("\"url\""));
                 return (has_mcp, 0);
             } else if !top_level_key.is_empty() {
-                // For object configs, look for the top-level key
-                let has_mcp = content.contains(&top_level_key);
+                // For object configs, look for the top-level key (handle nested paths)
+                let search_key = if top_level_key.contains('.') {
+                    // For nested paths like "mcp.servers", search for the last part
+                    top_level_key
+                        .split('.')
+                        .next_back()
+                        .unwrap_or(&top_level_key)
+                } else {
+                    &top_level_key
+                };
+                let has_mcp = content.contains(search_key);
                 return (has_mcp, 0);
             }
 
@@ -102,7 +112,8 @@ fn analyze_with_fallback_keys(content: &str) -> (bool, u32) {
             let mcp_servers = json
                 .get("mcpServers")
                 .or_else(|| json.get("mcp_servers"))
-                .or_else(|| json.get("context_servers"));
+                .or_else(|| json.get("context_servers"))
+                .or_else(|| get_nested_value(&json, "mcp.servers"));
 
             if let Some(servers) = mcp_servers {
                 if let Some(obj) = servers.as_object() {
@@ -118,7 +129,8 @@ fn analyze_with_fallback_keys(content: &str) -> (bool, u32) {
             // If not valid JSON, do simple text search with fallback keys
             let has_mcp = content.contains("mcpServers")
                 || content.contains("mcp_servers")
-                || content.contains("context_servers");
+                || content.contains("context_servers")
+                || content.contains("\"mcp\"") && content.contains("\"servers\"");
             (has_mcp, 0)
         }
     }

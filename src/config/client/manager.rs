@@ -2,6 +2,7 @@
 // Provides client application detection, configuration generation, and management
 // Integrates with existing system/detection module
 
+use super::utils::{get_nested_value, set_nested_value};
 use crate::api::handlers::clients::database::get_client_config_path;
 use crate::config::client::generator::ConfigGenerator;
 use crate::config::client::models::*;
@@ -364,9 +365,9 @@ impl ClientManager {
             .get_client_top_level_key(&config.client_identifier)
             .await?;
 
-        // Update only the MCP-related section
-        if let Some(mcp_section) = new_mcp_config.get(&top_level_key) {
-            existing_config[&top_level_key] = mcp_section.clone();
+        // Update only the MCP-related section (supports nested paths like "mcp.servers")
+        if let Some(mcp_section) = get_nested_value(&new_mcp_config, &top_level_key) {
+            set_nested_value(&mut existing_config, &top_level_key, mcp_section.clone());
         }
 
         // Write the merged configuration back

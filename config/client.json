@@ -423,7 +423,7 @@
         ]
       },
       "config_rules": {
-        "top_level_key": "servers",
+        "top_level_key": "mcp.servers",
         "is_mixed_config": true,
         "supported_transports": [
           "stdio",

@@ -203,5 +203,5 @@ pub async fn get_database(
         .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))
-        .map(|db| db.clone())
+        .cloned()
 }

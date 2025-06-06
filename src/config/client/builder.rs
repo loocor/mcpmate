@@ -9,6 +9,7 @@ use std::sync::Arc;
 use super::loader::{ServerInfo, ServerLoader};
 use super::models::{ConfigRule, GeneratedConfig, GenerationMode, GenerationRequest};
 use super::strategy::TransportStrategy;
+use super::utils::set_nested_value;
 use crate::common::config::config_keys;
 use crate::common::server::transport_formats;
 
@@ -199,8 +200,8 @@ impl ConfigBuilder {
                 // Log skipped servers if any
                 self.log_skipped_servers(&skipped_servers);
 
-                // Add servers to the top-level key
-                config[&config_rule.top_level_key] = servers_config;
+                // Add servers to the top-level key (supports nested paths like "mcp.servers")
+                set_nested_value(&mut config, &config_rule.top_level_key, servers_config);
             }
             GenerationMode::Hosted => {
                 // Handle hosted mode (unified endpoint)
@@ -208,10 +209,14 @@ impl ConfigBuilder {
                     .get_unified_endpoint_config(config_rule, &request.client_identifier)
                     .await?;
 
-                // Add the endpoint config to the top-level key
-                config[&config_rule.top_level_key] = json!({
-                    config_keys::MCPMATE: endpoint_config
-                });
+                // Add the endpoint config to the top-level key (supports nested paths like "mcp.servers")
+                set_nested_value(
+                    &mut config,
+                    &config_rule.top_level_key,
+                    json!({
+                        config_keys::MCPMATE: endpoint_config
+                    }),
+                );
             }
         }
 
