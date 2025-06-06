@@ -233,14 +233,32 @@ pub async fn get_config(
             // Get file modification time
             let last_modified = get_config_last_modified(&config_path);
 
-            // Check if import is requested
+            // Check if import is requested and client is in transparent mode
             let imported_servers = if query.get("import").map(|v| v == "true").unwrap_or(false) {
-                match import_servers_from_config(&json_content, &db_pool).await {
-                    Ok(servers) => Some(servers),
-                    Err(e) => {
-                        tracing::warn!("Failed to import servers from config: {}", e);
-                        None
+                // Check if client is in transparent mode (or has no config_mode set)
+                let is_transparent = sqlx::query_scalar::<_, bool>(
+                    "SELECT (config_mode = 'transparent' OR config_mode IS NULL) FROM client_apps WHERE identifier = ?"
+                )
+                .bind(&client_identifier)
+                .fetch_optional(&db_pool)
+                .await
+                .unwrap_or(Some(true)) // Default to true if client not found
+                .unwrap_or(true);
+
+                if is_transparent {
+                    match import_servers_from_config(&json_content, &db_pool).await {
+                        Ok(servers) => Some(servers),
+                        Err(e) => {
+                            tracing::warn!("Failed to import servers from config: {}", e);
+                            None
+                        }
                     }
+                } else {
+                    tracing::info!(
+                        "Skipping import for client {} in hosted mode",
+                        client_identifier
+                    );
+                    None
                 }
             } else {
                 None
@@ -367,6 +385,26 @@ pub async fn manage_config(
             Ok(result) => {
                 response.applied = result.success;
                 response.backup_path = result.backup_path;
+
+                // If application succeeded, update the client's config_mode
+                if result.success {
+                    let config_mode = match request.mode {
+                        ConfigMode::Transparent => "transparent",
+                        ConfigMode::Hosted => "hosted",
+                    };
+
+                    if let Err(e) = client_manager
+                        .update_client_config_mode(&client_identifier, config_mode)
+                        .await
+                    {
+                        tracing::warn!(
+                            "Failed to update config_mode for client {}: {}",
+                            client_identifier,
+                            e
+                        );
+                    }
+                }
+
                 // If application failed, add error message to warnings
                 if !result.success {
                     response

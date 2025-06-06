@@ -13,7 +13,7 @@ pub async fn get_all_client_apps(
         r#"
         SELECT id, identifier, display_name, description, enabled, detected,
                last_detected_at, install_path, config_path, version, detection_method,
-               created_at, updated_at
+               config_mode, created_at, updated_at
         FROM client_apps
         ORDER BY display_name
         "#,

@@ -16,6 +16,11 @@ pub async fn initialize_client_apps(pool: &SqlitePool) -> Result<()> {
 
 /// Create client applications related tables
 async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
+    // First, add config_mode column if it doesn't exist (migration)
+    let _ =
+        sqlx::query("ALTER TABLE client_apps ADD COLUMN config_mode TEXT DEFAULT 'transparent'")
+            .execute(pool)
+            .await; // Ignore error if column already exists
     // Create client_apps table
     sqlx::query(
         r#"
@@ -31,6 +36,7 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
             config_path TEXT,
             version TEXT,
             detection_method TEXT,
+            config_mode TEXT DEFAULT 'transparent',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )

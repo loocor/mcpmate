@@ -26,7 +26,7 @@ pub use self::{
 // Submodules
 mod basic;
 mod crud;
-mod helpers;
+pub mod helpers;
 mod mgmt;
 mod prompt;
 mod resource;

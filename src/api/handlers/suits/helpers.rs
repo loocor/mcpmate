@@ -124,3 +124,84 @@ pub fn check_resource_belongs_to_suit(
     }
     Ok(())
 }
+
+/// Get the config suit ID to use, either from parameter or first active suit
+pub async fn get_config_suit_id(
+    config_suit_id: Option<String>,
+    db_pool: &sqlx::SqlitePool,
+) -> Result<String, ApiError> {
+    match config_suit_id {
+        Some(id) => Ok(id),
+        None => {
+            // Get the first active config suit
+            let active_suits = crate::config::suit::get_active_config_suits(db_pool)
+                .await
+                .map_err(|e| {
+                    ApiError::InternalError(format!("Failed to get active config suits: {}", e))
+                })?;
+
+            match active_suits.first() {
+                Some(suit) => Ok(suit.id.clone().unwrap_or_else(|| "default".to_string())),
+                None => {
+                    tracing::warn!("No active config suits found");
+                    Err(ApiError::NotFound(
+                        "No active config suits found".to_string(),
+                    ))
+                }
+            }
+        }
+    }
+}
+
+/// Sync client configurations using the specified or first active config suit
+pub async fn sync_client_configurations(
+    state: &std::sync::Arc<crate::api::routes::AppState>,
+    config_suit_id: Option<String>,
+) -> Result<(), ApiError> {
+    // Get database reference
+    let db = get_database(state).await?;
+
+    // Get the config suit ID to use
+    let suit_id = get_config_suit_id(config_suit_id, &db.pool).await?;
+
+    // Create client manager
+    let mut client_manager =
+        crate::config::client::manager::ClientManager::new(std::sync::Arc::new(db.pool.clone()));
+
+    // Apply configuration to all enabled clients
+    match client_manager.apply_config_batch(Some(suit_id)).await {
+        Ok(result) => {
+            tracing::info!(
+                "Synced configurations to {} clients, {} failed",
+                result.success_count,
+                result.failed_clients.len()
+            );
+
+            if !result.failed_clients.is_empty() {
+                for (client, error) in result.failed_clients {
+                    tracing::warn!("Failed to sync config for client {}: {}", client, error);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to sync client configurations: {}", e);
+            return Err(ApiError::InternalError(format!(
+                "Failed to sync client configurations: {}",
+                e
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Get database reference from app state
+pub async fn get_database(
+    state: &std::sync::Arc<crate::api::routes::AppState>
+) -> Result<std::sync::Arc<Database>, ApiError> {
+    state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))
+        .map(|db| db.clone())
+}

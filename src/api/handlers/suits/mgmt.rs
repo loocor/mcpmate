@@ -3,45 +3,15 @@
 
 use std::collections::HashMap;
 
-use super::common::*;
+use super::{common::*, helpers};
 
 /// Sync client configurations using the client manager
 async fn sync_client_configurations(
     state: &Arc<AppState>,
     config_suit_id: Option<String>,
 ) -> Result<(), ApiError> {
-    // Get database reference
-    let db = get_database(state).await?;
-
-    // Create client manager
-    let mut client_manager =
-        crate::config::client::manager::ClientManager::new(Arc::new(db.pool.clone()));
-
-    // Apply configuration to all enabled clients
-    match client_manager.apply_config_batch(config_suit_id).await {
-        Ok(result) => {
-            tracing::info!(
-                "Synced configurations to {} clients, {} failed",
-                result.success_count,
-                result.failed_clients.len()
-            );
-
-            if !result.failed_clients.is_empty() {
-                for (client, error) in result.failed_clients {
-                    tracing::warn!("Failed to sync config for client {}: {}", client, error);
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to sync client configurations: {}", e);
-            return Err(ApiError::InternalError(format!(
-                "Failed to sync client configurations: {}",
-                e
-            )));
-        }
-    }
-
-    Ok(())
+    // Use the helper function
+    helpers::sync_client_configurations(state, config_suit_id).await
 }
 
 /// Activate a configuration suit

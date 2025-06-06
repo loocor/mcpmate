@@ -10,7 +10,7 @@ use crate::system::detection::models::{ClientApp, DetectedApp};
 use crate::system::paths::PathMapper;
 use anyhow::Result;
 use serde_json::{Value, json};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs;
@@ -101,26 +101,6 @@ impl ClientManager {
         detector.get_all_known_apps().await
     }
 
-    /// Enable a client application
-    pub async fn enable_client(
-        &mut self,
-        identifier: &str,
-    ) -> Result<()> {
-        self.ensure_loaded().await?;
-        let detector = self.app_detector.as_ref().unwrap();
-        detector.enable_client_app(identifier).await
-    }
-
-    /// Disable a client application
-    pub async fn disable_client(
-        &mut self,
-        identifier: &str,
-    ) -> Result<()> {
-        self.ensure_loaded().await?;
-        let detector = self.app_detector.as_ref().unwrap();
-        detector.disable_client_app(identifier).await
-    }
-
     // ========== Configuration Generation Functions ==========
 
     /// Generate configuration for a client (decoupled function)
@@ -207,8 +187,8 @@ impl ClientManager {
         let mut successful_clients = Vec::new();
         let mut failed_clients = std::collections::HashMap::new();
 
-        // Get all enabled clients
-        let enabled_clients = self.get_enabled_clients().await?;
+        // Get all clients that are in transparent mode (or have no config_mode set)
+        let enabled_clients = self.get_transparent_clients().await?;
 
         for client in enabled_clients {
             // Generate configuration for this client
@@ -242,7 +222,19 @@ impl ClientManager {
             match self.apply_config(&application_request).await {
                 Ok(result) => {
                     if result.success {
-                        successful_clients.push(client.identifier);
+                        successful_clients.push(client.identifier.clone());
+
+                        // Update the client's config_mode to transparent
+                        if let Err(e) = self
+                            .update_client_config_mode(&client.identifier, "transparent")
+                            .await
+                        {
+                            tracing::warn!(
+                                "Failed to update config_mode for client {}: {}",
+                                client.identifier,
+                                e
+                            );
+                        }
                     } else {
                         failed_clients.insert(
                             client.identifier,
@@ -445,5 +437,53 @@ impl ClientManager {
                 Ok(String::new())
             }
         }
+    }
+
+    /// Get all clients that are in transparent mode (or have no config_mode set)
+    async fn get_transparent_clients(&self) -> Result<Vec<ClientApp>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, identifier, display_name, description, enabled
+            FROM client_apps
+            WHERE (config_mode = 'transparent' OR config_mode IS NULL)
+            ORDER BY display_name
+            "#,
+        )
+        .fetch_all(&*self.db_pool)
+        .await?;
+
+        let mut apps = Vec::new();
+        for row in rows {
+            apps.push(ClientApp {
+                id: row.get("id"),
+                identifier: row.get("identifier"),
+                display_name: row.get("display_name"),
+                description: row.get("description"),
+                enabled: row.get("enabled"),
+            });
+        }
+
+        Ok(apps)
+    }
+
+    /// Update client's config_mode in the database
+    pub async fn update_client_config_mode(
+        &self,
+        client_identifier: &str,
+        config_mode: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE client_apps
+            SET config_mode = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(config_mode)
+        .bind(client_identifier)
+        .execute(&*self.db_pool)
+        .await?;
+
+        Ok(())
     }
 }

@@ -408,6 +408,142 @@
           }
         }
       }
+    },
+    {
+      "identifier": "vscode",
+      "display_name": "VSCode",
+      "detection_rules": {
+        "macos": [
+          {
+            "method": "file_path",
+            "value": "~/Library/Application Support/Code/User/settings.json",
+            "config_path": "~/Library/Application Support/Code/User/settings.json",
+            "priority": 1
+          }
+        ]
+      },
+      "config_rules": {
+        "top_level_key": "servers",
+        "is_mixed_config": true,
+        "supported_transports": [
+          "stdio",
+          "sse",
+          "streamableHttp"
+        ],
+        "supported_runtimes": {
+          "macos": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "linux": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "windows": [
+            "npx",
+            "uvx",
+            "binary"
+          ]
+        },
+        "format_rules": {
+          "stdio": {
+            "template": {
+              "type": "stdio",
+              "command": "{{command}}",
+              "args": "{{args}}",
+              "env": "{{env}}"
+            },
+            "requires_type_field": false
+          },
+          "sse": {
+            "template": {
+              "url": "{{url}}",
+              "type": "sse",
+              "headers": "{{headers}}"
+            },
+            "requires_type_field": false
+          },
+          "streamableHttp": {
+            "template": {
+              "type": "streamableHttp",
+              "url": "{{url}}"
+            },
+            "requires_type_field": false
+          }
+        }
+      }
+    },
+    {
+      "identifier": "trae",
+      "display_name": "Trae",
+      "detection_rules": {
+        "macos": [
+          {
+            "method": "file_path",
+            "value": "~/Library/Application Support/Trae/User/mcp.json",
+            "config_path": "~/Library/Application Support/Trae/User/mcp.json",
+            "priority": 1
+          }
+        ]
+      },
+      "config_rules": {
+        "top_level_key": "mcpServers",
+        "is_mixed_config": false,
+        "supported_transports": [
+          "stdio",
+          "sse",
+          "streamableHttp"
+        ],
+        "supported_runtimes": {
+          "macos": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "linux": [
+            "npx",
+            "uvx",
+            "docker",
+            "binary"
+          ],
+          "windows": [
+            "npx",
+            "uvx",
+            "binary"
+          ]
+        },
+        "format_rules": {
+          "stdio": {
+            "template": {
+              "type": "stdio",
+              "command": "{{command}}",
+              "args": "{{args}}",
+              "env": "{{env}}"
+            },
+            "requires_type_field": false
+          },
+          "sse": {
+            "template": {
+              "url": "{{url}}",
+              "type": "sse",
+              "headers": "{{headers}}"
+            },
+            "requires_type_field": false
+          },
+          "streamableHttp": {
+            "template": {
+              "type": "streamableHttp",
+              "url": "{{url}}"
+            },
+            "requires_type_field": false
+          }
+        }
+      }
     }
   ]
 }

@@ -17,6 +17,7 @@ pub struct ClientAppRow {
     pub config_path: Option<String>,
     pub version: Option<String>,
     pub detection_method: Option<String>,
+    pub config_mode: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
