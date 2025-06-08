@@ -11,7 +11,7 @@ pub async fn get_all_client_apps(
 ) -> Result<Vec<ClientAppRow>, sqlx::Error> {
     sqlx::query_as::<_, ClientAppRow>(
         r#"
-        SELECT id, identifier, display_name, description, enabled, detected,
+        SELECT id, identifier, display_name, description, logo_url, category, enabled, detected,
                last_detected_at, install_path, config_path, version, detection_method,
                config_mode, created_at, updated_at
         FROM client_apps

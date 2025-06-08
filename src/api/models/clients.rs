@@ -1,3 +1,4 @@
+use crate::common::ClientCategory;
 use serde::{Deserialize, Serialize};
 
 /// Client detection and query response
@@ -5,6 +6,9 @@ use serde::{Deserialize, Serialize};
 pub struct ClientInfo {
     pub identifier: String,
     pub display_name: String,
+    pub logo_url: Option<String>,
+    pub category: ClientCategory,
+    pub enabled: bool,
     pub detected: bool,
     pub install_path: Option<String>,
     pub config_path: String,
@@ -12,6 +16,7 @@ pub struct ClientInfo {
     pub has_mcp_config: bool,
     pub supported_transports: Vec<String>,
     pub supported_runtimes: Vec<String>,
+    pub config_mode: Option<String>,
     pub last_detected_at: Option<String>,
 }
 

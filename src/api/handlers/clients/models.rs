@@ -1,5 +1,6 @@
 // Data models and structures for client handlers
 
+use crate::common::ClientCategory;
 use serde::Deserialize;
 
 /// Database row structure for client_apps table
@@ -10,6 +11,8 @@ pub struct ClientAppRow {
     pub identifier: String,
     pub display_name: String,
     pub description: Option<String>,
+    pub logo_url: Option<String>,
+    pub category: Option<String>,
     pub enabled: bool,
     pub detected: bool,
     pub last_detected_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -20,6 +23,16 @@ pub struct ClientAppRow {
     pub config_mode: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl ClientAppRow {
+    /// Get the category as a ClientCategory enum
+    pub fn get_category(&self) -> ClientCategory {
+        self.category
+            .as_ref()
+            .and_then(|c| ClientCategory::from_str(c))
+            .unwrap_or_default()
+    }
 }
 
 /// Query parameters for client detection

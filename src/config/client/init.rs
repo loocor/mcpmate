@@ -21,6 +21,19 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
         sqlx::query("ALTER TABLE client_apps ADD COLUMN config_mode TEXT DEFAULT 'transparent'")
             .execute(pool)
             .await; // Ignore error if column already exists
+
+    // Add logo_url column if it doesn't exist (migration)
+    let _ =
+        sqlx::query("ALTER TABLE client_apps ADD COLUMN logo_url TEXT")
+            .execute(pool)
+            .await; // Ignore error if column already exists
+
+    // Add category column if it doesn't exist (migration)
+    let _ =
+        sqlx::query("ALTER TABLE client_apps ADD COLUMN category TEXT DEFAULT 'application'")
+            .execute(pool)
+            .await; // Ignore error if column already exists
+
     // Create client_apps table
     sqlx::query(
         r#"
@@ -29,6 +42,8 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
             identifier TEXT UNIQUE NOT NULL,
             display_name TEXT NOT NULL,
             description TEXT,
+            logo_url TEXT,
+            category TEXT DEFAULT 'application',
             enabled BOOLEAN DEFAULT FALSE,
             detected BOOLEAN DEFAULT FALSE,
             last_detected_at DATETIME,
@@ -136,14 +151,16 @@ async fn insert_clients_from_config(
         // Insert client app
         sqlx::query(
             r#"
-            INSERT INTO client_apps (id, identifier, display_name, description, enabled)
-            VALUES (?, ?, ?, ?, FALSE)
+            INSERT INTO client_apps (id, identifier, display_name, description, logo_url, category, enabled)
+            VALUES (?, ?, ?, ?, ?, ?, FALSE)
             "#,
         )
         .bind(&client_id)
         .bind(&client.identifier)
         .bind(&client.display_name)
         .bind(client.description.as_ref().unwrap())
+        .bind(client.logo_url.as_ref())
+        .bind(client.category.to_string())
         .execute(pool)
         .await?;
 

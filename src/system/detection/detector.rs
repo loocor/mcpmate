@@ -218,22 +218,49 @@ impl AppDetector {
             }
         });
 
-        // Use app result if available, otherwise use the highest confidence result
-        let best_result = app_result.unwrap_or_else(|| {
-            detection_results
-                .iter()
-                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
-                .unwrap()
-        });
+        // Determine install_path and version based on detection results
+        // Only accept real application paths, not config file paths
+        let (install_path, version) = if let Some(app_result) = app_result {
+            // Found a real application installation path
+            (app_result.install_path.as_ref().unwrap().clone(), app_result.version.clone())
+        } else {
+            // No real application path found, check if any result has a valid executable path
+            let valid_app_result = detection_results.iter().find(|result| {
+                if let Some(path) = &result.install_path {
+                    let path_str = path.to_string_lossy();
+                    // Only consider it valid if it's clearly an executable or application
+                    (path_str.ends_with(".exe") ||
+                     path_str.ends_with(".app") ||
+                     path_str.contains("/bin/") ||
+                     path_str.contains("/Applications/")) &&
+                    // And it's not obviously a config file
+                    !path_str.contains(".json") &&
+                    !path_str.contains(".config") &&
+                    !path_str.contains("settings") &&
+                    !path_str.contains("globalStorage") &&
+                    !path_str.contains("Application Support") &&
+                    !path_str.contains("AppData") &&
+                    !path_str.contains("Library/")
+                } else {
+                    false
+                }
+            });
 
-        let install_path = best_result.install_path.as_ref().unwrap().clone();
-        let version = best_result.version.clone();
+            if let Some(valid_result) = valid_app_result {
+                (valid_result.install_path.as_ref().unwrap().clone(), valid_result.version.clone())
+            } else {
+                // No valid application path found - this is likely an extension
+                // Return None to indicate no real application was detected
+                return Ok(None);
+            }
+        };
 
         // Resolve config path from the first rule (they should all have the same template)
         let config_path = if let Some(first_rule) = platform_rules.first() {
             self.path_mapper.resolve_template(&first_rule.config_path)?
         } else {
-            install_path.clone() // Fallback
+            // This should not happen if we have detection results, but provide a fallback
+            std::path::PathBuf::from(format!("~/.config/{}/config.json", client_app.identifier))
         };
 
         let verified_methods: Vec<String> = detection_results

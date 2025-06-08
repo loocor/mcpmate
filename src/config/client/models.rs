@@ -1,6 +1,7 @@
 // Client management models for configuration generation
 // Reuses detection models from system::detection, adds config-specific models
 
+use crate::common::ClientCategory;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -22,6 +23,10 @@ pub struct ClientDefinition {
     pub display_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_url: Option<String>,
+    #[serde(default = "default_application_category")]
+    pub category: ClientCategory,
 
     // Database state fields (auto-managed, JSON files should omit these)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,6 +122,11 @@ pub struct ClientConfigFile {
 /// Helper function for default true values
 fn default_true() -> Option<bool> {
     Some(true)
+}
+
+/// Helper function for default application category
+fn default_application_category() -> ClientCategory {
+    ClientCategory::Application
 }
 
 /// Load client configuration from JSON file

@@ -71,11 +71,30 @@ pub async fn get_clients(
                         detected_app.install_path.display()
                     );
 
+                    // Determine if this is a real application installation path or just a config file
+                    let install_path_str = detected_app.install_path.to_string_lossy();
+                    let is_real_app_path = install_path_str.contains("/Applications/") ||
+                        install_path_str.ends_with(".app") ||
+                        install_path_str.ends_with(".exe") ||
+                        (!install_path_str.contains(".json") &&
+                         !install_path_str.contains(".config") &&
+                         !install_path_str.contains("settings") &&
+                         !install_path_str.contains("globalStorage") &&
+                         !install_path_str.contains("Application Support") &&
+                         !install_path_str.contains("AppData"));
+
+                    // Only update install_path if it's a real application path
+                    let install_path_to_store = if is_real_app_path {
+                        Some(install_path_str.as_ref())
+                    } else {
+                        None
+                    };
+
                     // Update database with detection results
                     if let Err(e) = update_client_detection_status(
                         &client.identifier,
                         true,
-                        Some(&detected_app.install_path.to_string_lossy()),
+                        install_path_to_store,
                         &db_pool,
                     )
                     .await
@@ -132,6 +151,7 @@ pub async fn get_clients(
     let mut client_infos = Vec::new();
     for client in all_clients {
         let client_id = &client.identifier;
+        let category = client.get_category();
 
         // Get supported transports and runtimes from database
         let supported_transports = get_supported_transports(client_id, &db_pool).await;
@@ -159,10 +179,12 @@ pub async fn get_clients(
                     check_mcp_config_exists(&config_path_buf, client_id, &db_pool).await,
                 )
             };
-
         client_infos.push(ClientInfo {
             identifier: client.identifier,
             display_name: client.display_name,
+            logo_url: client.logo_url,
+            category,
+            enabled: client.enabled,
             detected,
             install_path,
             config_path,
@@ -170,6 +192,7 @@ pub async fn get_clients(
             has_mcp_config,
             supported_transports,
             supported_runtimes,
+            config_mode: client.config_mode,
             last_detected_at: client.last_detected_at.map(|dt| dt.to_rfc3339()),
         });
     }

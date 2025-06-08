@@ -4,6 +4,8 @@
     {
       "identifier": "claude_desktop",
       "display_name": "Claude Desktop",
+      "logo_url": "https://claude.ai/images/claude_app_icon.png",
+      "category": "application",
       "detection_rules": {
         "macos": [
           {
@@ -67,6 +69,8 @@
     {
       "identifier": "windsurf",
       "display_name": "Windsurf",
+      "logo_url": "https://windsurf.com/favicon_270.png",
+      "category": "application",
       "detection_rules": {
         "macos": [
           {
@@ -144,6 +148,8 @@
     {
       "identifier": "cursor",
       "display_name": "Cursor",
+      "logo_url": "https://www.cursor.com/apple-touch-icon.png",
+      "category": "application",
       "detection_rules": {
         "macos": [
           {
@@ -218,11 +224,41 @@
     {
       "identifier": "zed",
       "display_name": "Zed",
+      "logo_url": "https://zed.dev/favicon_black_64.png",
+      "category": "application",
       "detection_rules": {
         "macos": [
           {
             "method": "file_path",
             "value": "/Applications/Zed.app",
+            "config_path": "~/.config/zed/settings.json",
+            "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/.config/zed/settings.json",
+            "config_path": "~/.config/zed/settings.json",
+            "priority": 2
+          }
+        ],
+        "windows": [
+          {
+            "method": "file_path",
+            "value": "~/AppData/Local/Zed/Zed.exe",
+            "config_path": "~/AppData/Roaming/Zed/settings.json",
+            "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/AppData/Roaming/Zed/settings.json",
+            "config_path": "~/AppData/Roaming/Zed/settings.json",
+            "priority": 2
+          }
+        ],
+        "linux": [
+          {
+            "method": "file_path",
+            "value": "/usr/local/bin/zed",
             "config_path": "~/.config/zed/settings.json",
             "priority": 1
           },
@@ -276,7 +312,9 @@
     },
     {
       "identifier": "augment",
-      "display_name": "Augment (Extension)",
+      "display_name": "Augment",
+      "logo_url": "https://cdn.prod.website-files.com/66d76c2202b335e39ad2b5e8/66f302dcebf22909de2bad9d_Apple.png",
+      "category": "extension",
       "detection_rules": {
         "macos": [
           {
@@ -336,6 +374,8 @@
     {
       "identifier": "cline",
       "display_name": "Cline",
+      "logo_url": "https://cline.bot/assets/icons/favicon-256x256.png",
+      "category": "extension",
       "detection_rules": {
         "macos": [
           {
@@ -412,13 +452,49 @@
     {
       "identifier": "vscode",
       "display_name": "VSCode",
+      "logo_url": "https://code.visualstudio.com/favicon.ico",
+      "category": "application",
       "detection_rules": {
         "macos": [
           {
             "method": "file_path",
-            "value": "~/Library/Application Support/Code/User/settings.json",
+            "value": "/Applications/Visual Studio Code.app",
             "config_path": "~/Library/Application Support/Code/User/settings.json",
             "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/Library/Application Support/Code/User/settings.json",
+            "config_path": "~/Library/Application Support/Code/User/settings.json",
+            "priority": 2
+          }
+        ],
+        "windows": [
+          {
+            "method": "file_path",
+            "value": "~/AppData/Local/Programs/Microsoft VS Code/Code.exe",
+            "config_path": "~/AppData/Roaming/Code/User/settings.json",
+            "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/AppData/Roaming/Code/User/settings.json",
+            "config_path": "~/AppData/Roaming/Code/User/settings.json",
+            "priority": 2
+          }
+        ],
+        "linux": [
+          {
+            "method": "file_path",
+            "value": "/usr/bin/code",
+            "config_path": "~/.config/Code/User/settings.json",
+            "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/.config/Code/User/settings.json",
+            "config_path": "~/.config/Code/User/settings.json",
+            "priority": 2
           }
         ]
       },
@@ -480,6 +556,8 @@
     {
       "identifier": "trae",
       "display_name": "Trae",
+      "logo_url": "https://trae.ai/favicon.ico",
+      "category": "application",
       "detection_rules": {
         "macos": [
           {
@@ -548,6 +626,8 @@
     {
       "identifier": "5ire",
       "display_name": "5ire",
+      "logo_url": "https://5ire.app/logo.png",
+      "category": "application",
       "detection_rules": {
         "macos": [
           {
@@ -616,6 +696,8 @@
     {
       "identifier": "deepchat",
       "display_name": "DeepChat",
+      "logo_url": "https://deepchat.thinkinai.xyz/logo.png",
+      "category": "application",
       "detection_rules": {
         "macos": [
           {
