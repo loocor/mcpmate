@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::loader::ServerInfo;
 use super::models::{ConfigRule, FormatRule, GenerationMode};
 use super::template::TemplateEngine;
+use crate::common::get_bridge_path;
 use crate::common::server::{
     TRANSPORT_PRIORITY,
     transport_formats::{SSE, STDIO, STREAMABLE_HTTP},
@@ -263,11 +264,20 @@ impl TransportStrategy {
 
         let mut config = json!({});
 
+        // Get dynamic bridge path
+        let bridge_path = get_bridge_path()
+            .map_err(|e| anyhow::anyhow!("Failed to locate bridge component: {}", e))?;
+
+        tracing::debug!(
+            "Using dynamic bridge path for client config: {}",
+            bridge_path
+        );
+
         // Create a mock server info for hosted mode bridge configuration
         let bridge_server = TemplateEngine::create_mock_server(
             "mcpmate-bridge",
             "mcpmate",
-            Some("/Applications/MCPMate.app/Contents/MacOS/bridge".to_string()),
+            Some(bridge_path),
             None,
             vec![],
             {

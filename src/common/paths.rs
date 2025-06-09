@@ -207,3 +207,49 @@ pub fn global_paths() -> &'static MCPMatePaths {
     GLOBAL_PATHS
         .get_or_init(|| MCPMatePaths::new().expect("Failed to initialize global path manager"))
 }
+
+/// Get the bridge component path dynamically
+///
+/// Resolves the bridge executable path based on the current server executable location.
+/// This replaces hardcoded paths with dynamic resolution.
+///
+/// Priority order:
+/// 1. MCPMATE_BRIDGE_PATH environment variable (if set)
+/// 2. Same directory as current executable
+/// 3. Return error with helpful guidance
+pub fn get_bridge_path() -> Result<String> {
+    // Check for environment variable override first
+    if let Ok(env_path) = std::env::var("MCPMATE_BRIDGE_PATH") {
+        if !env_path.is_empty() {
+            return Ok(env_path);
+        }
+    }
+
+    let bridge_name = if cfg!(windows) {
+        "bridge.exe"
+    } else {
+        "bridge"
+    };
+
+    // Try to find bridge executable in the same directory as current executable
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            let bridge_path = exe_dir.join(bridge_name);
+            if bridge_path.exists() {
+                tracing::debug!("Found bridge at: {}", bridge_path.display());
+                return Ok(bridge_path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    // If we can't find the bridge, provide helpful error message
+    Err(anyhow::anyhow!(
+        "Bridge executable '{}' not found.\n\n\
+        The bridge component should be located in the same directory as the current executable.\n\
+        To resolve this issue:\n\
+        1. Ensure MCPMate is properly installed with all components\n\
+        2. Set MCPMATE_BRIDGE_PATH environment variable to specify the bridge location\n\
+        3. Verify the bridge executable exists and has proper permissions",
+        bridge_name
+    ))
+}

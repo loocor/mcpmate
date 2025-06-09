@@ -14,6 +14,6 @@ pub mod types;
 
 // Re-export commonly used items for convenience
 pub use env::{EnvironmentManager, create_runtime_environment, prepare_command_environment};
-pub use types::ClientCategory;
 pub use json::strip_comments;
-pub use paths::{MCPMatePaths, global_paths};
+pub use paths::{MCPMatePaths, get_bridge_path, global_paths};
+pub use types::ClientCategory;
