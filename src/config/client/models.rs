@@ -12,6 +12,19 @@ pub use crate::system::detection::models::{
     ClientApp, DetectedApp, DetectionMethod, DetectionResult, DetectionRule,
 };
 
+/// Configuration type enum for different client configuration formats
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigType {
+    /// Standard JSON configuration (e.g., Cursor, Windsurf)
+    #[default]
+    Standard,
+    /// Mixed configuration with existing content (e.g., Claude Desktop)
+    Mixed,
+    /// Array-based configuration format
+    Array,
+}
+
 /// Client application definition (unified for both JSON and DB)
 /// Based on client_apps table structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,9 +111,7 @@ pub struct ConfigRulesDefinition {
     // Business logic fields
     pub top_level_key: String,
     #[serde(default)]
-    pub is_mixed_config: bool,
-    #[serde(default)]
-    pub is_array_config: bool,
+    pub config_type: ConfigType,
     pub supported_transports: Vec<String>,
     pub supported_runtimes: HashMap<String, Vec<String>>,
     pub format_rules: HashMap<String, serde_json::Value>,
@@ -304,8 +315,7 @@ pub struct ConfigRule {
     pub client_app_id: String,
     pub client_identifier: String,
     pub top_level_key: String,
-    pub is_mixed_config: bool,
-    pub is_array_config: bool,
+    pub config_type: ConfigType,
     pub supported_transports: Vec<String>,
     pub supported_runtimes: HashMap<String, Vec<String>>,
     pub format_rules: HashMap<String, FormatRule>,

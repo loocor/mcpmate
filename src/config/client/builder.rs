@@ -82,7 +82,7 @@ impl ConfigBuilder {
     ) -> Result<ConfigRule> {
         let row = sqlx::query(
             r#"
-            SELECT id, client_app_id, client_identifier, top_level_key, is_mixed_config, is_array_config,
+            SELECT id, client_app_id, client_identifier, top_level_key, config_type,
                    supported_transports, supported_runtimes, format_rules, security_features
             FROM client_config_rules
             WHERE client_identifier = ?
@@ -105,13 +105,20 @@ impl ConfigBuilder {
             .map(|s| serde_json::from_str(&s))
             .transpose()?;
 
+        // Parse config_type from database
+        let config_type_str: String = row.get("config_type");
+        let config_type = match config_type_str.as_str() {
+            "mixed" => crate::config::client::models::ConfigType::Mixed,
+            "array" => crate::config::client::models::ConfigType::Array,
+            _ => crate::config::client::models::ConfigType::Standard,
+        };
+
         Ok(ConfigRule {
             id: row.get("id"),
             client_app_id: row.get("client_app_id"),
             client_identifier: row.get("client_identifier"),
             top_level_key: row.get("top_level_key"),
-            is_mixed_config: row.get("is_mixed_config"),
-            is_array_config: row.get("is_array_config"),
+            config_type,
             supported_transports,
             supported_runtimes,
             format_rules,
@@ -169,12 +176,16 @@ impl ConfigBuilder {
         request: &GenerationRequest,
     ) -> Result<String> {
         // process array config or object config based on the rule
-        let json_value = if config_rule.is_array_config {
-            self.generate_array_config_value(config_rule, servers, request)
-                .await?
-        } else {
-            self.generate_object_config_value(config_rule, servers, request)
-                .await?
+        let json_value = match config_rule.config_type {
+            crate::config::client::models::ConfigType::Array => {
+                self.generate_array_config_value(config_rule, servers, request)
+                    .await?
+            }
+            crate::config::client::models::ConfigType::Standard
+            | crate::config::client::models::ConfigType::Mixed => {
+                self.generate_object_config_value(config_rule, servers, request)
+                    .await?
+            }
         };
 
         // Pretty print JSON with proper formatting

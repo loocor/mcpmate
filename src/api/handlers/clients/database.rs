@@ -1,6 +1,7 @@
 // Database operations for client handlers
 
 use super::models::{ClientAppRow, SimpleDetectedApp};
+use crate::config::client::models::ConfigType;
 use crate::system::detection::detector::AppDetector;
 use anyhow::Result;
 use std::sync::Arc;
@@ -116,6 +117,38 @@ pub async fn get_supported_runtimes(
             }
         }
         _ => vec!["npx".to_string()],
+    }
+}
+
+/// Helper function to get the config type for a client from database
+pub async fn get_config_type(
+    client_id: &str,
+    db_pool: &sqlx::SqlitePool,
+) -> Option<ConfigType> {
+    // Query the database for config_type
+    let query = "
+        SELECT config_type
+        FROM client_config_rules
+        WHERE client_app_id = (
+            SELECT id FROM client_apps WHERE identifier = ?
+        )
+        LIMIT 1
+    ";
+
+    match sqlx::query_scalar::<_, String>(query)
+        .bind(client_id)
+        .fetch_optional(db_pool)
+        .await
+    {
+        Ok(Some(config_type_str)) => {
+            match config_type_str.as_str() {
+                "mixed" => Some(ConfigType::Mixed),
+                "array" => Some(ConfigType::Array),
+                "standard" => Some(ConfigType::Standard),
+                _ => Some(ConfigType::Standard), // Default fallback
+            }
+        }
+        _ => None,
     }
 }
 

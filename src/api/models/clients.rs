@@ -1,4 +1,5 @@
 use crate::common::ClientCategory;
+use crate::config::client::models::ConfigType;
 use serde::{Deserialize, Serialize};
 
 /// Client detection and query response
@@ -17,6 +18,7 @@ pub struct ClientInfo {
     pub supported_transports: Vec<String>,
     pub supported_runtimes: Vec<String>,
     pub config_mode: Option<String>,
+    pub config_type: Option<ConfigType>,
     pub last_detected_at: Option<String>,
 }
 
@@ -68,6 +70,7 @@ pub struct ConfigViewResponse {
     pub has_mcp_config: bool,
     pub mcp_servers_count: u32,
     pub last_modified: Option<String>,
+    pub config_type: Option<ConfigType>,
     pub imported_servers: Option<Vec<ImportedServer>>,
 }
 

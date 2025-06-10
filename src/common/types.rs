@@ -3,29 +3,28 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// Represents the category of a client application
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ClientCategory {
     /// Standalone application that can run independently
+    #[default]
     Application,
     /// Extension or plugin that depends on another application
     Extension,
 }
 
 impl fmt::Display for ClientCategory {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         match self {
             ClientCategory::Application => write!(f, "application"),
             ClientCategory::Extension => write!(f, "extension"),
         }
-    }
-}
-
-impl Default for ClientCategory {
-    fn default() -> Self {
-        ClientCategory::Application
     }
 }
 
@@ -40,8 +39,8 @@ impl ClientCategory {
         matches!(self, ClientCategory::Extension)
     }
 
-    /// Parse from string representation
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parse from string representation (convenience method)
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "application" | "app" => Some(ClientCategory::Application),
             "extension" | "ext" => Some(ClientCategory::Extension),
@@ -52,6 +51,18 @@ impl ClientCategory {
     /// Get all possible values
     pub fn all() -> &'static [ClientCategory] {
         &[ClientCategory::Application, ClientCategory::Extension]
+    }
+}
+
+impl FromStr for ClientCategory {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "application" | "app" => Ok(ClientCategory::Application),
+            "extension" | "ext" => Ok(ClientCategory::Extension),
+            _ => Err(format!("Invalid client category: {}", s)),
+        }
     }
 }
 
@@ -66,12 +77,46 @@ mod tests {
     }
 
     #[test]
+    fn test_client_category_parse() {
+        assert_eq!(
+            ClientCategory::parse("application"),
+            Some(ClientCategory::Application)
+        );
+        assert_eq!(
+            ClientCategory::parse("extension"),
+            Some(ClientCategory::Extension)
+        );
+        assert_eq!(
+            ClientCategory::parse("app"),
+            Some(ClientCategory::Application)
+        );
+        assert_eq!(
+            ClientCategory::parse("ext"),
+            Some(ClientCategory::Extension)
+        );
+        assert_eq!(ClientCategory::parse("invalid"), None);
+    }
+
+    #[test]
     fn test_client_category_from_str() {
-        assert_eq!(ClientCategory::from_str("application"), Some(ClientCategory::Application));
-        assert_eq!(ClientCategory::from_str("extension"), Some(ClientCategory::Extension));
-        assert_eq!(ClientCategory::from_str("app"), Some(ClientCategory::Application));
-        assert_eq!(ClientCategory::from_str("ext"), Some(ClientCategory::Extension));
-        assert_eq!(ClientCategory::from_str("invalid"), None);
+        use std::str::FromStr;
+        assert_eq!(
+            ClientCategory::from_str("application"),
+            Ok(ClientCategory::Application)
+        );
+        assert_eq!(
+            ClientCategory::from_str("extension"),
+            Ok(ClientCategory::Extension)
+        );
+        assert_eq!(
+            ClientCategory::from_str("app"),
+            Ok(ClientCategory::Application)
+        );
+        assert_eq!(
+            ClientCategory::from_str("ext"),
+            Ok(ClientCategory::Extension)
+        );
+        assert!(ClientCategory::from_str("invalid").is_err());
     }
 
     #[test]
@@ -86,16 +131,16 @@ mod tests {
     fn test_client_category_serialization() {
         let app = ClientCategory::Application;
         let ext = ClientCategory::Extension;
-        
+
         let app_json = serde_json::to_string(&app).unwrap();
         let ext_json = serde_json::to_string(&ext).unwrap();
-        
+
         assert_eq!(app_json, "\"application\"");
         assert_eq!(ext_json, "\"extension\"");
-        
+
         let app_deserialized: ClientCategory = serde_json::from_str(&app_json).unwrap();
         let ext_deserialized: ClientCategory = serde_json::from_str(&ext_json).unwrap();
-        
+
         assert_eq!(app_deserialized, app);
         assert_eq!(ext_deserialized, ext);
     }

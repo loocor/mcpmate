@@ -2,8 +2,8 @@
 
 use super::config::{analyze_config_content, check_mcp_config_exists, get_config_last_modified};
 use super::database::{
-    get_all_client_apps, get_client_config_path, get_supported_runtimes, get_supported_transports,
-    perform_client_detection, update_client_detection_status,
+    get_all_client_apps, get_client_config_path, get_config_type, get_supported_runtimes,
+    get_supported_transports, perform_client_detection, update_client_detection_status,
 };
 
 use super::import::import_servers_from_config;
@@ -73,15 +73,15 @@ pub async fn get_clients(
 
                     // Determine if this is a real application installation path or just a config file
                     let install_path_str = detected_app.install_path.to_string_lossy();
-                    let is_real_app_path = install_path_str.contains("/Applications/") ||
-                        install_path_str.ends_with(".app") ||
-                        install_path_str.ends_with(".exe") ||
-                        (!install_path_str.contains(".json") &&
-                         !install_path_str.contains(".config") &&
-                         !install_path_str.contains("settings") &&
-                         !install_path_str.contains("globalStorage") &&
-                         !install_path_str.contains("Application Support") &&
-                         !install_path_str.contains("AppData"));
+                    let is_real_app_path = install_path_str.contains("/Applications/")
+                        || install_path_str.ends_with(".app")
+                        || install_path_str.ends_with(".exe")
+                        || (!install_path_str.contains(".json")
+                            && !install_path_str.contains(".config")
+                            && !install_path_str.contains("settings")
+                            && !install_path_str.contains("globalStorage")
+                            && !install_path_str.contains("Application Support")
+                            && !install_path_str.contains("AppData"));
 
                     // Only update install_path if it's a real application path
                     let install_path_to_store = if is_real_app_path {
@@ -153,9 +153,10 @@ pub async fn get_clients(
         let client_id = &client.identifier;
         let category = client.get_category();
 
-        // Get supported transports and runtimes from database
+        // Get supported transports, runtimes, and config type from database
         let supported_transports = get_supported_transports(client_id, &db_pool).await;
         let supported_runtimes = get_supported_runtimes(client_id, &db_pool).await;
+        let config_type = get_config_type(client_id, &db_pool).await;
 
         // Check if this client was detected (if force_refresh was used)
         let (detected, install_path, config_path, config_exists, has_mcp_config) =
@@ -193,6 +194,7 @@ pub async fn get_clients(
             supported_transports,
             supported_runtimes,
             config_mode: client.config_mode,
+            config_type,
             last_detected_at: client.last_detected_at.map(|dt| dt.to_rfc3339()),
         });
     }
@@ -256,6 +258,9 @@ pub async fn get_config(
             // Get file modification time
             let last_modified = get_config_last_modified(&config_path);
 
+            // Get config type for this client
+            let config_type = get_config_type(&client_identifier, &db_pool).await;
+
             // Check if import is requested and client is in transparent mode
             let imported_servers = if query.get("import").map(|v| v == "true").unwrap_or(false) {
                 // Check if client is in transparent mode (or has no config_mode set)
@@ -294,6 +299,7 @@ pub async fn get_config(
                 has_mcp_config,
                 mcp_servers_count,
                 last_modified,
+                config_type,
                 imported_servers,
             };
 

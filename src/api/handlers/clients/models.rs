@@ -30,7 +30,7 @@ impl ClientAppRow {
     pub fn get_category(&self) -> ClientCategory {
         self.category
             .as_ref()
-            .and_then(|c| ClientCategory::from_str(c))
+            .and_then(|c| ClientCategory::parse(c))
             .unwrap_or_default()
     }
 }

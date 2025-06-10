@@ -30,7 +30,7 @@
         ]
       },
       "config_rules": {
-        "is_mixed_config": true,
+        "config_type": "mixed",
         "top_level_key": "mcpServers",
         "supported_transports": [
           "stdio"
@@ -96,8 +96,8 @@
         ]
       },
       "config_rules": {
+        "config_type": "standard",
         "top_level_key": "mcpServers",
-        "is_mixed_config": false,
         "supported_transports": [
           "stdio",
           "sse"
@@ -167,8 +167,8 @@
         ]
       },
       "config_rules": {
+        "config_type": "standard",
         "top_level_key": "mcpServers",
-        "is_mixed_config": false,
         "supported_transports": [
           "stdio",
           "sse",
@@ -271,8 +271,8 @@
         ]
       },
       "config_rules": {
+        "config_type": "mixed",
         "top_level_key": "context_servers",
-        "is_mixed_config": true,
         "supported_transports": [
           "stdio"
         ],
@@ -334,9 +334,8 @@
         ]
       },
       "config_rules": {
+        "config_type": "array",
         "top_level_key": "",
-        "is_array_config": true,
-        "is_mixed_config": false,
         "supported_transports": [
           "stdio"
         ],
@@ -395,8 +394,8 @@
         ]
       },
       "config_rules": {
+        "config_type": "standard",
         "top_level_key": "mcpServers",
-        "is_mixed_config": false,
         "supported_transports": [
           "stdio",
           "sse",
@@ -499,8 +498,8 @@
         ]
       },
       "config_rules": {
+        "config_type": "mixed",
         "top_level_key": "mcp.servers",
-        "is_mixed_config": true,
         "supported_transports": [
           "stdio",
           "sse",
@@ -569,8 +568,8 @@
         ]
       },
       "config_rules": {
+        "config_type": "standard",
         "top_level_key": "mcpServers",
-        "is_mixed_config": false,
         "supported_transports": [
           "stdio",
           "sse",
@@ -639,8 +638,8 @@
         ]
       },
       "config_rules": {
+        "config_type": "standard",
         "top_level_key": "mcpServers",
-        "is_mixed_config": false,
         "supported_transports": [
           "stdio",
           "sse",
@@ -709,9 +708,9 @@
         ]
       },
       "config_rules": {
+        "config_type": "standard",
         "top_level_key": "mcpServers",
         "keep_original_config": true,
-        "is_mixed_config": false,
         "supported_transports": [
           "stdio",
           "sse",

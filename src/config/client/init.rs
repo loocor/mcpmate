@@ -16,24 +16,6 @@ pub async fn initialize_client_apps(pool: &SqlitePool) -> Result<()> {
 
 /// Create client applications related tables
 async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
-    // First, add config_mode column if it doesn't exist (migration)
-    let _ =
-        sqlx::query("ALTER TABLE client_apps ADD COLUMN config_mode TEXT DEFAULT 'transparent'")
-            .execute(pool)
-            .await; // Ignore error if column already exists
-
-    // Add logo_url column if it doesn't exist (migration)
-    let _ =
-        sqlx::query("ALTER TABLE client_apps ADD COLUMN logo_url TEXT")
-            .execute(pool)
-            .await; // Ignore error if column already exists
-
-    // Add category column if it doesn't exist (migration)
-    let _ =
-        sqlx::query("ALTER TABLE client_apps ADD COLUMN category TEXT DEFAULT 'application'")
-            .execute(pool)
-            .await; // Ignore error if column already exists
-
     // Create client_apps table
     sqlx::query(
         r#"
@@ -90,8 +72,7 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
             client_app_id TEXT NOT NULL,
             client_identifier TEXT NOT NULL,
             top_level_key TEXT NOT NULL,
-            is_mixed_config BOOLEAN DEFAULT FALSE,
-            is_array_config BOOLEAN DEFAULT FALSE,
+            config_type TEXT DEFAULT 'standard',
             supported_transports TEXT NOT NULL,
             supported_runtimes TEXT NOT NULL,
             format_rules TEXT NOT NULL,
@@ -200,20 +181,26 @@ async fn insert_clients_from_config(
             .map(serde_json::to_string)
             .transpose()?;
 
+        // Convert config_type to string for database storage
+        let config_type_str = match client.config_rules.config_type {
+            crate::config::client::models::ConfigType::Standard => "standard",
+            crate::config::client::models::ConfigType::Mixed => "mixed",
+            crate::config::client::models::ConfigType::Array => "array",
+        };
+
         sqlx::query(
             r#"
             INSERT INTO client_config_rules
-            (id, client_app_id, client_identifier, top_level_key, is_mixed_config, is_array_config,
+            (id, client_app_id, client_identifier, top_level_key, config_type,
              supported_transports, supported_runtimes, format_rules, security_features)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(client.config_rules.id.as_ref().unwrap())
         .bind(client.config_rules.client_app_id.as_ref().unwrap())
         .bind(client.config_rules.client_identifier.as_ref().unwrap())
         .bind(&client.config_rules.top_level_key)
-        .bind(client.config_rules.is_mixed_config)
-        .bind(client.config_rules.is_array_config)
+        .bind(config_type_str)
         .bind(supported_transports_json)
         .bind(supported_runtimes_json)
         .bind(format_rules_json)
