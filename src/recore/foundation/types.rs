@@ -48,6 +48,8 @@ pub enum ErrorType {
 /// connection operation type
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionOperation {
+    /// connect to server
+    Connect,
     /// disconnect
     Disconnect,
     /// reconnect
@@ -113,31 +115,33 @@ impl ConnectionStatus {
 
     /// get the list of allowed operations in this state
     pub fn allowed_operations(&self) -> Vec<ConnectionOperation> {
-        let mut ops = vec![
-            ConnectionOperation::Disconnect,
-            ConnectionOperation::Reconnect,
-        ]; // most states share these operations
-
         match self {
             Self::Initializing => {
-                ops.push(ConnectionOperation::Cancel); // can cancel initialization
+                vec![ConnectionOperation::Cancel, ConnectionOperation::Disconnect]
             }
             Self::Ready => {
-                // no special operations
+                vec![
+                    ConnectionOperation::Disconnect,
+                    ConnectionOperation::Reconnect,
+                ]
             }
             Self::Busy => {
-                // no special operations
+                vec![
+                    ConnectionOperation::Disconnect,
+                    ConnectionOperation::Reconnect,
+                ]
             }
             Self::Error(_) => {
-                // no special operations
+                vec![
+                    ConnectionOperation::Connect,
+                    ConnectionOperation::Disconnect,
+                    ConnectionOperation::Reconnect,
+                ]
             }
             Self::Shutdown => {
-                ops.clear(); // clear shared operations
-                ops.push(ConnectionOperation::Reconnect); // only allow reconnect
+                vec![ConnectionOperation::Connect, ConnectionOperation::Reconnect]
             }
         }
-
-        ops
     }
 
     /// check if a specific operation is allowed in the current state (type-safe version)
