@@ -1,0 +1,143 @@
+//! Prompt status checking functionality
+//!
+//! Contains functions for checking if prompts are enabled in configuration suits
+
+use anyhow::{Context, Result};
+use sqlx::{Pool, Sqlite};
+use tracing;
+
+/// Check if a prompt is enabled in any active configuration suit
+pub async fn is_prompt_enabled(
+    pool: &Pool<Sqlite>,
+    server_name: &str,
+    prompt_name: &str,
+) -> Result<bool> {
+    tracing::debug!(
+        "Checking if prompt '{}' from server '{}' is enabled",
+        prompt_name,
+        server_name
+    );
+
+    // Get all active configuration suits
+    let active_suits = crate::config::suit::get_active_config_suits(pool)
+        .await
+        .context("Failed to get active configuration suits")?;
+
+    if active_suits.is_empty() {
+        tracing::debug!("No active configuration suits found, prompt is disabled");
+        return Ok(false);
+    }
+
+    // Get the server ID
+    let server = crate::config::server::get_server(pool, server_name)
+        .await
+        .context(format!("Failed to get server '{server_name}'"))?;
+
+    let server_id = match server {
+        Some(server) => match server.id {
+            Some(id) => id,
+            None => {
+                tracing::warn!("Server '{}' has no ID, prompt is disabled", server_name);
+                return Ok(false);
+            }
+        },
+        None => {
+            tracing::debug!("Server '{}' not found, prompt is disabled", server_name);
+            return Ok(false);
+        }
+    };
+
+    // Check each active configuration suit
+    for suit in active_suits {
+        if let Some(suit_id) = &suit.id {
+            // Get enabled prompts for this configuration suit
+            let enabled_prompts =
+                crate::config::suit::get_enabled_prompts_for_config_suit(pool, suit_id)
+                    .await
+                    .context(format!(
+                        "Failed to get enabled prompts for suit '{suit_id}'"
+                    ))?;
+
+            // Check if our prompt is in the enabled list
+            for prompt in enabled_prompts {
+                if prompt.server_id == server_id && prompt.prompt_name == prompt_name {
+                    tracing::debug!(
+                        "Prompt '{}' from server '{}' is enabled in configuration suit '{}'",
+                        prompt_name,
+                        server_name,
+                        suit.name
+                    );
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    tracing::debug!(
+        "Prompt '{}' from server '{}' is not enabled in any active configuration suit",
+        prompt_name,
+        server_name
+    );
+    Ok(false)
+}
+
+/// Get prompt status (ID, enabled status) for a specific prompt
+pub async fn get_prompt_status(
+    pool: &Pool<Sqlite>,
+    server_name: &str,
+    prompt_name: &str,
+) -> Result<(String, bool)> {
+    tracing::debug!(
+        "Getting prompt status for '{}' from server '{}'",
+        prompt_name,
+        server_name
+    );
+
+    // Check if the prompt is enabled
+    let enabled = is_prompt_enabled(pool, server_name, prompt_name).await?;
+
+    // Get the prompt ID from any active configuration suit
+    let active_suits = crate::config::suit::get_active_config_suits(pool)
+        .await
+        .context("Failed to get active configuration suits")?;
+
+    // Get the server ID
+    let server = crate::config::server::get_server(pool, server_name)
+        .await
+        .context(format!("Failed to get server '{server_name}'"))?;
+
+    let server_id = match server {
+        Some(server) => match server.id {
+            Some(id) => id,
+            None => {
+                return Err(anyhow::anyhow!("Server '{}' has no ID", server_name));
+            }
+        },
+        None => {
+            return Err(anyhow::anyhow!("Server '{}' not found", server_name));
+        }
+    };
+
+    // Look for the prompt in any active configuration suit
+    for suit in active_suits {
+        if let Some(suit_id) = &suit.id {
+            let prompts = crate::config::suit::get_prompts_for_config_suit(pool, suit_id)
+                .await
+                .context(format!("Failed to get prompts for suit '{suit_id}'"))?;
+
+            for prompt in prompts {
+                if prompt.server_id == server_id && prompt.prompt_name == prompt_name {
+                    if let Some(prompt_id) = prompt.id {
+                        return Ok((prompt_id, enabled));
+                    }
+                }
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Prompt '{}' from server '{}' not found in any active configuration suit",
+        prompt_name,
+        server_name
+    ))
+}

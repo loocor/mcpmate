@@ -55,11 +55,42 @@ pub use events::{
 //     manager::UpstreamConnectionPool,
 // };
 
-// pub use protocol::{
-//     tool::ToolMapping,
-//     resource::ResourceMapping,
-//     prompt::PromptMapping,
-// };
+pub use protocol::{
+    PromptMapping,
+    PromptTemplateMapping,
+    ResourceMapping,
+    ResourceTemplateMapping,
+
+    ToolMapping,
+    ToolNameMapping,
+
+    // build functions
+    build_prompt_mapping,
+    build_prompt_template_mapping,
+    build_resource_mapping,
+    build_resource_template_mapping,
+    build_tool_mapping,
+
+    // tool protocol
+    call_upstream_tool,
+    ensure_unique_name,
+    find_tool_in_server,
+    generate_unique_name,
+    get_all_tools,
+    get_prompt_status,
+    get_resource_status,
+
+    // prompt protocol
+    get_upstream_prompt,
+    is_prompt_enabled,
+    is_resource_enabled,
+
+    // resource protocol
+    read_upstream_resource,
+    resolve_unique_name,
+    validate_prompt_name,
+    validate_resource_uri,
+};
 
 // pub use proxy::{
 //     engine::ProxyEngine,
