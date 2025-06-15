@@ -280,7 +280,6 @@ impl ParallelConnectionManager {
         };
 
         connect_result
-            .map(|(service, tools, capabilities, pid)| (service, tools, capabilities, pid))
     }
 
     /// HTTP connection logic (extracted from existing code)

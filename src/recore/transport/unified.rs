@@ -30,7 +30,7 @@ pub async fn connect_server(
 )> {
     match server_type {
         ServerType::Stdio => {
-            let ct = ct.unwrap_or_else(CancellationToken::new);
+            let ct = ct.unwrap_or_default();
 
             let result = if let Some(cache) = runtime_cache {
                 stdio::connect_stdio_server_with_runtime_cache(

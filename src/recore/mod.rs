@@ -40,11 +40,11 @@ pub mod proxy;
 //     types::*,
 // };
 
-// pub use events::{
-//     EventBus,
-//     EventHandler,
-//     EventWaiter,
-// };
+pub use events::{
+    Event, EventBus, EventHandlers, EventReceiver, init as init_events,
+    init_with_handlers as init_events_with_handlers, needs_transport_ready_wait,
+    wait_for_transport_ready,
+};
 
 // pub use connection::{
 //     lifecycle::ConnectionLifecycle,
