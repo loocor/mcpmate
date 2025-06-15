@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{TransportType, http, sse, stdio};
 use crate::common::server::ServerType;
-use crate::core::models::MCPServerConfig;
+use crate::recore::models::MCPServerConfig;
 
 /// Connect to any type of MCP server using the appropriate transport
 pub async fn connect_server(

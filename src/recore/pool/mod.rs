@@ -13,9 +13,8 @@ use anyhow::{self, Context, Result};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
-use crate::{
-    core::models::Config,
-    recore::{connection::UpstreamConnection, foundation::monitor::ProcessMonitor},
+use crate::recore::{
+    connection::UpstreamConnection, foundation::monitor::ProcessMonitor, models::Config,
 };
 
 // Import submodules

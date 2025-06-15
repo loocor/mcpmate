@@ -299,3 +299,117 @@ async fn collect_all_resource_templates_from_instance(
 
     Ok(all_templates)
 }
+
+/// Get all resources from all connected upstream servers
+///
+/// This function collects all resources from all connected upstream servers
+/// and returns them as a vector of Resource objects.
+///
+/// # Arguments
+/// * `connection_pool` - The connection pool to use
+///
+/// # Returns
+/// * `Vec<rmcp::model::Resource>` - A vector of all available resources
+pub async fn get_all_resources(
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
+) -> Vec<rmcp::model::Resource> {
+    let mut all_resources = Vec::new();
+
+    // Lock the connection pool to access it
+    let pool = connection_pool.lock().await;
+
+    // Iterate through all servers and instances
+    for (server_name, instances) in &pool.connections {
+        for (instance_id, conn) in instances {
+            // Skip instances that are not connected
+            if !conn.is_connected() {
+                continue;
+            }
+
+            // Skip instances that don't support resources
+            if !conn.supports_resources() {
+                continue;
+            }
+
+            // Collect all resources from this instance
+            match collect_all_resources_from_instance(conn, instance_id, server_name).await {
+                Ok(resource_mappings) => {
+                    // Convert ResourceMapping to Resource
+                    for mapping in resource_mappings {
+                        all_resources.push(mapping.resource);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to collect resources from instance {} (server: {}): {}",
+                        instance_id,
+                        server_name,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    tracing::debug!("Collected {} total resources", all_resources.len());
+    all_resources
+}
+
+/// Get all resource templates from all connected upstream servers
+///
+/// This function collects all resource templates from all connected upstream servers
+/// and returns them as a vector of ResourceTemplate objects.
+///
+/// # Arguments
+/// * `connection_pool` - The connection pool to use
+///
+/// # Returns
+/// * `Vec<rmcp::model::ResourceTemplate>` - A vector of all available resource templates
+pub async fn get_all_resource_templates(
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
+) -> Vec<rmcp::model::ResourceTemplate> {
+    let mut all_resource_templates = Vec::new();
+
+    // Lock the connection pool to access it
+    let pool = connection_pool.lock().await;
+
+    // Iterate through all servers and instances
+    for (server_name, instances) in &pool.connections {
+        for (instance_id, conn) in instances {
+            // Skip instances that are not connected
+            if !conn.is_connected() {
+                continue;
+            }
+
+            // Skip instances that don't support resources
+            if !conn.supports_resources() {
+                continue;
+            }
+
+            // Collect all resource templates from this instance
+            match collect_all_resource_templates_from_instance(conn, instance_id, server_name).await
+            {
+                Ok(template_mappings) => {
+                    // Convert ResourceTemplateMapping to ResourceTemplate
+                    for mapping in template_mappings {
+                        all_resource_templates.push(mapping.resource_template);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to collect resource templates from instance {} (server: {}): {}",
+                        instance_id,
+                        server_name,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    tracing::debug!(
+        "Collected {} total resource templates",
+        all_resource_templates.len()
+    );
+    all_resource_templates
+}

@@ -92,3 +92,49 @@ pub async fn build_prompt_template_mapping(
     );
     prompt_template_mapping
 }
+
+/// Get all prompts from all connected upstream servers
+///
+/// This function collects all prompts from all connected upstream servers
+/// and returns them as a vector of Prompt objects.
+///
+/// # Arguments
+/// * `connection_pool` - The connection pool to use
+///
+/// # Returns
+/// * `Vec<rmcp::model::Prompt>` - A vector of all available prompts
+pub async fn get_all_prompts(
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
+) -> Vec<rmcp::model::Prompt> {
+    let all_prompts = Vec::new();
+
+    // Lock the connection pool to access it
+    let pool = connection_pool.lock().await;
+
+    // Iterate through all servers and instances
+    for (server_name, instances) in &pool.connections {
+        for (instance_id, conn) in instances {
+            // Skip instances that are not connected
+            if !conn.is_connected() {
+                continue;
+            }
+
+            // Skip instances that don't support prompts
+            if !conn.supports_prompts() {
+                continue;
+            }
+
+            // TODO: Collect all prompts from this instance
+            // For now, we'll return an empty list since prompt collection
+            // is not yet fully implemented in recore
+            tracing::debug!(
+                "Collecting prompts from instance {} (server: {}) - implementation pending",
+                instance_id,
+                server_name
+            );
+        }
+    }
+
+    tracing::debug!("Collected {} total prompts", all_prompts.len());
+    all_prompts
+}

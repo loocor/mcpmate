@@ -19,7 +19,7 @@ use crate::{
     recore::transport::{
         connect_http_server,                     // connect to an HTTP server
         connect_sse_server,                      // connect to an SSE server
-        connect_stdio_server_with_ct_and_db,     // connect to a stdio server with a cancellation token and a database
+        connect_stdio_server_with_ct_and_db, // connect to a stdio server with a cancellation token and a database
         connect_stdio_server_with_runtime_cache, // connect to a stdio server with a runtime cache
     },
 };
@@ -202,7 +202,7 @@ impl ParallelConnectionManager {
     async fn perform_connection(
         server_name: &str,
         instance_id: &str,
-        config: &Arc<crate::core::models::Config>,
+        config: &Arc<crate::recore::models::Config>,
         database: Option<Arc<crate::config::database::Database>>,
         runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
         server_type: ServerType,
@@ -247,7 +247,7 @@ impl ParallelConnectionManager {
     async fn perform_stdio_connection(
         server_name: &str,
         instance_id: &str,
-        server_config: &crate::core::models::MCPServerConfig,
+        server_config: &crate::recore::models::MCPServerConfig,
         database: Option<Arc<crate::config::database::Database>>,
         runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
         event_tx: mpsc::UnboundedSender<ConnectionEvent>,
@@ -288,7 +288,7 @@ impl ParallelConnectionManager {
     /// Perform HTTP connection
     async fn perform_http_connection(
         server_name: &str,
-        server_config: &crate::core::models::MCPServerConfig,
+        server_config: &crate::recore::models::MCPServerConfig,
         transport_type: TransportType,
     ) -> Result<(
         RunningService<RoleClient, ()>,

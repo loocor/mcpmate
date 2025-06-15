@@ -2,16 +2,19 @@
 //!
 //! this is the refactor version of the original core module, using a more clear hierarchical architecture:
 //! - foundation: infrastructure layer
+//! - models: data models (independent)
 //! - events: event system (independent first-level module)
 //! - connection: single connection management
 //! - transport: transport layer
 //! - pool: connection pool management
 //! - protocol: protocol handling
-//! - audit: audit middleware
 //! - proxy: proxy core
 
 // infrastructure layer - does not depend on other modules
 pub mod foundation;
+
+// data models - independent
+pub mod models;
 
 // event system - independent infrastructure module
 pub mod events;
@@ -26,34 +29,18 @@ pub mod pool;
 // protocol handling layer - depends on connection pool
 pub mod protocol;
 
-// audit middleware layer - depends on protocol layer
-pub mod audit;
-
-// proxy core layer - depends on all lower modules
+// proxy core business logic - depends on protocol layer
 pub mod proxy;
 
+// proxy core business logic - depends on protocol layer
+pub use proxy::{Args as ProxyArgs, ProxyServer};
+
 // re-export core interfaces, keeping compatibility with the original core module
-// note: these exports will be gradually enabled after the actual implementation of the modules
-
-// pub use foundation::{
-//     error::RecoreError,
-//     types::*,
-// };
-
 pub use events::{
     Event, EventBus, EventHandlers, EventReceiver, init as init_events,
     init_with_handlers as init_events_with_handlers, needs_transport_ready_wait,
     wait_for_transport_ready,
 };
-
-// pub use connection::{
-//     lifecycle::ConnectionLifecycle,
-//     status::ConnectionStatus,
-// };
-
-// pub use pool::{
-//     manager::UpstreamConnectionPool,
-// };
 
 pub use protocol::{
     PromptMapping,
@@ -91,8 +78,3 @@ pub use protocol::{
     validate_prompt_name,
     validate_resource_uri,
 };
-
-// pub use proxy::{
-//     engine::ProxyEngine,
-//     handler::ProxyHandler,
-// };

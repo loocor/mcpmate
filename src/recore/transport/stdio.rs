@@ -12,12 +12,12 @@ use sysinfo;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use crate::core::models::MCPServerConfig;
 use crate::recore::foundation::utils::{
     get_connection_timeout, // connection timeout
     get_tools_timeout,      // tools timeout
     prepare_command,        // prepare command
 };
+use crate::recore::models::MCPServerConfig;
 
 /// Core connection function with customizable environment preparation
 async fn connect_stdio_server_core(

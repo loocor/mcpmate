@@ -11,12 +11,12 @@ use rmcp::{
 use tokio::time::timeout;
 
 use super::TransportType;
-use crate::core::models::MCPServerConfig;
 use crate::recore::foundation::utils::{
     get_sse_connection_timeout, // SSE connection timeout
     get_sse_service_timeout,    // SSE service timeout
     get_sse_tools_timeout,      // SSE tools timeout
 };
+use crate::recore::models::MCPServerConfig;
 
 /// Connect to an HTTP-based server (SSE or Streamable HTTP) with timeout
 pub async fn connect_http_server(

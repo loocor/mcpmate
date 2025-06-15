@@ -14,11 +14,12 @@ pub use tool::{
 
 pub use resource::{
     ResourceMapping, ResourceTemplateMapping, build_resource_mapping,
-    build_resource_template_mapping, get_resource_status, is_resource_enabled,
-    read_upstream_resource, validate_resource_uri,
+    build_resource_template_mapping, get_all_resource_templates, get_all_resources,
+    get_resource_status, is_resource_enabled, read_upstream_resource, validate_resource_uri,
 };
 
 pub use prompt::{
     PromptMapping, PromptTemplateMapping, build_prompt_mapping, build_prompt_template_mapping,
-    get_prompt_status, get_upstream_prompt, is_prompt_enabled, validate_prompt_name,
+    get_all_prompts, get_prompt_status, get_upstream_prompt, is_prompt_enabled,
+    validate_prompt_name,
 };
