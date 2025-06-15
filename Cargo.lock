@@ -2197,6 +2197,7 @@ dependencies = [
  "atty",
  "axum 0.8.4",
  "axum-test",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "dirs",
