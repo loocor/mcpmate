@@ -13,6 +13,7 @@ use crate::core::{connection::UpstreamConnection, models::Config, monitor::Proce
 mod connection;
 mod health;
 mod monitoring;
+mod parallel;
 mod sync;
 mod utils;
 

@@ -35,6 +35,7 @@ atty = "0.2"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "5.0"
 flate2 = "1.0"
+futures = "0.3"
 json5 = "0.4"
 reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-features = false }
 rmcp = { path = "../sdk/crates/rmcp", features = [

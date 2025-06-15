@@ -25,13 +25,14 @@ pub async fn start_background_connections(
         // Wait for a short time to ensure the SSE server is started
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        // Connect to all servers
-        let mut pool = connection_pool.lock().await;
-
-        // Connect to all servers in parallel
-        if let Err(e) = pool.connect_all().await {
+        // Connect to all servers using high-performance parallel method
+        if let Err(e) = UpstreamConnectionPool::connect_all_parallel(connection_pool.clone()).await
+        {
             tracing::error!("Error in parallel connection process: {}", e);
         }
+
+        // Get pool reference for status reporting
+        let pool = connection_pool.lock().await;
 
         // Get the total number of servers in the database
         let total_server_count_in_db = if let Some(db) = &proxy_arc_clone.database {
