@@ -45,20 +45,20 @@ pub enum ErrorType {
     Unknown,
 }
 
-/// connection operation type
-#[derive(Debug, Clone, PartialEq)]
+/// Connection operations that can be performed on a connection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionOperation {
-    /// connect to server
+    /// Connect to the server
     Connect,
-    /// disconnect
+    /// Disconnect from the server
     Disconnect,
-    /// reconnect
-    Reconnect,
-    /// cancel operation
-    Cancel,
-    /// force disconnect
+    /// Force disconnect (immediate)
     ForceDisconnect,
-    /// reset reconnect state
+    /// Reconnect to the server
+    Reconnect,
+    /// Cancel current operation
+    Cancel,
+    /// Reset and reconnect
     ResetReconnect,
 }
 
@@ -182,5 +182,37 @@ impl ConnectionStatus {
     )]
     pub fn can_reset_reconnect(&self) -> bool {
         self.can_perform_operation(ConnectionOperation::ResetReconnect)
+    }
+}
+
+impl std::fmt::Display for ConnectionOperation {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            ConnectionOperation::Connect => write!(f, "connect"),
+            ConnectionOperation::Disconnect => write!(f, "disconnect"),
+            ConnectionOperation::ForceDisconnect => write!(f, "force_disconnect"),
+            ConnectionOperation::Reconnect => write!(f, "reconnect"),
+            ConnectionOperation::Cancel => write!(f, "cancel"),
+            ConnectionOperation::ResetReconnect => write!(f, "reset_reconnect"),
+        }
+    }
+}
+
+impl std::str::FromStr for ConnectionOperation {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "connect" => Ok(ConnectionOperation::Connect),
+            "disconnect" => Ok(ConnectionOperation::Disconnect),
+            "force_disconnect" | "force-disconnect" => Ok(ConnectionOperation::ForceDisconnect),
+            "reconnect" => Ok(ConnectionOperation::Reconnect),
+            "cancel" => Ok(ConnectionOperation::Cancel),
+            "reset_reconnect" | "reset-reconnect" => Ok(ConnectionOperation::ResetReconnect),
+            _ => Err(format!("Invalid connection operation: {}", s)),
+        }
     }
 }

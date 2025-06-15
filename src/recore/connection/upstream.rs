@@ -11,7 +11,10 @@ use rmcp::{
 
 use crate::generate_id;
 use crate::recore::foundation::types::{
-    ConnectionOperation, ConnectionStatus, ErrorDetails, ErrorType,
+    ConnectionOperation, // action to perform on the connection
+    ConnectionStatus,    // status of the connection
+    ErrorDetails,        // details of the error
+    ErrorType,           // type of the error
 };
 
 /// Connection to an upstream MCP server
@@ -169,6 +172,25 @@ impl UpstreamConnection {
     pub fn update_connecting(&mut self) {
         self.status = ConnectionStatus::Initializing;
         self.connection_attempts += 1;
+    }
+
+    /// Update connection status to initializing (alias for compatibility)
+    pub fn update_initializing(&mut self) {
+        self.update_connecting();
+    }
+
+    /// Update connection status to ready
+    pub fn update_ready(&mut self) {
+        self.status = ConnectionStatus::Ready;
+        self.last_connected = Instant::now();
+    }
+
+    /// Update connection status to error (alias for compatibility)
+    pub fn update_error(
+        &mut self,
+        error_msg: String,
+    ) {
+        self.update_failed(error_msg);
     }
 
     /// Update connection status to shutdown
