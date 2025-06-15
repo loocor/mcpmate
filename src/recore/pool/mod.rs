@@ -76,6 +76,24 @@ impl UpstreamConnectionPool {
         self.config = config;
     }
 
+    /// Set the database reference
+    pub fn set_database(
+        &mut self,
+        database: Option<Arc<crate::config::database::Database>>,
+    ) {
+        self.database = database;
+        tracing::info!("Database reference updated for connection pool");
+    }
+
+    /// Set the runtime cache reference
+    pub fn set_runtime_cache(
+        &mut self,
+        runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
+    ) {
+        self.runtime_cache = runtime_cache;
+        tracing::info!("Runtime cache reference updated for connection pool");
+    }
+
     /// Initialize the connection pool with all servers
     pub fn initialize(&mut self) {
         for name in self.config.mcp_servers.keys() {

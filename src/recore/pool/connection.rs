@@ -312,8 +312,21 @@ impl UpstreamConnectionPool {
         capabilities: Option<rmcp::model::ServerCapabilities>,
     ) {
         if let Ok(conn) = self.get_instance_mut(server_name, instance_id) {
+            // Check if server supports resources and prompts
+            let supports_resources = capabilities
+                .as_ref()
+                .and_then(|caps| caps.resources.as_ref())
+                .is_some();
+            let supports_prompts = capabilities
+                .as_ref()
+                .and_then(|caps| caps.prompts.as_ref())
+                .is_some();
+
+            // Clone service for database sync operations
+            let service_for_sync = service.peer().clone();
+
             conn.service = Some(service);
-            conn.tools = tools;
+            conn.tools = tools.clone();
             conn.capabilities = capabilities;
             conn.update_ready();
 
@@ -323,6 +336,131 @@ impl UpstreamConnectionPool {
                 instance_id,
                 conn.tools.len()
             );
+
+            // Sync to database if database reference is available
+            if let Some(db) = &self.database {
+                let db_clone = db.clone();
+                let tools_clone = tools.clone();
+                let server_name_clone = server_name.to_string();
+                let instance_id_clone = instance_id.to_string();
+                let service_for_sync = service_for_sync.clone();
+
+                // Single task to handle all database sync operations concurrently
+                tokio::spawn(async move {
+                    // Build list of sync operations to execute
+                    let mut sync_futures = Vec::new();
+
+                    // Always sync tools
+                    {
+                        let db = db_clone.clone();
+                        let server_name = server_name_clone.clone();
+                        let tools = tools_clone.clone();
+                        sync_futures.push(Box::pin(async move {
+                            UpstreamConnectionPool::sync_tools_to_database(
+                                &db,
+                                &server_name,
+                                &tools,
+                            )
+                            .await
+                            .map_err(|e| ("tools", e))
+                        })
+                            as std::pin::Pin<
+                                Box<
+                                    dyn std::future::Future<
+                                            Output = Result<(), (&str, anyhow::Error)>,
+                                        > + Send,
+                                >,
+                            >);
+                    }
+
+                    // Conditionally sync resources if server supports them
+                    if supports_resources {
+                        let db = db_clone.clone();
+                        let server_name = server_name_clone.clone();
+                        let instance_id = instance_id_clone.clone();
+                        let service = service_for_sync.clone();
+                        sync_futures.push(Box::pin(async move {
+                            UpstreamConnectionPool::sync_resources_to_database_with_service(
+                                &db,
+                                &server_name,
+                                &instance_id,
+                                &service,
+                            )
+                            .await
+                            .map_err(|e| ("resources", e))
+                        })
+                            as std::pin::Pin<
+                                Box<
+                                    dyn std::future::Future<
+                                            Output = Result<(), (&str, anyhow::Error)>,
+                                        > + Send,
+                                >,
+                            >);
+                    }
+
+                    // Conditionally sync prompts if server supports them
+                    if supports_prompts {
+                        let db = db_clone.clone();
+                        let server_name = server_name_clone.clone();
+                        let instance_id = instance_id_clone.clone();
+                        let service = service_for_sync.clone();
+                        sync_futures.push(Box::pin(async move {
+                            UpstreamConnectionPool::sync_prompts_to_database_with_service(
+                                &db,
+                                &server_name,
+                                &instance_id,
+                                &service,
+                            )
+                            .await
+                            .map_err(|e| ("prompts", e))
+                        })
+                            as std::pin::Pin<
+                                Box<
+                                    dyn std::future::Future<
+                                            Output = Result<(), (&str, anyhow::Error)>,
+                                        > + Send,
+                                >,
+                            >);
+                    }
+
+                    // Execute all sync operations concurrently
+                    let results = futures::future::join_all(sync_futures).await;
+
+                    // Process results and log any errors
+                    let mut success_count = 0;
+                    let mut error_count = 0;
+
+                    for result in results {
+                        match result {
+                            Ok(()) => success_count += 1,
+                            Err((operation, error)) => {
+                                error_count += 1;
+                                tracing::error!(
+                                    "Failed to sync {} to database for server '{}': {}",
+                                    operation,
+                                    server_name_clone,
+                                    error
+                                );
+                            }
+                        }
+                    }
+
+                    if error_count == 0 {
+                        tracing::debug!(
+                            "Successfully completed {} database sync operations for server '{}'",
+                            success_count,
+                            server_name_clone
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Database sync completed for server '{}': {} successful, {} failed",
+                            server_name_clone,
+                            success_count,
+                            error_count
+                        );
+                    }
+                });
+            }
         }
     }
 

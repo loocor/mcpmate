@@ -42,8 +42,8 @@ pub struct ProxyServer {
     pub config_suit_merge_service: Option<Arc<crate::core::suit::ConfigSuitMergeService>>,
     /// Runtime cache for fast runtime queries (temporary core dependency)
     pub runtime_cache: Arc<crate::runtime::RuntimeCache>,
-    /// Paginator for aggregated results (temporary core dependency)
-    pub paginator: crate::core::ProxyPaginator,
+    /// Paginator for aggregated results
+    pub paginator: crate::recore::foundation::pagination::ProxyPaginator,
 }
 
 /// Configuration for the unified HTTP server
@@ -226,9 +226,8 @@ impl ProxyServer {
         // Start health check task
         UpstreamConnectionPool::start_health_check(connection_pool.clone());
 
-        // Create paginator with default config (temporarily simplified)
-        // TODO: Implement recore version of ProxyPaginator to avoid core dependency
-        let paginator = crate::core::ProxyPaginator::new();
+        // Create paginator with default config
+        let paginator = crate::recore::foundation::pagination::ProxyPaginator::new();
 
         Self {
             connection_pool,
@@ -255,15 +254,16 @@ impl ProxyServer {
             crate::core::suit::ConfigSuitMergeService::new(db_arc.clone()),
         ));
 
-        // TODO: Update connection pool with database reference
-        // Note: recore connection pool doesn't have set_database method yet
-        // This will need to be implemented when we fully integrate the database
-        // {
-        //     let mut pool = self.connection_pool.lock().await;
-        //     pool.set_database(Some(db_arc));
-        // }
+        // Update connection pool with database reference and runtime cache
+        {
+            let mut pool = self.connection_pool.lock().await;
+            pool.set_database(Some(db_arc));
+            pool.set_runtime_cache(Some(self.runtime_cache.clone()));
+        }
 
-        tracing::info!("Database connection set for proxy server");
+        tracing::info!(
+            "Database connection and runtime cache set for proxy server and connection pool"
+        );
         Ok(())
     }
 
