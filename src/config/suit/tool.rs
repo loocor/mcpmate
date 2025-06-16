@@ -78,13 +78,18 @@ pub async fn add_tool_to_config_suit(
         .context("Failed to get server name")?;
 
     // Generate a unique name for the tool
-    let base_unique_name = crate::core::tool::generate_unique_name(&server_name, tool_name);
+    let base_unique_name =
+        crate::core::protocol::tool::generate_unique_name(&server_name, tool_name);
 
     // Ensure the unique name doesn't conflict with existing names
-    let unique_name =
-        crate::core::tool::ensure_unique_name(pool, &base_unique_name, server_id, tool_name)
-            .await
-            .context("Failed to ensure unique name for tool")?;
+    let unique_name = crate::core::protocol::tool::ensure_unique_name(
+        pool,
+        &base_unique_name,
+        server_id,
+        tool_name,
+    )
+    .await
+    .context("Failed to ensure unique name for tool")?;
 
     let result = sqlx::query(
         r#"

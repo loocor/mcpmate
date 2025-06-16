@@ -57,12 +57,12 @@ async fn get_server_info(
     Ok((server, server_id))
 }
 
-/// Sync server connections
+/// Sync server connections by invalidating suit service cache
 async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> {
     if let Some(merge_service) = &state.suit_merge_service {
-        if let Err(e) = merge_service.sync_server_connections(state).await {
-            tracing::error!("Failed to sync server connections: {}", e);
-        }
+        // Invalidate cache to force re-merging of configurations
+        merge_service.invalidate_cache().await;
+        tracing::info!("Invalidated suit service cache to sync server connections");
     }
 
     Ok(())
@@ -80,7 +80,7 @@ async fn sync_client_configurations(
 /// Get connection pool with timeout
 async fn get_connection_pool(
     state: &Arc<AppState>
-) -> Result<tokio::sync::MutexGuard<crate::core::http::pool::UpstreamConnectionPool>, ApiError> {
+) -> Result<tokio::sync::MutexGuard<crate::core::pool::UpstreamConnectionPool>, ApiError> {
     match tokio::time::timeout(
         std::time::Duration::from_secs(1),
         state.connection_pool.lock(),
@@ -172,7 +172,7 @@ pub async fn enable_server(
     if let Some(http_proxy) = &state.http_proxy {
         if let Some(db) = &http_proxy.database {
             // Load server configuration from database
-            match crate::core::loader::load_server_config(db).await {
+            match crate::core::foundation::loader::load_server_config(db).await {
                 Ok(config) => {
                     // Create a new Config with the loaded configuration
                     let new_config = std::sync::Arc::new(config);
@@ -194,7 +194,7 @@ pub async fn enable_server(
     // Check if the server exists in the connection pool
     if !pool.connections.contains_key(&server_name) {
         // Server not in connection pool, add it
-        let connection = crate::core::UpstreamConnection::new(server_name.clone());
+        let connection = crate::core::connection::UpstreamConnection::new(server_name.clone());
         let instance_id = connection.id.clone();
 
         // Add to connection pool
@@ -232,7 +232,7 @@ pub async fn enable_server(
 
     // If there are no instances, create one
     if instances.is_empty() {
-        let connection = crate::core::UpstreamConnection::new(server_name.clone());
+        let connection = crate::core::connection::UpstreamConnection::new(server_name.clone());
         let instance_id = connection.id.clone();
 
         // Add to connection pool

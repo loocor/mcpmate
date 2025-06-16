@@ -11,7 +11,7 @@ use axum::{
 use crate::{
     api::{handlers::ApiError, routes::AppState},
     config::server,
-    core::http::HttpProxyServer,
+    core::proxy::ProxyServer,
 };
 
 /// List all MCP specification-compliant prompts
@@ -19,11 +19,11 @@ pub async fn list_all(
     State(state): State<Arc<AppState>>
 ) -> Result<Json<Vec<rmcp::model::Prompt>>, ApiError> {
     // Get the HTTP proxy server and database
-    let (proxy, db) = get_context(&state).await?;
+    let (proxy, _db) = get_context(&state).await?;
 
     // Build prompt mapping from all connected servers
     let prompt_mapping =
-        crate::core::prompt::build_prompt_mapping(&proxy.connection_pool, Some(db)).await;
+        crate::core::protocol::prompt::build_prompt_mapping(&proxy.connection_pool).await;
 
     // Convert prompt mapping to list of prompts (filtering is already done in build_prompt_mapping)
     let prompts: Vec<rmcp::model::Prompt> = prompt_mapping
@@ -60,7 +60,7 @@ pub async fn list_server(
 
     // Build prompt mapping from all connected servers
     let prompt_mapping =
-        crate::core::prompt::build_prompt_mapping(&proxy.connection_pool, Some(db)).await;
+        crate::core::protocol::prompt::build_prompt_mapping(&proxy.connection_pool).await;
 
     // Filter prompts for the specific server
     let prompts: Vec<rmcp::model::Prompt> = prompt_mapping
@@ -87,10 +87,10 @@ pub async fn list_server(
 /// * `state` - The application state
 ///
 /// # Returns
-/// * `Result<(&HttpProxyServer, &Arc<Database>), ApiError>` - The HTTP proxy server and database, or an error
+/// * `Result<(&ProxyServer, &Arc<Database>), ApiError>` - The HTTP proxy server and database, or an error
 pub async fn get_context(
     state: &Arc<AppState>
-) -> Result<(&HttpProxyServer, &Arc<crate::config::database::Database>), ApiError> {
+) -> Result<(&ProxyServer, &Arc<crate::config::database::Database>), ApiError> {
     // Get the HTTP proxy server
     let proxy = state
         .http_proxy

@@ -438,7 +438,21 @@ impl ProxyServer {
 
 impl ServerHandler for ProxyServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::default()
+        ServerInfo {
+            protocol_version: rmcp::model::ProtocolVersion::LATEST,
+            capabilities: rmcp::model::ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .enable_prompts()
+                .build(),
+            server_info: rmcp::model::Implementation {
+                name: "mcpmate".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+            instructions: Some(
+                "MCPMate - Aggregates tools, resources, and prompts from multiple upstream MCP servers. Connect to access all configured MCP services through a single endpoint.".to_string()
+            ),
+        }
     }
 
     async fn list_tools(

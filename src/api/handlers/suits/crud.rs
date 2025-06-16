@@ -134,7 +134,7 @@ pub async fn create_suit(
 
         for tool_config in tool_configs {
             // Generate a unique name for the tool
-            let unique_name = crate::core::tool::generate_unique_name(
+            let unique_name = crate::core::protocol::tool::generate_unique_name(
                 &tool_config.server_name,
                 &tool_config.tool_name,
             );

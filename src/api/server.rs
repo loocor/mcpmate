@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use tracing;
 
 use super::routes::{create_router, create_router_with_proxy};
-use crate::core::http::{HttpProxyServer, pool::UpstreamConnectionPool};
+use crate::core::{pool::UpstreamConnectionPool, proxy::ProxyServer};
 
 /// API server for the MCP Proxy
 #[derive(Debug)]
@@ -26,7 +26,7 @@ impl ApiServer {
     pub async fn start(
         &self,
         connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
-        http_proxy: Option<Arc<HttpProxyServer>>,
+        http_proxy: Option<Arc<ProxyServer>>,
     ) -> Result<(), anyhow::Error> {
         // Create the router with connection pool and HTTP proxy reference if available
         let router = if let Some(proxy) = http_proxy {

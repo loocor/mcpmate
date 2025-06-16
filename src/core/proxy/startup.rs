@@ -147,32 +147,27 @@ pub async fn start_proxy_server(
     Ok(())
 }
 
-/// Start the API server (temporarily disabled due to type incompatibility)
+/// Start the API server
 pub async fn start_api_server(
-    _proxy: &ProxyServer,
+    proxy_arc: Arc<ProxyServer>,
     args: &Args,
 ) -> Result<tokio::task::JoinHandle<()>> {
     // Start API server
     let api_bind_address: SocketAddr = format!("127.0.0.1:{}", args.api_port).parse()?;
     tracing::info!("Starting API server on {}", api_bind_address);
 
-    // API server integration with core (deferred)
-    // The API server currently expects core::UpstreamConnectionPool, but we have core::UpstreamConnectionPool
-    // This will be resolved after core module is replaced with core, or by creating a compatibility adapter
+    // Clone necessary references for the API server
+    let connection_pool = Arc::clone(&proxy_arc.connection_pool);
 
-    tracing::warn!(
-        "API server temporarily disabled - type incompatibility between core and core connection pools"
-    );
-    tracing::warn!("API functionality will be restored after API module migration");
-
-    // Return a dummy task for now
+    // Start the API server in a background task
     let api_task = tokio::spawn(async move {
-        tracing::info!("API server placeholder task running");
-        // Keep the task alive but do nothing
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        let api_server = crate::api::ApiServer::new(api_bind_address);
+
+        if let Err(e) = api_server.start(connection_pool, Some(proxy_arc)).await {
+            tracing::error!("API server failed: {}", e);
         }
     });
 
+    tracing::info!("API server started successfully on {}", api_bind_address);
     Ok(api_task)
 }

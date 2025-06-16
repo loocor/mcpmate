@@ -14,7 +14,7 @@ use crate::{
         },
         routes::AppState,
     },
-    core::types::ConnectionStatus,
+    core::foundation::types::ConnectionStatus,
 };
 
 /// Notify clients that the tools list has changed

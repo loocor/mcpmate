@@ -62,9 +62,8 @@ pub async fn activate_suit(
 
     // Sync server connections if merge service is available
     if let Some(merge_service) = &state.suit_merge_service {
-        if let Err(e) = merge_service.sync_server_connections(&state).await {
-            tracing::error!("Failed to sync server connections: {}", e);
-        }
+        merge_service.invalidate_cache().await;
+        tracing::info!("Invalidated suit service cache to sync server connections");
     }
 
     // Check if sync parameter is true
@@ -142,9 +141,8 @@ pub async fn deactivate_suit(
 
     // Sync server connections if merge service is available
     if let Some(merge_service) = &state.suit_merge_service {
-        if let Err(e) = merge_service.sync_server_connections(&state).await {
-            tracing::error!("Failed to sync server connections: {}", e);
-        }
+        merge_service.invalidate_cache().await;
+        tracing::info!("Invalidated suit service cache to sync server connections");
     }
 
     // Check if sync parameter is true
@@ -220,9 +218,8 @@ pub async fn batch_activate_suits(
     // Sync server connections if merge service is available and any suits were activated
     if !successful_ids.is_empty() {
         if let Some(merge_service) = &state.suit_merge_service {
-            if let Err(e) = merge_service.sync_server_connections(&state).await {
-                tracing::error!("Failed to sync server connections: {}", e);
-            }
+            merge_service.invalidate_cache().await;
+            tracing::info!("Invalidated suit service cache to sync server connections");
         }
     }
 
@@ -281,9 +278,8 @@ pub async fn batch_deactivate_suits(
     // Sync server connections if merge service is available and any suits were deactivated
     if !successful_ids.is_empty() {
         if let Some(merge_service) = &state.suit_merge_service {
-            if let Err(e) = merge_service.sync_server_connections(&state).await {
-                tracing::error!("Failed to sync server connections: {}", e);
-            }
+            merge_service.invalidate_cache().await;
+            tracing::info!("Invalidated suit service cache to sync server connections");
         }
     }
 

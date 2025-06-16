@@ -16,7 +16,7 @@ use axum::Router;
 use tokio::sync::Mutex;
 
 use crate::{
-    core::http::{HttpProxyServer, pool::UpstreamConnectionPool},
+    core::{pool::UpstreamConnectionPool, proxy::ProxyServer},
     system::SystemMetricsCollector,
 };
 
@@ -28,9 +28,9 @@ pub struct AppState {
     /// System metrics collector
     pub metrics_collector: Arc<SystemMetricsCollector>,
     /// HTTP proxy server reference
-    pub http_proxy: Option<Arc<HttpProxyServer>>,
+    pub http_proxy: Option<Arc<ProxyServer>>,
     /// Config Suit merge service
-    pub suit_merge_service: Option<Arc<crate::core::suit::ConfigSuitMergeService>>,
+    pub suit_merge_service: Option<Arc<crate::core::suit::SuitService>>,
     /// Database reference for API operations
     pub database: Option<Arc<crate::config::database::Database>>,
 }
@@ -43,7 +43,7 @@ pub fn create_router(connection_pool: Arc<Mutex<UpstreamConnectionPool>>) -> Rou
 /// Create the API router with all routes and HTTP proxy server reference
 pub fn create_router_with_proxy(
     connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
-    http_proxy: Arc<HttpProxyServer>,
+    http_proxy: Arc<ProxyServer>,
 ) -> Router {
     create_router_internal(connection_pool, Some(http_proxy))
 }
@@ -51,7 +51,7 @@ pub fn create_router_with_proxy(
 /// Internal function to create router with optional HTTP proxy
 fn create_router_internal(
     connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
-    http_proxy: Option<Arc<HttpProxyServer>>,
+    http_proxy: Option<Arc<ProxyServer>>,
 ) -> Router {
     // Create system metrics collector with 5 second update interval
     let metrics_collector = Arc::new(SystemMetricsCollector::new(std::time::Duration::from_secs(
@@ -64,7 +64,7 @@ fn create_router_internal(
     // Create Config Suit merge service if HTTP proxy and database are available
     let config_suit_merge_service = if let Some(ref proxy) = http_proxy {
         if let Some(db) = proxy.database.clone() {
-            let merge_service = Arc::new(crate::core::suit::ConfigSuitMergeService::new(db));
+            let merge_service = Arc::new(crate::core::suit::SuitService::new(db));
             Some(merge_service)
         } else {
             tracing::warn!(

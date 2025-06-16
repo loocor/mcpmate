@@ -11,7 +11,7 @@ use axum::{
 use crate::{
     api::{handlers::ApiError, routes::AppState},
     config::server,
-    core::http::HttpProxyServer,
+    core::proxy::ProxyServer,
 };
 
 /// List all MCP specification-compliant resources
@@ -23,7 +23,8 @@ pub async fn list_all(
 
     // Build resource mapping from all connected servers
     let resource_mapping =
-        crate::core::resource::build_resource_mapping(&proxy.connection_pool, Some(&db)).await;
+        crate::core::protocol::resource::build_resource_mapping(&proxy.connection_pool, Some(&db))
+            .await;
 
     // Convert resource mapping to list of resources
     let resources: Vec<rmcp::model::Resource> = resource_mapping
@@ -60,7 +61,8 @@ pub async fn list_server(
 
     // Build resource mapping from all connected servers
     let resource_mapping =
-        crate::core::resource::build_resource_mapping(&proxy.connection_pool, Some(&db)).await;
+        crate::core::protocol::resource::build_resource_mapping(&proxy.connection_pool, Some(&db))
+            .await;
 
     // Filter resources for the specific server
     let resources: Vec<rmcp::model::Resource> = resource_mapping
@@ -87,7 +89,8 @@ pub async fn list_templates(
 
     // Build resource template mapping from all connected servers
     let resource_template_mapping =
-        crate::core::resource::build_resource_template_mapping(&proxy.connection_pool).await;
+        crate::core::protocol::resource::build_resource_template_mapping(&proxy.connection_pool)
+            .await;
 
     // Convert resource template mapping to list of resource templates
     let resource_templates: Vec<rmcp::model::ResourceTemplate> = resource_template_mapping
@@ -124,7 +127,8 @@ pub async fn list_server_templates(
 
     // Build resource template mapping from all connected servers
     let resource_template_mapping =
-        crate::core::resource::build_resource_template_mapping(&proxy.connection_pool).await;
+        crate::core::protocol::resource::build_resource_template_mapping(&proxy.connection_pool)
+            .await;
 
     // Filter resource templates for the specific server
     let resource_templates: Vec<rmcp::model::ResourceTemplate> = resource_template_mapping
@@ -145,7 +149,7 @@ pub async fn list_server_templates(
 /// Helper function to get context (proxy server and database)
 async fn get_context(
     state: &AppState
-) -> Result<(Arc<HttpProxyServer>, Arc<crate::config::database::Database>), ApiError> {
+) -> Result<(Arc<ProxyServer>, Arc<crate::config::database::Database>), ApiError> {
     let proxy = state
         .http_proxy
         .as_ref()

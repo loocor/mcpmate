@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     start_proxy_server(&mut proxy, &args).await?;
 
     // Start API server
-    let api_task = start_api_server(&proxy, &args).await?;
+    let api_task = start_api_server(proxy_arc.clone(), &args).await?;
 
     tracing::info!("Servers started. Press Ctrl+C to stop.");
 

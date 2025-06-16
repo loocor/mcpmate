@@ -11,7 +11,7 @@ use axum::{
 use crate::{
     api::{handlers::ApiError, routes::AppState},
     config::{operations, server, suit},
-    core::http::HttpProxyServer,
+    core::proxy::ProxyServer,
 };
 
 /// List all MCP specification-compliant tools
@@ -231,10 +231,10 @@ pub async fn get_tool(
 /// * `state` - The application state
 ///
 /// # Returns
-/// * `Result<(&HttpProxyServer, &Database), ApiError>` - The HTTP proxy server and database, or an error
+/// * `Result<(&ProxyServer, &Database), ApiError>` - The HTTP proxy server and database, or an error
 pub async fn get_context(
     state: &Arc<AppState>
-) -> Result<(&HttpProxyServer, &crate::config::database::Database), ApiError> {
+) -> Result<(&ProxyServer, &crate::config::database::Database), ApiError> {
     // Get the HTTP proxy server
     let proxy = state
         .http_proxy
