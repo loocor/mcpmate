@@ -1,13 +1,18 @@
-//! Event waiting utilities
+//! Event waiting utilities for the core event system
 
 use std::time::Duration;
 
-use anyhow::Result;
 use tokio::time::timeout;
 use tracing::debug;
 
 use super::{Event, EventBus};
-use crate::{common::server::ServerType, core::transport::TransportType};
+use crate::{
+    common::server::ServerType,
+    core::{
+        foundation::error::{CoreError, CoreResult},
+        transport::TransportType,
+    },
+};
 
 /// Wait for the transport layer of a specific server type to be ready
 ///
@@ -19,22 +24,11 @@ use crate::{common::server::ServerType, core::transport::TransportType};
 /// * `timeout_ms` - The timeout in milliseconds
 ///
 /// # Returns
-/// * `Result<()>` - Success or timeout error
-///
-/// This function will wait for a ready event for the specified transport type,
-/// or return a timeout error if the event does not occur within the specified timeout.
-/// If the event occurs within the timeout, it returns Ok(()), otherwise it returns a timeout error.
-///
-/// # Parameters
-/// * `transport_type` - The type of transport layer to wait for
-/// * `timeout_ms` - The timeout in milliseconds
-///
-/// # Returns
-/// * `Result<()>` - Success or timeout error
+/// * `CoreResult<()>` - Success or timeout error
 pub async fn wait_for_transport_ready(
     transport_type: TransportType,
     timeout_ms: u64,
-) -> Result<()> {
+) -> CoreResult<()> {
     debug!(
         "Waiting for {:?} transport layer to be ready, timeout {}ms",
         transport_type, timeout_ms
@@ -62,7 +56,10 @@ pub async fn wait_for_transport_ready(
                 }
                 Err(e) => {
                     // Broadcast channel error
-                    return Err(anyhow::anyhow!("Event receiver error: {}", e));
+                    return Err(CoreError::generic_error(
+                        &format!("Event receiver error: {}", e),
+                        Some(anyhow::anyhow!(e)),
+                    ));
                 }
             }
         }

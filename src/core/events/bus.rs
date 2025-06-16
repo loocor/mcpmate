@@ -1,4 +1,4 @@
-//! Event bus for the MCPMate event system
+//! Event bus for the core event system
 
 use std::sync::{Arc, RwLock};
 
@@ -15,7 +15,7 @@ type EventHandler = Box<dyn Fn(Event) + Send + Sync + 'static>;
 
 /// Global event bus singleton
 static EVENT_BUS: once_cell::sync::Lazy<EventBus> = once_cell::sync::Lazy::new(|| {
-    info!("Initializing event bus");
+    info!("Initializing core event bus");
     EventBus::new()
 });
 
@@ -54,7 +54,7 @@ impl EventBus {
         &self,
         event: Event,
     ) {
-        debug!("Publishing event: {:?}", event);
+        debug!("Publishing core event: {:?}", event);
 
         // Send to broadcast channel for async subscribers
         let _ = self.sender.send(event.clone());
@@ -78,7 +78,10 @@ impl EventBus {
     {
         if let Ok(mut handlers) = self.handlers.write() {
             handlers.push(Box::new(handler));
-            debug!("Added event handler, total handlers: {}", handlers.len());
+            debug!(
+                "Added core event handler, total handlers: {}",
+                handlers.len()
+            );
         } else {
             error!("Failed to acquire write lock on event handlers");
         }

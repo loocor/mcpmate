@@ -1,267 +1,216 @@
-// Config Suit merge service
-// Contains functions for merging and deduplicating configuration suits
+//! Configuration suit merging algorithm implementation
+//!
+//! Merges server and tool configurations from multiple active configuration suits
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use crate::config::database::Database;
+use crate::core::foundation::error::{CoreError, CoreResult};
+use crate::core::suit::types::*;
+use std::sync::Arc;
 
-use anyhow::{Context, Result};
-use tracing;
-
-use crate::{
-    api::routes::AppState,
-    config::{
-        database::Database,
-        models::{ConfigSuitTool, Server},
-        suit::get_active_config_suits,
-    },
-};
-
-/// Configuration Suit Merge Service
+/// Configuration suit merger
 ///
-/// This service is responsible for merging and deduplicating servers and tools
-/// from multiple active configuration suits.
-#[derive(Debug)]
-pub struct ConfigSuitMergeService {
+/// Responsible for merging server and tool configurations from multiple active configuration suits
+#[derive(Debug, Clone)]
+pub struct SuitMerger {
     /// Database reference
-    pub db: Arc<Database>,
+    db: Arc<Database>,
 }
 
-impl ConfigSuitMergeService {
-    /// Create a new ConfigSuitMergeService
+impl SuitMerger {
+    /// Create a new SuitMerger instance
     pub fn new(db: Arc<Database>) -> Self {
         Self { db }
     }
 
-    /// Get all merged servers
-    pub async fn get_merged_servers(&self) -> Result<Vec<Server>> {
+    /// Execute complete configuration merging operation
+    ///
+    /// # Returns
+    /// - `Ok(SuitMergeResult)`: Merge result
+    /// - `Err(CoreError)`: Error during merging process
+    pub async fn merge_all_configs(&self) -> CoreResult<SuitMergeResult> {
         // Get all active configuration suits
-        let active_suits = get_active_config_suits(&self.db.pool)
+        let active_suits = crate::config::suit::get_active_config_suits(&self.db.pool)
             .await
-            .context("Failed to get active configuration suits")?;
+            .map_err(|e| {
+                CoreError::generic_error(
+                    &format!("Failed to get active config suits: {}", e),
+                    Some(e),
+                )
+            })?;
 
         tracing::debug!("Found {} active configuration suits", active_suits.len());
 
         // Merge servers from all active suits
         let merged_servers = self.merge_servers(&active_suits).await?;
 
-        // Convert to Vec
-        let servers = merged_servers.values().cloned().collect();
-        Ok(servers)
+        // Merge tools from all active suits
+        let merged_tools = self.merge_all_tools(&active_suits).await?;
+
+        // Build merge result
+        let suit_ids: Vec<String> = active_suits.iter().filter_map(|s| s.id.clone()).collect();
+
+        Ok(SuitMergeResult {
+            servers: merged_servers,
+            tools: merged_tools,
+            merged_suits: suit_ids,
+            merged_at: chrono::Utc::now(),
+        })
     }
 
-    /// Get all merged tools for a specific server
-    pub async fn get_merged_tools(
+    /// Get merged tool configurations for a specific server
+    ///
+    /// # Arguments
+    /// - `server_id`: Server ID
+    ///
+    /// # Returns
+    /// - `Ok(Vec<MergedToolConfig>)`: List of tool configurations for this server
+    /// - `Err(CoreError)`: Error during merging process
+    pub async fn merge_tools_for_server(
         &self,
         server_id: &str,
-    ) -> Result<Vec<ConfigSuitTool>> {
+    ) -> CoreResult<Vec<MergedToolConfig>> {
         // Get all active configuration suits
-        let active_suits = get_active_config_suits(&self.db.pool)
+        let active_suits = crate::config::suit::get_active_config_suits(&self.db.pool)
             .await
-            .context("Failed to get active configuration suits")?;
+            .map_err(|e| {
+                CoreError::generic_error(
+                    &format!("Failed to get active config suits: {}", e),
+                    Some(e),
+                )
+            })?;
 
-        // Merge tools for the server
-        let tools = self.merge_tools(&active_suits, server_id).await?;
-
-        // Convert to Vec
-        let tools_vec = tools.values().cloned().collect();
-        Ok(tools_vec)
+        // Merge tools for the specific server
+        self.merge_tools_for_specific_server(&active_suits, server_id)
+            .await
     }
 
-    /// Check if a tool is enabled
+    /// Check if a specific tool is enabled
+    ///
+    /// # Arguments
+    /// - `server_id`: Server ID
+    /// - `tool_name`: Tool name
+    ///
+    /// # Returns
+    /// - `Ok(bool)`: Whether the tool is enabled
+    /// - `Err(CoreError)`: Error during checking process
     pub async fn is_tool_enabled(
         &self,
         server_id: &str,
         tool_name: &str,
-    ) -> Result<bool> {
+    ) -> CoreResult<bool> {
         // Get all active configuration suits
-        let active_suits = get_active_config_suits(&self.db.pool)
+        let active_suits = crate::config::suit::get_active_config_suits(&self.db.pool)
             .await
-            .context("Failed to get active configuration suits")?;
+            .map_err(|e| {
+                CoreError::generic_error(
+                    &format!("Failed to get active config suits: {}", e),
+                    Some(e),
+                )
+            })?;
 
-        // Merge tools for the server
-        let tools = self.merge_tools(&active_suits, server_id).await?;
+        // Check if the tool is enabled in any of the active suits for this server
+        for suit in &active_suits {
+            if let Some(suit_id) = &suit.id {
+                if let Ok(servers) =
+                    crate::config::suit::get_config_suit_servers(&self.db.pool, suit_id).await
+                {
+                    // Check if this suit contains the specified server
+                    let has_server = servers
+                        .iter()
+                        .any(|s| s.server_id == server_id && s.enabled);
 
-        // Check if the tool is enabled by looking for a tool with matching name
-        // Note: tools HashMap is keyed by tool_id, not tool_name, so we need to iterate
-        for tool in tools.values() {
-            if tool.tool_name == tool_name {
-                return Ok(tool.enabled);
-            }
-        }
-
-        // If the tool is not found, it's considered disabled
-        // This is a change from the semi-blacklist mode in operations::tool::is_tool_enabled
-        // but is consistent with the behavior in the rest of the merge service
-        Ok(false)
-    }
-
-    /// Synchronize server connections based on merged servers
-    ///
-    /// This function connects to servers that are enabled in the merged list
-    /// and disconnects from servers that are not in the merged list.
-    pub async fn sync_server_connections(
-        &self,
-        state: &Arc<AppState>,
-    ) -> Result<()> {
-        tracing::debug!("Synchronizing server connections");
-
-        // Get merged servers
-        let merged_servers = self.get_merged_servers().await?;
-        let merged_server_ids: HashSet<String> =
-            merged_servers.iter().filter_map(|s| s.id.clone()).collect();
-
-        // Get connection pool
-        let mut pool = state.connection_pool.lock().await;
-
-        // Get all connected servers
-        let mut connected_server_ids = HashSet::new();
-        for (server_name, instances) in &pool.connections {
-            // Get server ID
-            if let Ok(Some(server)) =
-                crate::config::server::get_server(&self.db.pool, server_name).await
-            {
-                if let Some(server_id) = server.id {
-                    // Check if any instance is connected
-                    for conn in instances.values() {
-                        if conn.is_connected() {
-                            connected_server_ids.insert(server_id.clone());
-                            break;
+                    if has_server {
+                        if let Ok(tools) =
+                            crate::config::suit::get_config_suit_tools(&self.db.pool, suit_id).await
+                        {
+                            for tool in tools {
+                                if tool.tool_name == tool_name
+                                    && tool.enabled
+                                    && tool.server_id == server_id
+                                {
+                                    return Ok(true);
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Servers to connect: in merged list but not connected
-        let to_connect: Vec<&Server> = merged_servers
-            .iter()
-            .filter(|s| {
-                if let Some(id) = &s.id {
-                    !connected_server_ids.contains(id)
-                } else {
-                    false
-                }
-            })
-            .collect();
-
-        // Servers to disconnect: connected but not in merged list
-        let to_disconnect: Vec<String> = connected_server_ids
-            .iter()
-            .filter(|id| !merged_server_ids.contains(*id))
-            .cloned()
-            .collect();
-
-        // Connect to servers
-        for server in to_connect {
-            let name = &server.name;
-            tracing::info!("Connecting to server '{}'", name);
-
-            // Find the default instance
-            if let Ok((instance_id, _)) = pool.get_default_instance(name) {
-                // Connect to the server
-                if let Err(e) = pool.connect(name, &instance_id).await {
-                    tracing::error!("Failed to connect to server '{}': {}", name, e);
-                }
-            }
-        }
-
-        // Disconnect from servers
-        for server_id in to_disconnect {
-            // Get server name from ID
-            if let Ok(Some(server)) =
-                crate::config::server::get_server_by_id(&self.db.pool, &server_id).await
-            {
-                let name = &server.name;
-                tracing::info!("Disconnecting from server '{}'", name);
-
-                // Get instance IDs first to avoid borrowing issues
-                let instance_ids: Vec<String> = if let Some(instances) = pool.connections.get(name)
-                {
-                    instances.keys().cloned().collect()
-                } else {
-                    Vec::new()
-                };
-
-                // Disconnect from each instance
-                for instance_id in instance_ids {
-                    // Disconnect from the server
-                    if let Err(e) = pool.disconnect(name, &instance_id).await {
-                        tracing::error!("Failed to disconnect from server '{}': {}", name, e);
-                    }
-                }
-            }
-        }
-
-        tracing::debug!("Server connections synchronized successfully");
-        Ok(())
+        Ok(false)
     }
 
     /// Merge servers from all active configuration suits
     async fn merge_servers(
         &self,
         active_suits: &[crate::config::models::ConfigSuit],
-    ) -> Result<HashMap<String, Server>> {
-        let mut merged_servers = HashMap::new();
+    ) -> CoreResult<Vec<MergedServerConfig>> {
+        use std::collections::HashMap;
 
-        // Process each active suit
+        let mut server_map: HashMap<String, MergedServerConfig> = HashMap::new();
+
         for suit in active_suits {
             if let Some(suit_id) = &suit.id {
-                // Get all servers in this suit
-                let suit_servers =
-                    crate::config::suit::get_config_suit_servers(&self.db.pool, suit_id)
-                        .await
-                        .context(format!("Failed to get servers for suit '{suit_id}'"))?;
+                if let Ok(suit_servers) =
+                    crate::config::suit::get_config_suit_servers(&self.db.pool, suit_id).await
+                {
+                    for suit_server in suit_servers {
+                        if !suit_server.enabled {
+                            continue; // Skip disabled servers
+                        }
 
-                // Process each server
-                for server_config in suit_servers {
-                    // Only include enabled servers in the config suit
-                    if server_config.enabled {
-                        // Get server details
-                        if let Ok(Some(server)) = crate::config::server::get_server_by_id(
-                            &self.db.pool,
-                            &server_config.server_id,
+                        // Get actual server details from server_config table
+                        let server_details = match sqlx::query_as::<_, (String, String)>(
+                            "SELECT name, address FROM server_config WHERE id = ?",
                         )
+                        .bind(&suit_server.server_id)
+                        .fetch_optional(&self.db.pool)
                         .await
                         {
-                            // Check if the server is globally enabled
-                            let globally_enabled =
-                                match crate::config::server::get_server_global_status(
-                                    &self.db.pool,
-                                    &server_config.server_id,
-                                )
-                                .await
-                                {
-                                    Ok(Some(enabled)) => enabled,
-                                    Ok(None) => {
-                                        tracing::warn!(
-                                            "Server '{}' global status not found, assuming disabled",
-                                            server.name
-                                        );
-                                        false
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Failed to get server '{}' global status: {}",
-                                            server.name,
-                                            e
-                                        );
-                                        false
-                                    }
-                                };
-
-                            // Only include servers that are both globally enabled and enabled in the config suit
-                            if globally_enabled {
-                                // Add to merged servers, using server_id as the key
-                                if let Some(server_id) = &server.id {
-                                    merged_servers.insert(server_id.clone(), server);
-                                }
-                            } else {
-                                tracing::debug!(
-                                    "Server '{}' is enabled in config suit but globally disabled, skipping",
-                                    server.name
+                            Ok(Some((name, address))) => (name, address),
+                            Ok(None) => {
+                                tracing::warn!(
+                                    "Server {} not found in server_config",
+                                    suit_server.server_id
                                 );
+                                continue;
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to get server details for {}: {}",
+                                    suit_server.server_id,
+                                    e
+                                );
+                                continue;
+                            }
+                        };
+
+                        let entry = server_map
+                            .entry(suit_server.server_id.clone())
+                            .or_insert_with(|| MergedServerConfig {
+                                server_id: suit_server.server_id.clone(),
+                                name: server_details.0.clone(),
+                                address: server_details.1.clone(),
+                                enabled_tools: vec![],
+                                source_suits: vec![],
+                            });
+
+                        // Add this suit as a source
+                        if !entry.source_suits.contains(suit_id) {
+                            entry.source_suits.push(suit_id.clone());
+                        }
+
+                        // Get tools for this server in this suit
+                        if let Ok(tools) =
+                            crate::config::suit::get_config_suit_tools(&self.db.pool, suit_id).await
+                        {
+                            for tool in tools {
+                                if tool.enabled
+                                    && tool.server_id == suit_server.server_id
+                                    && !entry.enabled_tools.contains(&tool.tool_name)
+                                {
+                                    entry.enabled_tools.push(tool.tool_name);
+                                }
                             }
                         }
                     }
@@ -269,35 +218,112 @@ impl ConfigSuitMergeService {
             }
         }
 
-        Ok(merged_servers)
+        Ok(server_map.into_values().collect())
     }
 
-    /// Merge tools for a specific server from all active configuration suits
-    async fn merge_tools(
+    /// Merge all tools from active configuration suits
+    async fn merge_all_tools(
+        &self,
+        active_suits: &[crate::config::models::ConfigSuit],
+    ) -> CoreResult<Vec<MergedToolConfig>> {
+        use std::collections::HashMap;
+
+        let mut tool_map: HashMap<String, MergedToolConfig> = HashMap::new();
+
+        for suit in active_suits {
+            if let Some(suit_id) = &suit.id {
+                if let Ok(tools) =
+                    crate::config::suit::get_config_suit_tools(&self.db.pool, suit_id).await
+                {
+                    for tool in tools {
+                        let entry = tool_map.entry(tool.tool_name.clone()).or_insert_with(|| {
+                            MergedToolConfig {
+                                tool_name: tool.tool_name.clone(),
+                                enabled: false,
+                                server_ids: vec![],
+                                config: HashMap::new(), // Empty config for now
+                                source_suits: vec![],
+                            }
+                        });
+
+                        // Update enabled status (if any suit enables it, it's enabled)
+                        if tool.enabled {
+                            entry.enabled = true;
+                        }
+
+                        // Add server ID if not already present
+                        if tool.enabled && !entry.server_ids.contains(&tool.server_id) {
+                            entry.server_ids.push(tool.server_id.clone());
+                        }
+
+                        // Add this suit as a source
+                        if !entry.source_suits.contains(suit_id) {
+                            entry.source_suits.push(suit_id.clone());
+                        }
+
+                        // Note: ConfigSuitTool doesn't have a config field in the current model
+                        // If configuration is needed, it would need to be added to the database schema
+                    }
+                }
+            }
+        }
+
+        Ok(tool_map.into_values().collect())
+    }
+
+    /// Merge tools for a specific server
+    async fn merge_tools_for_specific_server(
         &self,
         active_suits: &[crate::config::models::ConfigSuit],
         server_id: &str,
-    ) -> Result<HashMap<String, ConfigSuitTool>> {
-        let mut merged_tools = HashMap::new();
+    ) -> CoreResult<Vec<MergedToolConfig>> {
+        use std::collections::HashMap;
 
-        // Process each active suit
+        let mut tool_map: HashMap<String, MergedToolConfig> = HashMap::new();
+
         for suit in active_suits {
             if let Some(suit_id) = &suit.id {
-                // Get all tools in this suit
-                let suit_tools =
-                    crate::config::operations::tool::get_tools_by_suit_id(&self.db.pool, suit_id)
-                        .await
-                        .context(format!("Failed to get tools for suit '{suit_id}'"))?;
+                // Check if this suit contains the specified server and it's enabled
+                if let Ok(servers) =
+                    crate::config::suit::get_config_suit_servers(&self.db.pool, suit_id).await
+                {
+                    let has_enabled_server = servers
+                        .iter()
+                        .any(|s| s.server_id == server_id && s.enabled);
 
-                // Process each tool
-                for tool in suit_tools {
-                    // Only include tools for the specified server
-                    if tool.server_id == *server_id {
-                        // Only include enabled tools
-                        if tool.enabled {
-                            // Add to merged tools, using tool_id as the key
-                            if let Some(tool_id) = &tool.id {
-                                merged_tools.insert(tool_id.clone(), tool);
+                    if has_enabled_server {
+                        if let Ok(tools) =
+                            crate::config::suit::get_config_suit_tools(&self.db.pool, suit_id).await
+                        {
+                            for tool in tools {
+                                // Only include tools for the specified server
+                                if tool.server_id != server_id {
+                                    continue;
+                                }
+
+                                let entry =
+                                    tool_map.entry(tool.tool_name.clone()).or_insert_with(|| {
+                                        MergedToolConfig {
+                                            tool_name: tool.tool_name.clone(),
+                                            enabled: false,
+                                            server_ids: vec![server_id.to_string()],
+                                            config: HashMap::new(),
+                                            source_suits: vec![],
+                                        }
+                                    });
+
+                                // Update enabled status
+                                if tool.enabled {
+                                    entry.enabled = true;
+                                }
+
+                                // Add this suit as a source
+                                if !entry.source_suits.contains(suit_id) {
+                                    entry.source_suits.push(suit_id.clone());
+                                }
+
+                                // Note: ConfigSuitTool doesn't have a config field in the current model
+                                // Configuration merging would need database schema updates
                             }
                         }
                     }
@@ -305,6 +331,6 @@ impl ConfigSuitMergeService {
             }
         }
 
-        Ok(merged_tools)
+        Ok(tool_map.into_values().collect())
     }
 }

@@ -1,10 +1,18 @@
-// Core models for MCPMate
-// Contains data models for core functionality
+//! Core models for core MCPMate
+//! Contains data models for core functionality - completely independent from core
 
 use crate::common::server::{ServerType, TransportType};
-use crate::core::pagination::PaginationConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Pagination configuration for proxy responses
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PaginationConfig {
+    /// Maximum number of items per page
+    pub max_page_size: usize,
+    /// Default page size if not specified
+    pub default_page_size: usize,
+}
 
 /// MCP server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

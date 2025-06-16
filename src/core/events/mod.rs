@@ -1,22 +1,58 @@
-/// Event system for MCPMate
-///
-/// This module provides a simple event system for MCPMate, allowing components
-/// to communicate with each other without direct dependencies.
-///
-/// The event system is designed to be lightweight and focused on core scenarios,
-/// particularly server status changes that need to trigger connection operations.
-mod bus;
-mod handlers;
-mod types;
-mod wait;
+//! Event system for the core architecture
+//!
+//! This module provides a decoupled event-driven communication system that supports
+//! both synchronous and asynchronous event handling. It's designed to replace the
+//! core/events module with improved performance and better separation of concerns.
+//!
+//! # Features
+//!
+//! - Global event bus with broadcast capabilities
+//! - Support for both sync and async event subscribers
+//! - Transport layer readiness waiting mechanism
+//! - Dependency injection for event handlers
+//! - Event classification for optimized processing
+//!
+//! # Usage
+//!
+//! ## Basic Event Publishing
+//!
+//! ```rust
+//! use crate::core::events::{EventBus, Event};
+//!
+//! // Publish an event
+//! EventBus::global().publish(Event::ServerGlobalStatusChanged {
+//!     server_id: "test".to_string(),
+//!     server_name: "test_server".to_string(),
+//!     enabled: true,
+//! });
+//! ```
+//!
+//! ## Initialize with Custom Handlers
+//!
+//! ```rust
+//! use crate::core::events::{EventHandlers, init_with_handlers};
+//!
+//! let mut handlers = EventHandlers::new();
+//! handlers.register_server_sync_callback(|| {
+//!     Box::pin(async {
+//!         // Your server sync logic here
+//!         Ok(())
+//!     })
+//! });
+//!
+//! init_with_handlers(handlers)?;
+//! ```
 
+pub mod bus;
+pub mod handlers;
+pub mod types;
+pub mod wait;
+
+// Re-export public API
 pub use bus::EventBus;
-pub use tokio::sync::broadcast::Receiver as EventReceiver;
+pub use handlers::{EventHandlers, ServerSyncCallback, init, init_with_handlers};
 pub use types::Event;
 pub use wait::{needs_transport_ready_wait, wait_for_transport_ready};
 
-/// Initialize the event system
-pub fn init() {
-    // Register event handlers
-    handlers::register_handlers();
-}
+// Re-export for compatibility
+pub use tokio::sync::broadcast::Receiver as EventReceiver;

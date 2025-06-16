@@ -1,16 +1,20 @@
+//! Initialization logic for core proxy server
+//!
+//! This module handles the setup and initialization of the proxy server using core modules.
+
 use anyhow::Result;
 use std::sync::Arc;
 use tracing_subscriber::{self, EnvFilter};
 
-use super::Args;
+use super::{Args, ProxyServer};
 
-// Import required types and modules from our library crate
-use crate::api::handlers::system;
-use crate::config::database::Database;
-use crate::core::http::HttpProxyServer;
-use crate::core::http::proxy;
-use crate::core::{events, loader};
-use crate::runtime::migration;
+// Import required types and modules from core and other modules
+use crate::{
+    api::handlers::system,
+    config::database::Database,
+    core::{events, foundation::loader},
+    runtime::migration,
+};
 
 /// Setup logging based on command line arguments
 pub fn setup_logging(args: &Args) -> Result<()> {
@@ -54,9 +58,9 @@ pub async fn setup_database() -> Result<Database> {
     Ok(db)
 }
 
-/// Setup proxy server with database and configuration
-pub async fn setup_proxy_server(db: Database) -> Result<(HttpProxyServer, Arc<HttpProxyServer>)> {
-    // Load configuration from database
+/// Setup proxy server with database and configuration using core modules
+pub async fn setup_proxy_server(db: Database) -> Result<(ProxyServer, Arc<ProxyServer>)> {
+    // Load configuration from database using core loader
     let config = loader::load_server_config(&db).await?;
 
     tracing::info!("Loaded configuration from database");
@@ -65,8 +69,8 @@ pub async fn setup_proxy_server(db: Database) -> Result<(HttpProxyServer, Arc<Ht
         config.mcp_servers.len()
     );
 
-    // Create HTTP proxy server
-    let mut proxy = HttpProxyServer::new(Arc::new(config));
+    // Create proxy server using core implementation
+    let mut proxy = ProxyServer::new(Arc::new(config));
 
     // Use the existing database connection
     proxy.set_database(db).await?;
@@ -74,14 +78,11 @@ pub async fn setup_proxy_server(db: Database) -> Result<(HttpProxyServer, Arc<Ht
 
     // Create an Arc for the proxy server and set the global instance
     let proxy_arc = Arc::new(proxy.clone());
-    proxy::set_proxy_server(proxy_arc.clone());
+    ProxyServer::set_global(Arc::new(tokio::sync::Mutex::new(proxy.clone())));
 
-    // Set the global instance for the event system
-    let proxy_mutex = Arc::new(tokio::sync::Mutex::new(proxy.clone()));
-    HttpProxyServer::set_global(proxy_mutex);
-
-    // Initialize the event system
-    events::init();
+    // Initialize the event system using core
+    let _ = events::init();
+    tracing::info!("Event system initialized using core");
 
     Ok((proxy, proxy_arc))
 }

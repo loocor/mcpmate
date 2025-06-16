@@ -1,41 +1,83 @@
-// MCP Proxy module
-// Contains functions and utilities for the MCP proxy server
+//! Core - refactor core module
+//!
+//! this is the refactor version of the original core module, using a more clear hierarchical architecture:
+//! - foundation: infrastructure layer
+//! - models: data models (independent)
+//! - events: event system (independent first-level module)
+//! - connection: single connection management
+//! - transport: transport layer
+//! - pool: connection pool management
+//! - protocol: protocol handling
+//! - proxy: proxy core
 
-// Module declarations
-pub mod connection;
-pub mod error;
-pub mod events;
-pub mod http;
-pub mod loader;
+// infrastructure layer - does not depend on other modules
+pub mod foundation;
+
+// data models - independent
 pub mod models;
-pub mod monitor;
-pub mod pagination;
-pub mod prompt;
-pub mod proxy;
-pub mod resource;
-pub mod sse;
-pub mod stdio;
-pub mod suit;
-pub mod tool;
-pub mod transport;
-pub mod types;
-pub mod utils;
 
-// Re-exports
-pub use crate::common::server::TransportType;
-pub use crate::core::http::pool::UpstreamConnectionPool;
-pub use connection::UpstreamConnection;
-pub use pagination::{PaginationConfig, ProxyPaginator};
-pub use resource::{
-    ResourceMapping, ResourceTemplateMapping, build_resource_mapping,
-    build_resource_template_mapping, read_upstream_resource, validate_resource_uri,
+// event system - independent infrastructure module
+pub mod events;
+
+// connection and transport layer - depends on infrastructure and event system
+pub mod connection;
+pub mod transport;
+
+// connection pool layer - depends on connection and transport
+pub mod pool;
+
+// protocol handling layer - depends on connection pool
+pub mod protocol;
+
+// proxy core business logic - depends on protocol layer
+pub mod proxy;
+
+// suit configuration business logic - depends on foundation layer
+pub mod suit;
+
+// proxy core business logic - depends on protocol layer
+pub use proxy::{Args as ProxyArgs, ProxyServer};
+
+// re-export core interfaces, keeping compatibility with the original core module
+pub use events::{
+    Event, EventBus, EventHandlers, EventReceiver, init as init_events,
+    init_with_handlers as init_events_with_handlers, needs_transport_ready_wait,
+    wait_for_transport_ready,
 };
-pub use sse::connect_sse_server;
-pub use suit::ConfigSuitMergeService;
-pub use tool::{
-    ToolMapping, ToolNameMapping, build_tool_mapping, call_upstream_tool, find_tool_in_server,
+
+pub use protocol::{
+    PromptMapping,
+    PromptTemplateMapping,
+    ResourceMapping,
+    ResourceTemplateMapping,
+
+    ToolMapping,
+    ToolNameMapping,
+
+    // build functions
+    build_prompt_mapping,
+    build_prompt_template_mapping,
+    build_resource_mapping,
+    build_resource_template_mapping,
+    build_tool_mapping,
+
+    // tool protocol
+    call_upstream_tool,
+    ensure_unique_name,
+    find_tool_in_server,
+    generate_unique_name,
     get_all_tools,
+    get_prompt_status,
+    get_resource_status,
+
+    // prompt protocol
+    get_upstream_prompt,
+    is_prompt_enabled,
+    is_resource_enabled,
+
+    // resource protocol
+    read_upstream_resource,
+    resolve_unique_name,
+    validate_prompt_name,
+    validate_resource_uri,
 };
-pub use transport::connect_http_server;
-pub use types::ConnectionStatus;
-pub use utils::{get_connection_timeout, get_tools_timeout};
