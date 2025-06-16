@@ -38,8 +38,8 @@ pub struct ProxyServer {
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     /// Database connection for configuration persistence
     pub database: Option<Arc<Database>>,
-    /// Config Suit merge service for tool enablement check (temporary core dependency)
-    pub config_suit_merge_service: Option<Arc<crate::core::suit::ConfigSuitMergeService>>,
+    /// Suit service for configuration management and tool enablement check
+    pub suit_service: Option<Arc<crate::recore::suit::SuitService>>,
     /// Runtime cache for fast runtime queries (temporary core dependency)
     pub runtime_cache: Arc<crate::runtime::RuntimeCache>,
     /// Paginator for aggregated results
@@ -231,8 +231,8 @@ impl ProxyServer {
 
         Self {
             connection_pool,
-            database: None,                  // Database will be initialized separately
-            config_suit_merge_service: None, // Will be initialized after database
+            database: None,     // Database will be initialized separately
+            suit_service: None, // Will be initialized when database is set
             runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
             paginator,
         }
@@ -249,10 +249,10 @@ impl ProxyServer {
         // Store the database connection
         self.database = Some(db_arc.clone());
 
-        // Initialize Config Suit merge service
-        self.config_suit_merge_service = Some(Arc::new(
-            crate::core::suit::ConfigSuitMergeService::new(db_arc.clone()),
-        ));
+        // Initialize Suit service
+        self.suit_service = Some(Arc::new(crate::recore::suit::SuitService::new(
+            db_arc.clone(),
+        )));
 
         // Update connection pool with database reference and runtime cache
         {

@@ -32,6 +32,9 @@ pub mod protocol;
 // proxy core business logic - depends on protocol layer
 pub mod proxy;
 
+// suit configuration business logic - depends on foundation layer
+pub mod suit;
+
 // proxy core business logic - depends on protocol layer
 pub use proxy::{Args as ProxyArgs, ProxyServer};
 

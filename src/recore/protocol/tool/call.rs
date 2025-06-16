@@ -9,79 +9,37 @@ use rmcp::model::{CallToolRequestParam, CallToolResult};
 use tokio::sync::Mutex;
 use tracing;
 
-use super::mapping::build_tool_mapping;
 use crate::recore::{foundation::types::ConnectionStatus, pool::UpstreamConnectionPool};
 
 /// Call a tool on the appropriate upstream server
 ///
 /// This function calls a tool on the appropriate upstream server based on the tool name.
-/// It handles tool name prefixing and routing to the correct server and instance.
+/// It handles tool name resolution and routing to the correct server and instance using
+/// configuration suits to determine tool availability and permissions.
 ///
 /// # Arguments
 /// * `connection_pool` - The connection pool to use
 /// * `request` - The tool call request
-/// * `config_suit_merge_service` - Optional Config Suit merge service for tool enablement check
+/// * `suit_service` - Suit service for tool resolution and enablement check
 ///
 /// # Returns
 /// * `Result<CallToolResult>` - The result of the tool call, or an error if the call failed
 pub async fn call_upstream_tool(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     request: CallToolRequestParam,
-    config_suit_merge_service: Option<&Arc<crate::core::suit::ConfigSuitMergeService>>,
+    suit_service: &Arc<crate::recore::suit::SuitService>,
 ) -> Result<CallToolResult> {
     // Extract the unique name from the request
     let unique_name = request.name.to_string();
 
-    // Variables to store resolved server name and original tool name
-    let (server_name, original_tool_name);
-
-    // Try to resolve the unique name using the database if config_suit_merge_service is available
-    if let Some(merge_service) = config_suit_merge_service {
-        match crate::core::tool::resolve_unique_name(&merge_service.db.pool, &unique_name).await {
-            Ok((server, tool)) => {
-                server_name = server;
-                original_tool_name = tool;
-
-                tracing::debug!(
-                    "Resolved unique name '{}' to server '{}' and tool '{}'",
-                    unique_name,
-                    server_name,
-                    original_tool_name
-                );
-            }
-            Err(e) => {
-                // If resolution fails, fall back to the tool mapping
-                tracing::warn!(
-                    "Failed to resolve unique name '{}': {}, falling back to tool mapping",
-                    unique_name,
-                    e
-                );
-
-                // Build the tool mapping to find the server for this tool
-                let tool_mapping = build_tool_mapping(connection_pool).await;
-
-                // Find the mapping for this tool
-                let mapping = tool_mapping.get(&unique_name).cloned().context(format!(
-                    "Tool '{unique_name}' not found in any connected server"
-                ))?;
-
-                server_name = mapping.server_name;
-                original_tool_name = unique_name.clone();
-            }
-        }
-    } else {
-        // If no config_suit_merge_service is available, use the tool mapping
-        // Build the tool mapping to find the server for this tool
-        let tool_mapping = build_tool_mapping(connection_pool).await;
-
-        // Find the mapping for this tool
-        let mapping = tool_mapping.get(&unique_name).cloned().context(format!(
-            "Tool '{unique_name}' not found in any connected server"
-        ))?;
-
-        server_name = mapping.server_name;
-        original_tool_name = unique_name.clone();
-    }
+    // Resolve tool name using SuitService
+    let (server_name, original_tool_name) =
+        resolve_tool_with_suit_service(connection_pool, &unique_name, suit_service)
+            .await
+            .context(format!(
+                "Failed to resolve tool '{}' to any available server",
+                unique_name
+            ))?;
 
     // Get the instance
     let connection_pool_guard = connection_pool.lock().await;
@@ -111,27 +69,20 @@ pub async fn call_upstream_tool(
     // Release the connection pool guard
     drop(connection_pool_guard);
 
-    // Check if the tool is enabled in the config suit
-    if let Some(merge_service) = config_suit_merge_service {
-        // Get server ID from database
-        if let Ok(Some(server)) =
-            crate::config::server::get_server(&merge_service.db.pool, &server_name).await
-        {
-            if let Some(server_id) = &server.id {
-                // Check if the tool is enabled
-                let is_enabled = merge_service
-                    .is_tool_enabled(server_id, &original_tool_name)
-                    .await
-                    .unwrap_or(true); // Default to enabled if check fails
+    // Check if the tool is enabled for this server using SuitService
+    let tool_enabled = check_tool_enablement(suit_service, &server_name, &original_tool_name)
+        .await
+        .context(format!(
+            "Failed to check enablement for tool '{}' on server '{}'",
+            original_tool_name, server_name
+        ))?;
 
-                if !is_enabled {
-                    return Err(anyhow::anyhow!(
-                        "Tool '{}' is disabled in the active configuration suits",
-                        unique_name
-                    ));
-                }
-            }
-        }
+    if !tool_enabled {
+        return Err(anyhow::anyhow!(
+            "Tool '{}' is disabled for server '{}' according to configuration suits",
+            original_tool_name,
+            server_name
+        ));
     }
 
     // Use the original tool name for upstream server
@@ -294,5 +245,185 @@ pub async fn call_upstream_tool(
                 error_message
             ))
         }
+    }
+}
+
+/// Resolve tool name using SuitService
+///
+/// This function resolves a tool name using the SuitService, which respects
+/// configuration suit settings. Only tools that are enabled in active suits
+/// and available on connected servers will be resolved.
+///
+/// # Arguments
+/// * `connection_pool` - The connection pool to use
+/// * `tool_name` - The tool name to resolve
+/// * `suit_service` - SuitService for configuration-aware resolution
+///
+/// # Returns
+/// * `Result<(String, String)>` - Tuple of (server_name, original_tool_name)
+async fn resolve_tool_with_suit_service(
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    tool_name: &str,
+    suit_service: &Arc<crate::recore::suit::SuitService>,
+) -> Result<(String, String)> {
+    tracing::debug!(
+        "Resolving tool '{}' using SuitService configuration",
+        tool_name
+    );
+
+    // Get merged tool configurations from all active suits
+    let merge_result = suit_service.merge_all_configs().await.context(format!(
+        "Failed to get SuitService configuration for tool '{}'",
+        tool_name
+    ))?;
+
+    // Look for the tool in the merged configuration
+    let tool_config = merge_result
+        .tools
+        .iter()
+        .find(|t| t.tool_name == tool_name)
+        .context(format!(
+            "Tool '{}' not found in any active configuration suit",
+            tool_name
+        ))?;
+
+    // Check if the tool is enabled
+    if !tool_config.enabled {
+        return Err(anyhow::anyhow!(
+            "Tool '{}' is disabled in configuration suits",
+            tool_name
+        ));
+    }
+
+    // Check if any servers are configured for this tool
+    if tool_config.server_ids.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Tool '{}' has no servers configured in configuration suits",
+            tool_name
+        ));
+    }
+
+    // Find the first available server that has this tool enabled and connected
+    for server_id in &tool_config.server_ids {
+        if let Ok(mapping) =
+            super::mapping::find_tool_in_server(connection_pool, server_id, tool_name).await
+        {
+            tracing::info!(
+                "Resolved tool '{}' to server '{}' (enabled in {} suits)",
+                tool_name,
+                server_id,
+                tool_config.source_suits.len()
+            );
+            return Ok((mapping.server_name, mapping.upstream_tool_name));
+        }
+    }
+
+    // Tool is enabled in suits but no connected server provides it
+    Err(anyhow::anyhow!(
+        "Tool '{}' is enabled in configuration suits but no connected server provides it (configured servers: {:?})",
+        tool_name,
+        tool_config.server_ids
+    ))
+}
+
+/// Check if a tool is enabled for a specific server using SuitService
+///
+/// This function checks whether a tool is enabled for a specific server
+/// according to the configuration suits. Returns an error if the check fails.
+///
+/// # Arguments
+/// * `suit_service` - SuitService for enablement checking
+/// * `server_name` - The server name to check
+/// * `tool_name` - The tool name to check
+///
+/// # Returns
+/// * `Result<bool>` - True if the tool is enabled, false otherwise
+async fn check_tool_enablement(
+    suit_service: &Arc<crate::recore::suit::SuitService>,
+    server_name: &str,
+    tool_name: &str,
+) -> Result<bool> {
+    tracing::debug!(
+        "Checking tool enablement for '{}' on server '{}' using SuitService",
+        tool_name,
+        server_name
+    );
+
+    // Check if the tool is enabled for this specific server
+    let enabled = suit_service
+        .is_tool_enabled_for_server(server_name, tool_name)
+        .await
+        .context(format!(
+            "Failed to check tool enablement for '{}' on server '{}'",
+            tool_name, server_name
+        ))?;
+
+    if enabled {
+        tracing::debug!(
+            "Tool '{}' is enabled for server '{}' according to SuitService",
+            tool_name,
+            server_name
+        );
+    } else {
+        tracing::warn!(
+            "Tool '{}' is disabled for server '{}' according to SuitService",
+            tool_name,
+            server_name
+        );
+    }
+
+    Ok(enabled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::database::Database;
+    use crate::recore::suit::SuitService;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_resolve_tool_with_suit_service_not_found() {
+        // Test that the function returns error when tool is not found in SuitService
+
+        // Create a mock database and SuitService
+        let db = Arc::new(Database::new().await.unwrap());
+        let suit_service = Arc::new(SuitService::new(db));
+
+        // Create a mock config
+        let config = Arc::new(crate::recore::models::Config {
+            mcp_servers: std::collections::HashMap::new(),
+            pagination: None,
+        });
+
+        // Create a mock connection pool (empty)
+        let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(config, None)));
+
+        // Test with SuitService but nonexistent tool
+        let result = resolve_tool_with_suit_service(&pool, "nonexistent_tool", &suit_service).await;
+
+        // Should fail because tool is not found in configuration suits
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not found in any active configuration suit")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_tool_enablement_with_service() {
+        // Test tool enablement checking with a SuitService
+
+        // Create a mock database and SuitService
+        let db = Arc::new(Database::new().await.unwrap());
+        let suit_service = Arc::new(SuitService::new(db));
+
+        // Test enablement check (will likely return true due to empty database)
+        let result = check_tool_enablement(&suit_service, "test_server", "test_tool").await;
+
+        // Should succeed (may return true or false depending on configuration)
+        assert!(result.is_ok());
     }
 }
