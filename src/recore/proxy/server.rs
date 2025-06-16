@@ -464,13 +464,29 @@ impl ServerHandler for ProxyServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::debug!("Calling tool: {}", request.name);
 
-        // TODO: Implement tool calling with proper parameters
-        // The call_upstream_tool function requires connection_pool, request, and config_suit_merge_service
-        tracing::warn!("Tool calling not yet fully implemented in recore proxy");
-        Err(McpError::internal_error(
-            "Tool calling not yet fully implemented in recore proxy".to_string(),
-            None,
-        ))
+        // Check if suit service is available
+        if let Some(suit_service) = &self.suit_service {
+            // Use recore protocol implementation
+            match crate::recore::protocol::tool::call_upstream_tool(
+                &self.connection_pool,
+                request,
+                suit_service,
+            )
+            .await
+            {
+                Ok(result) => Ok(result),
+                Err(e) => {
+                    tracing::error!("Failed to call tool: {}", e);
+                    Err(McpError::internal_error(e.to_string(), None))
+                }
+            }
+        } else {
+            tracing::error!("Suit service not available for tool calling");
+            Err(McpError::internal_error(
+                "Configuration suit service not available".to_string(),
+                None,
+            ))
+        }
     }
 
     async fn list_resources(
@@ -513,13 +529,27 @@ impl ServerHandler for ProxyServer {
     ) -> Result<ReadResourceResult, McpError> {
         tracing::debug!("Reading resource: {}", request.uri);
 
-        // TODO: Implement resource reading with proper parameters
-        // The read_upstream_resource function requires connection_pool, resource_mapping, and uri
-        tracing::warn!("Resource reading not yet fully implemented in recore proxy");
-        Err(McpError::internal_error(
-            "Resource reading not yet fully implemented in recore proxy".to_string(),
-            None,
-        ))
+        // Build resource mapping on-demand (can be optimized later with caching)
+        let resource_mapping = crate::recore::protocol::resource::build_resource_mapping(
+            &self.connection_pool,
+            self.database.as_ref(),
+        )
+        .await;
+
+        // Use recore protocol implementation
+        match crate::recore::protocol::resource::read_upstream_resource(
+            &self.connection_pool,
+            &resource_mapping,
+            &request.uri,
+        )
+        .await
+        {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                tracing::error!("Failed to read resource '{}': {}", request.uri, e);
+                Err(McpError::internal_error(e.to_string(), None))
+            }
+        }
     }
 
     async fn list_prompts(
@@ -545,12 +575,24 @@ impl ServerHandler for ProxyServer {
     ) -> Result<GetPromptResult, McpError> {
         tracing::debug!("Getting prompt: {}", request.name);
 
-        // TODO: Implement prompt getting with proper parameters
-        // The get_upstream_prompt function requires connection_pool, prompt_mapping, name, and arguments
-        tracing::warn!("Prompt getting not yet fully implemented in recore proxy");
-        Err(McpError::internal_error(
-            "Prompt getting not yet fully implemented in recore proxy".to_string(),
-            None,
-        ))
+        // Build prompt mapping on-demand (can be optimized later with caching)
+        let prompt_mapping =
+            crate::recore::protocol::prompt::build_prompt_mapping(&self.connection_pool).await;
+
+        // Use recore protocol implementation
+        match crate::recore::protocol::prompt::get_upstream_prompt(
+            &self.connection_pool,
+            &prompt_mapping,
+            &request.name,
+            request.arguments,
+        )
+        .await
+        {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                tracing::error!("Failed to get prompt '{}': {}", request.name, e);
+                Err(McpError::internal_error(e.to_string(), None))
+            }
+        }
     }
 }

@@ -34,7 +34,7 @@ impl SuitMerger {
             .map_err(|e| {
                 RecoreError::generic_error(
                     &format!("Failed to get active config suits: {}", e),
-                    Some(e.into()),
+                    Some(e),
                 )
             })?;
 
@@ -75,7 +75,7 @@ impl SuitMerger {
             .map_err(|e| {
                 RecoreError::generic_error(
                     &format!("Failed to get active config suits: {}", e),
-                    Some(e.into()),
+                    Some(e),
                 )
             })?;
 
@@ -104,7 +104,7 @@ impl SuitMerger {
             .map_err(|e| {
                 RecoreError::generic_error(
                     &format!("Failed to get active config suits: {}", e),
-                    Some(e.into()),
+                    Some(e),
                 )
             })?;
 

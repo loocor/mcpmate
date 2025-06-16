@@ -11,9 +11,9 @@ use super::{Args, ProxyServer};
 use crate::{
     config::server,
     recore::{
-        foundation::types::ConnectionStatus, //
-        pool::UpstreamConnectionPool,        //
-        transport::TransportType,            //
+        foundation::types::ConnectionStatus, // connection status
+        pool::UpstreamConnectionPool,        // connection pool
+        transport::TransportType,            // transport type
     },
 };
 
@@ -156,9 +156,9 @@ pub async fn start_api_server(
     let api_bind_address: SocketAddr = format!("127.0.0.1:{}", args.api_port).parse()?;
     tracing::info!("Starting API server on {}", api_bind_address);
 
-    // TODO: API server integration with recore
+    // API server integration with recore (deferred)
     // The API server currently expects core::UpstreamConnectionPool, but we have recore::UpstreamConnectionPool
-    // This will need to be resolved when we migrate the API module or create an adapter
+    // This will be resolved after core module is replaced with recore, or by creating a compatibility adapter
 
     tracing::warn!(
         "API server temporarily disabled - type incompatibility between core and recore connection pools"

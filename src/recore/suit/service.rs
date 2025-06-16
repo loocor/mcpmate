@@ -4,7 +4,7 @@
 //! configuration merging, tool checking and other functions
 
 use crate::config::database::Database;
-use crate::recore::foundation::error::RecoreResult;
+use crate::recore::foundation::error::{RecoreError, RecoreResult};
 use crate::recore::suit::merge::SuitMerger;
 use crate::recore::suit::types::*;
 use std::sync::Arc;
@@ -61,33 +61,26 @@ impl SuitService {
     /// Check if a specific tool is enabled in configuration suits
     ///
     /// # Arguments
+    /// - `server_name`: Server name
     /// - `tool_name`: Tool name
     ///
     /// # Returns
-    /// - `Ok(ToolEnabledResult)`: Tool enablement check result
+    /// - `Ok(bool)`: Whether the tool is enabled
     /// - `Err(RecoreError)`: Error during checking process
     pub async fn is_tool_enabled(
         &self,
+        server_name: &str,
         tool_name: &str,
-    ) -> RecoreResult<ToolEnabledResult> {
+    ) -> RecoreResult<bool> {
         let merge_result = self.get_or_create_merge_result().await?;
 
         // Find matching tool configuration
         if let Some(tool_config) = merge_result.tools.iter().find(|t| t.tool_name == tool_name) {
-            Ok(ToolEnabledResult {
-                tool_name: tool_name.to_string(),
-                enabled: tool_config.enabled,
-                enabled_servers: tool_config.server_ids.clone(),
-                related_suits: tool_config.source_suits.clone(),
-            })
+            // Check if this server is in the enabled servers list
+            Ok(tool_config.enabled && tool_config.server_ids.contains(&server_name.to_string()))
         } else {
             // Tool not defined in any configuration suit, default to disabled
-            Ok(ToolEnabledResult {
-                tool_name: tool_name.to_string(),
-                enabled: false,
-                enabled_servers: vec![],
-                related_suits: vec![],
-            })
+            Ok(false)
         }
     }
 
@@ -143,5 +136,49 @@ impl SuitService {
         }
 
         Ok(merge_result)
+    }
+
+    /// Resolve a tool name to server and original tool name
+    ///
+    /// This function resolves a unique tool name to the server name and original tool name
+    /// using the configuration suits.
+    ///
+    /// # Arguments
+    /// * `tool_name` - The tool name to resolve
+    ///
+    /// # Returns
+    /// * `Result<(String, String)>` - (server_name, original_tool_name)
+    pub async fn resolve_tool_name(
+        &self,
+        tool_name: &str,
+    ) -> RecoreResult<(String, String)> {
+        // Implement tool name resolution using configuration suits
+        tracing::debug!("Resolving tool name '{}'", tool_name);
+
+        let merge_result = self.get_or_create_merge_result().await?;
+
+        // Find the tool in the merged configuration
+        for tool_config in &merge_result.tools {
+            if tool_config.tool_name == tool_name && tool_config.enabled {
+                // Get the first enabled server for this tool
+                if let Some(server_id) = tool_config.server_ids.first() {
+                    // Find the server name from the merged servers
+                    for server_config in &merge_result.servers {
+                        if server_config.server_id == *server_id {
+                            return Ok((server_config.name.clone(), tool_name.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tool not found in any enabled configuration
+        Err(RecoreError::generic_error(
+            &format!(
+                "Tool '{}' not found in any enabled configuration suits",
+                tool_name
+            ),
+            None,
+        ))
     }
 }
