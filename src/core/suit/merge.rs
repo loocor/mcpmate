@@ -84,7 +84,10 @@ impl SuitMerger {
             .await
     }
 
-    /// Check if a specific tool is enabled
+    /// Check if a specific tool is enabled (with semi-blacklist mode)
+    ///
+    /// This function implements "semi-blacklist mode": tools are enabled by default
+    /// unless explicitly disabled in configuration suits.
     ///
     /// # Arguments
     /// - `server_id`: Server ID
@@ -98,6 +101,12 @@ impl SuitMerger {
         server_id: &str,
         tool_name: &str,
     ) -> CoreResult<bool> {
+        tracing::debug!(
+            "Checking tool enablement for '{}' on server '{}' using SuitMerger",
+            tool_name,
+            server_id
+        );
+
         // Get all active configuration suits
         let active_suits = crate::config::suit::get_active_config_suits(&self.db.pool)
             .await
@@ -108,27 +117,52 @@ impl SuitMerger {
                 )
             })?;
 
-        // Check if the tool is enabled in any of the active suits for this server
+        // If no active suits, tool is enabled by default (semi-blacklist mode)
+        if active_suits.is_empty() {
+            tracing::debug!(
+                "No active config suits found, tool '{}' on server '{}' is enabled by default (semi-blacklist mode)",
+                tool_name,
+                server_id
+            );
+            return Ok(true);
+        }
+
+        let mut found_explicit_config = false;
+
+        // Check if the tool is configured in any of the active suits for this server
         for suit in &active_suits {
             if let Some(suit_id) = &suit.id {
                 if let Ok(servers) =
                     crate::config::suit::get_config_suit_servers(&self.db.pool, suit_id).await
                 {
-                    // Check if this suit contains the specified server
-                    let has_server = servers
+                    // Check if this suit contains the specified server and it's enabled
+                    let has_enabled_server = servers
                         .iter()
                         .any(|s| s.server_id == server_id && s.enabled);
 
-                    if has_server {
+                    if has_enabled_server {
                         if let Ok(tools) =
                             crate::config::suit::get_config_suit_tools(&self.db.pool, suit_id).await
                         {
                             for tool in tools {
-                                if tool.tool_name == tool_name
-                                    && tool.enabled
-                                    && tool.server_id == server_id
-                                {
-                                    return Ok(true);
+                                if tool.tool_name == tool_name && tool.server_id == server_id {
+                                    found_explicit_config = true;
+                                    if tool.enabled {
+                                        tracing::debug!(
+                                            "Tool '{}' on server '{}' is explicitly enabled in suit '{}'",
+                                            tool_name,
+                                            server_id,
+                                            suit_id
+                                        );
+                                        return Ok(true);
+                                    } else {
+                                        tracing::debug!(
+                                            "Tool '{}' on server '{}' is explicitly disabled in suit '{}'",
+                                            tool_name,
+                                            server_id,
+                                            suit_id
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -137,6 +171,22 @@ impl SuitMerger {
             }
         }
 
+        // If no explicit configuration found, tool is enabled by default (semi-blacklist mode)
+        if !found_explicit_config {
+            tracing::debug!(
+                "No explicit configuration for tool '{}' on server '{}', enabled by default (semi-blacklist mode)",
+                tool_name,
+                server_id
+            );
+            return Ok(true);
+        }
+
+        // If we found explicit configuration but none were enabled, tool is disabled
+        tracing::debug!(
+            "Tool '{}' on server '{}' has explicit configuration but is disabled",
+            tool_name,
+            server_id
+        );
         Ok(false)
     }
 

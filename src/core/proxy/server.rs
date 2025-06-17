@@ -135,8 +135,9 @@ impl UnifiedHttpServer {
             rmcp::transport::streamable_http_server::session::local::LocalSessionManager::default(),
         );
 
+        let service_factory_clone = service_factory.clone();
         let streamable_http_service = rmcp::transport::StreamableHttpService::new(
-            service_factory.clone(),
+            move || Ok(service_factory_clone()),
             session_manager,
             streamable_http_config,
         );
@@ -393,7 +394,7 @@ impl ProxyServer {
 
         // Create a factory function
         let server_clone = self.clone();
-        let factory = move || server_clone.clone();
+        let factory = move || Ok(server_clone.clone());
 
         // Create Streamable HTTP server config
         let server_config = rmcp::transport::StreamableHttpServerConfig {
@@ -462,8 +463,32 @@ impl ServerHandler for ProxyServer {
     ) -> Result<rmcp::model::ListToolsResult, McpError> {
         tracing::debug!("Listing tools from proxy server");
 
-        // Use core protocol implementation
-        let tools = crate::core::protocol::get_all_tools(&self.connection_pool).await;
+        // Use database service for authoritative tool listing
+        let tools = match &self.database {
+            Some(db) => {
+                // Create database tool service
+                let db_service = crate::core::protocol::DatabaseToolService::new(
+                    db.clone(),
+                    self.connection_pool.clone(),
+                );
+
+                // Get enabled tools using database service (authoritative method)
+                match db_service.get_enabled_tools().await {
+                    Ok(tools) => tools,
+                    Err(e) => {
+                        tracing::error!("Failed to get tools using database service: {}", e);
+                        return Err(McpError::internal_error(e.to_string(), None));
+                    }
+                }
+            }
+            None => {
+                tracing::error!("Database not available for tool filtering");
+                return Err(McpError::internal_error(
+                    "Database not available for tool filtering".to_string(),
+                    None,
+                ));
+            }
+        };
 
         Ok(rmcp::model::ListToolsResult {
             tools,
@@ -478,28 +503,31 @@ impl ServerHandler for ProxyServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::debug!("Calling tool: {}", request.name);
 
-        // Check if suit service is available
-        if let Some(suit_service) = &self.suit_service {
-            // Use core protocol implementation
-            match crate::core::protocol::tool::call_upstream_tool(
-                &self.connection_pool,
-                request,
-                suit_service,
-            )
-            .await
-            {
-                Ok(result) => Ok(result),
-                Err(e) => {
-                    tracing::error!("Failed to call tool: {}", e);
-                    Err(McpError::internal_error(e.to_string(), None))
+        // Use database service for authoritative tool calling
+        match &self.database {
+            Some(db) => {
+                // Create database tool service
+                let db_service = crate::core::protocol::DatabaseToolService::new(
+                    db.clone(),
+                    self.connection_pool.clone(),
+                );
+
+                // Use new database-driven tool calling
+                match crate::core::protocol::call_upstream_tool(&db_service, request).await {
+                    Ok(result) => Ok(result),
+                    Err(e) => {
+                        tracing::error!("Failed to call tool using database service: {}", e);
+                        Err(McpError::internal_error(e.to_string(), None))
+                    }
                 }
             }
-        } else {
-            tracing::error!("Suit service not available for tool calling");
-            Err(McpError::internal_error(
-                "Configuration suit service not available".to_string(),
-                None,
-            ))
+            None => {
+                tracing::error!("Database not available for tool calling");
+                Err(McpError::internal_error(
+                    "Database not available for tool calling".to_string(),
+                    None,
+                ))
+            }
         }
     }
 

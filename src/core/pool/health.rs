@@ -81,12 +81,36 @@ impl UpstreamConnectionPool {
                                         reconnects.push((server_name.clone(), instance_id.clone()));
                                     }
                                 }
-                                ConnectionStatus::Error(_) => {
-                                    // Reconnect error instances after a delay
+                                ConnectionStatus::Error(error_details) => {
+                                    // Skip permanent errors to avoid unnecessary reconnection attempts
+                                    if error_details.error_type
+                                        == crate::core::foundation::types::ErrorType::Permanent
+                                    {
+                                        tracing::debug!(
+                                            "Health check: Skipping permanent error for '{}' instance '{}'",
+                                            server_name,
+                                            instance_id
+                                        );
+                                        continue;
+                                    }
+
+                                    // For temporary errors, use longer delays based on failure count
+                                    let min_delay = std::cmp::min(
+                                        300,                                           // Maximum 5 minutes
+                                        60 * (1 + error_details.failure_count as u64), // Progressive delay: 60s, 120s, 180s, etc.
+                                    );
+
                                     if now > conn.last_connected
                                         && now.duration_since(conn.last_connected)
-                                            > std::time::Duration::from_secs(60)
+                                            > std::time::Duration::from_secs(min_delay)
                                     {
+                                        tracing::debug!(
+                                            "Health check: Scheduling reconnect for '{}' instance '{}' after {}s delay (failure count: {})",
+                                            server_name,
+                                            instance_id,
+                                            min_delay,
+                                            error_details.failure_count
+                                        );
                                         reconnects.push((server_name.clone(), instance_id.clone()));
                                     }
                                 }

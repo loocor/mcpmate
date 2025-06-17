@@ -46,6 +46,7 @@ pub use events::{
 };
 
 pub use protocol::{
+    DatabaseToolService,
     PromptMapping,
     PromptTemplateMapping,
     ResourceMapping,

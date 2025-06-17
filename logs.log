@@ -1,0 +1,95 @@
+cargo run
+2025-06-17T05:14:30.146165Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_RYTbwDA4OyvR (true)
+2025-06-17T05:14:30.146213Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'playdocker' global availability to enabled
+2025-06-17T05:14:30.146227Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:14:30.146250Z  INFO mcpmate::core::foundation::loader: Loading server configuration from database using core loader
+2025-06-17T05:14:30.149156Z  INFO mcpmate::config::server::enabled: Found 6 enabled servers across all active config suits
+2025-06-17T05:14:30.159585Z  INFO mcpmate::core::foundation::loader: Successfully loaded 6 enabled servers from database using core loader
+2025-06-17T05:14:30.159635Z  INFO mcpmate::core::foundation::loader: Published ConfigReloaded event using core events
+2025-06-17T05:14:30.159665Z  INFO mcpmate::api::handlers::server::mgmt: Updated connection pool configuration with latest server information
+2025-06-17T05:14:30.159816Z  INFO mcpmate::core::transport::stdio: MCPMate runtime for command 'docker' not available in cache, falling back to system runtime
+2025-06-17T05:14:30.159944Z  INFO mcpmate::config::runtime: Preparing environment for command: docker (executable: docker)
+2025-06-17T05:14:30.159959Z  INFO mcpmate::core::transport::stdio: Using timeouts for 'playdocker': connection=120s, tools=60s
+2025-06-17T05:14:30.670305Z  INFO serve_inner: rmcp::service: Service initialized as client peer_info=Some(InitializeResult { protocol_version: ProtocolVersion("2025-03-26"), capabilities: ServerCapabilities { experimental: None, logging: None, completions: None, prompts: None, resources: None, tools: Some(ToolsCapability { list_changed: None }) }, server_info: Implementation { name: "Playwright", version: "0.0.28" }, instructions: None })
+2025-06-17T05:14:31.213381Z  INFO mcpmate::core::transport::stdio: Connected to server 'playdocker', found 25 tools, capabilities: Some("resources=false"), process ID: Some(7921)
+2025-06-17T05:14:31.213472Z  INFO mcpmate::core::pool::connection: Updated connection for 'playdocker' instance 'upsv_rmCkPJKFDDHT' with service and 25 tools
+2025-06-17T05:14:31.213547Z  INFO mcpmate::core::pool::connection: Successfully initiated connection to 'playdocker' instance 'upsv_rmCkPJKFDDHT'
+2025-06-17T05:14:31.213958Z  INFO mcpmate::core::pool::sync: Syncing 25 tools from server 'playdocker' to database
+2025-06-17T05:14:31.214863Z  INFO mcpmate::core::pool::sync: Found 1 config suits with server 'playdocker' enabled
+2025-06-17T05:14:31.217590Z  INFO mcpmate::core::pool::sync: Successfully synced 25 tools from server 'playdocker' to database
+2025-06-17T05:14:33.053454Z  INFO mcpmate::core::pool::health: Connection check: Retrying temporary error for '21magic' instance 'upsv_JG92QG_vzpna' after 60s (failure count: 1)
+2025-06-17T05:14:33.053602Z  INFO mcpmate::core::pool::connection: Disconnected from server '21magic' instance 'upsv_JG92QG_vzpna'
+2025-06-17T05:14:33.053664Z  INFO mcpmate::core::pool::connection: Waiting 30s before reconnecting to '21magic' instance 'upsv_JG92QG_vzpna'
+2025-06-17T05:14:33.158714Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_ghk_UzdOB8Em (false)
+2025-06-17T05:14:33.158764Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'playwright' global availability to disabled
+2025-06-17T05:14:33.158787Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:14:38.365251Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_ky2VAWAF4bwe (true)
+2025-06-17T05:14:38.365306Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'thinking' global availability to enabled
+2025-06-17T05:14:38.365332Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:14:44.947327Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_ky2VAWAF4bwe (true)
+2025-06-17T05:14:44.947354Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'thinking' global availability to enabled
+2025-06-17T05:14:44.947367Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:14:59.419027Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_w1fhNr2M3xtV (true)
+2025-06-17T05:14:59.419086Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'firecrawl' global availability to enabled
+2025-06-17T05:14:59.419110Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:15:03.056314Z  INFO mcpmate::core::transport::stdio: MCPMate runtime for command 'npx' not available in cache, falling back to system runtime
+2025-06-17T05:15:03.056355Z  INFO mcpmate::config::runtime: Preparing environment for command: npx (executable: npx)
+2025-06-17T05:15:03.056838Z  INFO mcpmate::core::transport::stdio: Using timeouts for '21magic': connection=60s, tools=60s
+2025-06-17T05:15:03.989394Z ERROR rmcp::transport::async_rw: Error reading from stream: serde error data did not match any variant of untagged enum JsonRpcMessage
+2025-06-17T05:15:03.989530Z ERROR mcpmate::core::pool::connection: Failed to connect to '21magic' instance 'upsv_JG92QG_vzpna': Failed to connect to server: connection closed: initialize response
+2025-06-17T05:15:03.989546Z ERROR mcpmate::core::pool::health: Connection check: Failed to reconnect to '21magic' instance 'upsv_JG92QG_vzpna': Failed to connect to server: connection closed: initialize response
+2025-06-17T05:15:03.989608Z  INFO mcpmate::core::pool::health: Health check: Attempting to reconnect to '21magic' instance 'upsv_JG92QG_vzpna'
+2025-06-17T05:15:03.989628Z  INFO mcpmate::core::pool::connection: Disconnected from server '21magic' instance 'upsv_JG92QG_vzpna'
+2025-06-17T05:15:03.989636Z  INFO mcpmate::core::pool::connection: Waiting 30s before reconnecting to '21magic' instance 'upsv_JG92QG_vzpna'
+2025-06-17T05:15:22.779400Z  WARN mcpmate::api::handlers::server::crud: Timed out waiting for connection pool lock, proceeding with server deletion anyway
+2025-06-17T05:15:22.786676Z  INFO mcpmate::api::handlers::server::crud: Successfully deleted server '21magic'
+2025-06-17T05:15:27.577680Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_n_hw-XqlL2ZW (true)
+2025-06-17T05:15:27.577722Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'deepwiki' global availability to enabled
+2025-06-17T05:15:27.577744Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:15:33.991078Z  INFO mcpmate::core::transport::stdio: MCPMate runtime for command 'npx' not available in cache, falling back to system runtime
+2025-06-17T05:15:33.991164Z  INFO mcpmate::config::runtime: Preparing environment for command: npx (executable: npx)
+2025-06-17T05:15:33.993402Z  INFO mcpmate::core::transport::stdio: Using timeouts for '21magic': connection=60s, tools=60s
+2025-06-17T05:15:34.959275Z ERROR rmcp::transport::async_rw: Error reading from stream: serde error data did not match any variant of untagged enum JsonRpcMessage
+2025-06-17T05:15:34.959376Z ERROR mcpmate::core::pool::connection: Failed to connect to '21magic' instance 'upsv_JG92QG_vzpna': Failed to connect to server: connection closed: initialize response
+2025-06-17T05:15:34.959393Z  WARN mcpmate::core::pool::health: Health check: Failed to reconnect to '21magic' instance 'upsv_JG92QG_vzpna': Failed to connect to server: connection closed: initialize response
+2025-06-17T05:15:40.753861Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_RYTbwDA4OyvR (true)
+2025-06-17T05:15:40.753912Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'playdocker' global availability to enabled
+2025-06-17T05:15:40.753927Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:15:40.753942Z  INFO mcpmate::core::foundation::loader: Loading server configuration from database using core loader
+2025-06-17T05:15:40.756090Z  INFO mcpmate::config::server::enabled: Found 5 enabled servers across all active config suits
+2025-06-17T05:15:40.759998Z  INFO mcpmate::core::foundation::loader: Successfully loaded 5 enabled servers from database using core loader
+2025-06-17T05:15:40.760065Z  INFO mcpmate::core::foundation::loader: Published ConfigReloaded event using core events
+2025-06-17T05:15:40.760092Z  INFO mcpmate::api::handlers::server::mgmt: Updated connection pool configuration with latest server information
+2025-06-17T05:15:44.890397Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_RYTbwDA4OyvR (false)
+2025-06-17T05:15:44.890428Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'playdocker' global availability to disabled
+2025-06-17T05:15:44.890443Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:15:44.890503Z  INFO rmcp::service: task cancelled
+2025-06-17T05:15:44.890517Z  INFO rmcp::service: serve finished quit_reason=Cancelled
+2025-06-17T05:15:44.890642Z  INFO mcpmate::core::pool::connection: Service for server 'playdocker' instance 'upsv_rmCkPJKFDDHT' cancelled with reason: Cancelled
+2025-06-17T05:15:44.890848Z  INFO mcpmate::core::pool::connection: Disconnected from server 'playdocker' instance 'upsv_rmCkPJKFDDHT'
+2025-06-17T05:15:44.890861Z  INFO mcpmate::api::handlers::server::mgmt: Successfully disconnected server 'playdocker' instance 'upsv_rmCkPJKFDDHT'
+2025-06-17T05:15:48.938172Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_G5d_ZM2H_KaW (false)
+2025-06-17T05:15:48.938203Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'context7' global availability to disabled
+2025-06-17T05:15:48.938214Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:15:48.938265Z  INFO rmcp::service: task cancelled
+2025-06-17T05:15:48.938273Z  INFO rmcp::service: serve finished quit_reason=Cancelled
+2025-06-17T05:15:48.938395Z  INFO mcpmate::core::pool::connection: Service for server 'context7' instance 'upsv_4uiWBDnMBxN3' cancelled with reason: Cancelled
+2025-06-17T05:15:48.938592Z  INFO mcpmate::core::pool::connection: Disconnected from server 'context7' instance 'upsv_4uiWBDnMBxN3'
+2025-06-17T05:15:48.938600Z  INFO mcpmate::api::handlers::server::mgmt: Successfully disconnected server 'context7' instance 'upsv_4uiWBDnMBxN3'
+2025-06-17T05:15:51.877430Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_ghk_UzdOB8Em (false)
+2025-06-17T05:15:51.877466Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'playwright' global availability to disabled
+2025-06-17T05:15:51.877485Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:15:51.877573Z  INFO rmcp::service: task cancelled
+2025-06-17T05:15:51.877592Z  INFO rmcp::service: serve finished quit_reason=Cancelled
+2025-06-17T05:15:51.883446Z  INFO mcpmate::core::pool::connection: Service for server 'playwright' instance 'upsv_8k3WMjuukcVk' cancelled with reason: Cancelled
+2025-06-17T05:15:51.883494Z  INFO mcpmate::core::pool::connection: Disconnected from server 'playwright' instance 'upsv_8k3WMjuukcVk'
+2025-06-17T05:15:51.883502Z  INFO mcpmate::api::handlers::server::mgmt: Successfully disconnected server 'playwright' instance 'upsv_8k3WMjuukcVk'
+2025-06-17T05:15:54.962873Z  WARN mcpmate::core::pool::monitoring: Process for 'playdocker' instance 'upsv_rmCkPJKFDDHT' (PID: 7921) is not running, clearing process ID
+2025-06-17T05:15:56.071087Z  INFO mcpmate::config::server::enabled: Published ServerGlobalStatusChanged event for server ID serv_w1fhNr2M3xtV (false)
+2025-06-17T05:15:56.071126Z  INFO mcpmate::api::handlers::server::mgmt: Set server 'firecrawl' global availability to disabled
+2025-06-17T05:15:56.071139Z  INFO mcpmate::api::handlers::server::mgmt: Invalidated suit service cache to sync server connections
+2025-06-17T05:15:56.071213Z  INFO rmcp::service: task cancelled
+2025-06-17T05:15:56.071223Z  INFO rmcp::service: serve finished quit_reason=Cancelled
+2025-06-17T05:15:56.071401Z  INFO mcpmate::core::pool::connection: Service for server 'firecrawl' instance 'upsv_yLUsOQIgEXSC' cancelled with reason: Cancelled
+2025-06-17T05:15:56.071791Z  INFO mcpmate::core::pool::connection: Disconnected from server 'firecrawl' instance 'upsv_yLUsOQIgEXSC'
+2025-06-17T05:15:56.071813Z  INFO mcpmate::api::handlers::server::mgmt: Successfully disconnected server 'firecrawl' instance 'upsv_yLUsOQIgEXSC'
