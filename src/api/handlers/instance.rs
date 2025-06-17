@@ -148,7 +148,7 @@ pub async fn check_health(
         // We use an exponential decay formula: stability = e^(-k * failure_count)
         // where k is a constant that controls how quickly stability decays
         let k = 0.2; // This can be adjusted based on desired sensitivity
-        Some((-(k * err.failure_count as f32)).exp())
+        Some((-(k * err.failure_count as f32)).exp() as f32)
     } else if conn.connection_attempts == 0 {
         // If no connection attempts, we don't have enough data
         None

@@ -6,11 +6,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result};
 use rmcp::model::Tool;
-
 use tokio::sync::Mutex;
 use tracing;
 
-use super::naming::generate_unique_name;
 use super::types::ToolMapping;
 use crate::core::pool::UpstreamConnectionPool;
 
@@ -42,39 +40,24 @@ pub async fn build_tool_mapping(
 
             // Add all tools from this instance to the mapping
             for tool in &conn.tools {
-                // Generate a unique name for this tool (with server prefix)
-                let unique_name = generate_unique_name(server_name, &tool.name);
-
                 // Skip tools that are already in the mapping (first one wins)
-                if tool_mapping.contains_key(&unique_name) {
+                if tool_mapping.contains_key(&tool.name.to_string()) {
                     tracing::warn!(
-                        "Tool '{}' (unique name: '{}') is provided by multiple servers, using the first one",
-                        tool.name,
-                        unique_name
+                        "Tool '{}' is provided by multiple servers, using the first one",
+                        tool.name
                     );
                     continue;
                 }
 
-                // Create a modified tool with the unique name
-                let mut unique_tool = tool.clone();
-                unique_tool.name = unique_name.clone().into();
-
                 // Add the tool to the mapping
                 tool_mapping.insert(
-                    unique_name.clone(),
+                    tool.name.to_string(),
                     ToolMapping {
                         server_name: server_name.clone(),
                         instance_id: instance_id.clone(),
-                        tool: unique_tool,
+                        tool: tool.clone(),
                         upstream_tool_name: tool.name.to_string(),
                     },
-                );
-
-                tracing::debug!(
-                    "Added tool '{}' -> '{}' from server '{}'",
-                    tool.name,
-                    unique_name,
-                    server_name
                 );
             }
         }
@@ -84,16 +67,16 @@ pub async fn build_tool_mapping(
     tool_mapping
 }
 
-/// Get all tools from all connected servers with standardized names
+/// Get all tools from all connected servers
 ///
-/// This function retrieves all tools from all connected servers and applies
-/// name standardization to prevent conflicts between tools from different servers.
+/// This function retrieves all tools from all connected servers.
+/// It is used to build a comprehensive list of available tools.
 ///
 /// # Arguments
 /// * `connection_pool` - The connection pool to use
 ///
 /// # Returns
-/// * `Vec<Tool>` - A list of all tools with standardized names
+/// * `Vec<Tool>` - A list of all tools from all connected servers
 pub async fn get_all_tools(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>) -> Vec<Tool> {
     // Lock the connection pool to access it
     let pool = connection_pool.lock().await;
@@ -102,32 +85,20 @@ pub async fn get_all_tools(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>)
     let mut all_tools = Vec::new();
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for instances in pool.connections.values() {
         for conn in instances.values() {
             // Skip instances that are not connected
             if !conn.is_connected() {
                 continue;
             }
 
-            // Add all tools from this instance with standardized names
-            for tool in &conn.tools {
-                // Generate a unique name for this tool
-                let unique_name = generate_unique_name(server_name, &tool.name);
-
-                // Create a modified tool with the unique name
-                let mut unique_tool = tool.clone();
-                unique_tool.name = unique_name.into();
-
-                all_tools.push(unique_tool);
-            }
+            // Add all tools from this instance
+            all_tools.extend(conn.tools.clone());
         }
     }
 
     // Log the number of tools found
-    tracing::info!(
-        "Found {} tools from all connected servers (with standardized names)",
-        all_tools.len()
-    );
+    tracing::info!("Found {} tools from all connected servers", all_tools.len());
 
     all_tools
 }

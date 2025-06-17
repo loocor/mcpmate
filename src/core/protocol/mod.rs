@@ -8,9 +8,8 @@ pub mod tool;
 
 // Re-export commonly used types and functions from each protocol
 pub use tool::{
-    DatabaseToolService, ToolMapping, ToolNameMapping, build_tool_mapping, call_upstream_tool,
-    ensure_unique_name, find_tool_in_server, generate_unique_name, get_all_tools,
-    resolve_unique_name,
+    ToolMapping, ToolNameMapping, build_tool_mapping, call_upstream_tool, ensure_unique_name,
+    find_tool_in_server, generate_unique_name, get_all_tools, resolve_unique_name,
 };
 
 pub use resource::{

@@ -21,46 +21,16 @@ pub async fn list_all(
     // Get the HTTP proxy server and database
     let (proxy, db) = get_context(&state).await?;
 
-    // Get all available tools from the proxy server with timeout protection
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_millis(500),
-        proxy.connection_pool.lock(),
-    )
-    .await;
-
-    let connection_pool = match pool_result {
-        Ok(pool) => pool,
-        Err(_) => {
-            tracing::error!("Timeout waiting for connection pool lock in list_all tools");
-            return Err(ApiError::InternalError(
-                "Connection pool access timeout".to_string(),
-            ));
-        }
-    };
-
+    // Get all available tools from the proxy server
+    let connection_pool = proxy.connection_pool.lock().await;
     let mut mcp_tools = Vec::new();
 
-    // Iterate through all servers and their tools with fault isolation
+    // Iterate through all servers and their tools
     for (server_name, instances) in connection_pool.connections.iter() {
         for conn in instances.values() {
             // Skip instances that are not connected
             if !conn.is_connected() {
                 continue;
-            }
-
-            // Skip servers with permanent errors for better fault isolation
-            if let crate::core::foundation::types::ConnectionStatus::Error(ref error_details) =
-                conn.status
-            {
-                if error_details.error_type == crate::core::foundation::types::ErrorType::Permanent
-                {
-                    tracing::debug!(
-                        "Skipping tools from server '{}' due to permanent error: {}",
-                        server_name,
-                        error_details.message
-                    );
-                    continue;
-                }
             }
 
             // Add all tools from this instance

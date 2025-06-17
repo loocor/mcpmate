@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 /// Database row structure for client_apps table
 #[derive(Debug, Clone, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct ClientAppRow {
     pub id: String,
     pub identifier: String,

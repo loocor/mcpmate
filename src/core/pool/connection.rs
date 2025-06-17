@@ -43,9 +43,8 @@ impl UpstreamConnectionPool {
         // Get connection for backoff calculation
         let conn = self.get_instance(server_name, instance_id)?;
 
-        // Calculate backoff time using exponential backoff with longer delays for better fault isolation
-        // MAX 300 seconds (5 minutes), exponential up to 2^8=256 seconds
-        let backoff = std::cmp::min(300, 2u64.pow(std::cmp::min(8, conn.connection_attempts)));
+        // Calculate backoff time using exponential backoff, MAX 30 seconds, MIN 2^5=32 seconds
+        let backoff = std::cmp::min(30, 2u64.pow(std::cmp::min(5, conn.connection_attempts)));
 
         tracing::info!(
             "Waiting {}s before reconnecting to '{}' instance '{}'",
