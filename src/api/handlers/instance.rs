@@ -130,6 +130,12 @@ pub async fn check_health(
             )
         }
         ConnectionStatus::Shutdown => "Instance is shut down".to_string(),
+        ConnectionStatus::Disabled(ref details) => {
+            format!(
+                "Instance is disabled: {} (total failures: {})",
+                details.reason, details.total_failures
+            )
+        }
     };
 
     // Get current time as ISO 8601 string
@@ -291,6 +297,50 @@ pub async fn reset_reconnect(
         }
         Err(e) => Err(ApiError::BadRequest(format!(
             "Failed to reset and reconnect instance: {e}"
+        ))),
+    }
+}
+
+/// Manually recover a disabled instance
+pub async fn recover_instance(
+    State(state): State<Arc<AppState>>,
+    Path((name, id)): Path<(String, String)>,
+) -> Result<Json<OperationResponse>, ApiError> {
+    let mut pool = state.connection_pool.lock().await;
+
+    // Get the instance
+    let conn = pool.get_instance_mut(&name, &id)?;
+
+    // Check if the instance is disabled
+    if !conn.is_disabled() {
+        return Err(ApiError::BadRequest(format!(
+            "Instance '{}' of server '{}' is not disabled (current status: {})",
+            id, name, conn.status
+        )));
+    }
+
+    // Manually recover the instance
+    match conn.manual_re_enable() {
+        Ok(_) => {
+            tracing::info!(
+                "Manually recovered disabled instance '{}' of server '{}' via API",
+                id,
+                name
+            );
+
+            // Get the updated instance
+            let conn = pool.get_instance(&name, &id)?;
+
+            Ok(Json(OperationResponse {
+                id,
+                name,
+                result: "Successfully recovered disabled instance".to_string(),
+                status: conn.status_string(),
+                allowed_operations: get_allowed_operations(conn),
+            }))
+        }
+        Err(e) => Err(ApiError::BadRequest(format!(
+            "Failed to recover instance: {e}"
         ))),
     }
 }

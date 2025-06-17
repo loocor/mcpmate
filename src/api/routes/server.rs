@@ -31,6 +31,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/{id}/disconnect/force", post(instance::force_disconnect))
         .route("/{id}/reconnect", post(instance::reconnect))
         .route("/{id}/reconnect/reset", post(instance::reset_reconnect))
+        .route("/{id}/recover", post(instance::recover_instance))
         .route("/{id}/cancel", post(instance::cancel));
 
     let combined_router = servers_router.nest("/{name}/instances", instances_router);

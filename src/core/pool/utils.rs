@@ -119,6 +119,7 @@ impl UpstreamConnectionPool {
                     ConnectionStatus::Busy => 3,
                     ConnectionStatus::Error(_) => 4,
                     ConnectionStatus::Shutdown => 5,
+                    ConnectionStatus::Disabled(_) => 6,
                 };
                 status_discriminant.hash(&mut hasher);
 

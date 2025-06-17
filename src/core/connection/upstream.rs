@@ -9,13 +9,14 @@ use rmcp::{
     service::RunningService,
 };
 
-use crate::generate_id;
 use crate::core::foundation::types::{
     ConnectionOperation, // action to perform on the connection
     ConnectionStatus,    // status of the connection
+    DisabledDetails,     // details of the disabled state
     ErrorDetails,        // details of the error
     ErrorType,           // type of the error
 };
+use crate::generate_id;
 
 /// Connection to an upstream MCP server
 #[derive(Debug)]
@@ -126,7 +127,10 @@ impl UpstreamConnection {
         self.last_connected = Instant::now();
     }
 
-    /// Update connection status to error
+    /// Update connection status to error (basic error handling without escalation)
+    ///
+    /// Use this method for simple error reporting without progressive failure escalation.
+    /// For production use with fault tolerance, prefer `update_error_with_escalation`.
     pub fn update_failed(
         &mut self,
         error_msg: String,
@@ -185,12 +189,75 @@ impl UpstreamConnection {
         self.last_connected = Instant::now();
     }
 
-    /// Update connection status to error (alias for compatibility)
-    pub fn update_error(
+    /// Update connection status with progressive failure escalation
+    ///
+    /// This method implements the progressive failure escalation strategy:
+    /// - 1st failure: 60s backoff
+    /// - 2nd failure: 120s backoff
+    /// - 3rd failure: 360s backoff
+    /// - 4th+ failure: auto-disable
+    pub fn update_error_with_escalation(
         &mut self,
         error_msg: String,
     ) {
-        self.update_failed(error_msg);
+        // Check if we're already in an error state
+        let (failure_count, first_failure_time) = match &self.status {
+            ConnectionStatus::Error(details) => {
+                (details.failure_count + 1, details.first_failure_time)
+            }
+            _ => (1, chrono::Local::now().timestamp() as u64),
+        };
+
+        // Check if we should disable the server (4+ consecutive failures)
+        if failure_count >= 4 {
+            self.update_disabled_due_to_failures(error_msg, failure_count);
+            return;
+        }
+
+        // Create error details with progressive escalation
+        let error_details = ErrorDetails {
+            message: error_msg,
+            error_type: ErrorType::Temporary,
+            failure_count,
+            first_failure_time,
+            last_failure_time: chrono::Local::now().timestamp() as u64,
+        };
+
+        tracing::warn!(
+            "Server '{}' failure #{}: {} (progressive escalation active)",
+            self.server_name,
+            failure_count,
+            error_details.message
+        );
+
+        self.status = ConnectionStatus::Error(error_details);
+    }
+
+    /// Update connection status to disabled due to repeated failures
+    pub fn update_disabled_due_to_failures(
+        &mut self,
+        last_error: String,
+        total_failures: u32,
+    ) {
+        let disabled_details = DisabledDetails {
+            reason: format!(
+                "Auto-disabled after {} consecutive failures",
+                total_failures
+            ),
+            total_failures,
+            disabled_time: chrono::Local::now().timestamp() as u64,
+            last_error,
+        };
+
+        self.service = None;
+        self.tools = Vec::new();
+        self.status = ConnectionStatus::Disabled(disabled_details);
+
+        tracing::error!(
+            "Server '{}' has been auto-disabled after {} consecutive failures",
+            self.server_name,
+            total_failures
+        );
     }
 
     /// Update connection status to shutdown
@@ -200,11 +267,10 @@ impl UpstreamConnection {
         self.status = ConnectionStatus::Shutdown;
     }
 
-    /// Update connection status to shutdown (disabled)
+    /// Update connection status to shutdown (legacy method, use update_disconnected instead)
+    #[deprecated(note = "Use update_disconnected instead to avoid confusion with disabled state")]
     pub fn update_disabled(&mut self) {
-        self.service = None;
-        self.tools = Vec::new();
-        self.status = ConnectionStatus::Shutdown;
+        self.update_disconnected();
     }
 
     /// Update connection status to busy
@@ -262,5 +328,58 @@ impl UpstreamConnection {
     /// Reset connection attempts counter
     pub fn reset_connection_attempts(&mut self) {
         self.connection_attempts = 0;
+    }
+
+    /// Manually re-enable a disabled server (resets failure count and status)
+    pub fn manual_re_enable(&mut self) -> Result<(), String> {
+        match &self.status {
+            ConnectionStatus::Disabled(details) => {
+                tracing::info!(
+                    "Manually re-enabling server '{}' (was disabled: {})",
+                    self.server_name,
+                    details.reason
+                );
+
+                // Reset to shutdown state and clear failure counters
+                self.status = ConnectionStatus::Shutdown;
+                self.connection_attempts = 0;
+                self.service = None;
+                self.tools = Vec::new();
+
+                tracing::info!(
+                    "Server '{}' has been manually re-enabled and is ready for connection",
+                    self.server_name
+                );
+
+                Ok(())
+            }
+            _ => Err(format!(
+                "Server '{}' is not in disabled state (current: {})",
+                self.server_name, self.status
+            )),
+        }
+    }
+
+    /// Check if the server is disabled
+    pub fn is_disabled(&self) -> bool {
+        self.status.is_disabled()
+    }
+
+    /// Check if the server should be included in API responses
+    pub fn is_available(&self) -> bool {
+        self.status.is_available()
+    }
+
+    /// Get the progressive backoff time based on failure count
+    pub fn get_progressive_backoff_seconds(&self) -> u64 {
+        match &self.status {
+            ConnectionStatus::Error(details) => match details.failure_count {
+                1 => 60,  // 1 minute
+                2 => 120, // 2 minutes
+                3 => 360, // 6 minutes
+                _ => 600, // 10 minutes (fallback, though should be disabled at 4+)
+            },
+            _ => 60, // Default 1 minute
+        }
     }
 }

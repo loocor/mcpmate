@@ -81,6 +81,15 @@ impl UpstreamConnectionPool {
                                         reconnects.push((server_name.clone(), instance_id.clone()));
                                     }
                                 }
+                                ConnectionStatus::Disabled(_) => {
+                                    // Skip disabled servers completely - no health checks, no reconnections
+                                    tracing::debug!(
+                                        "Health check: Skipping disabled server '{}' instance '{}'",
+                                        server_name,
+                                        instance_id
+                                    );
+                                    continue;
+                                }
                                 ConnectionStatus::Error(error_details) => {
                                     // Skip permanent errors to avoid unnecessary reconnection attempts
                                     if error_details.error_type
@@ -94,11 +103,22 @@ impl UpstreamConnectionPool {
                                         continue;
                                     }
 
-                                    // For temporary errors, use longer delays based on failure count
-                                    let min_delay = std::cmp::min(
-                                        300,                                           // Maximum 5 minutes
-                                        60 * (1 + error_details.failure_count as u64), // Progressive delay: 60s, 120s, 180s, etc.
-                                    );
+                                    // Use progressive backoff based on failure count
+                                    let min_delay = match error_details.failure_count {
+                                        1 => 60,  // 1 minute for first failure
+                                        2 => 120, // 2 minutes for second failure
+                                        3 => 360, // 6 minutes for third failure
+                                        _ => {
+                                            // 4+ failures should be auto-disabled, but handle edge case
+                                            tracing::warn!(
+                                                "Health check: Server '{}' instance '{}' has {} failures but not disabled",
+                                                server_name,
+                                                instance_id,
+                                                error_details.failure_count
+                                            );
+                                            600 // 10 minutes fallback
+                                        }
+                                    };
 
                                     if now > conn.last_connected
                                         && now.duration_since(conn.last_connected)
@@ -120,22 +140,31 @@ impl UpstreamConnectionPool {
                     }
                 }
 
-                // Reconnect instances that need it
-                for (server_name, instance_id) in reconnects {
+                // Reconnect instances that need it (non-blocking)
+                if !reconnects.is_empty() {
                     tracing::info!(
-                        "Health check: Attempting to reconnect to '{}' instance '{}'",
-                        server_name,
-                        instance_id
+                        "Health check: Scheduling {} reconnection(s) (non-blocking)",
+                        reconnects.len()
                     );
+
+                    // Use minimal lock time for scheduling reconnections
                     let mut pool_guard = health_check_pool.lock().await;
-                    if let Err(e) = pool_guard.reconnect(&server_name, &instance_id).await {
-                        tracing::warn!(
-                            "Health check: Failed to reconnect to '{}' instance '{}': {}",
+                    for (server_name, instance_id) in reconnects {
+                        tracing::debug!(
+                            "Health check: Scheduling reconnection to '{}' instance '{}'",
                             server_name,
-                            instance_id,
-                            e
+                            instance_id
                         );
+                        if let Err(e) = pool_guard.reconnect(&server_name, &instance_id).await {
+                            tracing::warn!(
+                                "Health check: Failed to schedule reconnection to '{}' instance '{}': {}",
+                                server_name,
+                                instance_id,
+                                e
+                            );
+                        }
                     }
+                    // Lock is released here, allowing other operations to proceed
                 }
             }
         });
@@ -199,13 +228,19 @@ impl UpstreamConnectionPool {
                             instance_id
                         );
 
-                        // Try to reconnect
+                        // Schedule reconnection (non-blocking)
                         if let Err(e) = self.reconnect(&server_name, &instance_id).await {
                             tracing::error!(
-                                "Connection check: Failed to reconnect to '{}' instance '{}': {}",
+                                "Connection check: Failed to schedule reconnection to '{}' instance '{}': {}",
                                 server_name,
                                 instance_id,
                                 e
+                            );
+                        } else {
+                            tracing::info!(
+                                "Connection check: Scheduled reconnection for '{}' instance '{}'",
+                                server_name,
+                                instance_id
                             );
                         }
                     }
@@ -214,36 +249,49 @@ impl UpstreamConnectionPool {
                     // Check if we should retry based on error type and failure count
                     let should_retry = match error_details.error_type {
                         ErrorType::Temporary => {
-                            // Use exponential backoff for temporary errors
-                            let backoff_seconds = std::cmp::min(
-                                300,                                                     /* Maximum 5 minutes */
-                                2u64.pow(std::cmp::min(8, error_details.failure_count)), /* Exponential backoff, max 2^8=256 seconds */
-                            );
-
-                            // Calculate time since last failure
-                            let now = chrono::Local::now().timestamp() as u64;
-                            let seconds_since_last_failure =
-                                now.saturating_sub(error_details.last_failure_time);
-
-                            // Only retry if enough time has passed based on backoff
-                            if seconds_since_last_failure >= backoff_seconds {
-                                tracing::info!(
-                                    "Connection check: Retrying temporary error for '{}' instance '{}' after {}s (failure count: {})",
+                            // Check if we should auto-disable (4+ failures)
+                            if error_details.failure_count >= 4 {
+                                tracing::warn!(
+                                    "Connection check: Server '{}' instance '{}' has {} failures, should be auto-disabled",
                                     server_name,
                                     instance_id,
-                                    seconds_since_last_failure,
                                     error_details.failure_count
                                 );
-                                true
+                                false // Don't retry, should be disabled
                             } else {
-                                tracing::debug!(
-                                    "Connection check: Waiting {}s before retrying '{}' instance '{}' (failure count: {})",
-                                    backoff_seconds - seconds_since_last_failure,
-                                    server_name,
-                                    instance_id,
-                                    error_details.failure_count
-                                );
-                                false
+                                // Use progressive backoff based on failure count
+                                let backoff_seconds = match error_details.failure_count {
+                                    1 => 60,  // 1 minute for first failure
+                                    2 => 120, // 2 minutes for second failure
+                                    3 => 360, // 6 minutes for third failure
+                                    _ => 600, // Fallback (shouldn't reach here due to check above)
+                                };
+
+                                // Calculate time since last failure
+                                let now = chrono::Local::now().timestamp() as u64;
+                                let seconds_since_last_failure =
+                                    now.saturating_sub(error_details.last_failure_time);
+
+                                // Only retry if enough time has passed based on progressive backoff
+                                if seconds_since_last_failure >= backoff_seconds {
+                                    tracing::info!(
+                                        "Connection check: Retrying temporary error for '{}' instance '{}' after {}s (failure #{}, progressive backoff)",
+                                        server_name,
+                                        instance_id,
+                                        seconds_since_last_failure,
+                                        error_details.failure_count
+                                    );
+                                    true
+                                } else {
+                                    tracing::debug!(
+                                        "Connection check: Waiting {}s before retrying '{}' instance '{}' (failure #{}, progressive backoff)",
+                                        backoff_seconds - seconds_since_last_failure,
+                                        server_name,
+                                        instance_id,
+                                        error_details.failure_count
+                                    );
+                                    false
+                                }
                             }
                         }
                         ErrorType::Permanent => {
@@ -266,42 +314,19 @@ impl UpstreamConnectionPool {
 
                     // If we should retry, attempt to reconnect
                     if should_retry {
-                        // Check if we've exceeded the maximum retry count for temporary errors
-                        let max_retries_exceeded =
-                            matches!(error_details.error_type, ErrorType::Temporary)
-                                && error_details.failure_count > 10;
-
-                        if max_retries_exceeded {
-                            // Store the failure count for later use
-                            let failure_count = error_details.failure_count;
-
-                            // We need to break out of the match and for loop to avoid borrowing issues
-                            // No need to explicitly drop a reference
-
-                            // Convert to permanent error after too many retries
-                            {
-                                let conn = self.get_instance_mut(&server_name, &instance_id)?;
-                                conn.update_permanent_error(format!(
-                                    "Too many failed reconnection attempts ({failure_count}). Manual intervention required."
-                                ));
-                            }
-
-                            tracing::error!(
-                                "Connection check: Too many failed reconnection attempts for '{}' instance '{}' ({}). Marking as permanent error.",
-                                server_name,
-                                instance_id,
-                                failure_count
-                            );
-                            continue;
-                        }
-
-                        // Try to reconnect
+                        // Schedule reconnection (non-blocking)
                         if let Err(e) = self.reconnect(&server_name, &instance_id).await {
                             tracing::error!(
-                                "Connection check: Failed to reconnect to '{}' instance '{}': {}",
+                                "Connection check: Failed to schedule reconnection to '{}' instance '{}': {}",
                                 server_name,
                                 instance_id,
                                 e
+                            );
+                        } else {
+                            tracing::info!(
+                                "Connection check: Scheduled reconnection for '{}' instance '{}' after progressive backoff",
+                                server_name,
+                                instance_id
                             );
                         }
                     }

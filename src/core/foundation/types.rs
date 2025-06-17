@@ -17,6 +17,8 @@ pub enum ConnectionStatus {
     Error(ErrorDetails),
     /// server is closed or disconnected
     Shutdown,
+    /// server is disabled due to repeated failures (no automatic reconnection)
+    Disabled(DisabledDetails),
 }
 
 /// detailed information about a connection error
@@ -32,6 +34,19 @@ pub struct ErrorDetails {
     pub first_failure_time: u64,
     /// last failure time (UNIX timestamp in seconds)
     pub last_failure_time: u64,
+}
+
+/// detailed information about a disabled connection
+#[derive(Debug, Clone, PartialEq)]
+pub struct DisabledDetails {
+    /// reason for disabling
+    pub reason: String,
+    /// total number of failures that led to disabling
+    pub total_failures: u32,
+    /// time when the server was disabled (UNIX timestamp in seconds)
+    pub disabled_time: u64,
+    /// last error message before disabling
+    pub last_error: String,
 }
 
 /// possible error types
@@ -60,6 +75,8 @@ pub enum ConnectionOperation {
     Cancel,
     /// Reset and reconnect
     ResetReconnect,
+    /// Recover a disabled server (manual re-enable)
+    Recover,
 }
 
 impl fmt::Display for ErrorType {
@@ -84,6 +101,15 @@ impl fmt::Display for ErrorDetails {
     }
 }
 
+impl fmt::Display for DisabledDetails {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{} (failures: {})", self.reason, self.total_failures)
+    }
+}
+
 impl fmt::Display for ConnectionStatus {
     fn fmt(
         &self,
@@ -95,6 +121,7 @@ impl fmt::Display for ConnectionStatus {
             ConnectionStatus::Busy => write!(f, "Busy"),
             ConnectionStatus::Error(err) => write!(f, "Error: {err}"),
             ConnectionStatus::Shutdown => write!(f, "Shutdown"),
+            ConnectionStatus::Disabled(details) => write!(f, "Disabled: {details}"),
         }
     }
 }
@@ -111,6 +138,16 @@ impl ConnectionStatus {
     /// check if the connection should be monitored by health check
     pub fn should_monitor(&self) -> bool {
         matches!(self, ConnectionStatus::Ready | ConnectionStatus::Error(_))
+    }
+
+    /// check if the connection is disabled
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, ConnectionStatus::Disabled(_))
+    }
+
+    /// check if the connection should be included in API responses and tool lists
+    pub fn is_available(&self) -> bool {
+        !matches!(self, ConnectionStatus::Disabled(_))
     }
 
     /// get the list of allowed operations in this state
@@ -140,6 +177,10 @@ impl ConnectionStatus {
             }
             Self::Shutdown => {
                 vec![ConnectionOperation::Connect, ConnectionOperation::Reconnect]
+            }
+            Self::Disabled(_) => {
+                // Disabled servers can only be manually recovered
+                vec![ConnectionOperation::Recover]
             }
         }
     }
@@ -197,6 +238,7 @@ impl std::fmt::Display for ConnectionOperation {
             ConnectionOperation::Reconnect => write!(f, "reconnect"),
             ConnectionOperation::Cancel => write!(f, "cancel"),
             ConnectionOperation::ResetReconnect => write!(f, "reset_reconnect"),
+            ConnectionOperation::Recover => write!(f, "recover"),
         }
     }
 }

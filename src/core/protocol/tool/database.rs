@@ -97,6 +97,16 @@ impl DatabaseToolService {
                 // Find a connected instance for this server
                 let mut found = false;
                 for conn in instances.values() {
+                    // Skip disabled servers completely (they should not appear in tool lists)
+                    if conn.is_disabled() {
+                        tracing::debug!(
+                            "Skipping tool '{}' from disabled server '{}'",
+                            tool_name,
+                            server_name
+                        );
+                        continue;
+                    }
+
                     // Skip failed or disconnected instances immediately
                     if !conn.is_connected() {
                         continue;
@@ -241,6 +251,16 @@ impl DatabaseToolService {
                 let mut found = false;
                 #[allow(clippy::for_kv_map)] // We need both instance_id and conn
                 for (instance_id, conn) in instances {
+                    // Skip disabled servers completely
+                    if conn.is_disabled() {
+                        tracing::debug!(
+                            "Skipping tool mapping for '{}' from disabled server '{}'",
+                            tool_name,
+                            server_name
+                        );
+                        continue;
+                    }
+
                     if !conn.is_connected() {
                         continue;
                     }

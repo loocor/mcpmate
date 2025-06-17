@@ -48,6 +48,12 @@ pub async fn list_all(
                 continue;
             }
 
+            // Skip disabled servers completely (they should not appear in API responses)
+            if conn.is_disabled() {
+                tracing::debug!("Skipping tools from disabled server '{}'", server_name);
+                continue;
+            }
+
             // Skip servers with permanent errors for better fault isolation
             if let crate::core::foundation::types::ConnectionStatus::Error(ref error_details) =
                 conn.status

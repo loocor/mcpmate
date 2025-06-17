@@ -362,7 +362,7 @@ impl ParallelConnectionManager {
                 } => {
                     let mut pool = pool.lock().await;
                     if let Ok(conn) = pool.get_instance_mut(&server_name, &instance_id) {
-                        conn.update_error(error.clone());
+                        conn.update_error_with_escalation(error.clone());
                         tracing::error!(
                             "Failed to connect to '{}' instance '{}': {}",
                             server_name,

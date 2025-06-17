@@ -6,11 +6,10 @@
 //! - parallel connection capabilities
 //! - service lifecycle management
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use rmcp::{RoleClient, model::Tool, service::RunningService};
-use tokio::time::sleep;
 use tracing;
 
 use super::UpstreamConnectionPool;
@@ -31,7 +30,10 @@ use crate::{
 };
 
 impl UpstreamConnectionPool {
-    /// Reconnect to a specific instance of a server
+    /// Reconnect to a specific instance of a server (non-blocking)
+    ///
+    /// This method schedules a reconnection without blocking the connection pool.
+    /// The actual reconnection happens asynchronously after the backoff period.
     pub async fn reconnect(
         &mut self,
         server_name: &str,
@@ -48,15 +50,78 @@ impl UpstreamConnectionPool {
         let backoff = std::cmp::min(300, 2u64.pow(std::cmp::min(8, conn.connection_attempts)));
 
         tracing::info!(
-            "Waiting {}s before reconnecting to '{}' instance '{}'",
-            backoff,
+            "Scheduling reconnection to '{}' instance '{}' in {}s (non-blocking)",
             server_name,
-            instance_id
+            instance_id,
+            backoff
         );
-        sleep(Duration::from_secs(backoff)).await;
 
-        // Reconnect
-        self.trigger_connect(server_name, instance_id).await
+        // Schedule asynchronous reconnection without blocking the connection pool
+        self.schedule_async_reconnect(server_name, instance_id, backoff)
+            .await
+    }
+
+    /// Schedule an asynchronous reconnection without blocking the connection pool
+    async fn schedule_async_reconnect(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+        backoff_seconds: u64,
+    ) -> Result<()> {
+        // Clone necessary data for the async task
+        let server_name = server_name.to_string();
+        let instance_id = instance_id.to_string();
+
+        // Create a weak reference to avoid circular dependencies
+        let pool_weak = Arc::downgrade(&Arc::new(tokio::sync::Mutex::new(self.clone())));
+
+        // Spawn async reconnection task
+        tokio::spawn(async move {
+            // Wait for backoff period without blocking anything
+            tokio::time::sleep(Duration::from_secs(backoff_seconds)).await;
+
+            tracing::info!(
+                "Executing scheduled reconnection to '{}' instance '{}' after {}s delay",
+                server_name,
+                instance_id,
+                backoff_seconds
+            );
+
+            // Try to upgrade the weak reference
+            if let Some(pool_arc) = pool_weak.upgrade() {
+                // Attempt reconnection with minimal lock time
+                let result = {
+                    let mut pool = pool_arc.lock().await;
+                    pool.trigger_connect(&server_name, &instance_id).await
+                };
+
+                match result {
+                    Ok(()) => {
+                        tracing::info!(
+                            "Scheduled reconnection to '{}' instance '{}' completed successfully",
+                            server_name,
+                            instance_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Scheduled reconnection to '{}' instance '{}' failed: {}",
+                            server_name,
+                            instance_id,
+                            e
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    "Connection pool no longer available for scheduled reconnection to '{}' instance '{}'",
+                    server_name,
+                    instance_id
+                );
+            }
+        });
+
+        Ok(())
     }
 
     /// Disconnect from a specific instance of a server
@@ -204,12 +269,12 @@ impl UpstreamConnectionPool {
                 Ok(())
             }
             Err(e) => {
-                // Update connection with error
+                // Update connection with progressive failure escalation
                 let conn = self.get_instance_mut(server_name, instance_id)?;
-                conn.update_error(format!("Connection failed: {}", e));
+                conn.update_error_with_escalation(format!("Connection failed: {}", e));
 
                 tracing::error!(
-                    "Failed to connect to '{}' instance '{}': {}",
+                    "Failed to connect to '{}' instance '{}': {} (progressive escalation applied)",
                     server_name,
                     instance_id,
                     e
@@ -523,6 +588,13 @@ impl UpstreamConnectionPool {
 
                 // Then reconnect
                 self.trigger_connect(server_name, instance_id).await
+            }
+            ConnectionOperation::Recover => {
+                // Recover operation should be handled at the API level, not here
+                // This is a manual operation that requires direct connection manipulation
+                Err(anyhow::anyhow!(
+                    "Recover operation should be handled directly via manual_re_enable method"
+                ))
             }
         }
     }
