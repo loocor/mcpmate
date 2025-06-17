@@ -142,14 +142,22 @@ async fn get_client_config_details(
     db_pool: &sqlx::SqlitePool,
 ) -> Result<(String, bool), sqlx::Error> {
     let row = sqlx::query(
-        "SELECT top_level_key, is_array_config FROM client_config_rules WHERE client_identifier = ?",
+        "SELECT top_level_key, config_type FROM client_config_rules WHERE client_identifier = ?",
     )
     .bind(client_identifier)
     .fetch_one(db_pool)
     .await?;
 
     let top_level_key: String = row.get("top_level_key");
-    let is_array_config: bool = row.get("is_array_config");
+    let config_type: String = row.get("config_type");
+
+    // Check if config_type is 'array' (default to 'standard' if empty)
+    let config_type = if config_type.is_empty() {
+        "standard"
+    } else {
+        &config_type
+    };
+    let is_array_config = config_type == "array";
 
     Ok((top_level_key, is_array_config))
 }

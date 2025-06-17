@@ -328,14 +328,19 @@ impl ClientManager {
         &self,
         config: &GeneratedConfig,
     ) -> Result<bool> {
-        // Query database to check if this client uses mixed config
-        let is_mixed: bool = sqlx::query_scalar(
-            "SELECT is_mixed_config FROM client_config_rules WHERE client_identifier = ?",
+        // Query database to check if this client uses mixed config type
+        let config_type: Option<String> = sqlx::query_scalar(
+            "SELECT config_type FROM client_config_rules WHERE client_identifier = ?",
         )
         .bind(&config.client_identifier)
         .fetch_optional(&*self.db_pool)
-        .await?
-        .unwrap_or(false);
+        .await?;
+
+        // Check if config_type is 'mixed' (default to 'standard' if not found)
+        let is_mixed = config_type
+            .unwrap_or_else(|| "standard".to_string())
+            .as_str()
+            == "mixed";
 
         Ok(is_mixed)
     }

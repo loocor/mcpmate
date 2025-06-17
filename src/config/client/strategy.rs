@@ -77,8 +77,9 @@ impl TransportStrategy {
             .contains(&server.server_type)
         {
             return Err(anyhow::anyhow!(
-                "Transport type '{}' is not supported by client in transparent mode",
-                server.server_type
+                "Transport type '{}' is not supported by client '{}' in transparent mode",
+                server.server_type,
+                config_rule.client_identifier
             ));
         }
 
