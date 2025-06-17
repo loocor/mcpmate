@@ -152,62 +152,27 @@ pub async fn get_config_type(
     }
 }
 
-/// Helper function to get the actual config path for a client
+/// Helper function to get the actual config path for a client using unified path service
 pub async fn get_client_config_path(
     client_id: &str,
     db_pool: &sqlx::SqlitePool,
 ) -> String {
-    // Get current platform
-    let current_platform = {
-        #[cfg(target_os = "macos")]
-        {
-            "macos"
-        }
-        #[cfg(target_os = "windows")]
-        {
-            "windows"
-        }
-        #[cfg(target_os = "linux")]
-        {
-            "linux"
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        {
-            "unknown"
-        }
-    };
+    // Use the unified path service
+    let path_service = crate::system::paths::service::get_path_service();
 
-    // Query the database for the config path from detection rules for current platform
-    let query = "
-        SELECT config_path
-        FROM client_detection_rules
-        WHERE client_app_id = (
-            SELECT id FROM client_apps WHERE identifier = ?
-        ) AND platform = ?
-        ORDER BY priority ASC
-        LIMIT 1
-    ";
-
-    match sqlx::query_scalar::<_, String>(query)
-        .bind(client_id)
-        .bind(current_platform)
-        .fetch_optional(db_pool)
+    match path_service
+        .get_client_config_path(db_pool, client_id)
         .await
     {
-        Ok(Some(config_path)) => {
-            // Use PathMapper to resolve template variables consistently
-            use crate::system::paths::PathMapper;
-
-            let path_mapper = PathMapper::new().unwrap_or_default();
-            match path_mapper.resolve_template(&config_path) {
-                Ok(resolved_path) => resolved_path.to_string_lossy().to_string(),
-                Err(_) => {
-                    // Fallback: try old {HOME} format
-                    config_path.replace("{HOME}", &std::env::var("HOME").unwrap_or_default())
-                }
-            }
+        Ok(path) => path,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to get client config path for '{}': {}",
+                client_id,
+                e
+            );
+            format!("~/.config/{}/config.json", client_id)
         }
-        _ => format!("~/.config/{}/config.json", client_id),
     }
 }
 

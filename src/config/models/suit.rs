@@ -96,25 +96,67 @@ pub struct ConfigSuitServer {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
-/// Configuration suit tool association model
+/// Server tool mapping model - maintains global tool name mappings
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct ConfigSuitTool {
-    /// Unique ID (UUID)
-    pub id: Option<String>,
-    /// Configuration suit ID
-    pub config_suit_id: String,
+pub struct ServerTool {
+    /// Unique ID (generated with "stool" prefix)
+    pub id: String,
     /// Server ID
     pub server_id: String,
-    /// Server name
+    /// Server name (cached for performance)
     pub server_name: String,
     /// Tool name (original name from upstream server)
     pub tool_name: String,
     /// Unique name for external display and routing
-    pub unique_name: Option<String>,
+    pub unique_name: String,
+    /// Tool description (from MCP server)
+    pub description: Option<String>,
+    /// When the mapping was created
+    pub created_at: Option<DateTime<Utc>>,
+    /// When the mapping was last updated
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// Configuration suit tool association model - references server_tools
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ConfigSuitTool {
+    /// Unique ID (generated with "cstool" prefix)
+    pub id: String,
+    /// Configuration suit ID
+    pub config_suit_id: String,
+    /// Server tool ID (references server_tools.id)
+    pub server_tool_id: String,
     /// Whether the tool is enabled in this configuration suit
     pub enabled: bool,
     /// When the association was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the association was last updated
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// Configuration suit tool with server tool details (for JOIN queries)
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ConfigSuitToolWithDetails {
+    /// Config suit tool ID
+    pub id: String,
+    /// Configuration suit ID
+    pub config_suit_id: String,
+    /// Server tool ID (references server_tools.id)
+    pub server_tool_id: String,
+    /// Whether the tool is enabled in this configuration suit
+    pub enabled: bool,
+    /// When the association was created
+    pub created_at: Option<DateTime<Utc>>,
+    /// When the association was last updated
+    pub updated_at: Option<DateTime<Utc>>,
+    /// Server ID (from server_tools)
+    pub server_id: String,
+    /// Server name (from server_tools)
+    pub server_name: String,
+    /// Tool name (from server_tools)
+    pub tool_name: String,
+    /// Unique name (from server_tools)
+    pub unique_name: String,
+    /// Tool description (from server_tools)
+    pub description: Option<String>,
 }

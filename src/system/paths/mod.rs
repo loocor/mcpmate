@@ -3,5 +3,7 @@
 
 pub mod mapper;
 pub mod platform;
+pub mod service;
 
 pub use mapper::PathMapper;
+pub use service::PathService;

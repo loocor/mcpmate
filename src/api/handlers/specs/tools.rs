@@ -10,7 +10,7 @@ use axum::{
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    config::{operations, server, suit},
+    config::server,
     core::proxy::ProxyServer,
 };
 
@@ -286,118 +286,17 @@ pub async fn get_context(
     Ok((proxy, db))
 }
 
-/// Helper function to get tool status (ID, unique name, enabled status)
+/// Helper function to get tool status using unified service
 pub async fn get_tool_status(
     pool: &sqlx::Pool<sqlx::Sqlite>,
     server_name: &str,
     tool_name: &str,
 ) -> Result<(String, Option<String>, bool), ApiError> {
-    // Check if the tool is enabled
-    let enabled = match operations::tool::is_tool_enabled(pool, server_name, tool_name).await {
-        Ok(enabled) => enabled,
-        Err(e) => {
-            tracing::warn!(
-                "Failed to check if tool is enabled: {}, assuming enabled",
-                e
-            );
-            true // Default to enabled if there's an error
-        }
-    };
+    // Use the unified tool status service
+    let status =
+        crate::config::suit::ToolStatusService::get_tool_status(pool, server_name, tool_name)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to get tool status: {e}")))?;
 
-    // Get the tool ID
-    let tool_id = match operations::tool::get_tool_id(pool, server_name, tool_name).await {
-        Ok(Some(id)) => id,
-        Ok(None) => {
-            // Tool not found in database, create a new record
-            // Get the default config suit
-            let default_suit = suit::get_default_config_suit(pool).await.map_err(|e| {
-                ApiError::InternalError(format!("Failed to get default config suit: {e}"))
-            })?;
-
-            // If there's no default suit, try the legacy "default" named suit
-            let suit_id = if let Some(suit) = default_suit {
-                suit.id.unwrap()
-            } else {
-                let legacy_default = suit::get_config_suit_by_name(pool, "default")
-                    .await
-                    .map_err(|e| {
-                        ApiError::InternalError(format!(
-                            "Failed to get legacy default config suit: {e}"
-                        ))
-                    })?;
-
-                // If there's no legacy default suit either, create a new default suit
-                if let Some(suit) = legacy_default {
-                    suit.id.unwrap()
-                } else {
-                    // Create default config suit if it doesn't exist
-                    let mut new_suit = crate::config::models::ConfigSuit::new_with_description(
-                        "default".to_string(),
-                        Some("Default configuration suit".to_string()),
-                        crate::common::config::ConfigSuitType::Shared,
-                    );
-
-                    // Set active and default flags
-                    new_suit.is_active = true;
-                    new_suit.is_default = true;
-                    new_suit.multi_select = true;
-                    suit::upsert_config_suit(pool, &new_suit)
-                        .await
-                        .map_err(|e| {
-                            ApiError::InternalError(format!(
-                                "Failed to create default config suit: {e}"
-                            ))
-                        })?
-                }
-            };
-
-            // Get the server ID
-            let server = server::get_server(pool, server_name)
-                .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
-
-            if let Some(server) = server {
-                if let Some(server_id) = &server.id {
-                    // Add the tool to the config suit
-                    suit::add_tool_to_config_suit(pool, &suit_id, server_id, tool_name, true)
-                        .await
-                        .map_err(|e| {
-                            ApiError::InternalError(format!(
-                                "Failed to add tool to config suit: {e}"
-                            ))
-                        })?
-                } else {
-                    return Err(ApiError::InternalError(format!(
-                        "Server '{server_name}' has no ID"
-                    )));
-                }
-            } else {
-                return Err(ApiError::NotFound(format!(
-                    "Server '{server_name}' not found"
-                )));
-            }
-        }
-        Err(e) => {
-            return Err(ApiError::InternalError(format!(
-                "Failed to get tool ID: {e}"
-            )));
-        }
-    };
-
-    // Get the unique name for the tool
-    let unique_name = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT unique_name
-        FROM config_suit_tool
-        WHERE server_name = ? AND tool_name = ?
-        LIMIT 1
-        "#,
-    )
-    .bind(server_name)
-    .bind(tool_name)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| ApiError::InternalError(format!("Failed to get unique name: {e}")))?;
-
-    Ok((tool_id, unique_name, enabled))
+    Ok((status.tool_id, status.unique_name, status.enabled))
 }

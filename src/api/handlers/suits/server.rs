@@ -40,23 +40,14 @@ pub async fn list_servers(
         })
         .collect();
 
-    // Convert to response format
+    // Convert to response format using unified converter
     let mut server_responses = Vec::new();
     for config in server_configs {
         if let Some(server) = server_map.get(&config.server_id) {
-            let mut allowed_operations = Vec::new();
-            if config.enabled {
-                allowed_operations.push("disable".to_string());
-            } else {
-                allowed_operations.push("enable".to_string());
-            }
-
-            server_responses.push(ConfigSuitServerResponse {
-                id: config.server_id.clone(),
-                name: server.name.clone(),
-                enabled: config.enabled,
-                allowed_operations,
-            });
+            server_responses.push(ResponseConverter::server_to_suit_response(
+                server,
+                config.enabled,
+            ));
         }
     }
 

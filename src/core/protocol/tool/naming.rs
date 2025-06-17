@@ -113,11 +113,11 @@ pub async fn ensure_unique_name(
     server_id: &str,
     tool_name: &str,
 ) -> Result<String> {
-    // Check if the base name is already used by another tool
+    // Check if the base name is already used by a DIFFERENT tool in server_tools table
     let conflict = sqlx::query_scalar::<_, bool>(
         r#"
         SELECT EXISTS(
-            SELECT 1 FROM config_suit_tool
+            SELECT 1 FROM server_tools
             WHERE unique_name = ?
             AND (server_id != ? OR tool_name != ?)
         )
@@ -143,12 +143,15 @@ pub async fn ensure_unique_name(
         let conflict = sqlx::query_scalar::<_, bool>(
             r#"
             SELECT EXISTS(
-                SELECT 1 FROM config_suit_tool
+                SELECT 1 FROM server_tools
                 WHERE unique_name = ?
+                AND (server_id != ? OR tool_name != ?)
             )
             "#,
         )
         .bind(&suffixed_name)
+        .bind(server_id)
+        .bind(tool_name)
         .fetch_one(pool)
         .await
         .context(format!(

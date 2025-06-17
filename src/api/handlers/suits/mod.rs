@@ -8,6 +8,7 @@ pub use self::{
     helpers::{
         check_resource_belongs_to_suit, check_tool_belongs_to_suit, get_resource_by_id,
         get_resource_or_error, get_server_or_error, get_suit_or_error, get_tool_or_error,
+        get_tool_with_details_or_error,
     },
     mgmt::{activate_suit, batch_activate_suits, batch_deactivate_suits, deactivate_suit},
     prompt::{
@@ -45,17 +46,20 @@ pub(crate) mod common {
     pub use crate::{
         api::{
             handlers::ApiError,
-            models::suits::{
-                BatchOperationRequest, BatchOperationResponse, ConfigSuitListResponse,
-                ConfigSuitPromptResponse, ConfigSuitPromptsResponse, ConfigSuitResourceResponse,
-                ConfigSuitResourcesResponse, ConfigSuitResponse, ConfigSuitServerResponse,
-                ConfigSuitServersResponse, ConfigSuitToolResponse, ConfigSuitToolsResponse,
-                CreateConfigSuitRequest, SuitOperationResponse, UpdateConfigSuitRequest,
+            models::{
+                ResponseConverter,
+                suits::{
+                    BatchOperationRequest, BatchOperationResponse, ConfigSuitListResponse,
+                    ConfigSuitPromptResponse, ConfigSuitPromptsResponse,
+                    ConfigSuitResourceResponse, ConfigSuitResourcesResponse, ConfigSuitResponse,
+                    ConfigSuitServersResponse, ConfigSuitToolResponse, ConfigSuitToolsResponse,
+                    CreateConfigSuitRequest, SuitOperationResponse, UpdateConfigSuitRequest,
+                },
             },
             routes::AppState,
         },
         common::config::ConfigSuitType,
-        config::models::{ConfigSuit, ConfigSuitServer, ConfigSuitTool},
+        config::models::{ConfigSuit, ConfigSuitServer},
     };
 
     /// Get database reference from AppState
@@ -70,31 +74,8 @@ pub(crate) mod common {
         }
     }
 
-    /// Convert ConfigSuit to ConfigSuitResponse
+    /// Convert ConfigSuit to ConfigSuitResponse using unified converter
     pub fn suit_to_response(suit: &ConfigSuit) -> ConfigSuitResponse {
-        let mut allowed_operations = Vec::new();
-
-        // Add allowed operations based on current state
-        if suit.is_active {
-            allowed_operations.push("deactivate".to_string());
-        } else {
-            allowed_operations.push("activate".to_string());
-        }
-
-        // Always allow update and delete
-        allowed_operations.push("update".to_string());
-        allowed_operations.push("delete".to_string());
-
-        ConfigSuitResponse {
-            id: suit.id.clone().unwrap_or_default(),
-            name: suit.name.clone(),
-            description: suit.description.clone(),
-            suit_type: suit.suit_type_string(),
-            multi_select: suit.multi_select,
-            priority: suit.priority,
-            is_active: suit.is_active,
-            is_default: suit.is_default,
-            allowed_operations,
-        }
+        ResponseConverter::suit_to_response(suit)
     }
 }

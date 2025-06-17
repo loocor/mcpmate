@@ -1,9 +1,9 @@
 // Configuration module for MCPMate
 // Contains database connection and configuration management
 
+pub mod client;
 pub mod constants;
 pub mod database;
-pub mod client;
 pub mod initialization;
 pub mod migration;
 pub mod models;

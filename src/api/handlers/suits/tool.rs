@@ -3,7 +3,10 @@
 
 use std::collections::HashMap;
 
-use super::{check_tool_belongs_to_suit, common::*, get_suit_or_error, get_tool_or_error};
+use super::{
+    check_tool_belongs_to_suit, common::*, get_suit_or_error, get_tool_or_error,
+    get_tool_with_details_or_error,
+};
 
 /// List tools in a configuration suit
 pub async fn list_tools(
@@ -16,8 +19,8 @@ pub async fn list_tools(
     // Get the suit to check if it exists and get its name
     let suit = get_suit_or_error(&db, &id).await?;
 
-    // Get all tools in the suit
-    let tool_configs = crate::config::operations::tool::get_tools_by_suit_id(&db.pool, &id)
+    // Get all tools in the suit (using new architecture)
+    let tool_configs = crate::config::suit::get_config_suit_tools(&db.pool, &id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get tool configurations: {e}")))?;
 
@@ -32,11 +35,11 @@ pub async fn list_tools(
         }
 
         tool_responses.push(ConfigSuitToolResponse {
-            id: config.id.unwrap_or_default(),
+            id: config.id,
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             tool_name: config.tool_name.clone(),
-            unique_name: config.unique_name.clone(),
+            unique_name: Some(config.unique_name.clone()),
             enabled: config.enabled,
             allowed_operations,
         });
@@ -67,9 +70,11 @@ pub async fn enable_tool(
 
     // Check if the tool is already enabled
     if tool.enabled {
+        // Get tool details for response
+        let tool_details = get_tool_with_details_or_error(&db, &tool_id).await?;
         return Ok(Json(SuitOperationResponse {
             id: tool_id,
-            name: format!("{}/{}", tool.server_id, tool.tool_name),
+            name: format!("{}/{}", tool_details.server_name, tool_details.tool_name),
             result: "Tool is already enabled in this configuration suit".to_string(),
             status: "Enabled".to_string(),
             allowed_operations: vec!["disable".to_string()],
@@ -77,16 +82,21 @@ pub async fn enable_tool(
     }
 
     // Enable the tool
-    crate::config::operations::tool::set_tool_enabled_by_id(&db.pool, &tool_id, true)
+    sqlx::query("UPDATE config_suit_tool SET enabled = true WHERE id = ?")
+        .bind(&tool_id)
+        .execute(&db.pool)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to enable tool in configuration suit: {e}"))
         })?;
 
+    // Get tool details for response
+    let tool_details = get_tool_with_details_or_error(&db, &tool_id).await?;
+
     // Return success response
     Ok(Json(SuitOperationResponse {
         id: tool_id,
-        name: format!("{}/{}", tool.server_id, tool.tool_name),
+        name: format!("{}/{}", tool_details.server_name, tool_details.tool_name),
         result: "Successfully enabled tool in configuration suit".to_string(),
         status: "Enabled".to_string(),
         allowed_operations: vec!["disable".to_string()],
@@ -110,9 +120,11 @@ pub async fn disable_tool(
 
     // Check if the tool is already disabled
     if !tool.enabled {
+        // Get tool details for response
+        let tool_details = get_tool_with_details_or_error(&db, &tool_id).await?;
         return Ok(Json(SuitOperationResponse {
             id: tool_id,
-            name: format!("{}/{}", tool.server_id, tool.tool_name),
+            name: format!("{}/{}", tool_details.server_name, tool_details.tool_name),
             result: "Tool is already disabled in this configuration suit".to_string(),
             status: "Disabled".to_string(),
             allowed_operations: vec!["enable".to_string()],
@@ -120,16 +132,21 @@ pub async fn disable_tool(
     }
 
     // Disable the tool
-    crate::config::operations::tool::set_tool_enabled_by_id(&db.pool, &tool_id, false)
+    sqlx::query("UPDATE config_suit_tool SET enabled = false WHERE id = ?")
+        .bind(&tool_id)
+        .execute(&db.pool)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to disable tool in configuration suit: {e}"))
         })?;
 
+    // Get tool details for response
+    let tool_details = get_tool_with_details_or_error(&db, &tool_id).await?;
+
     // Return success response
     Ok(Json(SuitOperationResponse {
         id: tool_id,
-        name: format!("{}/{}", tool.server_id, tool.tool_name),
+        name: format!("{}/{}", tool_details.server_name, tool_details.tool_name),
         result: "Successfully disabled tool in configuration suit".to_string(),
         status: "Disabled".to_string(),
         allowed_operations: vec!["enable".to_string()],
@@ -175,10 +192,10 @@ pub async fn batch_enable_tools(
                 }
 
                 // Enable the tool
-                match crate::config::operations::tool::set_tool_enabled_by_id(
-                    &db.pool, &tool_id, true,
-                )
-                .await
+                match sqlx::query("UPDATE config_suit_tool SET enabled = true WHERE id = ?")
+                    .bind(&tool_id)
+                    .execute(&db.pool)
+                    .await
                 {
                     Ok(_) => {
                         successful_ids.push(tool_id.clone());
@@ -241,10 +258,10 @@ pub async fn batch_disable_tools(
                 }
 
                 // Disable the tool
-                match crate::config::operations::tool::set_tool_enabled_by_id(
-                    &db.pool, &tool_id, false,
-                )
-                .await
+                match sqlx::query("UPDATE config_suit_tool SET enabled = false WHERE id = ?")
+                    .bind(&tool_id)
+                    .execute(&db.pool)
+                    .await
                 {
                     Ok(_) => {
                         successful_ids.push(tool_id.clone());

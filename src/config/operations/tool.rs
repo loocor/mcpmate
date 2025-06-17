@@ -118,11 +118,11 @@ pub async fn get_tool_id(
             // Get all tools in this suit
             let tools = crate::config::suit::get_config_suit_tools(pool, &suit_id).await?;
 
-            // Find the tool in this suit
+            // Find the tool in this suit (using new architecture with details)
             for tool_config in tools {
                 if tool_config.server_id == *server_id && tool_config.tool_name == tool_name {
                     // Return the tool's ID
-                    return Ok(tool_config.id);
+                    return Ok(Some(tool_config.id));
                 }
             }
         }
@@ -132,12 +132,12 @@ pub async fn get_tool_id(
     Ok(None)
 }
 
-/// Get all tools in a configuration suit by ID
+/// Get all tools in a configuration suit by ID (deprecated - use crate::config::suit::get_config_suit_tools)
 pub async fn get_tools_by_suit_id(
     pool: &Pool<Sqlite>,
     suit_id: &str,
 ) -> Result<Vec<ConfigSuitTool>> {
-    // Get all tools in the suit
+    // Get all tools in the suit using new table structure
     let tools = sqlx::query_as::<_, ConfigSuitTool>(
         r#"
         SELECT * FROM config_suit_tool
@@ -258,7 +258,7 @@ pub async fn is_tool_enabled(
                         }
                     }
 
-                    // Check tool status in this suit
+                    // Check tool status in this suit (using new architecture)
                     let tools = crate::config::suit::get_config_suit_tools(pool, suit_id).await?;
 
                     for tool_config in tools {
@@ -371,7 +371,7 @@ async fn is_tool_enabled_in_suit(
                 return Ok(false);
             }
 
-            // Check if there's a specific tool configuration in this suit
+            // Check if there's a specific tool configuration in this suit (using new architecture)
             let tools = crate::config::suit::get_config_suit_tools(pool, suit_id).await?;
 
             // Count tools for this server

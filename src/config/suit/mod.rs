@@ -40,4 +40,10 @@ pub use resource::{
 };
 
 // Tool association operations
-pub use tool::{add_tool_to_config_suit, get_config_suit_tools, remove_tool_from_config_suit};
+pub use tool::{
+    ToolStatus,                   // Tool status information for API responses
+    ToolStatusService,            // Unified tool status service to eliminate code duplication
+    add_tool_to_config_suit,      // Add a tool to a config suit
+    get_config_suit_tools,        // Get all tools for a config suit
+    remove_tool_from_config_suit, // Remove a tool from a config suit
+};

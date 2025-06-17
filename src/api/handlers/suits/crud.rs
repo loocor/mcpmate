@@ -124,47 +124,22 @@ pub async fn create_suit(
             })?;
         }
 
-        // Copy tool associations
-        let tool_configs =
-            crate::config::operations::tool::get_tools_by_suit_id(&db.pool, &clone_from_id)
-                .await
-                .map_err(|e| {
-                    ApiError::InternalError(format!("Failed to get tool configurations: {e}"))
-                })?;
+        // Copy tool associations (using new architecture)
+        let tool_configs = crate::config::suit::get_config_suit_tools(&db.pool, &clone_from_id)
+            .await
+            .map_err(|e| {
+                ApiError::InternalError(format!("Failed to get tool configurations: {e}"))
+            })?;
 
         for tool_config in tool_configs {
-            // Generate a unique name for the tool
-            let unique_name = crate::core::protocol::tool::generate_unique_name(
-                &tool_config.server_name,
+            // Use the new architecture to add tools to the config suit
+            crate::config::suit::add_tool_to_config_suit(
+                &db.pool,
+                &suit_id,
+                &tool_config.server_id,
                 &tool_config.tool_name,
-            );
-
-            let new_tool_config = ConfigSuitTool {
-                id: Some(generate_id!("stol")),
-                config_suit_id: suit_id.clone(),
-                server_id: tool_config.server_id.clone(),
-                server_name: tool_config.server_name.clone(),
-                tool_name: tool_config.tool_name.clone(),
-                unique_name: Some(unique_name),
-                enabled: tool_config.enabled,
-                created_at: None,
-                updated_at: None,
-            };
-
-            sqlx::query(
-                r#"
-                INSERT INTO config_suit_tool (id, config_suit_id, server_id, server_name, tool_name, unique_name, enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                "#,
+                tool_config.enabled,
             )
-            .bind(new_tool_config.id.as_ref().unwrap())
-            .bind(&new_tool_config.config_suit_id)
-            .bind(&new_tool_config.server_id)
-            .bind(&new_tool_config.server_name)
-            .bind(&new_tool_config.tool_name)
-            .bind(&new_tool_config.unique_name)
-            .bind(new_tool_config.enabled)
-            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 ApiError::InternalError(format!("Failed to create tool association: {e}"))

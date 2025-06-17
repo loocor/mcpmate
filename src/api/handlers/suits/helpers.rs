@@ -43,12 +43,14 @@ pub async fn get_server_or_error(
     }
 }
 
-/// Get a tool by ID or return an error
+/// Get a tool by ID or return an error (new architecture)
 pub async fn get_tool_or_error(
     db: &Database,
     tool_id: &str,
 ) -> Result<ConfigSuitTool, ApiError> {
-    let tool = crate::config::operations::tool::get_config_suit_tool_by_id(&db.pool, tool_id)
+    let tool = sqlx::query_as::<_, ConfigSuitTool>("SELECT * FROM config_suit_tool WHERE id = ?")
+        .bind(tool_id)
+        .fetch_optional(&db.pool)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {e}")))?;
 
@@ -60,7 +62,27 @@ pub async fn get_tool_or_error(
     }
 }
 
-/// Check if a tool belongs to a specific configuration suit
+/// Get a tool with details by ID or return an error (new architecture)
+pub async fn get_tool_with_details_or_error(
+    db: &Database,
+    tool_id: &str,
+) -> Result<crate::config::models::ConfigSuitToolWithDetails, ApiError> {
+    let query = crate::config::suit::tool::build_tool_details_query(Some("cst.id = ?"));
+    let tool = sqlx::query_as::<_, crate::config::models::ConfigSuitToolWithDetails>(&query)
+        .bind(tool_id)
+        .fetch_optional(&db.pool)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get tool with details: {e}")))?;
+
+    match tool {
+        Some(t) => Ok(t),
+        None => Err(ApiError::NotFound(format!(
+            "Tool with ID '{tool_id}' not found"
+        ))),
+    }
+}
+
+/// Check if a tool belongs to a specific configuration suit (new architecture)
 pub fn check_tool_belongs_to_suit(
     tool: &ConfigSuitTool,
     suit_id: &str,
@@ -68,8 +90,7 @@ pub fn check_tool_belongs_to_suit(
     if tool.config_suit_id != suit_id {
         return Err(ApiError::BadRequest(format!(
             "Tool with ID '{}' does not belong to configuration suit with ID '{}'",
-            tool.id.as_ref().unwrap_or(&"unknown".to_string()),
-            suit_id
+            tool.id, suit_id
         )));
     }
     Ok(())

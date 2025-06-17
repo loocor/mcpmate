@@ -59,19 +59,15 @@ impl DatabaseToolService {
     pub async fn get_enabled_tools(&self) -> Result<Vec<Tool>> {
         tracing::debug!("Getting all enabled tools from database (authoritative method)");
 
-        // Query enabled tools from active configuration suits
-        let enabled_tools = sqlx::query_as::<_, (String, String, String)>(
-            r#"
-            SELECT cst.unique_name, cst.server_name, cst.tool_name
-            FROM config_suit_tool cst
-            JOIN config_suit cs ON cst.config_suit_id = cs.id
-            WHERE cs.is_active = true AND cst.enabled = true
-            ORDER BY cst.unique_name
-            "#,
-        )
-        .fetch_all(&self.db.pool)
-        .await
-        .context("Failed to query enabled tools from database")?;
+        // Query enabled tools from active configuration suits (new architecture)
+        let query = format!(
+            "{} ORDER BY st.unique_name",
+            crate::config::suit::tool::build_enabled_tools_query(None)
+        );
+        let enabled_tools = sqlx::query_as::<_, (String, String, String, String)>(&query)
+            .fetch_all(&self.db.pool)
+            .await
+            .context("Failed to query enabled tools from database")?;
 
         let mut all_tools = Vec::new();
 
@@ -91,7 +87,7 @@ impl DatabaseToolService {
         };
 
         // Build tool list for each enabled tool with fault isolation
-        for (unique_name, server_name, tool_name) in enabled_tools {
+        for (unique_name, server_name, tool_name, _server_id) in enabled_tools {
             // Find the server instance in the connection pool
             if let Some(instances) = pool.connections.get(&server_name) {
                 // Find a connected instance for this server
@@ -185,23 +181,19 @@ impl DatabaseToolService {
             tool_name
         );
 
-        // Query the database for the tool mapping
-        let result = sqlx::query_as::<_, (String, String)>(
-            r#"
-            SELECT cst.server_name, cst.tool_name
-            FROM config_suit_tool cst
-            JOIN config_suit cs ON cst.config_suit_id = cs.id
-            WHERE cs.is_active = true AND cst.enabled = true AND cst.unique_name = ?
-            LIMIT 1
-            "#,
-        )
-        .bind(tool_name)
-        .fetch_optional(&self.db.pool)
-        .await
-        .context("Failed to query tool mapping from database")?;
+        // Query the database for the tool mapping (new architecture)
+        let query = format!(
+            "{} AND st.unique_name = ? LIMIT 1",
+            crate::config::suit::tool::build_enabled_tools_query(None)
+        );
+        let result = sqlx::query_as::<_, (String, String, String, String)>(&query)
+            .bind(tool_name)
+            .fetch_optional(&self.db.pool)
+            .await
+            .context("Failed to query tool mapping from database")?;
 
         match result {
-            Some((server_name, original_tool_name)) => {
+            Some((_unique_name, server_name, original_tool_name, _server_id)) => {
                 tracing::debug!(
                     "Resolved tool '{}' -> server: '{}', original tool: '{}'",
                     tool_name,
@@ -227,18 +219,12 @@ impl DatabaseToolService {
     pub async fn build_tool_mapping(&self) -> Result<HashMap<String, ToolMapping>> {
         tracing::debug!("Building tool mapping from database (authoritative method)");
 
-        // Query enabled tools from active configuration suits
-        let enabled_tools = sqlx::query_as::<_, (String, String, String, String)>(
-            r#"
-            SELECT cst.unique_name, cst.server_name, cst.tool_name, cst.server_id
-            FROM config_suit_tool cst
-            JOIN config_suit cs ON cst.config_suit_id = cs.id
-            WHERE cs.is_active = true AND cst.enabled = true
-            "#,
-        )
-        .fetch_all(&self.db.pool)
-        .await
-        .context("Failed to query enabled tools from database")?;
+        // Query enabled tools from active configuration suits (new architecture)
+        let query = crate::config::suit::tool::build_enabled_tools_query(None);
+        let enabled_tools = sqlx::query_as::<_, (String, String, String, String)>(&query)
+            .fetch_all(&self.db.pool)
+            .await
+            .context("Failed to query enabled tools from database")?;
 
         let mut tool_mapping = HashMap::new();
         let pool = self.connection_pool.lock().await;
@@ -327,18 +313,15 @@ impl DatabaseToolService {
         &self,
         tool_name: &str,
     ) -> Result<bool> {
-        let count = sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT COUNT(*)
-            FROM config_suit_tool cst
-            JOIN config_suit cs ON cst.config_suit_id = cs.id
-            WHERE cs.is_active = true AND cst.enabled = true AND cst.unique_name = ?
-            "#,
-        )
-        .bind(tool_name)
-        .fetch_one(&self.db.pool)
-        .await
-        .context("Failed to check tool enablement in database")?;
+        let query = format!(
+            "SELECT COUNT(*) FROM ({}) AS enabled_tools WHERE unique_name = ?",
+            crate::config::suit::tool::build_enabled_tools_query(None)
+        );
+        let count = sqlx::query_scalar::<_, i64>(&query)
+            .bind(tool_name)
+            .fetch_one(&self.db.pool)
+            .await
+            .context("Failed to check tool enablement in database")?;
 
         Ok(count > 0)
     }

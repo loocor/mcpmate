@@ -7,6 +7,7 @@ pub mod enabled;
 pub mod env;
 pub mod init;
 pub mod meta;
+pub mod tools;
 
 pub use crud::{
     delete_server, get_all_servers, get_server, get_server_by_id, upsert_server, upsert_server_tx,
