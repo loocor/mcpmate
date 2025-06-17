@@ -322,6 +322,12 @@
             "value": "~/Library/Application Support/Cursor/User/globalStorage/augment.vscode-augment/augment-global-state/mcpServers.json",
             "config_path": "~/Library/Application Support/Cursor/User/globalStorage/augment.vscode-augment/augment-global-state/mcpServers.json",
             "priority": 1
+          },
+          {
+            "method": "file_path",
+            "value": "~/Library/Application Support/Code/User/globalStorage/augment.vscode-augment/augment-global-state/mcpServers.json",
+            "config_path": "~/Library/Application Support/Code/User/globalStorage/augment.vscode-augment/augment-global-state/mcpServers.json",
+            "priority": 1
           }
         ],
         "windows": [

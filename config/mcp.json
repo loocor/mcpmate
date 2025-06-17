@@ -33,6 +33,22 @@
       "command": "npx",
       "type": "stdio"
     },
+    "feedback": {
+      "args": [
+        "mcp-feedback-enhanced@latest"
+      ],
+      "autoApprove": [
+        "interactive_feedback"
+      ],
+      "command": "uvx",
+      "env": {
+        "MCP_DEBUG": "false",
+        "MCP_DESKTOP_MODE": "true",
+        "MCP_WEB_PORT": "8765"
+      },
+      "timeout": 600,
+      "type": "stdio"
+    },
     "fetch": {
       "args": [
         "mcp-server-fetch"
