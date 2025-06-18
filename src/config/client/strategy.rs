@@ -12,6 +12,7 @@ use crate::common::server::{
     TRANSPORT_PRIORITY,
     transport_formats::{SSE, STDIO, STREAMABLE_HTTP},
 };
+use crate::system::config::get_runtime_port_config;
 
 /// Transport strategy handler
 pub struct TransportStrategy {
@@ -142,10 +143,18 @@ impl TransportStrategy {
             let value = match key.as_str() {
                 "url" | "serverUrl" => match transport {
                     t if t == SSE => {
-                        json!(format!("http://localhost:8000/sse/{}", server.id))
+                        let runtime_config = get_runtime_port_config();
+                        json!(format!(
+                            "http://localhost:{}/sse/{}",
+                            runtime_config.mcp_port, server.id
+                        ))
                     }
                     t if t == STREAMABLE_HTTP => {
-                        json!(format!("http://localhost:8000/mcp/{}", server.id))
+                        let runtime_config = get_runtime_port_config();
+                        json!(format!(
+                            "http://localhost:{}/mcp/{}",
+                            runtime_config.mcp_port, server.id
+                        ))
                     }
                     _ => {
                         self.template_engine
@@ -179,7 +188,13 @@ impl TransportStrategy {
             let value = match key.as_str() {
                 "command" => json!("mcpmate"),
                 "args" => json!(["proxy", "--server", &server.id]),
-                "url" => json!(format!("http://localhost:8000/mcp/{}", server.id)),
+                "url" => {
+                    let runtime_config = get_runtime_port_config();
+                    json!(format!(
+                        "http://localhost:{}/mcp/{}",
+                        runtime_config.mcp_port, server.id
+                    ))
+                }
                 _ => {
                     self.template_engine
                         .apply_template(template, server, STDIO)
@@ -207,11 +222,14 @@ impl TransportStrategy {
 
         let mut config = json!({});
 
-        // Create endpoint URL based on transport type
+        // Create endpoint URL based on transport type with dynamic port
+        let runtime_config = get_runtime_port_config();
         let endpoint_url = match transport {
-            t if t == SSE => "http://localhost:8000/sse",
-            t if t == STREAMABLE_HTTP => "http://localhost:8000/mcp",
-            _ => "http://localhost:8000/mcp",
+            t if t == SSE => format!("http://localhost:{}/sse", runtime_config.mcp_port),
+            t if t == STREAMABLE_HTTP => {
+                format!("http://localhost:{}/mcp", runtime_config.mcp_port)
+            }
+            _ => format!("http://localhost:{}/mcp", runtime_config.mcp_port),
         };
 
         // Create a mock server info for hosted mode endpoint configuration

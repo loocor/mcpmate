@@ -91,12 +91,12 @@ pub async fn start_proxy_server(
     args: &Args,
 ) -> Result<()> {
     // Start proxy server with specified transport
-    let mcp_bind_address = format!("127.0.0.1:{}", args.port).parse()?;
+    let mcp_bind_address = format!("127.0.0.1:{}", args.mcp_port).parse()?;
     tracing::info!(
         "🚀 MCP Proxy Server binding to address: {}",
         mcp_bind_address
     );
-    tracing::info!("🔧 Using port from args.port: {}", args.port);
+    tracing::info!("🔧 Using port from args.port: {}", args.mcp_port);
 
     // Check if using unified mode
     if args.transport == "unified" || args.transport == "uni" {

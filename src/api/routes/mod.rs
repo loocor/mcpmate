@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     core::{pool::UpstreamConnectionPool, proxy::ProxyServer},
-    system::SystemMetricsCollector,
+    system::metrics::MetricsCollector,
 };
 
 /// Application state shared across all routes
@@ -26,7 +26,7 @@ pub struct AppState {
     /// Connection pool for upstream servers
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     /// System metrics collector
-    pub metrics_collector: Arc<SystemMetricsCollector>,
+    pub metrics_collector: Arc<MetricsCollector>,
     /// HTTP proxy server reference
     pub http_proxy: Option<Arc<ProxyServer>>,
     /// Config Suit merge service
@@ -54,12 +54,10 @@ fn create_router_internal(
     http_proxy: Option<Arc<ProxyServer>>,
 ) -> Router {
     // Create system metrics collector with 5 second update interval
-    let metrics_collector = Arc::new(SystemMetricsCollector::new(std::time::Duration::from_secs(
-        5,
-    )));
+    let metrics_collector = Arc::new(MetricsCollector::new(std::time::Duration::from_secs(5)));
 
     // Start background refresh task
-    SystemMetricsCollector::start_background_refresh(metrics_collector.clone());
+    MetricsCollector::start_background_refresh(metrics_collector.clone());
 
     // Create Config Suit merge service if HTTP proxy and database are available
     let config_suit_merge_service = if let Some(ref proxy) = http_proxy {

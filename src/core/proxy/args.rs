@@ -6,7 +6,7 @@ use clap::Parser;
 pub struct Args {
     /// Port to listen on for MCP server
     #[arg(short, long, default_value = "8000")]
-    pub port: u16,
+    pub mcp_port: u16,
 
     /// Port to listen on for API server
     #[arg(long, default_value = "8080")]

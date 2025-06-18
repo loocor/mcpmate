@@ -1,6 +1,6 @@
-//! FFI data types
+//! Interop data types
 //!
-//! Defines data structures that can be safely passed between Rust and Swift
+//! Defines data structures that can be safely passed between different languages
 
 use serde::{Deserialize, Serialize};
 

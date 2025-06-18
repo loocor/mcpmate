@@ -89,7 +89,7 @@ base64 = "0.22.1"
 # Features for different build modes
 [features]
 default = []
-ffi = []
+interop = []
 standalone = []
 
 [[bin]]

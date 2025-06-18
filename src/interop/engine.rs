@@ -1,6 +1,6 @@
-//! FFI Engine implementation
+//! Interop Engine implementation
 //!
-//! Core engine that manages MCPMate service lifecycle for FFI integration
+//! Core engine that manages MCPMate service lifecycle for cross-language integration
 
 use anyhow::Result;
 use std::sync::{
@@ -17,7 +17,7 @@ use crate::core::proxy::startup::{
 };
 use crate::core::proxy::{Args, ProxyServer};
 
-/// MCPMate FFI Engine
+/// MCPMate Interop Engine
 ///
 /// This is the main interface for Swift to interact with MCPMate backend.
 /// It provides minimal lifecycle management functionality.
@@ -135,16 +135,16 @@ impl MCPMateEngine {
         // Step 1: Setup logging (10%)
         Self::update_progress(&startup_progress, 0.1, "Setting up logging...").await;
 
-        // Create Args with FFI-provided ports (highest priority)
+        // Create Args with Interop-provided ports (highest priority)
         let args = Args {
-            port: mcp_port,
+            mcp_port,
             api_port,
             log_level: "info".to_string(),
             transport: "uni".to_string(),
         };
 
         tracing::info!(
-            "FFI Engine starting with ports: API={}, MCP={}",
+            "Interop Engine starting with ports: API={}, MCP={}",
             api_port,
             mcp_port
         );
@@ -153,12 +153,12 @@ impl MCPMateEngine {
 
         // Log configuration priority information
         tracing::info!(
-            "FFI startup with port configuration - API port: {}, MCP port: {}",
+            "Interop startup with port configuration - API port: {}, MCP port: {}",
             api_port,
             mcp_port
         );
         tracing::info!(
-            "Configuration priority: FFI parameters > command-line arguments > defaults"
+            "Configuration priority: Interop parameters > command-line arguments > defaults"
         );
 
         // Step 2: Setup database (30%)
@@ -180,15 +180,15 @@ impl MCPMateEngine {
         // Step 5: Start proxy server (85%)
         Self::update_progress(&startup_progress, 0.85, "Starting proxy server...").await;
         tracing::info!(
-            "Starting MCP proxy server on port {} (from FFI config)",
-            args.port
+            "Starting MCP proxy server on port {} (from Interop config)",
+            args.mcp_port
         );
         start_proxy_server(&mut proxy, &args).await?;
 
         // Step 6: Start API server (100%)
         Self::update_progress(&startup_progress, 1.0, "Starting API server...").await;
         tracing::info!(
-            "Starting API server on port {} (from FFI config)",
+            "Starting API server on port {} (from Interop config)",
             args.api_port
         );
         let _api_task = start_api_server(proxy_arc.clone(), &args).await?;
@@ -208,7 +208,7 @@ impl MCPMateEngine {
             progress.is_complete = true;
         }
 
-        tracing::info!("MCPMate service started successfully via FFI");
+        tracing::info!("MCPMate service started successfully via Interop");
 
         // Keep the service running
         // Note: In a real implementation, we'd store the handles for cleanup
@@ -236,7 +236,7 @@ impl MCPMateEngine {
 
     /// Debug environment and command availability
     async fn debug_environment() {
-        tracing::info!("=== FFI Environment Debug ===");
+        tracing::info!("=== Interop Environment Debug ===");
 
         // Check current working directory
         if let Ok(cwd) = std::env::current_dir() {
@@ -485,7 +485,7 @@ impl MCPMateEngine {
         }
 
         tracing::info!("=== End Subprocess Creation Tests ===");
-        tracing::info!("=== End FFI Environment Debug ===");
+        tracing::info!("=== End Interop Environment Debug ===");
     }
 
     /// Get current startup progress
@@ -539,7 +539,7 @@ impl MCPMateEngine {
 
     /// Stop the service
     pub fn stop(&mut self) {
-        tracing::info!("🛑 Stopping MCPMate service via FFI");
+        tracing::info!("🛑 Stopping MCPMate service via Interop");
 
         // Update status
         if let Some(runtime) = &self.runtime {
