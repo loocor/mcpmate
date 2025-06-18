@@ -9,6 +9,7 @@ authors = ["Loocor <loocor@gmail.com>"]
 [lib]
 name = "mcpmate"
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]  # Support both FFI and regular library
 
 [dev-dependencies]
 mockall = "0.12"
@@ -84,6 +85,12 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
 base64 = "0.22.1"
+
+# Features for different build modes
+[features]
+default = []
+ffi = []
+standalone = []
 
 [[bin]]
 name = "bridge"

@@ -17,8 +17,10 @@ use crate::{
 };
 
 /// Setup logging based on command line arguments
+/// This function is safe to call multiple times - it will only initialize once
 pub fn setup_logging(args: &Args) -> Result<()> {
-    tracing_subscriber::fmt()
+    // Use try_init() to avoid panic on repeated calls
+    let result = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env().add_directive(
                 args.log_level
@@ -26,7 +28,18 @@ pub fn setup_logging(args: &Args) -> Result<()> {
                     .unwrap_or(tracing::Level::INFO.into()),
             ),
         )
-        .init();
+        .try_init();
+
+    match result {
+        Ok(()) => {
+            tracing::info!("Logging system initialized successfully");
+        }
+        Err(_) => {
+            // Global subscriber already set, this is fine for FFI mode
+            tracing::debug!("Logging system already initialized, skipping");
+        }
+    }
+
     Ok(())
 }
 
@@ -35,14 +48,22 @@ pub async fn setup_database() -> Result<Database> {
     // Initialize server start time
     system::initialize_server_start_time();
 
+    // Debug database path before initialization
+    let db_path = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".mcpmate")
+        .join("mcpmate.db");
+    tracing::info!("FFI Database setup - Expected path: {}", db_path.display());
+    tracing::info!("FFI Database setup - File exists: {}", db_path.exists());
+
     // Initialize database
     let db = match Database::new().await {
         Ok(db) => {
-            tracing::info!("Database initialized successfully");
+            tracing::info!("FFI Database initialized successfully");
             db
         }
         Err(e) => {
-            tracing::error!("Failed to initialize database: {}", e);
+            tracing::error!("FFI Failed to initialize database: {}", e);
             return Err(anyhow::anyhow!("Failed to initialize database: {}", e));
         }
     };

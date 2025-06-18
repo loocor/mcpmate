@@ -1,0 +1,540 @@
+//! FFI Engine implementation
+//!
+//! Core engine that manages MCPMate service lifecycle for FFI integration
+
+use anyhow::Result;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
+
+use super::types::{ServiceInfo, ServiceStatus, StartupProgress};
+use crate::core::proxy::init::{setup_database, setup_logging, setup_proxy_server};
+use crate::core::proxy::startup::{
+    start_api_server, start_background_connections, start_proxy_server,
+};
+use crate::core::proxy::{Args, ProxyServer};
+
+/// MCPMate FFI Engine
+///
+/// This is the main interface for Swift to interact with MCPMate backend.
+/// It provides minimal lifecycle management functionality.
+pub struct MCPMateEngine {
+    /// Tokio runtime for async operations
+    runtime: Option<tokio::runtime::Runtime>,
+    /// Proxy server handle
+    proxy_handle: Option<Arc<ProxyServer>>,
+    /// API server task handle
+    api_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Current startup progress
+    startup_progress: Arc<Mutex<StartupProgress>>,
+    /// Service status
+    status: Arc<Mutex<ServiceStatus>>,
+    /// Whether service is running
+    is_running: Arc<AtomicBool>,
+    /// Service start time
+    start_time: Arc<AtomicU64>,
+    /// Configuration
+    api_port: u16,
+    mcp_port: u16,
+}
+
+impl MCPMateEngine {
+    /// Create a new MCPMate engine instance
+    pub fn new() -> Self {
+        Self {
+            runtime: Some(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime")),
+            proxy_handle: None,
+            api_handle: None,
+            startup_progress: Arc::new(Mutex::new(StartupProgress::default())),
+            status: Arc::new(Mutex::new(ServiceStatus::Unknown)),
+            is_running: Arc::new(AtomicBool::new(false)),
+            start_time: Arc::new(AtomicU64::new(0)),
+            api_port: 8080,
+            mcp_port: 3000,
+        }
+    }
+
+    /// Start the MCPMate service
+    pub fn start(
+        &mut self,
+        api_port: u16,
+        mcp_port: u16,
+    ) -> bool {
+        // Update configuration
+        self.api_port = api_port;
+        self.mcp_port = mcp_port;
+
+        // Record start time
+        let start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.start_time.store(start_time, Ordering::Relaxed);
+
+        // Get runtime reference
+        let runtime = match &self.runtime {
+            Some(rt) => rt,
+            None => return false,
+        };
+
+        // Clone necessary data for async task
+        let startup_progress = Arc::clone(&self.startup_progress);
+        let status = Arc::clone(&self.status);
+        let is_running = Arc::clone(&self.is_running);
+
+        // Start the service in background
+        let _handle = runtime.spawn(async move {
+            if let Err(e) =
+                Self::start_service_async(api_port, mcp_port, startup_progress, status, is_running)
+                    .await
+            {
+                tracing::error!("Failed to start MCPMate service: {}", e);
+            }
+        });
+
+        true
+    }
+
+    /// Async service startup implementation
+    async fn start_service_async(
+        api_port: u16,
+        mcp_port: u16,
+        startup_progress: Arc<Mutex<StartupProgress>>,
+        status: Arc<Mutex<ServiceStatus>>,
+        is_running: Arc<AtomicBool>,
+    ) -> Result<()> {
+        // Update status to starting
+        {
+            let mut status_guard = status.lock().await;
+            *status_guard = ServiceStatus::Starting;
+        }
+
+        // Step 1: Setup logging (10%)
+        Self::update_progress(&startup_progress, 0.1, "Setting up logging...").await;
+        let args = Args {
+            port: mcp_port,
+            api_port,
+            log_level: "info".to_string(),
+            transport: "uni".to_string(),
+        };
+        setup_logging(&args)?;
+
+        // Step 2: Setup database (30%)
+        Self::update_progress(&startup_progress, 0.3, "Initializing database...").await;
+        let db = setup_database().await?;
+
+        // Step 3: Setup proxy server (50%)
+        Self::update_progress(&startup_progress, 0.5, "Setting up proxy server...").await;
+        let (mut proxy, proxy_arc) = setup_proxy_server(db).await?;
+
+        // Step 4: Debug environment and command availability
+        Self::update_progress(&startup_progress, 0.65, "Debugging environment...").await;
+        Self::debug_environment().await;
+
+        // Step 4: Start background connections (70%)
+        Self::update_progress(&startup_progress, 0.7, "Starting background connections...").await;
+        start_background_connections(&proxy, proxy_arc.clone()).await?;
+
+        // Step 5: Start proxy server (85%)
+        Self::update_progress(&startup_progress, 0.85, "Starting proxy server...").await;
+        start_proxy_server(&mut proxy, &args).await?;
+
+        // Step 6: Start API server (100%)
+        Self::update_progress(&startup_progress, 1.0, "Starting API server...").await;
+        let _api_task = start_api_server(proxy_arc.clone(), &args).await?;
+
+        // Mark as running
+        {
+            let mut status_guard = status.lock().await;
+            *status_guard = ServiceStatus::Running;
+        }
+        is_running.store(true, Ordering::Relaxed);
+
+        // Final progress update
+        {
+            let mut progress = startup_progress.lock().await;
+            progress.percentage = 1.0;
+            progress.current_step = "Service ready".to_string();
+            progress.is_complete = true;
+        }
+
+        tracing::info!("MCPMate service started successfully via FFI");
+
+        // Keep the service running
+        // Note: In a real implementation, we'd store the handles for cleanup
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received shutdown signal");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Update startup progress
+    async fn update_progress(
+        startup_progress: &Arc<Mutex<StartupProgress>>,
+        percentage: f32,
+        message: &str,
+    ) {
+        let mut progress = startup_progress.lock().await;
+        progress.percentage = percentage;
+        progress.current_step = message.to_string();
+
+        tracing::info!("Startup progress: {:.1}% - {}", percentage * 100.0, message);
+    }
+
+    /// Debug environment and command availability
+    async fn debug_environment() {
+        tracing::info!("=== FFI Environment Debug ===");
+
+        // Check current working directory
+        if let Ok(cwd) = std::env::current_dir() {
+            tracing::info!("Current working directory: {}", cwd.display());
+        }
+
+        // Check HOME directory
+        if let Ok(home) = std::env::var("HOME") {
+            tracing::info!("HOME directory: {}", home);
+        }
+
+        // Check database path
+        let db_path = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".mcpmate")
+            .join("mcpmate.db");
+        tracing::info!("Expected database path: {}", db_path.display());
+        tracing::info!("Database exists: {}", db_path.exists());
+
+        // Check .mcpmate directory
+        let mcpmate_dir = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".mcpmate");
+        tracing::info!("MCPMate directory: {}", mcpmate_dir.display());
+        tracing::info!("MCPMate directory exists: {}", mcpmate_dir.exists());
+
+        // List .mcpmate directory contents if it exists
+        if mcpmate_dir.exists() {
+            match std::fs::read_dir(&mcpmate_dir) {
+                Ok(entries) => {
+                    tracing::info!("MCPMate directory contents:");
+                    for entry in entries {
+                        if let Ok(entry) = entry {
+                            tracing::info!("  - {}", entry.file_name().to_string_lossy());
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to read MCPMate directory: {}", e);
+                }
+            }
+        }
+
+        // Check PATH environment variable
+        if let Ok(path) = std::env::var("PATH") {
+            tracing::info!("PATH: {}", path);
+
+            // Check if homebrew paths are in PATH
+            let homebrew_paths = [
+                "/opt/homebrew/bin",
+                "/opt/homebrew/sbin",
+                "/usr/local/bin",
+                "/usr/local/sbin",
+            ];
+            for homebrew_path in homebrew_paths {
+                if path.contains(homebrew_path) {
+                    tracing::info!("✅ PATH contains: {}", homebrew_path);
+                } else {
+                    tracing::warn!("❌ PATH missing: {}", homebrew_path);
+                }
+            }
+        } else {
+            tracing::error!("PATH environment variable not found!");
+        }
+
+        // Check sandbox-related environment variables
+        for env_var in ["APP_SANDBOX_CONTAINER_ID", "TMPDIR", "NSUnbufferedIO"] {
+            if let Ok(value) = std::env::var(env_var) {
+                tracing::info!("Sandbox env {}: {}", env_var, value);
+            }
+        }
+
+        // Test command availability
+        let commands = ["uvx", "npx", "which"];
+        for cmd in commands {
+            match std::process::Command::new(cmd).arg("--version").output() {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    tracing::info!(
+                        "Command '{}' test: success={}, stdout={}, stderr={}",
+                        cmd,
+                        output.status.success(),
+                        stdout.trim(),
+                        stderr.trim()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Command '{}' test failed: {}", cmd, e);
+                }
+            }
+        }
+
+        // Test which command for uvx and npx
+        for cmd in ["uvx", "npx"] {
+            match std::process::Command::new("which").arg(cmd).output() {
+                Ok(output) => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if output.status.success() && !stdout.trim().is_empty() {
+                        tracing::info!("✅ which {}: {}", cmd, stdout.trim());
+                    } else {
+                        tracing::warn!(
+                            "❌ which {} failed: stdout='{}', stderr='{}', status={}",
+                            cmd,
+                            stdout.trim(),
+                            stderr.trim(),
+                            output.status
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("❌ which {} command failed: {}", cmd, e);
+                }
+            }
+
+            // Also test direct access to expected paths
+            let expected_paths = [
+                format!("/opt/homebrew/bin/{}", cmd),
+                format!("/usr/local/bin/{}", cmd),
+            ];
+
+            for expected_path in expected_paths {
+                if std::path::Path::new(&expected_path).exists() {
+                    tracing::info!("✅ Direct path exists: {}", expected_path);
+
+                    // Test if it's executable
+                    match std::process::Command::new(&expected_path)
+                        .arg("--version")
+                        .output()
+                    {
+                        Ok(output) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            if output.status.success() {
+                                tracing::info!(
+                                    "✅ {} is executable: {}",
+                                    expected_path,
+                                    stdout.lines().next().unwrap_or("").trim()
+                                );
+                            } else {
+                                tracing::warn!(
+                                    "❌ {} not executable: status={}",
+                                    expected_path,
+                                    output.status
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("❌ {} execution test failed: {}", expected_path, e);
+                        }
+                    }
+                } else {
+                    tracing::info!("❌ Direct path not found: {}", expected_path);
+                }
+            }
+        }
+
+        // Test subprocess creation with different approaches
+        tracing::info!("=== Subprocess Creation Tests ===");
+
+        // Test 1: Simple echo command
+        match std::process::Command::new("echo").arg("test").output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                tracing::info!(
+                    "Echo test: success={}, output={}",
+                    output.status.success(),
+                    stdout.trim()
+                );
+            }
+            Err(e) => {
+                tracing::error!("Echo test failed: {}", e);
+            }
+        }
+
+        // Test 2: Shell command
+        match std::process::Command::new("sh")
+            .arg("-c")
+            .arg("echo 'shell test'")
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                tracing::info!(
+                    "Shell test: success={}, output={}",
+                    output.status.success(),
+                    stdout.trim()
+                );
+            }
+            Err(e) => {
+                tracing::error!("Shell test failed: {}", e);
+            }
+        }
+
+        // Test 3: Direct npx command with simple args
+        match std::process::Command::new("npx").arg("--version").output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::info!(
+                    "NPX direct test: success={}, stdout={}, stderr={}",
+                    output.status.success(),
+                    stdout.trim(),
+                    stderr.trim()
+                );
+            }
+            Err(e) => {
+                tracing::error!("NPX direct test failed: {}", e);
+            }
+        }
+
+        // Test 4: Using absolute path
+        match std::process::Command::new("/opt/homebrew/bin/npx")
+            .arg("--version")
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::info!(
+                    "NPX absolute path test: success={}, stdout={}, stderr={}",
+                    output.status.success(),
+                    stdout.trim(),
+                    stderr.trim()
+                );
+            }
+            Err(e) => {
+                tracing::error!("NPX absolute path test failed: {}", e);
+            }
+        }
+
+        // Test 5: Spawn vs output
+        tracing::info!("Testing spawn vs output...");
+        match std::process::Command::new("echo").arg("spawn test").spawn() {
+            Ok(mut child) => match child.wait() {
+                Ok(status) => {
+                    tracing::info!("Spawn test: success={}", status.success());
+                }
+                Err(e) => {
+                    tracing::error!("Spawn wait failed: {}", e);
+                }
+            },
+            Err(e) => {
+                tracing::error!("Spawn test failed: {}", e);
+            }
+        }
+
+        tracing::info!("=== End Subprocess Creation Tests ===");
+        tracing::info!("=== End FFI Environment Debug ===");
+    }
+
+    /// Get current startup progress
+    pub fn get_startup_progress(&self) -> StartupProgress {
+        // Use blocking lock since this is called from Swift
+        self.runtime
+            .as_ref()
+            .unwrap()
+            .block_on(async { self.startup_progress.lock().await.clone() })
+    }
+
+    /// Check if service is running
+    pub fn is_running(&self) -> bool {
+        self.is_running.load(Ordering::Relaxed)
+    }
+
+    /// Get service information
+    pub fn get_service_info(&self) -> ServiceInfo {
+        let start_time = self.start_time.load(Ordering::Relaxed);
+        let uptime = if start_time > 0 {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .saturating_sub(start_time)
+        } else {
+            0
+        };
+
+        ServiceInfo {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            api_port: self.api_port,
+            mcp_port: self.mcp_port,
+            uptime_seconds: uptime,
+            is_running: self.is_running(),
+            active_connections: 0, // TODO: Get from connection pool
+        }
+    }
+
+    /// Get startup progress as JSON string
+    pub fn get_startup_progress_json(&self) -> String {
+        let progress = self.get_startup_progress();
+        serde_json::to_string(&progress).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get service info as JSON string
+    pub fn get_service_info_json(&self) -> String {
+        let info = self.get_service_info();
+        serde_json::to_string(&info).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Stop the service
+    pub fn stop(&mut self) {
+        tracing::info!("Stopping MCPMate service via FFI");
+
+        // Update status
+        if let Some(runtime) = &self.runtime {
+            runtime.block_on(async {
+                let mut status_guard = self.status.lock().await;
+                *status_guard = ServiceStatus::Stopping;
+            });
+        }
+
+        // Abort API task
+        if let Some(api_handle) = self.api_handle.take() {
+            api_handle.abort();
+        }
+
+        // Disconnect from all servers
+        if let Some(proxy) = &self.proxy_handle {
+            if let Some(runtime) = &self.runtime {
+                runtime.block_on(async {
+                    let mut pool = proxy.connection_pool.lock().await;
+                    let _ = pool.disconnect_all().await;
+                });
+            }
+        }
+
+        // Mark as stopped
+        self.is_running.store(false, Ordering::Relaxed);
+
+        if let Some(runtime) = &self.runtime {
+            runtime.block_on(async {
+                let mut status_guard = self.status.lock().await;
+                *status_guard = ServiceStatus::Stopped;
+            });
+        }
+
+        tracing::info!("MCPMate service stopped");
+    }
+}
+
+impl Drop for MCPMateEngine {
+    fn drop(&mut self) {
+        if self.is_running() {
+            self.stop();
+        }
+    }
+}
