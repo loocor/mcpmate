@@ -92,6 +92,11 @@ pub async fn start_proxy_server(
 ) -> Result<()> {
     // Start proxy server with specified transport
     let mcp_bind_address = format!("127.0.0.1:{}", args.port).parse()?;
+    tracing::info!(
+        "🚀 MCP Proxy Server binding to address: {}",
+        mcp_bind_address
+    );
+    tracing::info!("🔧 Using port from args.port: {}", args.port);
 
     // Check if using unified mode
     if args.transport == "unified" || args.transport == "uni" {
@@ -154,7 +159,8 @@ pub async fn start_api_server(
 ) -> Result<tokio::task::JoinHandle<()>> {
     // Start API server
     let api_bind_address: SocketAddr = format!("127.0.0.1:{}", args.api_port).parse()?;
-    tracing::info!("Starting API server on {}", api_bind_address);
+    tracing::info!("🚀 API Server binding to address: {}", api_bind_address);
+    tracing::info!("🔧 Using port from args.api_port: {}", args.api_port);
 
     // Clone necessary references for the API server
     let connection_pool = Arc::clone(&proxy_arc.connection_pool);

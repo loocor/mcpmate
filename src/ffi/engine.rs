@@ -10,7 +10,7 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-use super::types::{ServiceInfo, ServiceStatus, StartupProgress};
+use super::types::{PortConfig, ServiceInfo, ServiceStatus, StartupProgress};
 use crate::core::proxy::init::{setup_database, setup_logging, setup_proxy_server};
 use crate::core::proxy::startup::{
     start_api_server, start_background_connections, start_proxy_server,
@@ -63,9 +63,24 @@ impl MCPMateEngine {
         api_port: u16,
         mcp_port: u16,
     ) -> bool {
+        let config = PortConfig::new(api_port, mcp_port);
+        self.start_with_config(config)
+    }
+
+    /// Start the MCPMate service with port configuration
+    pub fn start_with_config(
+        &mut self,
+        config: PortConfig,
+    ) -> bool {
+        // Validate configuration
+        if let Err(e) = config.validate() {
+            tracing::error!("Invalid port configuration: {}", e);
+            return false;
+        }
+
         // Update configuration
-        self.api_port = api_port;
-        self.mcp_port = mcp_port;
+        self.api_port = config.api_port;
+        self.mcp_port = config.mcp_port;
 
         // Record start time
         let start_time = SystemTime::now()
@@ -87,9 +102,14 @@ impl MCPMateEngine {
 
         // Start the service in background
         let _handle = runtime.spawn(async move {
-            if let Err(e) =
-                Self::start_service_async(api_port, mcp_port, startup_progress, status, is_running)
-                    .await
+            if let Err(e) = Self::start_service_async(
+                config.api_port,
+                config.mcp_port,
+                startup_progress,
+                status,
+                is_running,
+            )
+            .await
             {
                 tracing::error!("Failed to start MCPMate service: {}", e);
             }
@@ -114,13 +134,32 @@ impl MCPMateEngine {
 
         // Step 1: Setup logging (10%)
         Self::update_progress(&startup_progress, 0.1, "Setting up logging...").await;
+
+        // Create Args with FFI-provided ports (highest priority)
         let args = Args {
             port: mcp_port,
             api_port,
             log_level: "info".to_string(),
             transport: "uni".to_string(),
         };
+
+        tracing::info!(
+            "FFI Engine starting with ports: API={}, MCP={}",
+            api_port,
+            mcp_port
+        );
+
         setup_logging(&args)?;
+
+        // Log configuration priority information
+        tracing::info!(
+            "FFI startup with port configuration - API port: {}, MCP port: {}",
+            api_port,
+            mcp_port
+        );
+        tracing::info!(
+            "Configuration priority: FFI parameters > command-line arguments > defaults"
+        );
 
         // Step 2: Setup database (30%)
         Self::update_progress(&startup_progress, 0.3, "Initializing database...").await;
@@ -140,10 +179,18 @@ impl MCPMateEngine {
 
         // Step 5: Start proxy server (85%)
         Self::update_progress(&startup_progress, 0.85, "Starting proxy server...").await;
+        tracing::info!(
+            "Starting MCP proxy server on port {} (from FFI config)",
+            args.port
+        );
         start_proxy_server(&mut proxy, &args).await?;
 
         // Step 6: Start API server (100%)
         Self::update_progress(&startup_progress, 1.0, "Starting API server...").await;
+        tracing::info!(
+            "Starting API server on port {} (from FFI config)",
+            args.api_port
+        );
         let _api_task = start_api_server(proxy_arc.clone(), &args).await?;
 
         // Mark as running
@@ -492,30 +539,39 @@ impl MCPMateEngine {
 
     /// Stop the service
     pub fn stop(&mut self) {
-        tracing::info!("Stopping MCPMate service via FFI");
+        tracing::info!("🛑 Stopping MCPMate service via FFI");
 
         // Update status
         if let Some(runtime) = &self.runtime {
             runtime.block_on(async {
                 let mut status_guard = self.status.lock().await;
                 *status_guard = ServiceStatus::Stopping;
+                tracing::info!("🔄 Service status updated to Stopping");
             });
         }
 
-        // Abort API task
+        // Abort API task first
         if let Some(api_handle) = self.api_handle.take() {
+            tracing::info!("🛑 Aborting API server task");
             api_handle.abort();
         }
 
-        // Disconnect from all servers
+        // Disconnect from all servers and stop proxy
         if let Some(proxy) = &self.proxy_handle {
             if let Some(runtime) = &self.runtime {
                 runtime.block_on(async {
+                    tracing::info!("🛑 Disconnecting from all MCP servers");
                     let mut pool = proxy.connection_pool.lock().await;
                     let _ = pool.disconnect_all().await;
+                    drop(pool); // Explicitly drop the pool
+                    tracing::info!("✅ All MCP server connections closed");
                 });
             }
         }
+
+        // Clear proxy handle to ensure it's dropped
+        self.proxy_handle = None;
+        tracing::info!("🛑 Proxy handle cleared");
 
         // Mark as stopped
         self.is_running.store(false, Ordering::Relaxed);

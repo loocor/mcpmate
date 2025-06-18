@@ -4,6 +4,51 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Port configuration for MCPMate services
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortConfig {
+    /// API server port (default: 8080)
+    pub api_port: u16,
+    /// MCP proxy server port (default: 8000)
+    pub mcp_port: u16,
+}
+
+impl Default for PortConfig {
+    fn default() -> Self {
+        Self {
+            api_port: 8080,
+            mcp_port: 8000,
+        }
+    }
+}
+
+impl PortConfig {
+    /// Create a new port configuration
+    pub fn new(
+        api_port: u16,
+        mcp_port: u16,
+    ) -> Self {
+        Self { api_port, mcp_port }
+    }
+
+    /// Validate port configuration
+    pub fn validate(&self) -> Result<(), String> {
+        if self.api_port == 0 {
+            return Err("API port cannot be 0".to_string());
+        }
+        if self.mcp_port == 0 {
+            return Err("MCP port cannot be 0".to_string());
+        }
+        if self.api_port == self.mcp_port {
+            return Err("API port and MCP port cannot be the same".to_string());
+        }
+        if self.api_port < 1024 || self.mcp_port < 1024 {
+            return Err("Ports below 1024 require root privileges".to_string());
+        }
+        Ok(())
+    }
+}
+
 /// Startup progress information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartupProgress {
