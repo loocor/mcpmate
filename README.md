@@ -104,15 +104,21 @@ For more details on configuration suits and API usage, see [Configuration Manage
 
 ### MCPMate Desktop
 
-The planned MCPMate Desktop is a cross-platform desktop application based on the Tauri2 framework, which will provide:
+MCPMate Desktop is a native desktop application that provides a comprehensive graphical interface for managing MCP servers:
 
-- Graphical interface for managing MCP servers
-- Scenario presets and one-click switching
-- Intelligent recommendations and guidance
-- Configuration templates and version control
-- Cross-device synchronization
-- Real-time monitoring and auditing
-- Security risk detection
+**Current Status**: ✅ **macOS version available** - Native SwiftUI application with full functionality
+
+**Key Features**:
+- Complete graphical interface for managing MCP servers, config suits, and tools
+- Real-time monitoring and status display with live updates
+- Intelligent client detection and configuration generation
+- Native system integration with MenuBar support and notifications
+- Automated build and packaging system with DMG installer
+- FFI integration with Rust backend for optimal performance
+
+**Planned Platforms**:
+- **Windows**: Native WinUI 3 application (planned)
+- **Linux**: Native GTK 4 application (planned)
 
 ### MCPMate Inspector
 
@@ -132,10 +138,11 @@ MCPMate Proxy provides a RESTful API for managing and monitoring MCP servers. Se
 
 MCPMate uses the following technology stack:
 
-- **Backend**: Rust, based on [Model Context Protocol Rust SDK](https://github.com/modelcontextprotocol/rust-sdk)
-- **Frontend**: Planned to use Tauri2 framework + React
-- **Data Storage**: Local configuration files + optional cloud sync
-- **Communication**: RESTful API + WebSocket
+- **Backend**: Rust with FFI support, based on [Model Context Protocol Rust SDK](https://github.com/modelcontextprotocol/rust-sdk)
+- **Desktop**: Native applications per platform (SwiftUI for macOS, WinUI 3 for Windows, GTK 4 for Linux)
+- **Data Storage**: SQLite database with structured configuration management
+- **Communication**: RESTful API + FFI integration for desktop applications
+- **Build System**: Automated build scripts with cross-platform packaging support
 
 ## Future Plans
 
