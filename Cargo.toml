@@ -79,6 +79,7 @@ sqlx = { version = "0.8.1", features = [
 ] }
 nanoid = "0.4.0"
 which = "6.0"
+walkdir = "2.3"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tower = { version = "0.5", features = ["util"] }
 proc-macro2 = "1.0"
@@ -95,10 +96,6 @@ standalone = []
 [[bin]]
 name = "bridge"
 path = "src/bin/bridge.rs"
-
-[[bin]]
-name = "runtime"
-path = "src/bin/runtime.rs"
 
 [profile.release]
 panic = "abort"

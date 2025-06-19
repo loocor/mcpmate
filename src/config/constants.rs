@@ -5,9 +5,6 @@
 
 /// Runtime command constants
 pub mod commands {
-    /// Node.js package executor command
-    pub const NPX: &str = "npx";
-
     /// UV package executor command
     pub const UVX: &str = "uvx";
 
@@ -16,6 +13,9 @@ pub mod commands {
 
     /// Docker command
     pub const DOCKER: &str = "docker";
+
+    /// NPX command, only used for npx compatibility
+    pub const NPX: &str = "npx";
 }
 
 /// Environment variable name constants
@@ -23,17 +23,11 @@ pub mod env_vars {
     /// Generic runtime binary path
     pub const MCP_RUNTIME_BIN: &str = "MCP_RUNTIME_BIN";
 
-    /// Node.js specific binary path
-    pub const NPX_BIN_PATH: &str = "NPX_BIN_PATH";
-
     /// UV specific binary path
     pub const UVX_BIN_PATH: &str = "UVX_BIN_PATH";
 
     /// Bun specific binary path
     pub const BUNX_BIN_PATH: &str = "BUNX_BIN_PATH";
-
-    /// NPM cache directory
-    pub const NPM_CONFIG_CACHE: &str = "NPM_CONFIG_CACHE";
 
     /// UV cache directory
     pub const UV_CACHE_DIR: &str = "UV_CACHE_DIR";

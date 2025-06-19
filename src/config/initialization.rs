@@ -4,7 +4,6 @@
 use crate::config::client::init::initialize_client_apps;
 use crate::config::server::init::initialize_server_tables;
 use crate::config::suit::init::initialize_suit_tables;
-use crate::runtime::init::initialize_runtime_tables;
 use anyhow::Result;
 use sqlx::{Pool, Sqlite};
 use tracing;
@@ -20,10 +19,6 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     // Initialize config suit-related tables
     tracing::debug!("Initializing config suit-related tables");
     initialize_suit_tables(pool).await?;
-
-    // Initialize runtime-related tables
-    tracing::debug!("Initializing runtime-related tables");
-    initialize_runtime_tables(pool).await?;
 
     // Initialize client applications tables and data
     tracing::debug!("Initializing client applications tables and data");

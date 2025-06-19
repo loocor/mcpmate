@@ -38,11 +38,18 @@ async fn connect_stdio_server_core(
         .as_ref()
         .context("Command not specified for stdio server")?;
 
+    // Transform command if needed (e.g., npx -> bunx)
+    let transformed_command = crate::core::foundation::utils::transform_command(command);
+
     // Log the command being executed
-    tracing::debug!("Executing command: {}", command);
+    tracing::debug!(
+        "Executing command: {} (transformed from: {})",
+        transformed_command,
+        command
+    );
 
     // Create command with cross-platform support
-    let mut cmd = prepare_command(command, server_config.args.as_ref());
+    let mut cmd = prepare_command(&transformed_command, server_config.args.as_ref());
 
     // Add environment variables if any
     if let Some(env) = &server_config.env {
@@ -53,10 +60,11 @@ async fn connect_stdio_server_core(
 
     // Use RuntimeCache for fast runtime queries if available
     if let Some(cache) = runtime_cache {
-        // Check if runtime is available in cache
-        if let Some(runtime_path) = cache.get_runtime_for_command(command).await {
+        // Check if runtime is available in cache (use transformed command)
+        if let Some(runtime_path) = cache.get_runtime_for_command(&transformed_command).await {
             tracing::info!(
-                "Using MCPMate managed runtime for command '{}': {}",
+                "Using MCPMate managed runtime for command '{}' (transformed from '{}'): {}",
+                transformed_command,
                 command,
                 runtime_path.display()
             );
@@ -73,7 +81,8 @@ async fn connect_stdio_server_core(
             }
         } else {
             tracing::info!(
-                "MCPMate runtime for command '{}' not available in cache, falling back to system runtime",
+                "MCPMate runtime for command '{}' (transformed from '{}') not available in .mcpmate/runtimes, falling back to system runtime",
+                transformed_command,
                 command
             );
         }
@@ -88,14 +97,22 @@ async fn connect_stdio_server_core(
             .context("Failed to create necessary directories")?;
     }
 
-    // Prepare environment variables based on runtime configuration
-    if let Err(e) =
-        crate::config::runtime::prepare_command_env_with_db(&mut cmd, command, database_pool).await
+    // Prepare environment variables based on runtime configuration (use transformed command)
+    if let Err(e) = crate::config::runtime::prepare_command_env_with_db(
+        &mut cmd,
+        &transformed_command,
+        database_pool,
+    )
+    .await
     {
-        tracing::warn!("Failed to prepare environment for command '{command}': {e}");
+        tracing::warn!(
+            "Failed to prepare environment for command '{}': {}",
+            transformed_command,
+            e
+        );
         tracing::info!("Attempting to continue with default environment");
     } else {
-        tracing::debug!("Environment prepared for command '{command}'");
+        tracing::debug!("Environment prepared for command '{}'", transformed_command);
     }
 
     // Determine appropriate timeout based on command type
@@ -109,7 +126,7 @@ async fn connect_stdio_server_core(
         tools_timeout.as_secs()
     );
 
-    // Connect to the server with timeout
+    // Connect to the server with timeout and proper cleanup
     let connect_result = match TokioChildProcess::new(cmd) {
         Ok(child_process) => {
             // Set a timeout for the connection process
@@ -126,13 +143,20 @@ async fn connect_stdio_server_core(
             {
                 Ok(result) => result,
                 Err(_) => {
-                    let error_msg = format!("Connection timeout for server '{server_name}'");
+                    // Connection timeout - ensure cancellation token is triggered
+                    ct.cancel();
+                    let error_msg = format!(
+                        "Connection timeout for server '{server_name}' after {}s",
+                        connection_timeout.as_secs()
+                    );
                     tracing::warn!("{}", error_msg);
                     return Err(anyhow::anyhow!(error_msg));
                 }
             }
         }
         Err(e) => {
+            // Failed to create child process - cancel token to clean up
+            ct.cancel();
             let error_msg = format!("Failed to create child process: {e}");
             return Err(anyhow::anyhow!(error_msg));
         }
@@ -171,11 +195,29 @@ async fn connect_stdio_server_core(
                     Err(anyhow::anyhow!(error_msg))
                 }
                 Err(_) => {
-                    let error_msg = format!("Timeout listing tools for server '{server_name}'");
+                    let error_msg = format!(
+                        "Timeout listing tools for server '{server_name}' after {}s",
+                        tools_timeout.as_secs()
+                    );
                     tracing::warn!("{}", error_msg);
-                    // Make sure to cancel the service to avoid resource leaks
-                    if let Err(cancel_err) = service.cancel().await {
-                        tracing::warn!("Error cancelling service: {}", cancel_err);
+                    // Cancel the token first to stop any ongoing operations
+                    ct.cancel();
+                    // Then cancel the service with timeout to avoid hanging
+                    match tokio::time::timeout(std::time::Duration::from_secs(3), service.cancel())
+                        .await
+                    {
+                        Ok(Ok(_)) => {
+                            tracing::debug!("Service cancelled successfully after tools timeout");
+                        }
+                        Ok(Err(cancel_err)) => {
+                            tracing::warn!(
+                                "Error cancelling service after tools timeout: {}",
+                                cancel_err
+                            );
+                        }
+                        Err(_) => {
+                            tracing::warn!("Service cancellation timeout, resources may be leaked");
+                        }
                     }
                     Err(anyhow::anyhow!(error_msg))
                 }

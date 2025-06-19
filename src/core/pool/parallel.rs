@@ -17,10 +17,8 @@ use super::UpstreamConnectionPool;
 use crate::{
     common::server::{ServerType, TransportType},
     core::transport::{
-        connect_http_server,                     // connect to an HTTP server
-        connect_sse_server,                      // connect to an SSE server
-        connect_stdio_server_with_ct_and_db, // connect to a stdio server with a cancellation token and a database
-        connect_stdio_server_with_runtime_cache, // connect to a stdio server with a runtime cache
+        connect_http_server, // connect to an HTTP server
+        connect_sse_server,  // connect to an SSE server
     },
 };
 
@@ -270,19 +268,17 @@ impl ParallelConnectionManager {
         // Get database pool if available
         let database_pool = database.as_ref().map(|db| &db.pool);
 
-        // Connect using core transport
-        if let Some(runtime_cache) = runtime_cache {
-            connect_stdio_server_with_runtime_cache(
-                server_name,
-                server_config,
-                ct,
-                database_pool,
-                &runtime_cache,
-            )
-            .await
-        } else {
-            connect_stdio_server_with_ct_and_db(server_name, server_config, ct, database_pool).await
-        }
+        // Use the unified transport interface to reduce code duplication
+        crate::core::transport::unified::connect_server(
+            server_name,
+            server_config,
+            ServerType::Stdio,
+            TransportType::Stdio,
+            Some(ct),
+            database_pool,
+            runtime_cache.as_ref().map(|rc| rc.as_ref()),
+        )
+        .await
     }
 
     /// Perform HTTP connection

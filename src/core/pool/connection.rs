@@ -21,10 +21,8 @@ use crate::{
             ConnectionStatus,    // status of the connection
         },
         transport::{
-            connect_http_server,                     // connect to an HTTP server
-            connect_sse_server,                      // connect to an SSE server
-            connect_stdio_server_with_ct_and_db, // connect to a stdio server with a cancellation token and a database
-            connect_stdio_server_with_runtime_cache, // connect to a stdio server with a runtime cache
+            connect_http_server, // connect to an HTTP server
+            connect_sse_server,  // connect to an SSE server
         },
     },
 };
@@ -124,41 +122,13 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
-    /// Disconnect from a specific instance of a server
+    /// Disconnect from a specific instance of a server with improved resource cleanup
     pub async fn disconnect(
         &mut self,
         server_name: &str,
         instance_id: &str,
     ) -> Result<()> {
-        // Take the service from the connection
-        let service = {
-            let conn = self.get_instance_mut(server_name, instance_id)?;
-            conn.service.take()
-        };
-
-        // If there's an active service, cancel it
-        if let Some(service) = service {
-            match service.cancel().await {
-                Ok(quit_reason) => {
-                    tracing::info!(
-                        "Service for server '{}' instance '{}' cancelled with reason: {:?}",
-                        server_name,
-                        instance_id,
-                        quit_reason
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Error cancelling service for '{}' instance '{}': {}",
-                        server_name,
-                        instance_id,
-                        e
-                    );
-                }
-            }
-        }
-
-        // Cancel the token if it exists
+        // Step 1: Cancel the token first to stop new operations
         let token_opt = self
             .cancellation_tokens
             .get_mut(server_name)
@@ -167,13 +137,51 @@ impl UpstreamConnectionPool {
         if let Some(token) = token_opt {
             token.cancel();
             tracing::debug!(
-                "Cancelled token for server '{}' instance '{}'",
+                "Cancelled token for server '{}' instance '{}' to stop new operations",
                 server_name,
                 instance_id
             );
         }
 
-        // Update connection status
+        // Step 2: Take the service from the connection
+        let service = {
+            let conn = self.get_instance_mut(server_name, instance_id)?;
+            conn.service.take()
+        };
+
+        // Step 3: If there's an active service, cancel it with timeout
+        if let Some(service) = service {
+            // Give the service time to gracefully shutdown
+            let cancel_timeout = Duration::from_secs(5);
+
+            match tokio::time::timeout(cancel_timeout, service.cancel()).await {
+                Ok(Ok(quit_reason)) => {
+                    tracing::info!(
+                        "Service for server '{}' instance '{}' cancelled gracefully with reason: {:?}",
+                        server_name,
+                        instance_id,
+                        quit_reason
+                    );
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        "Error during graceful cancellation for '{}' instance '{}': {}",
+                        server_name,
+                        instance_id,
+                        e
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Service cancellation timeout for '{}' instance '{}', resources may be leaked",
+                        server_name,
+                        instance_id
+                    );
+                }
+            }
+        }
+
+        // Step 4: Update connection status
         {
             let conn = self.get_instance_mut(server_name, instance_id)?;
             conn.update_disconnected();
@@ -304,21 +312,18 @@ impl UpstreamConnectionPool {
         // Get database pool if available
         let database_pool = self.database.as_ref().map(|db| &db.pool);
 
-        // Use the core transport module
+        // Use the unified transport interface to reduce code duplication
         let (service, tools, capabilities, process_id) =
-            if let Some(runtime_cache) = &self.runtime_cache {
-                connect_stdio_server_with_runtime_cache(
-                    server_name,
-                    server_config,
-                    ct,
-                    database_pool,
-                    runtime_cache,
-                )
-                .await?
-            } else {
-                connect_stdio_server_with_ct_and_db(server_name, server_config, ct, database_pool)
-                    .await?
-            };
+            crate::core::transport::unified::connect_server(
+                server_name,
+                server_config,
+                crate::common::server::ServerType::Stdio,
+                crate::common::server::TransportType::Stdio,
+                Some(ct),
+                database_pool,
+                self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
+            )
+            .await?;
 
         // Update connection with service
         self.update_connection(server_name, instance_id, service, tools, capabilities);

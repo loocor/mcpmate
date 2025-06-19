@@ -11,10 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    common::paths::global_paths,
-    runtime::{
-        RuntimeType, cli::handle_install_command, get_runtime_path, types::ExecutionContext,
-    },
+    runtime::{RuntimeInstaller, RuntimeManager, RuntimeType},
 };
 
 /// Install runtime request
@@ -58,92 +55,39 @@ pub struct InstallResponse {
     pub runtime_type: String,
 }
 
-/// Sync already installed runtime to database
-async fn sync_existing_runtime_to_db(
-    state: &AppState,
-    runtime_type: RuntimeType,
-    version: Option<&str>,
-) -> Result<(), String> {
-    let Some(db) = &state.database else {
-        return Ok(()); // No database configured, skip sync
-    };
-
-    let runtime_path = get_runtime_path(runtime_type, version)
-        .map_err(|e| format!("Failed to get runtime path: {e}"))?;
-
-    // Create relative path for database storage
-    let paths = global_paths();
-    let mcpmate_dir = paths.base_dir();
-
-    let relative_path = if runtime_path.starts_with(mcpmate_dir) {
-        // MCPMate managed runtime - store relative path
-        runtime_path
-            .strip_prefix(mcpmate_dir)
-            .unwrap_or(&runtime_path)
-            .to_string_lossy()
-            .to_string()
-    } else {
-        // System runtime - store absolute path
-        runtime_path.to_string_lossy().to_string()
-    };
-
-    // Save to database
-    let version_str = version.unwrap_or_else(|| runtime_type.default_version());
-    let config =
-        crate::runtime::config::RuntimeConfig::new(runtime_type, version_str, &relative_path);
-
-    crate::runtime::config::save_config(&db.pool, &config)
-        .await
-        .map_err(|e| format!("Failed to sync runtime config to database: {e}"))?;
-
-    tracing::info!("Successfully synced {runtime_type} runtime to database");
-    Ok(())
-}
-
-/// Handle runtime installation using CLI
+/// Handle runtime installation using RuntimeInstaller
 async fn perform_runtime_installation(
-    state: &AppState,
-    request: &InstallRequest,
+    _state: &AppState,
+    _request: &InstallRequest,
     runtime_type: RuntimeType,
 ) -> Result<(), anyhow::Error> {
-    // Get database path from state if available
-    let database = state
-        .database
-        .as_ref()
-        .map(|db| db.path.to_string_lossy().to_string());
-
-    // Call the existing CLI function with API execution context
-    handle_install_command(
-        runtime_type,
-        request.version.clone(),
-        request.timeout.unwrap_or(300),
-        request.max_retries.unwrap_or(3),
-        request.verbose.unwrap_or(false),
-        request.interactive.unwrap_or(false),
-        true,
-        database,
-        ExecutionContext::Api,
-    )
-    .await
+    let installer = RuntimeInstaller::new();
+    installer.install_runtime(runtime_type).await.map(|_| ())
 }
 
 /// Create runtime status for a specific runtime type
 fn create_runtime_status(
     runtime_type: RuntimeType,
-    version: Option<&str>,
+    _version: Option<&str>, // Version parameter kept for API compatibility but ignored
 ) -> RuntimeStatus {
-    // Check if runtime is available
-    let path = get_runtime_path(runtime_type, version).ok();
-    let available = path.as_ref().is_some_and(|p| p.exists());
+    let manager = RuntimeManager::new();
+    let available = manager.is_installed(runtime_type);
+    let path = manager.get_executable_path(runtime_type);
+    let path_str = path.as_ref().map(|p| p.to_string_lossy().to_string());
 
-    let path_str = path.map(|p| p.to_string_lossy().to_string());
+    // Use RuntimeManager's enhanced status message with source information
+    let runtime_info = manager
+        .list_installed()
+        .into_iter()
+        .find(|info| info.runtime_type == runtime_type);
 
-    let version_display = version.unwrap_or("default");
-    let message = if available {
-        format!("✓ {} ({}) is available", runtime_type, version_display)
-    } else {
-        format!("✗ {} ({}) is not installed", runtime_type, version_display)
-    };
+    let message = runtime_info.map(|info| info.message).unwrap_or_else(|| {
+        if available {
+            format!("✓ {} is available", runtime_type)
+        } else {
+            format!("✗ {} is not installed", runtime_type)
+        }
+    });
 
     RuntimeStatus {
         runtime_type: runtime_type.to_string(),
@@ -164,24 +108,19 @@ pub async fn install_runtime(
         .parse()
         .map_err(|e| ApiError::BadRequest(format!("Invalid runtime type: {e}")))?;
 
-    let version = request.version.as_deref();
+    let _version = request.version.as_deref(); // Version parameter kept for API compatibility but ignored
 
     // Check if runtime is already installed
-    let runtime_path = get_runtime_path(runtime_type, version);
-    let is_already_installed = runtime_path.as_ref().is_ok_and(|p| p.exists());
+    let manager = RuntimeManager::new();
+    let is_already_installed = manager.is_installed(runtime_type);
 
     // Handle already installed runtime
     if is_already_installed {
-        tracing::info!("Runtime {runtime_type} already installed, syncing to database");
-
-        // Attempt to sync to database, but don't fail if it doesn't work
-        if let Err(e) = sync_existing_runtime_to_db(&state, runtime_type, version).await {
-            tracing::warn!("Failed to sync runtime to database: {e}");
-        }
+        tracing::info!("Runtime {runtime_type} already installed");
 
         return Ok(Json(InstallResponse {
             success: true,
-            message: format!("Runtime {runtime_type} already installed and synced to database"),
+            message: format!("Runtime {runtime_type} already installed"),
             runtime_type: request.runtime_type,
         }));
     }
@@ -222,7 +161,7 @@ pub async fn list_runtimes(
         vec![runtime_type]
     } else {
         // Check all runtime types
-        vec![RuntimeType::Node, RuntimeType::Uv, RuntimeType::Bun]
+        vec![RuntimeType::Uv, RuntimeType::Bun]
     };
 
     // Check each runtime type and create status

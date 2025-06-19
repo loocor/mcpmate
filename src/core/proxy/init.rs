@@ -13,7 +13,7 @@ use crate::{
     api::handlers::system,
     config::database::Database,
     core::{events, foundation::loader},
-    runtime::migration,
+    // runtime::migration removed - simplified runtime management
 };
 
 /// Setup logging based on command line arguments
@@ -68,13 +68,8 @@ pub async fn setup_database() -> Result<Database> {
         }
     };
 
-    // Migrate runtime configurations to ensure consistent path formats
-    if let Err(e) = migration::migrate_runtime_configs(&db.pool).await {
-        tracing::warn!("Failed to migrate runtime configurations: {}", e);
-        tracing::warn!("This may cause issues with runtime environment management");
-    } else {
-        tracing::info!("Runtime configurations migrated successfully");
-    }
+    // Runtime migration removed - simplified runtime management
+    tracing::debug!("Runtime management simplified - no migration needed");
 
     Ok(db)
 }

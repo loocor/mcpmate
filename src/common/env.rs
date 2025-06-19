@@ -15,13 +15,9 @@ use super::paths::global_paths;
 /// Environment variable constants
 pub mod constants {
     pub const MCP_RUNTIME_BIN: &str = "MCP_RUNTIME_BIN";
-    pub const NPX_BIN_PATH: &str = "NPX_BIN_PATH";
     pub const UVX_BIN_PATH: &str = "UVX_BIN_PATH";
     pub const BUNX_BIN_PATH: &str = "BUNX_BIN_PATH";
-    pub const NPM_CONFIG_CACHE: &str = "NPM_CONFIG_CACHE";
     pub const UV_CACHE_DIR: &str = "UV_CACHE_DIR";
-    pub const UV_PYTHON_CACHE_DIR: &str = "UV_PYTHON_CACHE_DIR";
-    pub const UV_PYTHON_INSTALL_DIR: &str = "UV_PYTHON_INSTALL_DIR";
     pub const BUN_INSTALL_CACHE_DIR: &str = "BUN_INSTALL_CACHE_DIR";
     pub const PATH: &str = "PATH";
 }
@@ -201,41 +197,6 @@ impl Default for EnvironmentManager {
     }
 }
 
-/// Create runtime-specific environment for Node.js
-pub fn create_node_environment(
-    bin_path: &Path,
-    version: &str,
-) -> Result<EnvironmentManager> {
-    let paths = global_paths();
-    let mut env = EnvironmentManager::new();
-
-    // Add runtime bin directory to PATH
-    let bin_dir = bin_path.parent().unwrap_or(bin_path);
-    env.prepend_path(bin_dir);
-
-    // Set Node.js specific environment variables
-    let cache_dir = paths.runtime_cache_dir("npm");
-    env.set_var(constants::NPM_CONFIG_CACHE, cache_dir.to_string_lossy());
-
-    // Set runtime bin path for reference
-    env.set_var(constants::MCP_RUNTIME_BIN, bin_path.to_string_lossy());
-
-    // Set specific tool paths
-    let npx_path = bin_dir.join(if cfg!(windows) { "npx.cmd" } else { "npx" });
-    if npx_path.exists() {
-        env.set_var(constants::NPX_BIN_PATH, npx_path.to_string_lossy());
-    }
-
-    tracing::debug!(
-        "Created Node.js environment for version {}: PATH includes {}, cache at {}",
-        version,
-        bin_dir.display(),
-        cache_dir.display()
-    );
-
-    Ok(env)
-}
-
 /// Create runtime-specific environment for uv
 pub fn create_uv_environment(
     bin_path: &Path,
@@ -248,25 +209,13 @@ pub fn create_uv_environment(
     let bin_dir = bin_path.parent().unwrap_or(bin_path);
     env.prepend_path(bin_dir);
 
-    // Set uv specific environment variables
+    // Set uv specific environment variables (simplified for system uvx)
     let cache_dir = paths.runtime_cache_dir("uv");
-    let python_cache_dir = paths.cache_dir().join("uv").join("python");
-    let python_install_dir = paths.runtimes_dir().join("uv").join("python");
 
-    // Ensure directories exist
+    // Ensure cache directory exists
     std::fs::create_dir_all(&cache_dir)?;
-    std::fs::create_dir_all(&python_cache_dir)?;
-    std::fs::create_dir_all(&python_install_dir)?;
 
-    env.set_var(constants::UV_CACHE_DIR, cache_dir.to_string_lossy())
-        .set_var(
-            constants::UV_PYTHON_CACHE_DIR,
-            python_cache_dir.to_string_lossy(),
-        )
-        .set_var(
-            constants::UV_PYTHON_INSTALL_DIR,
-            python_install_dir.to_string_lossy(),
-        );
+    env.set_var(constants::UV_CACHE_DIR, cache_dir.to_string_lossy());
 
     // Set runtime bin path for reference
     env.set_var(constants::MCP_RUNTIME_BIN, bin_path.to_string_lossy());
@@ -301,6 +250,10 @@ pub fn create_bun_environment(
 
     // Set Bun specific environment variables
     let cache_dir = paths.runtime_cache_dir("bun");
+
+    // Ensure cache directory exists
+    std::fs::create_dir_all(&cache_dir)?;
+
     env.set_var(
         constants::BUN_INSTALL_CACHE_DIR,
         cache_dir.to_string_lossy(),
@@ -332,7 +285,6 @@ pub fn create_runtime_environment(
     version: &str,
 ) -> Result<EnvironmentManager> {
     match runtime_type.to_lowercase().as_str() {
-        "node" | "nodejs" => create_node_environment(bin_path, version),
         "uv" => create_uv_environment(bin_path, version),
         "bun" | "bunjs" => create_bun_environment(bin_path, version),
         _ => {

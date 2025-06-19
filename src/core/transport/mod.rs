@@ -12,12 +12,8 @@ pub use crate::common::server::TransportType;
 // Re-export main transport functions
 pub use http::connect_http_server; // with cancellation token
 pub use sse::connect_sse_server; // with cancellation token
-pub use stdio::{
-    connect_stdio_server_with_ct,            // with cancellation token
-    connect_stdio_server_with_ct_and_db,     // with cancellation token and database pool
-    connect_stdio_server_with_runtime_cache, // with cancellation token and runtime cache
-};
+// stdio functions are now accessed through unified interface
 pub use unified::{
-    connect_server,        // with cancellation token and runtime cache
-    connect_server_simple, // with cancellation token without runtime cache
+    connect_server,        // unified interface with cancellation token and runtime cache
+    connect_server_simple, // simplified interface without runtime cache
 };

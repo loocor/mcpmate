@@ -14,7 +14,7 @@ use crate::config::constants::commands;
 pub fn get_connection_timeout(command: &str) -> Duration {
     match command {
         commands::DOCKER => Duration::from_secs(120), // Docker operations can take longer
-        commands::NPX => Duration::from_secs(60),     // npm operations can take time
+        commands::NPX => Duration::from_secs(60), // npm operations can take time (handled by transformation)
         commands::UVX | commands::BUNX => Duration::from_secs(30), // Runtime commands may need more time
         _ => Duration::from_secs(10),                              // Regular commands
     }
@@ -24,7 +24,7 @@ pub fn get_connection_timeout(command: &str) -> Duration {
 pub fn get_tools_timeout(command: &str) -> Duration {
     match command {
         commands::DOCKER => Duration::from_secs(60), // Docker operations can take longer
-        commands::NPX => Duration::from_secs(60),    // npm timeout
+        commands::NPX => Duration::from_secs(60),    // npm timeout (handled by transformation)
         commands::UVX | commands::BUNX => Duration::from_secs(20), // Runtime commands may need more time
         _ => Duration::from_secs(10),                              // Regular commands
     }
@@ -178,10 +178,37 @@ pub fn prepare_command(
     cmd
 }
 
-/// check if a command needs runtime setup (node, python, etc.)
+/// check if a command needs runtime setup (python, etc.)
+/// Note: npx is handled by command transformation to bunx
 pub fn needs_runtime_setup(command: &str) -> bool {
-    matches!(
-        command,
-        commands::NPX | commands::UVX | commands::BUNX | commands::DOCKER
-    )
+    matches!(command, commands::UVX | commands::BUNX | commands::DOCKER)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transform_command() {
+        // Test npx transformation
+        assert_eq!(transform_command("npx"), "bunx");
+
+        // Test other commands remain unchanged
+        assert_eq!(transform_command("uvx"), "uvx");
+        assert_eq!(transform_command("bunx"), "bunx");
+        assert_eq!(transform_command("docker"), "docker");
+        assert_eq!(transform_command("node"), "node");
+        assert_eq!(transform_command("python"), "python");
+    }
+}
+
+/// Transform npx commands to bunx for better performance and compatibility
+pub fn transform_command(command: &str) -> String {
+    match command {
+        "npx" => {
+            tracing::info!("Transforming npx command to bunx for better performance");
+            "bunx".to_string()
+        }
+        _ => command.to_string(),
+    }
 }
