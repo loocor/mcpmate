@@ -6,7 +6,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing_subscriber::{self, EnvFilter};
 
-use super::{Args, ProxyServer};
+use super::{Args, ProxyServer, args::StartupMode};
 
 // Import required types and modules from core and other modules
 use crate::{
@@ -74,12 +74,18 @@ pub async fn setup_database() -> Result<Database> {
     Ok(db)
 }
 
-/// Setup proxy server with database and configuration using core modules
-pub async fn setup_proxy_server(db: Database) -> Result<(ProxyServer, Arc<ProxyServer>)> {
-    // Load configuration from database using core loader
-    let config = loader::load_server_config(&db).await?;
+/// Setup proxy server with startup parameters
+pub async fn setup_proxy_server_with_params(
+    db: Database,
+    startup_mode: &StartupMode,
+) -> Result<(ProxyServer, Arc<ProxyServer>)> {
+    // Load configuration from database using core loader with startup parameters
+    let config = loader::load_server_config_with_params(&db, startup_mode).await?;
 
-    tracing::info!("Loaded configuration from database");
+    tracing::info!(
+        "Loaded configuration from database with startup mode: {:?}",
+        startup_mode
+    );
     tracing::info!(
         "Found {} enabled MCP servers in database configuration",
         config.mcp_servers.len()
@@ -101,4 +107,9 @@ pub async fn setup_proxy_server(db: Database) -> Result<(ProxyServer, Arc<ProxyS
     tracing::info!("Event system initialized using core");
 
     Ok((proxy, proxy_arc))
+}
+
+/// Setup proxy server with database and configuration using core modules (legacy function for backward compatibility)
+pub async fn setup_proxy_server(db: Database) -> Result<(ProxyServer, Arc<ProxyServer>)> {
+    setup_proxy_server_with_params(db, &StartupMode::Default).await
 }

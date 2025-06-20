@@ -337,3 +337,118 @@ pub async fn get_server_global_status(
 
     Ok(enabled)
 }
+
+/// Get enabled servers from specific configuration suites
+///
+/// This function gets enabled servers from a list of specific configuration suite IDs.
+/// It validates that the suite IDs exist and logs warnings for invalid ones.
+/// Returns servers that are enabled in any of the specified suites.
+pub async fn get_enabled_servers_by_suites(
+    pool: &Pool<Sqlite>,
+    suite_ids: &[String],
+) -> Result<Vec<Server>> {
+    tracing::debug!(
+        "Getting enabled servers from specific config suites: {:?}",
+        suite_ids
+    );
+
+    if suite_ids.is_empty() {
+        tracing::info!("No config suites specified, returning no servers");
+        return Ok(Vec::new());
+    }
+
+    // Get all servers first
+    let all_servers = super::crud::get_all_servers(pool).await?;
+
+    // If there are no servers, return empty list
+    if all_servers.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Validate suite IDs and get valid suites
+    let mut valid_suites = Vec::new();
+    for suite_id in suite_ids {
+        match crate::config::suit::get_config_suit(pool, suite_id).await? {
+            Some(suit) => {
+                tracing::debug!("Found valid config suite: {} ({})", suit.name, suite_id);
+                valid_suites.push(suit);
+            }
+            None => {
+                tracing::warn!("Config suite with ID '{}' not found, skipping", suite_id);
+            }
+        }
+    }
+
+    if valid_suites.is_empty() {
+        tracing::warn!(
+            "No valid config suites found from provided IDs: {:?}",
+            suite_ids
+        );
+        return Ok(Vec::new());
+    }
+
+    // Create a map to track enabled server IDs with their priority
+    // Higher priority value means higher precedence
+    let mut enabled_server_map: HashMap<String, (bool, i32)> = HashMap::new();
+
+    // Process all valid suits in priority order (sort by priority DESC)
+    valid_suites.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+    for suit in valid_suites {
+        if let Some(suit_id) = &suit.id {
+            // Get all server configs in this suit
+            let server_configs = crate::config::suit::get_config_suit_servers(pool, suit_id).await?;
+
+            tracing::debug!(
+                "Processing config suite '{}' with {} server configs",
+                suit.name,
+                server_configs.len()
+            );
+
+            // Process each server config
+            for server_config in server_configs {
+                // Only update the map if this server hasn't been seen yet or if the current suit has higher priority
+                if !enabled_server_map.contains_key(&server_config.server_id)
+                    || enabled_server_map.get(&server_config.server_id).unwrap().1 < suit.priority
+                {
+                    enabled_server_map.insert(
+                        server_config.server_id.clone(),
+                        (server_config.enabled, suit.priority),
+                    );
+                }
+            }
+        }
+    }
+
+    // If no server configurations were found in any specified suits, return no servers
+    if enabled_server_map.is_empty() {
+        tracing::info!(
+            "No server configurations found in any specified config suites, returning no servers"
+        );
+        return Ok(Vec::new());
+    }
+
+    // Filter servers by enabled status
+    let enabled_servers: Vec<Server> = all_servers
+        .into_iter()
+        .filter(|server| {
+            if let Some(id) = &server.id {
+                // Check both the suit-level enabled status AND the global enabled status
+                enabled_server_map
+                    .get(id)
+                    .is_some_and(|(enabled, _)| *enabled)
+                    && server.enabled.as_bool() // Add this check for global enabled status
+            } else {
+                false // Server without ID is not enabled
+            }
+        })
+        .collect();
+
+    tracing::info!(
+        "Found {} enabled servers from specified config suites: {:?}",
+        enabled_servers.len(),
+        suite_ids
+    );
+
+    Ok(enabled_servers)
+}

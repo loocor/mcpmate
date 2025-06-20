@@ -8,19 +8,46 @@ use anyhow::{Context, Result};
 use crate::{
     config::{
         database::Database,
-        server::{get_enabled_servers, get_server_args, get_server_env},
+        server::{get_enabled_servers, get_enabled_servers_by_suites, get_server_args, get_server_env},
     },
-    core::models::{Config, MCPServerConfig},
+    core::{
+        models::{Config, MCPServerConfig},
+        proxy::args::StartupMode,
+    },
 };
 
-/// Load the MCP server configuration from the database
-pub async fn load_server_config(db: &Database) -> Result<Config> {
-    tracing::info!("Loading server configuration from database using core loader");
+/// Load the MCP server configuration from the database with startup parameters
+pub async fn load_server_config_with_params(
+    db: &Database,
+    startup_mode: &StartupMode,
+) -> Result<Config> {
+    tracing::info!(
+        "Loading server configuration from database with startup mode: {:?}",
+        startup_mode
+    );
 
-    // Get enabled servers from the database based on config suits
-    let servers = get_enabled_servers(&db.pool)
-        .await
-        .context("Failed to get enabled servers from database")?;
+    // Get enabled servers based on startup mode
+    let servers = match startup_mode {
+        StartupMode::Minimal | StartupMode::NoSuites => {
+            tracing::info!("Minimal/NoSuites mode: not loading any servers");
+            Vec::new()
+        }
+        StartupMode::Default => {
+            tracing::info!("Default mode: loading servers from active default config suite");
+            get_enabled_servers(&db.pool)
+                .await
+                .context("Failed to get enabled servers from database")?
+        }
+        StartupMode::SpecificSuites(suite_ids) => {
+            tracing::info!(
+                "Specific suites mode: loading servers from suites: {:?}",
+                suite_ids
+            );
+            get_enabled_servers_by_suites(&db.pool, suite_ids)
+                .await
+                .context("Failed to get enabled servers from specific suites")?
+        }
+    };
 
     // Create a new Config object with default pagination settings
     let mut config = Config {
@@ -81,8 +108,9 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
     }
 
     tracing::info!(
-        "Successfully loaded {} enabled servers from database using core loader",
-        config.mcp_servers.len()
+        "Successfully loaded {} enabled servers from database using core loader (mode: {:?})",
+        config.mcp_servers.len(),
+        startup_mode
     );
 
     // Publish ConfigReloaded event using core events
@@ -90,4 +118,9 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
     tracing::info!("Published ConfigReloaded event using core events");
 
     Ok(config)
+}
+
+/// Load the MCP server configuration from the database (legacy function for backward compatibility)
+pub async fn load_server_config(db: &Database) -> Result<Config> {
+    load_server_config_with_params(db, &StartupMode::Default).await
 }

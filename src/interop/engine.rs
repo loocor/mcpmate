@@ -10,8 +10,10 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-use super::types::{PortConfig, ServiceInfo, ServiceStatus, StartupProgress};
-use crate::core::proxy::init::{setup_database, setup_logging, setup_proxy_server};
+use super::types::{PortConfig, ServiceInfo, ServiceStatus, StartupConfig, StartupProgress};
+use crate::core::proxy::init::{
+    setup_database, setup_logging, setup_proxy_server, setup_proxy_server_with_params,
+};
 use crate::core::proxy::startup::{
     start_api_server, start_background_connections, start_proxy_server,
 };
@@ -118,6 +120,82 @@ impl MCPMateEngine {
         true
     }
 
+    /// Start with full startup configuration
+    pub fn start_with_startup_config(
+        &mut self,
+        config: StartupConfig,
+    ) -> bool {
+        // Validate configuration
+        if let Err(e) = config.validate() {
+            tracing::error!("Invalid startup configuration: {}", e);
+            return false;
+        }
+
+        // Update configuration
+        self.api_port = config.api_port();
+        self.mcp_port = config.mcp_port();
+
+        // Record start time
+        let start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.start_time.store(start_time, Ordering::Relaxed);
+
+        // Get runtime reference
+        let runtime = match &self.runtime {
+            Some(rt) => rt,
+            None => return false,
+        };
+
+        // Clone necessary data for async task
+        let startup_progress = Arc::clone(&self.startup_progress);
+        let status = Arc::clone(&self.status);
+        let is_running = Arc::clone(&self.is_running);
+
+        // Start the service in background
+        let _handle = runtime.spawn(async move {
+            if let Err(e) =
+                Self::start_service_async_with_config(config, startup_progress, status, is_running)
+                    .await
+            {
+                tracing::error!("Failed to start MCPMate service: {}", e);
+            }
+        });
+
+        true
+    }
+
+    /// Start in minimal mode (API only)
+    pub fn start_minimal(
+        &mut self,
+        api_port: u16,
+    ) -> bool {
+        let config = StartupConfig::minimal(api_port);
+        self.start_with_startup_config(config)
+    }
+
+    /// Start with specific config suites
+    pub fn start_with_suites(
+        &mut self,
+        api_port: u16,
+        mcp_port: u16,
+        suites: Vec<String>,
+    ) -> bool {
+        let config = StartupConfig::with_suites(api_port, mcp_port, suites);
+        self.start_with_startup_config(config)
+    }
+
+    /// Start with no config suites
+    pub fn start_no_suites(
+        &mut self,
+        api_port: u16,
+        mcp_port: u16,
+    ) -> bool {
+        let config = StartupConfig::no_suites(api_port, mcp_port);
+        self.start_with_startup_config(config)
+    }
+
     /// Async service startup implementation
     async fn start_service_async(
         api_port: u16,
@@ -141,6 +219,8 @@ impl MCPMateEngine {
             api_port,
             log_level: "info".to_string(),
             transport: "uni".to_string(),
+            config_suites: None,
+            minimal: false,
         };
 
         tracing::info!(
@@ -212,6 +292,123 @@ impl MCPMateEngine {
 
         // Keep the service running
         // Note: In a real implementation, we'd store the handles for cleanup
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received shutdown signal");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Async service startup implementation with startup configuration
+    async fn start_service_async_with_config(
+        config: StartupConfig,
+        startup_progress: Arc<Mutex<StartupProgress>>,
+        status: Arc<Mutex<ServiceStatus>>,
+        is_running: Arc<AtomicBool>,
+    ) -> Result<()> {
+        // Update status to starting
+        {
+            let mut status_guard = status.lock().await;
+            *status_guard = ServiceStatus::Starting;
+        }
+
+        // Step 1: Setup logging (10%)
+        Self::update_progress(&startup_progress, 0.1, "Setting up logging...").await;
+
+        // Create Args with configuration
+        let args = Args {
+            mcp_port: config.mcp_port(),
+            api_port: config.api_port(),
+            log_level: "info".to_string(),
+            transport: "uni".to_string(),
+            config_suites: config.config_suites.clone(),
+            minimal: config.minimal,
+        };
+
+        tracing::info!("Interop Engine starting with startup config: {:?}", config);
+
+        setup_logging(&args)?;
+
+        // Log configuration information
+        tracing::info!(
+            "Interop startup with configuration - API port: {}, MCP port: {}, minimal: {}, suites: {:?}",
+            config.api_port(),
+            config.mcp_port(),
+            config.minimal,
+            config.config_suites
+        );
+
+        // Step 2: Setup database (30%)
+        Self::update_progress(&startup_progress, 0.3, "Initializing database...").await;
+        let db = setup_database().await?;
+
+        // Step 3: Setup proxy server with startup mode (50%)
+        Self::update_progress(&startup_progress, 0.5, "Setting up proxy server...").await;
+        let startup_mode = config.to_startup_mode();
+        let (mut proxy, proxy_arc) = setup_proxy_server_with_params(db, &startup_mode).await?;
+
+        // Step 4: Debug environment and command availability (only if not minimal)
+        if !config.minimal {
+            Self::update_progress(&startup_progress, 0.65, "Debugging environment...").await;
+            Self::debug_environment().await;
+
+            // Step 5: Start background connections (70%)
+            Self::update_progress(&startup_progress, 0.7, "Starting background connections...")
+                .await;
+            start_background_connections(&proxy, proxy_arc.clone()).await?;
+
+            // Step 6: Start proxy server (85%)
+            Self::update_progress(&startup_progress, 0.85, "Starting proxy server...").await;
+            tracing::info!(
+                "Starting MCP proxy server on port {} (from Interop config)",
+                args.mcp_port
+            );
+            start_proxy_server(&mut proxy, &args).await?;
+        } else {
+            tracing::info!("Minimal mode: skipping MCP server and background connections");
+            Self::update_progress(
+                &startup_progress,
+                0.85,
+                "Skipping MCP server (minimal mode)...",
+            )
+            .await;
+        }
+
+        // Step 7: Start API server (100%)
+        Self::update_progress(&startup_progress, 1.0, "Starting API server...").await;
+        tracing::info!(
+            "Starting API server on port {} (from Interop config)",
+            args.api_port
+        );
+        let _api_task = start_api_server(proxy_arc.clone(), &args).await?;
+
+        // Mark as running
+        {
+            let mut status_guard = status.lock().await;
+            *status_guard = ServiceStatus::Running;
+        }
+        is_running.store(true, Ordering::Relaxed);
+
+        // Final progress update
+        {
+            let mut progress = startup_progress.lock().await;
+            progress.percentage = 1.0;
+            progress.current_step = if config.minimal {
+                "Service ready (minimal mode)".to_string()
+            } else {
+                "Service ready".to_string()
+            };
+            progress.is_complete = true;
+        }
+
+        tracing::info!(
+            "MCPMate service started successfully via Interop with config: {:?}",
+            config
+        );
+
+        // Keep the service running
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Received shutdown signal");

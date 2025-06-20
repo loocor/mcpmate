@@ -101,7 +101,7 @@ impl Default for ServiceInfo {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
             api_port: 8080,
-            mcp_port: 3000,
+            mcp_port: 8000,
             uptime_seconds: 0,
             is_running: false,
             active_connections: 0,
@@ -142,5 +142,129 @@ impl ServiceStatus {
             Self::Stopped => "stopped",
             Self::Error => "error",
         }
+    }
+}
+
+/// Startup configuration for MCPMate service
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupConfig {
+    /// Port configuration (API and MCP ports)
+    #[serde(flatten)]
+    pub ports: PortConfig,
+    /// Configuration suites to load (None = default, Some(empty) = none, Some(list) = specific)
+    pub config_suites: Option<Vec<String>>,
+    /// Start in minimal mode (API only, no config suites loaded)
+    pub minimal: bool,
+}
+
+impl Default for StartupConfig {
+    fn default() -> Self {
+        Self {
+            ports: PortConfig::default(),
+            config_suites: None,
+            minimal: false,
+        }
+    }
+}
+
+impl StartupConfig {
+    /// Create a new startup configuration
+    pub fn new(
+        api_port: u16,
+        mcp_port: u16,
+        config_suites: Option<Vec<String>>,
+        minimal: bool,
+    ) -> Self {
+        Self {
+            ports: PortConfig::new(api_port, mcp_port),
+            config_suites,
+            minimal,
+        }
+    }
+
+    /// Create a minimal startup configuration (API only)
+    pub fn minimal(api_port: u16) -> Self {
+        Self {
+            ports: PortConfig::new(api_port, 0), // MCP port not used in minimal mode
+            config_suites: None,
+            minimal: true,
+        }
+    }
+
+    /// Create a configuration with specific suites
+    pub fn with_suites(
+        api_port: u16,
+        mcp_port: u16,
+        suites: Vec<String>,
+    ) -> Self {
+        Self {
+            ports: PortConfig::new(api_port, mcp_port),
+            config_suites: Some(suites),
+            minimal: false,
+        }
+    }
+
+    /// Create a configuration with no suites
+    pub fn no_suites(
+        api_port: u16,
+        mcp_port: u16,
+    ) -> Self {
+        Self {
+            ports: PortConfig::new(api_port, mcp_port),
+            config_suites: Some(Vec::new()),
+            minimal: false,
+        }
+    }
+
+    /// Validate startup configuration
+    pub fn validate(&self) -> Result<(), String> {
+        // Validate API port (always required)
+        if self.ports.api_port == 0 {
+            return Err("API port cannot be 0".to_string());
+        }
+
+        // Validate MCP port only in non-minimal mode
+        if !self.minimal {
+            // Use PortConfig validation for comprehensive port checks
+            self.ports.validate()?;
+        }
+
+        // Validate config suites if provided
+        if let Some(ref suites) = self.config_suites {
+            for suite in suites {
+                if suite.trim().is_empty() {
+                    return Err("Configuration suite ID cannot be empty".to_string());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert to StartupMode for internal use
+    pub fn to_startup_mode(&self) -> crate::core::proxy::args::StartupMode {
+        use crate::core::proxy::args::StartupMode;
+
+        if self.minimal {
+            StartupMode::Minimal
+        } else if let Some(ref suites) = self.config_suites {
+            if suites.is_empty() {
+                StartupMode::NoSuites
+            } else {
+                StartupMode::SpecificSuites(suites.clone())
+            }
+        } else {
+            StartupMode::Default
+        }
+    }
+
+    /// Get API port (convenience method)
+    pub fn api_port(&self) -> u16 {
+        self.ports.api_port
+    }
+
+    /// Get MCP port (convenience method)
+    pub fn mcp_port(&self) -> u16 {
+        self.ports.mcp_port
     }
 }

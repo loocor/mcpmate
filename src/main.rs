@@ -3,7 +3,7 @@ use clap::Parser;
 
 use mcpmate::core::proxy::{
     Args,
-    init::{setup_database, setup_logging, setup_proxy_server},
+    init::{setup_database, setup_logging, setup_proxy_server_with_params},
     startup::{start_api_server, start_background_connections, start_proxy_server},
 };
 use mcpmate::system::config::init_port_config;
@@ -12,6 +12,16 @@ use mcpmate::system::config::init_port_config;
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
+
+    // Validate command line arguments
+    if let Err(e) = args.validate() {
+        eprintln!("Invalid arguments: {}", e);
+        std::process::exit(1);
+    }
+
+    // Get startup mode from arguments
+    let startup_mode = args.get_startup_mode();
+    tracing::info!("Starting MCPMate with mode: {:?}", startup_mode);
 
     // Initialize runtime port configuration from command line arguments
     init_port_config(args.api_port, args.mcp_port);
@@ -22,8 +32,8 @@ async fn main() -> Result<()> {
     // Setup database
     let db = setup_database().await?;
 
-    // Setup proxy server
-    let (mut proxy, proxy_arc) = setup_proxy_server(db).await?;
+    // Setup proxy server with startup parameters
+    let (mut proxy, proxy_arc) = setup_proxy_server_with_params(db, &startup_mode).await?;
 
     // Start background connections
     start_background_connections(&proxy, proxy_arc.clone()).await?;
