@@ -33,6 +33,9 @@ pub extern "C" fn mcpmate_engine_free(engine: *mut MCPMateEngine) {
 }
 
 /// Start MCPMate service
+///
+/// Note: This function internally converts to StartupConfig for unified processing.
+/// For more advanced configuration, use mcpmate_engine_start_with_startup_config().
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub extern "C" fn mcpmate_engine_start(
@@ -41,14 +44,21 @@ pub extern "C" fn mcpmate_engine_start(
     mcp_port: u16,
 ) -> bool {
     if engine.is_null() {
+        tracing::error!("MCPMate engine pointer is null");
         return false;
     }
 
     let engine = unsafe { &mut *engine };
-    engine.start(api_port, mcp_port)
+    let result = engine.start(api_port, mcp_port);
+
+    tracing::info!("MCPMate engine start result: {}", result);
+    result
 }
 
 /// Start MCPMate service with configuration
+///
+/// Note: This function internally converts PortConfig to StartupConfig for unified processing.
+/// For more advanced configuration, use mcpmate_engine_start_with_startup_config().
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub extern "C" fn mcpmate_engine_start_with_config(
@@ -157,6 +167,143 @@ pub extern "C" fn mcpmate_engine_get_service_info_json(
         },
         Err(_) => ptr::null(),
     }
+}
+
+/// Start MCPMate service with default configuration
+#[cfg(feature = "interop")]
+#[unsafe(no_mangle)]
+pub extern "C" fn mcpmate_engine_start_default(
+    engine: *mut MCPMateEngine,
+    api_port: u16,
+    mcp_port: u16,
+) -> bool {
+    if engine.is_null() {
+        tracing::error!("MCPMate engine pointer is null");
+        return false;
+    }
+
+    let engine = unsafe { &mut *engine };
+    let result = engine.start_default(api_port, mcp_port);
+
+    tracing::info!("MCPMate engine start_default result: {}", result);
+    result
+}
+
+/// Start MCPMate service in minimal mode
+#[cfg(feature = "interop")]
+#[unsafe(no_mangle)]
+pub extern "C" fn mcpmate_engine_start_minimal(
+    engine: *mut MCPMateEngine,
+    api_port: u16,
+) -> bool {
+    if engine.is_null() {
+        tracing::error!("MCPMate engine pointer is null");
+        return false;
+    }
+
+    let engine = unsafe { &mut *engine };
+    let result = engine.start_minimal(api_port);
+
+    tracing::info!("MCPMate engine start_minimal result: {}", result);
+    result
+}
+
+/// Start MCPMate service with startup configuration
+#[cfg(feature = "interop")]
+#[unsafe(no_mangle)]
+pub extern "C" fn mcpmate_engine_start_with_startup_config(
+    engine: *mut MCPMateEngine,
+    config_json: *const c_char,
+) -> bool {
+    // Validate engine pointer
+    if engine.is_null() {
+        tracing::error!("MCPMate engine pointer is null");
+        return false;
+    }
+
+    // Validate config JSON pointer
+    if config_json.is_null() {
+        tracing::error!("Startup config JSON pointer is null");
+        return false;
+    }
+
+    // Convert C string to Rust string
+    let config_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(
+                "Failed to convert startup config JSON to UTF-8 string: {}",
+                e
+            );
+            return false;
+        }
+    };
+
+    // Parse JSON to StartupConfig
+    let config: super::types::StartupConfig = match serde_json::from_str(config_str) {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::error!("Failed to parse startup config JSON: {}", e);
+            return false;
+        }
+    };
+
+    // Get mutable reference to engine and start with startup config
+    let engine = unsafe { &mut *engine };
+    let result = engine.start_with_startup_config(config);
+
+    tracing::info!(
+        "MCPMate engine start_with_startup_config result: {}",
+        result
+    );
+    result
+}
+
+/// Start MCPMate service with specific config suites
+#[cfg(feature = "interop")]
+#[unsafe(no_mangle)]
+pub extern "C" fn mcpmate_engine_start_with_suites(
+    engine: *mut MCPMateEngine,
+    api_port: u16,
+    mcp_port: u16,
+    suites_json: *const c_char,
+) -> bool {
+    // Validate engine pointer
+    if engine.is_null() {
+        tracing::error!("MCPMate engine pointer is null");
+        return false;
+    }
+
+    // Validate suites JSON pointer
+    if suites_json.is_null() {
+        tracing::error!("Suites JSON pointer is null");
+        return false;
+    }
+
+    // Convert C string to Rust string
+    let suites_str = match unsafe { CStr::from_ptr(suites_json) }.to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to convert suites JSON to UTF-8 string: {}", e);
+            return false;
+        }
+    };
+
+    // Parse JSON to Vec<String>
+    let suites: Vec<String> = match serde_json::from_str(suites_str) {
+        Ok(suites) => suites,
+        Err(e) => {
+            tracing::error!("Failed to parse suites JSON: {}", e);
+            return false;
+        }
+    };
+
+    // Get mutable reference to engine and start with suites
+    let engine = unsafe { &mut *engine };
+    let result = engine.start_with_suites(api_port, mcp_port, suites);
+
+    tracing::info!("MCPMate engine start_with_suites result: {}", result);
+    result
 }
 
 /// Free string allocated by Rust

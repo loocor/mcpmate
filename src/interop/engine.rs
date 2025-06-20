@@ -11,9 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use super::types::{PortConfig, ServiceInfo, ServiceStatus, StartupConfig, StartupProgress};
-use crate::core::proxy::init::{
-    setup_database, setup_logging, setup_proxy_server, setup_proxy_server_with_params,
-};
+use crate::core::proxy::init::{setup_database, setup_logging, setup_proxy_server_with_params};
 use crate::core::proxy::startup::{
     start_api_server, start_background_connections, start_proxy_server,
 };
@@ -60,64 +58,35 @@ impl MCPMateEngine {
     }
 
     /// Start the MCPMate service
+    ///
+    /// Note: This function internally converts to StartupConfig for unified processing.
+    /// For more advanced configuration options, use start_with_startup_config().
     pub fn start(
         &mut self,
         api_port: u16,
         mcp_port: u16,
     ) -> bool {
-        let config = PortConfig::new(api_port, mcp_port);
-        self.start_with_config(config)
+        let config = StartupConfig::new(api_port, mcp_port, None, false);
+        self.start_with_startup_config(config)
     }
 
     /// Start the MCPMate service with port configuration
+    ///
+    /// Note: This function internally converts PortConfig to StartupConfig for unified processing.
+    /// For more advanced configuration options, use start_with_startup_config().
     pub fn start_with_config(
         &mut self,
         config: PortConfig,
     ) -> bool {
-        // Validate configuration
+        // Validate port configuration
         if let Err(e) = config.validate() {
             tracing::error!("Invalid port configuration: {}", e);
             return false;
         }
 
-        // Update configuration
-        self.api_port = config.api_port;
-        self.mcp_port = config.mcp_port;
-
-        // Record start time
-        let start_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.start_time.store(start_time, Ordering::Relaxed);
-
-        // Get runtime reference
-        let runtime = match &self.runtime {
-            Some(rt) => rt,
-            None => return false,
-        };
-
-        // Clone necessary data for async task
-        let startup_progress = Arc::clone(&self.startup_progress);
-        let status = Arc::clone(&self.status);
-        let is_running = Arc::clone(&self.is_running);
-
-        // Start the service in background
-        let _handle = runtime.spawn(async move {
-            if let Err(e) = Self::start_service_async(
-                config.api_port,
-                config.mcp_port,
-                startup_progress,
-                status,
-                is_running,
-            )
-            .await
-            {
-                tracing::error!("Failed to start MCPMate service: {}", e);
-            }
-        });
-
-        true
+        // Convert PortConfig to StartupConfig for unified processing
+        let startup_config = StartupConfig::new(config.api_port, config.mcp_port, None, false);
+        self.start_with_startup_config(startup_config)
     }
 
     /// Start with full startup configuration
@@ -196,109 +165,14 @@ impl MCPMateEngine {
         self.start_with_startup_config(config)
     }
 
-    /// Async service startup implementation
-    async fn start_service_async(
+    /// Start with default configuration (load default config suites)
+    pub fn start_default(
+        &mut self,
         api_port: u16,
         mcp_port: u16,
-        startup_progress: Arc<Mutex<StartupProgress>>,
-        status: Arc<Mutex<ServiceStatus>>,
-        is_running: Arc<AtomicBool>,
-    ) -> Result<()> {
-        // Update status to starting
-        {
-            let mut status_guard = status.lock().await;
-            *status_guard = ServiceStatus::Starting;
-        }
-
-        // Step 1: Setup logging (10%)
-        Self::update_progress(&startup_progress, 0.1, "Setting up logging...").await;
-
-        // Create Args with Interop-provided ports (highest priority)
-        let args = Args {
-            mcp_port,
-            api_port,
-            log_level: "info".to_string(),
-            transport: "uni".to_string(),
-            config_suites: None,
-            minimal: false,
-        };
-
-        tracing::info!(
-            "Interop Engine starting with ports: API={}, MCP={}",
-            api_port,
-            mcp_port
-        );
-
-        setup_logging(&args)?;
-
-        // Log configuration priority information
-        tracing::info!(
-            "Interop startup with port configuration - API port: {}, MCP port: {}",
-            api_port,
-            mcp_port
-        );
-        tracing::info!(
-            "Configuration priority: Interop parameters > command-line arguments > defaults"
-        );
-
-        // Step 2: Setup database (30%)
-        Self::update_progress(&startup_progress, 0.3, "Initializing database...").await;
-        let db = setup_database().await?;
-
-        // Step 3: Setup proxy server (50%)
-        Self::update_progress(&startup_progress, 0.5, "Setting up proxy server...").await;
-        let (mut proxy, proxy_arc) = setup_proxy_server(db).await?;
-
-        // Step 4: Debug environment and command availability
-        Self::update_progress(&startup_progress, 0.65, "Debugging environment...").await;
-        Self::debug_environment().await;
-
-        // Step 4: Start background connections (70%)
-        Self::update_progress(&startup_progress, 0.7, "Starting background connections...").await;
-        start_background_connections(&proxy, proxy_arc.clone()).await?;
-
-        // Step 5: Start proxy server (85%)
-        Self::update_progress(&startup_progress, 0.85, "Starting proxy server...").await;
-        tracing::info!(
-            "Starting MCP proxy server on port {} (from Interop config)",
-            args.mcp_port
-        );
-        start_proxy_server(&mut proxy, &args).await?;
-
-        // Step 6: Start API server (100%)
-        Self::update_progress(&startup_progress, 1.0, "Starting API server...").await;
-        tracing::info!(
-            "Starting API server on port {} (from Interop config)",
-            args.api_port
-        );
-        let _api_task = start_api_server(proxy_arc.clone(), &args).await?;
-
-        // Mark as running
-        {
-            let mut status_guard = status.lock().await;
-            *status_guard = ServiceStatus::Running;
-        }
-        is_running.store(true, Ordering::Relaxed);
-
-        // Final progress update
-        {
-            let mut progress = startup_progress.lock().await;
-            progress.percentage = 1.0;
-            progress.current_step = "Service ready".to_string();
-            progress.is_complete = true;
-        }
-
-        tracing::info!("MCPMate service started successfully via Interop");
-
-        // Keep the service running
-        // Note: In a real implementation, we'd store the handles for cleanup
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("Received shutdown signal");
-            }
-        }
-
-        Ok(())
+    ) -> bool {
+        let config = StartupConfig::new(api_port, mcp_port, None, false);
+        self.start_with_startup_config(config)
     }
 
     /// Async service startup implementation with startup configuration
