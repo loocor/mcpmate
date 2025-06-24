@@ -3,6 +3,7 @@
 //! Merges server and tool configurations from multiple active configuration suits
 
 use crate::config::database::Database;
+use crate::config::server::ServerEnabledService;
 use crate::core::foundation::error::{CoreError, CoreResult};
 use crate::core::suit::types::*;
 use std::sync::Arc;
@@ -14,12 +15,18 @@ use std::sync::Arc;
 pub struct SuitMerger {
     /// Database reference
     db: Arc<Database>,
+    /// Unified server enabled service
+    server_enabled_service: ServerEnabledService,
 }
 
 impl SuitMerger {
     /// Create a new SuitMerger instance
     pub fn new(db: Arc<Database>) -> Self {
-        Self { db }
+        let server_enabled_service = ServerEnabledService::new(db.pool.clone());
+        Self {
+            db,
+            server_enabled_service,
+        }
     }
 
     /// Execute complete configuration merging operation
@@ -205,19 +212,32 @@ impl SuitMerger {
                     crate::config::suit::get_config_suit_servers(&self.db.pool, suit_id).await
                 {
                     for suit_server in suit_servers {
-                        if !suit_server.enabled {
-                            continue; // Skip disabled servers
+                        // Use unified service to check if server is enabled
+                        let is_enabled = self.server_enabled_service
+                            .is_server_enabled(&suit_server.server_id)
+                            .await
+                            .map_err(|e| CoreError::generic_error(
+                                &format!("Failed to check server enabled status: {}", e),
+                                Some(e),
+                            ))?;
+
+                        if !is_enabled {
+                            tracing::debug!(
+                                "Server {} is not enabled (either in suits or globally), skipping",
+                                suit_server.server_id
+                            );
+                            continue;
                         }
 
-                        // Get actual server details from server_config table
-                        let server_details = match sqlx::query_as::<_, (String, String)>(
-                            "SELECT name, address FROM server_config WHERE id = ?",
+                        // Get server details from server_config table
+                        let server_details = match sqlx::query_as::<_, (String, Option<String>)>(
+                            "SELECT name, url FROM server_config WHERE id = ?",
                         )
                         .bind(&suit_server.server_id)
                         .fetch_optional(&self.db.pool)
                         .await
                         {
-                            Ok(Some((name, address))) => (name, address),
+                            Ok(Some((name, url))) => (name, url.unwrap_or_default()),
                             Ok(None) => {
                                 tracing::warn!(
                                     "Server {} not found in server_config",

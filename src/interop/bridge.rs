@@ -24,11 +24,9 @@ pub extern "C" fn mcpmate_engine_new() -> *mut MCPMateEngine {
 /// Free MCPMate engine instance
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_free(engine: *mut MCPMateEngine) {
+pub unsafe extern "C" fn mcpmate_engine_free(engine: *mut MCPMateEngine) {
     if !engine.is_null() {
-        unsafe {
-            let _ = Box::from_raw(engine);
-        }
+        let _ = Box::from_raw(engine);
     }
 }
 
@@ -38,7 +36,7 @@ pub extern "C" fn mcpmate_engine_free(engine: *mut MCPMateEngine) {
 /// For more advanced configuration, use mcpmate_engine_start_with_startup_config().
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_start(
+pub unsafe extern "C" fn mcpmate_engine_start(
     engine: *mut MCPMateEngine,
     api_port: u16,
     mcp_port: u16,
@@ -48,7 +46,7 @@ pub extern "C" fn mcpmate_engine_start(
         return false;
     }
 
-    let engine = unsafe { &mut *engine };
+    let engine = &mut *engine;
     let result = engine.start(api_port, mcp_port);
 
     tracing::info!("MCPMate engine start result: {}", result);
@@ -61,7 +59,7 @@ pub extern "C" fn mcpmate_engine_start(
 /// For more advanced configuration, use mcpmate_engine_start_with_startup_config().
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_start_with_config(
+pub unsafe extern "C" fn mcpmate_engine_start_with_config(
     engine: *mut MCPMateEngine,
     config_json: *const c_char,
 ) -> bool {
@@ -78,7 +76,7 @@ pub extern "C" fn mcpmate_engine_start_with_config(
     }
 
     // Convert C string to Rust string
-    let config_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
+    let config_str = match CStr::from_ptr(config_json).to_str() {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Failed to convert config JSON to UTF-8 string: {}", e);
@@ -96,7 +94,7 @@ pub extern "C" fn mcpmate_engine_start_with_config(
     };
 
     // Get mutable reference to engine and start with config
-    let engine = unsafe { &mut *engine };
+    let engine = &mut *engine;
     let result = engine.start_with_config(config);
 
     tracing::info!("MCPMate engine start_with_config result: {}", result);
@@ -106,9 +104,9 @@ pub extern "C" fn mcpmate_engine_start_with_config(
 /// Stop MCPMate service
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_stop(engine: *mut MCPMateEngine) {
+pub unsafe extern "C" fn mcpmate_engine_stop(engine: *mut MCPMateEngine) {
     if !engine.is_null() {
-        let engine = unsafe { &mut *engine };
+        let engine = &mut *engine;
         engine.stop();
     }
 }
@@ -116,26 +114,26 @@ pub extern "C" fn mcpmate_engine_stop(engine: *mut MCPMateEngine) {
 /// Check if service is running
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_is_running(engine: *mut MCPMateEngine) -> bool {
+pub unsafe extern "C" fn mcpmate_engine_is_running(engine: *mut MCPMateEngine) -> bool {
     if engine.is_null() {
         return false;
     }
 
-    let engine = unsafe { &*engine };
+    let engine = &*engine;
     engine.is_running()
 }
 
 /// Get startup progress as JSON
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_get_startup_progress_json(
+pub unsafe extern "C" fn mcpmate_engine_get_startup_progress_json(
     engine: *mut MCPMateEngine
 ) -> *const c_char {
     if engine.is_null() {
         return ptr::null();
     }
 
-    let engine = unsafe { &*engine };
+    let engine = &*engine;
     let progress = engine.get_startup_progress();
 
     match serde_json::to_string(&progress) {
@@ -150,14 +148,14 @@ pub extern "C" fn mcpmate_engine_get_startup_progress_json(
 /// Get service info as JSON
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_get_service_info_json(
+pub unsafe extern "C" fn mcpmate_engine_get_service_info_json(
     engine: *mut MCPMateEngine
 ) -> *const c_char {
     if engine.is_null() {
         return ptr::null();
     }
 
-    let engine = unsafe { &*engine };
+    let engine = &*engine;
     let info = engine.get_service_info();
 
     match serde_json::to_string(&info) {
@@ -172,7 +170,7 @@ pub extern "C" fn mcpmate_engine_get_service_info_json(
 /// Start MCPMate service with default configuration
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_start_default(
+pub unsafe extern "C" fn mcpmate_engine_start_default(
     engine: *mut MCPMateEngine,
     api_port: u16,
     mcp_port: u16,
@@ -182,7 +180,7 @@ pub extern "C" fn mcpmate_engine_start_default(
         return false;
     }
 
-    let engine = unsafe { &mut *engine };
+    let engine = &mut *engine;
     let result = engine.start_default(api_port, mcp_port);
 
     tracing::info!("MCPMate engine start_default result: {}", result);
@@ -192,7 +190,7 @@ pub extern "C" fn mcpmate_engine_start_default(
 /// Start MCPMate service in minimal mode
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_start_minimal(
+pub unsafe extern "C" fn mcpmate_engine_start_minimal(
     engine: *mut MCPMateEngine,
     api_port: u16,
 ) -> bool {
@@ -201,7 +199,7 @@ pub extern "C" fn mcpmate_engine_start_minimal(
         return false;
     }
 
-    let engine = unsafe { &mut *engine };
+    let engine = &mut *engine;
     let result = engine.start_minimal(api_port);
 
     tracing::info!("MCPMate engine start_minimal result: {}", result);
@@ -211,7 +209,7 @@ pub extern "C" fn mcpmate_engine_start_minimal(
 /// Start MCPMate service with startup configuration
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_start_with_startup_config(
+pub unsafe extern "C" fn mcpmate_engine_start_with_startup_config(
     engine: *mut MCPMateEngine,
     config_json: *const c_char,
 ) -> bool {
@@ -228,7 +226,7 @@ pub extern "C" fn mcpmate_engine_start_with_startup_config(
     }
 
     // Convert C string to Rust string
-    let config_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
+    let config_str = match CStr::from_ptr(config_json).to_str() {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(
@@ -249,7 +247,7 @@ pub extern "C" fn mcpmate_engine_start_with_startup_config(
     };
 
     // Get mutable reference to engine and start with startup config
-    let engine = unsafe { &mut *engine };
+    let engine = &mut *engine;
     let result = engine.start_with_startup_config(config);
 
     tracing::info!(
@@ -262,7 +260,7 @@ pub extern "C" fn mcpmate_engine_start_with_startup_config(
 /// Start MCPMate service with specific config suites
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_engine_start_with_suites(
+pub unsafe extern "C" fn mcpmate_engine_start_with_suites(
     engine: *mut MCPMateEngine,
     api_port: u16,
     mcp_port: u16,
@@ -281,7 +279,7 @@ pub extern "C" fn mcpmate_engine_start_with_suites(
     }
 
     // Convert C string to Rust string
-    let suites_str = match unsafe { CStr::from_ptr(suites_json) }.to_str() {
+    let suites_str = match CStr::from_ptr(suites_json).to_str() {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Failed to convert suites JSON to UTF-8 string: {}", e);
@@ -299,7 +297,7 @@ pub extern "C" fn mcpmate_engine_start_with_suites(
     };
 
     // Get mutable reference to engine and start with suites
-    let engine = unsafe { &mut *engine };
+    let engine = &mut *engine;
     let result = engine.start_with_suites(api_port, mcp_port, suites);
 
     tracing::info!("MCPMate engine start_with_suites result: {}", result);
@@ -309,10 +307,8 @@ pub extern "C" fn mcpmate_engine_start_with_suites(
 /// Free string allocated by Rust
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub extern "C" fn mcpmate_string_free(string: *const c_char) {
+pub unsafe extern "C" fn mcpmate_string_free(string: *const c_char) {
     if !string.is_null() {
-        unsafe {
-            let _ = CString::from_raw(string as *mut c_char);
-        }
+        let _ = CString::from_raw(string as *mut c_char);
     }
 }

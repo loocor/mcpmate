@@ -184,6 +184,17 @@ pub fn needs_runtime_setup(command: &str) -> bool {
     matches!(command, commands::UVX | commands::BUNX | commands::DOCKER)
 }
 
+/// Transform npx commands to bunx for better performance and compatibility
+pub fn transform_command(command: &str) -> String {
+    match command {
+        "npx" => {
+            tracing::info!("Transforming npx command to bunx for better performance");
+            "bunx".to_string()
+        }
+        _ => command.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,16 +210,5 @@ mod tests {
         assert_eq!(transform_command("docker"), "docker");
         assert_eq!(transform_command("node"), "node");
         assert_eq!(transform_command("python"), "python");
-    }
-}
-
-/// Transform npx commands to bunx for better performance and compatibility
-pub fn transform_command(command: &str) -> String {
-    match command {
-        "npx" => {
-            tracing::info!("Transforming npx command to bunx for better performance");
-            "bunx".to_string()
-        }
-        _ => command.to_string(),
     }
 }

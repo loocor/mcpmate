@@ -60,10 +60,19 @@ pub async fn activate_suit(
             ApiError::InternalError(format!("Failed to activate configuration suit: {e}"))
         })?;
 
-    // Sync server connections if merge service is available
+    // Publish event to trigger server synchronization
+    crate::core::events::EventBus::global().publish(
+        crate::core::events::Event::ConfigSuitStatusChanged {
+            suit_id: id.clone(),
+            enabled: true,
+        }
+    );
+    tracing::info!("Published ConfigSuitStatusChanged event for suit activation: {}", id);
+
+    // Sync server connections if merge service is available (legacy support)
     if let Some(merge_service) = &state.suit_merge_service {
         merge_service.invalidate_cache().await;
-        tracing::info!("Invalidated suit service cache to sync server connections");
+        tracing::debug!("Invalidated suit service cache to sync server connections");
     }
 
     // Check if sync parameter is true
@@ -139,10 +148,19 @@ pub async fn deactivate_suit(
             ApiError::InternalError(format!("Failed to deactivate configuration suit: {e}"))
         })?;
 
-    // Sync server connections if merge service is available
+    // Publish event to trigger server synchronization
+    crate::core::events::EventBus::global().publish(
+        crate::core::events::Event::ConfigSuitStatusChanged {
+            suit_id: id.clone(),
+            enabled: false,
+        }
+    );
+    tracing::info!("Published ConfigSuitStatusChanged event for suit deactivation: {}", id);
+
+    // Sync server connections if merge service is available (legacy support)
     if let Some(merge_service) = &state.suit_merge_service {
         merge_service.invalidate_cache().await;
-        tracing::info!("Invalidated suit service cache to sync server connections");
+        tracing::debug!("Invalidated suit service cache to sync server connections");
     }
 
     // Check if sync parameter is true
@@ -203,6 +221,14 @@ pub async fn batch_activate_suits(
                 match crate::config::suit::set_config_suit_active(&db.pool, &id, true).await {
                     Ok(_) => {
                         successful_ids.push(id.clone());
+
+                        // Publish event for each successful activation
+                        crate::core::events::EventBus::global().publish(
+                            crate::core::events::Event::ConfigSuitStatusChanged {
+                                suit_id: id.clone(),
+                                enabled: true,
+                            }
+                        );
                     }
                     Err(e) => {
                         failed_ids.insert(id.clone(), format!("Failed to activate: {e}"));
@@ -219,7 +245,7 @@ pub async fn batch_activate_suits(
     if !successful_ids.is_empty() {
         if let Some(merge_service) = &state.suit_merge_service {
             merge_service.invalidate_cache().await;
-            tracing::info!("Invalidated suit service cache to sync server connections");
+            tracing::debug!("Invalidated suit service cache to sync server connections");
         }
     }
 
@@ -263,6 +289,14 @@ pub async fn batch_deactivate_suits(
                 match crate::config::suit::set_config_suit_active(&db.pool, &id, false).await {
                     Ok(_) => {
                         successful_ids.push(id.clone());
+
+                        // Publish event for each successful deactivation
+                        crate::core::events::EventBus::global().publish(
+                            crate::core::events::Event::ConfigSuitStatusChanged {
+                                suit_id: id.clone(),
+                                enabled: false,
+                            }
+                        );
                     }
                     Err(e) => {
                         failed_ids.insert(id.clone(), format!("Failed to deactivate: {e}"));
@@ -279,7 +313,7 @@ pub async fn batch_deactivate_suits(
     if !successful_ids.is_empty() {
         if let Some(merge_service) = &state.suit_merge_service {
             merge_service.invalidate_cache().await;
-            tracing::info!("Invalidated suit service cache to sync server connections");
+            tracing::debug!("Invalidated suit service cache to sync server connections");
         }
     }
 

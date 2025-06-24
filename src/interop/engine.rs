@@ -41,6 +41,12 @@ pub struct MCPMateEngine {
     mcp_port: u16,
 }
 
+impl Default for MCPMateEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MCPMateEngine {
     /// Create a new MCPMate engine instance
     pub fn new() -> Self {
@@ -339,10 +345,8 @@ impl MCPMateEngine {
             match std::fs::read_dir(&mcpmate_dir) {
                 Ok(entries) => {
                     tracing::info!("MCPMate directory contents:");
-                    for entry in entries {
-                        if let Ok(entry) = entry {
-                            tracing::info!("  - {}", entry.file_name().to_string_lossy());
-                        }
+                    for entry in entries.flatten() {
+                        tracing::info!("  - {}", entry.file_name().to_string_lossy());
                     }
                 }
                 Err(e) => {

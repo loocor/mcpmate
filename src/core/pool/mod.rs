@@ -5,11 +5,10 @@
 //! - health monitoring and reconnection
 //! - parallel connection capabilities
 //! - resource monitoring and limits
-//! - database synchronization
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use anyhow::{self, Context, Result};
+use anyhow::{self, Result};
 use tokio_util::sync::CancellationToken;
 use tracing;
 
@@ -17,15 +16,28 @@ use crate::core::{
     connection::UpstreamConnection, foundation::monitor::ProcessMonitor, models::Config,
 };
 
-// Import submodules
+// Core pool functionality modules
 mod connection;
 mod health;
 mod monitoring;
 mod parallel;
+
+// Business logic managers (separated from core pool logic)
+mod config;
+mod database;
+mod helpers;
 mod sync;
-mod utils;
+
+// Re-export managers for external use
+pub use config::PoolConfigManager;
+pub use sync::ServerSyncManager;
 
 /// Pool of connections to upstream MCP servers
+///
+/// This is the core connection pool that manages active connections to upstream MCP servers.
+/// It focuses purely on connection storage, access, and basic lifecycle management.
+/// Business logic for configuration synchronization and server management is handled
+/// by dedicated managers (PoolConfigManager and ServerSyncManager).
 #[derive(Debug, Clone)]
 pub struct UpstreamConnectionPool {
     /// Map of server name to map of instance ID to connection
@@ -36,7 +48,7 @@ pub struct UpstreamConnectionPool {
     pub cancellation_tokens: HashMap<String, HashMap<String, CancellationToken>>,
     /// Process monitor for tracking resource usage
     pub process_monitor: Option<Arc<ProcessMonitor>>,
-    /// Database reference for checking server status
+    /// Database reference for checking server status (used by sync manager)
     pub database: Option<Arc<crate::config::database::Database>>,
     /// Runtime cache for fast runtime queries
     pub runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
@@ -68,11 +80,25 @@ impl UpstreamConnectionPool {
         }
     }
 
-    /// Update the configuration
+    /// Update the configuration using the configuration manager
+    ///
+    /// This method delegates to PoolConfigManager for the actual configuration logic.
+    /// It maintains the public API while separating business logic concerns.
     pub fn set_config(
         &mut self,
         config: Arc<Config>,
     ) {
+        // Use the configuration manager to handle the complex logic
+        if let Err(e) = PoolConfigManager::update_configuration(
+            &mut self.connections,
+            &mut self.cancellation_tokens,
+            config.clone(),
+        ) {
+            tracing::error!("Failed to update pool configuration: {}", e);
+            return;
+        }
+
+        // Update the stored configuration reference
         self.config = config;
     }
 
@@ -95,109 +121,26 @@ impl UpstreamConnectionPool {
     }
 
     /// Initialize the connection pool with all servers
+    ///
+    /// This method delegates to PoolConfigManager for the initialization logic.
     pub fn initialize(&mut self) {
-        for name in self.config.mcp_servers.keys() {
-            // Skip the proxy server itself
-            if name == "proxy" {
-                continue;
-            }
-
-            // Create a new connection
-            let connection = UpstreamConnection::new(name.clone());
-            let instance_id = connection.id.clone();
-
-            // Create a new map for this server if it doesn't exist
-            let instances = self.connections.entry(name.clone()).or_default();
-
-            // Add the connection to the map
-            instances.insert(instance_id, connection);
-        }
-
-        // Count total instances
-        let total_instances: usize = self
-            .connections
-            .values()
-            .map(|instances| instances.len())
-            .sum();
-
-        tracing::info!(
-            "Initialized connection pool with {} servers and {} instances",
-            self.connections.len(),
-            total_instances
-        );
+        PoolConfigManager::initialize_connections(&mut self.connections, &self.config);
     }
 
-    /// Helper method to get a specific instance of a server
-    pub fn get_instance(
-        &self,
-        server_name: &str,
-        instance_id: &str,
-    ) -> Result<&UpstreamConnection> {
-        let instances = self.connections.get(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
-        ))?;
+    // Instance helper methods are now in instance_helpers.rs
 
-        instances.get(instance_id).context(format!(
-            "Instance '{instance_id}' not found for server '{server_name}'"
-        ))
-    }
+    /// Sync all servers based on active configuration suites
+    ///
+    /// This method delegates to ServerSyncManager for the complex synchronization logic.
+    /// It maintains the public API while separating business logic concerns.
+    pub async fn sync_servers_from_active_suits(&mut self) -> Result<()> {
+        let db = self
+            .database
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Database not available for server sync"))?;
 
-    /// Helper method to get a mutable reference to a specific instance of a server
-    pub fn get_instance_mut(
-        &mut self,
-        server_name: &str,
-        instance_id: &str,
-    ) -> Result<&mut UpstreamConnection> {
-        let instances = self.connections.get_mut(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
-        ))?;
-
-        instances.get_mut(instance_id).context(format!(
-            "Instance '{instance_id}' not found for server '{server_name}'"
-        ))
-    }
-
-    /// Helper method to get the default instance of a server
-    pub fn get_default_instance(
-        &self,
-        server_name: &str,
-    ) -> Result<(String, &UpstreamConnection)> {
-        let instances = self.connections.get(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
-        ))?;
-
-        if instances.is_empty() {
-            return Err(anyhow::anyhow!(
-                "No instances found for server '{}'",
-                server_name
-            ));
-        }
-
-        // Get the first instance (for now, we'll just use the first one as default)
-        let (instance_id, connection) = instances.iter().next().unwrap();
-        Ok((instance_id.clone(), connection))
-    }
-
-    /// Helper method to get a mutable reference to the default instance of a server
-    pub fn get_default_instance_mut(
-        &mut self,
-        server_name: &str,
-    ) -> Result<(String, &mut UpstreamConnection)> {
-        let instances = self.connections.get_mut(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
-        ))?;
-
-        if instances.is_empty() {
-            return Err(anyhow::anyhow!(
-                "No instances found for server '{}'",
-                server_name
-            ));
-        }
-
-        // Get the first instance (for now, we'll just use the first one as default)
-        let instance_id = instances.keys().next().unwrap().clone();
-        let connection = instances.get_mut(&instance_id).unwrap();
-        Ok((instance_id, connection))
+        let sync_manager = ServerSyncManager::new(db.clone());
+        sync_manager.sync_servers_from_active_suites(self).await
     }
 }
 

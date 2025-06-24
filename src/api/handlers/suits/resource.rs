@@ -26,7 +26,7 @@ pub async fn list_resources(
             ApiError::InternalError(format!("Failed to get resource configurations: {e}"))
         })?;
 
-    tracing::info!(
+    tracing::debug!(
         "Found {} resources in configuration suit '{}' ({})",
         resource_configs.len(),
         suit.name,

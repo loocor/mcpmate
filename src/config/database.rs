@@ -24,7 +24,7 @@ fn get_database_url() -> Result<String> {
 }
 
 /// Database connection pool
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Database {
     /// SQLite connection pool
     pub pool: Pool<Sqlite>,

@@ -22,4 +22,5 @@ pub use meta::{get_server_meta, upsert_server_meta};
 pub use enabled::{
     get_enabled_servers, get_enabled_servers_by_suites, get_server_global_status,
     is_server_enabled_in_any_suit, is_server_in_suit, update_server_global_status,
+    ServerEnabledService,
 };

@@ -110,14 +110,14 @@ pub async fn set_config_suit_active(
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
-    // If activating and multi_select is false, deactivate all other suits
+    // If activating and multi_select is false, deactivate all other suits (except default)
     if active && !suit.multi_select {
         sqlx::query(
             r#"
             UPDATE config_suit
             SET is_active = 0,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id != ?
+            WHERE id != ? AND is_default = 0
             "#,
         )
         .bind(suit_id)

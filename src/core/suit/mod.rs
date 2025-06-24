@@ -8,20 +8,40 @@
 //! - Tool enablement status checking
 //! - Server configuration aggregation
 //! - Business rule validation
+//! - Server lifecycle management for config suit integration
 //!
 //! ## Architecture Principles
 //! - Only depends on config/suit data interfaces
 //! - No direct database connection operations
 //! - Communicates with other modules through event mechanisms
 
+pub mod config;
 pub mod merge;
 pub mod service;
 pub mod types;
 
 // Re-export core types and services
+pub use config::ConfigApplicationStateManager;
 pub use merge::SuitMerger;
 pub use service::SuitService;
 pub use types::*;
+
+use crate::config::database::Database;
+use crate::core::models::Config;
+use std::sync::Arc;
+
+/// Get merged configuration from active suits
+/// Returns both SuitMergeResult and Config formats
+pub async fn get_merged_configuration(db: &Database) -> anyhow::Result<(SuitMergeResult, Config)> {
+    let merger = SuitMerger::new(Arc::new(db.clone()));
+    let merge_result = merger.merge_all_configs().await
+        .map_err(|e| anyhow::anyhow!("Failed to merge configurations: {}", e))?;
+
+    // Convert to Config format using the unified loader
+    let (_, config) = crate::core::foundation::loader::load_servers_from_active_suits(db).await?;
+
+    Ok((merge_result, config))
+}
 
 #[cfg(test)]
 mod tests {

@@ -2,6 +2,7 @@
 // Contains data models for system endpoints
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// System status response
 #[derive(Debug, Serialize, Deserialize)]
@@ -66,4 +67,48 @@ pub struct SystemMetricsResponse {
     pub system_memory_usage: Option<u64>,
     /// Total system memory in bytes
     pub system_memory_total: Option<u64>,
+    /// Configuration application status
+    pub config_application_status: Option<ConfigApplicationStatus>,
+}
+
+/// Configuration application status
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ConfigApplicationStatus {
+    /// Whether a configuration application is currently in progress
+    pub in_progress: bool,
+    /// Configuration suit ID being applied
+    pub suit_id: Option<String>,
+    /// Current stage description
+    pub current_stage: Option<String>,
+    /// Progress percentage (0-100)
+    pub progress_percentage: Option<u8>,
+    /// Estimated remaining time in seconds
+    pub estimated_remaining_seconds: Option<u32>,
+    /// Start time of the current application (ISO 8601 format)
+    pub started_at: Option<String>,
+    /// Total number of servers being processed
+    pub total_servers: Option<usize>,
+    /// Number of servers successfully started
+    pub servers_started: Option<usize>,
+    /// Number of servers successfully stopped
+    pub servers_stopped: Option<usize>,
+    /// Failed operations with error messages
+    pub failed_operations: Option<HashMap<String, String>>,
+}
+
+/// Server connection status for detailed reporting
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ServerConnectionStatus {
+    /// Server name
+    pub server_name: String,
+    /// Connection status (connected, disconnected, connecting, error)
+    pub status: String,
+    /// Last connection attempt timestamp (ISO 8601 format)
+    pub last_attempt: Option<String>,
+    /// Error message if connection failed
+    pub error_message: Option<String>,
+    /// Number of tools available from this server
+    pub tools_count: usize,
+    /// Whether this server is enabled in active configuration suits
+    pub enabled_in_suits: bool,
 }

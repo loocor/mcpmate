@@ -262,9 +262,31 @@ impl ProxyServer {
             pool.set_runtime_cache(Some(self.runtime_cache.clone()));
         }
 
+        // Setup event handlers with server manager callback
+        self.setup_event_handlers().await?;
+
         tracing::info!(
-            "Database connection and runtime cache set for proxy server and connection pool"
+            "Database connection, server manager, and event handlers set for proxy server"
         );
+        Ok(())
+    }
+
+    /// Setup event handlers with simplified direct integration
+    async fn setup_event_handlers(&self) -> Result<()> {
+        let mut handlers = crate::core::events::EventHandlers::new();
+
+        // Set suit service for cache invalidation
+        if let Some(suit_service) = &self.suit_service {
+            handlers.set_suit_service(suit_service.clone());
+        }
+
+        // Set connection pool for server management
+        handlers.set_connection_pool(self.connection_pool.clone());
+
+        // Initialize the event handlers
+        crate::core::events::init_with_handlers(handlers)?;
+
+        tracing::info!("Event handlers initialized with direct integration");
         Ok(())
     }
 

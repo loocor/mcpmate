@@ -33,6 +33,8 @@ pub struct AppState {
     pub suit_merge_service: Option<Arc<crate::core::suit::SuitService>>,
     /// Database reference for API operations
     pub database: Option<Arc<crate::config::database::Database>>,
+    /// Configuration application state manager
+    pub config_application_state: Arc<crate::core::suit::ConfigApplicationStateManager>,
 }
 
 /// Create the API router with all routes
@@ -81,12 +83,23 @@ fn create_router_internal(
         None
     };
 
+    // Create and initialize configuration application state manager
+    let config_application_state =
+        Arc::new(crate::core::suit::ConfigApplicationStateManager::new());
+
+    // Initialize the state manager in the background
+    let state_manager_clone = config_application_state.clone();
+    tokio::spawn(async move {
+        state_manager_clone.initialize().await;
+    });
+
     let state = Arc::new(AppState {
         connection_pool,
         metrics_collector,
         http_proxy,
         suit_merge_service: config_suit_merge_service,
         database,
+        config_application_state,
     });
 
     // Create API router

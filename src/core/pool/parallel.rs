@@ -22,6 +22,14 @@ use crate::{
     },
 };
 
+/// Configuration bundle for connection operations
+struct ConnectionConfig {
+    config: Arc<crate::core::models::Config>,
+    database: Option<Arc<crate::config::database::Database>>,
+    runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
+    server_type: ServerType,
+}
+
 /// Connection state update events for parallel processing
 #[derive(Debug)]
 pub enum ConnectionEvent {
@@ -132,67 +140,100 @@ impl ParallelConnectionManager {
         event_tx: mpsc::UnboundedSender<ConnectionEvent>,
     ) -> Result<()> {
         // Send connecting event
-        let _ = event_tx.send(ConnectionEvent::Connecting {
-            server_name: server_name.clone(),
-            instance_id: instance_id.clone(),
-        });
+        Self::send_event(
+            &event_tx,
+            ConnectionEvent::Connecting {
+                server_name: server_name.clone(),
+                instance_id: instance_id.clone(),
+            },
+        );
 
         // Get configuration and dependencies (read-only)
-        let (config, database, runtime_cache, server_type) = {
-            let pool = pool.lock().await;
-            let server_config = match pool.config.mcp_servers.get(&server_name) {
-                Some(config) => config,
-                None => {
-                    let error_msg = format!("Server configuration for '{}' not found", server_name);
-                    let _ = event_tx.send(ConnectionEvent::Failed {
+        let connection_config = match Self::get_connection_config(&pool, &server_name).await {
+            Ok(config) => config,
+            Err(error_msg) => {
+                Self::send_event(
+                    &event_tx,
+                    ConnectionEvent::Failed {
                         server_name,
                         instance_id,
                         error: error_msg,
-                    });
-                    return Ok(());
-                }
-            };
-
-            (
-                pool.config.clone(),
-                pool.database.clone(),
-                pool.runtime_cache.clone(),
-                server_config.kind,
-            )
+                    },
+                );
+                return Ok(());
+            }
         };
 
         // Perform actual connection (stateless operation)
         match Self::perform_connection(
             &server_name,
             &instance_id,
-            &config,
-            database,
-            runtime_cache,
-            server_type,
+            &connection_config.config,
+            connection_config.database,
+            connection_config.runtime_cache,
+            connection_config.server_type,
             event_tx.clone(),
         )
         .await
         {
             Ok((service, tools, capabilities, process_id)) => {
-                let _ = event_tx.send(ConnectionEvent::Connected {
-                    server_name,
-                    instance_id,
-                    service,
-                    tools,
-                    capabilities,
-                    process_id,
-                });
+                Self::send_event(
+                    &event_tx,
+                    ConnectionEvent::Connected {
+                        server_name,
+                        instance_id,
+                        service,
+                        tools,
+                        capabilities,
+                        process_id,
+                    },
+                );
             }
             Err(e) => {
-                let _ = event_tx.send(ConnectionEvent::Failed {
-                    server_name,
-                    instance_id,
-                    error: e.to_string(),
-                });
+                Self::send_event(
+                    &event_tx,
+                    ConnectionEvent::Failed {
+                        server_name,
+                        instance_id,
+                        error: e.to_string(),
+                    },
+                );
             }
         }
 
         Ok(())
+    }
+
+    /// Helper to extract connection configuration from pool
+    async fn get_connection_config(
+        pool: &Arc<Mutex<UpstreamConnectionPool>>,
+        server_name: &str,
+    ) -> Result<ConnectionConfig, String> {
+        let pool = pool.lock().await;
+        let server_config = match pool.config.mcp_servers.get(server_name) {
+            Some(config) => config,
+            None => {
+                return Err(format!(
+                    "Server configuration for '{}' not found",
+                    server_name
+                ));
+            }
+        };
+
+        Ok(ConnectionConfig {
+            config: pool.config.clone(),
+            database: pool.database.clone(),
+            runtime_cache: pool.runtime_cache.clone(),
+            server_type: server_config.kind,
+        })
+    }
+
+    /// Helper to send events with error handling
+    fn send_event(
+        event_tx: &mpsc::UnboundedSender<ConnectionEvent>,
+        event: ConnectionEvent,
+    ) {
+        let _ = event_tx.send(event);
     }
 
     /// Pure connection logic extracted from existing methods

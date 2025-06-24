@@ -155,6 +155,9 @@ pub async fn get_metrics(
     // Get uptime
     let uptime_seconds = get_uptime_seconds();
 
+    // Get configuration application status
+    let config_application_status = state.config_application_state.get_current_status().await;
+
     Ok(Json(SystemMetricsResponse {
         uptime_seconds,
         timestamp,
@@ -172,6 +175,7 @@ pub async fn get_metrics(
         system_cpu_usage,
         system_memory_usage,
         system_memory_total,
+        config_application_status,
     }))
 }
 

@@ -16,40 +16,41 @@ pub async fn list_servers(
     // Get the suit to check if it exists and get its name
     let suit = get_suit_or_error(&db, &id).await?;
 
-    // Get all servers in the suit
+    // Get all available servers in the system
+    let all_servers = crate::config::server::get_all_servers(&db.pool)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
+
+    // Get servers currently configured in this suit
     let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &id)
         .await
         .map_err(|e| {
             ApiError::InternalError(format!("Failed to get server configurations: {e}"))
         })?;
 
-    // Get all servers
-    let all_servers = crate::config::server::get_all_servers(&db.pool)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
-
-    // Create a map of server ID to server
-    let server_map: HashMap<String, crate::config::models::Server> = all_servers
+    // Create a map of server ID to enabled status in this suit
+    let suit_server_status: HashMap<String, bool> = server_configs
         .into_iter()
-        .filter_map(|s| {
-            if let Some(id) = &s.id {
-                Some((id.clone(), s))
-            } else {
-                None
-            }
-        })
+        .map(|config| (config.server_id, config.enabled))
         .collect();
 
-    // Convert to response format using unified converter
+    // Convert to response format - include ALL servers with their suit status
     let mut server_responses = Vec::new();
-    for config in server_configs {
-        if let Some(server) = server_map.get(&config.server_id) {
-            server_responses.push(ResponseConverter::server_to_suit_response(
-                server,
-                config.enabled,
-            ));
+    for server in all_servers {
+        if let Some(server_id) = &server.id {
+            // Check if this server is configured in the suit and get its enabled status
+            let enabled = suit_server_status.get(server_id).copied().unwrap_or(false);
+
+            server_responses.push(ResponseConverter::server_to_suit_response(&server, enabled));
         }
     }
+
+    tracing::debug!(
+        "Listed {} total servers for configuration suit '{}' ({})",
+        server_responses.len(),
+        suit.name,
+        id
+    );
 
     // Return response
     Ok(Json(ConfigSuitServersResponse {
@@ -101,7 +102,7 @@ pub async fn enable_server(
     // Sync server connections if merge service is available
     if let Some(merge_service) = &state.suit_merge_service {
         merge_service.invalidate_cache().await;
-        tracing::info!("Invalidated suit service cache to sync server connections");
+        tracing::debug!("Invalidated suit service cache to sync server connections");
     }
 
     // Return success response
@@ -156,7 +157,7 @@ pub async fn disable_server(
     // Sync server connections if merge service is available
     if let Some(merge_service) = &state.suit_merge_service {
         merge_service.invalidate_cache().await;
-        tracing::info!("Invalidated suit service cache to sync server connections");
+        tracing::debug!("Invalidated suit service cache to sync server connections");
     }
 
     // Return success response
@@ -219,7 +220,7 @@ pub async fn batch_enable_servers(
     if !successful_ids.is_empty() {
         if let Some(merge_service) = &state.suit_merge_service {
             merge_service.invalidate_cache().await;
-            tracing::info!("Invalidated suit service cache to sync server connections");
+            tracing::debug!("Invalidated suit service cache to sync server connections");
         }
     }
 
@@ -281,7 +282,7 @@ pub async fn batch_disable_servers(
     if !successful_ids.is_empty() {
         if let Some(merge_service) = &state.suit_merge_service {
             merge_service.invalidate_cache().await;
-            tracing::info!("Invalidated suit service cache to sync server connections");
+            tracing::debug!("Invalidated suit service cache to sync server connections");
         }
     }
 

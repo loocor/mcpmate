@@ -62,7 +62,7 @@ async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> 
     if let Some(merge_service) = &state.suit_merge_service {
         // Invalidate cache to force re-merging of configurations
         merge_service.invalidate_cache().await;
-        tracing::info!("Invalidated suit service cache to sync server connections");
+        tracing::debug!("Invalidated suit service cache to sync server connections");
     }
 
     Ok(())

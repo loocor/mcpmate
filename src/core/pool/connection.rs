@@ -216,6 +216,8 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
+    // Removed redundant implementations in favor of update_server_status
+
     /// Trigger connection to a specific instance of a server
     pub async fn trigger_connect(
         &mut self,
@@ -409,6 +411,7 @@ impl UpstreamConnectionPool {
             );
 
             // Sync to database if database reference is available
+            // Delegate to database.rs methods for cleaner separation of concerns
             if let Some(db) = &self.database {
                 let db_clone = db.clone();
                 let tools_clone = tools.clone();
@@ -416,120 +419,65 @@ impl UpstreamConnectionPool {
                 let instance_id_clone = instance_id.to_string();
                 let service_for_sync = service_for_sync.clone();
 
-                // Single task to handle all database sync operations concurrently
+                // Spawn async task to handle database sync operations
                 tokio::spawn(async move {
-                    // Build list of sync operations to execute
-                    let mut sync_futures = Vec::new();
-
                     // Always sync tools
+                    if let Err(e) = UpstreamConnectionPool::sync_tools_to_database(
+                        &db_clone,
+                        &server_name_clone,
+                        &tools_clone,
+                    )
+                    .await
                     {
-                        let db = db_clone.clone();
-                        let server_name = server_name_clone.clone();
-                        let tools = tools_clone.clone();
-                        sync_futures.push(Box::pin(async move {
-                            UpstreamConnectionPool::sync_tools_to_database(
-                                &db,
-                                &server_name,
-                                &tools,
-                            )
-                            .await
-                            .map_err(|e| ("tools", e))
-                        })
-                            as std::pin::Pin<
-                                Box<
-                                    dyn std::future::Future<
-                                            Output = Result<(), (&str, anyhow::Error)>,
-                                        > + Send,
-                                >,
-                            >);
+                        tracing::error!(
+                            "Failed to sync tools to database for server '{}': {}",
+                            server_name_clone,
+                            e
+                        );
                     }
 
                     // Conditionally sync resources if server supports them
                     if supports_resources {
-                        let db = db_clone.clone();
-                        let server_name = server_name_clone.clone();
-                        let instance_id = instance_id_clone.clone();
-                        let service = service_for_sync.clone();
-                        sync_futures.push(Box::pin(async move {
+                        if let Err(e) =
                             UpstreamConnectionPool::sync_resources_to_database_with_service(
-                                &db,
-                                &server_name,
-                                &instance_id,
-                                &service,
+                                &db_clone,
+                                &server_name_clone,
+                                &instance_id_clone,
+                                &service_for_sync,
                             )
                             .await
-                            .map_err(|e| ("resources", e))
-                        })
-                            as std::pin::Pin<
-                                Box<
-                                    dyn std::future::Future<
-                                            Output = Result<(), (&str, anyhow::Error)>,
-                                        > + Send,
-                                >,
-                            >);
+                        {
+                            tracing::error!(
+                                "Failed to sync resources to database for server '{}': {}",
+                                server_name_clone,
+                                e
+                            );
+                        }
                     }
 
                     // Conditionally sync prompts if server supports them
                     if supports_prompts {
-                        let db = db_clone.clone();
-                        let server_name = server_name_clone.clone();
-                        let instance_id = instance_id_clone.clone();
-                        let service = service_for_sync.clone();
-                        sync_futures.push(Box::pin(async move {
+                        if let Err(e) =
                             UpstreamConnectionPool::sync_prompts_to_database_with_service(
-                                &db,
-                                &server_name,
-                                &instance_id,
-                                &service,
+                                &db_clone,
+                                &server_name_clone,
+                                &instance_id_clone,
+                                &service_for_sync,
                             )
                             .await
-                            .map_err(|e| ("prompts", e))
-                        })
-                            as std::pin::Pin<
-                                Box<
-                                    dyn std::future::Future<
-                                            Output = Result<(), (&str, anyhow::Error)>,
-                                        > + Send,
-                                >,
-                            >);
-                    }
-
-                    // Execute all sync operations concurrently
-                    let results = futures::future::join_all(sync_futures).await;
-
-                    // Process results and log any errors
-                    let mut success_count = 0;
-                    let mut error_count = 0;
-
-                    for result in results {
-                        match result {
-                            Ok(()) => success_count += 1,
-                            Err((operation, error)) => {
-                                error_count += 1;
-                                tracing::error!(
-                                    "Failed to sync {} to database for server '{}': {}",
-                                    operation,
-                                    server_name_clone,
-                                    error
-                                );
-                            }
+                        {
+                            tracing::error!(
+                                "Failed to sync prompts to database for server '{}': {}",
+                                server_name_clone,
+                                e
+                            );
                         }
                     }
 
-                    if error_count == 0 {
-                        tracing::debug!(
-                            "Successfully completed {} database sync operations for server '{}'",
-                            success_count,
-                            server_name_clone
-                        );
-                    } else {
-                        tracing::warn!(
-                            "Database sync completed for server '{}': {} successful, {} failed",
-                            server_name_clone,
-                            success_count,
-                            error_count
-                        );
-                    }
+                    tracing::debug!(
+                        "Database sync operations completed for server '{}'",
+                        server_name_clone
+                    );
                 });
             }
         }
@@ -604,14 +552,7 @@ impl UpstreamConnectionPool {
         }
     }
 
-    /// Get the default instance ID for a server
-    pub fn get_default_instance_id(
-        &self,
-        server_name: &str,
-    ) -> Result<String> {
-        let (instance_id, _) = self.get_default_instance(server_name)?;
-        Ok(instance_id)
-    }
+    // get_default_instance_id method is now in instance_helpers.rs
 
     /// Log a connection event
     pub fn log_connection_event(
@@ -634,5 +575,84 @@ impl UpstreamConnectionPool {
                 tracing::trace!("[{}:{}] {}", server_name, instance_id, message)
             }
         }
+    }
+
+    /// Update server status in the connection pool
+    ///
+    /// This is a unified interface for managing server status:
+    /// - If enabled=true:
+    ///   1. Loads latest config from active suits
+    ///   2. Updates pool configuration
+    ///   3. Creates new connection if needed
+    ///   4. Connects to the server
+    /// - If enabled=false:
+    ///   1. Disconnects all instances
+    ///   2. Removes server from pool
+    ///
+    /// This implementation replaces the previous separate start_server, stop_server,
+    /// and load_server_config_dynamic functions with a single, more consistent interface.
+    pub async fn update_server_status(
+        &mut self,
+        server_name: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        if enabled {
+            // Load latest config for this server
+            let db = self
+                .database
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
+
+            let (_, config) =
+                crate::core::foundation::loader::load_servers_from_active_suits(db).await?;
+
+            if let Some(_server_config) = config.mcp_servers.get(server_name) {
+                // Update config and start server
+                self.set_config(Arc::new(config));
+
+                // Create new connection if needed
+                if !self.connections.contains_key(server_name) {
+                    let connection =
+                        crate::core::connection::UpstreamConnection::new(server_name.to_string());
+                    let instance_id = connection.id.clone();
+                    let instances = self.connections.entry(server_name.to_string()).or_default();
+                    instances.insert(instance_id.clone(), connection);
+                }
+
+                // Get default instance ID and connect
+                let instance_id = self.get_default_instance_id(server_name)?;
+                self.trigger_connect(server_name, &instance_id).await?;
+
+                tracing::info!("Server '{}' enabled and started", server_name);
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Server '{}' not found in active configuration suits",
+                    server_name
+                ));
+            }
+        } else {
+            // Stop and remove server
+            if let Some(instances) = self.connections.get(server_name) {
+                let instance_ids: Vec<String> = instances.keys().cloned().collect();
+                for instance_id in instance_ids {
+                    if let Err(e) = self.disconnect(server_name, &instance_id).await {
+                        tracing::warn!(
+                            "Failed to disconnect server '{}' instance '{}': {}",
+                            server_name,
+                            instance_id,
+                            e
+                        );
+                    }
+                }
+            }
+
+            // Remove server from pool
+            self.connections.remove(server_name);
+            self.cancellation_tokens.remove(server_name);
+
+            tracing::info!("Server '{}' disabled and stopped", server_name);
+        }
+
+        Ok(())
     }
 }

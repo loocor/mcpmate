@@ -33,7 +33,7 @@
 //! use crate::core::events::{EventHandlers, init_with_handlers};
 //!
 //! let mut handlers = EventHandlers::new();
-//! handlers.register_server_sync_callback(|| {
+//! handlers.set_suit_service(suit_service);
 //!     Box::pin(async {
 //!         // Your server sync logic here
 //!         Ok(())
@@ -50,7 +50,7 @@ pub mod wait;
 
 // Re-export public API
 pub use bus::EventBus;
-pub use handlers::{EventHandlers, ServerSyncCallback, init, init_with_handlers};
+pub use handlers::{EventHandlers, init, init_with_handlers};
 pub use types::Event;
 pub use wait::{needs_transport_ready_wait, wait_for_transport_ready};
 

@@ -146,7 +146,7 @@ impl ServiceStatus {
 }
 
 /// Startup configuration for MCPMate service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StartupConfig {
     /// Port configuration (API and MCP ports)
     #[serde(flatten)]
@@ -157,15 +157,7 @@ pub struct StartupConfig {
     pub minimal: bool,
 }
 
-impl Default for StartupConfig {
-    fn default() -> Self {
-        Self {
-            ports: PortConfig::default(),
-            config_suites: None,
-            minimal: false,
-        }
-    }
-}
+
 
 impl StartupConfig {
     /// Create a new startup configuration
