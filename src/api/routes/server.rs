@@ -28,35 +28,12 @@ pub fn routes(state: Arc<AppState>) -> Router {
 
         // Discovery capabilities (integrated from discovery module)
         .route("/{identifier}/capabilities", get(server::get_capabilities))
-        .route(
-            "/{identifier}/capabilities/raw",
-            get(server::get_raw_capabilities),
-        )
-
-        // Tools discovery
         .route("/{identifier}/tools", get(server::list_tools))
-        .route(
-            "/{identifier}/tools/{tool_name}",
-            get(server::get_tool_detail),
-        )
-        .route(
-            "/{identifier}/tools/{tool_name}/schema",
-            get(server::get_tool_schema),
-        )
-
-        // Resources discovery
+        .route("/{identifier}/tools/{tool_name}", get(server::get_tool_detail))
         .route("/{identifier}/resources", get(server::list_resources))
-        .route(
-            "/{identifier}/resource-templates",
-            get(server::list_resource_templates),
-        )
-
-        // Prompts discovery
+        .route("/{identifier}/resource-templates", get(server::list_resource_templates))
         .route("/{identifier}/prompts", get(server::list_prompts))
-        .route(
-            "/{identifier}/prompts/arguments",
-            get(server::get_prompt_arguments),
-        )
+        .route("/{identifier}/prompts/arguments", get(server::get_prompt_arguments))
 
         // Instance management
         .route("/{identifier}/instances", get(server::list_instances));

@@ -8,54 +8,9 @@
 // 4. Changes to server status in config suits trigger connection/disconnection operations
 // 5. This creates a one-way synchronization where API operations take priority
 
-use sqlx::{Pool, Sqlite};
-
-use super::shared::*;
+use super::{common, shared::*};
 
 // Helper functions for server management operations
-
-/// Get database reference from AppState
-async fn get_database(
-    state: &Arc<AppState>
-) -> Result<Arc<crate::config::database::Database>, ApiError> {
-    match state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
-        Some(db) => Ok(db),
-        None => Err(ApiError::InternalError(
-            "Database not available".to_string(),
-        )),
-    }
-}
-
-/// Get server information by name
-async fn get_server_info(
-    pool: &Pool<Sqlite>,
-    server_name: &str,
-) -> Result<(crate::config::models::Server, String), ApiError> {
-    // Get the server
-    let server = crate::config::server::get_server(pool, server_name)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
-
-    let server = match server {
-        Some(server) => server,
-        None => {
-            return Err(ApiError::NotFound(format!(
-                "Server '{server_name}' not found"
-            )));
-        }
-    };
-
-    let server_id = match &server.id {
-        Some(id) => id.clone(),
-        None => {
-            return Err(ApiError::InternalError(format!(
-                "Server '{server_name}' has no ID"
-            )));
-        }
-    };
-
-    Ok((server, server_id))
-}
 
 /// Sync server connections by invalidating suit service cache
 async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> {
@@ -75,23 +30,6 @@ async fn sync_client_configurations(
 ) -> Result<(), ApiError> {
     // Use the helper function from suits::helpers
     crate::api::handlers::suits::helpers::sync_client_configurations(state, config_suit_id).await
-}
-
-/// Get connection pool with timeout
-async fn get_connection_pool(
-    state: &Arc<AppState>
-) -> Result<tokio::sync::MutexGuard<crate::core::pool::UpstreamConnectionPool>, ApiError> {
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await
-    {
-        Ok(pool) => Ok(pool),
-        Err(_) => Err(ApiError::InternalError(
-            "Timed out waiting for connection pool lock".to_string(),
-        )),
-    }
 }
 
 /// Create operation response
@@ -124,10 +62,10 @@ pub async fn enable_server(
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     // Get database reference
-    let db = get_database(&state).await?;
+    let db = common::get_database_from_state(&state)?;
 
     // Get the server information
-    let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
+    let (_server, server_id) = common::get_server_by_identifier(&db.pool, &server_name).await?;
 
     // Update the server's global enabled status
     match crate::config::server::update_server_global_status(&db.pool, &server_id, true).await {
@@ -165,7 +103,7 @@ pub async fn enable_server(
     }
 
     // Get connection pool
-    let mut pool = get_connection_pool(&state).await?;
+    let mut pool = common::get_connection_pool_with_timeout(&state).await?;
 
     // Load the server configuration from the database
     // This will update the connection pool's configuration with the latest server information
@@ -316,10 +254,10 @@ pub async fn disable_server(
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     // Get database reference
-    let db = get_database(&state).await?;
+    let db = common::get_database_from_state(&state)?;
 
     // Get the server information
-    let (_server, server_id) = get_server_info(&db.pool, &server_name).await?;
+    let (_server, server_id) = common::get_server_by_identifier(&db.pool, &server_name).await?;
 
     // Update the server's global enabled status
     match crate::config::server::update_server_global_status(&db.pool, &server_id, false).await {

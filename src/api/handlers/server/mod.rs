@@ -42,8 +42,8 @@ pub(crate) mod shared {
             handlers::ApiError,
             models::server::{
                 CreateServerRequest, ImportServersRequest, ImportServersResponse,
-                OperationResponse, ServerInstanceSummary, ServerInstancesResponse,
-                ServerListResponse, ServerResponse, UpdateServerRequest,
+                OperationResponse, ServerInstancesResponse, ServerListResponse, ServerResponse,
+                UpdateServerRequest,
             },
             routes::AppState,
         },

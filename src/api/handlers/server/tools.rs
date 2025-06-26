@@ -178,8 +178,10 @@ pub async fn get_tool_detail(
 
     // Create response with metadata
     let response = create_discovery_response(
-        tool, &params, Some(false), // No direct caching for this endpoint
-        None, // No capabilities metadata for this endpoint
+        tool,
+        &params,
+        Some(false), // No direct caching for this endpoint
+        None,        // No capabilities metadata for this endpoint
     );
 
     tracing::info!(
@@ -252,14 +254,15 @@ pub async fn get_tool_schema(
         tool_name: tool.name,
         input_schema: tool.input_schema,
         description: tool.description,
-        enabled: tool.enabled,
         unique_name: tool.unique_name,
     };
 
     // Create response with metadata
     let response = create_discovery_response(
-        schema, &params, Some(false), // No direct caching for this endpoint
-        None, // No capabilities metadata for this endpoint
+        schema,
+        &params,
+        Some(false), // No direct caching for this endpoint
+        None,        // No capabilities metadata for this endpoint
     );
 
     tracing::debug!(
@@ -281,8 +284,6 @@ pub struct ToolSchema {
     pub input_schema: serde_json::Value,
     /// Tool description
     pub description: Option<String>,
-    /// Whether tool is enabled
-    pub enabled: bool,
     /// Unique name in configuration
     pub unique_name: Option<String>,
 }

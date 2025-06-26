@@ -62,13 +62,6 @@ impl CapabilitiesProcessor {
         let mut processed_tools = Vec::new();
 
         for tool in tools {
-            // Check if tool is enabled (if database is available)
-            let enabled = if let Some(db) = &self.database {
-                self.is_tool_enabled(db, server_id, &tool.name).await?
-            } else {
-                true // Default to enabled if no database
-            };
-
             // Apply format-specific processing
             let processed_tool = match format {
                 ResponseFormat::Compact => ProcessedToolInfo {
@@ -76,7 +69,6 @@ impl CapabilitiesProcessor {
                     description: None, // Omit description in compact format
                     input_schema: serde_json::Value::Null, // Omit schema in compact format
                     annotations: None,
-                    enabled,
                     unique_name: self.get_tool_unique_name(server_id, &tool.name).await?,
                 },
                 ResponseFormat::Json => ProcessedToolInfo {
@@ -84,7 +76,6 @@ impl CapabilitiesProcessor {
                     description: tool.description.clone(),
                     input_schema: tool.input_schema.clone(),
                     annotations: None, // Omit annotations in standard format
-                    enabled,
                     unique_name: self.get_tool_unique_name(server_id, &tool.name).await?,
                 },
                 ResponseFormat::Detailed => ProcessedToolInfo {
@@ -92,7 +83,6 @@ impl CapabilitiesProcessor {
                     description: tool.description.clone(),
                     input_schema: tool.input_schema.clone(),
                     annotations: tool.annotations.clone(),
-                    enabled,
                     unique_name: self.get_tool_unique_name(server_id, &tool.name).await?,
                 },
             };
@@ -107,20 +97,12 @@ impl CapabilitiesProcessor {
     async fn process_resources(
         &self,
         resources: &[ResourceInfo],
-        server_id: &str,
+        _server_id: &str,
         format: ResponseFormat,
     ) -> DiscoveryResult<Vec<ProcessedResourceInfo>> {
         let mut processed_resources = Vec::new();
 
         for resource in resources {
-            // Check if resource is enabled (if database is available)
-            let enabled = if let Some(db) = &self.database {
-                self.is_resource_enabled(db, server_id, &resource.uri)
-                    .await?
-            } else {
-                true // Default to enabled if no database
-            };
-
             // Apply format-specific processing
             let processed_resource = match format {
                 ResponseFormat::Compact => ProcessedResourceInfo {
@@ -129,7 +111,6 @@ impl CapabilitiesProcessor {
                     description: None, // Omit description in compact format
                     mime_type: None,   // Omit mime_type in compact format
                     annotations: None,
-                    enabled,
                 },
                 ResponseFormat::Json => ProcessedResourceInfo {
                     uri: resource.uri.clone(),
@@ -137,7 +118,6 @@ impl CapabilitiesProcessor {
                     description: resource.description.clone(),
                     mime_type: resource.mime_type.clone(),
                     annotations: None, // Omit annotations in standard format
-                    enabled,
                 },
                 ResponseFormat::Detailed => ProcessedResourceInfo {
                     uri: resource.uri.clone(),
@@ -145,7 +125,6 @@ impl CapabilitiesProcessor {
                     description: resource.description.clone(),
                     mime_type: resource.mime_type.clone(),
                     annotations: resource.annotations.clone(),
-                    enabled,
                 },
             };
 
@@ -159,19 +138,12 @@ impl CapabilitiesProcessor {
     async fn process_prompts(
         &self,
         prompts: &[PromptInfo],
-        server_id: &str,
+        _server_id: &str,
         format: ResponseFormat,
     ) -> DiscoveryResult<Vec<ProcessedPromptInfo>> {
         let mut processed_prompts = Vec::new();
 
         for prompt in prompts {
-            // Check if prompt is enabled (if database is available)
-            let enabled = if let Some(db) = &self.database {
-                self.is_prompt_enabled(db, server_id, &prompt.name).await?
-            } else {
-                true // Default to enabled if no database
-            };
-
             // Apply format-specific processing
             let processed_prompt = match format {
                 ResponseFormat::Compact => ProcessedPromptInfo {
@@ -179,21 +151,18 @@ impl CapabilitiesProcessor {
                     description: None,     // Omit description in compact format
                     arguments: Vec::new(), // Omit arguments in compact format
                     annotations: None,
-                    enabled,
                 },
                 ResponseFormat::Json => ProcessedPromptInfo {
                     name: prompt.name.clone(),
                     description: prompt.description.clone(),
                     arguments: prompt.arguments.clone(),
                     annotations: None, // Omit annotations in standard format
-                    enabled,
                 },
                 ResponseFormat::Detailed => ProcessedPromptInfo {
                     name: prompt.name.clone(),
                     description: prompt.description.clone(),
                     arguments: prompt.arguments.clone(),
                     annotations: prompt.annotations.clone(),
-                    enabled,
                 },
             };
 
@@ -243,83 +212,6 @@ impl CapabilitiesProcessor {
         Ok(processed_templates)
     }
 
-    /// Check if tool is enabled in configuration
-    async fn is_tool_enabled(
-        &self,
-        database: &Database,
-        server_id: &str,
-        tool_name: &str,
-    ) -> DiscoveryResult<bool> {
-        // Get server name from server_id
-        let server = crate::config::server::get_server(&database.pool, server_id)
-            .await
-            .map_err(|e| DiscoveryError::DatabaseError(e.to_string()))?;
-
-        if let Some(server) = server {
-            // Use existing tool status checking logic
-            let enabled = crate::config::operations::tool::is_tool_enabled(
-                &database.pool,
-                &server.name,
-                tool_name,
-            )
-            .await
-            .unwrap_or(true); // Default to enabled if check fails
-
-            Ok(enabled)
-        } else {
-            // Server not found, default to enabled
-            Ok(true)
-        }
-    }
-
-    /// Check if resource is enabled in configuration
-    async fn is_resource_enabled(
-        &self,
-        database: &Database,
-        server_id: &str,
-        resource_uri: &str,
-    ) -> DiscoveryResult<bool> {
-        match crate::core::protocol::resource::status::is_resource_enabled(
-            &database.pool,
-            server_id,
-            resource_uri,
-        )
-        .await
-        {
-            Ok(enabled) => Ok(enabled),
-            Err(_) => Ok(true), // Default to enabled if status check fails
-        }
-    }
-
-    /// Check if prompt is enabled in configuration
-    async fn is_prompt_enabled(
-        &self,
-        database: &Database,
-        server_id: &str,
-        prompt_name: &str,
-    ) -> DiscoveryResult<bool> {
-        // Get server name from server_id
-        let server = crate::config::server::get_server(&database.pool, server_id)
-            .await
-            .map_err(|e| DiscoveryError::DatabaseError(e.to_string()))?;
-
-        if let Some(server) = server {
-            // Use existing prompt status checking logic
-            let enabled = crate::core::protocol::prompt::status::is_prompt_enabled(
-                &database.pool,
-                &server.name,
-                prompt_name,
-            )
-            .await
-            .unwrap_or(true); // Default to enabled if check fails
-
-            Ok(enabled)
-        } else {
-            // Server not found, default to enabled
-            Ok(true)
-        }
-    }
-
     /// Get unique tool name from configuration
     async fn get_tool_unique_name(
         &self,
@@ -357,25 +249,6 @@ impl CapabilitiesProcessor {
         }
     }
 
-    /// Convert to enabled-only list for compatibility
-    pub fn to_enabled_tools(processed_tools: &[ProcessedToolInfo]) -> Vec<&ProcessedToolInfo> {
-        processed_tools.iter().filter(|t| t.enabled).collect()
-    }
-
-    /// Convert to enabled-only list for resources
-    pub fn to_enabled_resources(
-        processed_resources: &[ProcessedResourceInfo]
-    ) -> Vec<&ProcessedResourceInfo> {
-        processed_resources.iter().filter(|r| r.enabled).collect()
-    }
-
-    /// Convert to enabled-only list for prompts
-    pub fn to_enabled_prompts(
-        processed_prompts: &[ProcessedPromptInfo]
-    ) -> Vec<&ProcessedPromptInfo> {
-        processed_prompts.iter().filter(|p| p.enabled).collect()
-    }
-
     /// Generate summary information from processed capabilities
     fn generate_summary(
         &self,
@@ -384,10 +257,10 @@ impl CapabilitiesProcessor {
         prompts: &[ProcessedPromptInfo],
         resource_templates: &[ProcessedResourceTemplateInfo],
     ) -> CapabilitiesSummary {
-        // Count enabled items
-        let enabled_tools = tools.iter().filter(|t| t.enabled).count();
-        let enabled_resources = resources.iter().filter(|r| r.enabled).count();
-        let enabled_prompts = prompts.iter().filter(|p| p.enabled).count();
+        // Count total items (no enabled/disabled distinction in Discovery API)
+        let total_tools = tools.len();
+        let total_resources = resources.len();
+        let total_prompts = prompts.len();
 
         // Analyze MIME types
         let mut mime_types = std::collections::HashMap::new();
@@ -404,62 +277,13 @@ impl CapabilitiesProcessor {
         let has_dynamic_resources = !resource_templates.is_empty();
 
         CapabilitiesSummary {
-            total_tools: tools.len(),
-            enabled_tools,
-            total_resources: resources.len(),
-            enabled_resources,
-            total_prompts: prompts.len(),
-            enabled_prompts,
+            total_tools,
+            total_resources,
+            total_prompts,
             total_resource_templates: resource_templates.len(),
             mime_types,
             has_complex_prompts,
             has_dynamic_resources,
-        }
-    }
-
-    /// Filter capabilities by enabled status
-    pub fn filter_enabled_only(capabilities: &ProcessedCapabilities) -> ProcessedCapabilities {
-        let filtered_tools: Vec<ProcessedToolInfo> = capabilities
-            .tools
-            .iter()
-            .filter(|t| t.enabled)
-            .cloned()
-            .collect();
-        let filtered_resources: Vec<ProcessedResourceInfo> = capabilities
-            .resources
-            .iter()
-            .filter(|r| r.enabled)
-            .cloned()
-            .collect();
-        let filtered_prompts: Vec<ProcessedPromptInfo> = capabilities
-            .prompts
-            .iter()
-            .filter(|p| p.enabled)
-            .cloned()
-            .collect();
-
-        // Regenerate summary for filtered data
-        let summary = CapabilitiesSummary {
-            total_tools: filtered_tools.len(),
-            enabled_tools: filtered_tools.len(), // All are enabled after filtering
-            total_resources: filtered_resources.len(),
-            enabled_resources: filtered_resources.len(), // All are enabled after filtering
-            total_prompts: filtered_prompts.len(),
-            enabled_prompts: filtered_prompts.len(), // All are enabled after filtering
-            total_resource_templates: capabilities.resource_templates.len(),
-            mime_types: capabilities.summary.mime_types.clone(), // Keep original MIME types
-            has_complex_prompts: filtered_prompts.iter().any(|p| !p.arguments.is_empty()),
-            has_dynamic_resources: !capabilities.resource_templates.is_empty(),
-        };
-
-        ProcessedCapabilities {
-            server_id: capabilities.server_id.clone(),
-            server_name: capabilities.server_name.clone(),
-            tools: filtered_tools,
-            resources: filtered_resources,
-            prompts: filtered_prompts,
-            resource_templates: capabilities.resource_templates.clone(), // Templates don't have enabled status
-            summary,
         }
     }
 }
@@ -488,16 +312,10 @@ pub struct ProcessedCapabilities {
 pub struct CapabilitiesSummary {
     /// Total number of tools
     pub total_tools: usize,
-    /// Number of enabled tools
-    pub enabled_tools: usize,
     /// Total number of resources
     pub total_resources: usize,
-    /// Number of enabled resources
-    pub enabled_resources: usize,
     /// Total number of prompts
     pub total_prompts: usize,
-    /// Number of enabled prompts
-    pub enabled_prompts: usize,
     /// Total number of resource templates
     pub total_resource_templates: usize,
     /// MIME type distribution for resources
@@ -519,8 +337,6 @@ pub struct ProcessedToolInfo {
     pub input_schema: serde_json::Value,
     /// Tool annotations
     pub annotations: Option<serde_json::Value>,
-    /// Whether tool is enabled
-    pub enabled: bool,
     /// Unique name in configuration
     pub unique_name: Option<String>,
 }
@@ -538,8 +354,6 @@ pub struct ProcessedResourceInfo {
     pub mime_type: Option<String>,
     /// Resource annotations
     pub annotations: Option<serde_json::Value>,
-    /// Whether resource is enabled
-    pub enabled: bool,
 }
 
 /// Processed prompt information with additional metadata
@@ -553,8 +367,6 @@ pub struct ProcessedPromptInfo {
     pub arguments: Vec<PromptArgument>,
     /// Prompt annotations
     pub annotations: Option<serde_json::Value>,
-    /// Whether prompt is enabled
-    pub enabled: bool,
 }
 
 /// Processed resource template information

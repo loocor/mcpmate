@@ -90,7 +90,7 @@ pub async fn list_prompts(
         prompts,
         &params,
         Some(false), // No direct caching for this endpoint
-        None, // No capabilities metadata for this endpoint
+        None,        // No capabilities metadata for this endpoint
     );
 
     tracing::info!(
@@ -151,7 +151,7 @@ pub async fn get_prompt_arguments(
     // Extract argument information
     let mut argument_info = Vec::new();
     for prompt in prompts {
-        if prompt.enabled && !prompt.arguments.is_empty() {
+        if !prompt.arguments.is_empty() {
             argument_info.push(PromptArgumentInfo {
                 prompt_name: prompt.name,
                 prompt_description: prompt.description,
@@ -165,7 +165,7 @@ pub async fn get_prompt_arguments(
         argument_info,
         &params,
         Some(false), // No direct caching for this endpoint
-        None, // No capabilities metadata for this endpoint
+        None,        // No capabilities metadata for this endpoint
     );
 
     tracing::debug!(
@@ -176,27 +176,6 @@ pub async fn get_prompt_arguments(
     );
 
     Ok(Json(response))
-}
-
-/// Prompt summary structure
-#[derive(Debug, serde::Serialize)]
-pub struct PromptSummary {
-    /// Server identifier
-    pub server_id: String,
-    /// Server name
-    pub server_name: String,
-    /// Total number of prompts
-    pub total_prompts: usize,
-    /// Number of enabled prompts
-    pub enabled_prompts: usize,
-    /// Number of prompts with arguments
-    pub prompts_with_arguments: usize,
-    /// Total number of arguments across all prompts
-    pub total_arguments: usize,
-    /// Number of required arguments
-    pub required_arguments: usize,
-    /// Whether server has complex prompts (with arguments)
-    pub has_complex_prompts: bool,
 }
 
 /// Prompt argument information structure

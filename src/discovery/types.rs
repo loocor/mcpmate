@@ -331,6 +331,7 @@ pub struct ResponseMetadata {
     #[serde(rename = "ttl_seconds", with = "duration_as_seconds")]
     pub ttl: Duration,
     /// Server protocol version
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub protocol_version: Option<String>,
 }
 

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use super::{instance::list_instances, shared::*};
+use super::{common, instance::list_instances, shared::*};
 use crate::{
     api::{handlers::ApiError, models::server::ServerMetaInfo},
     common::{config::ConfigSuitType, server::ServerType},
@@ -16,15 +16,6 @@ use crate::{
 };
 
 // Private helper functions
-
-/// Get database reference from AppState
-fn get_database_from_state(state: &Arc<AppState>) -> Result<Arc<Database>, ApiError> {
-    state
-        .http_proxy
-        .as_ref()
-        .and_then(|p| p.database.clone())
-        .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))
-}
 
 /// Convert database error to ApiError
 fn db_error(e: impl std::fmt::Display) -> ApiError {
@@ -216,7 +207,7 @@ pub async fn create_server(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CreateServerRequest>,
 ) -> Result<Json<ServerResponse>, ApiError> {
-    let db = get_database_from_state(&state)?;
+    let db = common::get_database_from_state(&state)?;
 
     // Check if server already exists
     if crate::config::server::get_server(&db.pool, &payload.name)
@@ -296,7 +287,7 @@ pub async fn update_server(
     Path(name): Path<String>,
     Json(payload): Json<UpdateServerRequest>,
 ) -> Result<Json<ServerResponse>, ApiError> {
-    let db = get_database_from_state(&state)?;
+    let db = common::get_database_from_state(&state)?;
 
     // Get existing server
     let existing_server = get_existing_server_or_error(&db, &name).await?;
@@ -446,7 +437,7 @@ pub async fn import_servers(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ImportServersRequest>,
 ) -> Result<Json<ImportServersResponse>, ApiError> {
-    let db = get_database_from_state(&state)?;
+    let db = common::get_database_from_state(&state)?;
 
     let mut imported_servers = Vec::new();
     let mut failed_servers = Vec::new();
@@ -576,7 +567,7 @@ pub async fn delete_server(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> Result<Json<OperationResponse>, ApiError> {
-    let db = get_database_from_state(&state)?;
+    let db = common::get_database_from_state(&state)?;
 
     // Get existing server
     let existing_server = get_existing_server_or_error(&db, &name).await?;

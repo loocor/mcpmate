@@ -90,7 +90,7 @@ pub async fn list_resources(
         resources,
         &params,
         Some(false), // No direct caching for this endpoint
-        None, // No capabilities metadata for this endpoint
+        None,        // No capabilities metadata for this endpoint
     );
 
     tracing::info!(
@@ -154,7 +154,7 @@ pub async fn list_resource_templates(
         templates,
         &params,
         Some(false), // No direct caching for this endpoint
-        None, // No capabilities metadata for this endpoint
+        None,        // No capabilities metadata for this endpoint
     );
 
     tracing::info!(
@@ -166,23 +166,4 @@ pub async fn list_resource_templates(
     );
 
     Ok(Json(response))
-}
-
-/// Resource summary structure
-#[derive(Debug, serde::Serialize)]
-pub struct ResourceSummary {
-    /// Server identifier
-    pub server_id: String,
-    /// Server name
-    pub server_name: String,
-    /// Total number of resources
-    pub total_resources: usize,
-    /// Number of enabled resources
-    pub enabled_resources: usize,
-    /// Total number of resource templates
-    pub total_templates: usize,
-    /// MIME type distribution
-    pub mime_types: std::collections::HashMap<String, usize>,
-    /// Whether server supports dynamic resources
-    pub has_dynamic_resources: bool,
 }
