@@ -1,7 +1,7 @@
 // MCPMate Proxy API handlers for basic MCP server operations
 // Contains handler functions for listing and getting servers
 
-use super::common::*;
+use super::shared::*;
 use crate::api::models::server::ServerMetaInfo;
 
 /// List all MCP servers

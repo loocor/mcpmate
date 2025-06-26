@@ -28,14 +28,74 @@ pub struct ServerCapabilities {
 /// Capabilities metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilitiesMetadata {
-    /// Last updated timestamp
+    /// Last updated timestamp (ISO 8601 format)
+    #[serde(with = "iso8601_timestamp")]
     pub last_updated: SystemTime,
     /// Cache version
     pub version: String,
-    /// Time to live for cache
+    /// Time to live for cache in seconds
+    #[serde(rename = "ttl_seconds", with = "duration_as_seconds")]
     pub ttl: Duration,
     /// Server protocol version
     pub protocol_version: Option<String>,
+}
+
+/// Serialize SystemTime as ISO 8601 string
+mod iso8601_timestamp {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    pub fn serialize<S>(
+        time: &SystemTime,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let duration = time
+            .duration_since(UNIX_EPOCH)
+            .map_err(serde::ser::Error::custom)?;
+        let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(
+            duration.as_secs() as i64,
+            duration.subsec_nanos(),
+        )
+        .ok_or_else(|| serde::ser::Error::custom("Invalid timestamp"))?;
+        datetime.to_rfc3339().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let datetime =
+            chrono::DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
+        Ok(UNIX_EPOCH + std::time::Duration::from_secs(datetime.timestamp() as u64))
+    }
+}
+
+/// Serialize Duration as seconds
+mod duration_as_seconds {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(
+        duration: &Duration,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        duration.as_secs().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = u64::deserialize(deserializer)?;
+        Ok(Duration::from_secs(secs))
+    }
 }
 
 /// Tool information
@@ -106,7 +166,7 @@ pub struct ResourceTemplateInfo {
 }
 
 /// Refresh strategy for capability queries
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
 pub enum RefreshStrategy {
     /// Use cache if available, don't refresh
     CacheFirst,
@@ -118,7 +178,7 @@ pub enum RefreshStrategy {
 }
 
 /// Response format for discovery APIs
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
 pub enum ResponseFormat {
     /// Standard JSON format
     #[default]
@@ -243,6 +303,36 @@ pub enum DiscoveryError {
 
 /// Type alias for discovery results
 pub type DiscoveryResult<T> = Result<T, DiscoveryError>;
+
+/// Discovery API response wrapper with metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryResponse<T> {
+    /// Response data
+    pub data: T,
+    /// Response metadata
+    pub meta: Option<ResponseMetadata>,
+}
+
+/// Response metadata for discovery APIs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseMetadata {
+    /// Refresh strategy used
+    pub refresh_strategy: RefreshStrategy,
+    /// Response format used
+    pub format: ResponseFormat,
+    /// Whether response came from cache
+    pub cache_hit: Option<bool>,
+    /// Last updated timestamp (ISO 8601 format)
+    #[serde(with = "iso8601_timestamp")]
+    pub last_updated: SystemTime,
+    /// Cache version
+    pub version: String,
+    /// Time to live for cache in seconds
+    #[serde(rename = "ttl_seconds", with = "duration_as_seconds")]
+    pub ttl: Duration,
+    /// Server protocol version
+    pub protocol_version: Option<String>,
+}
 
 /// Cache entry metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]

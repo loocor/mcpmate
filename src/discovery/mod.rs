@@ -16,15 +16,16 @@ use crate::core::events::{
 };
 
 pub use capabilities::{
-    CapabilitiesProcessor, ProcessedCapabilities, ProcessedPromptInfo, ProcessedResourceInfo,
-    ProcessedResourceTemplateInfo, ProcessedToolInfo,
+    CapabilitiesProcessor, CapabilitiesSummary, ProcessedCapabilities, ProcessedPromptInfo,
+    ProcessedResourceInfo, ProcessedResourceTemplateInfo, ProcessedToolInfo,
 };
 pub use client::McpDiscoveryClient;
+pub use manager::{CacheLevel, CacheResult};
 pub use manager::{CacheManagerStats, CapabilitiesCache, PreloadResult};
 pub use storage::{CacheStats, TempFileStorage};
 pub use types::{
-    CapabilitySelections, DiscoveryError, DiscoveryParams, DiscoveryResult, RefreshStrategy,
-    ResponseFormat, ServerCapabilities, SyncResult,
+    CapabilitySelections, DiscoveryError, DiscoveryParams, DiscoveryResponse, DiscoveryResult,
+    RefreshStrategy, ResponseFormat, ResponseMetadata, ServerCapabilities, SyncResult,
 };
 
 /// Main Discovery Service
@@ -89,16 +90,42 @@ impl DiscoveryService {
         server_id: &str,
         refresh_strategy: RefreshStrategy,
     ) -> DiscoveryResult<ServerCapabilities> {
+        let result = self
+            .get_server_capabilities_with_cache_info(server_id, refresh_strategy)
+            .await?;
+        Ok(result.capabilities)
+    }
+
+    /// Get server capabilities with cache hit information
+    pub async fn get_server_capabilities_with_cache_info(
+        &self,
+        server_id: &str,
+        refresh_strategy: RefreshStrategy,
+    ) -> DiscoveryResult<manager::CacheResult> {
         tracing::debug!(
             "Getting capabilities for server '{}' with strategy {:?}",
             server_id,
             refresh_strategy
         );
 
-        let capabilities = self
+        let result = self
             .cache
             .get_capabilities(server_id, refresh_strategy, &self.database)
             .await?;
+
+        // Log cache performance
+        let cache_level_str = match result.cache_level {
+            Some(manager::CacheLevel::Memory) => "L1",
+            Some(manager::CacheLevel::File) => "L2",
+            None => "MISS",
+        };
+
+        tracing::debug!(
+            "Cache performance for server '{}': {} ({})",
+            server_id,
+            if result.cache_hit { "HIT" } else { "MISS" },
+            cache_level_str
+        );
 
         // Emit specific discovery event if event bus is available
         if let Some(event_bus) = &self.event_bus {
@@ -110,14 +137,14 @@ impl DiscoveryService {
 
             let event = Event::DiscoveryCacheUpdated {
                 server_id: server_id.to_string(),
-                server_name: capabilities.server_name.clone(),
+                server_name: result.capabilities.server_name.clone(),
                 update_type,
             };
 
             event_bus.publish(event);
         }
 
-        Ok(capabilities)
+        Ok(result)
     }
 
     /// Get processed server capabilities with format options

@@ -43,6 +43,26 @@ struct CachedCapabilities {
     last_accessed: SystemTime,
 }
 
+/// Cache result with hit information
+#[derive(Debug, Clone)]
+pub struct CacheResult {
+    /// The capabilities data
+    pub capabilities: ServerCapabilities,
+    /// Whether this was a cache hit
+    pub cache_hit: bool,
+    /// Cache level that was hit (if any)
+    pub cache_level: Option<CacheLevel>,
+}
+
+/// Cache level enumeration
+#[derive(Debug, Clone, Copy)]
+pub enum CacheLevel {
+    /// L1 memory cache
+    Memory,
+    /// L2 file cache
+    File,
+}
+
 impl CapabilitiesCache {
     /// Create new capabilities cache
     pub fn new(config: CacheConfig) -> DiscoveryResult<Self> {
@@ -82,7 +102,7 @@ impl CapabilitiesCache {
         server_id: &str,
         refresh_strategy: RefreshStrategy,
         database: &Database,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> DiscoveryResult<CacheResult> {
         match refresh_strategy {
             RefreshStrategy::CacheFirst => {
                 self.get_capabilities_cache_first(server_id, database).await
@@ -103,11 +123,15 @@ impl CapabilitiesCache {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> DiscoveryResult<CacheResult> {
         // Try L1 cache first
         if let Some(capabilities) = self.get_from_memory_cache(server_id).await {
             tracing::debug!("Cache hit (L1) for server '{}'", server_id);
-            return Ok(capabilities);
+            return Ok(CacheResult {
+                capabilities,
+                cache_hit: true,
+                cache_level: Some(CacheLevel::Memory),
+            });
         }
 
         // Try L2 cache
@@ -115,12 +139,21 @@ impl CapabilitiesCache {
             // Promote to L1 cache
             self.put_to_memory_cache(server_id, &capabilities).await;
             tracing::debug!("Cache hit (L2) for server '{}'", server_id);
-            return Ok(capabilities);
+            return Ok(CacheResult {
+                capabilities,
+                cache_hit: true,
+                cache_level: Some(CacheLevel::File),
+            });
         }
 
         // Cache miss - fetch fresh data
         tracing::debug!("Cache miss for server '{}', fetching fresh data", server_id);
-        self.fetch_and_cache(server_id, database).await
+        let capabilities = self.fetch_and_cache(server_id, database).await?;
+        Ok(CacheResult {
+            capabilities,
+            cache_hit: false,
+            cache_level: None,
+        })
     }
 
     /// Refresh-if-stale strategy: check TTL and refresh if needed
@@ -128,12 +161,16 @@ impl CapabilitiesCache {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> DiscoveryResult<CacheResult> {
         // Check L1 cache with TTL
         if let Some(cached) = self.get_from_memory_cache_with_metadata(server_id).await {
             if !self.is_stale(&cached) {
                 tracing::debug!("Cache hit (L1, fresh) for server '{}'", server_id);
-                return Ok(cached.capabilities);
+                return Ok(CacheResult {
+                    capabilities: cached.capabilities,
+                    cache_hit: true,
+                    cache_level: Some(CacheLevel::Memory),
+                });
             }
         }
 
@@ -143,7 +180,11 @@ impl CapabilitiesCache {
                 // Promote to L1 cache
                 self.put_to_memory_cache(server_id, &capabilities).await;
                 tracing::debug!("Cache hit (L2, fresh) for server '{}'", server_id);
-                return Ok(capabilities);
+                return Ok(CacheResult {
+                    capabilities,
+                    cache_hit: true,
+                    cache_level: Some(CacheLevel::File),
+                });
             }
         }
 
@@ -152,7 +193,12 @@ impl CapabilitiesCache {
             "Cache stale for server '{}', fetching fresh data",
             server_id
         );
-        self.fetch_and_cache(server_id, database).await
+        let capabilities = self.fetch_and_cache(server_id, database).await?;
+        Ok(CacheResult {
+            capabilities,
+            cache_hit: false,
+            cache_level: None,
+        })
     }
 
     /// Force refresh strategy: always fetch fresh data
@@ -160,9 +206,14 @@ impl CapabilitiesCache {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> DiscoveryResult<CacheResult> {
         tracing::debug!("Force refresh for server '{}'", server_id);
-        self.fetch_and_cache(server_id, database).await
+        let capabilities = self.fetch_and_cache(server_id, database).await?;
+        Ok(CacheResult {
+            capabilities,
+            cache_hit: false,
+            cache_level: None,
+        })
     }
 
     /// Get capabilities from memory cache

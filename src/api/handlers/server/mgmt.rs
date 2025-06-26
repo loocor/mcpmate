@@ -10,7 +10,7 @@
 
 use sqlx::{Pool, Sqlite};
 
-use super::common::*;
+use super::shared::*;
 
 // Helper functions for server management operations
 

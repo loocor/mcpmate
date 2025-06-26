@@ -1,7 +1,7 @@
 // MCPMate Proxy API handlers for MCP server instance operations
 // Contains handler functions for listing server instances
 
-use super::common::*;
+use super::shared::*;
 
 /// List all instances for a specific MCP server
 pub async fn list_instances(

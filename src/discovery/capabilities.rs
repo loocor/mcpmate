@@ -38,14 +38,17 @@ impl CapabilitiesProcessor {
             .process_resource_templates(&capabilities.resource_templates, format)
             .await?;
 
+        // Generate summary information
+        let summary = self.generate_summary(&tools, &resources, &prompts, &resource_templates);
+
         Ok(ProcessedCapabilities {
             server_id: capabilities.server_id.clone(),
             server_name: capabilities.server_name.clone(),
-            metadata: capabilities.metadata.clone(),
             tools,
             resources,
             prompts,
             resource_templates,
+            summary,
         })
     }
 
@@ -373,31 +376,90 @@ impl CapabilitiesProcessor {
         processed_prompts.iter().filter(|p| p.enabled).collect()
     }
 
+    /// Generate summary information from processed capabilities
+    fn generate_summary(
+        &self,
+        tools: &[ProcessedToolInfo],
+        resources: &[ProcessedResourceInfo],
+        prompts: &[ProcessedPromptInfo],
+        resource_templates: &[ProcessedResourceTemplateInfo],
+    ) -> CapabilitiesSummary {
+        // Count enabled items
+        let enabled_tools = tools.iter().filter(|t| t.enabled).count();
+        let enabled_resources = resources.iter().filter(|r| r.enabled).count();
+        let enabled_prompts = prompts.iter().filter(|p| p.enabled).count();
+
+        // Analyze MIME types
+        let mut mime_types = std::collections::HashMap::new();
+        for resource in resources {
+            if let Some(mime_type) = &resource.mime_type {
+                *mime_types.entry(mime_type.clone()).or_insert(0) += 1;
+            }
+        }
+
+        // Check for complex prompts (with arguments)
+        let has_complex_prompts = prompts.iter().any(|p| !p.arguments.is_empty());
+
+        // Check for dynamic resources (has templates)
+        let has_dynamic_resources = !resource_templates.is_empty();
+
+        CapabilitiesSummary {
+            total_tools: tools.len(),
+            enabled_tools,
+            total_resources: resources.len(),
+            enabled_resources,
+            total_prompts: prompts.len(),
+            enabled_prompts,
+            total_resource_templates: resource_templates.len(),
+            mime_types,
+            has_complex_prompts,
+            has_dynamic_resources,
+        }
+    }
+
     /// Filter capabilities by enabled status
     pub fn filter_enabled_only(capabilities: &ProcessedCapabilities) -> ProcessedCapabilities {
+        let filtered_tools: Vec<ProcessedToolInfo> = capabilities
+            .tools
+            .iter()
+            .filter(|t| t.enabled)
+            .cloned()
+            .collect();
+        let filtered_resources: Vec<ProcessedResourceInfo> = capabilities
+            .resources
+            .iter()
+            .filter(|r| r.enabled)
+            .cloned()
+            .collect();
+        let filtered_prompts: Vec<ProcessedPromptInfo> = capabilities
+            .prompts
+            .iter()
+            .filter(|p| p.enabled)
+            .cloned()
+            .collect();
+
+        // Regenerate summary for filtered data
+        let summary = CapabilitiesSummary {
+            total_tools: filtered_tools.len(),
+            enabled_tools: filtered_tools.len(), // All are enabled after filtering
+            total_resources: filtered_resources.len(),
+            enabled_resources: filtered_resources.len(), // All are enabled after filtering
+            total_prompts: filtered_prompts.len(),
+            enabled_prompts: filtered_prompts.len(), // All are enabled after filtering
+            total_resource_templates: capabilities.resource_templates.len(),
+            mime_types: capabilities.summary.mime_types.clone(), // Keep original MIME types
+            has_complex_prompts: filtered_prompts.iter().any(|p| !p.arguments.is_empty()),
+            has_dynamic_resources: !capabilities.resource_templates.is_empty(),
+        };
+
         ProcessedCapabilities {
             server_id: capabilities.server_id.clone(),
             server_name: capabilities.server_name.clone(),
-            metadata: capabilities.metadata.clone(),
-            tools: capabilities
-                .tools
-                .iter()
-                .filter(|t| t.enabled)
-                .cloned()
-                .collect(),
-            resources: capabilities
-                .resources
-                .iter()
-                .filter(|r| r.enabled)
-                .cloned()
-                .collect(),
-            prompts: capabilities
-                .prompts
-                .iter()
-                .filter(|p| p.enabled)
-                .cloned()
-                .collect(),
+            tools: filtered_tools,
+            resources: filtered_resources,
+            prompts: filtered_prompts,
             resource_templates: capabilities.resource_templates.clone(), // Templates don't have enabled status
+            summary,
         }
     }
 }
@@ -409,8 +471,6 @@ pub struct ProcessedCapabilities {
     pub server_id: String,
     /// Server name
     pub server_name: String,
-    /// Capabilities metadata
-    pub metadata: super::types::CapabilitiesMetadata,
     /// Processed tools
     pub tools: Vec<ProcessedToolInfo>,
     /// Processed resources
@@ -419,6 +479,33 @@ pub struct ProcessedCapabilities {
     pub prompts: Vec<ProcessedPromptInfo>,
     /// Processed resource templates
     pub resource_templates: Vec<ProcessedResourceTemplateInfo>,
+    /// Summary information
+    pub summary: CapabilitiesSummary,
+}
+
+/// Capabilities summary information
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CapabilitiesSummary {
+    /// Total number of tools
+    pub total_tools: usize,
+    /// Number of enabled tools
+    pub enabled_tools: usize,
+    /// Total number of resources
+    pub total_resources: usize,
+    /// Number of enabled resources
+    pub enabled_resources: usize,
+    /// Total number of prompts
+    pub total_prompts: usize,
+    /// Number of enabled prompts
+    pub enabled_prompts: usize,
+    /// Total number of resource templates
+    pub total_resource_templates: usize,
+    /// MIME type distribution for resources
+    pub mime_types: std::collections::HashMap<String, usize>,
+    /// Whether server has complex prompts (with arguments)
+    pub has_complex_prompts: bool,
+    /// Whether server supports dynamic resources
+    pub has_dynamic_resources: bool,
 }
 
 /// Processed tool information with additional metadata

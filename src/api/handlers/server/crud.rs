@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use super::{common::*, instance::list_instances};
+use super::{instance::list_instances, shared::*};
 use crate::{
     api::{handlers::ApiError, models::server::ServerMetaInfo},
     common::{config::ConfigSuitType, server::ServerType},

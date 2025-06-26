@@ -108,7 +108,14 @@ impl McpDiscoveryClient {
 
         // Convert to our format
         let capabilities = self
-            .convert_capabilities(server_id, tools, resources, prompts, server_capabilities)
+            .convert_capabilities(
+                server_id,
+                tools,
+                resources,
+                prompts,
+                server_capabilities,
+                database,
+            )
             .await?;
 
         // Cancel the service to clean up
@@ -227,6 +234,7 @@ impl McpDiscoveryClient {
         resources: Vec<rmcp::model::Resource>,
         prompts: Vec<rmcp::model::Prompt>,
         _server_capabilities: Option<rmcp::model::ServerCapabilities>,
+        database: &Database,
     ) -> DiscoveryResult<ServerCapabilities> {
         // Convert tools
         let tool_infos: Vec<ToolInfo> = tools
@@ -313,9 +321,17 @@ impl McpDiscoveryClient {
             protocol_version: Some("2024-11-05".to_string()), // Default MCP protocol version
         };
 
-        // Get actual server name from server capabilities or use server_id as fallback
-        // For now, use server_id as the name until we have a better source
-        let server_name = server_id.to_string();
+        // Get actual server name from database
+        let server_name = match self.get_server_from_database(server_id, database).await {
+            Ok(server) => server.name,
+            Err(_) => {
+                tracing::warn!(
+                    "Failed to get server name for {}, using server_id as fallback",
+                    server_id
+                );
+                server_id.to_string()
+            }
+        };
 
         Ok(ServerCapabilities {
             server_id: server_id.to_string(),
