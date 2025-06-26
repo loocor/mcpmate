@@ -3,6 +3,19 @@
 use crate::core::transport::TransportType;
 use std::collections::HashMap;
 
+/// Discovery cache update types
+#[derive(Debug, Clone)]
+pub enum DiscoveryCacheUpdateType {
+    /// Fresh capabilities fetched from server
+    Fresh,
+    /// Background refresh completed
+    BackgroundRefresh,
+    /// Cache restored from file
+    FileCache,
+    /// Manual refresh requested
+    Manual,
+}
+
 /// Events that can be published in the system
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -77,6 +90,27 @@ pub enum Event {
 
     /// Configuration was reloaded
     ConfigReloaded,
+
+    /// Discovery cache was updated for a server
+    DiscoveryCacheUpdated {
+        /// Server ID
+        server_id: String,
+        /// Server name
+        server_name: String,
+        /// Cache update type
+        update_type: DiscoveryCacheUpdateType,
+    },
+
+    /// Discovery cache was invalidated for a server
+    DiscoveryCacheInvalidated {
+        /// Server ID
+        server_id: String,
+        /// Server name
+        server_name: String,
+    },
+
+    /// Discovery cache was cleared
+    DiscoveryCacheCleared,
 
     /// Server transport layer is ready
     ServerTransportReady {

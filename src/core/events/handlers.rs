@@ -32,13 +32,19 @@ impl EventHandlers {
     }
 
     /// Set suit service for cache invalidation
-    pub fn set_suit_service(&mut self, suit_service: Arc<crate::core::suit::SuitService>) {
+    pub fn set_suit_service(
+        &mut self,
+        suit_service: Arc<crate::core::suit::SuitService>,
+    ) {
         self.suit_service = Some(suit_service);
         info!("Set suit service for event handlers");
     }
 
     /// Set connection pool for server management
-    pub fn set_connection_pool(&mut self, connection_pool: Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>) {
+    pub fn set_connection_pool(
+        &mut self,
+        connection_pool: Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+    ) {
         self.connection_pool = Some(connection_pool);
         info!("Set connection pool for event handlers");
     }
@@ -94,7 +100,7 @@ impl EventHandlers {
                 server_id: _,
                 server_name,
                 suit_id,
-                enabled
+                enabled,
             } => {
                 debug!(
                     "Handling ServerEnabledInSuitChanged: server '{}' in suit '{}' -> {}",
@@ -134,6 +140,35 @@ impl EventHandlers {
                 debug!("Configuration changed, no server sync needed: {:?}", event);
                 // These events only affect protocol-level configuration
                 // No need to reconnect to servers
+            }
+
+            // Discovery cache events (informational only)
+            Event::DiscoveryCacheUpdated {
+                server_id,
+                server_name,
+                update_type,
+            } => {
+                debug!(
+                    "Discovery cache updated for server '{}' ({}): {:?}",
+                    server_name, server_id, update_type
+                );
+                // No action needed, this is informational
+            }
+
+            Event::DiscoveryCacheInvalidated {
+                server_id,
+                server_name,
+            } => {
+                debug!(
+                    "Discovery cache invalidated for server '{}' ({})",
+                    server_name, server_id
+                );
+                // No action needed, this is informational
+            }
+
+            Event::DiscoveryCacheCleared => {
+                debug!("Discovery cache cleared");
+                // No action needed, this is informational
             }
 
             // Transport and runtime events (handled by wait mechanism)
@@ -301,8 +336,6 @@ impl EventHandlers {
             }
         }
     }
-
-
 }
 
 /// Initialize the event system with default handlers

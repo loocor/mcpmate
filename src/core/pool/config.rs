@@ -237,7 +237,14 @@ mod tests {
         for name in server_names {
             mcp_servers.insert(
                 name.to_string(),
-                serde_json::Value::Object(serde_json::Map::new()),
+                crate::core::models::MCPServerConfig {
+                    kind: crate::common::server::ServerType::Stdio,
+                    command: Some("test-command".to_string()),
+                    args: Some(vec!["arg1".to_string()]),
+                    url: None,
+                    env: None,
+                    transport_type: Some(crate::common::server::TransportType::Stdio),
+                },
             );
         }
 

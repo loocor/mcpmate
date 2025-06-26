@@ -195,6 +195,7 @@ pub async fn list_servers(
 
         // Create server response
         servers.push(ServerResponse {
+            id: server.id.clone(),
             name,
             enabled,
             globally_enabled,
@@ -407,6 +408,7 @@ pub async fn get_server(
     let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
 
     Ok(Json(ServerResponse {
+        id: server.id.clone(),
         name,
         enabled,
         globally_enabled,

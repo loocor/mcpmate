@@ -14,7 +14,7 @@ mod macos_tests {
         let _detector = MacOSDetector::new();
 
         // Then: Should succeed (just test instantiation)
-        assert!(true);
+        // Detector should be created successfully
     }
 
     #[tokio::test]

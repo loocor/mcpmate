@@ -15,7 +15,6 @@ use rmcp::{
         ReadResourceRequestParam, ReadResourceResult, ServerInfo,
     },
     service::RequestContext,
-    tool,
 };
 use tokio::sync::Mutex;
 use tracing;
@@ -198,7 +197,6 @@ impl UnifiedHttpServer {
     }
 }
 
-#[tool(tool_box)]
 impl ProxyServer {
     /// Set the global instance of the proxy server
     pub fn set_global(server: Arc<Mutex<ProxyServer>>) {

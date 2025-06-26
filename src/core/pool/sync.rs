@@ -10,12 +10,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tracing;
 
+use super::UpstreamConnectionPool;
 use crate::config::database::Database;
 use crate::core::models::Config;
-use super::UpstreamConnectionPool;
 
 /// Manager for synchronizing server configurations and states
-/// 
+///
 /// This manager handles the business logic of:
 /// - Loading server configurations from active configuration suites
 /// - Comparing required vs current server states
@@ -34,16 +34,16 @@ impl ServerSyncManager {
     }
 
     /// Sync all servers in the connection pool based on active configuration suites
-    /// 
+    ///
     /// This is the main entry point for server synchronization. It:
     /// 1. Loads the current active configuration from database
     /// 2. Updates the connection pool configuration
     /// 3. Calculates required server state changes
     /// 4. Executes the necessary server lifecycle operations
-    /// 
+    ///
     /// # Arguments
     /// * `pool` - Mutable reference to the connection pool to sync
-    /// 
+    ///
     /// # Returns
     /// * `Ok(())` - If synchronization completed successfully
     /// * `Err(...)` - If any step of synchronization failed
@@ -55,13 +55,13 @@ impl ServerSyncManager {
 
         // Step 1: Load current active configuration
         let config = self.load_active_configuration().await?;
-        
+
         // Step 2: Update connection pool configuration
         pool.set_config(Arc::new(config));
 
         // Step 3: Calculate required server state changes
         let sync_plan = self.calculate_sync_plan(pool)?;
-        
+
         // Step 4: Execute the synchronization plan
         self.execute_sync_plan(pool, sync_plan).await?;
 
@@ -72,22 +72,39 @@ impl ServerSyncManager {
     /// Load the current active configuration from database
     async fn load_active_configuration(&self) -> Result<Config> {
         tracing::debug!("Loading server configuration from active configuration suites");
-        
-        let (_, config) = crate::core::foundation::loader::load_servers_from_active_suits(&self.database).await
-            .context("Failed to load servers from active configuration suites")?;
-        
-        tracing::debug!("Loaded configuration with {} servers", config.mcp_servers.len());
+
+        let (_, config) =
+            crate::core::foundation::loader::load_servers_from_active_suits(&self.database)
+                .await
+                .context("Failed to load servers from active configuration suites")?;
+
+        tracing::debug!(
+            "Loaded configuration with {} servers",
+            config.mcp_servers.len()
+        );
         Ok(config)
     }
 
     /// Calculate what changes need to be made to synchronize the pool
-    fn calculate_sync_plan(&self, pool: &UpstreamConnectionPool) -> Result<ServerSyncPlan> {
+    fn calculate_sync_plan(
+        &self,
+        pool: &UpstreamConnectionPool,
+    ) -> Result<ServerSyncPlan> {
         let required_servers: HashSet<String> = pool.config.mcp_servers.keys().cloned().collect();
         let current_servers: HashSet<String> = pool.connections.keys().cloned().collect();
 
-        let servers_to_start: HashSet<String> = required_servers.difference(&current_servers).cloned().collect();
-        let servers_to_stop: HashSet<String> = current_servers.difference(&required_servers).cloned().collect();
-        let servers_to_check: HashSet<String> = required_servers.intersection(&current_servers).cloned().collect();
+        let servers_to_start: HashSet<String> = required_servers
+            .difference(&current_servers)
+            .cloned()
+            .collect();
+        let servers_to_stop: HashSet<String> = current_servers
+            .difference(&required_servers)
+            .cloned()
+            .collect();
+        let servers_to_check: HashSet<String> = required_servers
+            .intersection(&current_servers)
+            .cloned()
+            .collect();
 
         // Filter servers that need connection (existing but not connected)
         let mut servers_to_connect = HashSet::new();
@@ -143,7 +160,10 @@ impl ServerSyncManager {
 
         // Connect existing servers that are in shutdown state
         for server_name in plan.servers_to_connect {
-            tracing::info!("Connecting existing server in shutdown state: {}", server_name);
+            tracing::info!(
+                "Connecting existing server in shutdown state: {}",
+                server_name
+            );
             if let Err(e) = self.ensure_server_connected(pool, &server_name).await {
                 tracing::warn!("Failed to connect existing server '{}': {}", server_name, e);
             }
@@ -153,7 +173,7 @@ impl ServerSyncManager {
     }
 
     /// Ensure a server is connected (create instance if needed and connect)
-    /// 
+    ///
     /// This method handles the detailed logic of ensuring a server has a connected instance:
     /// 1. Create instance if it doesn't exist
     /// 2. Get the default instance ID
@@ -165,7 +185,8 @@ impl ServerSyncManager {
     ) -> Result<()> {
         // Create instance if it doesn't exist
         if !pool.connections.contains_key(server_name) {
-            let connection = crate::core::connection::UpstreamConnection::new(server_name.to_string());
+            let connection =
+                crate::core::connection::UpstreamConnection::new(server_name.to_string());
             let instance_id = connection.id.clone();
             let instances = pool.connections.entry(server_name.to_string()).or_default();
             instances.insert(instance_id, connection);
@@ -181,7 +202,7 @@ impl ServerSyncManager {
 }
 
 /// Plan for synchronizing servers
-/// 
+///
 /// This struct represents the calculated changes needed to bring the connection pool
 /// into sync with the required configuration.
 #[derive(Debug, Clone)]
@@ -192,40 +213,4 @@ struct ServerSyncPlan {
     servers_to_stop: HashSet<String>,
     /// Servers that exist but need to be connected (shutdown servers)
     servers_to_connect: HashSet<String>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-    use crate::core::models::Config;
-
-    fn create_test_database() -> Arc<Database> {
-        // This would need to be implemented with a proper test database
-        // For now, we'll skip the actual implementation
-        todo!("Implement test database creation")
-    }
-
-    fn create_test_pool() -> UpstreamConnectionPool {
-        let config = Arc::new(Config {
-            mcp_servers: HashMap::new(),
-            pagination: None,
-        });
-        UpstreamConnectionPool::new(config, None)
-    }
-
-    #[tokio::test]
-    async fn test_sync_manager_creation() {
-        // This test would need a proper test database setup
-        // For now, we'll skip the implementation
-        // let db = create_test_database();
-        // let manager = ServerSyncManager::new(db);
-        // assert!(manager.database.is_some());
-    }
-
-    #[test]
-    fn test_sync_plan_calculation() {
-        // This test would verify the sync plan calculation logic
-        // For now, we'll skip the implementation
-    }
 }

@@ -46,6 +46,8 @@ pub struct ServerInstanceSummary {
 /// Server Response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ServerResponse {
+    /// Server ID (unique identifier)
+    pub id: Option<String>,
     /// Server name
     pub name: String,
     /// Is enabled in configuration (combined global and suit status)

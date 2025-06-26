@@ -22,11 +22,21 @@ pub extern "C" fn mcpmate_engine_new() -> *mut MCPMateEngine {
 }
 
 /// Free MCPMate engine instance
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences a raw pointer that must be valid and properly aligned
+/// - Takes ownership of the memory pointed to by `engine`
+/// - The caller must ensure `engine` was allocated by `mcpmate_engine_new`
+/// - The caller must ensure `engine` is not used after this call
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_free(engine: *mut MCPMateEngine) {
     if !engine.is_null() {
-        let _ = Box::from_raw(engine);
+        unsafe {
+            let _ = Box::from_raw(engine);
+        }
     }
 }
 
@@ -34,6 +44,13 @@ pub unsafe extern "C" fn mcpmate_engine_free(engine: *mut MCPMateEngine) {
 ///
 /// Note: This function internally converts to StartupConfig for unified processing.
 /// For more advanced configuration, use mcpmate_engine_start_with_startup_config().
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences a raw pointer that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must ensure `engine` is not accessed concurrently from other threads
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_start(
@@ -46,7 +63,7 @@ pub unsafe extern "C" fn mcpmate_engine_start(
         return false;
     }
 
-    let engine = &mut *engine;
+    let engine = unsafe { &mut *engine };
     let result = engine.start(api_port, mcp_port);
 
     tracing::info!("MCPMate engine start result: {}", result);
@@ -57,6 +74,14 @@ pub unsafe extern "C" fn mcpmate_engine_start(
 ///
 /// Note: This function internally converts PortConfig to StartupConfig for unified processing.
 /// For more advanced configuration, use mcpmate_engine_start_with_startup_config().
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences raw pointers that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must ensure `config_json` points to a valid null-terminated C string
+/// - The caller must ensure `engine` is not accessed concurrently from other threads
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_start_with_config(
@@ -76,7 +101,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_config(
     }
 
     // Convert C string to Rust string
-    let config_str = match CStr::from_ptr(config_json).to_str() {
+    let config_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Failed to convert config JSON to UTF-8 string: {}", e);
@@ -94,7 +119,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_config(
     };
 
     // Get mutable reference to engine and start with config
-    let engine = &mut *engine;
+    let engine = unsafe { &mut *engine };
     let result = engine.start_with_config(config);
 
     tracing::info!("MCPMate engine start_with_config result: {}", result);
@@ -102,16 +127,29 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_config(
 }
 
 /// Stop MCPMate service
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences a raw pointer that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must ensure `engine` is not accessed concurrently from other threads
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_stop(engine: *mut MCPMateEngine) {
     if !engine.is_null() {
-        let engine = &mut *engine;
+        let engine = unsafe { &mut *engine };
         engine.stop();
     }
 }
 
 /// Check if service is running
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences a raw pointer that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_is_running(engine: *mut MCPMateEngine) -> bool {
@@ -119,11 +157,18 @@ pub unsafe extern "C" fn mcpmate_engine_is_running(engine: *mut MCPMateEngine) -
         return false;
     }
 
-    let engine = &*engine;
+    let engine = unsafe { &*engine };
     engine.is_running()
 }
 
 /// Get startup progress as JSON
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences a raw pointer that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must free the returned string using `mcpmate_string_free`
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_get_startup_progress_json(
@@ -133,7 +178,7 @@ pub unsafe extern "C" fn mcpmate_engine_get_startup_progress_json(
         return ptr::null();
     }
 
-    let engine = &*engine;
+    let engine = unsafe { &*engine };
     let progress = engine.get_startup_progress();
 
     match serde_json::to_string(&progress) {
@@ -146,6 +191,13 @@ pub unsafe extern "C" fn mcpmate_engine_get_startup_progress_json(
 }
 
 /// Get service info as JSON
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences a raw pointer that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must free the returned string using `mcpmate_string_free`
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_get_service_info_json(
@@ -155,7 +207,7 @@ pub unsafe extern "C" fn mcpmate_engine_get_service_info_json(
         return ptr::null();
     }
 
-    let engine = &*engine;
+    let engine = unsafe { &*engine };
     let info = engine.get_service_info();
 
     match serde_json::to_string(&info) {
@@ -168,6 +220,13 @@ pub unsafe extern "C" fn mcpmate_engine_get_service_info_json(
 }
 
 /// Start MCPMate service with default configuration
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences a raw pointer that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must ensure `engine` is not accessed concurrently from other threads
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_start_default(
@@ -180,7 +239,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_default(
         return false;
     }
 
-    let engine = &mut *engine;
+    let engine = unsafe { &mut *engine };
     let result = engine.start_default(api_port, mcp_port);
 
     tracing::info!("MCPMate engine start_default result: {}", result);
@@ -188,6 +247,13 @@ pub unsafe extern "C" fn mcpmate_engine_start_default(
 }
 
 /// Start MCPMate service in minimal mode
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences a raw pointer that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must ensure `engine` is not accessed concurrently from other threads
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_start_minimal(
@@ -199,7 +265,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_minimal(
         return false;
     }
 
-    let engine = &mut *engine;
+    let engine = unsafe { &mut *engine };
     let result = engine.start_minimal(api_port);
 
     tracing::info!("MCPMate engine start_minimal result: {}", result);
@@ -207,6 +273,14 @@ pub unsafe extern "C" fn mcpmate_engine_start_minimal(
 }
 
 /// Start MCPMate service with startup configuration
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences raw pointers that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must ensure `config_json` points to a valid null-terminated C string
+/// - The caller must ensure `engine` is not accessed concurrently from other threads
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_start_with_startup_config(
@@ -226,7 +300,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_startup_config(
     }
 
     // Convert C string to Rust string
-    let config_str = match CStr::from_ptr(config_json).to_str() {
+    let config_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(
@@ -247,7 +321,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_startup_config(
     };
 
     // Get mutable reference to engine and start with startup config
-    let engine = &mut *engine;
+    let engine = unsafe { &mut *engine };
     let result = engine.start_with_startup_config(config);
 
     tracing::info!(
@@ -258,6 +332,14 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_startup_config(
 }
 
 /// Start MCPMate service with specific config suites
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Dereferences raw pointers that must be valid and properly aligned
+/// - The caller must ensure `engine` points to a valid MCPMateEngine instance
+/// - The caller must ensure `suites_json` points to a valid null-terminated C string
+/// - The caller must ensure `engine` is not accessed concurrently from other threads
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_engine_start_with_suites(
@@ -279,7 +361,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_suites(
     }
 
     // Convert C string to Rust string
-    let suites_str = match CStr::from_ptr(suites_json).to_str() {
+    let suites_str = match unsafe { CStr::from_ptr(suites_json) }.to_str() {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("Failed to convert suites JSON to UTF-8 string: {}", e);
@@ -297,7 +379,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_suites(
     };
 
     // Get mutable reference to engine and start with suites
-    let engine = &mut *engine;
+    let engine = unsafe { &mut *engine };
     let result = engine.start_with_suites(api_port, mcp_port, suites);
 
     tracing::info!("MCPMate engine start_with_suites result: {}", result);
@@ -305,10 +387,20 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_suites(
 }
 
 /// Free string allocated by Rust
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Takes ownership of memory pointed to by `string`
+/// - The caller must ensure `string` was allocated by a Rust CString::into_raw call
+/// - The caller must ensure `string` is not used after this call
+/// - The caller must ensure `string` is not freed multiple times
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mcpmate_string_free(string: *const c_char) {
     if !string.is_null() {
-        let _ = CString::from_raw(string as *mut c_char);
+        unsafe {
+            let _ = CString::from_raw(string as *mut c_char);
+        }
     }
 }

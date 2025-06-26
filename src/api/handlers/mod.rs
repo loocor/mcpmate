@@ -2,11 +2,11 @@
 // Contains handler functions for API endpoints
 
 pub mod clients;
+pub mod discovery;
 pub mod instance;
 pub mod notifs;
 pub mod runtime;
 pub mod server;
-pub mod specs;
 pub mod suits;
 pub mod system;
 
@@ -30,6 +30,8 @@ pub enum ApiError {
     InternalError(String),
     /// Conflict error
     Conflict(String),
+    /// Forbidden error
+    Forbidden(String),
 }
 
 impl fmt::Display for ApiError {
@@ -42,6 +44,7 @@ impl fmt::Display for ApiError {
             ApiError::BadRequest(msg) => write!(f, "Bad request: {msg}"),
             ApiError::InternalError(msg) => write!(f, "Internal error: {msg}"),
             ApiError::Conflict(msg) => write!(f, "Conflict: {msg}"),
+            ApiError::Forbidden(msg) => write!(f, "Forbidden: {msg}"),
         }
     }
 }
@@ -53,6 +56,7 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
         };
 
         let body = Json(json!({

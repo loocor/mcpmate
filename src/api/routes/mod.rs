@@ -3,10 +3,10 @@
 
 pub mod board;
 pub mod clients;
+pub mod discovery;
 pub mod notifs;
 pub mod runtime;
 pub mod server;
-pub mod specs;
 pub mod suits;
 pub mod system;
 
@@ -35,6 +35,8 @@ pub struct AppState {
     pub database: Option<Arc<crate::config::database::Database>>,
     /// Configuration application state manager
     pub config_application_state: Arc<crate::core::suit::ConfigApplicationStateManager>,
+    /// Discovery service for capability discovery and caching
+    pub discovery_service: Option<Arc<crate::discovery::DiscoveryService>>,
 }
 
 /// Create the API router with all routes
@@ -93,6 +95,23 @@ fn create_router_internal(
         state_manager_clone.initialize().await;
     });
 
+    // Create discovery service if database is available
+    let discovery_service = if let Some(ref db) = database {
+        match crate::discovery::DiscoveryService::new((**db).clone(), None) {
+            Ok(service) => {
+                tracing::info!("Discovery service initialized successfully");
+                Some(Arc::new(service))
+            }
+            Err(e) => {
+                tracing::warn!("Failed to initialize discovery service: {}", e);
+                None
+            }
+        }
+    } else {
+        tracing::warn!("Database not available, discovery service disabled");
+        None
+    };
+
     let state = Arc::new(AppState {
         connection_pool,
         metrics_collector,
@@ -100,6 +119,7 @@ fn create_router_internal(
         suit_merge_service: config_suit_merge_service,
         database,
         config_application_state,
+        discovery_service,
     });
 
     // Create API router
@@ -107,10 +127,10 @@ fn create_router_internal(
         .merge(server::routes(state.clone()))
         .merge(system::routes(state.clone()))
         .merge(notifs::routes(state.clone()))
-        .merge(specs::routes(state.clone()))
         .merge(suits::routes(state.clone()))
         .merge(runtime::routes(state.clone()))
-        .merge(clients::routes(state.clone()));
+        .merge(clients::routes(state.clone()))
+        .merge(discovery::routes(state.clone()));
 
     // Create main router with API routes and board static files
     // Note: API routes must come first to avoid being intercepted by board fallback

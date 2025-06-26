@@ -86,6 +86,7 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
 base64 = "0.22.1"
+lru = "0.12"
 
 # Features for different build modes
 [features]

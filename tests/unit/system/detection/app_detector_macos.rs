@@ -24,8 +24,7 @@ mod macos_tests {
         let _detector = MacOSDetector::new();
 
         // Then: Should succeed (just test instantiation)
-        // This is a basic smoke test
-        assert!(true);
+        // This is a basic smoke test - detector should be created successfully
     }
 
     #[tokio::test]

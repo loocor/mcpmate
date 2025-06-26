@@ -273,6 +273,7 @@ pub async fn create_server(
 
     // Return success response
     Ok(Json(ServerResponse {
+        id: Some(server_id),
         name: payload.name.clone(),
         enabled,
         globally_enabled: true,
@@ -374,6 +375,7 @@ pub async fn update_server(
 
     // Return success response
     Ok(Json(ServerResponse {
+        id: Some(server_id),
         name,
         enabled: payload.enabled.unwrap_or(true),
         globally_enabled: details.globally_enabled,
