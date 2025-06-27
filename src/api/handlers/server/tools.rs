@@ -1,5 +1,5 @@
 // Server tools handlers
-// Provides handlers for server tool discovery endpoints
+// Provides handlers for server tool inspect endpoints
 
 use axum::{
     extract::{Path, Query, State},
@@ -9,21 +9,21 @@ use std::sync::Arc;
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    discovery::{DiscoveryParams, ProcessedToolInfo},
+    inspect::{InspectParams, ProcessedToolInfo},
 };
 
 use super::common::{
-    create_discovery_response, get_database_from_state, get_discovery_service,
-    handle_discovery_error, resolve_server_identifier, validate_server_id,
+    create_inspect_response, get_database_from_state, get_inspect_service,
+    handle_inspect_error, resolve_server_identifier, validate_server_id,
 };
 
 /// Query parameters for tools endpoints
 #[derive(Debug, serde::Deserialize)]
 pub struct ToolsQuery {
     /// Refresh strategy for tool queries
-    pub refresh: Option<crate::discovery::RefreshStrategy>,
+    pub refresh: Option<crate::inspect::RefreshStrategy>,
     /// Response format
-    pub format: Option<crate::discovery::ResponseFormat>,
+    pub format: Option<crate::inspect::ResponseFormat>,
     /// Whether to include metadata
     pub include_meta: Option<bool>,
     /// Timeout in seconds
@@ -31,9 +31,9 @@ pub struct ToolsQuery {
 }
 
 impl ToolsQuery {
-    /// Convert to DiscoveryParams
-    pub fn to_params(&self) -> Result<DiscoveryParams, ApiError> {
-        Ok(DiscoveryParams {
+    /// Convert to InspectParams
+    pub fn to_params(&self) -> Result<InspectParams, ApiError> {
+        Ok(InspectParams {
             refresh: self.refresh,
             format: self.format,
             include_meta: self.include_meta,
@@ -68,7 +68,7 @@ pub async fn list_tools(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
     Query(query): Query<ToolsQuery>,
-) -> Result<Json<crate::discovery::DiscoveryResponse<Vec<ProcessedToolInfo>>>, ApiError> {
+) -> Result<Json<crate::inspect::InspectResponse<Vec<ProcessedToolInfo>>>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -79,20 +79,20 @@ pub async fn list_tools(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get discovery service
-    let discovery_service = get_discovery_service(&state).await?;
+    // Get inspect service
+    let inspect_service = get_inspect_service(&state).await?;
 
     // Add timeout control
     let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
     let tools_result = tokio::time::timeout(timeout, async {
-        discovery_service
+        inspect_service
             .get_server_tools(&server_info.server_id, params.clone())
             .await
     })
     .await;
 
     let tools = match tools_result {
-        Ok(result) => result.map_err(handle_discovery_error)?,
+        Ok(result) => result.map_err(handle_inspect_error)?,
         Err(_) => {
             return Err(ApiError::Timeout(format!(
                 "Tools request for server '{}' timed out after {}s",
@@ -103,7 +103,7 @@ pub async fn list_tools(
     };
 
     // Create response with metadata
-    let response = create_discovery_response(
+    let response = create_inspect_response(
         tools,
         &params,
         Some(false), // Tools endpoint doesn't use direct caching
@@ -132,7 +132,7 @@ pub async fn get_tool_detail(
     State(state): State<Arc<AppState>>,
     Path((identifier, tool_name)): Path<(String, String)>,
     Query(query): Query<ToolsQuery>,
-) -> Result<Json<crate::discovery::DiscoveryResponse<ProcessedToolInfo>>, ApiError> {
+) -> Result<Json<crate::inspect::InspectResponse<ProcessedToolInfo>>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -144,20 +144,20 @@ pub async fn get_tool_detail(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get discovery service
-    let discovery_service = get_discovery_service(&state).await?;
+    // Get inspect service
+    let inspect_service = get_inspect_service(&state).await?;
 
     // Add timeout control
     let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
     let tool_result = tokio::time::timeout(timeout, async {
-        discovery_service
+        inspect_service
             .get_tool_detail(&server_info.server_id, &tool_name, params.clone())
             .await
     })
     .await;
 
     let tool_option = match tool_result {
-        Ok(result) => result.map_err(handle_discovery_error)?,
+        Ok(result) => result.map_err(handle_inspect_error)?,
         Err(_) => {
             return Err(ApiError::Timeout(format!(
                 "Tool detail request for '{}' on server '{}' timed out after {}s",
@@ -177,7 +177,7 @@ pub async fn get_tool_detail(
     })?;
 
     // Create response with metadata
-    let response = create_discovery_response(
+    let response = create_inspect_response(
         tool,
         &params,
         Some(false), // No direct caching for this endpoint
@@ -205,7 +205,7 @@ pub async fn get_tool_schema(
     State(state): State<Arc<AppState>>,
     Path((identifier, tool_name)): Path<(String, String)>,
     Query(query): Query<ToolsQuery>,
-) -> Result<Json<crate::discovery::DiscoveryResponse<ToolSchema>>, ApiError> {
+) -> Result<Json<crate::inspect::InspectResponse<ToolSchema>>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -217,20 +217,20 @@ pub async fn get_tool_schema(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get discovery service
-    let discovery_service = get_discovery_service(&state).await?;
+    // Get inspect service
+    let inspect_service = get_inspect_service(&state).await?;
 
     // Add timeout control
     let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
     let tool_result = tokio::time::timeout(timeout, async {
-        discovery_service
+        inspect_service
             .get_tool_detail(&server_info.server_id, &tool_name, params.clone())
             .await
     })
     .await;
 
     let tool_option = match tool_result {
-        Ok(result) => result.map_err(handle_discovery_error)?,
+        Ok(result) => result.map_err(handle_inspect_error)?,
         Err(_) => {
             return Err(ApiError::Timeout(format!(
                 "Tool schema request for '{}' on server '{}' timed out after {}s",
@@ -258,7 +258,7 @@ pub async fn get_tool_schema(
     };
 
     // Create response with metadata
-    let response = create_discovery_response(
+    let response = create_inspect_response(
         schema,
         &params,
         Some(false), // No direct caching for this endpoint

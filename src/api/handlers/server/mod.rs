@@ -19,7 +19,7 @@ mod crud;
 mod instance;
 mod mgmt;
 
-// Discovery functionality
+// Inspect functionality
 mod capabilities;
 mod prompts;
 mod resources;

@@ -2,7 +2,7 @@
 // Contains handler functions for API endpoints
 
 pub mod clients;
-// pub mod discovery;  // Removed: Discovery functionality integrated into server module
+// pub mod inspect;  // Removed: Inspect functionality integrated into server module
 pub mod instance;
 pub mod notifs;
 pub mod runtime;

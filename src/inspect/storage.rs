@@ -1,4 +1,4 @@
-// Temporary File Storage for Discovery System
+// Temporary File Storage for Inspect System
 // Manages capability information cache in system temporary directory
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Interval, interval};
 
 use super::types::{
-    CacheConfig, CacheEntryMetadata, DiscoveryError, DiscoveryResult, FileCacheManifest,
+    CacheConfig, CacheEntryMetadata, InspectError, InspectResult, FileCacheManifest,
     ServerCapabilities,
 };
 
@@ -45,7 +45,7 @@ impl Clone for TempFileStorage {
 
 impl TempFileStorage {
     /// Create new temporary file storage
-    pub fn new(config: CacheConfig) -> DiscoveryResult<Self> {
+    pub fn new(config: CacheConfig) -> InspectResult<Self> {
         let process_id = std::process::id();
         let cache_dir = Self::create_cache_directory(process_id)?;
 
@@ -59,15 +59,15 @@ impl TempFileStorage {
     }
 
     /// Create cache directory in system temp
-    fn create_cache_directory(process_id: u32) -> DiscoveryResult<PathBuf> {
+    fn create_cache_directory(process_id: u32) -> InspectResult<PathBuf> {
         let temp_dir = std::env::temp_dir();
         let cache_dir = temp_dir.join(format!("mcpmate-capabilities/session-{}", process_id));
 
         fs::create_dir_all(&cache_dir).map_err(|e| {
-            DiscoveryError::CacheError(format!("Failed to create cache directory: {}", e))
+            InspectError::CacheError(format!("Failed to create cache directory: {}", e))
         })?;
 
-        tracing::info!("Created discovery cache directory: {:?}", cache_dir);
+        tracing::info!("Created inspect cache directory: {:?}", cache_dir);
         Ok(cache_dir)
     }
 
@@ -95,21 +95,21 @@ impl TempFileStorage {
         &self,
         server_id: &str,
         capabilities: &ServerCapabilities,
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         let server_dir = self.cache_dir.join(server_id);
         async_fs::create_dir_all(&server_dir).await.map_err(|e| {
-            DiscoveryError::CacheError(format!("Failed to create server directory: {}", e))
+            InspectError::CacheError(format!("Failed to create server directory: {}", e))
         })?;
 
         // Store capabilities
         let capabilities_file = server_dir.join("capabilities.json");
         let capabilities_json = serde_json::to_string_pretty(capabilities)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         async_fs::write(&capabilities_file, capabilities_json)
             .await
             .map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to write capabilities file: {}", e))
+                InspectError::CacheError(format!("Failed to write capabilities file: {}", e))
             })?;
 
         // Store individual components for faster access
@@ -129,7 +129,7 @@ impl TempFileStorage {
     pub async fn load_capabilities(
         &self,
         server_id: &str,
-    ) -> DiscoveryResult<Option<ServerCapabilities>> {
+    ) -> InspectResult<Option<ServerCapabilities>> {
         let capabilities_file = self.cache_dir.join(server_id).join("capabilities.json");
 
         if !capabilities_file.exists() {
@@ -145,11 +145,11 @@ impl TempFileStorage {
         let content = async_fs::read_to_string(&capabilities_file)
             .await
             .map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to read capabilities file: {}", e))
+                InspectError::CacheError(format!("Failed to read capabilities file: {}", e))
             })?;
 
         let capabilities: ServerCapabilities = serde_json::from_str(&content)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         // Update last accessed time
         self.touch_file(&capabilities_file).await?;
@@ -163,15 +163,15 @@ impl TempFileStorage {
         &self,
         server_id: &str,
         tools: &[super::types::ToolInfo],
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         let tools_file = self.cache_dir.join(server_id).join("tools.json");
         let tools_json = serde_json::to_string_pretty(tools)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         async_fs::write(&tools_file, tools_json)
             .await
             .map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to write tools file: {}", e))
+                InspectError::CacheError(format!("Failed to write tools file: {}", e))
             })?;
 
         Ok(())
@@ -182,15 +182,15 @@ impl TempFileStorage {
         &self,
         server_id: &str,
         resources: &[super::types::ResourceInfo],
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         let resources_file = self.cache_dir.join(server_id).join("resources.json");
         let resources_json = serde_json::to_string_pretty(resources)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         async_fs::write(&resources_file, resources_json)
             .await
             .map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to write resources file: {}", e))
+                InspectError::CacheError(format!("Failed to write resources file: {}", e))
             })?;
 
         Ok(())
@@ -201,15 +201,15 @@ impl TempFileStorage {
         &self,
         server_id: &str,
         prompts: &[super::types::PromptInfo],
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         let prompts_file = self.cache_dir.join(server_id).join("prompts.json");
         let prompts_json = serde_json::to_string_pretty(prompts)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         async_fs::write(&prompts_file, prompts_json)
             .await
             .map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to write prompts file: {}", e))
+                InspectError::CacheError(format!("Failed to write prompts file: {}", e))
             })?;
 
         Ok(())
@@ -220,7 +220,7 @@ impl TempFileStorage {
         &self,
         server_id: &str,
         capabilities_file: &Path,
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         // Acquire manifest lock to prevent concurrent modifications
         let _lock = self.manifest_mutex.lock().await;
 
@@ -231,7 +231,7 @@ impl TempFileStorage {
             let content = async_fs::read_to_string(&manifest_file)
                 .await
                 .map_err(|e| {
-                    DiscoveryError::CacheError(format!("Failed to read manifest: {}", e))
+                    InspectError::CacheError(format!("Failed to read manifest: {}", e))
                 })?;
             serde_json::from_str::<FileCacheManifest>(&content).unwrap_or_else(|_| {
                 tracing::warn!("Corrupted manifest file, creating new one");
@@ -251,7 +251,7 @@ impl TempFileStorage {
 
         // Get file metadata
         let metadata = async_fs::metadata(capabilities_file).await.map_err(|e| {
-            DiscoveryError::CacheError(format!("Failed to get file metadata: {}", e))
+            InspectError::CacheError(format!("Failed to get file metadata: {}", e))
         })?;
 
         let entry_metadata = CacheEntryMetadata {
@@ -272,19 +272,19 @@ impl TempFileStorage {
 
         // Save manifest atomically
         let manifest_json = serde_json::to_string_pretty(&manifest)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         // Write to temporary file first, then rename for atomic operation
         let temp_manifest_file = manifest_file.with_extension("tmp");
         async_fs::write(&temp_manifest_file, &manifest_json)
             .await
             .map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to write temp manifest: {}", e))
+                InspectError::CacheError(format!("Failed to write temp manifest: {}", e))
             })?;
 
         async_fs::rename(&temp_manifest_file, &manifest_file)
             .await
-            .map_err(|e| DiscoveryError::CacheError(format!("Failed to rename manifest: {}", e)))?;
+            .map_err(|e| InspectError::CacheError(format!("Failed to rename manifest: {}", e)))?;
 
         tracing::debug!(
             "Updated manifest for server '{}' with atomic operation",
@@ -297,17 +297,17 @@ impl TempFileStorage {
     async fn is_file_expired(
         &self,
         file_path: &Path,
-    ) -> DiscoveryResult<bool> {
+    ) -> InspectResult<bool> {
         let metadata = async_fs::metadata(file_path).await.map_err(|e| {
-            DiscoveryError::CacheError(format!("Failed to get file metadata: {}", e))
+            InspectError::CacheError(format!("Failed to get file metadata: {}", e))
         })?;
 
         let modified = metadata.modified().map_err(|e| {
-            DiscoveryError::CacheError(format!("Failed to get file modification time: {}", e))
+            InspectError::CacheError(format!("Failed to get file modification time: {}", e))
         })?;
 
         let elapsed = SystemTime::now().duration_since(modified).map_err(|e| {
-            DiscoveryError::CacheError(format!("Failed to calculate file age: {}", e))
+            InspectError::CacheError(format!("Failed to calculate file age: {}", e))
         })?;
 
         Ok(elapsed > self.config.max_file_age)
@@ -317,15 +317,15 @@ impl TempFileStorage {
     async fn touch_file(
         &self,
         file_path: &Path,
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         // Simple way to update access time - read and write back
         if file_path.exists() {
             let content = async_fs::read(file_path).await.map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to read file for touch: {}", e))
+                InspectError::CacheError(format!("Failed to read file for touch: {}", e))
             })?;
             async_fs::write(file_path, content)
                 .await
-                .map_err(|e| DiscoveryError::CacheError(format!("Failed to touch file: {}", e)))?;
+                .map_err(|e| InspectError::CacheError(format!("Failed to touch file: {}", e)))?;
         }
         Ok(())
     }
@@ -334,7 +334,7 @@ impl TempFileStorage {
     async fn cleanup_expired_files(
         cache_dir: &Path,
         config: &CacheConfig,
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         if !cache_dir.exists() {
             return Ok(());
         }
@@ -345,11 +345,11 @@ impl TempFileStorage {
 
         // Read directory entries
         let mut dir_entries = async_fs::read_dir(cache_dir).await.map_err(|e| {
-            DiscoveryError::CacheError(format!("Failed to read cache directory: {}", e))
+            InspectError::CacheError(format!("Failed to read cache directory: {}", e))
         })?;
 
         while let Some(entry) = dir_entries.next_entry().await.map_err(|e| {
-            DiscoveryError::CacheError(format!("Failed to read directory entry: {}", e))
+            InspectError::CacheError(format!("Failed to read directory entry: {}", e))
         })? {
             let path = entry.path();
             if path.is_dir() {
@@ -410,23 +410,23 @@ impl TempFileStorage {
         total_size: &mut u64,
         entries_to_remove: &mut Vec<PathBuf>,
         server_ids_to_remove: &mut Vec<String>,
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         let capabilities_file = server_dir.join("capabilities.json");
 
         if capabilities_file.exists() {
             let metadata = async_fs::metadata(&capabilities_file).await.map_err(|e| {
-                DiscoveryError::CacheError(format!(
+                InspectError::CacheError(format!(
                     "Failed to get capabilities file metadata: {}",
                     e
                 ))
             })?;
 
             let modified = metadata.modified().map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to get file modification time: {}", e))
+                InspectError::CacheError(format!("Failed to get file modification time: {}", e))
             })?;
 
             let elapsed = SystemTime::now().duration_since(modified).map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to calculate file age: {}", e))
+                InspectError::CacheError(format!("Failed to calculate file age: {}", e))
             })?;
 
             if elapsed > config.max_file_age {
@@ -450,7 +450,7 @@ impl TempFileStorage {
     async fn update_manifest_after_cleanup(
         cache_dir: &Path,
         server_ids_to_remove: &[String],
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         let manifest_file = cache_dir.join("manifest.json");
 
         if !manifest_file.exists() {
@@ -459,10 +459,10 @@ impl TempFileStorage {
 
         let content = async_fs::read_to_string(&manifest_file)
             .await
-            .map_err(|e| DiscoveryError::CacheError(format!("Failed to read manifest: {}", e)))?;
+            .map_err(|e| InspectError::CacheError(format!("Failed to read manifest: {}", e)))?;
 
         let mut manifest: FileCacheManifest = serde_json::from_str(&content)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         // Remove entries from manifest
         for server_id in server_ids_to_remove {
@@ -476,19 +476,19 @@ impl TempFileStorage {
 
         // Save manifest atomically
         let manifest_json = serde_json::to_string_pretty(&manifest)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         // Write to temporary file first, then rename for atomic operation
         let temp_manifest_file = manifest_file.with_extension("tmp");
         async_fs::write(&temp_manifest_file, &manifest_json)
             .await
             .map_err(|e| {
-                DiscoveryError::CacheError(format!("Failed to write temp manifest: {}", e))
+                InspectError::CacheError(format!("Failed to write temp manifest: {}", e))
             })?;
 
         async_fs::rename(&temp_manifest_file, &manifest_file)
             .await
-            .map_err(|e| DiscoveryError::CacheError(format!("Failed to rename manifest: {}", e)))?;
+            .map_err(|e| InspectError::CacheError(format!("Failed to rename manifest: {}", e)))?;
 
         tracing::debug!(
             "Updated manifest after cleanup, removed {} entries",
@@ -498,7 +498,7 @@ impl TempFileStorage {
     }
 
     /// Get cache statistics
-    pub async fn get_cache_stats(&self) -> DiscoveryResult<CacheStats> {
+    pub async fn get_cache_stats(&self) -> InspectResult<CacheStats> {
         let manifest_file = self.cache_dir.join("manifest.json");
 
         if !manifest_file.exists() {
@@ -511,10 +511,10 @@ impl TempFileStorage {
 
         let content = async_fs::read_to_string(&manifest_file)
             .await
-            .map_err(|e| DiscoveryError::CacheError(format!("Failed to read manifest: {}", e)))?;
+            .map_err(|e| InspectError::CacheError(format!("Failed to read manifest: {}", e)))?;
 
         let manifest: FileCacheManifest = serde_json::from_str(&content)
-            .map_err(|e| DiscoveryError::SerializationError(e.to_string()))?;
+            .map_err(|e| InspectError::SerializationError(e.to_string()))?;
 
         Ok(CacheStats {
             total_entries: manifest.entries.len(),
@@ -524,21 +524,21 @@ impl TempFileStorage {
     }
 
     /// Clear all cache files
-    pub async fn clear_cache(&self) -> DiscoveryResult<()> {
+    pub async fn clear_cache(&self) -> InspectResult<()> {
         if self.cache_dir.exists() {
             async_fs::remove_dir_all(&self.cache_dir)
                 .await
-                .map_err(|e| DiscoveryError::CacheError(format!("Failed to clear cache: {}", e)))?;
+                .map_err(|e| InspectError::CacheError(format!("Failed to clear cache: {}", e)))?;
 
             // Recreate cache directory
             async_fs::create_dir_all(&self.cache_dir)
                 .await
                 .map_err(|e| {
-                    DiscoveryError::CacheError(format!("Failed to recreate cache directory: {}", e))
+                    InspectError::CacheError(format!("Failed to recreate cache directory: {}", e))
                 })?;
         }
 
-        tracing::info!("Cleared discovery cache directory: {:?}", self.cache_dir);
+        tracing::info!("Cleared inspect cache directory: {:?}", self.cache_dir);
         Ok(())
     }
 }

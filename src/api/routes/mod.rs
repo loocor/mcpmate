@@ -3,7 +3,7 @@
 
 pub mod board;
 pub mod clients;
-// pub mod discovery;  // Removed: Discovery functionality integrated into server module
+// pub mod inspect;  // Removed: Inspect functionality integrated into server module
 pub mod notifs;
 pub mod runtime;
 pub mod server;
@@ -35,8 +35,8 @@ pub struct AppState {
     pub database: Option<Arc<crate::config::database::Database>>,
     /// Configuration application state manager
     pub config_application_state: Arc<crate::core::suit::ConfigApplicationStateManager>,
-    /// Discovery service for capability discovery and caching
-    pub discovery_service: Option<Arc<crate::discovery::DiscoveryService>>,
+    /// Inspect service for capability inspect and caching
+    pub inspect_service: Option<Arc<crate::inspect::InspectService>>,
 }
 
 /// Create the API router with all routes
@@ -95,20 +95,20 @@ fn create_router_internal(
         state_manager_clone.initialize().await;
     });
 
-    // Create discovery service if database is available
-    let discovery_service = if let Some(ref db) = database {
-        match crate::discovery::DiscoveryService::new((**db).clone(), None) {
+    // Create inspect service if database is available
+    let inspect_service = if let Some(ref db) = database {
+        match crate::inspect::InspectService::new((**db).clone(), None) {
             Ok(service) => {
-                tracing::info!("Discovery service initialized successfully");
+                tracing::info!("Inspect service initialized successfully");
                 Some(Arc::new(service))
             }
             Err(e) => {
-                tracing::warn!("Failed to initialize discovery service: {}", e);
+                tracing::warn!("Failed to initialize inspect service: {}", e);
                 None
             }
         }
     } else {
-        tracing::warn!("Database not available, discovery service disabled");
+        tracing::warn!("Database not available, inspect service disabled");
         None
     };
 
@@ -119,7 +119,7 @@ fn create_router_internal(
         suit_merge_service: config_suit_merge_service,
         database,
         config_application_state,
-        discovery_service,
+        inspect_service,
     });
 
     // Create API router
@@ -130,7 +130,7 @@ fn create_router_internal(
         .merge(suits::routes(state.clone()))
         .merge(runtime::routes(state.clone()))
         .merge(clients::routes(state.clone()));
-    // .merge(discovery::routes(state.clone()));  // Removed: Discovery functionality integrated into server module
+    // .merge(inspect::routes(state.clone()));  // Removed: Inspect functionality integrated into server module
 
     // Create main router with API routes and board static files
     // Note: API routes must come first to avoid being intercepted by board fallback

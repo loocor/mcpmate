@@ -9,21 +9,21 @@ use std::sync::Arc;
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    discovery::{DiscoveryParams, ProcessedCapabilities, ServerCapabilities},
+    inspect::{InspectParams, ProcessedCapabilities, ServerCapabilities},
 };
 
 use super::common::{
-    create_discovery_response, get_database_from_state, get_discovery_service,
-    handle_discovery_error, resolve_server_identifier, validate_server_id,
+    create_inspect_response, get_database_from_state, get_inspect_service, handle_inspect_error,
+    resolve_server_identifier, validate_server_id,
 };
 
 /// Query parameters for capabilities endpoints
 #[derive(Debug, serde::Deserialize)]
 pub struct CapabilitiesQuery {
     /// Refresh strategy for capability queries
-    pub refresh: Option<crate::discovery::RefreshStrategy>,
+    pub refresh: Option<crate::inspect::RefreshStrategy>,
     /// Response format
-    pub format: Option<crate::discovery::ResponseFormat>,
+    pub format: Option<crate::inspect::ResponseFormat>,
     /// Whether to include metadata
     pub include_meta: Option<bool>,
     /// Timeout in seconds (new)
@@ -31,9 +31,9 @@ pub struct CapabilitiesQuery {
 }
 
 impl CapabilitiesQuery {
-    /// Convert to DiscoveryParams
-    pub fn to_params(&self) -> Result<DiscoveryParams, ApiError> {
-        Ok(DiscoveryParams {
+    /// Convert to InspectParams
+    pub fn to_params(&self) -> Result<InspectParams, ApiError> {
+        Ok(InspectParams {
             refresh: self.refresh,
             format: self.format,
             include_meta: self.include_meta,
@@ -52,7 +52,7 @@ pub async fn get_capabilities(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
     Query(query): Query<CapabilitiesQuery>,
-) -> Result<Json<crate::discovery::DiscoveryResponse<ProcessedCapabilities>>, ApiError> {
+) -> Result<Json<crate::inspect::InspectResponse<ProcessedCapabilities>>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -63,13 +63,13 @@ pub async fn get_capabilities(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get discovery service
-    let discovery_service = get_discovery_service(&state).await?;
+    // Get inspect service
+    let inspect_service = get_inspect_service(&state).await?;
 
     // Add timeout control for long-running operations
     let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
     let capabilities_result = tokio::time::timeout(timeout, async {
-        discovery_service
+        inspect_service
             .get_processed_capabilities(&server_info.server_id, params.clone())
             .await
     })
@@ -77,15 +77,15 @@ pub async fn get_capabilities(
 
     let (capabilities, cache_hit, metadata) = match capabilities_result {
         Ok(result) => {
-            let processed = result.map_err(handle_discovery_error)?;
+            let processed = result.map_err(handle_inspect_error)?;
             // Get cache info for this request
-            let cache_result = discovery_service
+            let cache_result = inspect_service
                 .get_server_capabilities_with_cache_info(
                     &server_info.server_id,
                     params.refresh.unwrap_or_default(),
                 )
                 .await
-                .map_err(handle_discovery_error)?;
+                .map_err(handle_inspect_error)?;
             (
                 processed,
                 cache_result.cache_hit,
@@ -102,8 +102,7 @@ pub async fn get_capabilities(
     };
 
     // Create response with metadata
-    let response =
-        create_discovery_response(capabilities, &params, Some(cache_hit), Some(&metadata));
+    let response = create_inspect_response(capabilities, &params, Some(cache_hit), Some(&metadata));
 
     tracing::info!(
         "Retrieved capabilities for server '{}' (ID: {}) with strategy {:?}, cache_hit: {}",
@@ -126,7 +125,7 @@ pub async fn get_raw_capabilities(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
     Query(query): Query<CapabilitiesQuery>,
-) -> Result<Json<crate::discovery::DiscoveryResponse<ServerCapabilities>>, ApiError> {
+) -> Result<Json<crate::inspect::InspectResponse<ServerCapabilities>>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -137,13 +136,13 @@ pub async fn get_raw_capabilities(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get discovery service
-    let discovery_service = get_discovery_service(&state).await?;
+    // Get inspect service
+    let inspect_service = get_inspect_service(&state).await?;
 
     // Add timeout control
     let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
     let capabilities_result = tokio::time::timeout(timeout, async {
-        discovery_service
+        inspect_service
             .get_server_capabilities(&server_info.server_id, params.refresh.unwrap_or_default())
             .await
     })
@@ -152,15 +151,15 @@ pub async fn get_raw_capabilities(
     let (capabilities, cache_hit) = match capabilities_result {
         Ok(result) => {
             // Get cache info for this request
-            let cache_result = discovery_service
+            let cache_result = inspect_service
                 .get_server_capabilities_with_cache_info(
                     &server_info.server_id,
                     params.refresh.unwrap_or_default(),
                 )
                 .await
-                .map_err(handle_discovery_error)?;
+                .map_err(handle_inspect_error)?;
             (
-                result.map_err(handle_discovery_error)?,
+                result.map_err(handle_inspect_error)?,
                 cache_result.cache_hit,
             )
         }
@@ -175,7 +174,7 @@ pub async fn get_raw_capabilities(
 
     // Create response with metadata
     let metadata_clone = capabilities.metadata.clone();
-    let response = create_discovery_response(
+    let response = create_inspect_response(
         capabilities,
         &params,
         Some(cache_hit),

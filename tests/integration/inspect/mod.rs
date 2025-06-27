@@ -1,18 +1,18 @@
-// Discovery API integration tests
-// Tests for the discovery system endpoints
+// Inspect API integration tests
+// Tests for the inspect system endpoints
 
-/// Test discovery endpoints basic functionality
+/// Test inspect endpoints basic functionality
 #[tokio::test]
-async fn test_discovery_endpoints_basic() {
+async fn test_inspect_endpoints_basic() {
     // This is a basic structure for integration tests
     // In a real implementation, you would:
     // 1. Set up a test database
     // 2. Create mock MCP servers
-    // 3. Initialize the discovery service
+    // 3. Initialize the inspect service
     // 4. Test each endpoint
 
     // For now, we'll create a minimal test structure
-    println!("Discovery integration tests would be implemented here");
+    println!("Inspect integration tests would be implemented here");
 
     // Example test structure:
     // let app = create_test_app().await;
@@ -55,23 +55,23 @@ async fn test_response_formats() {
 // async fn create_test_app() -> Router {
 //     // Create test database
 //     // Set up mock servers
-//     // Initialize discovery service
+//     // Initialize inspect service
 //     // Return configured router
 // }
 
 // async fn test_capabilities_endpoint(app: &Router) {
-//     // Test /discovery/{server_id}/capabilities
+//     // Test /inspect/{server_id}/capabilities
 // }
 
 // async fn test_tools_endpoint(app: &Router) {
-//     // Test /discovery/{server_id}/tools
-//     // Test /discovery/{server_id}/tools/{tool_id}
+//     // Test /inspect/{server_id}/tools
+//     // Test /inspect/{server_id}/tools/{tool_id}
 // }
 
 // async fn test_resources_endpoint(app: &Router) {
-//     // Test /discovery/{server_id}/resources
+//     // Test /inspect/{server_id}/resources
 // }
 
 // async fn test_prompts_endpoint(app: &Router) {
-//     // Test /discovery/{server_id}/prompts
+//     // Test /inspect/{server_id}/prompts
 // }

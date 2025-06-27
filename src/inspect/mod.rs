@@ -1,5 +1,5 @@
-// Discovery System Module
-// Provides independent MCP server capability discovery and caching
+// Inspect System Module
+// Provides independent MCP server capability inspect and caching
 
 pub mod capabilities;
 pub mod client;
@@ -12,25 +12,25 @@ use std::sync::Arc;
 use crate::config::database::Database;
 use crate::core::events::{
     bus::EventBus,
-    types::{DiscoveryCacheUpdateType, Event},
+    types::{Event, InspectCacheUpdateType},
 };
 
 pub use capabilities::{
     CapabilitiesProcessor, CapabilitiesSummary, ProcessedCapabilities, ProcessedPromptInfo,
     ProcessedResourceInfo, ProcessedResourceTemplateInfo, ProcessedToolInfo,
 };
-pub use client::McpDiscoveryClient;
+pub use client::McpInspectClient;
 pub use manager::{CacheLevel, CacheResult};
 pub use manager::{CacheManagerStats, CapabilitiesCache, PreloadResult};
 pub use storage::{CacheStats, TempFileStorage};
 pub use types::{
-    CapabilitySelections, DiscoveryError, DiscoveryParams, DiscoveryResponse, DiscoveryResult,
+    CapabilitySelections, InspectResponse, InspectError, InspectParams, InspectResult,
     RefreshStrategy, ResponseFormat, ResponseMetadata, ServerCapabilities, SyncResult,
 };
 
-/// Main Discovery Service
-/// Integrates all discovery components and provides unified interface
-pub struct DiscoveryService {
+/// Main Inspect Service
+/// Integrates all inspect components and provides unified interface
+pub struct InspectService {
     /// Capabilities cache manager
     cache: CapabilitiesCache,
     /// Capabilities processor
@@ -41,12 +41,12 @@ pub struct DiscoveryService {
     database: Database,
 }
 
-impl DiscoveryService {
-    /// Create new discovery service
+impl InspectService {
+    /// Create new inspect service
     pub fn new(
         database: Database,
         event_bus: Option<Arc<EventBus>>,
-    ) -> DiscoveryResult<Self> {
+    ) -> InspectResult<Self> {
         let config = types::CacheConfig::default();
         let cache = if let Some(ref event_bus) = event_bus {
             CapabilitiesCache::with_event_bus(config, Arc::clone(event_bus))?
@@ -63,12 +63,12 @@ impl DiscoveryService {
         })
     }
 
-    /// Create discovery service with custom cache configuration
+    /// Create inspect service with custom cache configuration
     pub fn with_config(
         database: Database,
         cache_config: types::CacheConfig,
         event_bus: Option<Arc<EventBus>>,
-    ) -> DiscoveryResult<Self> {
+    ) -> InspectResult<Self> {
         let cache = if let Some(ref event_bus) = event_bus {
             CapabilitiesCache::with_event_bus(cache_config, Arc::clone(event_bus))?
         } else {
@@ -89,7 +89,7 @@ impl DiscoveryService {
         &self,
         server_id: &str,
         refresh_strategy: RefreshStrategy,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> InspectResult<ServerCapabilities> {
         let result = self
             .get_server_capabilities_with_cache_info(server_id, refresh_strategy)
             .await?;
@@ -101,7 +101,7 @@ impl DiscoveryService {
         &self,
         server_id: &str,
         refresh_strategy: RefreshStrategy,
-    ) -> DiscoveryResult<manager::CacheResult> {
+    ) -> InspectResult<manager::CacheResult> {
         tracing::debug!(
             "Getting capabilities for server '{}' with strategy {:?}",
             server_id,
@@ -127,15 +127,15 @@ impl DiscoveryService {
             cache_level_str
         );
 
-        // Emit specific discovery event if event bus is available
+        // Emit specific inspect event if event bus is available
         if let Some(event_bus) = &self.event_bus {
             let update_type = match refresh_strategy {
-                RefreshStrategy::Force => DiscoveryCacheUpdateType::Manual,
-                RefreshStrategy::RefreshIfStale => DiscoveryCacheUpdateType::Fresh,
-                RefreshStrategy::CacheFirst => DiscoveryCacheUpdateType::FileCache,
+                RefreshStrategy::Force => InspectCacheUpdateType::Manual,
+                RefreshStrategy::RefreshIfStale => InspectCacheUpdateType::Fresh,
+                RefreshStrategy::CacheFirst => InspectCacheUpdateType::FileCache,
             };
 
-            let event = Event::DiscoveryCacheUpdated {
+            let event = Event::InspectCacheUpdated {
                 server_id: server_id.to_string(),
                 server_name: result.capabilities.server_name.clone(),
                 update_type,
@@ -151,8 +151,8 @@ impl DiscoveryService {
     pub async fn get_processed_capabilities(
         &self,
         server_id: &str,
-        params: DiscoveryParams,
-    ) -> DiscoveryResult<ProcessedCapabilities> {
+        params: InspectParams,
+    ) -> InspectResult<ProcessedCapabilities> {
         let refresh_strategy = params.refresh.unwrap_or_default();
         let format = params.format.unwrap_or_default();
 
@@ -174,8 +174,8 @@ impl DiscoveryService {
     pub async fn get_server_tools(
         &self,
         server_id: &str,
-        params: DiscoveryParams,
-    ) -> DiscoveryResult<Vec<ProcessedToolInfo>> {
+        params: InspectParams,
+    ) -> InspectResult<Vec<ProcessedToolInfo>> {
         let processed = self.get_processed_capabilities(server_id, params).await?;
         Ok(processed.tools)
     }
@@ -185,8 +185,8 @@ impl DiscoveryService {
         &self,
         server_id: &str,
         tool_id: &str,
-        params: DiscoveryParams,
-    ) -> DiscoveryResult<Option<ProcessedToolInfo>> {
+        params: InspectParams,
+    ) -> InspectResult<Option<ProcessedToolInfo>> {
         let tools = self.get_server_tools(server_id, params).await?;
 
         // Find tool by name or unique name (tool_id can match either)
@@ -201,8 +201,8 @@ impl DiscoveryService {
     pub async fn get_server_resources(
         &self,
         server_id: &str,
-        params: DiscoveryParams,
-    ) -> DiscoveryResult<Vec<ProcessedResourceInfo>> {
+        params: InspectParams,
+    ) -> InspectResult<Vec<ProcessedResourceInfo>> {
         let processed = self.get_processed_capabilities(server_id, params).await?;
         Ok(processed.resources)
     }
@@ -211,8 +211,8 @@ impl DiscoveryService {
     pub async fn get_server_prompts(
         &self,
         server_id: &str,
-        params: DiscoveryParams,
-    ) -> DiscoveryResult<Vec<ProcessedPromptInfo>> {
+        params: InspectParams,
+    ) -> InspectResult<Vec<ProcessedPromptInfo>> {
         let processed = self.get_processed_capabilities(server_id, params).await?;
         Ok(processed.prompts)
     }
@@ -221,8 +221,8 @@ impl DiscoveryService {
     pub async fn get_server_resource_templates(
         &self,
         server_id: &str,
-        params: DiscoveryParams,
-    ) -> DiscoveryResult<Vec<ProcessedResourceTemplateInfo>> {
+        params: InspectParams,
+    ) -> InspectResult<Vec<ProcessedResourceTemplateInfo>> {
         let processed = self.get_processed_capabilities(server_id, params).await?;
         Ok(processed.resource_templates)
     }
@@ -232,7 +232,7 @@ impl DiscoveryService {
         &self,
         capability_selections: &CapabilitySelections,
         config_suit_id: &str,
-    ) -> DiscoveryResult<SyncResult> {
+    ) -> InspectResult<SyncResult> {
         tracing::info!(
             "Syncing capability selections for server '{}' to config suit '{}'",
             capability_selections.server_id,
@@ -278,7 +278,7 @@ impl DiscoveryService {
     pub async fn invalidate_server_cache(
         &self,
         server_id: &str,
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         // Get server name before invalidation for event
         let server_name = if let Ok(Some(server)) =
             crate::config::server::get_server(&self.database.pool, server_id).await
@@ -292,7 +292,7 @@ impl DiscoveryService {
 
         // Emit cache invalidation event
         if let Some(event_bus) = &self.event_bus {
-            let event = Event::DiscoveryCacheInvalidated {
+            let event = Event::InspectCacheInvalidated {
                 server_id: server_id.to_string(),
                 server_name,
             };
@@ -303,13 +303,13 @@ impl DiscoveryService {
         Ok(())
     }
 
-    /// Clear all discovery cache
-    pub async fn clear_all_cache(&self) -> DiscoveryResult<()> {
+    /// Clear all inspect cache
+    pub async fn clear_all_cache(&self) -> InspectResult<()> {
         self.cache.clear_all().await?;
 
         // Emit cache clear event
         if let Some(event_bus) = &self.event_bus {
-            let event = Event::DiscoveryCacheCleared;
+            let event = Event::InspectCacheCleared;
 
             event_bus.publish(event);
         }
@@ -318,7 +318,7 @@ impl DiscoveryService {
     }
 
     /// Get cache statistics
-    pub async fn get_cache_stats(&self) -> DiscoveryResult<CacheManagerStats> {
+    pub async fn get_cache_stats(&self) -> InspectResult<CacheManagerStats> {
         self.cache.get_stats().await
     }
 
@@ -326,7 +326,7 @@ impl DiscoveryService {
     pub async fn preload_servers(
         &self,
         server_ids: &[String],
-    ) -> DiscoveryResult<PreloadResult> {
+    ) -> InspectResult<PreloadResult> {
         self.cache.preload_servers(server_ids, &self.database).await
     }
 
@@ -334,7 +334,7 @@ impl DiscoveryService {
     pub async fn start_background_refresh(
         &self,
         server_ids: &[String],
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         self.cache
             .background_refresh(server_ids, &self.database)
             .await
@@ -346,14 +346,14 @@ impl DiscoveryService {
     }
 }
 
-/// Discovery service builder for easier configuration
-pub struct DiscoveryServiceBuilder {
+/// Inspect service builder for easier configuration
+pub struct InspectServiceBuilder {
     database: Option<Database>,
     cache_config: Option<types::CacheConfig>,
     event_bus: Option<Arc<EventBus>>,
 }
 
-impl DiscoveryServiceBuilder {
+impl InspectServiceBuilder {
     /// Create new builder
     pub fn new() -> Self {
         Self {
@@ -390,21 +390,21 @@ impl DiscoveryServiceBuilder {
         self
     }
 
-    /// Build discovery service
-    pub fn build(self) -> DiscoveryResult<DiscoveryService> {
+    /// Build inspect service
+    pub fn build(self) -> InspectResult<InspectService> {
         let database = self.database.ok_or_else(|| {
-            DiscoveryError::InvalidConfig("Database connection is required".to_string())
+            InspectError::InvalidConfig("Database connection is required".to_string())
         })?;
 
         if let Some(cache_config) = self.cache_config {
-            DiscoveryService::with_config(database, cache_config, self.event_bus)
+            InspectService::with_config(database, cache_config, self.event_bus)
         } else {
-            DiscoveryService::new(database, self.event_bus)
+            InspectService::new(database, self.event_bus)
         }
     }
 }
 
-impl Default for DiscoveryServiceBuilder {
+impl Default for InspectServiceBuilder {
     fn default() -> Self {
         Self::new()
     }

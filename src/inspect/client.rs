@@ -1,11 +1,11 @@
-// MCP Discovery Client
-// Provides independent MCP server connection capabilities for discovery system
+// MCP Inspect Client
+// Provides independent MCP server connection capabilities for inspect system
 
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::types::{
-    CapabilitiesMetadata, DiscoveryError, DiscoveryResult, PromptArgument, PromptInfo,
+    CapabilitiesMetadata, InspectError, InspectResult, PromptArgument, PromptInfo,
     ResourceInfo, ServerCapabilities, ToolInfo,
 };
 use crate::common::server::{ServerType, TransportType};
@@ -13,17 +13,17 @@ use crate::config::database::Database;
 use crate::core::models::MCPServerConfig;
 use crate::core::transport::unified;
 
-/// MCP Discovery Client for independent server connections
+/// MCP Inspect Client for independent server connections
 #[derive(Clone)]
-pub struct McpDiscoveryClient {
+pub struct McpInspectClient {
     /// Connection timeout
     connection_timeout: Duration,
     /// Request timeout
     request_timeout: Duration,
 }
 
-impl McpDiscoveryClient {
-    /// Create a new discovery client
+impl McpInspectClient {
+    /// Create a new inspect client
     pub fn new() -> Self {
         Self {
             connection_timeout: Duration::from_secs(30),
@@ -31,7 +31,7 @@ impl McpDiscoveryClient {
         }
     }
 
-    /// Create a new discovery client with custom timeouts
+    /// Create a new inspect client with custom timeouts
     pub fn with_timeouts(
         connection_timeout: Duration,
         request_timeout: Duration,
@@ -47,7 +47,7 @@ impl McpDiscoveryClient {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> InspectResult<ServerCapabilities> {
         // Get server configuration from database
         let server = self.get_server_from_database(server_id, database).await?;
 
@@ -68,7 +68,7 @@ impl McpDiscoveryClient {
         server_id: &str,
         server_config: &MCPServerConfig,
         database: &Database,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> InspectResult<ServerCapabilities> {
         // Create cancellation token for timeout control
         let ct = CancellationToken::new();
 
@@ -89,16 +89,16 @@ impl McpDiscoveryClient {
                 transport_type,
                 Some(ct.clone()),
                 Some(&database.pool),
-                None, // No runtime cache needed for discovery
+                None, // No runtime cache needed for inspect
             ) => result,
             _ = &mut timeout_future => {
                 ct.cancel();
-                return Err(DiscoveryError::Timeout("Connection timeout".to_string()));
+                return Err(InspectError::Timeout("Connection timeout".to_string()));
             }
         };
 
         let (service, tools, server_capabilities, _process_id) =
-            connection_result.map_err(|e| DiscoveryError::ConnectionFailed(e.to_string()))?;
+            connection_result.map_err(|e| InspectError::ConnectionFailed(e.to_string()))?;
 
         // Get additional capabilities from the service
         let resources = self.get_resources_from_service(&service).await?;
@@ -121,7 +121,7 @@ impl McpDiscoveryClient {
         // Cancel the service to clean up
         if let Err(e) = service.cancel().await {
             tracing::warn!(
-                "Failed to cancel discovery service for {}: {}",
+                "Failed to cancel inspect service for {}: {}",
                 server_id,
                 e
             );
@@ -135,12 +135,12 @@ impl McpDiscoveryClient {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<crate::config::models::server::Server> {
+    ) -> InspectResult<crate::config::models::server::Server> {
         // Get server from database by ID (not by name)
         let server = crate::config::server::get_server_by_id(&database.pool, server_id)
             .await
-            .map_err(|e| DiscoveryError::DatabaseError(e.to_string()))?
-            .ok_or_else(|| DiscoveryError::ServerNotFound(server_id.to_string()))?;
+            .map_err(|e| InspectError::DatabaseError(e.to_string()))?
+            .ok_or_else(|| InspectError::ServerNotFound(server_id.to_string()))?;
 
         Ok(server)
     }
@@ -150,17 +150,17 @@ impl McpDiscoveryClient {
         &self,
         server: &crate::config::models::server::Server,
         database: &Database,
-    ) -> DiscoveryResult<MCPServerConfig> {
+    ) -> InspectResult<MCPServerConfig> {
         // Get server arguments and environment variables
         let server_id = server.id.clone().unwrap_or_default();
 
         let args = crate::config::server::get_server_args(&database.pool, &server_id)
             .await
-            .map_err(|e| DiscoveryError::DatabaseError(e.to_string()))?;
+            .map_err(|e| InspectError::DatabaseError(e.to_string()))?;
 
         let env = crate::config::server::get_server_env(&database.pool, &server_id)
             .await
-            .map_err(|e| DiscoveryError::DatabaseError(e.to_string()))?;
+            .map_err(|e| InspectError::DatabaseError(e.to_string()))?;
 
         // Convert args to Vec<String>
         let args_strings: Vec<String> = args.into_iter().map(|arg| arg.arg_value).collect();
@@ -182,7 +182,7 @@ impl McpDiscoveryClient {
     fn transport_to_server_type(
         &self,
         transport_type: &TransportType,
-    ) -> DiscoveryResult<ServerType> {
+    ) -> InspectResult<ServerType> {
         match transport_type {
             TransportType::Stdio => Ok(ServerType::Stdio),
             TransportType::Sse => Ok(ServerType::Sse),
@@ -194,7 +194,7 @@ impl McpDiscoveryClient {
     async fn get_resources_from_service(
         &self,
         service: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
-    ) -> DiscoveryResult<Vec<rmcp::model::Resource>> {
+    ) -> InspectResult<Vec<rmcp::model::Resource>> {
         match tokio::time::timeout(self.request_timeout, service.list_all_resources()).await {
             Ok(Ok(resources)) => Ok(resources),
             Ok(Err(e)) => {
@@ -212,7 +212,7 @@ impl McpDiscoveryClient {
     async fn get_prompts_from_service(
         &self,
         service: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
-    ) -> DiscoveryResult<Vec<rmcp::model::Prompt>> {
+    ) -> InspectResult<Vec<rmcp::model::Prompt>> {
         match tokio::time::timeout(self.request_timeout, service.list_all_prompts()).await {
             Ok(Ok(prompts)) => Ok(prompts),
             Ok(Err(e)) => {
@@ -226,7 +226,7 @@ impl McpDiscoveryClient {
         }
     }
 
-    /// Convert rmcp types to our discovery types
+    /// Convert rmcp types to our inspect types
     async fn convert_capabilities(
         &self,
         server_id: &str,
@@ -235,7 +235,7 @@ impl McpDiscoveryClient {
         prompts: Vec<rmcp::model::Prompt>,
         _server_capabilities: Option<rmcp::model::ServerCapabilities>,
         database: &Database,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> InspectResult<ServerCapabilities> {
         // Convert tools
         let tool_infos: Vec<ToolInfo> = tools
             .into_iter()
@@ -345,7 +345,7 @@ impl McpDiscoveryClient {
     }
 }
 
-impl Default for McpDiscoveryClient {
+impl Default for McpInspectClient {
     fn default() -> Self {
         Self::new()
     }

@@ -7,15 +7,13 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
-use super::client::McpDiscoveryClient;
+use super::client::McpInspectClient;
 use super::storage::{CacheStats, TempFileStorage};
-use super::types::{
-    CacheConfig, DiscoveryError, DiscoveryResult, RefreshStrategy, ServerCapabilities,
-};
+use super::types::{CacheConfig, InspectError, InspectResult, RefreshStrategy, ServerCapabilities};
 use crate::config::database::Database;
 use crate::core::events::{
     bus::EventBus,
-    types::{DiscoveryCacheUpdateType, Event},
+    types::{Event, InspectCacheUpdateType},
 };
 
 /// Dual-level capabilities cache manager
@@ -24,8 +22,8 @@ pub struct CapabilitiesCache {
     memory_cache: Arc<RwLock<LruCache<String, CachedCapabilities>>>,
     /// L2: File storage for warm data
     file_storage: TempFileStorage,
-    /// Discovery client for fetching fresh data
-    client: McpDiscoveryClient,
+    /// Inspect client for fetching fresh data
+    client: McpInspectClient,
     /// Cache configuration
     config: CacheConfig,
     /// Event bus for notifications (optional)
@@ -65,9 +63,9 @@ pub enum CacheLevel {
 
 impl CapabilitiesCache {
     /// Create new capabilities cache
-    pub fn new(config: CacheConfig) -> DiscoveryResult<Self> {
+    pub fn new(config: CacheConfig) -> InspectResult<Self> {
         let memory_cache_size = NonZeroUsize::new(config.memory_cache_size).ok_or_else(|| {
-            DiscoveryError::InvalidConfig("Memory cache size must be greater than 0".to_string())
+            InspectError::InvalidConfig("Memory cache size must be greater than 0".to_string())
         })?;
 
         let memory_cache = Arc::new(RwLock::new(LruCache::new(memory_cache_size)));
@@ -75,7 +73,7 @@ impl CapabilitiesCache {
         let mut file_storage = TempFileStorage::new(config.clone())?;
         file_storage.start_cleanup_scheduler();
 
-        let client = McpDiscoveryClient::new();
+        let client = McpInspectClient::new();
 
         Ok(Self {
             memory_cache,
@@ -90,7 +88,7 @@ impl CapabilitiesCache {
     pub fn with_event_bus(
         config: CacheConfig,
         event_bus: Arc<EventBus>,
-    ) -> DiscoveryResult<Self> {
+    ) -> InspectResult<Self> {
         let mut cache = Self::new(config)?;
         cache.event_bus = Some(event_bus);
         Ok(cache)
@@ -102,7 +100,7 @@ impl CapabilitiesCache {
         server_id: &str,
         refresh_strategy: RefreshStrategy,
         database: &Database,
-    ) -> DiscoveryResult<CacheResult> {
+    ) -> InspectResult<CacheResult> {
         match refresh_strategy {
             RefreshStrategy::CacheFirst => {
                 self.get_capabilities_cache_first(server_id, database).await
@@ -123,7 +121,7 @@ impl CapabilitiesCache {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<CacheResult> {
+    ) -> InspectResult<CacheResult> {
         // Try L1 cache first
         if let Some(capabilities) = self.get_from_memory_cache(server_id).await {
             tracing::debug!("Cache hit (L1) for server '{}'", server_id);
@@ -161,7 +159,7 @@ impl CapabilitiesCache {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<CacheResult> {
+    ) -> InspectResult<CacheResult> {
         // Check L1 cache with TTL
         if let Some(cached) = self.get_from_memory_cache_with_metadata(server_id).await {
             if !self.is_stale(&cached) {
@@ -206,7 +204,7 @@ impl CapabilitiesCache {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<CacheResult> {
+    ) -> InspectResult<CacheResult> {
         tracing::debug!("Force refresh for server '{}'", server_id);
         let capabilities = self.fetch_and_cache(server_id, database).await?;
         Ok(CacheResult {
@@ -248,7 +246,7 @@ impl CapabilitiesCache {
     async fn get_from_file_cache(
         &self,
         server_id: &str,
-    ) -> DiscoveryResult<Option<ServerCapabilities>> {
+    ) -> InspectResult<Option<ServerCapabilities>> {
         self.file_storage.load_capabilities(server_id).await
     }
 
@@ -273,7 +271,7 @@ impl CapabilitiesCache {
         &self,
         server_id: &str,
         database: &Database,
-    ) -> DiscoveryResult<ServerCapabilities> {
+    ) -> InspectResult<ServerCapabilities> {
         // Fetch fresh data from server
         let capabilities = self
             .client
@@ -321,7 +319,7 @@ impl CapabilitiesCache {
     pub async fn invalidate(
         &self,
         server_id: &str,
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         // Remove from memory cache
         {
             let mut cache = self.memory_cache.write().await;
@@ -335,7 +333,7 @@ impl CapabilitiesCache {
     }
 
     /// Clear all cache entries
-    pub async fn clear_all(&self) -> DiscoveryResult<()> {
+    pub async fn clear_all(&self) -> InspectResult<()> {
         // Clear memory cache
         {
             let mut cache = self.memory_cache.write().await;
@@ -350,7 +348,7 @@ impl CapabilitiesCache {
     }
 
     /// Get cache statistics
-    pub async fn get_stats(&self) -> DiscoveryResult<CacheManagerStats> {
+    pub async fn get_stats(&self) -> InspectResult<CacheManagerStats> {
         let memory_stats = {
             let cache = self.memory_cache.read().await;
             MemoryCacheStats {
@@ -372,7 +370,7 @@ impl CapabilitiesCache {
         &self,
         server_ids: &[String],
         database: &Database,
-    ) -> DiscoveryResult<PreloadResult> {
+    ) -> InspectResult<PreloadResult> {
         let mut successful = Vec::new();
         let mut failed = Vec::new();
 
@@ -404,7 +402,7 @@ impl CapabilitiesCache {
         &self,
         server_ids: &[String],
         database: &Database,
-    ) -> DiscoveryResult<()> {
+    ) -> InspectResult<()> {
         let cache = self.memory_cache.clone();
         let client = self.client.clone();
         let file_storage = &self.file_storage;
@@ -446,10 +444,10 @@ impl CapabilitiesCache {
 
                         // Emit background refresh event
                         if let Some(event_bus) = &event_bus {
-                            let event = Event::DiscoveryCacheUpdated {
+                            let event = Event::InspectCacheUpdated {
                                 server_id: server_id.clone(),
                                 server_name: capabilities.server_name.clone(),
-                                update_type: DiscoveryCacheUpdateType::BackgroundRefresh,
+                                update_type: InspectCacheUpdateType::BackgroundRefresh,
                             };
                             event_bus.publish(event);
                         }

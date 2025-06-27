@@ -1,5 +1,5 @@
-// Discovery system core data types
-// Provides type definitions for the MCPMate discovery system
+// Inspect system core data types
+// Provides type definitions for the MCPMate inspect system
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -177,7 +177,7 @@ pub enum RefreshStrategy {
     Force,
 }
 
-/// Response format for discovery APIs
+/// Response format for inspect APIs
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
 pub enum ResponseFormat {
     /// Standard JSON format
@@ -216,9 +216,9 @@ impl Default for CacheConfig {
     }
 }
 
-/// Discovery query parameters
+/// Inspect query parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoveryParams {
+pub struct InspectParams {
     /// Refresh strategy
     pub refresh: Option<RefreshStrategy>,
     /// Response format
@@ -227,7 +227,7 @@ pub struct DiscoveryParams {
     pub include_meta: Option<bool>,
 }
 
-impl Default for DiscoveryParams {
+impl Default for InspectParams {
     fn default() -> Self {
         Self {
             refresh: Some(RefreshStrategy::default()),
@@ -267,9 +267,9 @@ pub struct SyncResult {
     pub error: Option<String>,
 }
 
-/// Discovery system errors
+/// Inspect system errors
 #[derive(Debug, thiserror::Error)]
-pub enum DiscoveryError {
+pub enum InspectError {
     #[error("Server '{0}' not found")]
     ServerNotFound(String),
 
@@ -301,19 +301,19 @@ pub enum DiscoveryError {
     DatabaseError(String),
 }
 
-/// Type alias for discovery results
-pub type DiscoveryResult<T> = Result<T, DiscoveryError>;
+/// Type alias for inspect results
+pub type InspectResult<T> = Result<T, InspectError>;
 
-/// Discovery API response wrapper with metadata
+/// Inspect API response wrapper with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoveryResponse<T> {
+pub struct InspectResponse<T> {
     /// Response data
     pub data: T,
     /// Response metadata
     pub meta: Option<ResponseMetadata>,
 }
 
-/// Response metadata for discovery APIs
+/// Response metadata for inspect APIs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseMetadata {
     /// Refresh strategy used

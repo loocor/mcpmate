@@ -1,5 +1,5 @@
 // Server prompts handlers
-// Provides handlers for server prompt discovery endpoints
+// Provides handlers for server prompt inspect endpoints
 
 use axum::{
     extract::{Path, Query, State},
@@ -9,21 +9,21 @@ use std::sync::Arc;
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    discovery::{DiscoveryParams, ProcessedPromptInfo, types::PromptArgument},
+    inspect::{InspectParams, ProcessedPromptInfo, types::PromptArgument},
 };
 
 use super::common::{
-    create_discovery_response, get_database_from_state, get_discovery_service,
-    handle_discovery_error, resolve_server_identifier, validate_server_id,
+    create_inspect_response, get_database_from_state, get_inspect_service,
+    handle_inspect_error, resolve_server_identifier, validate_server_id,
 };
 
 /// Query parameters for prompts endpoints
 #[derive(Debug, serde::Deserialize)]
 pub struct PromptsQuery {
     /// Refresh strategy for prompt queries
-    pub refresh: Option<crate::discovery::RefreshStrategy>,
+    pub refresh: Option<crate::inspect::RefreshStrategy>,
     /// Response format
-    pub format: Option<crate::discovery::ResponseFormat>,
+    pub format: Option<crate::inspect::ResponseFormat>,
     /// Whether to include metadata
     pub include_meta: Option<bool>,
     /// Timeout in seconds
@@ -31,9 +31,9 @@ pub struct PromptsQuery {
 }
 
 impl PromptsQuery {
-    /// Convert to DiscoveryParams
-    pub fn to_params(&self) -> Result<DiscoveryParams, ApiError> {
-        Ok(DiscoveryParams {
+    /// Convert to InspectParams
+    pub fn to_params(&self) -> Result<InspectParams, ApiError> {
+        Ok(InspectParams {
             refresh: self.refresh,
             format: self.format,
             include_meta: self.include_meta,
@@ -51,7 +51,7 @@ pub async fn list_prompts(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
     Query(query): Query<PromptsQuery>,
-) -> Result<Json<crate::discovery::DiscoveryResponse<Vec<ProcessedPromptInfo>>>, ApiError> {
+) -> Result<Json<crate::inspect::InspectResponse<Vec<ProcessedPromptInfo>>>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -62,20 +62,20 @@ pub async fn list_prompts(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get discovery service
-    let discovery_service = get_discovery_service(&state).await?;
+    // Get inspect service
+    let inspect_service = get_inspect_service(&state).await?;
 
     // Add timeout control
     let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
     let prompts_result = tokio::time::timeout(timeout, async {
-        discovery_service
+        inspect_service
             .get_server_prompts(&server_info.server_id, params.clone())
             .await
     })
     .await;
 
     let prompts = match prompts_result {
-        Ok(result) => result.map_err(handle_discovery_error)?,
+        Ok(result) => result.map_err(handle_inspect_error)?,
         Err(_) => {
             return Err(ApiError::Timeout(format!(
                 "Prompts request for server '{}' timed out after {}s",
@@ -86,7 +86,7 @@ pub async fn list_prompts(
     };
 
     // Create response with metadata
-    let response = create_discovery_response(
+    let response = create_inspect_response(
         prompts,
         &params,
         Some(false), // No direct caching for this endpoint
@@ -114,7 +114,7 @@ pub async fn get_prompt_arguments(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
     Query(query): Query<PromptsQuery>,
-) -> Result<Json<crate::discovery::DiscoveryResponse<Vec<PromptArgumentInfo>>>, ApiError> {
+) -> Result<Json<crate::inspect::InspectResponse<Vec<PromptArgumentInfo>>>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -125,20 +125,20 @@ pub async fn get_prompt_arguments(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get discovery service
-    let discovery_service = get_discovery_service(&state).await?;
+    // Get inspect service
+    let inspect_service = get_inspect_service(&state).await?;
 
     // Add timeout control
     let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
     let prompts_result = tokio::time::timeout(timeout, async {
-        discovery_service
+        inspect_service
             .get_server_prompts(&server_info.server_id, params.clone())
             .await
     })
     .await;
 
     let prompts = match prompts_result {
-        Ok(result) => result.map_err(handle_discovery_error)?,
+        Ok(result) => result.map_err(handle_inspect_error)?,
         Err(_) => {
             return Err(ApiError::Timeout(format!(
                 "Prompt arguments request for server '{}' timed out after {}s",
@@ -161,7 +161,7 @@ pub async fn get_prompt_arguments(
     }
 
     // Create response with metadata
-    let response = create_discovery_response(
+    let response = create_inspect_response(
         argument_info,
         &params,
         Some(false), // No direct caching for this endpoint

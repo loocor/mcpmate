@@ -2,7 +2,7 @@
 // Handles capability data processing, filtering, and format conversion
 
 use super::types::{
-    DiscoveryError, DiscoveryResult, PromptArgument, PromptInfo, ResourceInfo,
+    InspectError, InspectResult, PromptArgument, PromptInfo, ResourceInfo,
     ResourceTemplateInfo, ResponseFormat, ServerCapabilities, ToolInfo,
 };
 use crate::config::database::Database;
@@ -24,7 +24,7 @@ impl CapabilitiesProcessor {
         &self,
         capabilities: &ServerCapabilities,
         format: ResponseFormat,
-    ) -> DiscoveryResult<ProcessedCapabilities> {
+    ) -> InspectResult<ProcessedCapabilities> {
         let tools = self
             .process_tools(&capabilities.tools, &capabilities.server_id, format)
             .await?;
@@ -58,7 +58,7 @@ impl CapabilitiesProcessor {
         tools: &[ToolInfo],
         server_id: &str,
         format: ResponseFormat,
-    ) -> DiscoveryResult<Vec<ProcessedToolInfo>> {
+    ) -> InspectResult<Vec<ProcessedToolInfo>> {
         let mut processed_tools = Vec::new();
 
         for tool in tools {
@@ -99,7 +99,7 @@ impl CapabilitiesProcessor {
         resources: &[ResourceInfo],
         _server_id: &str,
         format: ResponseFormat,
-    ) -> DiscoveryResult<Vec<ProcessedResourceInfo>> {
+    ) -> InspectResult<Vec<ProcessedResourceInfo>> {
         let mut processed_resources = Vec::new();
 
         for resource in resources {
@@ -140,7 +140,7 @@ impl CapabilitiesProcessor {
         prompts: &[PromptInfo],
         _server_id: &str,
         format: ResponseFormat,
-    ) -> DiscoveryResult<Vec<ProcessedPromptInfo>> {
+    ) -> InspectResult<Vec<ProcessedPromptInfo>> {
         let mut processed_prompts = Vec::new();
 
         for prompt in prompts {
@@ -177,7 +177,7 @@ impl CapabilitiesProcessor {
         &self,
         resource_templates: &[ResourceTemplateInfo],
         format: ResponseFormat,
-    ) -> DiscoveryResult<Vec<ProcessedResourceTemplateInfo>> {
+    ) -> InspectResult<Vec<ProcessedResourceTemplateInfo>> {
         let mut processed_templates = Vec::new();
 
         for template in resource_templates {
@@ -217,12 +217,12 @@ impl CapabilitiesProcessor {
         &self,
         server_id: &str,
         tool_name: &str,
-    ) -> DiscoveryResult<Option<String>> {
+    ) -> InspectResult<Option<String>> {
         if let Some(database) = &self.database {
             // Get server name from server_id
             let server = crate::config::server::get_server(&database.pool, server_id)
                 .await
-                .map_err(|e| DiscoveryError::DatabaseError(e.to_string()))?;
+                .map_err(|e| InspectError::DatabaseError(e.to_string()))?;
 
             if let Some(server) = server {
                 // Query server_tools table for unique name
@@ -237,7 +237,7 @@ impl CapabilitiesProcessor {
                 .bind(tool_name)
                 .fetch_optional(&database.pool)
                 .await
-                .map_err(|e| DiscoveryError::DatabaseError(e.to_string()))?;
+                .map_err(|e| InspectError::DatabaseError(e.to_string()))?;
 
                 Ok(unique_name)
             } else {
@@ -257,7 +257,7 @@ impl CapabilitiesProcessor {
         prompts: &[ProcessedPromptInfo],
         resource_templates: &[ProcessedResourceTemplateInfo],
     ) -> CapabilitiesSummary {
-        // Count total items (no enabled/disabled distinction in Discovery API)
+        // Count total items (no enabled/disabled distinction in Inspect API)
         let total_tools = tools.len();
         let total_resources = resources.len();
         let total_prompts = prompts.len();

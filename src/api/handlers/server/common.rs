@@ -12,7 +12,7 @@ use crate::{
     },
     config::{database::Database, server},
     core::pool::UpstreamConnectionPool,
-    discovery::{DiscoveryParams, DiscoveryService},
+    inspect::{InspectParams, InspectService},
 };
 
 /// Server identification result
@@ -301,30 +301,28 @@ pub fn get_database_from_state(state: &Arc<AppState>) -> Result<Arc<Database>, A
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))
 }
 
-/// Get discovery service from application state
+/// Get inspect service from application state
 ///
-/// Helper function to extract discovery service from AppState
+/// Helper function to extract inspect service from AppState
 /// with proper error handling.
-pub async fn get_discovery_service(
-    state: &Arc<AppState>
-) -> Result<&Arc<DiscoveryService>, ApiError> {
+pub async fn get_inspect_service(state: &Arc<AppState>) -> Result<&Arc<InspectService>, ApiError> {
     state
-        .discovery_service
+        .inspect_service
         .as_ref()
-        .ok_or_else(|| ApiError::InternalError("Discovery service not available".to_string()))
+        .ok_or_else(|| ApiError::InternalError("Inspect service not available".to_string()))
 }
 
-/// Create standardized discovery response with metadata
+/// Create standardized inspect response with metadata
 ///
 /// This function provides consistent response formatting across
-/// all discovery endpoints.
-pub fn create_discovery_response<T>(
+/// all inspect endpoints.
+pub fn create_inspect_response<T>(
     data: T,
-    params: &DiscoveryParams,
+    params: &InspectParams,
     cache_hit: Option<bool>,
-    capabilities_metadata: Option<&crate::discovery::types::CapabilitiesMetadata>,
-) -> crate::discovery::DiscoveryResponse<T> {
-    use crate::discovery::{DiscoveryResponse, ResponseMetadata};
+    capabilities_metadata: Option<&crate::inspect::types::CapabilitiesMetadata>,
+) -> crate::inspect::InspectResponse<T> {
+    use crate::inspect::{InspectResponse, ResponseMetadata};
 
     let metadata = Some(ResponseMetadata {
         refresh_strategy: params.refresh.unwrap_or_default(),
@@ -342,7 +340,7 @@ pub fn create_discovery_response<T>(
         protocol_version: capabilities_metadata.and_then(|m| m.protocol_version.clone()),
     });
 
-    DiscoveryResponse {
+    InspectResponse {
         data,
         meta: metadata,
     }
@@ -369,25 +367,25 @@ pub fn validate_server_id(server_id: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Handle discovery service errors with appropriate HTTP status codes
+/// Handle inspect service errors with appropriate HTTP status codes
 ///
-/// Converts discovery service errors to appropriate API errors
-pub fn handle_discovery_error(error: crate::discovery::DiscoveryError) -> ApiError {
-    use crate::discovery::DiscoveryError;
+/// Converts inspect service errors to appropriate API errors
+pub fn handle_inspect_error(error: crate::inspect::InspectError) -> ApiError {
+    use crate::inspect::InspectError;
 
     match error {
-        DiscoveryError::ServerNotFound(msg) => ApiError::NotFound(msg),
-        DiscoveryError::ConnectionFailed(msg) => ApiError::Timeout(msg),
-        DiscoveryError::InvalidConfig(msg) => ApiError::BadRequest(msg),
-        DiscoveryError::CacheError(msg) => ApiError::InternalError(format!("Cache error: {msg}")),
-        DiscoveryError::Timeout(msg) => ApiError::Timeout(msg),
-        DiscoveryError::SerializationError(msg) => {
+        InspectError::ServerNotFound(msg) => ApiError::NotFound(msg),
+        InspectError::ConnectionFailed(msg) => ApiError::Timeout(msg),
+        InspectError::InvalidConfig(msg) => ApiError::BadRequest(msg),
+        InspectError::CacheError(msg) => ApiError::InternalError(format!("Cache error: {msg}")),
+        InspectError::Timeout(msg) => ApiError::Timeout(msg),
+        InspectError::SerializationError(msg) => {
             ApiError::InternalError(format!("Serialization error: {msg}"))
         }
-        DiscoveryError::PermissionDenied(msg) => ApiError::Forbidden(msg),
-        DiscoveryError::IoError(err) => ApiError::InternalError(format!("IO error: {err}")),
-        DiscoveryError::JsonError(err) => ApiError::InternalError(format!("JSON error: {err}")),
-        DiscoveryError::DatabaseError(msg) => {
+        InspectError::PermissionDenied(msg) => ApiError::Forbidden(msg),
+        InspectError::IoError(err) => ApiError::InternalError(format!("IO error: {err}")),
+        InspectError::JsonError(err) => ApiError::InternalError(format!("JSON error: {err}")),
+        InspectError::DatabaseError(msg) => {
             ApiError::InternalError(format!("Database error: {msg}"))
         }
     }
@@ -411,10 +409,10 @@ mod tests {
     }
 
     #[test]
-    fn test_create_discovery_response() {
+    fn test_create_inspect_response() {
         let data = vec!["test"];
-        let params = DiscoveryParams::default();
-        let response = create_discovery_response(data, &params, Some(true), None);
+        let params = InspectParams::default();
+        let response = create_inspect_response(data, &params, Some(true), None);
 
         assert_eq!(response.data, vec!["test"]);
         assert!(response.meta.is_some());
