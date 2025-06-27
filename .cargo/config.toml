@@ -1,0 +1,25 @@
+# MCPMate Cargo Configuration
+# Optimizations for faster compilation and better development experience
+
+# Build Configuration
+[build]
+incremental = true
+
+# Network Configuration
+[net]
+offline = false
+retry = 2
+
+# Registry Configuration
+[registries.crates-io]
+protocol = "sparse"
+
+# Development Profile Optimizations
+[profile.dev]
+split-debuginfo = "unpacked"
+
+# Alternative Chinese Mirror (uncomment if needed)
+# [source.crates-io]
+# replace-with = "ustc"
+# [source.ustc]
+# registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"
