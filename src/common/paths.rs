@@ -11,8 +11,6 @@ pub mod constants {
     pub const MCPMATE_DIR_NAME: &str = ".mcpmate";
     pub const RUNTIMES_DIR_NAME: &str = "runtimes";
     pub const CACHE_DIR_NAME: &str = "cache";
-    pub const CONFIG_DIR_NAME: &str = "config";
-    pub const TMP_DIR_NAME: &str = "tmp";
     pub const DOWNLOADS_DIR_NAME: &str = "downloads";
     pub const BIN_DIR_NAME: &str = "bin";
     pub const DATABASE_FILE_NAME: &str = "mcpmate.db";
@@ -49,14 +47,9 @@ impl MCPMatePaths {
         self.base_dir.join(constants::CACHE_DIR_NAME)
     }
 
-    /// Get the config directory (~/.mcpmate/config)
-    pub fn config_dir(&self) -> PathBuf {
-        self.base_dir.join(constants::CONFIG_DIR_NAME)
-    }
-
-    /// Get the temporary directory (~/.mcpmate/tmp)
-    pub fn tmp_dir(&self) -> PathBuf {
-        self.base_dir.join(constants::TMP_DIR_NAME)
+    /// Get the capability cache directory (~/.mcpmate/cache/capability)
+    pub fn capability_cache_dir(&self) -> PathBuf {
+        self.cache_dir().join("capability")
     }
 
     /// Get the downloads directory (system temp dir)
@@ -115,8 +108,7 @@ impl MCPMatePaths {
             self.base_dir.clone(),
             self.runtimes_dir(),
             self.cache_dir(),
-            self.config_dir(),
-            self.tmp_dir(),
+            self.capability_cache_dir(),
         ];
 
         for dir in &dirs {

@@ -22,11 +22,18 @@ pub fn setup_logging(args: &Args) -> Result<()> {
     // Use try_init() to avoid panic on repeated calls
     let result = tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::from_default_env().add_directive(
-                args.log_level
-                    .parse()
-                    .unwrap_or(tracing::Level::INFO.into()),
-            ),
+            EnvFilter::from_default_env()
+                .add_directive(
+                    args.log_level
+                        .parse()
+                        .unwrap_or(tracing::Level::WARN.into()), // Changed default from INFO to WARN
+                )
+                // Reduce noise from specific modules
+                .add_directive("rmcp=warn".parse().unwrap())
+                .add_directive("mcpmate::inspect=warn".parse().unwrap())
+                .add_directive("mcpmate::core::transport=warn".parse().unwrap())
+                .add_directive("mcpmate::system::metrics=error".parse().unwrap())
+                .add_directive("sqlx=error".parse().unwrap())
         )
         .try_init();
 

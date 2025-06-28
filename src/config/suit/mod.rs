@@ -30,6 +30,7 @@ pub use prompt::{
 // Server association operations
 pub use server::{
     add_server_to_config_suit, get_config_suit_servers, remove_server_from_config_suit,
+    sync_server_capabilities_to_suit,
 };
 
 // Resource association operations

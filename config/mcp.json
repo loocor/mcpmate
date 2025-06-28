@@ -10,57 +10,27 @@
       "type": "stdio"
     },
     "context7": {
-      "args": [
-        "-y",
-        "@upstash/context7-mcp@latest"
-      ],
+      "args": ["-y", "@upstash/context7-mcp@latest"],
       "command": "npx",
       "type": "stdio"
     },
     "deepwiki": {
-      "args": [
-        "-y",
-        "mcp-deepwiki@latest"
-      ],
+      "args": ["-y", "mcp-deepwiki@latest"],
       "command": "npx",
       "type": "stdio"
     },
     "everything": {
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-everything"
-      ],
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
       "command": "npx",
       "type": "stdio"
     },
-    "feedback": {
-      "args": [
-        "mcp-feedback-enhanced@latest"
-      ],
-      "autoApprove": [
-        "interactive_feedback"
-      ],
-      "command": "uvx",
-      "env": {
-        "MCP_DEBUG": "false",
-        "MCP_DESKTOP_MODE": "true",
-        "MCP_WEB_PORT": "8765"
-      },
-      "timeout": 600,
-      "type": "stdio"
-    },
     "fetch": {
-      "args": [
-        "mcp-server-fetch"
-      ],
+      "args": ["mcp-server-fetch"],
       "command": "uvx",
       "type": "stdio"
     },
     "firecrawl": {
-      "args": [
-        "-y",
-        "firecrawl-mcp"
-      ],
+      "args": ["-y", "firecrawl-mcp"],
       "command": "npx",
       "env": {
         "FIRECRAWL_API_KEY": "fc-200cbeb18dd647818bbbc10c30e7b9c0"
@@ -68,21 +38,12 @@
       "type": "stdio"
     },
     "playdocker": {
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "--init",
-        "mcp/playwright"
-      ],
+      "args": ["run", "-i", "--rm", "--init", "mcp/playwright"],
       "command": "docker",
       "type": "stdio"
     },
     "playwright": {
-      "args": [
-        "-y",
-        "@executeautomation/playwright-mcp-server"
-      ],
+      "args": ["-y", "@executeautomation/playwright-mcp-server"],
       "command": "npx",
       "type": "stdio"
     },

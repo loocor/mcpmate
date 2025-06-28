@@ -176,6 +176,71 @@ async fn add_server_to_suit(
         .map(|_| ())
 }
 
+/// Add server to config suit with capabilities sync
+async fn add_server_to_suit_with_sync(
+    state: &Arc<AppState>,
+    db: &Database,
+    suit_id: &str,
+    server_id: &str,
+    enabled: bool,
+) -> Result<(), ApiError> {
+    // Add server to suit
+    suit::add_server_to_config_suit(&db.pool, suit_id, server_id, enabled)
+        .await
+        .map_err(db_error)?;
+
+    // Sync server capabilities to the configuration suit (async, non-blocking)
+    if let Some(inspect_service) = &state.inspect_service {
+        let pool_clone = db.pool.clone();
+        let suit_id_clone = suit_id.to_string();
+        let server_id_clone = server_id.to_string();
+        let inspect_service_clone = inspect_service.clone();
+
+        // Use the same semaphore to limit concurrent operations
+        static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+        let semaphore = CAPABILITY_SYNC_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(2));
+
+        tokio::spawn(async move {
+            // Acquire semaphore permit
+            let _permit = match semaphore.try_acquire() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    tracing::warn!(
+                        "Too many concurrent capability sync operations. Skipping sync for server {} to suit {}",
+                        server_id_clone,
+                        suit_id_clone
+                    );
+                    return;
+                }
+            };
+
+            if let Err(e) = crate::config::suit::sync_server_capabilities_to_suit(
+                &pool_clone,
+                &suit_id_clone,
+                &server_id_clone,
+                &inspect_service_clone,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to sync capabilities for server {} to suit {}: {}",
+                    server_id_clone,
+                    suit_id_clone,
+                    e
+                );
+            } else {
+                tracing::info!(
+                    "Successfully synced capabilities for server {} to suit {}",
+                    server_id_clone,
+                    suit_id_clone
+                );
+            }
+        });
+    }
+
+    Ok(())
+}
+
 /// Create server metadata
 async fn create_server_metadata(
     db: &Database,
@@ -347,7 +412,7 @@ pub async fn update_server(
     // Update server enabled status if provided
     if let Some(enabled) = payload.enabled {
         let suit_id = get_or_create_default_config_suit(&db).await?;
-        add_server_to_suit(&db, &suit_id, &server_id, enabled).await?;
+        add_server_to_suit_with_sync(&state, &db, &suit_id, &server_id, enabled).await?;
         tracing::info!(
             "Updated server '{}' enabled status to {} in default config suit",
             name,
@@ -385,6 +450,7 @@ pub async fn update_server(
 
 /// Helper function to import a single server
 async fn import_single_server(
+    state: &Arc<AppState>,
     db: &Database,
     name: String,
     config: crate::api::models::server::ImportServerConfig,
@@ -426,7 +492,7 @@ async fn import_single_server(
 
     // Add to default config suit
     if let Ok(suit_id) = get_or_create_default_config_suit(db).await {
-        let _ = add_server_to_suit(db, &suit_id, &server_id, true).await;
+        let _ = add_server_to_suit_with_sync(state, db, &suit_id, &server_id, true).await;
     }
 
     Ok(())
@@ -445,7 +511,7 @@ pub async fn import_servers(
 
     // Process each server in the payload
     for (name, config) in payload.mcp_servers {
-        match import_single_server(&db, name.clone(), config).await {
+        match import_single_server(&state, &db, name.clone(), config).await {
             Ok(()) => {
                 tracing::info!("Successfully imported server '{}'", name);
                 imported_servers.push(name);

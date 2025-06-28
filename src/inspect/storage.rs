@@ -16,7 +16,7 @@ use super::types::{
     ServerCapabilities,
 };
 
-/// Temporary file storage for capabilities cache
+/// File storage for capabilities cache
 pub struct TempFileStorage {
     /// Cache directory path
     cache_dir: PathBuf,
@@ -24,9 +24,6 @@ pub struct TempFileStorage {
     config: CacheConfig,
     /// Cleanup scheduler
     cleanup_interval: Option<Interval>,
-    /// Current process ID for session isolation
-    #[allow(dead_code)]
-    process_id: u32,
     /// Mutex to protect manifest file operations
     manifest_mutex: Arc<Mutex<()>>,
 }
@@ -37,37 +34,34 @@ impl Clone for TempFileStorage {
             cache_dir: self.cache_dir.clone(),
             config: self.config.clone(),
             cleanup_interval: None, // Don't clone interval, each instance manages its own
-            process_id: self.process_id,
             manifest_mutex: Arc::clone(&self.manifest_mutex),
         }
     }
 }
 
 impl TempFileStorage {
-    /// Create new temporary file storage
+    /// Create new file storage for capabilities cache
     pub fn new(config: CacheConfig) -> InspectResult<Self> {
-        let process_id = std::process::id();
-        let cache_dir = Self::create_cache_directory(process_id)?;
+        let cache_dir = Self::create_cache_directory()?;
 
         Ok(Self {
             cache_dir,
             config,
             cleanup_interval: None,
-            process_id,
             manifest_mutex: Arc::new(Mutex::new(())),
         })
     }
 
-    /// Create cache directory in system temp
-    fn create_cache_directory(process_id: u32) -> InspectResult<PathBuf> {
-        let temp_dir = std::env::temp_dir();
-        let cache_dir = temp_dir.join(format!("mcpmate-capabilities/session-{}", process_id));
+    /// Create cache directory in MCPMate cache folder
+    fn create_cache_directory() -> InspectResult<PathBuf> {
+        let paths = crate::common::paths::global_paths();
+        let cache_dir = paths.capability_cache_dir();
 
         fs::create_dir_all(&cache_dir).map_err(|e| {
-            InspectError::CacheError(format!("Failed to create cache directory: {}", e))
+            InspectError::CacheError(format!("Failed to create capability cache directory: {}", e))
         })?;
 
-        tracing::info!("Created inspect cache directory: {:?}", cache_dir);
+        tracing::info!("Created capability cache directory: {:?}", cache_dir);
         Ok(cache_dir)
     }
 
