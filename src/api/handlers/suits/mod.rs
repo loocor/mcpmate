@@ -8,7 +8,7 @@ pub use self::{
     helpers::{
         check_resource_belongs_to_suit, check_tool_belongs_to_suit, get_resource_by_id,
         get_resource_or_error, get_server_or_error, get_suit_or_error, get_tool_or_error,
-        get_tool_with_details_or_error,
+        get_tool_with_details_or_error, get_or_create_tool_by_name, resolve_tool_for_batch_operation,
     },
     mgmt::{activate_suit, batch_activate_suits, batch_deactivate_suits, deactivate_suit},
     prompt::{
