@@ -5,7 +5,7 @@
 //! this module provides basic pagination support for aggregated MCP resources,
 //! following the MCP specification 2025-03-26.
 
-use rmcp::Error as McpError;
+use rmcp::ErrorData as McpError;
 use rmcp::model::{Cursor, PaginatedRequestParam};
 use serde::{Deserialize, Serialize};
 

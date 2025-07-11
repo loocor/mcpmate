@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use once_cell::sync::OnceCell;
 use rmcp::{
-    ClientHandler, Error as McpError, RoleClient, RoleServer, ServerHandler,
+    ClientHandler, ErrorData as McpError, RoleClient, RoleServer, ServerHandler,
     model::{
         CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, Implementation,
         ProtocolVersion, ServerCapabilities, ServerInfo,

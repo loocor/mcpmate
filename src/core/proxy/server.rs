@@ -8,7 +8,7 @@ use std::{net::SocketAddr, sync::Arc};
 use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
 use rmcp::{
-    Error as McpError, RoleServer, ServerHandler, Service,
+    ErrorData as McpError, RoleServer, ServerHandler, Service,
     model::{
         CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult,
         ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParam,
