@@ -5,8 +5,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::types::{
-    CapabilitiesMetadata, InspectError, InspectResult, PromptArgument, PromptInfo,
-    ResourceInfo, ServerCapabilities, ToolInfo,
+    CapabilitiesMetadata, InspectError, InspectResult, PromptArgument, PromptInfo, ResourceInfo,
+    ServerCapabilities, ToolInfo,
 };
 use crate::common::server::{ServerType, TransportType};
 use crate::config::database::Database;
@@ -76,9 +76,16 @@ impl McpInspectClient {
         let timeout_future = tokio::time::sleep(self.connection_timeout);
         tokio::pin!(timeout_future);
 
-        // Use the transport type from config, with fallback
-        let transport_type = server_config.transport_type.unwrap_or(TransportType::Stdio);
-        let server_type = self.transport_to_server_type(&transport_type)?;
+        // Use the server type directly from config (from database)
+        let server_type = server_config.kind;
+        let transport_type = server_config.transport_type.unwrap_or({
+            // Derive transport type from server type if missing
+            match server_type {
+                ServerType::Stdio => TransportType::Stdio,
+                ServerType::Sse => TransportType::Sse,
+                ServerType::StreamableHttp => TransportType::StreamableHttp,
+            }
+        });
 
         // Connect using unified transport interface
         let connection_result = tokio::select! {
@@ -120,11 +127,7 @@ impl McpInspectClient {
 
         // Cancel the service to clean up
         if let Err(e) = service.cancel().await {
-            tracing::warn!(
-                "Failed to cancel inspect service for {}: {}",
-                server_id,
-                e
-            );
+            tracing::warn!("Failed to cancel inspect service for {}: {}", server_id, e);
         }
 
         Ok(capabilities)
@@ -176,18 +179,6 @@ impl McpInspectClient {
             url: server.url.clone(),
             transport_type: server.transport_type,
         })
-    }
-
-    /// Convert transport type to server type
-    fn transport_to_server_type(
-        &self,
-        transport_type: &TransportType,
-    ) -> InspectResult<ServerType> {
-        match transport_type {
-            TransportType::Stdio => Ok(ServerType::Stdio),
-            TransportType::Sse => Ok(ServerType::Sse),
-            TransportType::StreamableHttp => Ok(ServerType::StreamableHttp),
-        }
     }
 
     /// Get resources from the service
