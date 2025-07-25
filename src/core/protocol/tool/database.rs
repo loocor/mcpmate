@@ -87,9 +87,9 @@ impl DatabaseToolService {
         };
 
         // Build tool list for each enabled tool with fault isolation
-        for (unique_name, server_name, tool_name, _server_id) in enabled_tools {
+        for (unique_name, server_name, tool_name, _server_id) in &enabled_tools {
             // Find the server instance in the connection pool
-            if let Some(instances) = pool.connections.get(&server_name) {
+            if let Some(instances) = pool.connections.get(server_name) {
                 // Find a connected instance for this server
                 let mut found = false;
                 for conn in instances.values() {
@@ -127,7 +127,7 @@ impl DatabaseToolService {
                     }
 
                     // Find the tool in this instance
-                    if let Some(tool) = conn.tools.iter().find(|t| t.name == tool_name) {
+                    if let Some(tool) = conn.tools.iter().find(|t| t.name == *tool_name) {
                         // Create a modified tool with the unique name from database
                         let mut unique_tool = tool.clone();
                         unique_tool.name = unique_name.clone().into();
@@ -154,10 +154,45 @@ impl DatabaseToolService {
             }
         }
 
+        let tools_count = all_tools.len();
+        let enabled_tools_count = enabled_tools.len();
+
         tracing::info!(
             "Found {} enabled tools from database (authoritative method, fault-isolated)",
-            all_tools.len()
+            tools_count
         );
+
+        // Add diagnostic logging when no tools are found
+        if all_tools.is_empty() {
+            tracing::warn!(
+                "DIAGNOSTIC: Tool database returned 0 enabled tools - Enabled tools in config: {}",
+                enabled_tools_count
+            );
+
+            // Log connection states for each server
+            for (unique_name, server_name, _tool_name, _server_id) in &enabled_tools {
+                if let Some(instances) = pool.connections.get(server_name) {
+                    for (inst_id, conn) in instances {
+                        tracing::warn!(
+                            "DIAGNOSTIC: Tool '{}' from server '{}' instance '{}' - Status: {:?}, Connected: {}, Disabled: {}",
+                            unique_name,
+                            server_name,
+                            inst_id,
+                            conn.status,
+                            conn.is_connected(),
+                            conn.is_disabled()
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        "DIAGNOSTIC: Tool '{}' from server '{}' - No instances in connection pool",
+                        unique_name,
+                        server_name
+                    );
+                }
+            }
+        }
+
         Ok(all_tools)
     }
 
@@ -252,7 +287,7 @@ impl DatabaseToolService {
                     }
 
                     // Find the tool in this instance
-                    if let Some(tool) = conn.tools.iter().find(|t| t.name == tool_name) {
+                    if let Some(tool) = conn.tools.iter().find(|t| t.name == *tool_name) {
                         // Create a modified tool with the unique name from database
                         let mut unique_tool = tool.clone();
                         unique_tool.name = unique_name.clone().into();

@@ -64,12 +64,20 @@ impl UpstreamConnectionPool {
                                         // Every 60 minutes
                                         {
                                             tracing::info!(
-                                                "Health check: Periodic reconnect for '{}' instance '{}'",
+                                                "DIAGNOSTIC: Health check triggering periodic reconnect for '{}' instance '{}' - Last connected: {:?} ago, threshold: 3600s",
                                                 server_name,
-                                                instance_id
+                                                instance_id,
+                                                now.duration_since(conn.last_connected)
                                             );
                                             reconnects
                                                 .push((server_name.clone(), instance_id.clone()));
+                                        } else {
+                                            tracing::debug!(
+                                                "DIAGNOSTIC: Health check - '{}' instance '{}' still healthy, connected {:?} ago",
+                                                server_name,
+                                                instance_id,
+                                                now.duration_since(conn.last_connected)
+                                            );
                                         }
                                     } else {
                                         // If service is None but status is Ready, something is wrong
@@ -91,6 +99,14 @@ impl UpstreamConnectionPool {
                                     continue;
                                 }
                                 ConnectionStatus::Error(error_details) => {
+                                    tracing::debug!(
+                                        "DIAGNOSTIC: Health check found error state for '{}' instance '{}': {} (type: {:?}, failures: {})",
+                                        server_name,
+                                        instance_id,
+                                        error_details.message,
+                                        error_details.error_type,
+                                        error_details.failure_count
+                                    );
                                     // Skip permanent errors to avoid unnecessary reconnection attempts
                                     if error_details.error_type
                                         == crate::core::foundation::types::ErrorType::Permanent

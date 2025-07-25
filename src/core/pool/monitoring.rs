@@ -51,6 +51,14 @@ impl UpstreamConnectionPool {
                     if let Some((action, message)) =
                         process_monitor.check_resource_limits(pid).await
                     {
+                        tracing::warn!(
+                            "DIAGNOSTIC: Resource limit exceeded for '{}' instance '{}' (PID: {}): {} - Action: {:?}",
+                            server_name,
+                            instance_id,
+                            pid,
+                            message,
+                            action
+                        );
                         // Store instance for action
                         instances_to_update.push((
                             server_name.clone(),

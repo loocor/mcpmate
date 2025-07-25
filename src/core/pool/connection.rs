@@ -54,72 +54,16 @@ impl UpstreamConnectionPool {
             backoff
         );
 
-        // Schedule asynchronous reconnection without blocking the connection pool
-        self.schedule_async_reconnect(server_name, instance_id, backoff)
-            .await
-    }
+        // For now, use immediate reconnect to avoid the Weak reference bug
+        // TODO: Implement proper Arc-based async scheduling
+        tracing::warn!(
+            "DIAGNOSTIC: Using immediate reconnect to bypass Weak reference bug for '{}' instance '{}'",
+            server_name,
+            instance_id
+        );
 
-    /// Schedule an asynchronous reconnection without blocking the connection pool
-    async fn schedule_async_reconnect(
-        &mut self,
-        server_name: &str,
-        instance_id: &str,
-        backoff_seconds: u64,
-    ) -> Result<()> {
-        // Clone necessary data for the async task
-        let server_name = server_name.to_string();
-        let instance_id = instance_id.to_string();
-
-        // Create a weak reference to avoid circular dependencies
-        let pool_weak = Arc::downgrade(&Arc::new(tokio::sync::Mutex::new(self.clone())));
-
-        // Spawn async reconnection task
-        tokio::spawn(async move {
-            // Wait for backoff period without blocking anything
-            tokio::time::sleep(Duration::from_secs(backoff_seconds)).await;
-
-            tracing::info!(
-                "Executing scheduled reconnection to '{}' instance '{}' after {}s delay",
-                server_name,
-                instance_id,
-                backoff_seconds
-            );
-
-            // Try to upgrade the weak reference
-            if let Some(pool_arc) = pool_weak.upgrade() {
-                // Attempt reconnection with minimal lock time
-                let result = {
-                    let mut pool = pool_arc.lock().await;
-                    pool.trigger_connect(&server_name, &instance_id).await
-                };
-
-                match result {
-                    Ok(()) => {
-                        tracing::info!(
-                            "Scheduled reconnection to '{}' instance '{}' completed successfully",
-                            server_name,
-                            instance_id
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Scheduled reconnection to '{}' instance '{}' failed: {}",
-                            server_name,
-                            instance_id,
-                            e
-                        );
-                    }
-                }
-            } else {
-                tracing::debug!(
-                    "Connection pool no longer available for scheduled reconnection to '{}' instance '{}'",
-                    server_name,
-                    instance_id
-                );
-            }
-        });
-
-        Ok(())
+        // Immediate reconnect instead of async scheduling
+        self.trigger_connect(server_name, instance_id).await
     }
 
     /// Disconnect from a specific instance of a server with improved resource cleanup
@@ -128,6 +72,16 @@ impl UpstreamConnectionPool {
         server_name: &str,
         instance_id: &str,
     ) -> Result<()> {
+        tracing::info!(
+            "DIAGNOSTIC: disconnect() called for '{}' instance '{}' - Stack trace requested",
+            server_name,
+            instance_id
+        );
+
+        // Add stack trace logging to identify caller
+        let backtrace = std::backtrace::Backtrace::capture();
+        tracing::info!("DIAGNOSTIC: Disconnect initiated from: {}", backtrace);
+
         // Step 1: Cancel the token first to stop new operations
         let token_opt = self
             .cancellation_tokens
@@ -154,28 +108,38 @@ impl UpstreamConnectionPool {
             // Give the service time to gracefully shutdown
             let cancel_timeout = Duration::from_secs(5);
 
+            tracing::info!(
+                "DIAGNOSTIC: About to cancel service for '{}' instance '{}' with {}s timeout",
+                server_name,
+                instance_id,
+                cancel_timeout.as_secs()
+            );
+
             match tokio::time::timeout(cancel_timeout, service.cancel()).await {
                 Ok(Ok(quit_reason)) => {
                     tracing::info!(
-                        "Service for server '{}' instance '{}' cancelled gracefully with reason: {:?}",
+                        "DIAGNOSTIC: Service for server '{}' instance '{}' cancelled gracefully with reason: {:?} - Timestamp: {}",
                         server_name,
                         instance_id,
-                        quit_reason
+                        quit_reason,
+                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
                     );
                 }
                 Ok(Err(e)) => {
                     tracing::warn!(
-                        "Error during graceful cancellation for '{}' instance '{}': {}",
+                        "DIAGNOSTIC: Error during graceful cancellation for '{}' instance '{}': {} - Timestamp: {}",
                         server_name,
                         instance_id,
-                        e
+                        e,
+                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
                     );
                 }
                 Err(_) => {
                     tracing::warn!(
-                        "Service cancellation timeout for '{}' instance '{}', resources may be leaked",
+                        "DIAGNOSTIC: Service cancellation timeout for '{}' instance '{}', resources may be leaked - Timestamp: {}",
                         server_name,
-                        instance_id
+                        instance_id,
+                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
                     );
                 }
             }
