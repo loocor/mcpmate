@@ -197,7 +197,8 @@ async fn add_server_to_suit_with_sync(
         let inspect_service_clone = inspect_service.clone();
 
         // Use the same semaphore to limit concurrent operations
-        static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+        static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> =
+            std::sync::OnceLock::new();
         let semaphore = CAPABILITY_SYNC_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(2));
 
         tokio::spawn(async move {
@@ -576,53 +577,24 @@ async fn delete_server_records(
 ) -> Result<(), ApiError> {
     let mut tx = db.pool.begin().await.map_err(db_error)?;
 
-    // Delete from all config suits
-    let config_suits = crate::config::suit::get_all_config_suits(&db.pool)
-        .await
-        .map_err(db_error)?;
-    for suit in config_suits {
-        if let Some(suit_id) = &suit.id {
-            // Delete server from config suit
-            sqlx::query(
-                "DELETE FROM config_suit_server WHERE config_suit_id = ? AND server_id = ?",
-            )
-            .bind(suit_id)
-            .bind(server_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_error)?;
-
-            // Delete server tools from config suit
-            sqlx::query("DELETE FROM config_suit_tool WHERE config_suit_id = ? AND server_id = ?")
-                .bind(suit_id)
-                .bind(server_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(db_error)?;
-        }
-    }
-
-    // Delete server metadata, env, args, and config
-    sqlx::query("DELETE FROM server_meta WHERE server_id = ?")
-        .bind(server_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_error)?;
-    sqlx::query("DELETE FROM server_env WHERE server_id = ?")
-        .bind(server_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_error)?;
-    sqlx::query("DELETE FROM server_args WHERE server_id = ?")
-        .bind(server_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_error)?;
+    // Option 1: Use CASCADE DELETE (recommended)
+    // Since all tables have proper ON DELETE CASCADE constraints,
+    // we can simply delete from server_config and let the database handle the rest
     sqlx::query("DELETE FROM server_config WHERE id = ?")
         .bind(server_id)
         .execute(&mut *tx)
         .await
         .map_err(db_error)?;
+
+    // The following tables will be automatically cleaned up by CASCADE DELETE:
+    // - server_tools (has FK to server_config.id)
+    // - server_args (has FK to server_config.id)
+    // - server_env (has FK to server_config.id)
+    // - server_meta (has FK to server_config.id)
+    // - config_suit_server (has FK to server_config.id)
+    // - config_suit_resource (has FK to server_config.id)
+    // - config_suit_prompt (has FK to server_config.id)
+    // - config_suit_tool (has FK to server_tools.id, which cascades from server_config)
 
     tx.commit().await.map_err(db_error)?;
     Ok(())
