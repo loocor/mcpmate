@@ -10,9 +10,9 @@ use once_cell::sync::OnceCell;
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler, Service,
     model::{
-        CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult,
-        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParam,
-        ReadResourceRequestParam, ReadResourceResult, ServerInfo,
+        CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult, ListPromptsResult,
+        ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParam, ReadResourceRequestParam,
+        ReadResourceResult, ServerInfo,
     },
     service::RequestContext,
 };
@@ -152,10 +152,7 @@ impl UnifiedHttpServer {
         // Start the combined server
         let listener = tokio::net::TcpListener::bind(self.config.bind_address)
             .await
-            .context(format!(
-                "Failed to bind to address {}",
-                self.config.bind_address
-            ))?;
+            .context(format!("Failed to bind to address {}", self.config.bind_address))?;
 
         let ct = self.config.cancellation_token.child_token();
 
@@ -182,11 +179,7 @@ impl UnifiedHttpServer {
             self.config.bind_address,
             self.config.streamable_http_path
         );
-        tracing::info!(
-            "  - SSE: {}{}",
-            self.config.bind_address,
-            self.config.sse_path
-        );
+        tracing::info!("  - SSE: {}{}", self.config.bind_address, self.config.sse_path);
         tracing::info!(
             "  - SSE Message: {}{}",
             self.config.bind_address,
@@ -249,9 +242,7 @@ impl ProxyServer {
         self.database = Some(db_arc.clone());
 
         // Initialize Suit service
-        self.suit_service = Some(Arc::new(crate::core::suit::SuitService::new(
-            db_arc.clone(),
-        )));
+        self.suit_service = Some(Arc::new(crate::core::suit::SuitService::new(db_arc.clone())));
 
         // Update connection pool with database reference and runtime cache
         {
@@ -263,9 +254,7 @@ impl ProxyServer {
         // Setup event handlers with server manager callback
         self.setup_event_handlers().await?;
 
-        tracing::info!(
-            "Database connection, server manager, and event handlers set for proxy server"
-        );
+        tracing::info!("Database connection, server manager, and event handlers set for proxy server");
         Ok(())
     }
 
@@ -294,20 +283,12 @@ impl ProxyServer {
         transport_type: TransportType,
         bind_address: SocketAddr,
     ) -> Result<()> {
-        tracing::info!(
-            "Starting proxy server with transport type: {:?}",
-            transport_type
-        );
+        tracing::info!("Starting proxy server with transport type: {:?}", transport_type);
 
         match transport_type {
             TransportType::Sse => self.start_sse_server(bind_address, "/sse").await,
-            TransportType::StreamableHttp => {
-                self.start_streamable_http_server(bind_address, "/mcp")
-                    .await
-            }
-            TransportType::Stdio => Err(anyhow::anyhow!(
-                "Stdio transport not supported for proxy server"
-            )),
+            TransportType::StreamableHttp => self.start_streamable_http_server(bind_address, "/mcp").await,
+            TransportType::Stdio => Err(anyhow::anyhow!("Stdio transport not supported for proxy server")),
         }
     }
 
@@ -337,19 +318,15 @@ impl ProxyServer {
         server.start(factory).await?;
 
         // Publish server ready events
-        crate::core::events::EventBus::global().publish(
-            crate::core::events::Event::ServerTransportReady {
-                transport_type: TransportType::StreamableHttp,
-                ready: true,
-            },
-        );
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
+            transport_type: TransportType::StreamableHttp,
+            ready: true,
+        });
 
-        crate::core::events::EventBus::global().publish(
-            crate::core::events::Event::ServerTransportReady {
-                transport_type: TransportType::Sse,
-                ready: true,
-            },
-        );
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
+            transport_type: TransportType::Sse,
+            ready: true,
+        });
 
         tracing::info!("Unified proxy server started successfully");
         Ok(())
@@ -361,11 +338,7 @@ impl ProxyServer {
         bind_address: SocketAddr,
         sse_path: &str,
     ) -> Result<()> {
-        tracing::info!(
-            "Starting SSE server on {} at path {}",
-            bind_address,
-            sse_path
-        );
+        tracing::info!("Starting SSE server on {} at path {}", bind_address, sse_path);
 
         // Create SSE server config
         let server_config = rmcp::transport::sse_server::SseServerConfig {
@@ -389,12 +362,10 @@ impl ProxyServer {
         server.with_service(factory);
 
         // Publish server ready event
-        crate::core::events::EventBus::global().publish(
-            crate::core::events::Event::ServerTransportReady {
-                transport_type: TransportType::Sse,
-                ready: true,
-            },
-        );
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
+            transport_type: TransportType::Sse,
+            ready: true,
+        });
 
         tracing::info!("SSE server started successfully");
         Ok(())
@@ -406,11 +377,7 @@ impl ProxyServer {
         bind_address: SocketAddr,
         path: &str,
     ) -> Result<()> {
-        tracing::info!(
-            "Starting Streamable HTTP server on {} at path {}",
-            bind_address,
-            path
-        );
+        tracing::info!("Starting Streamable HTTP server on {} at path {}", bind_address, path);
 
         // Create a factory function
         let server_clone = self.clone();
@@ -427,8 +394,7 @@ impl ProxyServer {
             rmcp::transport::streamable_http_server::session::local::LocalSessionManager::default(),
         );
 
-        let streamable_service =
-            rmcp::transport::StreamableHttpService::new(factory, session_manager, server_config);
+        let streamable_service = rmcp::transport::StreamableHttpService::new(factory, session_manager, server_config);
 
         // Create an Axum router and mount the service
         let app = axum::Router::new().route_service(path, streamable_service);
@@ -445,12 +411,10 @@ impl ProxyServer {
         });
 
         // Publish server ready event
-        crate::core::events::EventBus::global().publish(
-            crate::core::events::Event::ServerTransportReady {
-                transport_type: TransportType::StreamableHttp,
-                ready: true,
-            },
-        );
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
+            transport_type: TransportType::StreamableHttp,
+            ready: true,
+        });
 
         tracing::info!("Streamable HTTP server started successfully");
         Ok(())
@@ -483,35 +447,44 @@ impl ServerHandler for ProxyServer {
     ) -> Result<rmcp::model::ListToolsResult, McpError> {
         tracing::debug!("Listing tools from proxy server");
 
-        // Use database service for authoritative tool listing
-        let tools = match &self.database {
-            Some(db) => {
-                // Create database tool service
-                let db_service = crate::core::protocol::DatabaseToolService::new(
-                    db.clone(),
-                    self.connection_pool.clone(),
-                );
+        // Prefer database-driven list; fallback to runtime connections if empty
+        let mut tools_from_db: Vec<rmcp::model::Tool> = Vec::new();
+        if let Some(db) = &self.database {
+            let db_service = crate::core::protocol::DatabaseToolService::new(db.clone(), self.connection_pool.clone());
+            match db_service.get_enabled_tools().await {
+                Ok(ts) => tools_from_db = ts,
+                Err(e) => {
+                    tracing::error!("Failed to get tools using database service: {}", e);
+                }
+            }
+        } else {
+            tracing::warn!("Database not available for tool filtering; will use runtime fallback");
+        }
 
-                // Get enabled tools using database service (authoritative method)
-                match db_service.get_enabled_tools().await {
-                    Ok(tools) => tools,
-                    Err(e) => {
-                        tracing::error!("Failed to get tools using database service: {}", e);
-                        return Err(McpError::internal_error(e.to_string(), None));
+        if tools_from_db.is_empty() {
+            // Runtime fallback: aggregate tools from connected instances
+            let mut aggregated: Vec<rmcp::model::Tool> = Vec::new();
+            let pool = self.connection_pool.lock().await;
+            for instances in pool.connections.values() {
+                for conn in instances.values() {
+                    if conn.is_connected() && !conn.tools.is_empty() {
+                        aggregated.extend(conn.tools.clone());
                     }
                 }
             }
-            None => {
-                tracing::error!("Database not available for tool filtering");
-                return Err(McpError::internal_error(
-                    "Database not available for tool filtering".to_string(),
-                    None,
-                ));
+            if aggregated.is_empty() {
+                tracing::warn!("Proxy runtime fallback found 0 tools across connected instances");
+            } else {
+                tracing::info!("Proxy runtime fallback aggregated {} tools", aggregated.len());
             }
-        };
+            return Ok(rmcp::model::ListToolsResult {
+                tools: aggregated,
+                next_cursor: None,
+            });
+        }
 
         Ok(rmcp::model::ListToolsResult {
-            tools,
+            tools: tools_from_db,
             next_cursor: None,
         })
     }
@@ -527,10 +500,8 @@ impl ServerHandler for ProxyServer {
         match &self.database {
             Some(db) => {
                 // Create database tool service
-                let db_service = crate::core::protocol::DatabaseToolService::new(
-                    db.clone(),
-                    self.connection_pool.clone(),
-                );
+                let db_service =
+                    crate::core::protocol::DatabaseToolService::new(db.clone(), self.connection_pool.clone());
 
                 // Use new database-driven tool calling
                 match crate::core::protocol::call_upstream_tool(&db_service, request).await {
@@ -575,8 +546,7 @@ impl ServerHandler for ProxyServer {
         tracing::debug!("Listing resource templates from proxy server");
 
         // Use core protocol implementation
-        let resource_templates =
-            crate::core::protocol::get_all_resource_templates(&self.connection_pool).await;
+        let resource_templates = crate::core::protocol::get_all_resource_templates(&self.connection_pool).await;
 
         Ok(ListResourceTemplatesResult {
             resource_templates,
@@ -592,11 +562,9 @@ impl ServerHandler for ProxyServer {
         tracing::debug!("Reading resource: {}", request.uri);
 
         // Build resource mapping on-demand (can be optimized later with caching)
-        let resource_mapping = crate::core::protocol::resource::build_resource_mapping(
-            &self.connection_pool,
-            self.database.as_ref(),
-        )
-        .await;
+        let resource_mapping =
+            crate::core::protocol::resource::build_resource_mapping(&self.connection_pool, self.database.as_ref())
+                .await;
 
         // Use core protocol implementation
         match crate::core::protocol::resource::read_upstream_resource(
@@ -638,8 +606,7 @@ impl ServerHandler for ProxyServer {
         tracing::debug!("Getting prompt: {}", request.name);
 
         // Build prompt mapping on-demand (can be optimized later with caching)
-        let prompt_mapping =
-            crate::core::protocol::prompt::build_prompt_mapping(&self.connection_pool).await;
+        let prompt_mapping = crate::core::protocol::prompt::build_prompt_mapping(&self.connection_pool).await;
 
         // Use core protocol implementation
         match crate::core::protocol::prompt::get_upstream_prompt(

@@ -35,6 +35,9 @@ pub mod proxy;
 // suit configuration business logic - depends on foundation layer
 pub mod suit;
 
+// cache system - high-performance Redb-based caching
+pub mod cache;
+
 // proxy core business logic - depends on protocol layer
 pub use proxy::{Args as ProxyArgs, ProxyServer};
 

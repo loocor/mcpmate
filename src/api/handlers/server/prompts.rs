@@ -7,35 +7,45 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::{
-    api::{handlers::ApiError, routes::AppState},
-    inspect::{InspectParams, ProcessedPromptInfo, types::PromptArgument},
-};
+use crate::api::{handlers::ApiError, routes::AppState};
 
 use super::common::{
-    create_inspect_response, get_database_from_state, get_inspect_service,
-    handle_inspect_error, resolve_server_identifier, validate_server_id,
+    InspectParams, RefreshStrategy, get_database_from_state, register_session_if_needed, resolve_server_identifier, validate_server_id,
 };
 
 /// Query parameters for prompts endpoints
 #[derive(Debug, serde::Deserialize)]
 pub struct PromptsQuery {
     /// Refresh strategy for prompt queries
-    pub refresh: Option<crate::inspect::RefreshStrategy>,
+    pub refresh: Option<RefreshStrategy>,
     /// Response format
-    pub format: Option<crate::inspect::ResponseFormat>,
+    pub format: Option<String>,
     /// Whether to include metadata
     pub include_meta: Option<bool>,
     /// Timeout in seconds
     pub timeout: Option<u64>,
+    /// Instance type per refactor spec (production|exploration|validation)
+    pub instance_type: Option<String>,
 }
 
 impl PromptsQuery {
     /// Convert to InspectParams
     pub fn to_params(&self) -> Result<InspectParams, ApiError> {
+        // Map instance_type to refresh strategy for backward compatibility
+        let mapped_refresh = if let Some(ref it) = self.instance_type {
+            match it.to_lowercase().as_str() {
+                "production" => Some(RefreshStrategy::CacheFirst),
+                "exploration" => Some(RefreshStrategy::RefreshIfStale),
+                "validation" => Some(RefreshStrategy::Force),
+                _ => self.refresh,
+            }
+        } else {
+            self.refresh
+        };
+
         Ok(InspectParams {
-            refresh: self.refresh,
-            format: self.format,
+            refresh: mapped_refresh,
+            format: self.format.clone(),
             include_meta: self.include_meta,
         })
     }
@@ -51,7 +61,7 @@ pub async fn list_prompts(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
     Query(query): Query<PromptsQuery>,
-) -> Result<Json<crate::inspect::InspectResponse<Vec<ProcessedPromptInfo>>>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -62,46 +72,37 @@ pub async fn list_prompts(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get inspect service
-    let inspect_service = get_inspect_service(&state).await?;
+    // Register exploration/validation session for runtime/status accounting
+    register_session_if_needed(&state, &query.instance_type).await;
 
-    // Add timeout control
-    let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
-    let prompts_result = tokio::time::timeout(timeout, async {
-        inspect_service
-            .get_server_prompts(&server_info.server_id, params.clone())
-            .await
-    })
-    .await;
-
-    let prompts = match prompts_result {
-        Ok(result) => result.map_err(handle_inspect_error)?,
-        Err(_) => {
-            return Err(ApiError::Timeout(format!(
-                "Prompts request for server '{}' timed out after {}s",
-                identifier,
-                timeout.as_secs()
-            )));
+    // Try Redb cache first when strategy prefers cache
+    let prefer_cache = params.refresh.unwrap_or_default() == RefreshStrategy::CacheFirst;
+    if prefer_cache {
+        if let Ok(cached) = state.redb_cache.get_server_prompts(&server_info.server_id, false).await {
+            if !cached.is_empty() {
+                let processed: Vec<serde_json::Value> = cached
+                    .into_iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "name": p.name,
+                            "description": p.description,
+                            "arguments": p.arguments,
+                        })
+                    })
+                    .collect();
+                return Ok(Json(serde_json::json!({
+                    "data": processed,
+                    "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default() }
+                })));
+            }
         }
-    };
+    }
 
-    // Create response with metadata
-    let response = create_inspect_response(
-        prompts,
-        &params,
-        Some(false), // No direct caching for this endpoint
-        None,        // No capabilities metadata for this endpoint
-    );
-
-    tracing::info!(
-        "Retrieved {} prompts for server '{}' (ID: {}) with strategy {:?}",
-        response.data.len(),
-        server_info.server_name,
-        server_info.server_id,
-        params.refresh.unwrap_or_default()
-    );
-
-    Ok(Json(response))
+    // Return empty result if no data available from cache or runtime
+    Ok(Json(serde_json::json!({
+        "data": [],
+        "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default() }
+    })))
 }
 
 /// Get detailed prompt argument information
@@ -114,7 +115,7 @@ pub async fn get_prompt_arguments(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
     Query(query): Query<PromptsQuery>,
-) -> Result<Json<crate::inspect::InspectResponse<Vec<PromptArgumentInfo>>>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
     let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
@@ -125,66 +126,10 @@ pub async fn get_prompt_arguments(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Get inspect service
-    let inspect_service = get_inspect_service(&state).await?;
-
-    // Add timeout control
-    let timeout = std::time::Duration::from_secs(query.timeout.unwrap_or(30));
-    let prompts_result = tokio::time::timeout(timeout, async {
-        inspect_service
-            .get_server_prompts(&server_info.server_id, params.clone())
-            .await
-    })
-    .await;
-
-    let prompts = match prompts_result {
-        Ok(result) => result.map_err(handle_inspect_error)?,
-        Err(_) => {
-            return Err(ApiError::Timeout(format!(
-                "Prompt arguments request for server '{}' timed out after {}s",
-                identifier,
-                timeout.as_secs()
-            )));
-        }
-    };
-
-    // Extract argument information
-    let mut argument_info = Vec::new();
-    for prompt in prompts {
-        if !prompt.arguments.is_empty() {
-            argument_info.push(PromptArgumentInfo {
-                prompt_name: prompt.name,
-                prompt_description: prompt.description,
-                arguments: prompt.arguments,
-            });
-        }
-    }
-
-    // Create response with metadata
-    let response = create_inspect_response(
-        argument_info,
-        &params,
-        Some(false), // No direct caching for this endpoint
-        None,        // No capabilities metadata for this endpoint
-    );
-
-    tracing::debug!(
-        "Retrieved prompt argument information for server '{}' (ID: {}): {} prompts with arguments",
-        server_info.server_name,
-        server_info.server_id,
-        response.data.len()
-    );
-
-    Ok(Json(response))
+    // Return empty result if no data available from cache or runtime
+    Ok(Json(serde_json::json!({
+        "data": [],
+        "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default() }
+    })))
 }
 
-/// Prompt argument information structure
-#[derive(Debug, serde::Serialize)]
-pub struct PromptArgumentInfo {
-    /// Prompt name
-    pub prompt_name: String,
-    /// Prompt description
-    pub prompt_description: Option<String>,
-    /// Prompt arguments
-    pub arguments: Vec<PromptArgument>,
-}

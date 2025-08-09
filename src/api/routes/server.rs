@@ -24,23 +24,13 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/{identifier}", delete(server::delete_server))
         .route("/{identifier}/enable", post(server::enable_server))
         .route("/{identifier}/disable", post(server::disable_server))
-        // Inspect capabilities (integrated from inspect module)
-        .route("/{identifier}/capabilities", get(server::get_capabilities))
+        // Inspect endpoints per refactor spec
         .route("/{identifier}/tools", get(server::list_tools))
-        .route(
-            "/{identifier}/tools/{tool_name}",
-            get(server::get_tool_detail),
-        )
+        .route("/{identifier}/tools/{tool_name}", get(server::get_tool_detail))
         .route("/{identifier}/resources", get(server::list_resources))
-        .route(
-            "/{identifier}/resource-templates",
-            get(server::list_resource_templates),
-        )
+        .route("/{identifier}/resource-templates", get(server::list_resource_templates))
         .route("/{identifier}/prompts", get(server::list_prompts))
-        .route(
-            "/{identifier}/prompts/arguments",
-            get(server::get_prompt_arguments),
-        )
+        .route("/{identifier}/prompts/arguments", get(server::get_prompt_arguments))
         // Instance management
         .route("/{identifier}/instances", get(server::list_instances));
 

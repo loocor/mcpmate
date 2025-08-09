@@ -70,10 +70,7 @@ pub async fn add_server_to_config_suit(
     {
         Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
         None => {
-            tracing::warn!(
-                "Server ID {} not found, using 'unknown' as server_name",
-                server_id
-            );
+            tracing::warn!("Server ID {} not found, using 'unknown' as server_name", server_id);
             "unknown".to_string()
         }
     };
@@ -144,14 +141,12 @@ pub async fn add_server_to_config_suit(
         .unwrap_or_else(|| "unknown".to_string());
 
         // Publish the event
-        crate::core::events::EventBus::global().publish(
-            crate::core::events::Event::ServerEnabledInSuitChanged {
-                server_id: server_id.to_string(),
-                server_name: original_server_name,
-                suit_id: config_suit_id.to_string(),
-                enabled,
-            },
-        );
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerEnabledInSuitChanged {
+            server_id: server_id.to_string(),
+            server_name: original_server_name,
+            suit_id: config_suit_id.to_string(),
+            enabled,
+        });
 
         // tracing::info!(
         //     "Published ServerEnabledInSuitChanged event for server ID {} in suit ID {} ({})",
@@ -200,7 +195,6 @@ pub async fn sync_server_capabilities_to_suit(
     pool: &Pool<Sqlite>,
     config_suit_id: &str,
     server_id: &str,
-    inspect_service: &crate::inspect::InspectService,
 ) -> Result<()> {
     tracing::debug!(
         "Starting capability sync for server ID {} to configuration suit ID {}",
@@ -212,7 +206,7 @@ pub async fn sync_server_capabilities_to_suit(
     let existing_tools_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM config_suit_tool cst
          JOIN server_tools st ON cst.server_tool_id = st.id
-         WHERE cst.config_suit_id = ? AND st.server_id = ?"
+         WHERE cst.config_suit_id = ? AND st.server_id = ?",
     )
     .bind(config_suit_id)
     .bind(server_id)
@@ -230,124 +224,15 @@ pub async fn sync_server_capabilities_to_suit(
         return Ok(());
     }
 
-    // Get server capabilities using inspect service with shorter timeout
-    tracing::debug!("Fetching capabilities for server {}", server_id);
-    let capabilities_result = tokio::time::timeout(
-        std::time::Duration::from_secs(5), // Reduced to 5 second timeout
-        inspect_service.get_server_capabilities(server_id, crate::inspect::RefreshStrategy::CacheFirst)
-    ).await;
+    // Inspect module removed; skip fetching capabilities (no-op for now)
+    let _capabilities = None::<()>;
 
-    let capabilities = match capabilities_result {
-        Ok(Ok(caps)) => {
-            tracing::debug!(
-                "Successfully fetched capabilities for server {}: {} tools, {} prompts, {} resources",
-                server_id,
-                caps.tools.len(),
-                caps.prompts.len(),
-                caps.resources.len()
-            );
-            caps
-        }
-        Ok(Err(e)) => {
-            tracing::warn!(
-                "Failed to get capabilities for server {}: {}. Skipping capability sync.",
-                server_id,
-                e
-            );
-            return Ok(()); // Don't fail the server addition if capabilities can't be retrieved
-        }
-        Err(_) => {
-            tracing::warn!(
-                "Timeout (5s) getting capabilities for server {}. Skipping capability sync.",
-                server_id
-            );
-            return Ok(()); // Don't fail the server addition if capabilities timeout
-        }
-    };
-
-    let mut synced_tools = 0;
-    let mut synced_prompts = 0;
-    let mut synced_resources = 0;
-
-    // Sync tools
-    for tool in &capabilities.tools {
-        match crate::config::suit::add_tool_to_config_suit(
-            pool,
-            config_suit_id,
-            server_id,
-            &tool.name,
-            true, // Default to enabled for better user experience
-        )
-        .await
-        {
-            Ok(_) => synced_tools += 1,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to sync tool '{}' for server {} to suit {}: {}",
-                    tool.name,
-                    server_id,
-                    config_suit_id,
-                    e
-                );
-            }
-        }
-    }
-
-    // Sync prompts
-    for prompt in &capabilities.prompts {
-        match crate::config::suit::add_prompt_to_config_suit(
-            pool,
-            config_suit_id,
-            server_id,
-            &prompt.name,
-            true, // Default to enabled for better user experience
-        )
-        .await
-        {
-            Ok(_) => synced_prompts += 1,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to sync prompt '{}' for server {} to suit {}: {}",
-                    prompt.name,
-                    server_id,
-                    config_suit_id,
-                    e
-                );
-            }
-        }
-    }
-
-    // Sync resources
-    for resource in &capabilities.resources {
-        match crate::config::suit::add_resource_to_config_suit(
-            pool,
-            config_suit_id,
-            server_id,
-            &resource.uri,
-            true, // Default to enabled for better user experience
-        )
-        .await
-        {
-            Ok(_) => synced_resources += 1,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to sync resource '{}' for server {} to suit {}: {}",
-                    resource.uri,
-                    server_id,
-                    config_suit_id,
-                    e
-                );
-            }
-        }
-    }
+    // No-op: syncing removed with inspect module
 
     tracing::info!(
-        "Synced capabilities for server {} to suit {}: {} tools, {} prompts, {} resources",
+        "Capabilities sync skipped (inspect removed) for server {} to suit {}",
         server_id,
-        config_suit_id,
-        synced_tools,
-        synced_prompts,
-        synced_resources
+        config_suit_id
     );
 
     Ok(())

@@ -42,6 +42,14 @@ pub use sync::ServerSyncManager;
 pub struct UpstreamConnectionPool {
     /// Map of server name to map of instance ID to connection
     pub connections: HashMap<String, HashMap<String, UpstreamConnection>>,
+    /// Exploration sessions: session_id -> map of server_name to connection (minimal skeleton)
+    pub exploration_sessions: HashMap<String, HashMap<String, UpstreamConnection>>,
+    /// Validation sessions: session_id -> map of server_name to connection (minimal skeleton)
+    pub validation_sessions: HashMap<String, HashMap<String, UpstreamConnection>>,
+    /// Exploration session expirations
+    pub exploration_expirations: HashMap<String, std::time::Instant>,
+    /// Validation session expirations
+    pub validation_expirations: HashMap<String, std::time::Instant>,
     /// Server configuration
     pub config: Arc<Config>,
     /// Map of server name to map of instance ID to cancellation token
@@ -72,6 +80,10 @@ impl UpstreamConnectionPool {
 
         Self {
             connections: HashMap::new(),
+            exploration_sessions: HashMap::new(),
+            validation_sessions: HashMap::new(),
+            exploration_expirations: HashMap::new(),
+            validation_expirations: HashMap::new(),
             config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
@@ -141,6 +153,111 @@ impl UpstreamConnectionPool {
 
         let sync_manager = ServerSyncManager::new(db.clone());
         sync_manager.sync_servers_from_active_suites(self).await
+    }
+
+    /// Create or refresh an exploration session with TTL
+    pub fn upsert_exploration_session(&mut self, session_id: &str, ttl: Duration) {
+        use std::time::Instant;
+        self.exploration_sessions.entry(session_id.to_string()).or_default();
+        self.exploration_expirations
+            .insert(session_id.to_string(), Instant::now() + ttl);
+    }
+
+    /// Create or refresh a validation session with TTL
+    pub fn upsert_validation_session(&mut self, session_id: &str, ttl: Duration) {
+        use std::time::Instant;
+        self.validation_sessions.entry(session_id.to_string()).or_default();
+        self.validation_expirations
+            .insert(session_id.to_string(), Instant::now() + ttl);
+    }
+
+    /// Cleanup expired exploration/validation sessions
+    pub fn cleanup_expired_sessions(&mut self) {
+        use std::time::Instant;
+        let now = Instant::now();
+        let expired_exploration: Vec<String> = self
+            .exploration_expirations
+            .iter()
+            .filter_map(|(sid, &exp)| if exp <= now { Some(sid.clone()) } else { None })
+            .collect();
+        for sid in expired_exploration {
+            self.exploration_expirations.remove(&sid);
+            self.exploration_sessions.remove(&sid);
+        }
+
+        let expired_validation: Vec<String> = self
+            .validation_expirations
+            .iter()
+            .filter_map(|(sid, &exp)| if exp <= now { Some(sid.clone()) } else { None })
+            .collect();
+        for sid in expired_validation {
+            self.validation_expirations.remove(&sid);
+            self.validation_sessions.remove(&sid);
+        }
+    }
+
+    /// Get active instance counts for runtime status
+    pub fn active_instance_counts(&self) -> (usize, usize, usize) {
+        let production = self
+            .connections
+            .iter()
+            .filter(|(_, m)| !m.is_empty())
+            .count();
+        let exploration = self.exploration_sessions.len();
+        let validation = self.validation_sessions.len();
+        (production, exploration, validation)
+    }
+
+    /// Get or create an exploration instance for a server
+    pub fn get_or_create_exploration_instance(
+        &mut self,
+        server_name: &str,
+        session_id: &str,
+        ttl: Duration,
+    ) -> Result<Option<&UpstreamConnection>, anyhow::Error> {
+        // Ensure session exists
+        self.upsert_exploration_session(session_id, ttl);
+        
+        // Check if server connection already exists in this session
+        if let Some(session_servers) = self.exploration_sessions.get(session_id) {
+            if let Some(connection) = session_servers.get(server_name) {
+                return Ok(Some(connection));
+            }
+        }
+
+        // For now, return None - full implementation would create actual connection
+        // This would involve:
+        // 1. Get server config from database
+        // 2. Create new UpstreamConnection
+        // 3. Initialize connection to server
+        // 4. Store in exploration_sessions
+        
+        tracing::debug!("Exploration instance for server '{}' in session '{}' not implemented yet", 
+                       server_name, session_id);
+        Ok(None)
+    }
+
+    /// Get or create a validation instance for a server
+    pub fn get_or_create_validation_instance(
+        &mut self,
+        server_name: &str,
+        session_id: &str,
+        ttl: Duration,
+    ) -> Result<Option<&UpstreamConnection>, anyhow::Error> {
+        // Ensure session exists
+        self.upsert_validation_session(session_id, ttl);
+        
+        // Check if server connection already exists in this session
+        if let Some(session_servers) = self.validation_sessions.get(session_id) {
+            if let Some(connection) = session_servers.get(server_name) {
+                return Ok(Some(connection));
+            }
+        }
+
+        // For now, return None - full implementation would create actual connection
+        tracing::debug!("Validation instance for server '{}' in session '{}' not implemented yet", 
+                       server_name, session_id);
+        Ok(None)
     }
 }
 

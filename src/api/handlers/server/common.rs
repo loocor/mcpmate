@@ -11,9 +11,10 @@ use crate::{
         routes::AppState,
     },
     config::{database::Database, server},
+    core::cache::{CacheQuery, FreshnessLevel, InstanceType},
     core::pool::UpstreamConnectionPool,
-    inspect::{InspectParams, InspectService},
 };
+use std::time::Duration;
 
 /// Server identification result
 #[derive(Debug, Clone)]
@@ -47,9 +48,7 @@ pub async fn resolve_server_identifier(
 ) -> Result<ServerIdentification, ApiError> {
     // Validate input
     if identifier.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "Server identifier cannot be empty".to_string(),
-        ));
+        return Err(ApiError::BadRequest("Server identifier cannot be empty".to_string()));
     }
 
     // Try to find server by ID first (more efficient for ID-based lookups)
@@ -112,11 +111,7 @@ pub async fn get_complete_server_details(
                 }
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to get arguments for server '{}': {}",
-                    server_name,
-                    e
-                );
+                tracing::warn!("Failed to get arguments for server '{}': {}", server_name, e);
             }
         }
     }
@@ -185,12 +180,7 @@ pub async fn get_server_instances(
     state: &Arc<AppState>,
     server_name: &str,
 ) -> Vec<ServerInstanceSummary> {
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await
-    {
+    match tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await {
         Ok(pool) => {
             if let Some(instances) = pool.connections.get(server_name) {
                 instances
@@ -199,8 +189,7 @@ pub async fn get_server_instances(
                         let connected_at = if conn.is_connected() {
                             Some(
                                 chrono::DateTime::<chrono::Utc>::from(
-                                    std::time::SystemTime::now()
-                                        - conn.time_since_last_connection(),
+                                    std::time::SystemTime::now() - conn.time_since_last_connection(),
                                 )
                                 .to_rfc3339(),
                             )
@@ -240,13 +229,8 @@ pub async fn get_server_instances(
 /// Provides a standardized way to access the connection pool with timeout handling.
 pub async fn get_connection_pool_with_timeout(
     state: &Arc<AppState>
-) -> Result<tokio::sync::MutexGuard<UpstreamConnectionPool>, ApiError> {
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await
-    {
+) -> Result<tokio::sync::MutexGuard<'_, UpstreamConnectionPool>, ApiError> {
+    match tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await {
         Ok(pool) => Ok(pool),
         Err(_) => Err(ApiError::InternalError(
             "Timed out waiting for connection pool lock".to_string(),
@@ -265,8 +249,7 @@ pub async fn get_server_by_identifier(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
 
-    let server =
-        server.ok_or_else(|| ApiError::NotFound(format!("Server '{identifier}' not found")))?;
+    let server = server.ok_or_else(|| ApiError::NotFound(format!("Server '{identifier}' not found")))?;
 
     let server_id = server
         .id
@@ -305,45 +288,88 @@ pub fn get_database_from_state(state: &Arc<AppState>) -> Result<Arc<Database>, A
 ///
 /// Helper function to extract inspect service from AppState
 /// with proper error handling.
-pub async fn get_inspect_service(state: &Arc<AppState>) -> Result<&Arc<InspectService>, ApiError> {
-    state
-        .inspect_service
-        .as_ref()
-        .ok_or_else(|| ApiError::InternalError("Inspect service not available".to_string()))
+// Refresh strategy for backward compatibility
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum RefreshStrategy {
+    #[default]
+    CacheFirst,
+    RefreshIfStale,
+    Force,
 }
 
-/// Create standardized inspect response with metadata
-///
-/// This function provides consistent response formatting across
-/// all inspect endpoints.
-pub fn create_inspect_response<T>(
-    data: T,
-    params: &InspectParams,
-    cache_hit: Option<bool>,
-    capabilities_metadata: Option<&crate::inspect::types::CapabilitiesMetadata>,
-) -> crate::inspect::InspectResponse<T> {
-    use crate::inspect::{InspectResponse, ResponseMetadata};
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct InspectParams {
+    pub refresh: Option<RefreshStrategy>,
+    pub format: Option<String>,
+    pub include_meta: Option<bool>,
+}
 
-    let metadata = Some(ResponseMetadata {
-        refresh_strategy: params.refresh.unwrap_or_default(),
-        format: params.format.unwrap_or_default(),
-        cache_hit,
-        last_updated: capabilities_metadata
-            .map(|m| m.last_updated)
-            .unwrap_or_else(std::time::SystemTime::now),
-        version: capabilities_metadata
-            .map(|m| m.version.clone())
-            .unwrap_or_else(|| "1.0".to_string()),
-        ttl: capabilities_metadata
-            .map(|m| m.ttl)
-            .unwrap_or_else(|| std::time::Duration::from_secs(300)),
-        protocol_version: capabilities_metadata.and_then(|m| m.protocol_version.clone()),
-    });
-
-    InspectResponse {
-        data,
-        meta: metadata,
+/// Map inspect RefreshStrategy to cache FreshnessLevel for Redb
+pub fn map_refresh_to_freshness(refresh: RefreshStrategy) -> FreshnessLevel {
+    match refresh {
+        RefreshStrategy::CacheFirst => FreshnessLevel::Cached,
+        RefreshStrategy::RefreshIfStale => FreshnessLevel::RecentlyFresh,
+        RefreshStrategy::Force => FreshnessLevel::RealTime,
     }
+}
+
+/// Build a Redb CacheQuery from server id and Inspect params
+pub fn build_cache_query(
+    server_id: &str,
+    params: &InspectParams,
+) -> CacheQuery {
+    let refresh = params.refresh.unwrap_or_default();
+    let freshness_level = map_refresh_to_freshness(refresh);
+    CacheQuery {
+        server_id: server_id.to_string(),
+        instance_type: InstanceType::Production, // API 侧默认生产实例
+        freshness_level,
+        include_disabled: false,
+    }
+}
+
+/// Parse instance_type string into cache InstanceType with default TTLs
+pub fn parse_instance_type(instance_type: &Option<String>) -> InstanceType {
+    match instance_type.as_ref().map(|s| s.to_lowercase()) {
+        Some(ref s) if s == "exploration" => InstanceType::Exploration {
+            session_id: "api".to_string(),
+            ttl_minutes: 30,
+        },
+        Some(ref s) if s == "validation" => InstanceType::Validation {
+            session_id: "api".to_string(),
+            ttl_minutes: 5,
+        },
+        _ => InstanceType::Production,
+    }
+}
+
+/// Register exploration/validation session into pool for runtime/status accounting
+pub async fn register_session_if_needed(
+    state: &Arc<AppState>,
+    instance_type: &Option<String>,
+) {
+    let lower = instance_type.as_ref().map(|s| s.to_lowercase());
+    if lower.as_deref() == Some("exploration") {
+        if let Ok(mut pool) = tokio::time::timeout(Duration::from_secs(1), state.connection_pool.lock()).await {
+            pool.upsert_exploration_session("api", Duration::from_secs(30 * 60));
+        }
+    } else if lower.as_deref() == Some("validation") {
+        if let Ok(mut pool) = tokio::time::timeout(Duration::from_secs(1), state.connection_pool.lock()).await {
+            pool.upsert_validation_session("api", Duration::from_secs(5 * 60));
+        }
+    }
+}
+
+/// Refresh capabilities via Inspect and persist into Redb
+pub async fn refresh_and_store_redb(
+    _state: &Arc<AppState>,
+    _server_id: &str,
+    _params: &InspectParams,
+) -> Result<(), ApiError> {
+    Err(ApiError::InternalError(
+        "Inspect module removed; refresh not available".to_string(),
+    ))
 }
 
 /// Validate server ID format
@@ -351,9 +377,7 @@ pub fn create_inspect_response<T>(
 /// Ensures server ID follows expected format patterns
 pub fn validate_server_id(server_id: &str) -> Result<(), ApiError> {
     if server_id.trim().is_empty() {
-        return Err(ApiError::BadRequest(
-            "Server ID cannot be empty".to_string(),
-        ));
+        return Err(ApiError::BadRequest("Server ID cannot be empty".to_string()));
     }
 
     // Allow both generated IDs (serv_*) and custom names
@@ -370,25 +394,8 @@ pub fn validate_server_id(server_id: &str) -> Result<(), ApiError> {
 /// Handle inspect service errors with appropriate HTTP status codes
 ///
 /// Converts inspect service errors to appropriate API errors
-pub fn handle_inspect_error(error: crate::inspect::InspectError) -> ApiError {
-    use crate::inspect::InspectError;
-
-    match error {
-        InspectError::ServerNotFound(msg) => ApiError::NotFound(msg),
-        InspectError::ConnectionFailed(msg) => ApiError::Timeout(msg),
-        InspectError::InvalidConfig(msg) => ApiError::BadRequest(msg),
-        InspectError::CacheError(msg) => ApiError::InternalError(format!("Cache error: {msg}")),
-        InspectError::Timeout(msg) => ApiError::Timeout(msg),
-        InspectError::SerializationError(msg) => {
-            ApiError::InternalError(format!("Serialization error: {msg}"))
-        }
-        InspectError::PermissionDenied(msg) => ApiError::Forbidden(msg),
-        InspectError::IoError(err) => ApiError::InternalError(format!("IO error: {err}")),
-        InspectError::JsonError(err) => ApiError::InternalError(format!("JSON error: {err}")),
-        InspectError::DatabaseError(msg) => {
-            ApiError::InternalError(format!("Database error: {msg}"))
-        }
-    }
+pub fn handle_inspect_error(error: String) -> ApiError {
+    ApiError::InternalError(error)
 }
 
 #[cfg(test)]
@@ -406,19 +413,5 @@ mod tests {
         assert!(validate_server_id("").is_err());
         assert!(validate_server_id("   ").is_err());
         assert!(validate_server_id(&"x".repeat(256)).is_err());
-    }
-
-    #[test]
-    fn test_create_inspect_response() {
-        let data = vec!["test"];
-        let params = InspectParams::default();
-        let response = create_inspect_response(data, &params, Some(true), None);
-
-        assert_eq!(response.data, vec!["test"]);
-        assert!(response.meta.is_some());
-        let meta = response.meta.unwrap();
-        assert_eq!(meta.refresh_strategy, params.refresh.unwrap_or_default());
-        assert_eq!(meta.format, params.format.unwrap_or_default());
-        assert_eq!(meta.cache_hit, Some(true));
     }
 }

@@ -3,9 +3,9 @@
 use crate::core::transport::TransportType;
 use std::collections::HashMap;
 
-/// Inspect cache update types
+/// Cache update types
 #[derive(Debug, Clone)]
-pub enum InspectCacheUpdateType {
+pub enum CacheUpdateType {
     /// Fresh capabilities fetched from server
     Fresh,
     /// Background refresh completed
@@ -91,26 +91,26 @@ pub enum Event {
     /// Configuration was reloaded
     ConfigReloaded,
 
-    /// Inspect cache was updated for a server
-    InspectCacheUpdated {
+    /// Cache was updated for a server
+    CacheUpdated {
         /// Server ID
         server_id: String,
         /// Server name
         server_name: String,
         /// Cache update type
-        update_type: InspectCacheUpdateType,
+        update_type: CacheUpdateType,
     },
 
-    /// Inspect cache was invalidated for a server
-    InspectCacheInvalidated {
+    /// Cache was invalidated for a server
+    CacheInvalidated {
         /// Server ID
         server_id: String,
         /// Server name
         server_name: String,
     },
 
-    /// Inspect cache was cleared
-    InspectCacheCleared,
+    /// Cache was cleared
+    CacheCleared,
 
     /// Server transport layer is ready
     ServerTransportReady {

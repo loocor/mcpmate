@@ -35,8 +35,8 @@ pub struct AppState {
     pub database: Option<Arc<crate::config::database::Database>>,
     /// Configuration application state manager
     pub config_application_state: Arc<crate::core::suit::ConfigApplicationStateManager>,
-    /// Inspect service for capability inspect and caching
-    pub inspect_service: Option<Arc<crate::inspect::InspectService>>,
+    /// Redb cache manager (unified capabilities cache)
+    pub redb_cache: Arc<crate::core::cache::RedbCacheManager>,
 }
 
 /// Create the API router with all routes
@@ -69,9 +69,7 @@ fn create_router_internal(
             let merge_service = Arc::new(crate::core::suit::SuitService::new(db));
             Some(merge_service)
         } else {
-            tracing::warn!(
-                "Database not available, Config Suit merge service will not be initialized"
-            );
+            tracing::warn!("Database not available, Config Suit merge service will not be initialized");
             None
         }
     } else {
@@ -86,8 +84,7 @@ fn create_router_internal(
     };
 
     // Create and initialize configuration application state manager
-    let config_application_state =
-        Arc::new(crate::core::suit::ConfigApplicationStateManager::new());
+    let config_application_state = Arc::new(crate::core::suit::ConfigApplicationStateManager::new());
 
     // Initialize the state manager in the background
     let state_manager_clone = config_application_state.clone();
@@ -95,22 +92,17 @@ fn create_router_internal(
         state_manager_clone.initialize().await;
     });
 
-    // Create inspect service if database is available
-    let inspect_service = if let Some(ref db) = database {
-        match crate::inspect::InspectService::new((**db).clone(), None) {
-            Ok(service) => {
-                tracing::info!("Inspect service initialized successfully");
-                Some(Arc::new(service))
-            }
-            Err(e) => {
-                tracing::warn!("Failed to initialize inspect service: {}", e);
-                None
-            }
-        }
+    // Initialize Redb cache manager
+    // Allow override via MCPMATE_REDB_CACHE_PATH for tests; default to temp dir
+    let redb_cache_path = if let Ok(p) = std::env::var("MCPMATE_REDB_CACHE_PATH") {
+        std::path::PathBuf::from(p)
     } else {
-        tracing::warn!("Database not available, inspect service disabled");
-        None
+        std::env::temp_dir().join("mcpmate").join("cache.redb")
     };
+    let redb_cache = Arc::new(
+        crate::core::cache::RedbCacheManager::new(redb_cache_path, crate::core::cache::manager::CacheConfig::default())
+            .expect("Failed to initialize Redb cache manager"),
+    );
 
     let state = Arc::new(AppState {
         connection_pool,
@@ -119,7 +111,7 @@ fn create_router_internal(
         suit_merge_service: config_suit_merge_service,
         database,
         config_application_state,
-        inspect_service,
+        redb_cache,
     });
 
     // Create API router

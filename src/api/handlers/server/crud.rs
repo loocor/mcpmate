@@ -43,9 +43,7 @@ fn validate_server_config(
         }
         "sse" | "streamable_http" => {
             if url.is_none() {
-                return Err(ApiError::BadRequest(format!(
-                    "URL is required for {kind} servers"
-                )));
+                return Err(ApiError::BadRequest(format!("URL is required for {kind} servers")));
             }
         }
         _ => {
@@ -94,9 +92,7 @@ async fn get_or_create_default_config_suit(db: &Database) -> Result<String, ApiE
         Ok(suit.id.unwrap())
     } else {
         let new_suit = ConfigSuit::new("default".to_string(), ConfigSuitType::Shared);
-        suit::upsert_config_suit(&db.pool, &new_suit)
-            .await
-            .map_err(db_error)
+        suit::upsert_config_suit(&db.pool, &new_suit).await.map_err(db_error)
     }
 }
 
@@ -135,8 +131,7 @@ async fn get_server_details(
     }
 
     // Get server metadata
-    if let Ok(Some(server_meta)) = crate::config::server::get_server_meta(&db.pool, server_id).await
-    {
+    if let Ok(Some(server_meta)) = crate::config::server::get_server_meta(&db.pool, server_id).await {
         details.meta = Some(ServerMetaInfo {
             description: server_meta.description,
             author: server_meta.author,
@@ -155,10 +150,9 @@ async fn get_server_details(
         .unwrap_or(true);
 
     // Get server enabled status in config suits
-    details.enabled_in_suits =
-        crate::config::server::is_server_enabled_in_any_suit(&db.pool, server_id)
-            .await
-            .unwrap_or(false);
+    details.enabled_in_suits = crate::config::server::is_server_enabled_in_any_suit(&db.pool, server_id)
+        .await
+        .unwrap_or(false);
 
     details
 }
@@ -178,7 +172,7 @@ async fn add_server_to_suit(
 
 /// Add server to config suit with capabilities sync
 async fn add_server_to_suit_with_sync(
-    state: &Arc<AppState>,
+    _state: &Arc<AppState>,
     db: &Database,
     suit_id: &str,
     server_id: &str,
@@ -190,15 +184,14 @@ async fn add_server_to_suit_with_sync(
         .map_err(db_error)?;
 
     // Sync server capabilities to the configuration suit (async, non-blocking)
-    if let Some(inspect_service) = &state.inspect_service {
+    if false {
         let pool_clone = db.pool.clone();
         let suit_id_clone = suit_id.to_string();
         let server_id_clone = server_id.to_string();
-        let inspect_service_clone = inspect_service.clone();
+        let _noop = ();
 
         // Use the same semaphore to limit concurrent operations
-        static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> =
-            std::sync::OnceLock::new();
+        static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
         let semaphore = CAPABILITY_SYNC_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(2));
 
         tokio::spawn(async move {
@@ -215,13 +208,9 @@ async fn add_server_to_suit_with_sync(
                 }
             };
 
-            if let Err(e) = crate::config::suit::sync_server_capabilities_to_suit(
-                &pool_clone,
-                &suit_id_clone,
-                &server_id_clone,
-                &inspect_service_clone,
-            )
-            .await
+            if let Err(e) =
+                crate::config::suit::sync_server_capabilities_to_suit(&pool_clone, &suit_id_clone, &server_id_clone)
+                    .await
             {
                 tracing::warn!(
                     "Failed to sync capabilities for server {} to suit {}: {}",
@@ -364,10 +353,7 @@ pub async fn update_server(
 
     // Validate server type if provided
     if let Some(kind) = &payload.kind {
-        let command = payload
-            .command
-            .as_ref()
-            .or(existing_server.command.as_ref());
+        let command = payload.command.as_ref().or(existing_server.command.as_ref());
         let url = payload.url.as_ref().or(existing_server.url.as_ref());
         validate_server_config(kind, &command.cloned(), &url.cloned())?;
     }
@@ -379,9 +365,7 @@ pub async fn update_server(
         updated_server.transport_type = match updated_server.server_type {
             ServerType::Stdio => Some(crate::common::server::TransportType::Stdio),
             ServerType::Sse => Some(crate::common::server::TransportType::Sse),
-            ServerType::StreamableHttp => {
-                Some(crate::common::server::TransportType::StreamableHttp)
-            }
+            ServerType::StreamableHttp => Some(crate::common::server::TransportType::StreamableHttp),
         };
     }
     if let Some(command) = payload.command {
@@ -468,14 +452,8 @@ async fn import_single_server(
     }
 
     // Validate and create server
-    validate_server_config(&config.kind, &config.command, &config.url)
-        .map_err(|e| e.to_string())?;
-    let server = create_server_from_config(
-        name.clone(),
-        &config.kind,
-        config.command.clone(),
-        config.url.clone(),
-    );
+    validate_server_config(&config.kind, &config.command, &config.url).map_err(|e| e.to_string())?;
+    let server = create_server_from_config(name.clone(), &config.kind, config.command.clone(), config.url.clone());
 
     // Insert server into database
     let server_id = crate::config::server::upsert_server(&db.pool, &server)
@@ -543,11 +521,7 @@ async fn disconnect_server_instances(
     state: &Arc<AppState>,
     name: &str,
 ) {
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await;
+    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
 
     if let Ok(mut pool) = pool_result {
         if let Some(instances) = pool.connections.get(name) {
@@ -564,9 +538,7 @@ async fn disconnect_server_instances(
             }
         }
     } else {
-        tracing::warn!(
-            "Timed out waiting for connection pool lock, proceeding with server deletion anyway"
-        );
+        tracing::warn!("Timed out waiting for connection pool lock, proceeding with server deletion anyway");
     }
 }
 

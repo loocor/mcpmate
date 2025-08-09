@@ -101,11 +101,10 @@ pub async fn enable_server(
 
     // Sync server capabilities to the configuration suit (async, non-blocking)
     // Use a semaphore to limit concurrent capability sync operations
-    if let Some(inspect_service) = &state.inspect_service {
+    if true { // Inspect removed; keep placeholder branch for future hook
         let pool_clone = db.pool.clone();
         let suit_id_clone = suit_id.clone();
         let server_id_clone = server_id.clone();
-        let inspect_service_clone = inspect_service.clone();
 
         // Create a semaphore to limit concurrent operations (max 2 concurrent syncs)
         static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
@@ -129,7 +128,6 @@ pub async fn enable_server(
                 &pool_clone,
                 &suit_id_clone,
                 &server_id_clone,
-                &inspect_service_clone,
             )
             .await
             {
@@ -253,11 +251,10 @@ pub async fn batch_enable_servers(
                 {
                     Ok(_) => {
                         // Sync server capabilities to the configuration suit (async, non-blocking)
-                        if let Some(inspect_service) = &state.inspect_service {
+    if true { // Inspect removed; keep placeholder branch for future hook
                             let pool_clone = db.pool.clone();
                             let suit_id_clone = suit_id.clone();
                             let server_id_clone = server_id.clone();
-                            let inspect_service_clone = inspect_service.clone();
 
                             // Use the same semaphore to limit concurrent operations
                             static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
@@ -281,7 +278,6 @@ pub async fn batch_enable_servers(
                                     &pool_clone,
                                     &suit_id_clone,
                                     &server_id_clone,
-                                    &inspect_service_clone,
                                 )
                                 .await
                                 {

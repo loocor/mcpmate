@@ -30,7 +30,7 @@ pub fn setup_logging(args: &Args) -> Result<()> {
                 )
                 // Reduce noise from specific modules
                 .add_directive("rmcp=warn".parse().unwrap())
-                .add_directive("mcpmate::inspect=warn".parse().unwrap())
+                .add_directive("mcpmate::core::cache=warn".parse().unwrap())
                 .add_directive("mcpmate::core::transport=warn".parse().unwrap())
                 .add_directive("mcpmate::system::metrics=error".parse().unwrap())
                 .add_directive("sqlx=error".parse().unwrap())

@@ -386,8 +386,8 @@ mod tests {
         UpstreamConnectionPool::new(config, None)
     }
 
-    #[test]
-    fn test_instance_helpers_with_empty_pool() {
+    #[tokio::test]
+    async fn test_instance_helpers_with_empty_pool() {
         let pool = create_test_pool();
 
         // Should return errors for non-existent servers

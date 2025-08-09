@@ -142,32 +142,32 @@ impl EventHandlers {
                 // No need to reconnect to servers
             }
 
-            // Inspect cache events (informational only)
-            Event::InspectCacheUpdated {
+            // Cache events (informational only)
+            Event::CacheUpdated {
                 server_id,
                 server_name,
                 update_type,
             } => {
                 debug!(
-                    "Inspect cache updated for server '{}' ({}): {:?}",
+                    "Cache updated for server '{}' ({}): {:?}",
                     server_name, server_id, update_type
                 );
                 // No action needed, this is informational
             }
 
-            Event::InspectCacheInvalidated {
+            Event::CacheInvalidated {
                 server_id,
                 server_name,
             } => {
                 debug!(
-                    "Inspect cache invalidated for server '{}' ({})",
+                    "Cache invalidated for server '{}' ({})",
                     server_name, server_id
                 );
                 // No action needed, this is informational
             }
 
-            Event::InspectCacheCleared => {
-                debug!("Inspect cache cleared");
+            Event::CacheCleared => {
+                debug!("Cache cleared");
                 // No action needed, this is informational
             }
 
