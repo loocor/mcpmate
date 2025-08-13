@@ -6,17 +6,16 @@
 pub mod downloader; // Simplified downloader
 pub mod installer; // Simplified installer
 pub mod manager; // Unified runtime manager
-pub mod types; // Core type definitions
 
-// Re-export common types from common::env
+// Re-export common types from common::env and common::types
 pub use crate::common::env::{Architecture, Environment, OperatingSystem, detect_environment};
+pub use crate::common::{RuntimeError, RuntimeType};
 
-// Re-export core types and services
+// Re-export core runtime services
 pub use crate::runtime::{
     downloader::RuntimeDownloader,
     installer::RuntimeInstaller,
     manager::{RuntimeCache, RuntimeInfo, RuntimeManager},
-    types::{RuntimeError, RuntimeType},
 };
 
 use std::path::PathBuf;

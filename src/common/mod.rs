@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod connection;
+pub mod constants;
 pub mod env;
 pub mod json;
 pub mod paths;
@@ -16,4 +17,4 @@ pub mod types;
 pub use env::{EnvironmentManager, create_runtime_environment, prepare_command_environment};
 pub use json::strip_comments;
 pub use paths::{MCPMatePaths, get_bridge_path, global_paths};
-pub use types::ClientCategory;
+pub use types::{ClientCategory, RuntimeType, RuntimeError};

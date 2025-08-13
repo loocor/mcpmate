@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use super::types::RuntimeType;
+use crate::common::RuntimeType;
 use crate::common::env::{Architecture, OperatingSystem, detect_environment};
 
 /// Simple runtime downloader

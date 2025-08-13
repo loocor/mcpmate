@@ -1,17 +1,26 @@
-// Runtime API handlers - Ultra-lightweight wrappers around CLI functionality
-// Directly calls existing CLI functions to avoid any code duplication
+//! Runtime API handlers - Complete business logic implementation
+//!
+//! Provides runtime management functionality for UV and Bun package managers,
+//! including installation, status monitoring, and cache management.
+//!
+//! Note: Only manages Runtime Cache (UV/Bun packages), not Capabilities Cache.
 
+use chrono;
+use std::fs;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use axum::{
     Json,
     extract::{Query, State},
 };
 use serde::{Deserialize, Serialize};
+use tokio::process::Command as AsyncCommand;
 
 use crate::{
     api::{handlers::ApiError, routes::AppState},
-    runtime::{RuntimeInstaller, RuntimeManager, RuntimeType},
+    common::{RuntimeType, paths::global_paths},
+    runtime::{RuntimeInstaller, RuntimeManager},
 };
 
 /// Install runtime request
@@ -31,20 +40,8 @@ pub struct RuntimeStatus {
     pub runtime_type: String,
     pub available: bool,
     pub path: Option<String>,
-    pub message: String,
-}
-
-/// List/query runtime parameters
-#[derive(Debug, Deserialize)]
-pub struct ListQuery {
-    pub runtime_type: Option<String>,
     pub version: Option<String>,
-}
-
-/// List response
-#[derive(Debug, Serialize)]
-pub struct ListResponse {
-    pub runtimes: Vec<RuntimeStatus>,
+    pub message: String,
 }
 
 /// Install response
@@ -55,27 +52,43 @@ pub struct InstallResponse {
     pub runtime_type: String,
 }
 
-// -------- Spec-aligned models --------
-
+/// Runtime status response - only runtime info
 #[derive(Debug, Serialize)]
-pub struct RuntimeCompositeStatus {
-    pub runtime_status: serde_json::Value,
-    pub cache_status: serde_json::Value,
-    pub active_servers: serde_json::Value,
+pub struct RuntimeStatusResponse {
+    pub uv: RuntimeStatus,
+    pub bun: RuntimeStatus,
+}
+
+/// Runtime cache response
+#[derive(Debug, Serialize)]
+pub struct RuntimeCacheResponse {
+    pub summary: CacheSummaryInfo,
+    pub uv: CacheItem,
+    pub bun: CacheItem,
 }
 
 #[derive(Debug, Serialize)]
-pub struct CacheStatisticsResponse {
-    pub cache_statistics: serde_json::Value,
-    pub performance_metrics: serde_json::Value,
+pub struct CacheSummaryInfo {
+    pub total_size_bytes: u64,
+    pub last_cleanup: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ClearCacheRequest {
-    pub cache_types: Option<Vec<String>>, // ["redb", "build_artifacts", "dependencies"]
-    pub server_ids: Option<Vec<String>>,  // optional
-    pub force: Option<bool>,
-    pub backup_before_clear: Option<bool>,
+#[derive(Debug, Serialize)]
+pub struct CacheItem {
+    pub path: String,
+    pub size_bytes: u64,
+    pub package_count: u64,
+    pub last_modified: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct CacheResetQuery {
+    #[serde(default = "default_cache_type")]
+    pub cache_type: String, // "all" | "uv" | "bun", defaults to "all"
+}
+
+fn default_cache_type() -> String {
+    "all".to_string()
 }
 
 #[derive(Debug, Serialize)]
@@ -108,14 +121,18 @@ async fn perform_runtime_installation(
 }
 
 /// Create runtime status for a specific runtime type
-fn create_runtime_status(
-    runtime_type: RuntimeType,
-    _version: Option<&str>, // Version parameter kept for API compatibility but ignored
-) -> RuntimeStatus {
+async fn create_runtime_status(runtime_type: RuntimeType) -> RuntimeStatus {
     let manager = RuntimeManager::new();
     let available = manager.is_installed(runtime_type);
     let path = manager.get_executable_path(runtime_type);
     let path_str = path.as_ref().map(|p| p.to_string_lossy().to_string());
+
+    // Get version using async command
+    let version = if let Some(path) = &path {
+        get_version_from_exec_async(path).await
+    } else {
+        None
+    };
 
     // Use RuntimeManager's enhanced status message with source information
     let runtime_info = manager
@@ -135,7 +152,102 @@ fn create_runtime_status(
         runtime_type: runtime_type.to_string(),
         available,
         path: path_str,
+        version,
         message,
+    }
+}
+
+/// Get version from executable asynchronously
+async fn get_version_from_exec_async(path: &std::path::Path) -> Option<String> {
+    let output = AsyncCommand::new(path).arg("--version").output().await.ok()?;
+
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !s.is_empty() { Some(s) } else { None }
+    } else {
+        None
+    }
+}
+
+/// Calculate directory size recursively
+fn calculate_dir_size(dir_path: &std::path::Path) -> u64 {
+    if !dir_path.exists() || !dir_path.is_dir() {
+        return 0;
+    }
+
+    fs::read_dir(dir_path)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .map(|entry| {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        calculate_dir_size(&path)
+                    } else {
+                        entry.metadata().map(|m| m.len()).unwrap_or(0)
+                    }
+                })
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+/// Count packages in cache directory
+fn count_packages_in_cache(cache_path: &std::path::Path) -> u64 {
+    if !cache_path.exists() || !cache_path.is_dir() {
+        return 0;
+    }
+
+    fs::read_dir(cache_path)
+        .map(|entries| entries.filter_map(|entry| entry.ok()).count() as u64)
+        .unwrap_or(0)
+}
+
+/// Get last modified time of directory
+fn get_last_modified(path: &std::path::Path) -> Option<String> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map(|time| {
+            time.duration_since(UNIX_EPOCH)
+                .map(|dur| {
+                    let timestamp = dur.as_secs();
+                    chrono::DateTime::from_timestamp(timestamp as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| format!("{}", timestamp))
+                })
+                .unwrap_or_else(|_| "unknown".to_string())
+        })
+        .ok()
+}
+
+/// Get the last cleanup timestamp from .last_cleanup file
+fn get_last_cleanup_time() -> Option<String> {
+    let paths = global_paths();
+    let cleanup_file = paths.cache_dir().join(".last_cleanup");
+
+    if cleanup_file.exists() {
+        std::fs::read_to_string(&cleanup_file)
+            .ok()
+            .map(|s| s.trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Get cache info for a specific runtime type
+async fn get_cache_info(runtime_type: RuntimeType) -> CacheItem {
+    let paths = global_paths();
+    let cache_path = paths.runtime_cache_dir(runtime_type.as_str());
+
+    let size_bytes = calculate_dir_size(&cache_path);
+    let package_count = count_packages_in_cache(&cache_path);
+    let last_modified = get_last_modified(&cache_path);
+
+    CacheItem {
+        path: cache_path.to_string_lossy().to_string(),
+        size_bytes,
+        package_count,
+        last_modified,
     }
 }
 
@@ -158,17 +270,20 @@ pub async fn install_runtime(
 
     // Handle already installed runtime
     if is_already_installed {
-        tracing::info!("Runtime {runtime_type} already installed");
+        tracing::info!("Runtime {} already installed", runtime_type);
 
         return Ok(Json(InstallResponse {
             success: true,
-            message: format!("Runtime {runtime_type} already installed"),
+            message: format!("Runtime {} already installed", runtime_type),
             runtime_type: request.runtime_type,
         }));
     }
 
     // Handle new runtime installation
-    tracing::info!("Runtime {runtime_type} not found, proceeding with download and installation");
+    tracing::info!(
+        "Runtime {} not found, proceeding with download and installation",
+        runtime_type
+    );
 
     match perform_runtime_installation(&state, &request, runtime_type).await {
         Ok(()) => Ok(Json(InstallResponse {
@@ -184,157 +299,78 @@ pub async fn install_runtime(
     }
 }
 
-/// List/query runtimes - GET /api/runtime/list
-/// Supports optional query parameters to filter by runtime_type and version
-/// Replaces the functionality of /check and /path endpoints
-pub async fn list_runtimes(
+/// GET /api/runtime/status
+pub async fn runtime_status(State(_state): State<Arc<AppState>>) -> Result<Json<RuntimeStatusResponse>, ApiError> {
+    // Get runtime information
+    let uv_status = create_runtime_status(RuntimeType::Uv).await;
+    let bun_status = create_runtime_status(RuntimeType::Bun).await;
+
+    Ok(Json(RuntimeStatusResponse {
+        uv: uv_status,
+        bun: bun_status,
+    }))
+}
+
+/// GET /api/runtime/cache - detailed Runtime Cache statistics
+/// Focus on space usage and cache management, removed performance metrics
+pub async fn runtime_cache(State(_state): State<Arc<AppState>>) -> Result<Json<RuntimeCacheResponse>, ApiError> {
+    // Get cache information for both runtime types
+    let uv_cache = get_cache_info(RuntimeType::Uv).await;
+    let bun_cache = get_cache_info(RuntimeType::Bun).await;
+
+    Ok(Json(RuntimeCacheResponse {
+        summary: CacheSummaryInfo {
+            total_size_bytes: uv_cache.size_bytes + bun_cache.size_bytes,
+            last_cleanup: get_last_cleanup_time(),
+        },
+        uv: uv_cache,
+        bun: bun_cache,
+    }))
+}
+
+/// Spec: POST /api/runtime/cache/reset?cache_type=all|uv|bun
+/// Reset runtime environment cache under ~/.mcpmate/cache.
+/// Supports selective clearing: all (default), uv, or bun only.
+pub async fn runtime_cache_reset(
     State(_state): State<Arc<AppState>>,
-    Query(query): Query<ListQuery>,
-) -> Result<Json<ListResponse>, ApiError> {
-    // Determine which runtime types to check
-    let runtime_types_to_check = if let Some(runtime_type_str) = &query.runtime_type {
-        // Parse and validate the specific runtime type
-        let runtime_type: RuntimeType = runtime_type_str
-            .parse()
-            .map_err(|e| ApiError::BadRequest(format!("Invalid runtime type: {e}")))?;
-        vec![runtime_type]
-    } else {
-        // Check all runtime types
-        vec![RuntimeType::Uv, RuntimeType::Bun]
+    Query(query): Query<CacheResetQuery>,
+) -> Result<Json<ClearCacheResponse>, ApiError> {
+    let paths = global_paths();
+    let base = paths.cache_dir();
+
+    // Determine which caches to clear based on cache_type parameter
+    let cache_paths: Vec<std::path::PathBuf> = match query.cache_type.as_str() {
+        "uv" => vec![base.join(RuntimeType::Uv.as_str())],
+        "bun" => vec![base.join(RuntimeType::Bun.as_str())],
+        _ => vec![
+            // "all" or any other value defaults to all
+            base.join(RuntimeType::Uv.as_str()),
+            base.join(RuntimeType::Bun.as_str()),
+        ],
     };
 
-    // Check each runtime type and create status
-    let runtimes = runtime_types_to_check
-        .into_iter()
-        .map(|runtime_type| create_runtime_status(runtime_type, query.version.as_deref()))
-        .collect();
+    let mut ok = true;
+    for p in cache_paths {
+        if p.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&p) {
+                tracing::warn!("Failed to remove {:?}: {}", p, e);
+                ok = false;
+            } else {
+                tracing::info!("Removed runtime cache dir: {:?}", p);
+            }
+        }
+    }
 
-    Ok(Json(ListResponse { runtimes }))
-}
+    // Record cleanup time if successful
+    if ok {
+        let cleanup_timestamp_path = base.join(".last_cleanup");
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        if let Err(e) = std::fs::write(&cleanup_timestamp_path, timestamp) {
+            tracing::warn!("Failed to write cleanup timestamp: {}", e);
+        } else {
+            tracing::info!("Recorded cleanup timestamp at {:?}", cleanup_timestamp_path);
+        }
+    }
 
-/// Spec: GET /api/runtime/status
-pub async fn runtime_status(State(state): State<Arc<AppState>>) -> Result<Json<RuntimeCompositeStatus>, ApiError> {
-    // Runtime availability via RuntimeManager
-    let manager = RuntimeManager::new();
-    let node_available = manager.is_installed(RuntimeType::Bun); // using Bun as a placeholder runtime
-    let node_status = serde_json::json!({
-        "version": null,
-        "status": if node_available { "available" } else { "unavailable" },
-        "package_managers": serde_json::json!({})
-    });
-    let python_status = serde_json::json!({
-        "version": null,
-        "status": "unknown",
-        "package_managers": serde_json::json!({})
-    });
-
-    let runtime_status = serde_json::json!({
-        "node_js": node_status,
-        "python": python_status,
-    });
-
-    // Cache status from Redb
-    let stats = state.redb_cache.get_stats().await;
-    let cache_status = serde_json::json!({
-        "total_size": format!("{}B", stats.cache_size_bytes),
-        "entries_count": stats.total_servers + stats.total_tools + stats.total_resources + stats.total_prompts,
-        "hit_rate": stats.hit_ratio,
-        "last_cleanup": stats.last_updated.to_rfc3339(),
-    });
-
-    // Active servers: derive production from pool connections; others 0 for now
-    let pool = state.connection_pool.lock().await;
-    let (production, exploration, validation) = pool.active_instance_counts();
-    drop(pool);
-    let active_servers = serde_json::json!({
-        "production": production,
-        "exploration": exploration,
-        "validation": validation,
-    });
-
-    Ok(Json(RuntimeCompositeStatus {
-        runtime_status,
-        cache_status,
-        active_servers,
-    }))
-}
-
-/// Spec: GET /api/runtime/cache
-pub async fn runtime_cache(State(state): State<Arc<AppState>>) -> Result<Json<CacheStatisticsResponse>, ApiError> {
-    let stats = state.redb_cache.get_stats().await;
-    let cache_statistics = serde_json::json!({
-        "redb_cache": {
-            "size": format!("{}B", stats.cache_size_bytes),
-            "entries": stats.total_servers + stats.total_tools + stats.total_resources + stats.total_prompts,
-            "hit_rate": stats.hit_ratio,
-            "avg_query_time": null
-        },
-        "build_artifacts": {"size": "0B", "entries": 0, "last_cleanup": null},
-        "dependency_cache": {"node_modules_size": "0B", "python_packages_size": "0B", "shared_dependencies": 0},
-    });
-    let performance_metrics = serde_json::json!({
-        "cache_hit_rate_trend": [],
-        "query_time_trend": [],
-        "storage_growth_rate": null,
-    });
-    Ok(Json(CacheStatisticsResponse {
-        cache_statistics,
-        performance_metrics,
-    }))
-}
-
-/// Spec: POST /api/runtime/cache/clear
-pub async fn runtime_cache_clear(
-    State(state): State<Arc<AppState>>,
-    Json(_req): Json<ClearCacheRequest>,
-) -> Result<Json<ClearCacheResponse>, ApiError> {
-    state
-        .redb_cache
-        .clear_all()
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to clear cache: {e}")))?;
-    Ok(Json(ClearCacheResponse { success: true }))
-}
-
-/// Spec: POST /api/runtime/cache/rebuild
-pub async fn runtime_cache_rebuild(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<RebuildCacheRequest>,
-) -> Result<Json<ClearCacheResponse>, ApiError> {
-    tracing::info!("Starting cache rebuild with strategy: {:?}", req.rebuild_strategy);
-
-    // Clear existing cache first
-    state
-        .redb_cache
-        .clear_all()
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to clear cache before rebuild: {e}")))?;
-
-    // TODO: For now, return success - full implementation would:
-    // 1. Get all configured servers from database
-    // 2. Create temporary exploration instances for each
-    // 3. Fetch fresh capabilities data
-    // 4. Store in cache with new fingerprints
-    // 5. Validate after rebuild if requested
-
-    tracing::info!("Cache rebuild completed successfully");
-    Ok(Json(ClearCacheResponse { success: true }))
-}
-
-/// Spec: GET /api/runtime/versions
-pub async fn runtime_versions(State(_state): State<Arc<AppState>>) -> Result<Json<VersionsResponse>, ApiError> {
-    let versions = serde_json::json!({
-        "mcpmate": env!("CARGO_PKG_VERSION"),
-        "node_js": null,
-        "python": null,
-        "redb": "2.x",
-    });
-    let compatibility_matrix = serde_json::json!({
-        "node_servers": {"supported_versions": ["16.x", "18.x", "20.x"], "recommended_version": "18.x"},
-        "python_servers": {"supported_versions": ["3.9", "3.10", "3.11", "3.12"], "recommended_version": "3.11"},
-    });
-    Ok(Json(VersionsResponse {
-        versions,
-        compatibility_matrix,
-    }))
+    Ok(Json(ClearCacheResponse { success: ok }))
 }

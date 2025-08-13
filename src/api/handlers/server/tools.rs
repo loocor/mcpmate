@@ -8,10 +8,11 @@ use axum::{
 use std::sync::Arc;
 
 use crate::api::{handlers::ApiError, routes::AppState};
+use chrono::Utc;
 
+use super::common::CacheQueryExt;
 use super::common::{
-    InspectParams, RefreshStrategy, get_database_from_state, register_session_if_needed, resolve_server_identifier,
-    validate_server_id,
+    InspectParams, get_database_from_state, register_session_if_needed, resolve_server_identifier, validate_server_id,
 };
 
 /// Query parameters for tools endpoints
@@ -94,29 +95,34 @@ pub async fn list_tools(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Try Redb cache first when strategy prefers cache
-    let prefer_cache = params.refresh.unwrap_or_default() == RefreshStrategy::CacheFirst;
-    if prefer_cache {
-        if let Ok(cached_tools) = state.redb_cache.get_server_tools(&server_info.server_id, false).await {
-            if !cached_tools.is_empty() {
-                let processed: Vec<serde_json::Value> = cached_tools
+    // Try Redb cache first with freshness policy
+    let instance_type = super::common::parse_instance_type(&query.instance_type);
+    let cache_query =
+        super::common::build_cache_query(&server_info.server_id, &params).update_instance_type(instance_type.clone());
+
+    if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
+        if cache_result.cache_hit {
+            if let Some(data) = cache_result.data {
+                let processed: Vec<serde_json::Value> = data
+                    .tools
                     .into_iter()
                     .map(|t| {
-                        let desc = t.description.clone();
-                        let unique_name = t.unique_name.clone();
                         let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
                         serde_json::json!({
                             "name": t.name,
-                            "description": desc,
+                            "description": t.description,
                             "input_schema": schema,
-                            "unique_name": unique_name
+                            "unique_name": t.unique_name
                         })
                     })
                     .collect();
-                return Ok(Json(serde_json::json!({
-                    "data": processed,
-                    "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default() }
-                })));
+                if !processed.is_empty() {
+                    return Ok(Json(serde_json::json!({
+                        "data": processed,
+                        "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
+                    })));
+                }
+                // empty cached snapshot is treated as miss; fall through to runtime/offline
             }
         }
     }
@@ -126,6 +132,7 @@ pub async fn list_tools(
         if let Some(instances) = pool.connections.get(&server_info.server_name) {
             // Collect tools from any connected instance
             let mut tools: Vec<serde_json::Value> = Vec::new();
+            let mut cached_tools: Vec<crate::core::cache::CachedToolInfo> = Vec::new();
             for conn in instances.values() {
                 if !conn.is_connected() {
                     continue;
@@ -138,14 +145,63 @@ pub async fn list_tools(
                         "input_schema": schema,
                         "unique_name": serde_json::Value::Null
                     }));
+
+                    // Build cacheable tool info
+                    let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
+                    cached_tools.push(crate::core::cache::CachedToolInfo {
+                        name: t.name.to_string(),
+                        description: t.description.clone().map(|d| d.into_owned()),
+                        input_schema_json,
+                        unique_name: None,
+                        enabled: true,
+                        cached_at: Utc::now(),
+                    });
                 }
             }
             if !tools.is_empty() {
+                // Persist into Redb cache for future requests
+                let server_data = crate::core::cache::CachedServerData {
+                    server_id: server_info.server_id.clone(),
+                    server_name: server_info.server_name.clone(),
+                    server_version: None,
+                    protocol_version: "latest".to_string(),
+                    tools: cached_tools,
+                    resources: Vec::new(),
+                    prompts: Vec::new(),
+                    resource_templates: Vec::new(),
+                    cached_at: Utc::now(),
+                    fingerprint: format!("runtime:{}:{}", server_info.server_id, Utc::now().timestamp()),
+                    instance_type: instance_type.clone(),
+                };
+                let _ = state.redb_cache.store_server_data(&server_data).await;
+
                 return Ok(Json(serde_json::json!({
                     "data": tools,
                     "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default(), "source": "runtime" }
                 })));
             }
+        }
+    }
+
+    // Last resort: return any cached tools ignoring freshness if available (support offline access)
+    if let Ok(cached_tools) = state.redb_cache.get_server_tools(&server_info.server_id, false).await {
+        if !cached_tools.is_empty() {
+            let processed: Vec<serde_json::Value> = cached_tools
+                .into_iter()
+                .map(|t| {
+                    let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": schema,
+                        "unique_name": t.unique_name
+                    })
+                })
+                .collect();
+            return Ok(Json(serde_json::json!({
+                "data": processed,
+                "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
+            })));
         }
     }
 
@@ -199,7 +255,9 @@ pub async fn get_tool_detail(
     if let Ok(pool) = tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
         if let Some(instances) = pool.connections.get(&server_info.server_name) {
             for conn in instances.values() {
-                if !conn.is_connected() { continue; }
+                if !conn.is_connected() {
+                    continue;
+                }
                 for tool in &conn.tools {
                     if tool.name == tool_name {
                         return Ok(Json(serde_json::json!({
@@ -215,7 +273,7 @@ pub async fn get_tool_detail(
     }
 
     Err(ApiError::NotFound(format!(
-        "Tool '{}' not found for server '{}'", 
+        "Tool '{}' not found for server '{}'",
         tool_name, server_info.server_name
     )))
 }

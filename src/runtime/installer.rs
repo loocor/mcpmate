@@ -9,7 +9,7 @@ use tokio::process::Command;
 
 use super::downloader::RuntimeDownloader;
 use super::manager::RuntimeManager;
-use super::types::RuntimeType;
+use crate::common::RuntimeType;
 
 /// Simple runtime installer
 pub struct RuntimeInstaller {

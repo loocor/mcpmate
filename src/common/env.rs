@@ -10,22 +10,11 @@ use std::env;
 use std::path::Path;
 use tokio::process::Command;
 
-use super::paths::global_paths;
+use super::{paths::global_paths, types::RuntimeType};
 
-/// Environment variable constants
-pub mod constants {
-    pub const MCP_RUNTIME_BIN: &str = "MCP_RUNTIME_BIN";
-    pub const UVX_BIN_PATH: &str = "UVX_BIN_PATH";
-    pub const BUNX_BIN_PATH: &str = "BUNX_BIN_PATH";
-    pub const UV_CACHE_DIR: &str = "UV_CACHE_DIR";
-    pub const BUN_INSTALL_CACHE_DIR: &str = "BUN_INSTALL_CACHE_DIR";
-    pub const PATH: &str = "PATH";
-}
-
-/// Platform-specific path separator
-pub fn get_path_separator() -> &'static str {
-    if cfg!(windows) { ";" } else { ":" }
-}
+// Re-export constants from the central constants module
+pub use super::constants::env_vars as constants;
+pub use super::constants::separators::get_path_separator;
 
 /// System environment information (from runtime/detection.rs)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,7 +199,7 @@ pub fn create_uv_environment(
     env.prepend_path(bin_dir);
 
     // Set uv specific environment variables (simplified for system uvx)
-    let cache_dir = paths.runtime_cache_dir("uv");
+    let cache_dir = paths.runtime_cache_dir(RuntimeType::Uv.as_str());
 
     // Ensure cache directory exists
     std::fs::create_dir_all(&cache_dir)?;
@@ -249,7 +238,7 @@ pub fn create_bun_environment(
     env.prepend_path(bin_dir);
 
     // Set Bun specific environment variables
-    let cache_dir = paths.runtime_cache_dir("bun");
+    let cache_dir = paths.runtime_cache_dir(RuntimeType::Bun.as_str());
 
     // Ensure cache directory exists
     std::fs::create_dir_all(&cache_dir)?;
@@ -284,17 +273,21 @@ pub fn create_runtime_environment(
     bin_path: &Path,
     version: &str,
 ) -> Result<EnvironmentManager> {
-    match runtime_type.to_lowercase().as_str() {
-        "uv" => create_uv_environment(bin_path, version),
-        "bun" | "bunjs" => create_bun_environment(bin_path, version),
-        _ => {
-            // Generic runtime environment
-            let mut env = EnvironmentManager::new();
-            let bin_dir = bin_path.parent().unwrap_or(bin_path);
-            env.prepend_path(bin_dir);
-            env.set_var(constants::MCP_RUNTIME_BIN, bin_path.to_string_lossy());
-            Ok(env)
+    use super::types::RuntimeType;
+    use std::str::FromStr;
+    
+    if let Ok(rt) = RuntimeType::from_str(runtime_type) {
+        match rt {
+            RuntimeType::Uv => create_uv_environment(bin_path, version),
+            RuntimeType::Bun => create_bun_environment(bin_path, version),
         }
+    } else {
+        // Generic runtime environment
+        let mut env = EnvironmentManager::new();
+        let bin_dir = bin_path.parent().unwrap_or(bin_path);
+        env.prepend_path(bin_dir);
+        env.set_var(constants::MCP_RUNTIME_BIN, bin_path.to_string_lossy());
+        Ok(env)
     }
 }
 

@@ -217,16 +217,13 @@ pub fn get_bridge_path() -> Result<String> {
         }
     }
 
-    let bridge_name = if cfg!(windows) {
-        "bridge.exe"
-    } else {
-        "bridge"
-    };
+    use super::types::RuntimeType;
+    let bridge_name = format!("bridge{}", RuntimeType::executable_extension());
 
     // Try to find bridge executable in the same directory as current executable
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(exe_dir) = current_exe.parent() {
-            let bridge_path = exe_dir.join(bridge_name);
+            let bridge_path = exe_dir.join(&bridge_name);
             if bridge_path.exists() {
                 tracing::debug!("Found bridge at: {}", bridge_path.display());
                 return Ok(bridge_path.to_string_lossy().to_string());

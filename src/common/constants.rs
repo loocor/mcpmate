@@ -1,7 +1,7 @@
-//! Configuration constants for MCPMate
+//! Common constants for MCPMate
 //!
-//! This module contains constants used throughout the configuration system,
-//! particularly for runtime environment management.
+//! This module contains constants used throughout MCPMate,
+//! including runtime commands, environment variables, and path separators.
 
 /// Runtime command constants
 pub mod commands {
@@ -46,4 +46,9 @@ pub mod separators {
 
     /// Unix-like path separator
     pub const UNIX: &str = ":";
+    
+    /// Get platform-specific path separator
+    pub fn get_path_separator() -> &'static str {
+        if cfg!(windows) { WINDOWS } else { UNIX }
+    }
 }

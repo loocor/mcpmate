@@ -56,10 +56,8 @@ pub async fn setup_database() -> Result<Database> {
     system::initialize_server_start_time();
 
     // Debug database path before initialization
-    let db_path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".mcpmate")
-        .join("mcpmate.db");
+    use crate::common::paths::global_paths;
+    let db_path = global_paths().database_path();
     tracing::info!("FFI Database setup - Expected path: {}", db_path.display());
     tracing::info!("FFI Database setup - File exists: {}", db_path.exists());
 

@@ -326,10 +326,8 @@ impl MCPMateEngine {
         }
 
         // Check database path
-        let db_path = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".mcpmate")
-            .join("mcpmate.db");
+        use crate::common::paths::global_paths;
+        let db_path = global_paths().database_path();
         tracing::info!("Expected database path: {}", db_path.display());
         tracing::info!("Database exists: {}", db_path.exists());
 
@@ -356,7 +354,8 @@ impl MCPMateEngine {
         }
 
         // Check PATH environment variable
-        if let Ok(path) = std::env::var("PATH") {
+        use crate::common::env::constants;
+        if let Ok(path) = std::env::var(constants::PATH) {
             tracing::info!("PATH: {}", path);
 
             // Check if homebrew paths are in PATH

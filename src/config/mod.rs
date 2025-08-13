@@ -2,7 +2,6 @@
 // Contains database connection and configuration management
 
 pub mod client;
-pub mod constants;
 pub mod database;
 pub mod initialization;
 pub mod migration;

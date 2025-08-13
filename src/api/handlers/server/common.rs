@@ -314,6 +314,14 @@ pub fn map_refresh_to_freshness(refresh: RefreshStrategy) -> FreshnessLevel {
     }
 }
 
+/// Validate a cached snapshot for being non-empty
+pub fn cached_snapshot_has_data(data: &crate::core::cache::CachedServerData) -> bool {
+    !(data.tools.is_empty()
+        && data.resources.is_empty()
+        && data.prompts.is_empty()
+        && data.resource_templates.is_empty())
+}
+
 /// Build a Redb CacheQuery from server id and Inspect params
 pub fn build_cache_query(
     server_id: &str,
@@ -326,6 +334,24 @@ pub fn build_cache_query(
         instance_type: InstanceType::Production, // API 侧默认生产实例
         freshness_level,
         include_disabled: false,
+    }
+}
+
+/// Builder-style helper to override instance_type after building query
+pub trait CacheQueryExt {
+    fn update_instance_type(
+        self,
+        instance_type: InstanceType,
+    ) -> CacheQuery;
+}
+
+impl CacheQueryExt for CacheQuery {
+    fn update_instance_type(
+        mut self,
+        instance_type: InstanceType,
+    ) -> CacheQuery {
+        self.instance_type = instance_type;
+        self
     }
 }
 

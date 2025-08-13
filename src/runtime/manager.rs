@@ -6,8 +6,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use super::types::RuntimeType;
-use crate::{common::paths::global_paths, config::constants::commands};
+use crate::{common::{paths::global_paths, RuntimeType, constants::commands}};
 
 /// Unified runtime management service
 ///
@@ -42,39 +41,39 @@ impl RuntimeManager {
         // Check for MCPMate managed executables (preferred for version consistency and security)
         match runtime_type {
             RuntimeType::Uv => {
-                let uv_dir = self.runtimes_dir.join("uv");
+                let runtime_dir = self.runtimes_dir.join(runtime_type.as_str());
 
                 // Check for uvx first (preferred for MCP servers)
-                let uvx_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
-                let uvx_path = uv_dir.join(uvx_name);
+                let uvx_name = runtime_type.executable_name_for_command(commands::UVX);
+                let uvx_path = runtime_dir.join(uvx_name);
                 if uvx_path.exists() {
                     return Some(uvx_path);
                 }
 
                 // Fall back to uv
-                let uv_name = if cfg!(windows) { "uv.exe" } else { "uv" };
-                let uv_path = uv_dir.join(uv_name);
-                if uv_path.exists() {
-                    Some(uv_path)
+                let runtime_name = runtime_type.executable_name();
+                let runtime_path = runtime_dir.join(runtime_name);
+                if runtime_path.exists() {
+                    Some(runtime_path)
                 } else {
                     None
                 }
             }
             RuntimeType::Bun => {
-                let bun_dir = self.runtimes_dir.join("bun");
+                let runtime_dir = self.runtimes_dir.join(runtime_type.as_str());
 
                 // Check for bunx first (preferred)
-                let bunx_name = if cfg!(windows) { "bunx.exe" } else { "bunx" };
-                let bunx_path = bun_dir.join(bunx_name);
+                let bunx_name = runtime_type.executable_name_for_command(commands::BUNX);
+                let bunx_path = runtime_dir.join(bunx_name);
                 if bunx_path.exists() {
                     return Some(bunx_path);
                 }
 
                 // Fall back to bun
-                let bun_name = if cfg!(windows) { "bun.exe" } else { "bun" };
-                let bun_path = bun_dir.join(bun_name);
-                if bun_path.exists() {
-                    Some(bun_path)
+                let runtime_name = runtime_type.executable_name();
+                let runtime_path = runtime_dir.join(runtime_name);
+                if runtime_path.exists() {
+                    Some(runtime_path)
                 } else {
                     None
                 }

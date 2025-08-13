@@ -8,7 +8,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use super::error::{CoreError, CoreResult};
-use crate::config::constants::commands;
+use crate::common::constants::commands;
 
 /// determine appropriate connection timeout based on command type
 pub fn get_connection_timeout(command: &str) -> Duration {

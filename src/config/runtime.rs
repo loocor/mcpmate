@@ -12,7 +12,7 @@ use tokio::process::Command;
 
 use crate::common::env::prepare_command_environment;
 use crate::common::paths::global_paths;
-use crate::config::constants::commands;
+use crate::common::constants::commands;
 use crate::runtime::RuntimeType;
 
 /// Prepare command environment variables based on runtime configurations in the database

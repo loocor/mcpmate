@@ -8,28 +8,22 @@ use axum::{
 };
 
 use crate::api::{
-    handlers::runtime::{
-        install_runtime,
-        list_runtimes,
-        runtime_status,
-        runtime_cache,
-        runtime_cache_clear,
-        runtime_cache_rebuild,
-        runtime_versions,
-    },
+    handlers::runtime::{install_runtime, runtime_cache, runtime_cache_reset, runtime_status},
     routes::AppState,
 };
 
 /// Create runtime management routes
+///
+/// API structure:
+/// - POST /runtime/install              # Install runtime
+/// - GET  /runtime/status               # Unified status (combines original list + basic cache)
+/// - GET  /runtime/cache                # Detailed cache information (optional)
+/// - POST /runtime/cache/reset          # Cache management (future extensions lock/rollback/check)
 pub fn routes(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/runtime/install", post(install_runtime))
-        .route("/runtime/list", get(list_runtimes))
-        // Spec-aligned endpoints
         .route("/runtime/status", get(runtime_status))
         .route("/runtime/cache", get(runtime_cache))
-        .route("/runtime/cache/clear", post(runtime_cache_clear))
-        .route("/runtime/cache/rebuild", post(runtime_cache_rebuild))
-        .route("/runtime/versions", get(runtime_versions))
+        .route("/runtime/cache/reset", post(runtime_cache_reset))
         .with_state(state)
 }
