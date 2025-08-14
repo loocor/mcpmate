@@ -34,16 +34,20 @@ pub struct PromptsQuery {
 impl PromptsQuery {
     /// Convert to InspectParams
     pub fn to_params(&self) -> Result<InspectParams, ApiError> {
-        // Map instance_type to refresh strategy for backward compatibility
-        let mapped_refresh = if let Some(ref it) = self.instance_type {
+        // Explicit refresh parameter takes priority over instance_type defaults
+        let mapped_refresh = if self.refresh.is_some() {
+            // Use explicit refresh parameter if provided
+            self.refresh
+        } else if let Some(ref it) = self.instance_type {
+            // Fall back to instance_type defaults only if no explicit refresh
             match it.to_lowercase().as_str() {
                 "production" => Some(RefreshStrategy::CacheFirst),
                 "exploration" => Some(RefreshStrategy::RefreshIfStale),
-                "validation" => Some(RefreshStrategy::Force),
-                _ => self.refresh,
+                "validation" => Some(RefreshStrategy::CacheFirst),
+                _ => None,
             }
         } else {
-            self.refresh
+            None
         };
 
         Ok(InspectParams {

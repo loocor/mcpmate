@@ -35,11 +35,7 @@ pub async fn get_instance(
     Path((name, id)): Path<(String, String)>,
 ) -> Result<Json<ServerInstanceResponse>, ApiError> {
     // Use a timeout to avoid blocking indefinitely
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await;
+    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
 
     let pool = match pool_result {
         Ok(pool) => pool,
@@ -92,11 +88,7 @@ pub async fn check_health(
     Path((name, id)): Path<(String, String)>,
 ) -> Result<Json<InstanceHealthResponse>, ApiError> {
     // Use a timeout to avoid blocking indefinitely
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await;
+    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
 
     let pool = match pool_result {
         Ok(pool) => pool,
@@ -136,6 +128,7 @@ pub async fn check_health(
                 details.reason, details.total_failures
             )
         }
+        ConnectionStatus::Validating => "Instance is running as a temporary validation instance".to_string(),
     };
 
     // Get current time as ISO 8601 string
@@ -205,9 +198,7 @@ pub async fn disconnect(
                 allowed_operations: get_allowed_operations(conn),
             }))
         }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to disconnect instance: {e}"
-        ))),
+        Err(e) => Err(ApiError::BadRequest(format!("Failed to disconnect instance: {e}"))),
     }
 }
 
@@ -219,10 +210,7 @@ pub async fn force_disconnect(
     let mut pool = state.connection_pool.lock().await;
 
     // Perform the operation
-    match pool
-        .perform_instance_operation(&name, &id, "force_disconnect")
-        .await
-    {
+    match pool.perform_instance_operation(&name, &id, "force_disconnect").await {
         Ok(_) => {
             // Get the updated instance
             let conn = pool.get_instance(&name, &id)?;
@@ -265,9 +253,7 @@ pub async fn reconnect(
                 allowed_operations: get_allowed_operations(conn),
             }))
         }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to reconnect instance: {e}"
-        ))),
+        Err(e) => Err(ApiError::BadRequest(format!("Failed to reconnect instance: {e}"))),
     }
 }
 
@@ -279,10 +265,7 @@ pub async fn reset_reconnect(
     let mut pool = state.connection_pool.lock().await;
 
     // Perform the operation
-    match pool
-        .perform_instance_operation(&name, &id, "reset_reconnect")
-        .await
-    {
+    match pool.perform_instance_operation(&name, &id, "reset_reconnect").await {
         Ok(_) => {
             // Get the updated instance
             let conn = pool.get_instance(&name, &id)?;
@@ -339,9 +322,7 @@ pub async fn recover_instance(
                 allowed_operations: get_allowed_operations(conn),
             }))
         }
-        Err(e) => Err(ApiError::BadRequest(format!(
-            "Failed to recover instance: {e}"
-        ))),
+        Err(e) => Err(ApiError::BadRequest(format!("Failed to recover instance: {e}"))),
     }
 }
 

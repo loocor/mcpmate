@@ -1,13 +1,10 @@
 //! Cache CRUD operations implementation
 
 use anyhow::Result;
-use redb::{Database, ReadableTable, ReadableMultimapTable};
+use redb::{Database, ReadableMultimapTable, ReadableTable};
 use tracing::debug;
 
-use super::{
-    schema::*,
-    types::*,
-};
+use super::{schema::*, types::*};
 
 /// CRUD operations for cache data
 pub struct CacheOperations<'a> {
@@ -19,18 +16,39 @@ impl<'a> CacheOperations<'a> {
         Self { db }
     }
 
+    /// Generate cache key from server_id and instance_type
+    ///
+    /// Format: "{server_id}#{instance_type_key}"
+    /// Examples:
+    /// - "srv_123#production"
+    /// - "srv_123#validation_api"
+    /// - "srv_123#exploration_session1"
+    fn generate_cache_key(
+        &self,
+        server_id: &str,
+        instance_type: &InstanceType,
+    ) -> String {
+        let instance_key = match instance_type {
+            InstanceType::Production => "production".to_string(),
+            InstanceType::Validation { session_id, .. } => format!("validation_{}", session_id),
+            InstanceType::Exploration { session_id, .. } => format!("exploration_{}", session_id),
+        };
+        format!("{}#{}", server_id, instance_key)
+    }
+
     /// Store server data in cache
     pub fn store_server_data(
         &self,
         server_data: &CachedServerData,
     ) -> Result<(), CacheError> {
         let write_txn = self.db.begin_write()?;
+        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type);
 
         {
-            // Store main server data
+            // Store main server data using composite key (server_id + instance_type)
             let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
             let serialized = bincode::serialize(server_data)?;
-            servers_table.insert(&*server_data.server_id, serialized.as_slice())?;
+            servers_table.insert(cache_key.as_str(), serialized.as_slice())?;
 
             // Store individual tools with indexing
             let mut tools_table = write_txn.open_table(TOOLS_TABLE)?;
@@ -78,7 +96,7 @@ impl<'a> CacheOperations<'a> {
         }
 
         write_txn.commit()?;
-        debug!("Stored server data for: {}", server_data.server_id);
+        tracing::info!("[CACHE][STORE] key={} server_id={}", cache_key, server_data.server_id);
         Ok(())
     }
 
@@ -90,10 +108,16 @@ impl<'a> CacheOperations<'a> {
         let read_txn = self.db.begin_read()?;
         let servers_table = read_txn.open_table(SERVERS_TABLE)?;
 
-        if let Some(data) = servers_table.get(&*query.server_id)? {
+        // Generate composite key for lookup
+        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type);
+        tracing::info!("[CACHE][LOOKUP] key={}", cache_key);
+
+        if let Some(data) = servers_table.get(cache_key.as_str())? {
             let server_data: CachedServerData = bincode::deserialize(data.value())?;
+            tracing::info!("[CACHE][HIT] key={}", cache_key);
             Ok(Some(server_data))
         } else {
+            tracing::info!("[CACHE][MISS] key={}", cache_key);
             Ok(None)
         }
     }
@@ -215,7 +239,10 @@ impl<'a> CacheOperations<'a> {
     }
 
     /// Remove server data from cache
-    pub fn remove_server_data(&self, server_id: &str) -> Result<(), CacheError> {
+    pub fn remove_server_data(
+        &self,
+        server_id: &str,
+    ) -> Result<(), CacheError> {
         let write_txn = self.db.begin_write()?;
 
         {
@@ -302,79 +329,103 @@ impl<'a> CacheOperations<'a> {
             let mut templates_index = write_txn.open_multimap_table(SERVER_RESOURCE_TEMPLATES_INDEX)?;
 
             // Remove all entries from main tables
-            let server_keys: Vec<String> = servers_table.iter()?.map(|item| {
-                let (key, _) = item?;
-                Ok(key.value().to_string())
-            }).collect::<Result<Vec<_>, CacheError>>()?;
-            
+            let server_keys: Vec<String> = servers_table
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    Ok(key.value().to_string())
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+
             for key in server_keys {
                 servers_table.remove(&*key)?;
             }
 
-            let tool_keys: Vec<(String, String)> = tools_table.iter()?.map(|item| {
-                let (key, _) = item?;
-                let (server_id, tool_name) = key.value();
-                Ok((server_id.to_string(), tool_name.to_string()))
-            }).collect::<Result<Vec<_>, CacheError>>()?;
-            
+            let tool_keys: Vec<(String, String)> = tools_table
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    let (server_id, tool_name) = key.value();
+                    Ok((server_id.to_string(), tool_name.to_string()))
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+
             for (server_id, tool_name) in tool_keys {
                 tools_table.remove((server_id.as_str(), tool_name.as_str()))?;
             }
 
-            let resource_keys: Vec<(String, String)> = resources_table.iter()?.map(|item| {
-                let (key, _) = item?;
-                let (server_id, resource_uri) = key.value();
-                Ok((server_id.to_string(), resource_uri.to_string()))
-            }).collect::<Result<Vec<_>, CacheError>>()?;
-            
+            let resource_keys: Vec<(String, String)> = resources_table
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    let (server_id, resource_uri) = key.value();
+                    Ok((server_id.to_string(), resource_uri.to_string()))
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+
             for (server_id, resource_uri) in resource_keys {
                 resources_table.remove((server_id.as_str(), resource_uri.as_str()))?;
             }
 
-            let prompt_keys: Vec<(String, String)> = prompts_table.iter()?.map(|item| {
-                let (key, _) = item?;
-                let (server_id, prompt_name) = key.value();
-                Ok((server_id.to_string(), prompt_name.to_string()))
-            }).collect::<Result<Vec<_>, CacheError>>()?;
-            
+            let prompt_keys: Vec<(String, String)> = prompts_table
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    let (server_id, prompt_name) = key.value();
+                    Ok((server_id.to_string(), prompt_name.to_string()))
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+
             for (server_id, prompt_name) in prompt_keys {
                 prompts_table.remove((server_id.as_str(), prompt_name.as_str()))?;
             }
 
-            let template_keys: Vec<(String, String)> = templates_table.iter()?.map(|item| {
-                let (key, _) = item?;
-                let (server_id, template_uri) = key.value();
-                Ok((server_id.to_string(), template_uri.to_string()))
-            }).collect::<Result<Vec<_>, CacheError>>()?;
-            
+            let template_keys: Vec<(String, String)> = templates_table
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    let (server_id, template_uri) = key.value();
+                    Ok((server_id.to_string(), template_uri.to_string()))
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+
             for (server_id, template_uri) in template_keys {
                 templates_table.remove((server_id.as_str(), template_uri.as_str()))?;
             }
 
-            let fingerprint_keys: Vec<String> = fingerprints_table.iter()?.map(|item| {
-                let (key, _) = item?;
-                Ok(key.value().to_string())
-            }).collect::<Result<Vec<_>, CacheError>>()?;
-            
+            let fingerprint_keys: Vec<String> = fingerprints_table
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    Ok(key.value().to_string())
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+
             for key in fingerprint_keys {
                 fingerprints_table.remove(&*key)?;
             }
 
-            let metadata_keys: Vec<String> = metadata_table.iter()?.map(|item| {
-                let (key, _) = item?;
-                Ok(key.value().to_string())
-            }).collect::<Result<Vec<_>, CacheError>>()?;
-            
+            let metadata_keys: Vec<String> = metadata_table
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    Ok(key.value().to_string())
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+
             for key in metadata_keys {
                 metadata_table.remove(&*key)?;
             }
 
             // Clear multimap indexes
-            let server_ids: Vec<String> = tools_index.iter()?.map(|item| {
-                let (key, _) = item?;
-                Ok(key.value().to_string())
-            }).collect::<Result<Vec<_>, CacheError>>()?;
-            
+            let server_ids: Vec<String> = tools_index
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    Ok(key.value().to_string())
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+
             for server_id in &server_ids {
                 tools_index.remove_all(server_id.as_str())?;
                 resources_index.remove_all(server_id.as_str())?;

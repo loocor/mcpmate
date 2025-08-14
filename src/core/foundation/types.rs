@@ -19,6 +19,8 @@ pub enum ConnectionStatus {
     Shutdown,
     /// server is disabled due to repeated failures (no automatic reconnection)
     Disabled(DisabledDetails),
+    /// server is running as a temporary validation instance (not for production use)
+    Validating,
 }
 
 /// detailed information about a connection error
@@ -122,6 +124,7 @@ impl fmt::Display for ConnectionStatus {
             ConnectionStatus::Error(err) => write!(f, "Error: {err}"),
             ConnectionStatus::Shutdown => write!(f, "Shutdown"),
             ConnectionStatus::Disabled(details) => write!(f, "Disabled: {details}"),
+            ConnectionStatus::Validating => write!(f, "Validating"),
         }
     }
 }
@@ -147,7 +150,7 @@ impl ConnectionStatus {
 
     /// check if the connection should be included in API responses and tool lists
     pub fn is_available(&self) -> bool {
-        !matches!(self, ConnectionStatus::Disabled(_))
+        !matches!(self, ConnectionStatus::Disabled(_) | ConnectionStatus::Validating)
     }
 
     /// get the list of allowed operations in this state
@@ -181,6 +184,10 @@ impl ConnectionStatus {
             Self::Disabled(_) => {
                 // Disabled servers can only be manually recovered
                 vec![ConnectionOperation::Recover]
+            }
+            Self::Validating => {
+                // Validating instances can be disconnected but not reconnected (they're temporary)
+                vec![ConnectionOperation::Disconnect]
             }
         }
     }

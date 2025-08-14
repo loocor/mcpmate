@@ -91,25 +91,42 @@ impl CacheMetrics {
 }
 
 impl RedbCacheManager {
+    /// Generate cache key from server_id and instance_type (consistent with operations.rs)
+    fn generate_cache_key(
+        &self,
+        server_id: &str,
+        instance_type: &InstanceType,
+    ) -> String {
+        let instance_key = match instance_type {
+            InstanceType::Production => "production".to_string(),
+            InstanceType::Validation { session_id, .. } => format!("validation_{}", session_id),
+            InstanceType::Exploration { session_id, .. } => format!("exploration_{}", session_id),
+        };
+        format!("{}#{}", server_id, instance_key)
+    }
+
     /// Create a new cache manager
-    pub fn new<P: AsRef<Path>>(db_path: P, config: CacheConfig) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(
+        db_path: P,
+        config: CacheConfig,
+    ) -> Result<Self> {
         let db_path = db_path.as_ref().to_path_buf();
-        
+
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         // Create database
         let db = Arc::new(Database::create(&db_path)?);
-        
+
         // Initialize database schema
         Self::initialize_schema(&db)?;
-        
+
         // Create memory cache
-        let memory_cache = Arc::new(RwLock::new(
-            LruCache::new(NonZeroUsize::new(config.memory_cache_size).unwrap())
-        ));
+        let memory_cache = Arc::new(RwLock::new(LruCache::new(
+            NonZeroUsize::new(config.memory_cache_size).unwrap(),
+        )));
 
         let manager = Self {
             db,
@@ -125,7 +142,7 @@ impl RedbCacheManager {
     /// Initialize database schema
     fn initialize_schema(db: &Database) -> Result<()> {
         use super::schema::*;
-        
+
         let write_txn = db.begin_write()?;
         {
             // Create all tables
@@ -151,25 +168,41 @@ impl RedbCacheManager {
     }
 
     /// Store server data in cache with multi-layer caching
-    pub async fn store_server_data(&self, server_data: &CachedServerData) -> Result<(), CacheError> {
+    pub async fn store_server_data(
+        &self,
+        server_data: &CachedServerData,
+    ) -> Result<(), CacheError> {
         // Store in L2 (disk) cache
         let operations = CacheOperations::new(&self.db);
         operations.store_server_data(server_data)?;
-        
-        // Update L1 (memory) cache
+
+        // Update L1 (memory) cache using composite key
+        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type);
         let mut memory_cache = self.memory_cache.write().await;
-        memory_cache.put(server_data.server_id.clone(), server_data.clone());
-        
+        memory_cache.put(cache_key, server_data.clone());
+
         Ok(())
     }
 
     /// Retrieve server data from cache with multi-layer lookup
-    pub async fn get_server_data(&self, query: &CacheQuery) -> Result<CacheResult<Option<CachedServerData>>, CacheError> {
+    pub async fn get_server_data(
+        &self,
+        query: &CacheQuery,
+    ) -> Result<CacheResult<Option<CachedServerData>>, CacheError> {
+        // Generate composite key for consistent lookup
+        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type);
+        tracing::debug!(
+            "[CACHE][GET_DATA] key={} freshness={:?}",
+            cache_key,
+            query.freshness_level
+        );
+
         // L1: Check memory cache first
         {
             let mut memory_cache = self.memory_cache.write().await;
-            if let Some(cached_data) = memory_cache.get(&query.server_id) {
+            if let Some(cached_data) = memory_cache.get(&cache_key) {
                 if self.is_data_fresh(cached_data, &query.freshness_level) {
+                    tracing::debug!("[CACHE][L1 HIT] key={}", cache_key);
                     return Ok(CacheResult {
                         data: Some(cached_data.clone()),
                         cache_hit: true,
@@ -178,6 +211,7 @@ impl RedbCacheManager {
                     });
                 }
             }
+            tracing::debug!("[CACHE][L1 MISS] key={}", cache_key);
         }
 
         // L2: Check disk cache
@@ -185,10 +219,11 @@ impl RedbCacheManager {
         let data = operations.get_server_data(query)?;
 
         let (cache_hit, cached_at) = if let Some(ref server_data) = data {
-            // Update L1 cache with fresh data
+            tracing::debug!("[CACHE][L2 HIT] key={}", cache_key);
+            // Update L1 cache with fresh data using composite key
             let mut memory_cache = self.memory_cache.write().await;
-            memory_cache.put(query.server_id.clone(), server_data.clone());
-            
+            memory_cache.put(cache_key.clone(), server_data.clone());
+
             let is_fresh = self.is_data_fresh(server_data, &query.freshness_level);
             if is_fresh || query.freshness_level == FreshnessLevel::Cached {
                 (true, Some(server_data.cached_at))
@@ -196,6 +231,7 @@ impl RedbCacheManager {
                 (false, None)
             }
         } else {
+            tracing::debug!("[CACHE][L2 MISS] key={}", cache_key);
             (false, None)
         };
 
@@ -208,35 +244,54 @@ impl RedbCacheManager {
     }
 
     /// Get server tools
-    pub async fn get_server_tools(&self, server_id: &str, include_disabled: bool) -> Result<Vec<CachedToolInfo>, CacheError> {
+    pub async fn get_server_tools(
+        &self,
+        server_id: &str,
+        include_disabled: bool,
+    ) -> Result<Vec<CachedToolInfo>, CacheError> {
         let operations = CacheOperations::new(&self.db);
         operations.get_server_tools(server_id, include_disabled)
     }
 
     /// Get server resources
-    pub async fn get_server_resources(&self, server_id: &str, include_disabled: bool) -> Result<Vec<CachedResourceInfo>, CacheError> {
+    pub async fn get_server_resources(
+        &self,
+        server_id: &str,
+        include_disabled: bool,
+    ) -> Result<Vec<CachedResourceInfo>, CacheError> {
         let operations = CacheOperations::new(&self.db);
         operations.get_server_resources(server_id, include_disabled)
     }
 
     /// Get server prompts
-    pub async fn get_server_prompts(&self, server_id: &str, include_disabled: bool) -> Result<Vec<CachedPromptInfo>, CacheError> {
+    pub async fn get_server_prompts(
+        &self,
+        server_id: &str,
+        include_disabled: bool,
+    ) -> Result<Vec<CachedPromptInfo>, CacheError> {
         let operations = CacheOperations::new(&self.db);
         operations.get_server_prompts(server_id, include_disabled)
     }
 
     /// Get server resource templates
-    pub async fn get_server_resource_templates(&self, server_id: &str, include_disabled: bool) -> Result<Vec<CachedResourceTemplateInfo>, CacheError> {
+    pub async fn get_server_resource_templates(
+        &self,
+        server_id: &str,
+        include_disabled: bool,
+    ) -> Result<Vec<CachedResourceTemplateInfo>, CacheError> {
         let operations = CacheOperations::new(&self.db);
         operations.get_server_resource_templates(server_id, include_disabled)
     }
 
     /// Remove server data from cache
-    pub async fn remove_server_data(&self, server_id: &str) -> Result<(), CacheError> {
+    pub async fn remove_server_data(
+        &self,
+        server_id: &str,
+    ) -> Result<(), CacheError> {
         // Remove from L1 cache
         let mut memory_cache = self.memory_cache.write().await;
         memory_cache.pop(server_id);
-        
+
         // Remove from L2 cache
         let operations = CacheOperations::new(&self.db);
         operations.remove_server_data(server_id)
@@ -253,35 +308,50 @@ impl RedbCacheManager {
         // Clear L1 cache
         let mut memory_cache = self.memory_cache.write().await;
         memory_cache.clear();
-        
+
         // Clear L2 cache
         let operations = CacheOperations::new(&self.db);
         operations.clear_all()?;
-        
+
         info!("Cache cleared successfully");
         Ok(())
     }
 
     /// Store fingerprint for a server
-    pub async fn store_fingerprint(&self, server_id: &str, fingerprint: &MCPServerFingerprint) -> Result<(), CacheError> {
+    pub async fn store_fingerprint(
+        &self,
+        server_id: &str,
+        fingerprint: &MCPServerFingerprint,
+    ) -> Result<(), CacheError> {
         let fingerprint_ops = FingerprintOperations::new(&self.db);
         fingerprint_ops.store_fingerprint(server_id, fingerprint)
     }
 
     /// Get stored fingerprint for a server
-    pub async fn get_fingerprint(&self, server_id: &str) -> Result<Option<MCPServerFingerprint>, CacheError> {
+    pub async fn get_fingerprint(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<MCPServerFingerprint>, CacheError> {
         let fingerprint_ops = FingerprintOperations::new(&self.db);
         fingerprint_ops.get_fingerprint(server_id)
     }
 
     /// Check if server data should be invalidated based on fingerprint changes
-    pub async fn should_invalidate_cache(&self, server_id: &str, current_fingerprint: &MCPServerFingerprint) -> Result<bool, CacheError> {
+    pub async fn should_invalidate_cache(
+        &self,
+        server_id: &str,
+        current_fingerprint: &MCPServerFingerprint,
+    ) -> Result<bool, CacheError> {
         let fingerprint_ops = FingerprintOperations::new(&self.db);
         fingerprint_ops.should_invalidate_cache(server_id, current_fingerprint)
     }
 
     /// Invalidate cache for a server and update fingerprint
-    pub async fn invalidate_and_update(&self, server_id: &str, new_fingerprint: &MCPServerFingerprint) -> Result<(), CacheError> {
+    pub async fn invalidate_and_update(
+        &self,
+        server_id: &str,
+        new_fingerprint: &MCPServerFingerprint,
+    ) -> Result<(), CacheError> {
         self.remove_server_data(server_id).await?;
         self.store_fingerprint(server_id, new_fingerprint).await?;
         info!("Cache invalidated and fingerprint updated for server: {}", server_id);
@@ -296,11 +366,11 @@ impl RedbCacheManager {
         fingerprint: &MCPServerFingerprint,
     ) -> Result<bool, CacheError> {
         let should_invalidate = self.should_invalidate_cache(server_id, fingerprint).await?;
-        
+
         if should_invalidate {
             self.invalidate_and_update(server_id, fingerprint).await?;
             self.store_server_data(server_data).await?;
-            
+
             // Cache invalidation recorded
             Ok(true)
         } else {
@@ -310,13 +380,20 @@ impl RedbCacheManager {
     }
 
     /// Generate fingerprint for a server based on its path/config
-    pub async fn generate_server_fingerprint(&self, server_path: &std::path::Path) -> Result<MCPServerFingerprint, CacheError> {
+    pub async fn generate_server_fingerprint(
+        &self,
+        server_path: &std::path::Path,
+    ) -> Result<MCPServerFingerprint, CacheError> {
         let fingerprint_ops = FingerprintOperations::new(&self.db);
         fingerprint_ops.generate_server_fingerprint(self.clone(), server_path)
     }
 
     /// Check if data is fresh based on freshness level
-    fn is_data_fresh(&self, data: &CachedServerData, freshness_level: &FreshnessLevel) -> bool {
+    fn is_data_fresh(
+        &self,
+        data: &CachedServerData,
+        freshness_level: &FreshnessLevel,
+    ) -> bool {
         match freshness_level {
             FreshnessLevel::Cached => true,
             FreshnessLevel::RecentlyFresh => {

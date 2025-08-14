@@ -341,6 +341,7 @@ impl super::UpstreamConnectionPool {
                     ConnectionStatus::Error(_) => 4,
                     ConnectionStatus::Shutdown => 5,
                     ConnectionStatus::Disabled(_) => 6,
+                    ConnectionStatus::Validating => 7,
                 };
                 status_discriminant.hash(&mut hasher);
 

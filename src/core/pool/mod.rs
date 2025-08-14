@@ -13,7 +13,9 @@ use tokio_util::sync::CancellationToken;
 use tracing;
 
 use crate::core::{
-    connection::UpstreamConnection, foundation::monitor::ProcessMonitor, models::Config,
+    connection::UpstreamConnection,
+    foundation::{monitor::ProcessMonitor, types::ConnectionStatus},
+    models::Config,
 };
 
 // Core pool functionality modules
@@ -217,7 +219,7 @@ impl UpstreamConnectionPool {
     ) -> Result<Option<&UpstreamConnection>, anyhow::Error> {
         // Ensure session exists
         self.upsert_exploration_session(session_id, ttl);
-        
+
         // Check if server connection already exists in this session
         if let Some(session_servers) = self.exploration_sessions.get(session_id) {
             if let Some(connection) = session_servers.get(server_name) {
@@ -231,33 +233,158 @@ impl UpstreamConnectionPool {
         // 2. Create new UpstreamConnection
         // 3. Initialize connection to server
         // 4. Store in exploration_sessions
-        
-        tracing::debug!("Exploration instance for server '{}' in session '{}' not implemented yet", 
+
+        tracing::debug!("Exploration instance for server '{}' in session '{}' not implemented yet",
                        server_name, session_id);
         Ok(None)
     }
 
     /// Get or create a validation instance for a server
-    pub fn get_or_create_validation_instance(
+    ///
+    /// This method implements "create-use-destroy" lifecycle for validation instances:
+    /// 1. Check if validation instance already exists in session
+    /// 2. If not, create temporary validation instance
+    /// 3. Instance will be destroyed after use (handled by caller)
+    pub async fn get_or_create_validation_instance(
         &mut self,
         server_name: &str,
         session_id: &str,
-        ttl: Duration,
+        _ttl: Duration, // TTL not used for validation instances per requirements
     ) -> Result<Option<&UpstreamConnection>, anyhow::Error> {
-        // Ensure session exists
-        self.upsert_validation_session(session_id, ttl);
-        
         // Check if server connection already exists in this session
         if let Some(session_servers) = self.validation_sessions.get(session_id) {
-            if let Some(connection) = session_servers.get(server_name) {
-                return Ok(Some(connection));
+            if session_servers.contains_key(server_name) {
+                return Ok(self.validation_sessions
+                    .get(session_id)
+                    .and_then(|session| session.get(server_name)));
             }
         }
 
-        // For now, return None - full implementation would create actual connection
-        tracing::debug!("Validation instance for server '{}' in session '{}' not implemented yet", 
-                       server_name, session_id);
-        Ok(None)
+        // Create temporary validation instance
+        let connection = self.create_temporary_validation_instance(server_name, session_id).await?;
+
+        // Store in validation_sessions
+        let session_servers = self.validation_sessions.entry(session_id.to_string()).or_default();
+        session_servers.insert(server_name.to_string(), connection);
+
+        // Return reference to the stored connection
+        Ok(self.validation_sessions
+            .get(session_id)
+            .and_then(|session| session.get(server_name)))
+    }
+
+    /// Create a temporary validation instance for a server
+    ///
+    /// This creates a temporary connection that will be used for capability inspection
+    /// and then immediately destroyed. It does not affect the server's enabled status.
+    async fn create_temporary_validation_instance(
+        &mut self,
+        server_name: &str,
+        session_id: &str,
+    ) -> Result<UpstreamConnection, anyhow::Error> {
+        tracing::info!("Creating temporary validation instance for server: {}", server_name);
+
+        // Get database connection
+        let db = self.database.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
+
+        // Get server configuration from database
+        let server = crate::config::server::get_server(&db.pool, server_name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
+
+        // Convert database Server to MCPServerConfig (reusing existing conversion logic)
+        let server_config = self.convert_server_to_config(&server, &db.pool).await?;
+
+        // Create temporary connection instance with validation prefix
+        let instance_id = format!("validation-{}-{}", server_name, session_id);
+        let mut connection = crate::core::connection::UpstreamConnection::new(instance_id);
+
+        // Set validation status to distinguish from production instances
+        connection.status = ConnectionStatus::Validating;
+
+        // Connect to server using unified transport interface
+        let (service, tools, capabilities, _process_id) =
+            crate::core::transport::unified::connect_server(
+                server_name,
+                &server_config,
+                server.server_type.clone(),
+                server_config.transport_type.unwrap_or_default(),
+                None, // No cancellation token needed for short-lived validation
+                Some(&db.pool),
+                self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
+            ).await?;
+
+        // Update connection with service and capabilities
+        connection.update_connected(service, tools, capabilities);
+
+        tracing::info!("Created temporary validation instance for server '{}'", server_name);
+        Ok(connection)
+    }
+
+    /// Convert database Server model to MCPServerConfig
+    ///
+    /// Reuses the conversion logic from core/foundation/loader.rs
+    async fn convert_server_to_config(
+        &self,
+        server: &crate::config::models::Server,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+    ) -> Result<crate::core::models::MCPServerConfig, anyhow::Error> {
+        // Get server arguments (reusing existing logic)
+        let args = if let Some(id) = &server.id {
+            let server_args = crate::config::server::get_server_args(pool, id).await?;
+            if server_args.is_empty() {
+                None
+            } else {
+                let mut sorted_args: Vec<_> = server_args.into_iter().collect();
+                sorted_args.sort_by_key(|arg| arg.arg_index);
+                Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect())
+            }
+        } else {
+            None
+        };
+
+        // Get server environment variables (reusing existing logic)
+        let env = if let Some(id) = &server.id {
+            let env_map = crate::config::server::get_server_env(pool, id).await?;
+            if env_map.is_empty() {
+                None
+            } else {
+                Some(env_map)
+            }
+        } else {
+            None
+        };
+
+        // Create MCPServerConfig (reusing existing structure)
+        Ok(crate::core::models::MCPServerConfig {
+            kind: server.server_type.clone(),
+            command: server.command.clone(),
+            args,
+            url: server.url.clone(),
+            env,
+            transport_type: server.transport_type.clone(),
+        })
+    }
+
+    /// Destroy a validation instance after use
+    ///
+    /// This implements the "immediate cleanup" part of the create-use-destroy lifecycle
+    pub async fn destroy_validation_instance(
+        &mut self,
+        server_name: &str,
+        session_id: &str,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(session_servers) = self.validation_sessions.get_mut(session_id) {
+            if let Some(mut connection) = session_servers.remove(server_name) {
+                // Disconnect the service if still connected
+                if connection.is_connected() {
+                    connection.update_disconnected();
+                }
+                tracing::info!("Destroyed validation instance for server '{}'", server_name);
+            }
+        }
+        Ok(())
     }
 }
 
