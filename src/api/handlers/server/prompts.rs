@@ -11,33 +11,11 @@ use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
 use super::common::{
-    InspectParams, RefreshStrategy, get_database_from_state, resolve_server_identifier,
+    InspectQuery, get_database_from_state, resolve_server_identifier,
     validate_server_id,
 };
 
-/// Query parameters for prompts endpoints
-#[derive(Debug, serde::Deserialize)]
-pub struct PromptsQuery {
-    /// Refresh strategy for prompt queries
-    pub refresh: Option<RefreshStrategy>,
-    /// Response format
-    pub format: Option<String>,
-    /// Whether to include metadata
-    pub include_meta: Option<bool>,
-    /// Timeout in seconds
-    pub timeout: Option<u64>,
-}
 
-impl PromptsQuery {
-    /// Convert to InspectParams
-    pub fn to_params(&self) -> Result<InspectParams, ApiError> {
-        Ok(InspectParams {
-            refresh: self.refresh.or(Some(RefreshStrategy::CacheFirst)),
-            format: self.format.clone(),
-            include_meta: self.include_meta,
-        })
-    }
-}
 
 /// List all prompts for a specific server
 ///
@@ -48,7 +26,7 @@ impl PromptsQuery {
 pub async fn list_prompts(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
-    Query(query): Query<PromptsQuery>,
+    Query(query): Query<InspectQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
@@ -195,7 +173,7 @@ pub async fn list_prompts(
 pub async fn get_prompt_arguments(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
-    Query(query): Query<PromptsQuery>,
+    Query(query): Query<InspectQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;

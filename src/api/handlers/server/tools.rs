@@ -11,32 +11,10 @@ use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
 use super::common::{
-    InspectParams, get_database_from_state, resolve_server_identifier, validate_server_id,
+    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state, resolve_server_identifier, validate_server_id,
 };
 
-/// Query parameters for tools endpoints
-#[derive(Debug, serde::Deserialize)]
-pub struct ToolsQuery {
-    /// Refresh strategy for tool queries
-    pub refresh: Option<super::common::RefreshStrategy>,
-    /// Response format
-    pub format: Option<String>,
-    /// Whether to include metadata
-    pub include_meta: Option<bool>,
-    /// Timeout in seconds
-    pub timeout: Option<u64>,
-}
 
-impl ToolsQuery {
-    /// Convert to InspectParams
-    pub fn to_params(&self) -> Result<InspectParams, ApiError> {
-        Ok(InspectParams {
-            refresh: self.refresh.or(Some(super::common::RefreshStrategy::CacheFirst)),
-            format: self.format.clone(),
-            include_meta: self.include_meta,
-        })
-    }
-}
 
 /// Validate tool name format
 fn validate_tool_name(tool_name: &str) -> Result<(), ApiError> {
@@ -87,7 +65,7 @@ fn validate_tool_name(tool_name: &str) -> Result<(), ApiError> {
 pub async fn list_tools(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
-    Query(query): Query<ToolsQuery>,
+    Query(query): Query<InspectQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;
@@ -125,10 +103,7 @@ pub async fn list_tools(
                     })
                     .collect();
                 if !processed.is_empty() {
-                    return Ok(Json(serde_json::json!({
-                        "data": processed,
-                        "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
-                    })));
+                    return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
                 }
                 // empty cached snapshot is treated as miss; fall through to runtime/offline
             }
@@ -168,24 +143,16 @@ pub async fn list_tools(
             }
             if !tools.is_empty() {
                 // Persist into Redb cache for future requests
-                let server_data = crate::core::cache::CachedServerData {
-                    server_id: server_info.server_id.clone(),
-                    server_name: server_info.server_name.clone(),
-                    server_version: None,
-                    protocol_version: "latest".to_string(),
-                    tools: cached_tools,
-                    resources: Vec::new(),
-                    prompts: Vec::new(),
-                    resource_templates: Vec::new(),
-                    cached_at: Utc::now(),
-                    fingerprint: format!("runtime:{}:{}", server_info.server_id, Utc::now().timestamp()),
-                };
+                let server_data = create_runtime_cache_data(
+                    &server_info,
+                    cached_tools,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
-                return Ok(Json(serde_json::json!({
-                    "data": tools,
-                    "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default(), "source": "runtime" }
-                })));
+                return Ok(create_inspect_response(tools, false, params.refresh, "runtime"));
             }
         }
     }
@@ -215,18 +182,12 @@ pub async fn list_tools(
                     })
                 })
                 .collect();
-            return Ok(Json(serde_json::json!({
-                "data": processed,
-                "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
-            })));
+            return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }
 
     // No data available
-    Ok(Json(serde_json::json!({
-        "data": [],
-        "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default() }
-    })))
+    Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
 }
 
 /// Get detailed information for a specific tool
@@ -239,7 +200,7 @@ pub async fn list_tools(
 pub async fn get_tool_detail(
     State(state): State<Arc<AppState>>,
     Path((identifier, tool_name)): Path<(String, String)>,
-    Query(query): Query<ToolsQuery>,
+    Query(query): Query<InspectQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Get database and resolve server identifier
     let db = get_database_from_state(&state)?;

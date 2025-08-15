@@ -258,7 +258,7 @@ pub async fn get_server_by_identifier(
     Ok((server, server_id))
 }
 
-/// Validate server access permissions
+/// TODO: Validate server access permissions
 ///
 /// This function can be extended to include authorization checks,
 /// rate limiting, or other access control mechanisms.
@@ -267,7 +267,7 @@ pub async fn validate_server_access(
     _server_id: &str,
 ) -> Result<(), ApiError> {
     // For now, all servers are accessible
-    // TODO: Add authorization logic here if needed
+    // Add authorization logic here if needed
     Ok(())
 }
 
@@ -302,6 +302,33 @@ pub struct InspectParams {
     pub refresh: Option<RefreshStrategy>,
     pub format: Option<String>,
     pub include_meta: Option<bool>,
+    pub timeout: Option<u64>,
+}
+
+/// Unified query parameters for inspect endpoints
+/// Replaces duplicate ToolsQuery, PromptsQuery, and ResourcesQuery structures
+#[derive(Debug, serde::Deserialize)]
+pub struct InspectQuery {
+    /// Refresh strategy for queries
+    pub refresh: Option<RefreshStrategy>,
+    /// Response format
+    pub format: Option<String>,
+    /// Whether to include metadata
+    pub include_meta: Option<bool>,
+    /// Timeout in seconds
+    pub timeout: Option<u64>,
+}
+
+impl InspectQuery {
+    /// Convert to InspectParams
+    pub fn to_params(&self) -> Result<InspectParams, crate::api::handlers::ApiError> {
+        Ok(InspectParams {
+            refresh: self.refresh.or(Some(RefreshStrategy::CacheFirst)),
+            format: self.format.clone(),
+            include_meta: self.include_meta,
+            timeout: self.timeout,
+        })
+    }
 }
 
 /// Map inspect RefreshStrategy to cache FreshnessLevel for Redb
@@ -502,8 +529,10 @@ async fn extract_resource_templates_capability(conn: &crate::core::connection::U
     Ok(result)
 }
 
-/// 🎯 THE ULTIMATE UNIFIED FUNCTION 🎯
-/// Create temporary instance and extract ANY capability type for refresh=force
+/// Create temporary instance and extract capability data for refresh=force requests
+///
+/// This unified function handles capability extraction for all types (tools, prompts, resources, resource templates)
+/// when a force refresh is requested. It creates a temporary validation instance and extracts the requested capability data.
 pub async fn create_temporary_instance_for_capability(
     state: &Arc<AppState>,
     server_info: &ServerIdentification,
@@ -540,7 +569,7 @@ pub async fn create_temporary_instance_for_capability(
         Ok(Some(validation_conn)) => {
             tracing::info!("Created temporary instance for server '{}'", server_info.server_name);
 
-            // Extract capabilities based on type - THE MAGIC HAPPENS HERE! ✨
+            // Extract capabilities based on the requested type
             let extracted = match capability_type {
                 CapabilityType::Tools => extract_tools_capability(validation_conn).await?,
                 CapabilityType::Prompts => extract_prompts_capability(validation_conn).await?,
@@ -591,41 +620,7 @@ pub async fn create_temporary_instance_for_capability(
     }
 }
 
-/// Convenience function for tools (backward compatibility)
-pub async fn create_temporary_instance_for_tools(
-    state: &Arc<AppState>,
-    server_info: &ServerIdentification,
-    params: &InspectParams,
-) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
-    create_temporary_instance_for_capability(state, server_info, params, CapabilityType::Tools).await
-}
 
-/// Convenience function for prompts (backward compatibility)
-pub async fn create_temporary_instance_for_prompts(
-    state: &Arc<AppState>,
-    server_info: &ServerIdentification,
-    params: &InspectParams,
-) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
-    create_temporary_instance_for_capability(state, server_info, params, CapabilityType::Prompts).await
-}
-
-/// Convenience function for resources (backward compatibility)
-pub async fn create_temporary_instance_for_resources(
-    state: &Arc<AppState>,
-    server_info: &ServerIdentification,
-    params: &InspectParams,
-) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
-    create_temporary_instance_for_capability(state, server_info, params, CapabilityType::Resources).await
-}
-
-/// Convenience function for resource templates (backward compatibility)
-pub async fn create_temporary_instance_for_resource_templates(
-    state: &Arc<AppState>,
-    server_info: &ServerIdentification,
-    params: &InspectParams,
-) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
-    create_temporary_instance_for_capability(state, server_info, params, CapabilityType::ResourceTemplates).await
-}
 
 
 
@@ -664,6 +659,50 @@ pub fn validate_server_id(server_id: &str) -> Result<(), ApiError> {
 /// Converts inspect service errors to appropriate API errors
 pub fn handle_inspect_error(error: String) -> ApiError {
     ApiError::InternalError(error)
+}
+
+/// Create a CachedServerData structure for storing runtime data
+///
+/// This helper function creates a standardized CachedServerData structure
+/// for storing capability data in the cache.
+pub fn create_runtime_cache_data(
+    server_info: &ServerIdentification,
+    tools: Vec<crate::core::cache::CachedToolInfo>,
+    resources: Vec<crate::core::cache::CachedResourceInfo>,
+    prompts: Vec<crate::core::cache::CachedPromptInfo>,
+    resource_templates: Vec<crate::core::cache::CachedResourceTemplateInfo>,
+) -> crate::core::cache::CachedServerData {
+    crate::core::cache::CachedServerData {
+        server_id: server_info.server_id.clone(),
+        server_name: server_info.server_name.clone(),
+        server_version: None,
+        protocol_version: "latest".to_string(),
+        tools,
+        resources,
+        prompts,
+        resource_templates,
+        cached_at: chrono::Utc::now(),
+        fingerprint: format!("runtime:{}:{}", server_info.server_id, chrono::Utc::now().timestamp()),
+    }
+}
+
+/// Create a standardized JSON response for inspect endpoints
+///
+/// This helper function creates a consistent response format for all inspect endpoints.
+pub fn create_inspect_response(
+    data: Vec<serde_json::Value>,
+    cache_hit: bool,
+    refresh_strategy: Option<RefreshStrategy>,
+    source: &str,
+) -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "data": data,
+        "meta": {
+            "cache_hit": cache_hit,
+            "strategy": refresh_strategy.unwrap_or_default(),
+            "source": source
+        }
+    }))
 }
 
 #[cfg(test)]
