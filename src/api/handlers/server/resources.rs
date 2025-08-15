@@ -11,11 +11,9 @@ use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
 use super::common::{
-    InspectQuery, get_database_from_state, resolve_server_identifier,
-    validate_server_id,
+    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
+    resolve_server_identifier, validate_server_id,
 };
-
-
 
 /// List all resources for a specific server
 ///
@@ -56,19 +54,16 @@ pub async fn list_resources(
                     })
                     .collect();
                 if !processed.is_empty() {
-                    return Ok(Json(serde_json::json!({
-                        "data": processed,
-                        "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
-                    })));
+                    return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
                 }
             }
         }
     }
 
-    // Runtime fallback: attempt to collect via proxy service from connected instances
+    // Runtime fallback: attempt to collect via proxy service across connected instances
     if let Ok(pool) = tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
         if let Some(instances) = pool.connections.get(&server_info.server_name) {
-            // Aggregate resources using rmcp client from the first connected instance
+            // Aggregate resources across connected instances using rmcp client
             let mut resources: Vec<serde_json::Value> = Vec::new();
             let mut cached_resources: Vec<crate::core::cache::CachedResourceInfo> = Vec::new();
 
@@ -109,24 +104,11 @@ pub async fn list_resources(
 
             if !resources.is_empty() {
                 // Persist partial snapshot into Redb
-                let server_data = crate::core::cache::CachedServerData {
-                    server_id: server_info.server_id.clone(),
-                    server_name: server_info.server_name.clone(),
-                    server_version: None,
-                    protocol_version: "latest".to_string(),
-                    tools: Vec::new(),
-                    resources: cached_resources,
-                    prompts: Vec::new(),
-                    resource_templates: Vec::new(),
-                    cached_at: Utc::now(),
-                    fingerprint: format!("runtime:{}:{}", server_info.server_id, Utc::now().timestamp()),
-                };
+                let server_data =
+                    create_runtime_cache_data(&server_info, Vec::new(), cached_resources, Vec::new(), Vec::new());
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
-                return Ok(Json(serde_json::json!({
-                    "data": resources,
-                    "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default(), "source": "runtime" }
-                })));
+                return Ok(create_inspect_response(resources, false, params.refresh, "runtime"));
             }
         }
     }
@@ -137,7 +119,9 @@ pub async fn list_resources(
         &server_info,
         &params,
         super::common::CapabilityType::Resources,
-    ).await? {
+    )
+    .await?
+    {
         return Ok(response);
     }
 
@@ -159,18 +143,12 @@ pub async fn list_resources(
                     })
                 })
                 .collect();
-            return Ok(Json(serde_json::json!({
-                "data": processed,
-                "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
-            })));
+            return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }
 
     // Fallback empty
-    Ok(Json(serde_json::json!({
-        "data": [],
-        "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default() }
-    })))
+    Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
 }
 
 /// List resource templates for a specific server
@@ -212,10 +190,7 @@ pub async fn list_resource_templates(
                     })
                     .collect();
                 if !processed.is_empty() {
-                    return Ok(Json(serde_json::json!({
-                        "data": processed,
-                        "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
-                    })));
+                    return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
                 }
             }
         }
@@ -261,24 +236,11 @@ pub async fn list_resource_templates(
             }
 
             if !templates.is_empty() {
-                let server_data = crate::core::cache::CachedServerData {
-                    server_id: server_info.server_id.clone(),
-                    server_name: server_info.server_name.clone(),
-                    server_version: None,
-                    protocol_version: "latest".to_string(),
-                    tools: Vec::new(),
-                    resources: Vec::new(),
-                    prompts: Vec::new(),
-                    resource_templates: cached_templates,
-                    cached_at: Utc::now(),
-                    fingerprint: format!("runtime:{}:{}", server_info.server_id, Utc::now().timestamp()),
-                };
+                let server_data =
+                    create_runtime_cache_data(&server_info, Vec::new(), Vec::new(), Vec::new(), cached_templates);
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
-                return Ok(Json(serde_json::json!({
-                    "data": templates,
-                    "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default(), "source": "runtime" }
-                })));
+                return Ok(create_inspect_response(templates, false, params.refresh, "runtime"));
             }
         }
     }
@@ -289,7 +251,9 @@ pub async fn list_resource_templates(
         &server_info,
         &params,
         super::common::CapabilityType::ResourceTemplates,
-    ).await? {
+    )
+    .await?
+    {
         return Ok(response);
     }
 
@@ -311,15 +275,9 @@ pub async fn list_resource_templates(
                     })
                 })
                 .collect();
-            return Ok(Json(serde_json::json!({
-                "data": processed,
-                "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
-            })));
+            return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }
 
-    Ok(Json(serde_json::json!({
-        "data": [],
-        "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default() }
-    })))
+    Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
 }

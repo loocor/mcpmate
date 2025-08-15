@@ -11,11 +11,9 @@ use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
 use super::common::{
-    InspectQuery, get_database_from_state, resolve_server_identifier,
-    validate_server_id,
+    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
+    resolve_server_identifier, validate_server_id,
 };
-
-
 
 /// List all prompts for a specific server
 ///
@@ -55,10 +53,7 @@ pub async fn list_prompts(
                     })
                     .collect();
                 if !processed.is_empty() {
-                    return Ok(Json(serde_json::json!({
-                        "data": processed,
-                        "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
-                    })));
+                    return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
                 }
             }
         }
@@ -105,24 +100,11 @@ pub async fn list_prompts(
             }
 
             if !prompts.is_empty() {
-                let server_data = crate::core::cache::CachedServerData {
-                    server_id: server_info.server_id.clone(),
-                    server_name: server_info.server_name.clone(),
-                    server_version: None,
-                    protocol_version: "latest".to_string(),
-                    tools: Vec::new(),
-                    resources: Vec::new(),
-                    prompts: cached_prompts,
-                    resource_templates: Vec::new(),
-                    cached_at: Utc::now(),
-                    fingerprint: format!("runtime:{}:{}", server_info.server_id, Utc::now().timestamp()),
-                };
+                let server_data =
+                    create_runtime_cache_data(&server_info, Vec::new(), Vec::new(), cached_prompts, Vec::new());
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
-                return Ok(Json(serde_json::json!({
-                    "data": prompts,
-                    "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default(), "source": "runtime" }
-                })));
+                return Ok(create_inspect_response(prompts, false, params.refresh, "runtime"));
             }
         }
     }
@@ -133,7 +115,9 @@ pub async fn list_prompts(
         &server_info,
         &params,
         super::common::CapabilityType::Prompts,
-    ).await? {
+    )
+    .await?
+    {
         return Ok(response);
     }
 
@@ -150,18 +134,12 @@ pub async fn list_prompts(
                     })
                 })
                 .collect();
-            return Ok(Json(serde_json::json!({
-                "data": processed,
-                "meta": { "cache_hit": true, "strategy": params.refresh.unwrap_or_default(), "source": "cache" }
-            })));
+            return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }
 
     // Return empty result if no data available from cache or runtime
-    Ok(Json(serde_json::json!({
-        "data": [],
-        "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default() }
-    })))
+    Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
 }
 
 /// Get detailed prompt argument information

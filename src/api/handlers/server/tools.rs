@@ -11,10 +11,9 @@ use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
 use super::common::{
-    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state, resolve_server_identifier, validate_server_id,
+    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
+    resolve_server_identifier, validate_server_id,
 };
-
-
 
 /// Validate tool name format
 fn validate_tool_name(tool_name: &str) -> Result<(), ApiError> {
@@ -80,13 +79,17 @@ pub async fn list_tools(
     // Try Redb cache first with freshness policy
     let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
 
-    tracing::info!(
+    tracing::debug!(
         "Querying cache for server '{}' with refresh strategy: {:?}",
         server_info.server_name,
         params.refresh.unwrap_or_default()
     );
     if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
-        tracing::info!("Cache query result: cache_hit={}, strategy={:?}", cache_result.cache_hit, params.refresh.unwrap_or_default());
+        tracing::debug!(
+            "Cache query result: cache_hit={}, strategy={:?}",
+            cache_result.cache_hit,
+            params.refresh.unwrap_or_default()
+        );
         if cache_result.cache_hit {
             if let Some(data) = cache_result.data {
                 let processed: Vec<serde_json::Value> = data
@@ -143,13 +146,8 @@ pub async fn list_tools(
             }
             if !tools.is_empty() {
                 // Persist into Redb cache for future requests
-                let server_data = create_runtime_cache_data(
-                    &server_info,
-                    cached_tools,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                );
+                let server_data =
+                    create_runtime_cache_data(&server_info, cached_tools, Vec::new(), Vec::new(), Vec::new());
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
                 return Ok(create_inspect_response(tools, false, params.refresh, "runtime"));
@@ -163,7 +161,9 @@ pub async fn list_tools(
         &server_info,
         &params,
         super::common::CapabilityType::Tools,
-    ).await? {
+    )
+    .await?
+    {
         return Ok(response);
     }
 

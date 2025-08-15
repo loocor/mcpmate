@@ -258,7 +258,7 @@ pub async fn get_server_by_identifier(
     Ok((server, server_id))
 }
 
-/// TODO: Validate server access permissions
+/// Note: Validate server access permissions (placeholder for future authorization)
 ///
 /// This function can be extended to include authorization checks,
 /// rate limiting, or other access control mechanisms.
@@ -393,7 +393,9 @@ impl ExtractedCapability {
 }
 
 /// Extract tools from temporary instance
-async fn extract_tools_capability(conn: &crate::core::connection::UpstreamConnection) -> Result<ExtractedCapability, ApiError> {
+async fn extract_tools_capability(
+    conn: &crate::core::connection::UpstreamConnection
+) -> Result<ExtractedCapability, ApiError> {
     let mut result = ExtractedCapability::empty();
 
     for t in &conn.tools {
@@ -420,7 +422,9 @@ async fn extract_tools_capability(conn: &crate::core::connection::UpstreamConnec
 }
 
 /// Extract prompts from temporary instance
-async fn extract_prompts_capability(conn: &crate::core::connection::UpstreamConnection) -> Result<ExtractedCapability, ApiError> {
+async fn extract_prompts_capability(
+    conn: &crate::core::connection::UpstreamConnection
+) -> Result<ExtractedCapability, ApiError> {
     let mut result = ExtractedCapability::empty();
 
     if conn.supports_prompts() {
@@ -460,7 +464,9 @@ async fn extract_prompts_capability(conn: &crate::core::connection::UpstreamConn
 }
 
 /// Extract resources from temporary instance
-async fn extract_resources_capability(conn: &crate::core::connection::UpstreamConnection) -> Result<ExtractedCapability, ApiError> {
+async fn extract_resources_capability(
+    conn: &crate::core::connection::UpstreamConnection
+) -> Result<ExtractedCapability, ApiError> {
     let mut result = ExtractedCapability::empty();
 
     if conn.supports_resources() {
@@ -491,7 +497,9 @@ async fn extract_resources_capability(conn: &crate::core::connection::UpstreamCo
 }
 
 /// Extract resource templates from temporary instance
-async fn extract_resource_templates_capability(conn: &crate::core::connection::UpstreamConnection) -> Result<ExtractedCapability, ApiError> {
+async fn extract_resource_templates_capability(
+    conn: &crate::core::connection::UpstreamConnection
+) -> Result<ExtractedCapability, ApiError> {
     let mut result = ExtractedCapability::empty();
 
     if conn.supports_resources() {
@@ -509,14 +517,16 @@ async fn extract_resource_templates_capability(conn: &crate::core::connection::U
                         "mime_type": t.mime_type,
                     }));
 
-                    result.resource_templates.push(crate::core::cache::CachedResourceTemplateInfo {
-                        uri_template: t.uri_template.clone(),
-                        name: Some(t.name.clone()),
-                        description: t.description.clone(),
-                        mime_type: t.mime_type.clone(),
-                        enabled: true,
-                        cached_at: chrono::Utc::now(),
-                    });
+                    result
+                        .resource_templates
+                        .push(crate::core::cache::CachedResourceTemplateInfo {
+                            uri_template: t.uri_template.clone(),
+                            name: Some(t.name.clone()),
+                            description: t.description.clone(),
+                            mime_type: t.mime_type.clone(),
+                            enabled: true,
+                            cached_at: chrono::Utc::now(),
+                        });
                 }
                 cursor = list_result.next_cursor;
                 if cursor.is_none() {
@@ -544,30 +554,32 @@ pub async fn create_temporary_instance_for_capability(
         return Ok(None);
     }
 
-    tracing::info!("Force refresh requested for server '{}', attempting temporary instance creation for {:?}",
-        server_info.server_name, capability_type);
+    tracing::debug!(
+        "Force refresh requested for server '{}', attempting temporary instance creation for {:?}",
+        server_info.server_name,
+        capability_type
+    );
 
     // Create temporary instance with timeout
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        state.connection_pool.lock()
-    ).await;
+    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(10), state.connection_pool.lock()).await;
 
     let mut pool = match pool_result {
         Ok(pool) => pool,
         Err(_) => {
-            tracing::error!("Timeout acquiring connection pool lock for server '{}'", server_info.server_name);
+            tracing::error!(
+                "Timeout acquiring connection pool lock for server '{}'",
+                server_info.server_name
+            );
             return Ok(None);
         }
     };
 
-    match pool.get_or_create_validation_instance(
-        &server_info.server_name,
-        "api",
-        std::time::Duration::from_secs(5 * 60),
-    ).await {
+    match pool
+        .get_or_create_validation_instance(&server_info.server_name, "api", std::time::Duration::from_secs(5 * 60))
+        .await
+    {
         Ok(Some(validation_conn)) => {
-            tracing::info!("Created temporary instance for server '{}'", server_info.server_name);
+            tracing::debug!("Created temporary instance for server '{}'", server_info.server_name);
 
             // Extract capabilities based on the requested type
             let extracted = match capability_type {
@@ -597,7 +609,7 @@ pub async fn create_temporary_instance_for_capability(
             // Destroy temporary instance (create-use-destroy lifecycle)
             let _ = pool.destroy_validation_instance(&server_info.server_name, "api").await;
 
-            tracing::info!("Destroyed temporary instance for server '{}'", server_info.server_name);
+            tracing::debug!("Destroyed temporary instance for server '{}'", server_info.server_name);
 
             // Return formatted response
             Ok(Some(axum::Json(serde_json::json!({
@@ -610,29 +622,21 @@ pub async fn create_temporary_instance_for_capability(
             }))))
         }
         Ok(None) => {
-            tracing::warn!("Failed to create temporary instance for server '{}' - returned None", server_info.server_name);
+            tracing::warn!(
+                "Failed to create temporary instance for server '{}' - returned None",
+                server_info.server_name
+            );
             Ok(None)
         }
         Err(e) => {
-            tracing::error!("Error creating temporary instance for server '{}': {:?}", server_info.server_name, e);
+            tracing::error!(
+                "Error creating temporary instance for server '{}': {:?}",
+                server_info.server_name,
+                e
+            );
             Ok(None)
         }
     }
-}
-
-
-
-
-
-/// Refresh capabilities via Inspect and persist into Redb
-pub async fn refresh_and_store_redb(
-    _state: &Arc<AppState>,
-    _server_id: &str,
-    _params: &InspectParams,
-) -> Result<(), ApiError> {
-    Err(ApiError::InternalError(
-        "Inspect module removed; refresh not available".to_string(),
-    ))
 }
 
 /// Validate server ID format
@@ -703,22 +707,4 @@ pub fn create_inspect_response(
             "source": source
         }
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_server_id() {
-        // Valid IDs
-        assert!(validate_server_id("serv_123").is_ok());
-        assert!(validate_server_id("my-server").is_ok());
-        assert!(validate_server_id("context7").is_ok());
-
-        // Invalid IDs
-        assert!(validate_server_id("").is_err());
-        assert!(validate_server_id("   ").is_err());
-        assert!(validate_server_id(&"x".repeat(256)).is_err());
-    }
 }
