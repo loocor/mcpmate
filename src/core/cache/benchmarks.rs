@@ -217,7 +217,6 @@ impl CacheBenchmarker {
                 resource_templates: Vec::new(),
                 cached_at: Utc::now(),
                 fingerprint: format!("fingerprint_{}", i),
-                instance_type: InstanceType::Production,
             });
         }
         
@@ -260,7 +259,6 @@ impl CacheBenchmarker {
             for server_data in test_data {
                 let query = CacheQuery {
                     server_id: server_data.server_id.clone(),
-                    instance_type: InstanceType::Production,
                     freshness_level: FreshnessLevel::Cached,
                     include_disabled: false,
                 };
@@ -315,7 +313,6 @@ impl CacheBenchmarker {
                     let handle = tokio::spawn(async move {
                         let query = CacheQuery {
                             server_id,
-                            instance_type: InstanceType::Production,
                             freshness_level: FreshnessLevel::Cached,
                             include_disabled: false,
                         };
@@ -401,7 +398,6 @@ impl CacheBenchmarker {
                         sleep(Duration::from_millis(1)).await;
                         let query = CacheQuery {
                             server_id: server_data.server_id,
-                            instance_type: InstanceType::Production,
                             freshness_level: FreshnessLevel::Cached,
                             include_disabled: false,
                         };
@@ -535,7 +531,6 @@ impl CacheBenchmarker {
         for server_data in test_data {
             let query = CacheQuery {
                 server_id: server_data.server_id.clone(),
-                instance_type: InstanceType::Production,
                 freshness_level: FreshnessLevel::Cached,
                 include_disabled: false,
             };

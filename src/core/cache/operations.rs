@@ -30,8 +30,6 @@ impl<'a> CacheOperations<'a> {
     ) -> String {
         let instance_key = match instance_type {
             InstanceType::Production => "production".to_string(),
-            InstanceType::Validation { session_id, .. } => format!("validation_{}", session_id),
-            InstanceType::Exploration { session_id, .. } => format!("exploration_{}", session_id),
         };
         format!("{}#{}", server_id, instance_key)
     }
@@ -42,7 +40,7 @@ impl<'a> CacheOperations<'a> {
         server_data: &CachedServerData,
     ) -> Result<(), CacheError> {
         let write_txn = self.db.begin_write()?;
-        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type);
+        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type());
 
         {
             // Store main server data using composite key (server_id + instance_type)
@@ -109,7 +107,7 @@ impl<'a> CacheOperations<'a> {
         let servers_table = read_txn.open_table(SERVERS_TABLE)?;
 
         // Generate composite key for lookup
-        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type);
+        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type());
         tracing::info!("[CACHE][LOOKUP] key={}", cache_key);
 
         if let Some(data) = servers_table.get(cache_key.as_str())? {

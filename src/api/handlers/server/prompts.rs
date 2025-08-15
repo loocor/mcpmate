@@ -10,9 +10,8 @@ use std::sync::Arc;
 use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
-use super::common::CacheQueryExt;
 use super::common::{
-    InspectParams, RefreshStrategy, get_database_from_state, register_session_if_needed, resolve_server_identifier,
+    InspectParams, RefreshStrategy, get_database_from_state, resolve_server_identifier,
     validate_server_id,
 };
 
@@ -27,31 +26,13 @@ pub struct PromptsQuery {
     pub include_meta: Option<bool>,
     /// Timeout in seconds
     pub timeout: Option<u64>,
-    /// Instance type per refactor spec (production|exploration|validation)
-    pub instance_type: Option<String>,
 }
 
 impl PromptsQuery {
     /// Convert to InspectParams
     pub fn to_params(&self) -> Result<InspectParams, ApiError> {
-        // Explicit refresh parameter takes priority over instance_type defaults
-        let mapped_refresh = if self.refresh.is_some() {
-            // Use explicit refresh parameter if provided
-            self.refresh
-        } else if let Some(ref it) = self.instance_type {
-            // Fall back to instance_type defaults only if no explicit refresh
-            match it.to_lowercase().as_str() {
-                "production" => Some(RefreshStrategy::CacheFirst),
-                "exploration" => Some(RefreshStrategy::RefreshIfStale),
-                "validation" => Some(RefreshStrategy::CacheFirst),
-                _ => None,
-            }
-        } else {
-            None
-        };
-
         Ok(InspectParams {
-            refresh: mapped_refresh,
+            refresh: self.refresh.or(Some(RefreshStrategy::CacheFirst)),
             format: self.format.clone(),
             include_meta: self.include_meta,
         })
@@ -79,13 +60,8 @@ pub async fn list_prompts(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Register exploration/validation session for runtime/status accounting
-    register_session_if_needed(&state, &query.instance_type).await;
-
     // Try Redb cache with freshness on full snapshot
-    let instance_type = super::common::parse_instance_type(&query.instance_type);
-    let cache_query =
-        super::common::build_cache_query(&server_info.server_id, &params).update_instance_type(instance_type.clone());
+    let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
     if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
         if cache_result.cache_hit {
             if let Some(data) = cache_result.data {
@@ -162,7 +138,6 @@ pub async fn list_prompts(
                     resource_templates: Vec::new(),
                     cached_at: Utc::now(),
                     fingerprint: format!("runtime:{}:{}", server_info.server_id, Utc::now().timestamp()),
-                    instance_type: instance_type.clone(),
                 };
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
@@ -172,6 +147,16 @@ pub async fn list_prompts(
                 })));
             }
         }
+    }
+
+    // Force refresh: create temporary instance if refresh=force and no runtime data found
+    if let Some(response) = super::common::create_temporary_instance_for_capability(
+        &state,
+        &server_info,
+        &params,
+        super::common::CapabilityType::Prompts,
+    ).await? {
+        return Ok(response);
     }
 
     // Last resort: offline cache

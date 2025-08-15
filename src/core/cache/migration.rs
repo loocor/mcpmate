@@ -389,7 +389,6 @@ impl CacheMigrator {
             resource_templates,
             cached_at: legacy.cached_at,
             fingerprint: format!("migrated_{}", server_id),
-            instance_type: InstanceType::Production,
         })
     }
     
@@ -500,7 +499,6 @@ impl CacheMigrator {
         let redb_start = std::time::Instant::now();
         let query = CacheQuery {
             server_id,
-            instance_type: InstanceType::Production,
             freshness_level: FreshnessLevel::Cached,
             include_disabled: true,
         };

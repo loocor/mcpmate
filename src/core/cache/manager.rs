@@ -99,8 +99,6 @@ impl RedbCacheManager {
     ) -> String {
         let instance_key = match instance_type {
             InstanceType::Production => "production".to_string(),
-            InstanceType::Validation { session_id, .. } => format!("validation_{}", session_id),
-            InstanceType::Exploration { session_id, .. } => format!("exploration_{}", session_id),
         };
         format!("{}#{}", server_id, instance_key)
     }
@@ -177,7 +175,7 @@ impl RedbCacheManager {
         operations.store_server_data(server_data)?;
 
         // Update L1 (memory) cache using composite key
-        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type);
+        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type());
         let mut memory_cache = self.memory_cache.write().await;
         memory_cache.put(cache_key, server_data.clone());
 
@@ -190,7 +188,7 @@ impl RedbCacheManager {
         query: &CacheQuery,
     ) -> Result<CacheResult<Option<CachedServerData>>, CacheError> {
         // Generate composite key for consistent lookup
-        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type);
+        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type());
         tracing::debug!(
             "[CACHE][GET_DATA] key={} freshness={:?}",
             cache_key,
@@ -207,7 +205,6 @@ impl RedbCacheManager {
                         data: Some(cached_data.clone()),
                         cache_hit: true,
                         cached_at: Some(cached_data.cached_at),
-                        instance_type: query.instance_type.clone(),
                     });
                 }
             }
@@ -225,7 +222,11 @@ impl RedbCacheManager {
             memory_cache.put(cache_key.clone(), server_data.clone());
 
             let is_fresh = self.is_data_fresh(server_data, &query.freshness_level);
-            if is_fresh || query.freshness_level == FreshnessLevel::Cached {
+            // For RealTime requests, always return cache_hit=false to force fresh data
+            if query.freshness_level == FreshnessLevel::RealTime {
+                tracing::debug!("[CACHE][L2 FORCE REFRESH] key={} - RealTime requested", cache_key);
+                (false, None)
+            } else if is_fresh || query.freshness_level == FreshnessLevel::Cached {
                 (true, Some(server_data.cached_at))
             } else {
                 (false, None)
@@ -239,7 +240,6 @@ impl RedbCacheManager {
             data: if cache_hit { data } else { None },
             cache_hit,
             cached_at,
-            instance_type: query.instance_type.clone(),
         })
     }
 

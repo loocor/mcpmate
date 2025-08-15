@@ -294,7 +294,6 @@ impl DefaultFingerprintGenerator {
     async fn generate_capability_fingerprint(&self, server_id: &str) -> Result<CapabilityFingerprint, FingerprintError> {
         let query = super::types::CacheQuery {
             server_id: server_id.to_string(),
-            instance_type: super::types::InstanceType::Production,
             freshness_level: super::types::FreshnessLevel::Cached,
             include_disabled: true,
         };

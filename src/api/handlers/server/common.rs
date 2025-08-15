@@ -11,10 +11,9 @@ use crate::{
         routes::AppState,
     },
     config::{database::Database, server},
-    core::cache::{CacheQuery, FreshnessLevel, InstanceType},
+    core::cache::{CacheQuery, FreshnessLevel},
     core::pool::UpstreamConnectionPool,
 };
-use std::time::Duration;
 
 /// Server identification result
 #[derive(Debug, Clone)]
@@ -331,61 +330,304 @@ pub fn build_cache_query(
     let freshness_level = map_refresh_to_freshness(refresh);
     CacheQuery {
         server_id: server_id.to_string(),
-        instance_type: InstanceType::Production, // API 侧默认生产实例
         freshness_level,
         include_disabled: false,
     }
 }
 
-/// Builder-style helper to override instance_type after building query
-pub trait CacheQueryExt {
-    fn update_instance_type(
-        self,
-        instance_type: InstanceType,
-    ) -> CacheQuery;
+/// Capability type for temporary instance extraction
+#[derive(Debug, Clone)]
+pub enum CapabilityType {
+    Tools,
+    Prompts,
+    Resources,
+    ResourceTemplates,
 }
 
-impl CacheQueryExt for CacheQuery {
-    fn update_instance_type(
-        mut self,
-        instance_type: InstanceType,
-    ) -> CacheQuery {
-        self.instance_type = instance_type;
-        self
+/// Result of capability extraction from temporary instance
+pub struct ExtractedCapability {
+    pub data: Vec<serde_json::Value>,
+    pub tools: Vec<crate::core::cache::CachedToolInfo>,
+    pub prompts: Vec<crate::core::cache::CachedPromptInfo>,
+    pub resources: Vec<crate::core::cache::CachedResourceInfo>,
+    pub resource_templates: Vec<crate::core::cache::CachedResourceTemplateInfo>,
+}
+
+impl ExtractedCapability {
+    pub fn empty() -> Self {
+        Self {
+            data: Vec::new(),
+            tools: Vec::new(),
+            prompts: Vec::new(),
+            resources: Vec::new(),
+            resource_templates: Vec::new(),
+        }
     }
 }
 
-/// Parse instance_type string into cache InstanceType with default TTLs
-pub fn parse_instance_type(instance_type: &Option<String>) -> InstanceType {
-    match instance_type.as_ref().map(|s| s.to_lowercase()) {
-        Some(ref s) if s == "exploration" => InstanceType::Exploration {
-            session_id: "api".to_string(),
-            ttl_minutes: 30,
-        },
-        Some(ref s) if s == "validation" => InstanceType::Validation {
-            session_id: "api".to_string(),
-            ttl_minutes: 5,
-        },
-        _ => InstanceType::Production,
+/// Extract tools from temporary instance
+async fn extract_tools_capability(conn: &crate::core::connection::UpstreamConnection) -> Result<ExtractedCapability, ApiError> {
+    let mut result = ExtractedCapability::empty();
+
+    for t in &conn.tools {
+        let schema = t.schema_as_json_value();
+        result.data.push(serde_json::json!({
+            "name": t.name,
+            "description": t.description,
+            "input_schema": schema,
+            "unique_name": serde_json::Value::Null
+        }));
+
+        let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
+        result.tools.push(crate::core::cache::CachedToolInfo {
+            name: t.name.to_string(),
+            description: t.description.clone().map(|d| d.into_owned()),
+            input_schema_json,
+            unique_name: None,
+            enabled: true,
+            cached_at: chrono::Utc::now(),
+        });
     }
+
+    Ok(result)
 }
 
-/// Register exploration/validation session into pool for runtime/status accounting
-pub async fn register_session_if_needed(
+/// Extract prompts from temporary instance
+async fn extract_prompts_capability(conn: &crate::core::connection::UpstreamConnection) -> Result<ExtractedCapability, ApiError> {
+    let mut result = ExtractedCapability::empty();
+
+    if conn.supports_prompts() {
+        if let Some(service) = &conn.service {
+            if let Ok(list_result) = service.list_prompts(None).await {
+                for p in list_result.prompts {
+                    result.data.push(serde_json::json!({
+                        "name": p.name,
+                        "description": p.description,
+                        "arguments": p.arguments.clone().unwrap_or_default(),
+                    }));
+
+                    let converted_args = p
+                        .arguments
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|arg| crate::core::cache::PromptArgument {
+                            name: arg.name,
+                            description: arg.description,
+                            required: arg.required.unwrap_or(false),
+                        })
+                        .collect();
+
+                    result.prompts.push(crate::core::cache::CachedPromptInfo {
+                        name: p.name,
+                        description: p.description,
+                        arguments: converted_args,
+                        enabled: true,
+                        cached_at: chrono::Utc::now(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Extract resources from temporary instance
+async fn extract_resources_capability(conn: &crate::core::connection::UpstreamConnection) -> Result<ExtractedCapability, ApiError> {
+    let mut result = ExtractedCapability::empty();
+
+    if conn.supports_resources() {
+        if let Some(service) = &conn.service {
+            if let Ok(list_result) = service.list_resources(None).await {
+                for r in list_result.resources {
+                    result.data.push(serde_json::json!({
+                        "uri": r.uri,
+                        "name": r.name,
+                        "description": r.description,
+                        "mime_type": r.mime_type,
+                    }));
+
+                    result.resources.push(crate::core::cache::CachedResourceInfo {
+                        uri: r.uri.clone(),
+                        name: Some(r.name.clone()),
+                        description: r.description.clone(),
+                        mime_type: r.mime_type.clone(),
+                        enabled: true,
+                        cached_at: chrono::Utc::now(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Extract resource templates from temporary instance
+async fn extract_resource_templates_capability(conn: &crate::core::connection::UpstreamConnection) -> Result<ExtractedCapability, ApiError> {
+    let mut result = ExtractedCapability::empty();
+
+    if conn.supports_resources() {
+        if let Some(service) = &conn.service {
+            let mut cursor = None;
+            while let Ok(list_result) = service
+                .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                .await
+            {
+                for t in list_result.resource_templates {
+                    result.data.push(serde_json::json!({
+                        "uri_template": t.uri_template,
+                        "name": t.name,
+                        "description": t.description,
+                        "mime_type": t.mime_type,
+                    }));
+
+                    result.resource_templates.push(crate::core::cache::CachedResourceTemplateInfo {
+                        uri_template: t.uri_template.clone(),
+                        name: Some(t.name.clone()),
+                        description: t.description.clone(),
+                        mime_type: t.mime_type.clone(),
+                        enabled: true,
+                        cached_at: chrono::Utc::now(),
+                    });
+                }
+                cursor = list_result.next_cursor;
+                if cursor.is_none() {
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// 🎯 THE ULTIMATE UNIFIED FUNCTION 🎯
+/// Create temporary instance and extract ANY capability type for refresh=force
+pub async fn create_temporary_instance_for_capability(
     state: &Arc<AppState>,
-    instance_type: &Option<String>,
-) {
-    let lower = instance_type.as_ref().map(|s| s.to_lowercase());
-    if lower.as_deref() == Some("exploration") {
-        if let Ok(mut pool) = tokio::time::timeout(Duration::from_secs(1), state.connection_pool.lock()).await {
-            pool.upsert_exploration_session("api", Duration::from_secs(30 * 60));
+    server_info: &ServerIdentification,
+    params: &InspectParams,
+    capability_type: CapabilityType,
+) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
+    // Only proceed if refresh=force is requested
+    if params.refresh != Some(RefreshStrategy::Force) {
+        return Ok(None);
+    }
+
+    tracing::info!("Force refresh requested for server '{}', attempting temporary instance creation for {:?}",
+        server_info.server_name, capability_type);
+
+    // Create temporary instance with timeout
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        state.connection_pool.lock()
+    ).await;
+
+    let mut pool = match pool_result {
+        Ok(pool) => pool,
+        Err(_) => {
+            tracing::error!("Timeout acquiring connection pool lock for server '{}'", server_info.server_name);
+            return Ok(None);
         }
-    } else if lower.as_deref() == Some("validation") {
-        if let Ok(mut pool) = tokio::time::timeout(Duration::from_secs(1), state.connection_pool.lock()).await {
-            pool.upsert_validation_session("api", Duration::from_secs(5 * 60));
+    };
+
+    match pool.get_or_create_validation_instance(
+        &server_info.server_name,
+        "api",
+        std::time::Duration::from_secs(5 * 60),
+    ).await {
+        Ok(Some(validation_conn)) => {
+            tracing::info!("Created temporary instance for server '{}'", server_info.server_name);
+
+            // Extract capabilities based on type - THE MAGIC HAPPENS HERE! ✨
+            let extracted = match capability_type {
+                CapabilityType::Tools => extract_tools_capability(validation_conn).await?,
+                CapabilityType::Prompts => extract_prompts_capability(validation_conn).await?,
+                CapabilityType::Resources => extract_resources_capability(validation_conn).await?,
+                CapabilityType::ResourceTemplates => extract_resource_templates_capability(validation_conn).await?,
+            };
+
+            // Update cache with fresh data (only if we have data)
+            if !extracted.data.is_empty() {
+                let server_data = crate::core::cache::CachedServerData {
+                    server_id: server_info.server_id.clone(),
+                    server_name: server_info.server_name.clone(),
+                    server_version: None,
+                    protocol_version: "latest".to_string(),
+                    tools: extracted.tools,
+                    resources: extracted.resources,
+                    prompts: extracted.prompts,
+                    resource_templates: extracted.resource_templates,
+                    cached_at: chrono::Utc::now(),
+                    fingerprint: format!("temp:{}:{}", server_info.server_id, chrono::Utc::now().timestamp()),
+                };
+                let _ = state.redb_cache.store_server_data(&server_data).await;
+            }
+
+            // Destroy temporary instance (create-use-destroy lifecycle)
+            let _ = pool.destroy_validation_instance(&server_info.server_name, "api").await;
+
+            tracing::info!("Destroyed temporary instance for server '{}'", server_info.server_name);
+
+            // Return formatted response
+            Ok(Some(axum::Json(serde_json::json!({
+                "data": extracted.data,
+                "meta": {
+                    "cache_hit": false,
+                    "strategy": params.refresh.unwrap_or_default(),
+                    "source": "temporary"
+                }
+            }))))
+        }
+        Ok(None) => {
+            tracing::warn!("Failed to create temporary instance for server '{}' - returned None", server_info.server_name);
+            Ok(None)
+        }
+        Err(e) => {
+            tracing::error!("Error creating temporary instance for server '{}': {:?}", server_info.server_name, e);
+            Ok(None)
         }
     }
 }
+
+/// Convenience function for tools (backward compatibility)
+pub async fn create_temporary_instance_for_tools(
+    state: &Arc<AppState>,
+    server_info: &ServerIdentification,
+    params: &InspectParams,
+) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
+    create_temporary_instance_for_capability(state, server_info, params, CapabilityType::Tools).await
+}
+
+/// Convenience function for prompts (backward compatibility)
+pub async fn create_temporary_instance_for_prompts(
+    state: &Arc<AppState>,
+    server_info: &ServerIdentification,
+    params: &InspectParams,
+) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
+    create_temporary_instance_for_capability(state, server_info, params, CapabilityType::Prompts).await
+}
+
+/// Convenience function for resources (backward compatibility)
+pub async fn create_temporary_instance_for_resources(
+    state: &Arc<AppState>,
+    server_info: &ServerIdentification,
+    params: &InspectParams,
+) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
+    create_temporary_instance_for_capability(state, server_info, params, CapabilityType::Resources).await
+}
+
+/// Convenience function for resource templates (backward compatibility)
+pub async fn create_temporary_instance_for_resource_templates(
+    state: &Arc<AppState>,
+    server_info: &ServerIdentification,
+    params: &InspectParams,
+) -> Result<Option<axum::Json<serde_json::Value>>, ApiError> {
+    create_temporary_instance_for_capability(state, server_info, params, CapabilityType::ResourceTemplates).await
+}
+
+
 
 /// Refresh capabilities via Inspect and persist into Redb
 pub async fn refresh_and_store_redb(

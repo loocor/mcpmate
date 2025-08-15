@@ -308,7 +308,7 @@ impl UpstreamConnectionPool {
             crate::core::transport::unified::connect_server(
                 server_name,
                 &server_config,
-                server.server_type.clone(),
+                server.server_type,
                 server_config.transport_type.unwrap_or_default(),
                 None, // No cancellation token needed for short-lived validation
                 Some(&db.pool),
@@ -358,12 +358,12 @@ impl UpstreamConnectionPool {
 
         // Create MCPServerConfig (reusing existing structure)
         Ok(crate::core::models::MCPServerConfig {
-            kind: server.server_type.clone(),
+            kind: server.server_type,
             command: server.command.clone(),
             args,
             url: server.url.clone(),
             env,
-            transport_type: server.transport_type.clone(),
+            transport_type: server.transport_type,
         })
     }
 

@@ -1,4 +1,13 @@
 //! Type definitions for the cache system
+//!
+//! ## Simplified Cache Design
+//!
+//! The cache system uses a simplified approach where all operations default to
+//! Production instance type. This aligns with the API endpoint simplification
+//! that removed complex instance_type handling for capability discovery.
+//!
+//! All cache operations are optimized for read-only management endpoints with
+//! consistent CacheFirst strategy by default.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,15 +26,21 @@ pub struct CachedServerData {
     pub resource_templates: Vec<CachedResourceTemplateInfo>,
     pub cached_at: DateTime<Utc>,
     pub fingerprint: String,
-    pub instance_type: InstanceType,
+}
+
+impl CachedServerData {
+    /// Get the instance type (always Production in simplified design)
+    pub fn instance_type(&self) -> InstanceType {
+        InstanceType::Production
+    }
 }
 
 /// Instance type classification for connection pool integration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Simplified to Production-only after API endpoint refactoring
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum InstanceType {
+    #[default]
     Production,
-    Exploration { session_id: String, ttl_minutes: u32 },
-    Validation { session_id: String, ttl_minutes: u32 },
 }
 
 /// Cached tool information
@@ -98,16 +113,28 @@ pub struct CacheResult<T> {
     pub data: T,
     pub cache_hit: bool,
     pub cached_at: Option<DateTime<Utc>>,
-    pub instance_type: InstanceType,
+}
+
+impl<T> CacheResult<T> {
+    /// Get the instance type (always Production in simplified design)
+    pub fn instance_type(&self) -> InstanceType {
+        InstanceType::Production
+    }
 }
 
 /// Cache query parameters
 #[derive(Debug, Clone)]
 pub struct CacheQuery {
     pub server_id: String,
-    pub instance_type: InstanceType,
     pub freshness_level: FreshnessLevel,
     pub include_disabled: bool,
+}
+
+impl CacheQuery {
+    /// Get the instance type (always Production in simplified design)
+    pub fn instance_type(&self) -> InstanceType {
+        InstanceType::Production
+    }
 }
 
 /// Freshness level for cache queries
