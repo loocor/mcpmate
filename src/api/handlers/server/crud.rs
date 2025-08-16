@@ -2,11 +2,13 @@
 // Contains handler functions for creating, updating, and importing servers
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::{common, shared::*};
 use crate::{
     api::handlers::ApiError,
     common::{config::ConfigSuitType, server::ServerType},
+    config::server::capabilities::sync_via_connection_pool,
     config::{
         database::Database,
         models::{ConfigSuit, ServerMeta},
@@ -14,8 +16,7 @@ use crate::{
         suit,
     },
 };
-
-// Private helper functions
+use axum::{Json, extract::State};
 
 /// Convert database error to ApiError
 fn db_error(e: impl std::fmt::Display) -> ApiError {
@@ -256,6 +257,17 @@ pub async fn create_server(
         tracing::info!("Enabled server '{}' in default config suit", payload.name);
     }
 
+    // Initial capability discovery + dual write (SQLite shadow + REDB)
+    let _ = sync_via_connection_pool(
+        &state.connection_pool,
+        &state.redb_cache,
+        &db.pool,
+        &server_id,
+        &payload.name,
+        10,
+    )
+    .await;
+
     // Return success response
     Ok(Json(ServerResponse {
         id: Some(server_id),
@@ -406,6 +418,17 @@ async fn import_single_server(
     if let Ok(suit_id) = get_or_create_default_config_suit(db).await {
         let _ = add_server_to_suit_with_sync(state, db, &suit_id, &server_id, true).await;
     }
+
+    // Initial capability discovery + dual write (SQLite shadow + REDB)
+    let _ = sync_via_connection_pool(
+        &state.connection_pool,
+        &state.redb_cache,
+        &db.pool,
+        &server_id,
+        &name,
+        10,
+    )
+    .await;
 
     Ok(())
 }
