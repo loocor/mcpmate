@@ -10,7 +10,9 @@ use std::sync::Arc;
 use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
-use super::capability::{CapabilityKind, enrich_capability_items, respond_with_enriched, prompt_json, prompt_json_from_cached};
+use super::capability::{
+    CapabilityKind, enrich_capability_items, prompt_json, prompt_json_from_cached, respond_with_enriched,
+};
 use super::common::{
     InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
     resolve_server_identifier, validate_server_id,
@@ -41,9 +43,11 @@ pub async fn list_prompts(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Short-circuit if server declares no prompts capability
+    // Short-circuit only if the server explicitly declares capabilities and lacks prompts capability
     if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
-        if !server_row.has_capability(crate::common::capability::CapabilityToken::Prompts) {
+        if server_row.capabilities.is_some()
+            && !server_row.has_capability(crate::common::capability::CapabilityToken::Prompts)
+        {
             return Ok(create_inspect_response(
                 Vec::new(),
                 false,

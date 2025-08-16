@@ -45,7 +45,9 @@ pub async fn list_tools(
 
     // If the server explicitly declares capabilities and lacks tools, short-circuit
     if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
-        if !server_row.has_capability(crate::common::capability::CapabilityToken::Tools) {
+        if server_row.capabilities.is_some()
+            && !server_row.has_capability(crate::common::capability::CapabilityToken::Tools)
+        {
             return Ok(create_inspect_response(
                 Vec::new(),
                 false,

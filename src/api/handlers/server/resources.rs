@@ -11,8 +11,8 @@ use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
 use super::capability::{
-    CapabilityKind, enrich_capability_items, respond_with_enriched,
-    resource_json, resource_json_from_cached, resource_template_json, resource_template_json_from_cached,
+    CapabilityKind, enrich_capability_items, resource_json, resource_json_from_cached, resource_template_json,
+    resource_template_json_from_cached, respond_with_enriched,
 };
 use super::common::{
     InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
@@ -44,9 +44,11 @@ pub async fn list_resources(
     // Parse query parameters
     let params = query.to_params()?;
 
-    // Short-circuit if server declares no resources capability
+    // Short-circuit only if the server explicitly declares capabilities and lacks resources capability
     if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
-        if !server_row.has_capability(crate::common::capability::CapabilityToken::Resources) {
+        if server_row.capabilities.is_some()
+            && !server_row.has_capability(crate::common::capability::CapabilityToken::Resources)
+        {
             return Ok(create_inspect_response(
                 Vec::new(),
                 false,
