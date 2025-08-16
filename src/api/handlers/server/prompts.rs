@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
+use super::capability::{CapabilityKind, enrich_capability_items, respond_with_enriched, prompt_json, prompt_json_from_cached};
 use super::common::{
     InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
     resolve_server_identifier, validate_server_id,
@@ -57,12 +58,18 @@ pub async fn list_prompts(
     if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
         if cache_result.cache_hit {
             if let Some(data) = cache_result.data {
-                let processed: Vec<serde_json::Value> = data
-                    .prompts
-                    .into_iter()
-                    .map(super::common::prompt_json_from_cached)
-                    .collect();
+                let processed: Vec<serde_json::Value> = data.prompts.into_iter().map(prompt_json_from_cached).collect();
                 if !processed.is_empty() {
+                    if let Ok(db) = get_database_from_state(&state) {
+                        let enriched = enrich_capability_items(
+                            CapabilityKind::Prompts,
+                            &db.pool,
+                            &server_info.server_id,
+                            processed,
+                        )
+                        .await;
+                        return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                    }
                     return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
                 }
             }
@@ -93,10 +100,12 @@ pub async fn list_prompts(
                                     required: arg.required.unwrap_or(false),
                                 })
                                 .collect();
-                            prompts.push(super::common::prompt_json(
+                            prompts.push(prompt_json(
                                 &p.name,
                                 p.description.clone(),
                                 converted_args.clone(),
+                                None,
+                                None,
                             ));
                             cached_prompts.push(crate::core::cache::CachedPromptInfo {
                                 name: p.name,
@@ -115,17 +124,23 @@ pub async fn list_prompts(
                     create_runtime_cache_data(&server_info, Vec::new(), Vec::new(), cached_prompts, Vec::new());
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
+                if let Ok(db) = get_database_from_state(&state) {
+                    let enriched =
+                        enrich_capability_items(CapabilityKind::Prompts, &db.pool, &server_info.server_id, prompts)
+                            .await;
+                    return Ok(respond_with_enriched(enriched, false, params.refresh, "runtime"));
+                }
                 return Ok(create_inspect_response(prompts, false, params.refresh, "runtime"));
             }
         }
     }
 
     // Force refresh: create temporary instance if refresh=force and no runtime data found
-    if let Some(response) = super::common::create_temporary_instance_for_capability(
+    if let Some(response) = super::capability::create_temporary_instance_for_capability(
         &state,
         &server_info,
         &params,
-        super::common::CapabilityType::Prompts,
+        super::capability::CapabilityType::Prompts,
     )
     .await?
     {
@@ -135,8 +150,12 @@ pub async fn list_prompts(
     // Last resort: offline cache
     if let Ok(cached) = state.redb_cache.get_server_prompts(&server_info.server_id, false).await {
         if !cached.is_empty() {
-            let processed: Vec<serde_json::Value> =
-                cached.into_iter().map(super::common::prompt_json_from_cached).collect();
+            let processed: Vec<serde_json::Value> = cached.into_iter().map(prompt_json_from_cached).collect();
+            if let Ok(db) = get_database_from_state(&state) {
+                let enriched =
+                    enrich_capability_items(CapabilityKind::Prompts, &db.pool, &server_info.server_id, processed).await;
+                return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+            }
             return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }

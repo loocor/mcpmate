@@ -269,7 +269,7 @@ async fn create_server_resources_table(pool: &Pool<Sqlite>) -> Result<()> {
             server_id TEXT NOT NULL,
             server_name TEXT NOT NULL,
             resource_uri TEXT NOT NULL,
-            unique_name TEXT NOT NULL,
+            unique_uri TEXT NOT NULL,
             name TEXT,
             description TEXT,
             mime_type TEXT,
@@ -277,7 +277,7 @@ async fn create_server_resources_table(pool: &Pool<Sqlite>) -> Result<()> {
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
             UNIQUE(server_id, resource_uri),
-            UNIQUE(unique_name)
+            UNIQUE(unique_uri)
         )
         "#,
     )
@@ -289,6 +289,10 @@ async fn create_server_resources_table(pool: &Pool<Sqlite>) -> Result<()> {
     })?;
 
     tracing::debug!("server_resources table created or already exists");
+
+    // Migration: Rename unique_name to unique_uri if it exists
+    migrate_server_resources_unique_name_to_unique_uri(pool).await?;
+    
     Ok(())
 }
 
@@ -313,15 +317,15 @@ async fn create_server_resources_index(pool: &Pool<Sqlite>) -> Result<()> {
     // Index for lookup by unique_name
     sqlx::query(
         r#"
-        CREATE INDEX IF NOT EXISTS idx_server_resources_unique_name
-        ON server_resources(unique_name)
+        CREATE INDEX IF NOT EXISTS idx_server_resources_unique_uri
+        ON server_resources(unique_uri)
         "#,
     )
     .execute(pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to create index on server_resources unique_name: {}", e);
-        anyhow::anyhow!("Failed to create index on server_resources unique_name: {}", e)
+        tracing::error!("Failed to create index on server_resources unique_uri: {}", e);
+        anyhow::anyhow!("Failed to create index on server_resources unique_uri: {}", e)
     })?;
 
     // Index for lookup by server_name
@@ -639,5 +643,35 @@ async fn verify_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
         tracing::debug!("Verified {} table exists", table);
     }
 
+    Ok(())
+}
+
+/// Migrate server_resources table from unique_name to unique_uri
+async fn migrate_server_resources_unique_name_to_unique_uri(pool: &Pool<Sqlite>) -> Result<()> {
+    // Check if unique_name column exists and unique_uri doesn't
+    let column_check = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('server_resources') WHERE name = 'unique_name'"
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if column_check > 0 {
+        tracing::info!("Migrating server_resources table: unique_name -> unique_uri");
+        
+        // Rename the column
+        sqlx::query("ALTER TABLE server_resources RENAME COLUMN unique_name TO unique_uri")
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to rename unique_name to unique_uri: {}", e);
+                anyhow::anyhow!("Failed to rename unique_name to unique_uri: {}", e)
+            })?;
+            
+        tracing::info!("Successfully migrated server_resources table column: unique_name -> unique_uri");
+    } else {
+        tracing::debug!("server_resources table already has unique_uri column, no migration needed");
+    }
+    
     Ok(())
 }

@@ -260,11 +260,11 @@ pub async fn upsert_shadow_resource(
     let unique_name = uri.to_string();
     sqlx::query(
         r#"
-        INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_name, name, description, mime_type)
+        INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri, name, description, mime_type)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id, resource_uri) DO UPDATE SET
             server_name = excluded.server_name,
-            unique_name = excluded.unique_name,
+            unique_uri = excluded.unique_uri,
             name = excluded.name,
             description = excluded.description,
             mime_type = excluded.mime_type,

@@ -23,6 +23,7 @@ mod tools;
 
 // Shared utilities
 pub mod common;
+pub mod capability;
 
 // Common imports for all submodules
 pub(crate) mod shared {

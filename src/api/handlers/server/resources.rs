@@ -10,6 +10,10 @@ use std::sync::Arc;
 use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
+use super::capability::{
+    CapabilityKind, enrich_capability_items, respond_with_enriched,
+    resource_json, resource_json_from_cached, resource_template_json, resource_template_json_from_cached,
+};
 use super::common::{
     InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
     resolve_server_identifier, validate_server_id,
@@ -57,12 +61,19 @@ pub async fn list_resources(
     if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
         if cache_result.cache_hit {
             if let Some(data) = cache_result.data {
-                let processed: Vec<serde_json::Value> = data
-                    .resources
-                    .into_iter()
-                    .map(super::common::resource_json_from_cached)
-                    .collect();
+                let processed: Vec<serde_json::Value> =
+                    data.resources.into_iter().map(resource_json_from_cached).collect();
                 if !processed.is_empty() {
+                    if let Ok(db) = get_database_from_state(&state) {
+                        let enriched = enrich_capability_items(
+                            CapabilityKind::Resources,
+                            &db.pool,
+                            &server_info.server_id,
+                            processed,
+                        )
+                        .await;
+                        return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                    }
                     return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
                 }
             }
@@ -88,11 +99,13 @@ pub async fn list_resources(
                         .await
                     {
                         for r in result.resources {
-                            resources.push(super::common::resource_json(
+                            resources.push(resource_json(
                                 &r.uri,
                                 Some(r.name.clone()),
                                 r.description.clone(),
                                 r.mime_type.clone(),
+                                None,
+                                None,
                             ));
                             cached_resources.push(crate::core::cache::CachedResourceInfo {
                                 uri: r.uri.clone(),
@@ -117,17 +130,24 @@ pub async fn list_resources(
                     create_runtime_cache_data(&server_info, Vec::new(), cached_resources, Vec::new(), Vec::new());
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
+                // Enrich resources with id/unique_name from DB mapping
+                if let Ok(db) = get_database_from_state(&state) {
+                    let enriched =
+                        enrich_capability_items(CapabilityKind::Resources, &db.pool, &server_info.server_id, resources)
+                            .await;
+                    return Ok(respond_with_enriched(enriched, false, params.refresh, "runtime"));
+                }
                 return Ok(create_inspect_response(resources, false, params.refresh, "runtime"));
             }
         }
     }
 
     // Force refresh: create temporary instance if refresh=force and no runtime data found
-    if let Some(response) = super::common::create_temporary_instance_for_capability(
+    if let Some(response) = super::capability::create_temporary_instance_for_capability(
         &state,
         &server_info,
         &params,
-        super::common::CapabilityType::Resources,
+        super::capability::CapabilityType::Resources,
     )
     .await?
     {
@@ -141,10 +161,13 @@ pub async fn list_resources(
         .await
     {
         if !cached.is_empty() {
-            let processed: Vec<serde_json::Value> = cached
-                .into_iter()
-                .map(super::common::resource_json_from_cached)
-                .collect();
+            let processed: Vec<serde_json::Value> = cached.into_iter().map(resource_json_from_cached).collect();
+            if let Ok(db) = get_database_from_state(&state) {
+                let enriched =
+                    enrich_capability_items(CapabilityKind::Resources, &db.pool, &server_info.server_id, processed)
+                        .await;
+                return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+            }
             return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }
@@ -198,9 +221,19 @@ pub async fn list_resource_templates(
                 let processed: Vec<serde_json::Value> = data
                     .resource_templates
                     .into_iter()
-                    .map(super::common::resource_template_json_from_cached)
+                    .map(resource_template_json_from_cached)
                     .collect();
                 if !processed.is_empty() {
+                    if let Ok(db) = get_database_from_state(&state) {
+                        let enriched = enrich_capability_items(
+                            CapabilityKind::ResourceTemplates,
+                            &db.pool,
+                            &server_info.server_id,
+                            processed,
+                        )
+                        .await;
+                        return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                    }
                     return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
                 }
             }
@@ -223,11 +256,13 @@ pub async fn list_resource_templates(
                         .await
                     {
                         for t in result.resource_templates {
-                            templates.push(super::common::resource_template_json(
+                            templates.push(resource_template_json(
                                 &t.uri_template,
                                 Some(t.name.clone()),
                                 t.description.clone(),
                                 t.mime_type.clone(),
+                                None,
+                                None,
                             ));
                             cached_templates.push(crate::core::cache::CachedResourceTemplateInfo {
                                 uri_template: t.uri_template.clone(),
@@ -251,17 +286,27 @@ pub async fn list_resource_templates(
                     create_runtime_cache_data(&server_info, Vec::new(), Vec::new(), Vec::new(), cached_templates);
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
+                if let Ok(db) = get_database_from_state(&state) {
+                    let enriched = enrich_capability_items(
+                        CapabilityKind::ResourceTemplates,
+                        &db.pool,
+                        &server_info.server_id,
+                        templates,
+                    )
+                    .await;
+                    return Ok(respond_with_enriched(enriched, false, params.refresh, "runtime"));
+                }
                 return Ok(create_inspect_response(templates, false, params.refresh, "runtime"));
             }
         }
     }
 
     // Force refresh: create temporary instance if refresh=force and no runtime data found
-    if let Some(response) = super::common::create_temporary_instance_for_capability(
+    if let Some(response) = super::capability::create_temporary_instance_for_capability(
         &state,
         &server_info,
         &params,
-        super::common::CapabilityType::ResourceTemplates,
+        super::capability::CapabilityType::ResourceTemplates,
     )
     .await?
     {
@@ -275,10 +320,18 @@ pub async fn list_resource_templates(
         .await
     {
         if !cached.is_empty() {
-            let processed: Vec<serde_json::Value> = cached
-                .into_iter()
-                .map(super::common::resource_template_json_from_cached)
-                .collect();
+            let processed: Vec<serde_json::Value> =
+                cached.into_iter().map(resource_template_json_from_cached).collect();
+            if let Ok(db) = get_database_from_state(&state) {
+                let enriched = enrich_capability_items(
+                    CapabilityKind::ResourceTemplates,
+                    &db.pool,
+                    &server_info.server_id,
+                    processed,
+                )
+                .await;
+                return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+            }
             return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }

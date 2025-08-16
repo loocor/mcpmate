@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
+use super::capability::{CapabilityKind, enrich_capability_items, respond_with_enriched, tool_json, tool_json_from_cached};
 use super::common::{
     InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
     resolve_server_identifier, validate_server_id,
@@ -73,12 +74,15 @@ pub async fn list_tools(
     if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
         if cache_result.cache_hit {
             if let Some(data) = cache_result.data {
-                let processed: Vec<serde_json::Value> = data
-                    .tools
-                    .into_iter()
-                    .map(|t| super::common::tool_json_from_cached(&t))
-                    .collect();
+                let processed: Vec<serde_json::Value> =
+                    data.tools.into_iter().map(|t| tool_json_from_cached(&t)).collect();
                 if !processed.is_empty() {
+                    if let Ok(db) = super::common::get_database_from_state(&state) {
+                        let enriched =
+                            enrich_capability_items(CapabilityKind::Tools, &db.pool, &server_info.server_id, processed)
+                                .await;
+                        return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                    }
                     return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
                 }
                 // empty cached snapshot is treated as miss; fall through to runtime/offline
@@ -98,10 +102,11 @@ pub async fn list_tools(
                 }
                 for t in &conn.tools {
                     let schema = t.schema_as_json_value();
-                    tools.push(super::common::tool_json(
+                    tools.push(tool_json(
                         &t.name,
                         t.description.clone().map(|d| d.into_owned()),
                         schema.clone(),
+                        None,
                         None,
                     ));
 
@@ -123,17 +128,23 @@ pub async fn list_tools(
                     create_runtime_cache_data(&server_info, cached_tools, Vec::new(), Vec::new(), Vec::new());
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
+                // Enrich tool list with id/unique_name from DB mapping
+                if let Ok(db) = get_database_from_state(&state) {
+                    let enriched =
+                        enrich_capability_items(CapabilityKind::Tools, &db.pool, &server_info.server_id, tools).await;
+                    return Ok(respond_with_enriched(enriched, false, params.refresh, "runtime"));
+                }
                 return Ok(create_inspect_response(tools, false, params.refresh, "runtime"));
             }
         }
     }
 
     // Force refresh: create temporary instance if refresh=force and no runtime data found
-    if let Some(response) = super::common::create_temporary_instance_for_capability(
+    if let Some(response) = super::capability::create_temporary_instance_for_capability(
         &state,
         &server_info,
         &params,
-        super::common::CapabilityType::Tools,
+        super::capability::CapabilityType::Tools,
     )
     .await?
     {
@@ -143,10 +154,13 @@ pub async fn list_tools(
     // Last resort: return any cached tools ignoring freshness if available (support offline access)
     if let Ok(cached_tools) = state.redb_cache.get_server_tools(&server_info.server_id, false).await {
         if !cached_tools.is_empty() {
-            let processed: Vec<serde_json::Value> = cached_tools
-                .into_iter()
-                .map(|t| super::common::tool_json_from_cached(&t))
-                .collect();
+            let processed: Vec<serde_json::Value> =
+                cached_tools.into_iter().map(|t| tool_json_from_cached(&t)).collect();
+            if let Ok(db) = get_database_from_state(&state) {
+                let enriched =
+                    enrich_capability_items(CapabilityKind::Tools, &db.pool, &server_info.server_id, processed).await;
+                return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+            }
             return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }
