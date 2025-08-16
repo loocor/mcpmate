@@ -244,9 +244,20 @@ impl<'a> CacheOperations<'a> {
         let write_txn = self.db.begin_write()?;
 
         {
-            // Remove main server data
+            // Remove main server data (keys are composite: "{server_id}#{instance}")
             let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
-            servers_table.remove(server_id)?;
+            let keys: Vec<String> = servers_table
+                .iter()?
+                .map(|item| {
+                    let (key, _) = item?;
+                    Ok(key.value().to_string())
+                })
+                .collect::<Result<Vec<_>, CacheError>>()?;
+            for k in keys {
+                if k == server_id || k.starts_with(&format!("{}#", server_id)) {
+                    servers_table.remove(&*k)?;
+                }
+            }
 
             // Remove tools
             let mut tools_table = write_txn.open_table(TOOLS_TABLE)?;

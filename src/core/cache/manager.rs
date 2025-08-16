@@ -8,7 +8,7 @@ use std::{
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use lru::LruCache;
-use redb::Database;
+use redb::{Database, ReadableTable};
 use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -30,6 +30,8 @@ pub struct RedbCacheManager {
     memory_cache: Arc<RwLock<LruCache<String, CachedServerData>>>,
     /// Cache configuration
     config: CacheConfig,
+    /// Runtime cache metrics (L1/L2 hits, misses, ops)
+    metrics: Arc<RwLock<CacheMetrics>>,
 }
 
 impl Clone for RedbCacheManager {
@@ -39,6 +41,7 @@ impl Clone for RedbCacheManager {
             db_path: self.db_path.clone(),
             memory_cache: self.memory_cache.clone(),
             config: self.config.clone(),
+            metrics: self.metrics.clone(),
         }
     }
 }
@@ -131,6 +134,7 @@ impl RedbCacheManager {
             db_path: db_path.clone(),
             memory_cache,
             config,
+            metrics: Arc::new(RwLock::new(CacheMetrics::default())),
         };
 
         info!("Cache manager initialized at: {:?}", db_path);
@@ -179,6 +183,12 @@ impl RedbCacheManager {
         let mut memory_cache = self.memory_cache.write().await;
         memory_cache.put(cache_key, server_data.clone());
 
+        // Record write op
+        {
+            let mut m = self.metrics.write().await;
+            m.write_operations += 1;
+        }
+
         Ok(())
     }
 
@@ -201,6 +211,10 @@ impl RedbCacheManager {
             if let Some(cached_data) = memory_cache.get(&cache_key) {
                 if self.is_data_fresh(cached_data, &query.freshness_level) {
                     tracing::debug!("[CACHE][L1 HIT] key={}", cache_key);
+                    let mut m = self.metrics.write().await;
+                    m.total_queries += 1;
+                    m.cache_hits += 1;
+                    m.read_operations += 1;
                     return Ok(CacheResult {
                         data: Some(cached_data.clone()),
                         cache_hit: true,
@@ -225,14 +239,30 @@ impl RedbCacheManager {
             // For RealTime requests, always return cache_hit=false to force fresh data
             if query.freshness_level == FreshnessLevel::RealTime {
                 tracing::debug!("[CACHE][L2 FORCE REFRESH] key={} - RealTime requested", cache_key);
+                let mut m = self.metrics.write().await;
+                m.total_queries += 1;
+                m.cache_misses += 1; // treat as miss for real-time
+                m.read_operations += 1;
                 (false, None)
             } else if is_fresh || query.freshness_level == FreshnessLevel::Cached {
+                let mut m = self.metrics.write().await;
+                m.total_queries += 1;
+                m.cache_hits += 1;
+                m.read_operations += 1;
                 (true, Some(server_data.cached_at))
             } else {
+                let mut m = self.metrics.write().await;
+                m.total_queries += 1;
+                m.cache_misses += 1;
+                m.read_operations += 1;
                 (false, None)
             }
         } else {
             tracing::debug!("[CACHE][L2 MISS] key={}", cache_key);
+            let mut m = self.metrics.write().await;
+            m.total_queries += 1;
+            m.cache_misses += 1;
+            m.read_operations += 1;
             (false, None)
         };
 
@@ -288,19 +318,37 @@ impl RedbCacheManager {
         &self,
         server_id: &str,
     ) -> Result<(), CacheError> {
-        // Remove from L1 cache
+        // Remove from L1 cache using composite key
+        let composite_key = self.generate_cache_key(server_id, &InstanceType::Production);
         let mut memory_cache = self.memory_cache.write().await;
-        memory_cache.pop(server_id);
+        memory_cache.pop(&composite_key);
 
         // Remove from L2 cache
         let operations = CacheOperations::new(&self.db);
-        operations.remove_server_data(server_id)
+        operations.remove_server_data(server_id)?;
+
+        // Record invalidation
+        {
+            let mut m = self.metrics.write().await;
+            m.cache_invalidations += 1;
+        }
+
+        Ok(())
     }
 
     /// Get cache statistics
     pub async fn get_stats(&self) -> CacheStats {
-        let statistics = CacheStatistics::new(&self.db, Arc::new(RwLock::new(CacheMetrics::default())));
-        statistics.get_stats()
+        let statistics = CacheStatistics::new(&self.db, self.metrics.clone());
+        let mut stats = statistics.get_stats();
+        // Use live metrics for hit ratio
+        let m = self.metrics.read().await;
+        stats.hit_ratio = m.hit_ratio();
+        stats
+    }
+
+    /// Get a snapshot of current metrics counters
+    pub async fn get_metrics(&self) -> CacheMetrics {
+        self.metrics.read().await.clone()
     }
 
     /// Clear all cache data
@@ -312,6 +360,24 @@ impl RedbCacheManager {
         // Clear L2 cache
         let operations = CacheOperations::new(&self.db);
         operations.clear_all()?;
+
+        // Record cleanup timestamp next to DB file (db_path's directory)
+        let ts = Utc::now().to_rfc3339();
+        if let Some(dir) = self.db_path.parent() {
+            let stamp = dir.join(".last_cleanup");
+            if let Err(e) = std::fs::write(&stamp, &ts) {
+                tracing::warn!("Failed to write capability cache cleanup timestamp: {}", e);
+            } else {
+                tracing::info!("Recorded capability cache cleanup timestamp at {:?}", stamp);
+            }
+        }
+
+        // Update metrics
+        {
+            let mut m = self.metrics.write().await;
+            m.cache_invalidations += 1;
+            m.last_cleanup = Some(Utc::now());
+        }
 
         info!("Cache cleared successfully");
         Ok(())
@@ -402,5 +468,86 @@ impl RedbCacheManager {
             }
             FreshnessLevel::RealTime => false,
         }
+    }
+
+    /// Expose database file path for observability
+    pub fn database_path(&self) -> PathBuf {
+        self.db_path.clone()
+    }
+
+    /// List entries in servers table with size and cached timestamp (for details view)
+    pub async fn list_server_entries(
+        &self,
+        server_id_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ServerCacheEntry>, CacheError> {
+        use super::schema::SERVERS_TABLE;
+        let read_txn = self.db.begin_read()?;
+        let servers_table = read_txn.open_table(SERVERS_TABLE)?;
+
+        let mut results: Vec<ServerCacheEntry> = Vec::new();
+        let mut count: usize = 0;
+        for item in servers_table.iter()? {
+            if count >= limit {
+                break;
+            }
+            let (key, value) = item?;
+            let key_str = key.value().to_string();
+            if let Some(filter) = server_id_filter {
+                if !key_str.starts_with(&format!("{}#", filter)) && key_str != filter {
+                    continue;
+                }
+            }
+
+            let value_bytes = value.value();
+            // Try to deserialize to get cached_at and server_id for accurate data
+            let (cached_at, server_id) = match bincode::deserialize::<CachedServerData>(value_bytes) {
+                Ok(data) => (Some(data.cached_at), Some(data.server_id)),
+                Err(_) => (None, None),
+            };
+
+            let parsed_server_id = parse_server_id_from_key(&key_str, server_id);
+
+            results.push(ServerCacheEntry {
+                key: key_str,
+                server_id: parsed_server_id,
+                approx_value_size_bytes: value_bytes.len() as u64,
+                cached_at,
+            });
+
+            count += 1;
+        }
+
+        Ok(results)
+    }
+
+    /// Get last cleanup time (RFC3339) if recorded by clear_all
+    pub fn get_last_cleanup_time(&self) -> Option<String> {
+        if let Some(dir) = self.db_path.parent() {
+            let stamp = dir.join(".last_cleanup");
+            if stamp.exists() {
+                return std::fs::read_to_string(stamp).ok().map(|s| s.trim().to_string());
+            }
+        }
+        None
+    }
+}
+
+/// Lightweight summary for a servers table entry (observability only)
+#[derive(Debug, Clone)]
+pub struct ServerCacheEntry {
+    pub key: String,
+    pub server_id: String,
+    pub approx_value_size_bytes: u64,
+    pub cached_at: Option<chrono::DateTime<Utc>>,
+}
+
+fn parse_server_id_from_key(
+    key: &str,
+    fallback: Option<String>,
+) -> String {
+    match key.split_once('#') {
+        Some((sid, _)) => sid.to_string(),
+        None => fallback.unwrap_or_else(|| key.to_string()),
     }
 }

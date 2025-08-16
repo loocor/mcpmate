@@ -2,6 +2,7 @@
 // Contains route definitions for the API server
 
 pub mod board;
+pub mod cache;
 pub mod clients;
 pub mod notifs;
 pub mod runtime;
@@ -92,11 +93,11 @@ fn create_router_internal(
     });
 
     // Initialize Redb cache manager
-    // Allow override via MCPMATE_REDB_CACHE_PATH for tests; default to temp dir
+    // Allow override via MCPMATE_REDB_CACHE_PATH; default to ~/.mcpmate/cache/capability.redb
     let redb_cache_path = if let Ok(p) = std::env::var("MCPMATE_REDB_CACHE_PATH") {
         std::path::PathBuf::from(p)
     } else {
-        std::env::temp_dir().join("mcpmate").join("cache.redb")
+        crate::common::paths::global_paths().cache_dir().join("capability.redb")
     };
     let redb_cache = Arc::new(
         crate::core::cache::RedbCacheManager::new(redb_cache_path, crate::core::cache::manager::CacheConfig::default())
@@ -117,6 +118,7 @@ fn create_router_internal(
     let api_router = Router::new()
         .merge(server::routes(state.clone()))
         .merge(system::routes(state.clone()))
+        .merge(cache::routes(state.clone()))
         .merge(notifs::routes(state.clone()))
         .merge(suits::routes(state.clone()))
         .merge(runtime::routes(state.clone()))

@@ -25,8 +25,7 @@ pub struct MCPMatePaths {
 impl MCPMatePaths {
     /// Create a new path manager instance
     pub fn new() -> Result<Self> {
-        let home_dir =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot get user home directory"))?;
+        let home_dir = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot get user home directory"))?;
         let base_dir = home_dir.join(constants::MCPMATE_DIR_NAME);
 
         Ok(Self { base_dir })
@@ -45,11 +44,6 @@ impl MCPMatePaths {
     /// Get the cache directory (~/.mcpmate/cache)
     pub fn cache_dir(&self) -> PathBuf {
         self.base_dir.join(constants::CACHE_DIR_NAME)
-    }
-
-    /// Get the capability cache directory (~/.mcpmate/cache/capability)
-    pub fn capability_cache_dir(&self) -> PathBuf {
-        self.cache_dir().join("capability")
     }
 
     /// Get the downloads directory (system temp dir)
@@ -104,16 +98,10 @@ impl MCPMatePaths {
 
     /// Create all necessary directories
     pub fn ensure_directories(&self) -> Result<()> {
-        let dirs = [
-            self.base_dir.clone(),
-            self.runtimes_dir(),
-            self.cache_dir(),
-            self.capability_cache_dir(),
-        ];
+        let dirs = [self.base_dir.clone(), self.runtimes_dir(), self.cache_dir()];
 
         for dir in &dirs {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
+            std::fs::create_dir_all(dir).with_context(|| format!("Failed to create directory: {}", dir.display()))?;
         }
 
         std::fs::create_dir_all(self.downloads_dir()).with_context(|| {
@@ -141,15 +129,10 @@ impl MCPMatePaths {
         ];
 
         for dir in &dirs {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
+            std::fs::create_dir_all(dir).with_context(|| format!("Failed to create directory: {}", dir.display()))?;
         }
 
-        tracing::debug!(
-            "Created runtime directories for {} {}",
-            runtime_type,
-            version
-        );
+        tracing::debug!("Created runtime directories for {} {}", runtime_type, version);
         Ok(())
     }
 
@@ -196,8 +179,7 @@ static GLOBAL_PATHS: std::sync::OnceLock<MCPMatePaths> = std::sync::OnceLock::ne
 
 /// Get the global path manager instance
 pub fn global_paths() -> &'static MCPMatePaths {
-    GLOBAL_PATHS
-        .get_or_init(|| MCPMatePaths::new().expect("Failed to initialize global path manager"))
+    GLOBAL_PATHS.get_or_init(|| MCPMatePaths::new().expect("Failed to initialize global path manager"))
 }
 
 /// Get the bridge component path dynamically

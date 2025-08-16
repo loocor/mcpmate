@@ -199,7 +199,7 @@ pub async fn migrate_from_files(
     let redb_cache_path = if let Ok(p) = std::env::var("MCPMATE_REDB_CACHE_PATH") {
         std::path::PathBuf::from(p)
     } else {
-        std::env::temp_dir().join("mcpmate").join("cache.redb")
+        crate::common::paths::global_paths().cache_dir().join("capability.redb")
     };
     let redb_cache = RedbCacheManager::new(redb_cache_path, CacheConfig::default())
         .map_err(|e| anyhow::anyhow!(format!("Failed to init REDB cache: {}", e)))?;
