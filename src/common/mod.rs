@@ -6,6 +6,7 @@
 pub mod config;
 pub mod connection;
 pub mod constants;
+pub mod capability;
 pub mod env;
 pub mod json;
 pub mod paths;

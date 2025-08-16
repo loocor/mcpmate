@@ -23,7 +23,7 @@ pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
 /// Create server_config table if it doesn't exist
 async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating server_config table if it doesn't exist");
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS server_config (
@@ -33,6 +33,7 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             command TEXT,
             url TEXT,
             transport_type TEXT,
+            capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -47,13 +48,20 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
     })?;
 
     tracing::debug!("server_config table created or already exists");
+
+    // Ensure capabilities column exists for older dev databases
+    sqlx::query(r#"ALTER TABLE server_config ADD COLUMN capabilities TEXT"#)
+        .execute(pool)
+        .await
+        .ok();
+
     Ok(())
 }
 
 /// Create server_args table if it doesn't exist
 async fn create_server_args_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating server_args table if it doesn't exist");
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS server_args (
@@ -81,7 +89,7 @@ async fn create_server_args_table(pool: &Pool<Sqlite>) -> Result<()> {
 /// Create server_env table if it doesn't exist
 async fn create_server_env_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating server_env table if it doesn't exist");
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS server_env (
@@ -109,7 +117,7 @@ async fn create_server_env_table(pool: &Pool<Sqlite>) -> Result<()> {
 /// Create server_meta table if it doesn't exist
 async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating server_meta table if it doesn't exist");
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS server_meta (
@@ -143,12 +151,7 @@ async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
 
 /// Verify that all server tables were created successfully
 async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
-    let tables = vec![
-        "server_config",
-        "server_args", 
-        "server_env",
-        "server_meta",
-    ];
+    let tables = vec!["server_config", "server_args", "server_env", "server_meta"];
 
     for table in tables {
         sqlx::query(&format!(

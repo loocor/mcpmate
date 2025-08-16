@@ -55,6 +55,18 @@ pub async fn list_tools(
     // Parse query parameters
     let params = query.to_params()?;
 
+    // If the server explicitly declares capabilities and lacks tools, short-circuit
+    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
+        if !server_row.has_capability(crate::common::capability::CapabilityToken::Tools) {
+            return Ok(create_inspect_response(
+                Vec::new(),
+                false,
+                params.refresh,
+                "capability-tools-unsupported",
+            ));
+        }
+    }
+
     // Try Redb cache first with freshness policy
     let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
 

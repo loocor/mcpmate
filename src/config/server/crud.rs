@@ -114,13 +114,14 @@ pub async fn upsert_server_tx(
 
     let result = sqlx::query(
         r#"
-        INSERT INTO server_config (id, name, server_type, command, url, transport_type)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO server_config (id, name, server_type, command, url, transport_type, capabilities)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(name) DO UPDATE SET
             server_type = excluded.server_type,
             command = excluded.command,
             url = excluded.url,
             transport_type = excluded.transport_type,
+            capabilities = excluded.capabilities,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -130,6 +131,7 @@ pub async fn upsert_server_tx(
     .bind(&server.command)
     .bind(&server.url)
     .bind(server.transport_type)
+    .bind(&server.capabilities)
     .execute(&mut **tx)
     .await
     .context("Failed to upsert server")?;

@@ -4,6 +4,7 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
+use crate::common::capability::CapabilityToken;
 use crate::core::cache::{
     CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
     RedbCacheManager,
@@ -410,6 +411,38 @@ pub async fn store_dual_write(
     Ok(())
 }
 
+/// Overwrite server_config.capabilities using protocol-level support flags (full snapshot semantics)
+pub async fn overwrite_capabilities(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    supports_tools: bool,
+    supports_prompts: bool,
+    supports_resources: bool,
+    supports_resource_templates: bool,
+) -> Result<()> {
+    let mut caps: Vec<&str> = Vec::new();
+    if supports_tools {
+        caps.push(CapabilityToken::Tools.as_str());
+    }
+    if supports_prompts {
+        caps.push(CapabilityToken::Prompts.as_str());
+    }
+    if supports_resources {
+        caps.push(CapabilityToken::Resources.as_str());
+    }
+    if supports_resource_templates {
+        caps.push(CapabilityToken::ResourceTemplates.as_str());
+    }
+    let caps_opt: Option<String> = if caps.is_empty() { None } else { Some(caps.join(",")) };
+    sqlx::query(r#"UPDATE server_config SET capabilities = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#)
+        .bind(caps_opt)
+        .bind(server_id)
+        .execute(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    Ok(())
+}
+
 /// Sync capabilities using an upstream connection pool (API path helper)
 pub async fn sync_via_connection_pool(
     connection_pool: &tokio::sync::Mutex<UpstreamConnectionPool>,
@@ -436,15 +469,35 @@ pub async fn sync_via_connection_pool(
 
     // Discover and store
     let snap = discover_from_connection(conn).await?;
+    // Clone for store and keep original for capability flags
+    let tools_clone = snap.tools.clone();
+    let resources_clone = snap.resources.clone();
+    let prompts_clone = snap.prompts.clone();
+    let templates_clone = snap.resource_templates.clone();
     store_dual_write(
         db_pool,
         redb,
         server_id,
         server_name,
-        snap.tools,
-        snap.resources,
-        snap.prompts,
-        snap.resource_templates,
+        tools_clone,
+        resources_clone,
+        prompts_clone,
+        templates_clone,
+    )
+    .await?;
+
+    // Full overwrite of capabilities using protocol support flags from this connection
+    let supports_tools = !snap.tools.is_empty();
+    let supports_prompts = !snap.prompts.is_empty();
+    let supports_resources = !snap.resources.is_empty();
+    let supports_resource_templates = !snap.resource_templates.is_empty();
+    overwrite_capabilities(
+        db_pool,
+        server_id,
+        supports_tools,
+        supports_prompts,
+        supports_resources,
+        supports_resource_templates,
     )
     .await?;
 

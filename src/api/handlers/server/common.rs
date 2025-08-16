@@ -560,7 +560,7 @@ pub async fn create_temporary_instance_for_capability(
         capability_type
     );
 
-    // Create temporary instance with timeout
+    // Try to reuse an existing connected instance first to avoid spawning a temporary one
     let pool_result = tokio::time::timeout(std::time::Duration::from_secs(10), state.connection_pool.lock()).await;
 
     let mut pool = match pool_result {
@@ -574,6 +574,48 @@ pub async fn create_temporary_instance_for_capability(
         }
     };
 
+    if let Some(instances) = pool.connections.get(&server_info.server_name) {
+        if let Some(conn) = instances.values().find(|c| c.is_connected()) {
+            tracing::debug!(
+                "Force refresh: reusing existing connected instance for server '{}'",
+                server_info.server_name
+            );
+
+            let extracted = match capability_type {
+                CapabilityType::Tools => extract_tools_capability(conn).await?,
+                CapabilityType::Prompts => extract_prompts_capability(conn).await?,
+                CapabilityType::Resources => extract_resources_capability(conn).await?,
+                CapabilityType::ResourceTemplates => extract_resource_templates_capability(conn).await?,
+            };
+
+            if !extracted.data.is_empty() {
+                let server_data = crate::core::cache::CachedServerData {
+                    server_id: server_info.server_id.clone(),
+                    server_name: server_info.server_name.clone(),
+                    server_version: None,
+                    protocol_version: "latest".to_string(),
+                    tools: extracted.tools,
+                    resources: extracted.resources,
+                    prompts: extracted.prompts,
+                    resource_templates: extracted.resource_templates,
+                    cached_at: chrono::Utc::now(),
+                    fingerprint: format!("runtime:{}:{}", server_info.server_id, chrono::Utc::now().timestamp()),
+                };
+                let _ = state.redb_cache.store_server_data(&server_data).await;
+            }
+
+            return Ok(Some(axum::Json(serde_json::json!({
+                "data": extracted.data,
+                "meta": {
+                    "cache_hit": false,
+                    "strategy": params.refresh.unwrap_or_default(),
+                    "source": "runtime"
+                }
+            }))));
+        }
+    }
+
+    // No connected instance available: create a temporary validation instance
     match pool
         .get_or_create_validation_instance(&server_info.server_name, "api", std::time::Duration::from_secs(5 * 60))
         .await
@@ -699,8 +741,15 @@ pub fn create_inspect_response(
     refresh_strategy: Option<RefreshStrategy>,
     source: &str,
 ) -> axum::Json<serde_json::Value> {
+    // Determine high-level state for client simplicity
+    let state = if source.starts_with("capability-") {
+        "unsupported"
+    } else {
+        "ok"
+    };
     axum::Json(serde_json::json!({
         "data": data,
+        "state": state,
         "meta": {
             "cache_hit": cache_hit,
             "strategy": refresh_strategy.unwrap_or_default(),

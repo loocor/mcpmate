@@ -40,6 +40,18 @@ pub async fn list_resources(
     // Parse query parameters
     let params = query.to_params()?;
 
+    // Short-circuit if server declares no resources capability
+    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
+        if !server_row.has_capability(crate::common::capability::CapabilityToken::Resources) {
+            return Ok(create_inspect_response(
+                Vec::new(),
+                false,
+                params.refresh,
+                "capability-resources-unsupported",
+            ));
+        }
+    }
+
     // Try Redb cache with freshness policy on full server snapshot
     let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
     if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
@@ -165,6 +177,18 @@ pub async fn list_resource_templates(
 
     // Parse query parameters
     let params = query.to_params()?;
+
+    // Short-circuit if server declares no resourceTemplates capability
+    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
+        if !server_row.has_capability(crate::common::capability::CapabilityToken::ResourceTemplates) {
+            return Ok(create_inspect_response(
+                Vec::new(),
+                false,
+                params.refresh,
+                "capability-resourceTemplates-unsupported",
+            ));
+        }
+    }
 
     // Try Redb cache first with freshness policy on full snapshot
     let cache_query = super::common::build_cache_query(&server_info.server_id, &params);

@@ -40,6 +40,18 @@ pub async fn list_prompts(
     // Parse query parameters
     let params = query.to_params()?;
 
+    // Short-circuit if server declares no prompts capability
+    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
+        if !server_row.has_capability(crate::common::capability::CapabilityToken::Prompts) {
+            return Ok(create_inspect_response(
+                Vec::new(),
+                false,
+                params.refresh,
+                "capability-prompts-unsupported",
+            ));
+        }
+    }
+
     // Try Redb cache with freshness on full snapshot
     let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
     if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {

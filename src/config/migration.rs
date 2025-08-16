@@ -222,6 +222,7 @@ pub async fn migrate_from_files(
                     crate::common::server::TransportType::StreamableHttp
                 }
             }),
+            capabilities: None,
             enabled: crate::common::status::EnabledStatus::Enabled,
             created_at: None,
             updated_at: None,
