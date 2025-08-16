@@ -10,26 +10,13 @@ use std::sync::Arc;
 use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
-use super::capability::{CapabilityKind, enrich_capability_items, respond_with_enriched, tool_json, tool_json_from_cached};
+use super::capability::{
+    CapabilityKind, enrich_capability_items, respond_with_enriched, tool_json, tool_json_from_cached,
+};
 use super::common::{
     InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
     resolve_server_identifier, validate_server_id,
 };
-
-/// Validate tool name format
-fn validate_tool_name(tool_name: &str) -> Result<(), ApiError> {
-    if tool_name.trim().is_empty() {
-        return Err(ApiError::BadRequest("Tool name cannot be empty".to_string()));
-    }
-
-    if tool_name.len() > 255 {
-        return Err(ApiError::BadRequest(
-            "Tool name too long (max 255 characters)".to_string(),
-        ));
-    }
-
-    Ok(())
-}
 
 /// List all tools for a specific server
 ///
@@ -167,70 +154,4 @@ pub async fn list_tools(
 
     // No data available
     Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
-}
-
-/// Get detailed information for a specific tool
-///
-/// Returns complete tool information including input schema, description,
-/// and configuration status for the specified tool on the given server.
-///
-/// Uses tool_name instead of tool_id for clearer semantics.
-/// Supports both server_name and server_id as identifier.
-pub async fn get_tool_detail(
-    State(state): State<Arc<AppState>>,
-    Path((identifier, tool_name)): Path<(String, String)>,
-    Query(query): Query<InspectQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    // Get database and resolve server identifier
-    let db = get_database_from_state(&state)?;
-    let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
-
-    // Validate parameters
-    validate_server_id(&server_info.server_id)?;
-    validate_tool_name(&tool_name)?;
-
-    // Parse query parameters
-    let _params = query.to_params()?;
-
-    // Tool details can be retrieved from cache or runtime pool
-    // Try cache first
-    if let Ok(cached_tools) = state.redb_cache.get_server_tools(&server_info.server_id, false).await {
-        if let Some(tool) = cached_tools.iter().find(|t| t.name == tool_name) {
-            let schema = tool.input_schema().unwrap_or_else(|_| serde_json::json!({}));
-            return Ok(Json(serde_json::json!({
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": schema,
-                "unique_name": tool.unique_name,
-                "enabled": tool.enabled,
-                "cached_at": tool.cached_at.to_rfc3339()
-            })));
-        }
-    }
-
-    // Fallback to runtime pool if available
-    if let Ok(pool) = tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
-        if let Some(instances) = pool.connections.get(&server_info.server_name) {
-            for conn in instances.values() {
-                if !conn.is_connected() {
-                    continue;
-                }
-                for tool in &conn.tools {
-                    if tool.name == tool_name {
-                        return Ok(Json(serde_json::json!({
-                            "name": tool.name,
-                            "description": tool.description,
-                            "input_schema": tool.schema_as_json_value(),
-                            "source": "runtime"
-                        })));
-                    }
-                }
-            }
-        }
-    }
-
-    Err(ApiError::NotFound(format!(
-        "Tool '{}' not found for server '{}'",
-        tool_name, server_info.server_name
-    )))
 }

@@ -8,7 +8,7 @@ pub use self::{
     mgmt::{disable_server, enable_server},
     prompts::{get_prompt_arguments, list_prompts},
     resources::{list_resource_templates, list_resources},
-    tools::{get_tool_detail, list_tools},
+    tools::list_tools,
 };
 
 // Submodules
@@ -22,8 +22,8 @@ mod resources;
 mod tools;
 
 // Shared utilities
-pub mod common;
 pub mod capability;
+pub mod common;
 
 // Common imports for all submodules
 pub(crate) mod shared {
@@ -38,9 +38,8 @@ pub(crate) mod shared {
         api::{
             handlers::ApiError,
             models::server::{
-                CreateServerRequest, ImportServersRequest, ImportServersResponse,
-                OperationResponse, ServerInstancesResponse, ServerListResponse, ServerResponse,
-                UpdateServerRequest,
+                CreateServerRequest, ImportServersRequest, ImportServersResponse, OperationResponse,
+                ServerInstancesResponse, ServerListResponse, ServerResponse, UpdateServerRequest,
             },
             routes::AppState,
         },
