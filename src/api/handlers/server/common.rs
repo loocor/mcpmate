@@ -708,3 +708,93 @@ pub fn create_inspect_response(
         }
     }))
 }
+
+/// Build tool JSON object (shared across handlers)
+pub fn tool_json(
+    name: &str,
+    description: Option<String>,
+    input_schema: serde_json::Value,
+    unique_name: Option<String>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "name": name,
+        "description": description,
+        "input_schema": input_schema,
+        "unique_name": unique_name,
+    })
+}
+
+/// Build tool JSON from cached model
+pub fn tool_json_from_cached(t: &crate::core::cache::CachedToolInfo) -> serde_json::Value {
+    let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
+    tool_json(&t.name, t.description.clone(), schema, t.unique_name.clone())
+}
+
+/// Build resource JSON object (shared across handlers)
+pub fn resource_json(
+    uri: &str,
+    name: Option<String>,
+    description: Option<String>,
+    mime_type: Option<String>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "uri": uri,
+        "name": name,
+        "description": description,
+        "mime_type": mime_type,
+    })
+}
+
+/// Build resource JSON from cached model
+pub fn resource_json_from_cached(r: crate::core::cache::CachedResourceInfo) -> serde_json::Value {
+    resource_json(&r.uri, r.name, r.description, r.mime_type)
+}
+
+/// Build resource template JSON object (shared across handlers)
+pub fn resource_template_json(
+    uri_template: &str,
+    name: Option<String>,
+    description: Option<String>,
+    mime_type: Option<String>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "uri_template": uri_template,
+        "name": name,
+        "description": description,
+        "mime_type": mime_type,
+    })
+}
+
+/// Build resource template JSON from cached model
+pub fn resource_template_json_from_cached(t: crate::core::cache::CachedResourceTemplateInfo) -> serde_json::Value {
+    resource_template_json(&t.uri_template, t.name, t.description, t.mime_type)
+}
+
+/// Build prompt JSON object (shared across handlers)
+pub fn prompt_json(
+    name: &str,
+    description: Option<String>,
+    arguments: Vec<crate::core::cache::PromptArgument>,
+) -> serde_json::Value {
+    use crate::core::cache::PromptArgument;
+    let args: Vec<serde_json::Value> = arguments
+        .into_iter()
+        .map(|a: PromptArgument| {
+            serde_json::json!({
+                "name": a.name,
+                "description": a.description,
+                "required": a.required,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "name": name,
+        "description": description,
+        "arguments": args,
+    })
+}
+
+/// Build prompt JSON from cached model
+pub fn prompt_json_from_cached(p: crate::core::cache::CachedPromptInfo) -> serde_json::Value {
+    prompt_json(&p.name, p.description, p.arguments)
+}

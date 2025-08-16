@@ -17,10 +17,14 @@ use super::common::{
 
 /// List all resources for a specific server
 ///
-/// Returns a list of resources available on the specified server with
-/// configurable filtering and formatting options.
+/// Strategy order:
+/// 1) Cache-first: query Redb snapshot with freshness policy.
+/// 2) Runtime fallback: aggregate via connected instances (proxy service).
+/// 3) Force refresh (if requested): create a temporary instance to fetch data.
+/// 4) Offline cache: return any cached copy ignoring freshness.
+/// 5) None: return empty.
 ///
-/// Supports both server_name and server_id as identifier.
+/// Supports both `server_name` and `server_id` as identifier.
 pub async fn list_resources(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
@@ -44,14 +48,7 @@ pub async fn list_resources(
                 let processed: Vec<serde_json::Value> = data
                     .resources
                     .into_iter()
-                    .map(|r| {
-                        serde_json::json!({
-                            "uri": r.uri,
-                            "name": r.name,
-                            "description": r.description,
-                            "mime_type": r.mime_type,
-                        })
-                    })
+                    .map(super::common::resource_json_from_cached)
                     .collect();
                 if !processed.is_empty() {
                     return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
@@ -79,12 +76,12 @@ pub async fn list_resources(
                         .await
                     {
                         for r in result.resources {
-                            resources.push(serde_json::json!({
-                                "uri": r.uri.clone(),
-                                "name": r.name.clone(),
-                                "description": r.description.clone(),
-                                "mime_type": r.mime_type.clone(),
-                            }));
+                            resources.push(super::common::resource_json(
+                                &r.uri,
+                                Some(r.name.clone()),
+                                r.description.clone(),
+                                r.mime_type.clone(),
+                            ));
                             cached_resources.push(crate::core::cache::CachedResourceInfo {
                                 uri: r.uri.clone(),
                                 name: Some(r.name.clone()),
@@ -134,14 +131,7 @@ pub async fn list_resources(
         if !cached.is_empty() {
             let processed: Vec<serde_json::Value> = cached
                 .into_iter()
-                .map(|r| {
-                    serde_json::json!({
-                        "uri": r.uri,
-                        "name": r.name,
-                        "description": r.description,
-                        "mime_type": r.mime_type,
-                    })
-                })
+                .map(super::common::resource_json_from_cached)
                 .collect();
             return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
@@ -153,10 +143,14 @@ pub async fn list_resources(
 
 /// List resource templates for a specific server
 ///
-/// Returns resource templates that define URI patterns for dynamic resources.
-/// Templates are used to generate resource URIs with parameters.
+/// Strategy order:
+/// 1) Cache-first: query Redb snapshot with freshness policy.
+/// 2) Runtime fallback: aggregate via connected instances (proxy service).
+/// 3) Force refresh (if requested): create a temporary instance to fetch data.
+/// 4) Offline cache: return any cached copy ignoring freshness.
+/// 5) None: return empty.
 ///
-/// Supports both server_name and server_id as identifier.
+/// Supports both `server_name` and `server_id` as identifier.
 pub async fn list_resource_templates(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
@@ -180,14 +174,7 @@ pub async fn list_resource_templates(
                 let processed: Vec<serde_json::Value> = data
                     .resource_templates
                     .into_iter()
-                    .map(|t| {
-                        serde_json::json!({
-                            "uri_template": t.uri_template,
-                            "name": t.name,
-                            "description": t.description,
-                            "mime_type": t.mime_type,
-                        })
-                    })
+                    .map(super::common::resource_template_json_from_cached)
                     .collect();
                 if !processed.is_empty() {
                     return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
@@ -212,12 +199,12 @@ pub async fn list_resource_templates(
                         .await
                     {
                         for t in result.resource_templates {
-                            templates.push(serde_json::json!({
-                                "uri_template": t.uri_template,
-                                "name": t.name,
-                                "description": t.description,
-                                "mime_type": t.mime_type,
-                            }));
+                            templates.push(super::common::resource_template_json(
+                                &t.uri_template,
+                                Some(t.name.clone()),
+                                t.description.clone(),
+                                t.mime_type.clone(),
+                            ));
                             cached_templates.push(crate::core::cache::CachedResourceTemplateInfo {
                                 uri_template: t.uri_template.clone(),
                                 name: Some(t.name.clone()),
@@ -266,14 +253,7 @@ pub async fn list_resource_templates(
         if !cached.is_empty() {
             let processed: Vec<serde_json::Value> = cached
                 .into_iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "uri_template": t.uri_template,
-                        "name": t.name,
-                        "description": t.description,
-                        "mime_type": t.mime_type,
-                    })
-                })
+                .map(super::common::resource_template_json_from_cached)
                 .collect();
             return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }

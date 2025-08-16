@@ -32,35 +32,14 @@ fn validate_tool_name(tool_name: &str) -> Result<(), ApiError> {
 
 /// List all tools for a specific server
 ///
-/// Returns a list of tools available on the specified server with
-/// configurable filtering and formatting options.
+/// Strategy order:
+/// 1) Cache-first: query Redb snapshot with freshness policy.
+/// 2) Runtime fallback: aggregate via connected instances (proxy service).
+/// 3) Force refresh (if requested): create a temporary instance to fetch data.
+/// 4) Offline cache: return any cached copy ignoring freshness.
+/// 5) None: return empty.
 ///
-/// Supports both server_name and server_id as identifier.
-///
-/// ## Cache and Refresh Strategies
-///
-/// This endpoint supports different caching strategies based on the `refresh` parameter:
-///
-/// ### Refresh Parameters:
-/// - **`refresh=cacheFirst`**: Always use cached data if available (fastest, default)
-/// - **`refresh=refreshIfStale`**: Use cache if data is less than 5 minutes old
-/// - **`refresh=force`**: Always fetch fresh data (slowest)
-///
-/// ### Example Usage:
-/// ```
-/// # Use cached data (default)
-/// GET /api/mcp/servers/context7/tools
-///
-/// # Force fresh data
-/// GET /api/mcp/servers/context7/tools?refresh=force
-///
-/// # Refresh if data is stale
-/// GET /api/mcp/servers/context7/tools?refresh=refreshIfStale
-/// ```
-///
-/// ### Performance Notes:
-/// - Cached requests: ~10-50ms response time
-/// - Runtime requests: ~100-500ms response time
+/// Supports both `server_name` and `server_id` as identifier.
 pub async fn list_tools(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
@@ -79,31 +58,13 @@ pub async fn list_tools(
     // Try Redb cache first with freshness policy
     let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
 
-    tracing::debug!(
-        "Querying cache for server '{}' with refresh strategy: {:?}",
-        server_info.server_name,
-        params.refresh.unwrap_or_default()
-    );
     if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
-        tracing::debug!(
-            "Cache query result: cache_hit={}, strategy={:?}",
-            cache_result.cache_hit,
-            params.refresh.unwrap_or_default()
-        );
         if cache_result.cache_hit {
             if let Some(data) = cache_result.data {
                 let processed: Vec<serde_json::Value> = data
                     .tools
                     .into_iter()
-                    .map(|t| {
-                        let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
-                        serde_json::json!({
-                            "name": t.name,
-                            "description": t.description,
-                            "input_schema": schema,
-                            "unique_name": t.unique_name
-                        })
-                    })
+                    .map(|t| super::common::tool_json_from_cached(&t))
                     .collect();
                 if !processed.is_empty() {
                     return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
@@ -125,12 +86,12 @@ pub async fn list_tools(
                 }
                 for t in &conn.tools {
                     let schema = t.schema_as_json_value();
-                    tools.push(serde_json::json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "input_schema": schema,
-                        "unique_name": serde_json::Value::Null
-                    }));
+                    tools.push(super::common::tool_json(
+                        &t.name,
+                        t.description.clone().map(|d| d.into_owned()),
+                        schema.clone(),
+                        None,
+                    ));
 
                     // Build cacheable tool info
                     let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
@@ -172,15 +133,7 @@ pub async fn list_tools(
         if !cached_tools.is_empty() {
             let processed: Vec<serde_json::Value> = cached_tools
                 .into_iter()
-                .map(|t| {
-                    let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
-                    serde_json::json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "input_schema": schema,
-                        "unique_name": t.unique_name
-                    })
-                })
+                .map(|t| super::common::tool_json_from_cached(&t))
                 .collect();
             return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }

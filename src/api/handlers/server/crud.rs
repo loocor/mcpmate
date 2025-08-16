@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use super::{common, instance::list_instances, shared::*};
+use super::{common, shared::*};
 use crate::{
-    api::{handlers::ApiError, models::server::ServerMetaInfo},
+    api::handlers::ApiError,
     common::{config::ConfigSuitType, server::ServerType},
     config::{
         database::Database,
@@ -94,67 +94,6 @@ async fn get_or_create_default_config_suit(db: &Database) -> Result<String, ApiE
         let new_suit = ConfigSuit::new("default".to_string(), ConfigSuitType::Shared);
         suit::upsert_config_suit(&db.pool, &new_suit).await.map_err(db_error)
     }
-}
-
-/// Server details for response building
-#[derive(Default)]
-struct ServerDetails {
-    args: Option<Vec<String>>,
-    env: Option<HashMap<String, String>>,
-    meta: Option<ServerMetaInfo>,
-    globally_enabled: bool,
-    enabled_in_suits: bool,
-}
-
-/// Get complete server details
-async fn get_server_details(
-    db: &Database,
-    server_id: &str,
-    _name: &str,
-) -> ServerDetails {
-    let mut details = ServerDetails::default();
-
-    // Get server arguments
-    if let Ok(server_args) = crate::config::server::get_server_args(&db.pool, server_id).await {
-        if !server_args.is_empty() {
-            let mut sorted_args: Vec<_> = server_args.into_iter().collect();
-            sorted_args.sort_by_key(|arg| arg.arg_index);
-            details.args = Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect());
-        }
-    }
-
-    // Get server environment variables
-    if let Ok(env_map) = crate::config::server::get_server_env(&db.pool, server_id).await {
-        if !env_map.is_empty() {
-            details.env = Some(env_map);
-        }
-    }
-
-    // Get server metadata
-    if let Ok(Some(server_meta)) = crate::config::server::get_server_meta(&db.pool, server_id).await {
-        details.meta = Some(ServerMetaInfo {
-            description: server_meta.description,
-            author: server_meta.author,
-            website: server_meta.website,
-            repository: server_meta.repository,
-            category: server_meta.category,
-            recommended_scenario: server_meta.recommended_scenario,
-            rating: server_meta.rating,
-        });
-    }
-
-    // Get server global enabled status
-    details.globally_enabled = crate::config::server::get_server_global_status(&db.pool, server_id)
-        .await
-        .unwrap_or(Some(true))
-        .unwrap_or(true);
-
-    // Get server enabled status in config suits
-    details.enabled_in_suits = crate::config::server::is_server_enabled_in_any_suit(&db.pool, server_id)
-        .await
-        .unwrap_or(false);
-
-    details
 }
 
 /// Add server to config suit
@@ -405,14 +344,8 @@ pub async fn update_server(
         );
     }
 
-    // Get current instances for the server
-    let instances_response = match list_instances(State(state.clone()), Path(name.clone())).await {
-        Ok(response) => response.0.instances,
-        Err(_) => Vec::new(),
-    };
-
-    // Get server details
-    let details = get_server_details(&db, &server_id, &name).await;
+    // Get server details via shared helper
+    let details = common::get_complete_server_details(&db.pool, &server_id, &name, &state).await;
 
     // Return success response
     Ok(Json(ServerResponse {
@@ -429,7 +362,7 @@ pub async fn update_server(
         meta: details.meta,
         created_at: updated_server.created_at.map(|dt| dt.to_rfc3339()),
         updated_at: updated_server.updated_at.map(|dt| dt.to_rfc3339()),
-        instances: instances_response,
+        instances: details.instances,
     }))
 }
 

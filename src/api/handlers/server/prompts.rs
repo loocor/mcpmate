@@ -17,10 +17,14 @@ use super::common::{
 
 /// List all prompts for a specific server
 ///
-/// Returns a list of prompts available on the specified server with
-/// configurable filtering and formatting options.
+/// Strategy order:
+/// 1) Cache-first: query Redb snapshot with freshness policy.
+/// 2) Runtime fallback: aggregate via connected instances (proxy service).
+/// 3) Force refresh (if requested): create a temporary instance to fetch data.
+/// 4) Offline cache: return any cached copy ignoring freshness.
+/// 5) None: return empty.
 ///
-/// Supports both server_name and server_id as identifier.
+/// Supports both `server_name` and `server_id` as identifier.
 pub async fn list_prompts(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
@@ -44,13 +48,7 @@ pub async fn list_prompts(
                 let processed: Vec<serde_json::Value> = data
                     .prompts
                     .into_iter()
-                    .map(|p| {
-                        serde_json::json!({
-                            "name": p.name,
-                            "description": p.description,
-                            "arguments": p.arguments,
-                        })
-                    })
+                    .map(super::common::prompt_json_from_cached)
                     .collect();
                 if !processed.is_empty() {
                     return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
@@ -72,13 +70,9 @@ pub async fn list_prompts(
                 if let Some(service) = &conn.service {
                     if let Ok(result) = service.list_prompts(None).await {
                         for p in result.prompts {
-                            prompts.push(serde_json::json!({
-                                "name": p.name,
-                                "description": p.description,
-                                "arguments": p.arguments.clone().unwrap_or_default(),
-                            }));
-                            let converted_args = p
+                            let converted_args: Vec<crate::core::cache::PromptArgument> = p
                                 .arguments
+                                .clone()
                                 .unwrap_or_default()
                                 .into_iter()
                                 .map(|arg| crate::core::cache::PromptArgument {
@@ -87,6 +81,11 @@ pub async fn list_prompts(
                                     required: arg.required.unwrap_or(false),
                                 })
                                 .collect();
+                            prompts.push(super::common::prompt_json(
+                                &p.name,
+                                p.description.clone(),
+                                converted_args.clone(),
+                            ));
                             cached_prompts.push(crate::core::cache::CachedPromptInfo {
                                 name: p.name,
                                 description: p.description,
@@ -124,16 +123,8 @@ pub async fn list_prompts(
     // Last resort: offline cache
     if let Ok(cached) = state.redb_cache.get_server_prompts(&server_info.server_id, false).await {
         if !cached.is_empty() {
-            let processed: Vec<serde_json::Value> = cached
-                .into_iter()
-                .map(|p| {
-                    serde_json::json!({
-                        "name": p.name,
-                        "description": p.description,
-                        "arguments": p.arguments,
-                    })
-                })
-                .collect();
+            let processed: Vec<serde_json::Value> =
+                cached.into_iter().map(super::common::prompt_json_from_cached).collect();
             return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
         }
     }
@@ -147,7 +138,7 @@ pub async fn list_prompts(
 /// Returns detailed information about prompt arguments for form generation
 /// and validation purposes.
 ///
-/// Supports both server_name and server_id as identifier.
+/// Supports both `server_name` and `server_id` as identifier.
 pub async fn get_prompt_arguments(
     State(state): State<Arc<AppState>>,
     Path(identifier): Path<String>,
