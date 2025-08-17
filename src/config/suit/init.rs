@@ -289,10 +289,6 @@ async fn create_server_resources_table(pool: &Pool<Sqlite>) -> Result<()> {
     })?;
 
     tracing::debug!("server_resources table created or already exists");
-
-    // Migration: Rename unique_name to unique_uri if it exists
-    migrate_server_resources_unique_name_to_unique_uri(pool).await?;
-    
     Ok(())
 }
 
@@ -429,18 +425,9 @@ async fn create_server_resource_templates_index(pool: &Pool<Sqlite>) -> Result<(
     Ok(())
 }
 
-/// Create config_suit_tool table if it doesn't exist (new architecture)
+/// Create config_suit_tool table if it doesn't exist
 async fn create_config_suit_tool_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating config_suit_tool table with new architecture");
-
-    // Drop the old table if it exists (development phase)
-    sqlx::query("DROP TABLE IF EXISTS config_suit_tool")
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to drop old config_suit_tool table: {}", e);
-            anyhow::anyhow!("Failed to drop old config_suit_tool table: {}", e)
-        })?;
+    tracing::debug!("Creating config_suit_tool table if it doesn't exist");
 
     sqlx::query(
         r#"
@@ -464,7 +451,7 @@ async fn create_config_suit_tool_table(pool: &Pool<Sqlite>) -> Result<()> {
         anyhow::anyhow!("Failed to create config_suit_tool table: {}", e)
     })?;
 
-    tracing::debug!("config_suit_tool table created with new architecture");
+    tracing::debug!("config_suit_tool table created or already exists");
     Ok(())
 }
 
@@ -643,35 +630,5 @@ async fn verify_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
         tracing::debug!("Verified {} table exists", table);
     }
 
-    Ok(())
-}
-
-/// Migrate server_resources table from unique_name to unique_uri
-async fn migrate_server_resources_unique_name_to_unique_uri(pool: &Pool<Sqlite>) -> Result<()> {
-    // Check if unique_name column exists and unique_uri doesn't
-    let column_check = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM pragma_table_info('server_resources') WHERE name = 'unique_name'"
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
-
-    if column_check > 0 {
-        tracing::info!("Migrating server_resources table: unique_name -> unique_uri");
-        
-        // Rename the column
-        sqlx::query("ALTER TABLE server_resources RENAME COLUMN unique_name TO unique_uri")
-            .execute(pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to rename unique_name to unique_uri: {}", e);
-                anyhow::anyhow!("Failed to rename unique_name to unique_uri: {}", e)
-            })?;
-            
-        tracing::info!("Successfully migrated server_resources table column: unique_name -> unique_uri");
-    } else {
-        tracing::debug!("server_resources table already has unique_uri column, no migration needed");
-    }
-    
     Ok(())
 }

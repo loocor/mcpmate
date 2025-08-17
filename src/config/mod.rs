@@ -4,7 +4,7 @@
 pub mod client;
 pub mod database;
 pub mod initialization;
-pub mod migration;
+pub mod import;
 pub mod models;
 pub mod operations;
 pub mod runtime;

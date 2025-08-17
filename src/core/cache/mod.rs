@@ -13,7 +13,6 @@
 pub mod benchmarks;
 pub mod fingerprint;
 pub mod manager;
-pub mod migration;
 pub mod operations;
 pub mod schema;
 pub mod statistics;
@@ -21,6 +20,5 @@ pub mod types;
 
 pub use fingerprint::{FingerprintGenerator, MCPServerFingerprint};
 pub use manager::RedbCacheManager;
-pub use migration::CacheMigrator;
 pub use schema::*;
 pub use types::*;

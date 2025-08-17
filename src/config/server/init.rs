@@ -48,13 +48,6 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
     })?;
 
     tracing::debug!("server_config table created or already exists");
-
-    // Ensure capabilities column exists for older dev databases
-    sqlx::query(r#"ALTER TABLE server_config ADD COLUMN capabilities TEXT"#)
-        .execute(pool)
-        .await
-        .ok();
-
     Ok(())
 }
 

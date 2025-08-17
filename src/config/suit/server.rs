@@ -186,7 +186,7 @@ pub async fn remove_server_from_config_suit(
     Ok(result.rows_affected() > 0)
 }
 
-/// Sync server capabilities to a configuration suit
+/// TODO: Sync server capabilities to a configuration suit
 ///
 /// This function retrieves all capabilities (tools, prompts, resources) from a server
 /// and creates corresponding records in the configuration suit with enabled=false by default.
@@ -223,17 +223,6 @@ pub async fn sync_server_capabilities_to_suit(
         );
         return Ok(());
     }
-
-    // Inspect module removed; skip fetching capabilities (no-op for now)
-    let _capabilities = None::<()>;
-
-    // No-op: syncing removed with inspect module
-
-    tracing::info!(
-        "Capabilities sync skipped (inspect removed) for server {} to suit {}",
-        server_id,
-        config_suit_id
-    );
 
     Ok(())
 }

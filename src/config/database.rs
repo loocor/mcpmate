@@ -9,7 +9,7 @@ use tracing;
 use crate::{
     common::config::ConfigSuitType,
     common::paths::global_paths,
-    config::{initialization, migration, models, server, suit},
+    config::{import, initialization, models, server, suit},
 };
 
 /// Get the database URL for SQLite
@@ -47,9 +47,8 @@ impl Database {
 
         // Ensure the parent directory exists
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create database directory: {}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create database directory: {}", parent.display()))?;
         }
 
         // Check if database exists
@@ -80,21 +79,14 @@ impl Database {
 
         // Connect to the database
         tracing::debug!("Connecting to database with max 5 connections");
-        let pool = match SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect(&database_url)
-            .await
-        {
+        let pool = match SqlitePoolOptions::new().max_connections(5).connect(&database_url).await {
             Ok(pool) => {
                 tracing::info!("Successfully connected to database");
                 pool
             }
             Err(e) => {
                 tracing::error!("Failed to connect to SQLite database: {}", e);
-                return Err(anyhow::anyhow!(
-                    "Failed to connect to SQLite database: {}",
-                    e
-                ));
+                return Err(anyhow::anyhow!("Failed to connect to SQLite database: {}", e));
             }
         };
 
@@ -111,83 +103,41 @@ impl Database {
         }
 
         // Create database instance
-        let db = Self {
-            pool,
-            path: db_path,
-        };
+        let db = Self { pool, path: db_path };
 
-        // Check if we need to migrate configuration from files
+        // Import configuration from JSON files if available
         let default_config_path = std::path::Path::new("config/mcp.json");
         if default_config_path.exists() {
-            tracing::info!(
-                "Found MCP configuration file at {}",
-                default_config_path.display()
-            );
-        } else {
-            tracing::warn!(
-                "MCP configuration file not found at {}. No servers will be available.",
-                default_config_path.display()
-            );
-        }
-
-        if default_config_path.exists() {
             // Check if database already has server configurations
-            let has_server_configs =
-                match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
-                    .fetch_one(&db.pool)
-                    .await
-                {
-                    Ok(count) => count > 0,
-                    Err(e) => {
-                        tracing::error!("Failed to check if server_config table has data: {}", e);
-                        false
-                    }
-                };
+            let has_server_configs = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
+                .fetch_one(&db.pool)
+                .await
+            {
+                Ok(count) => count > 0,
+                Err(e) => {
+                    tracing::error!("Failed to check if server_config table has data: {}", e);
+                    false
+                }
+            };
 
-            // If database is empty, migrate configuration from files
+            // Import configuration if database is empty
             if !has_server_configs {
-                tracing::info!("Database is empty, migrating configuration from files");
-                if let Err(e) = db.migrate_from_files(default_config_path).await {
-                    tracing::error!("Failed to migrate configuration from files: {}", e);
-                    tracing::warn!("Continuing with empty database");
+                if let Err(e) = db.import_from_files(default_config_path).await {
+                    tracing::warn!("Failed to import MCP configuration: {}", e);
                 } else {
-                    // Check if servers were actually migrated
-                    let server_count = match sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM server_config",
-                    )
-                    .fetch_one(&db.pool)
-                    .await
-                    {
-                        Ok(count) => count,
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to check if server_config table has data after migration: {}",
-                                e
-                            );
-                            0
-                        }
-                    };
-
-                    tracing::info!(
-                        "Successfully migrated configuration from files. Found {} servers.",
-                        server_count
-                    );
+                    tracing::info!("Imported MCP server configuration from {}", default_config_path.display());
                 }
             }
         }
 
-        // Initialize default values (after migrating servers from config files)
+        // Initialize default values (after importing servers from config files)
         if let Err(e) = db.initialize_defaults().await {
             tracing::error!("Failed to initialize default values: {}", e);
             tracing::warn!("Continuing with database initialization");
         }
 
-        tracing::info!("Database initialization completed successfully");
-
         // Publish DatabaseChanged event
-        crate::core::events::EventBus::global()
-            .publish(crate::core::events::Event::DatabaseChanged);
-        tracing::info!("Published DatabaseChanged event");
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::DatabaseChanged);
 
         Ok(db)
     }
@@ -197,12 +147,12 @@ impl Database {
         &self.path
     }
 
-    /// Migrate configuration from files to database
-    pub async fn migrate_from_files(
+    /// Import configuration from JSON files to database
+    pub async fn import_from_files(
         &self,
         mcp_config_path: &Path,
     ) -> Result<()> {
-        migration::migrate_from_files(&self.pool, mcp_config_path).await
+        import::import_from_mcp_config(&self.pool, mcp_config_path).await
     }
 
     /// Initialize the database with some default values
@@ -251,64 +201,21 @@ impl Database {
         let suit_servers = suit::get_config_suit_servers(&self.pool, &suit_id).await?;
 
         if suit_servers.is_empty() {
-            tracing::info!("Adding servers to default configuration suit");
-
-            // Get all servers from the database
             let all_servers = server::get_all_servers(&self.pool).await?;
-            let server_count = all_servers.len();
-
-            tracing::info!(
-                "Found {} servers in the database to add to default configuration suit",
-                server_count
-            );
-
-            if server_count == 0 {
-                tracing::warn!(
-                    "No servers found in the database. Make sure mcp.json exists and contains valid server configurations."
-                );
-                tracing::warn!(
-                    "You may need to restart the application after adding server configurations."
-                );
-            }
-
-            // Add each server to the default configuration suit
+            
             for server in &all_servers {
                 if let Some(server_id) = &server.id {
-                    // Add the server to the default configuration suit with enabled=true
                     suit::add_server_to_config_suit(&self.pool, &suit_id, server_id, true).await?;
-
-                    tracing::debug!(
-                        "Added server '{}' to default configuration suit",
-                        server.name
-                    );
                 }
             }
 
-            tracing::info!(
-                "Added {} servers to default configuration suit",
-                server_count
-            );
+            if !all_servers.is_empty() {
+                tracing::info!("Added {} servers to default configuration suit", all_servers.len());
+            }
         }
-
-        // Verify that servers were added to the default configuration suit
-        let suit_servers = suit::get_config_suit_servers(&self.pool, &suit_id).await?;
-        if suit_servers.is_empty() {
-            tracing::warn!(
-                "No servers were added to the default configuration suit. This may indicate a database issue."
-            );
-        } else {
-            tracing::info!(
-                "Verified {} servers were added to the default configuration suit",
-                suit_servers.len()
-            );
-        }
-
-        tracing::info!("Database initialized with default values");
 
         // Publish DatabaseChanged event
-        crate::core::events::EventBus::global()
-            .publish(crate::core::events::Event::DatabaseChanged);
-        tracing::info!("Published DatabaseChanged event after initializing defaults");
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::DatabaseChanged);
 
         Ok(())
     }

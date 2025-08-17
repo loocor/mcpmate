@@ -1,6 +1,5 @@
-// Database migration for MCPMate
-// Contains functions for migrating configuration from files to database
-// This file is temporary and can be removed after migration is complete
+// Configuration import for MCPMate
+// Contains functions for importing configuration from JSON files to database
 
 use std::{fs::File, path::Path};
 
@@ -143,12 +142,12 @@ async fn discover_and_dual_write(
     Ok(())
 }
 
-/// Migrate configuration from files to database
-pub async fn migrate_from_files(
+/// Import configuration from JSON files to database
+pub async fn import_from_mcp_config(
     pool: &Pool<Sqlite>,
     mcp_config_path: &Path,
 ) -> Result<()> {
-    tracing::info!("Migrating configuration from files to database");
+    tracing::info!("Importing configuration from JSON files to database");
 
     // Check if database already has server configurations
     let has_server_configs = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
@@ -165,16 +164,16 @@ pub async fn migrate_from_files(
         }
     };
 
-    // If database already has server configurations, skip migration
+    // If database already has server configurations, skip import
     if has_server_configs {
-        tracing::info!("Database already has server configurations, skipping migration");
+        tracing::info!("Database already has server configurations, skipping import");
         return Ok(());
     }
 
     // Check if configuration files exist
     if !mcp_config_path.exists() {
         tracing::warn!(
-            "MCP configuration file not found at {}, skipping migration",
+            "MCP configuration file not found at {}, skipping import",
             mcp_config_path.display()
         );
         return Ok(());
@@ -231,11 +230,11 @@ pub async fn migrate_from_files(
         // Insert server configuration
         let server_id = match upsert_server(pool, &server).await {
             Ok(id) => {
-                tracing::info!("Successfully migrated server '{}' (ID: {})", name, id);
+                tracing::info!("Successfully imported server '{}' (ID: {})", name, id);
                 id
             }
             Err(e) => {
-                tracing::error!("Failed to migrate server '{}': {}", name, e);
+                tracing::error!("Failed to import server '{}': {}", name, e);
                 continue;
             }
         };
@@ -243,9 +242,9 @@ pub async fn migrate_from_files(
         // Insert server arguments if any
         if let Some(args) = server_config.args {
             match upsert_server_args(pool, &server_id, &args).await {
-                Ok(_) => tracing::info!("Successfully migrated {} arguments for server '{}'", args.len(), name),
+                Ok(_) => tracing::info!("Successfully imported {} arguments for server '{}'", args.len(), name),
                 Err(e) => {
-                    tracing::error!("Failed to migrate arguments for server '{}': {}", name, e)
+                    tracing::error!("Failed to import arguments for server '{}': {}", name, e)
                 }
             }
         }
@@ -254,11 +253,11 @@ pub async fn migrate_from_files(
         if let Some(env) = server_config.env {
             match upsert_server_env(pool, &server_id, &env).await {
                 Ok(_) => tracing::info!(
-                    "Successfully migrated {} environment variables for server '{}'",
+                    "Successfully imported {} environment variables for server '{}'",
                     env.len(),
                     name
                 ),
-                Err(e) => tracing::error!("Failed to migrate environment variables for server '{}': {}", name, e),
+                Err(e) => tracing::error!("Failed to import environment variables for server '{}': {}", name, e),
             }
         }
 
@@ -266,7 +265,7 @@ pub async fn migrate_from_files(
         let meta = ServerMeta {
             id: None,
             server_id,
-            description: Some(format!("Migrated from {}", mcp_config_path.display())),
+            description: Some(format!("Imported from {}", mcp_config_path.display())),
             author: None,
             website: None,
             repository: None,
@@ -298,7 +297,7 @@ pub async fn migrate_from_files(
         }
     }
 
-    tracing::info!("Configuration migration completed successfully");
+    tracing::info!("Configuration import completed successfully");
     Ok(())
 }
 
