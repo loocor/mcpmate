@@ -98,22 +98,23 @@ impl UpstreamConnectionPool {
     ///
     /// This method delegates to PoolConfigManager for the actual configuration logic.
     /// It maintains the public API while separating business logic concerns.
+    /// 
+    /// Returns Ok(()) on success, or Err(CoreError) if configuration update fails.
     pub fn set_config(
         &mut self,
         config: Arc<Config>,
-    ) {
+    ) -> Result<(), crate::core::foundation::error::CoreError> {
         // Use the configuration manager to handle the complex logic
-        if let Err(e) = PoolConfigManager::update_configuration(
+        PoolConfigManager::update_configuration(
             &mut self.connections,
             &mut self.cancellation_tokens,
             config.clone(),
-        ) {
-            tracing::error!("Failed to update pool configuration: {}", e);
-            return;
-        }
+        )?;
 
         // Update the stored configuration reference
         self.config = config;
+        tracing::info!("Pool configuration updated successfully");
+        Ok(())
     }
 
     /// Set the database reference

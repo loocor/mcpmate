@@ -1,6 +1,7 @@
 // Upstream MCP server connection management
 // Contains the UpstreamConnection struct and related functionality
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rmcp::{
@@ -25,8 +26,8 @@ pub struct UpstreamConnection {
     pub id: String,
     /// Name of the server
     pub server_name: String,
-    /// Active service connection
-    pub service: Option<RunningService<RoleClient, ()>>,
+    /// Active service connection (using Arc for cheap cloning)
+    pub service: Option<Arc<RunningService<RoleClient, ()>>>,
     /// Server capabilities (resources, tools, etc.)
     pub capabilities: Option<ServerCapabilities>,
     /// Tools provided by this server
@@ -50,13 +51,13 @@ pub struct UpstreamConnection {
 }
 
 // Manual implementation of Clone for UpstreamConnection
-// We can't derive Clone because RunningService doesn't implement Clone
+// Using Arc for service allows cheap cloning while preserving the connection
 impl Clone for UpstreamConnection {
     fn clone(&self) -> Self {
         Self {
             id: self.id.clone(),
             server_name: self.server_name.clone(),
-            service: None, // We don't clone the service
+            service: self.service.clone(), // Arc clone is cheap and preserves service
             capabilities: self.capabilities.clone(),
             tools: self.tools.clone(),
             created_at: self.created_at,
@@ -120,7 +121,7 @@ impl UpstreamConnection {
         tools: Vec<Tool>,
         capabilities: Option<ServerCapabilities>,
     ) {
-        self.service = Some(service);
+        self.service = Some(Arc::new(service));
         self.tools = tools;
         self.capabilities = capabilities;
         self.status = ConnectionStatus::Ready;

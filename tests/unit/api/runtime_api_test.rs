@@ -17,8 +17,7 @@ fn test_runtime_status_messages() {
         if uv_info.available {
             // Should contain source information
             assert!(
-                uv_info.message.contains("(MCPMate managed)")
-                    || uv_info.message.contains("(system fallback)"),
+                uv_info.message.contains("(MCPMate managed)") || uv_info.message.contains("(system fallback)"),
                 "UV message should contain source information: {}",
                 uv_info.message
             );
@@ -36,8 +35,7 @@ fn test_runtime_status_messages() {
         if bun_info.available {
             // Should contain source information
             assert!(
-                bun_info.message.contains("(MCPMate managed)")
-                    || bun_info.message.contains("(system fallback)"),
+                bun_info.message.contains("(MCPMate managed)") || bun_info.message.contains("(system fallback)"),
                 "Bun message should contain source information: {}",
                 bun_info.message
             );

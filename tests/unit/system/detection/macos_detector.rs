@@ -103,8 +103,7 @@ mod macos_tests {
         let confidence = 0.8;
 
         // When: Creating success result
-        let result =
-            DetectionResult::success(install_path.clone(), version.clone(), method, confidence);
+        let result = DetectionResult::success(install_path.clone(), version.clone(), method, confidence);
 
         // Then: Should have correct properties
         assert!(result.success);

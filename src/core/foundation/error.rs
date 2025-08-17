@@ -3,6 +3,7 @@
 //! unified error handling module, providing error type definitions for the entire core system
 
 use thiserror::Error;
+use anyhow;
 
 /// unified error type for the core system
 #[derive(Error, Debug)]
@@ -185,6 +186,16 @@ impl CoreError {
         Self::GenericError {
             message: message.to_string(),
             source,
+        }
+    }
+}
+
+/// Convert anyhow::Error to CoreError
+impl From<anyhow::Error> for CoreError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::GenericError {
+            message: error.to_string(),
+            source: Some(error),
         }
     }
 }

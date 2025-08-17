@@ -6,8 +6,8 @@ use once_cell::sync::OnceCell;
 use rmcp::{
     ClientHandler, ErrorData as McpError, RoleClient, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, Implementation,
-        ProtocolVersion, ServerCapabilities, ServerInfo,
+        CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, Implementation, ProtocolVersion,
+        ServerCapabilities, ServerInfo,
     },
     serve_server,
     service::{NotificationContext, RequestContext, ServiceExt},
@@ -17,9 +17,7 @@ use tokio::sync::Mutex;
 use tracing_subscriber::{self, EnvFilter};
 
 // Global variable to store SSE client
-static SSE_CLIENT: OnceCell<
-    Mutex<Option<rmcp::service::RunningService<RoleClient, BridgeClient>>>,
-> = OnceCell::new();
+static SSE_CLIENT: OnceCell<Mutex<Option<rmcp::service::RunningService<RoleClient, BridgeClient>>>> = OnceCell::new();
 
 /// A client handler for the bridge client
 #[derive(Clone, Debug)]
@@ -221,10 +219,7 @@ impl BridgeServer {
             }
             Err(e) => {
                 tracing::error!("Failed to connect to SSE server: {}", e);
-                return Err(McpError::internal_error(
-                    "Failed to connect to SSE server",
-                    None,
-                ));
+                return Err(McpError::internal_error("Failed to connect to SSE server", None));
             }
         };
 
@@ -236,10 +231,7 @@ impl BridgeServer {
             }
             Err(e) => {
                 tracing::error!("Failed to initialize SSE client: {}", e);
-                return Err(McpError::internal_error(
-                    "Failed to initialize SSE client",
-                    None,
-                ));
+                return Err(McpError::internal_error("Failed to initialize SSE client", None));
             }
         };
 
@@ -260,9 +252,7 @@ impl ServerHandler for BridgeServer {
                 name: "mcpmate-bridge".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
-            instructions: Some(
-                "This is a bridge server that forwards requests to an SSE server.".to_string(),
-            ),
+            instructions: Some("This is a bridge server that forwards requests to an SSE server.".to_string()),
         }
     }
 
@@ -295,17 +285,11 @@ impl ServerHandler for BridgeServer {
                 }
             } else {
                 // report upstream service not available
-                Err(McpError::internal_error(
-                    "Upstream SSE service is not available",
-                    None,
-                ))
+                Err(McpError::internal_error("Upstream SSE service is not available", None))
             }
         } else {
             // report upstream service not available
-            Err(McpError::internal_error(
-                "Upstream SSE service is not available",
-                None,
-            ))
+            Err(McpError::internal_error("Upstream SSE service is not available", None))
         }
     }
 
@@ -344,17 +328,11 @@ impl ServerHandler for BridgeServer {
                 }
             } else {
                 // report upstream service not available
-                Err(McpError::internal_error(
-                    "Upstream SSE service is not available",
-                    None,
-                ))
+                Err(McpError::internal_error("Upstream SSE service is not available", None))
             }
         } else {
             // report upstream service not available
-            Err(McpError::internal_error(
-                "Upstream SSE service is not available",
-                None,
-            ))
+            Err(McpError::internal_error("Upstream SSE service is not available", None))
         }
     }
 }
@@ -369,11 +347,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr) // Redirect logs to stderr
         .with_env_filter(
-            EnvFilter::from_default_env().add_directive(
-                args.log_level
-                    .parse()
-                    .unwrap_or(tracing::Level::INFO.into()),
-            ),
+            EnvFilter::from_default_env().add_directive(args.log_level.parse().unwrap_or(tracing::Level::INFO.into())),
         )
         .init();
 

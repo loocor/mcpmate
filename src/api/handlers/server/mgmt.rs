@@ -75,10 +75,7 @@ pub async fn enable_server(
     // Update the server's global enabled status
     match crate::config::server::update_server_global_status(&db.pool, &server_id, true).await {
         Ok(true) => {
-            tracing::info!(
-                "Set server '{}' global availability to enabled",
-                server_name
-            );
+            tracing::info!("Set server '{}' global availability to enabled", server_name);
         }
         Ok(false) => {
             return Err(ApiError::NotFound(format!(
@@ -121,11 +118,15 @@ pub async fn enable_server(
                     let new_config = std::sync::Arc::new(config);
 
                     // Update the connection pool's configuration
-                    pool.set_config(new_config);
+                    if let Err(e) = pool.set_config(new_config) {
+                        tracing::error!("Failed to update connection pool configuration: {}", e);
+                        return Err(ApiError::InternalError(format!(
+                            "Failed to update pool configuration: {}",
+                            e
+                        )));
+                    }
 
-                    tracing::info!(
-                        "Updated connection pool configuration with latest server information"
-                    );
+                    tracing::info!("Updated connection pool configuration with latest server information");
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load server configuration: {}", e);
@@ -272,10 +273,7 @@ pub async fn disable_server(
     // Update the server's global enabled status
     match crate::config::server::update_server_global_status(&db.pool, &server_id, false).await {
         Ok(true) => {
-            tracing::info!(
-                "Set server '{}' global availability to disabled",
-                server_name
-            );
+            tracing::info!("Set server '{}' global availability to disabled", server_name);
         }
         Ok(false) => {
             return Err(ApiError::NotFound(format!(
@@ -305,11 +303,7 @@ pub async fn disable_server(
     }
 
     // Get connection pool
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await;
+    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
 
     let mut pool = match pool_result {
         Ok(pool) => pool,
@@ -339,13 +333,7 @@ pub async fn disable_server(
     }
 
     // Get all instance IDs
-    let instance_ids: Vec<String> = pool
-        .connections
-        .get(&server_name)
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
+    let instance_ids: Vec<String> = pool.connections.get(&server_name).unwrap().keys().cloned().collect();
 
     if instance_ids.is_empty() {
         // No instances, already disabled
@@ -393,9 +381,7 @@ pub async fn disable_server(
     create_operation_response(
         "all".to_string(),
         server_name,
-        format!(
-            "Successfully disabled server ({success_count} of {total_count} instances disconnected)"
-        ),
+        format!("Successfully disabled server ({success_count} of {total_count} instances disconnected)"),
         status.to_string(),
         false,
     )

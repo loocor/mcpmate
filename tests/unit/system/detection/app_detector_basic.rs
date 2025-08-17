@@ -60,11 +60,7 @@ async fn test_can_query_all_known_apps() -> Result<()> {
 
     // Verify all are disabled by default
     for app in &all_apps {
-        assert!(
-            !app.enabled,
-            "App {} should be disabled by default",
-            app.identifier
-        );
+        assert!(!app.enabled, "App {} should be disabled by default", app.identifier);
     }
 
     Ok(())

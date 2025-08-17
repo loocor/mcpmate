@@ -104,7 +104,7 @@ impl UpstreamConnectionPool {
         };
 
         // Step 3: If there's an active service, cancel it with timeout
-        if let Some(service) = service {
+        if let Some(service_arc) = service {
             // Give the service time to gracefully shutdown
             let cancel_timeout = Duration::from_secs(5);
 
@@ -115,31 +115,43 @@ impl UpstreamConnectionPool {
                 cancel_timeout.as_secs()
             );
 
-            match tokio::time::timeout(cancel_timeout, service.cancel()).await {
-                Ok(Ok(quit_reason)) => {
-                    tracing::info!(
-                        "DIAGNOSTIC: Service for server '{}' instance '{}' cancelled gracefully with reason: {:?} - Timestamp: {}",
-                        server_name,
-                        instance_id,
-                        quit_reason,
-                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
-                    );
+            // Try to extract the service from Arc for cancellation
+            match Arc::try_unwrap(service_arc) {
+                Ok(service) => {
+                    match tokio::time::timeout(cancel_timeout, service.cancel()).await {
+                        Ok(Ok(quit_reason)) => {
+                            tracing::info!(
+                                "DIAGNOSTIC: Service for server '{}' instance '{}' cancelled gracefully with reason: {:?} - Timestamp: {}",
+                                server_name,
+                                instance_id,
+                                quit_reason,
+                                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(
+                                "DIAGNOSTIC: Error during graceful cancellation for '{}' instance '{}': {} - Timestamp: {}",
+                                server_name,
+                                instance_id,
+                                e,
+                                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                            );
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "DIAGNOSTIC: Service cancellation timeout for '{}' instance '{}', resources may be leaked - Timestamp: {}",
+                                server_name,
+                                instance_id,
+                                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                            );
+                        }
+                    }
                 }
-                Ok(Err(e)) => {
+                Err(_arc) => {
                     tracing::warn!(
-                        "DIAGNOSTIC: Error during graceful cancellation for '{}' instance '{}': {} - Timestamp: {}",
+                        "DIAGNOSTIC: Cannot cancel service for '{}' instance '{}' - multiple references exist",
                         server_name,
-                        instance_id,
-                        e,
-                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
-                    );
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        "DIAGNOSTIC: Service cancellation timeout for '{}' instance '{}', resources may be leaked - Timestamp: {}",
-                        server_name,
-                        instance_id,
-                        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                        instance_id
                     );
                 }
             }
@@ -362,7 +374,7 @@ impl UpstreamConnectionPool {
             // Clone service for database sync operations
             let service_for_sync = service.peer().clone();
 
-            conn.service = Some(service);
+            conn.service = Some(Arc::new(service));
             conn.tools = tools.clone();
             conn.capabilities = capabilities;
             conn.update_ready();
@@ -572,7 +584,7 @@ impl UpstreamConnectionPool {
 
             if let Some(_server_config) = config.mcp_servers.get(server_name) {
                 // Update config and start server
-                self.set_config(Arc::new(config));
+                self.set_config(Arc::new(config))?;
 
                 // Create new connection if needed
                 if !self.connections.contains_key(server_name) {

@@ -57,7 +57,7 @@ impl ServerSyncManager {
         let config = self.load_active_configuration().await?;
 
         // Step 2: Update connection pool configuration
-        pool.set_config(Arc::new(config));
+        pool.set_config(Arc::new(config))?;
 
         // Step 3: Calculate required server state changes
         let sync_plan = self.calculate_sync_plan(pool)?;

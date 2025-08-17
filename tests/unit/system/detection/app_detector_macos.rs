@@ -223,10 +223,7 @@ mod macos_tests {
         // Then: Should handle template resolution without error
         if result.is_some() {
             let detected = result.unwrap();
-            println!(
-                "✅ Config path template resolved: {:?}",
-                detected.config_path
-            );
+            println!("✅ Config path template resolved: {:?}", detected.config_path);
             // Verify the path contains resolved variables (no {{ }} left)
             let path_str = detected.config_path.to_string_lossy();
             assert!(
