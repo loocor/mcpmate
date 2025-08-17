@@ -3,13 +3,16 @@
 
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
+use std::sync::Arc;
 
-use crate::common::capability::CapabilityToken;
-use crate::core::cache::{
-    CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
-    RedbCacheManager,
+use crate::common::{capability::CapabilityToken, server::ServerType};
+use crate::core::{
+    cache::{
+        CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
+        RedbCacheManager,
+    },
+    pool::UpstreamConnectionPool,
 };
-use crate::core::pool::UpstreamConnectionPool;
 use tokio::time::{Duration, timeout};
 
 /// Unified capability snapshot container
@@ -376,16 +379,34 @@ pub async fn store_dual_write(
         let items: Vec<(String, Option<String>)> =
             tools.iter().map(|t| (t.name.clone(), t.description.clone())).collect();
         let server_name_owned = server_name.to_string();
-        let _ =
-            crate::config::server::tools::batch_upsert_server_tools(pool, server_id, &server_name_owned, &items).await;
+        if let Err(e) =
+            crate::config::server::tools::batch_upsert_server_tools(pool, server_id, &server_name_owned, &items).await
+        {
+            tracing::warn!(
+                server_id = %server_id,
+                server_name = %server_name,
+                error = %e,
+                "Failed to batch upsert server tools (SQLite shadow)"
+            );
+        }
     }
 
     // SQLite: prompts/resources/templates
     for p in &prompts {
-        let _ = upsert_shadow_prompt(pool, server_id, server_name, &p.name, p.description.as_deref()).await;
+        if let Err(e) = upsert_shadow_prompt(pool, server_id, server_name, &p.name, p.description.as_deref()).await {
+            tracing::warn!(
+                server_id = %server_id,
+                server_name = %server_name,
+                prompt = %p.name,
+                error = %e,
+                "Failed to upsert shadow prompt"
+            );
+        }
     }
+
+    // SQLite: resources
     for r in &resources {
-        let _ = upsert_shadow_resource(
+        if let Err(e) = upsert_shadow_resource(
             pool,
             server_id,
             server_name,
@@ -394,10 +415,21 @@ pub async fn store_dual_write(
             r.description.as_deref(),
             r.mime_type.as_deref(),
         )
-        .await;
+        .await
+        {
+            tracing::warn!(
+                server_id = %server_id,
+                server_name = %server_name,
+                uri = %r.uri,
+                error = %e,
+                "Failed to upsert shadow resource"
+            );
+        }
     }
+
+    // SQLite: resource templates
     for t in &templates {
-        let _ = upsert_shadow_resource_template(
+        if let Err(e) = upsert_shadow_resource_template(
             pool,
             server_id,
             server_name,
@@ -405,7 +437,16 @@ pub async fn store_dual_write(
             t.name.as_deref(),
             t.description.as_deref(),
         )
-        .await;
+        .await
+        {
+            tracing::warn!(
+                server_id = %server_id,
+                server_name = %server_name,
+                uri_template = %t.uri_template,
+                error = %e,
+                "Failed to upsert shadow resource template"
+            );
+        }
     }
 
     Ok(())
@@ -460,7 +501,14 @@ pub async fn sync_via_connection_pool(
         .await
     {
         Ok(Some(c)) => c,
-        _ => return Ok(()),
+        Ok(None) => {
+            tracing::trace!(server_name = %server_name, "No validation instance available for API sync");
+            return Ok(());
+        }
+        Err(e) => {
+            tracing::warn!(server_name = %server_name, error = %e, "Failed to create validation instance for API sync");
+            return Ok(());
+        }
     };
 
     // Discover and store
@@ -489,6 +537,263 @@ pub async fn sync_via_connection_pool(
     overwrite_capabilities(db_pool, server_id, supports_tools, supports_prompts, supports_resources).await?;
 
     // Cleanup
-    let _ = pool.destroy_validation_instance(server_name, "api").await;
+    if let Err(e) = pool.destroy_validation_instance(server_name, "api").await {
+        tracing::trace!(server_name = %server_name, error = %e, "Failed to destroy validation instance (api)");
+    }
     Ok(())
+}
+
+/// Unified capability management interface
+pub struct CapabilityManager {
+    db_pool: Arc<Pool<Sqlite>>,
+    redb_cache: Arc<RedbCacheManager>,
+    connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
+}
+
+/// Capability sync result
+#[derive(Debug)]
+pub struct CapabilitySync {
+    pub server_id: String,
+    pub server_name: String,
+    pub supports_tools: bool,
+    pub supports_prompts: bool,
+    pub supports_resources: bool,
+    pub snapshot: CapabilitySnapshot,
+}
+
+/// Capability sync strategy
+#[derive(Debug, Clone)]
+pub enum SyncStrategy {
+    /// Use existing connection from pool
+    FromConnection,
+    /// Create temporary connection for discovery
+    FromConfig(crate::core::models::MCPServerConfig, ServerType),
+    /// Force refresh capabilities
+    ForceRefresh,
+}
+
+impl CapabilityManager {
+    /// Create a new capability manager
+    pub fn new(
+        db_pool: Arc<Pool<Sqlite>>,
+        redb_cache: Arc<RedbCacheManager>,
+        connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
+    ) -> Self {
+        Self {
+            db_pool,
+            redb_cache,
+            connection_pool,
+        }
+    }
+
+    /// Sync capabilities for a single server
+    pub async fn sync_server_capabilities(
+        &self,
+        server_id: &str,
+        server_name: &str,
+        strategy: SyncStrategy,
+    ) -> Result<CapabilitySync> {
+        tracing::debug!(
+            "Syncing capabilities for server '{}' using strategy {:?}",
+            server_name,
+            strategy
+        );
+
+        // Discover capabilities
+        let snapshot = match strategy {
+            SyncStrategy::FromConnection => self.discover_from_existing_connection(server_name).await?,
+            SyncStrategy::FromConfig(config, server_type) => {
+                discover_from_config(server_name, &config, server_type).await?
+            }
+            SyncStrategy::ForceRefresh => {
+                // Get server config from database and use FromConfig strategy
+                let server_row = crate::config::models::Server::find_by_name(&self.db_pool, server_name)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
+
+                let config = crate::core::models::MCPServerConfig {
+                    kind: server_row.server_type,
+                    command: server_row.command,
+                    url: server_row.url,
+                    args: None,
+                    env: None,
+                    transport_type: server_row.transport_type,
+                };
+
+                discover_from_config(server_name, &config, server_row.server_type).await?
+            }
+        };
+
+        // Store capabilities data
+        store_dual_write(
+            &self.db_pool,
+            &self.redb_cache,
+            server_id,
+            server_name,
+            snapshot.tools.clone(),
+            snapshot.resources.clone(),
+            snapshot.prompts.clone(),
+            snapshot.resource_templates.clone(),
+        )
+        .await?;
+
+        // Update capabilities field in server_config
+        let supports_tools = !snapshot.tools.is_empty();
+        let supports_prompts = !snapshot.prompts.is_empty();
+        let supports_resources = !snapshot.resources.is_empty() || !snapshot.resource_templates.is_empty();
+
+        overwrite_capabilities(
+            &self.db_pool,
+            server_id,
+            supports_tools,
+            supports_prompts,
+            supports_resources,
+        )
+        .await?;
+
+        Ok(CapabilitySync {
+            server_id: server_id.to_string(),
+            server_name: server_name.to_string(),
+            supports_tools,
+            supports_prompts,
+            supports_resources,
+            snapshot,
+        })
+    }
+
+    /// Sync capabilities for multiple servers in parallel
+    pub async fn sync_multiple_servers(
+        &self,
+        servers: Vec<(String, String, SyncStrategy)>, // (server_id, server_name, strategy)
+    ) -> Result<Vec<CapabilitySync>> {
+        tracing::info!("Starting parallel capability sync for {} servers", servers.len());
+
+        let mut results = Vec::new();
+
+        // Sync capabilities for each server
+        for (server_id, server_name, strategy) in servers {
+            match self.sync_server_capabilities(&server_id, &server_name, strategy).await {
+                Ok(sync) => {
+                    tracing::debug!("Successfully synced capabilities for server '{}'", server_name);
+                    results.push(sync);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to sync capabilities for server '{}': {}", server_name, e);
+                }
+            }
+        }
+
+        tracing::info!(
+            "Completed parallel capability sync: {}/{} successful",
+            results.len(),
+            results.len()
+        );
+        Ok(results)
+    }
+
+    /// Sync all connected servers from startup
+    pub async fn sync_connected_servers(&self) -> Result<Vec<CapabilitySync>> {
+        let connected_servers = {
+            let pool = self.connection_pool.lock().await;
+            pool.connections
+                .iter()
+                .filter_map(|(server_name, instances)| {
+                    if instances.values().any(|conn| conn.is_connected()) {
+                        Some(server_name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let mut servers_with_strategy = Vec::new();
+
+        // Sync capabilities for each server
+        for server_name in connected_servers {
+            if let Ok(Some(server_row)) = crate::config::models::Server::find_by_name(&self.db_pool, &server_name).await
+            {
+                if let Some(server_id) = server_row.id {
+                    servers_with_strategy.push((server_id, server_name, SyncStrategy::FromConnection));
+                }
+            }
+        }
+
+        self.sync_multiple_servers(servers_with_strategy).await
+    }
+
+    /// Sync servers from import configuration
+    pub async fn sync_import_servers(
+        &self,
+        servers: Vec<(String, String, crate::core::models::MCPServerConfig, ServerType)>, // (server_id, server_name, config, server_type)
+    ) -> Result<Vec<CapabilitySync>> {
+        let servers_with_strategy = servers
+            .into_iter()
+            .map(|(server_id, server_name, config, server_type)| {
+                (server_id, server_name, SyncStrategy::FromConfig(config, server_type))
+            })
+            .collect();
+
+        self.sync_multiple_servers(servers_with_strategy).await
+    }
+
+    /// Helper: discover from existing connection
+    async fn discover_from_existing_connection(
+        &self,
+        server_name: &str,
+    ) -> Result<CapabilitySnapshot> {
+        let mut pool = self.connection_pool.lock().await;
+        let conn = pool
+            .get_or_create_validation_instance(server_name, "capability_sync", tokio::time::Duration::from_secs(30))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Failed to get connection for server '{}'", server_name))?;
+
+        let snapshot = discover_from_connection(conn).await?;
+
+        // Cleanup validation instance
+        if let Err(e) = pool.destroy_validation_instance(server_name, "capability_sync").await {
+            tracing::trace!(server_name = %server_name, error = %e, "Failed to destroy validation instance (capability_sync)");
+        }
+
+        Ok(snapshot)
+    }
+
+    /// Convenience function: Sync single server by name with auto-strategy selection
+    pub async fn auto_sync_server(
+        &self,
+        server_name: &str,
+    ) -> Result<CapabilitySync> {
+        // Get server from database
+        let server_row = crate::config::models::Server::find_by_name(&self.db_pool, server_name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
+
+        let server_id = server_row
+            .id
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' has no ID", server_name))?;
+
+        // Try connection first, fallback to config
+        let strategy = {
+            let pool = self.connection_pool.lock().await;
+            if pool
+                .connections
+                .get(server_name)
+                .map_or(false, |instances| instances.values().any(|conn| conn.is_connected()))
+            {
+                SyncStrategy::FromConnection
+            } else {
+                let config = crate::core::models::MCPServerConfig {
+                    kind: server_row.server_type,
+                    command: server_row.command,
+                    url: server_row.url,
+                    args: None,
+                    env: None,
+                    transport_type: server_row.transport_type,
+                };
+                SyncStrategy::FromConfig(config, server_row.server_type)
+            }
+        };
+
+        self.sync_server_capabilities(&server_id, server_name, strategy).await
+    }
 }

@@ -15,10 +15,10 @@ pub struct PaginationConfig {
 }
 
 /// MCP server configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// Map of MCP server name to configuration
-    #[serde(rename = "mcpServers")]
+    #[serde(rename = "mcpServers", default)]
     pub mcp_servers: HashMap<String, MCPServerConfig>,
     /// Pagination configuration for proxy responses
     #[serde(default, skip_serializing_if = "Option::is_none")]

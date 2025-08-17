@@ -24,6 +24,7 @@ pub use enabled::{
 };
 
 pub use capabilities::{
-    store_dual_write, store_redb_snapshot, upsert_shadow_prompt, upsert_shadow_resource,
-    upsert_shadow_resource_template,
+    CapabilityManager, CapabilitySnapshot, CapabilitySync, SyncStrategy, discover_from_config,
+    discover_from_connection, overwrite_capabilities, store_dual_write, store_redb_snapshot, sync_via_connection_pool,
+    upsert_shadow_prompt, upsert_shadow_resource, upsert_shadow_resource_template,
 };

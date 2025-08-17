@@ -80,6 +80,27 @@ pub async fn start_background_connections(
             connected_count,
             total_count
         );
+
+        // Auto-sync capabilities for all connected servers on startup
+        if let Some(db) = proxy_arc_clone.database.as_ref() {
+            drop(pool); // Release lock before async operations
+            
+            // Create redb cache for capability sync
+            let redb_cache_path = crate::common::paths::global_paths().cache_dir().join("capability.redb");
+            if let Ok(redb_cache) = crate::core::cache::RedbCacheManager::new(
+                redb_cache_path, 
+                crate::core::cache::manager::CacheConfig::default()
+            ) {
+                // Use unified capability manager for startup sync
+                let capability_manager = crate::config::server::capabilities::CapabilityManager::new(
+                    Arc::new(db.pool.clone()),
+                    Arc::new(redb_cache),
+                    connection_pool.clone(),
+                );
+                
+                let _ = capability_manager.sync_connected_servers().await;
+            }
+        }
     });
 
     Ok(())

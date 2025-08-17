@@ -1,7 +1,7 @@
 // Configuration import for MCPMate
 // Contains functions for importing configuration from JSON files to database
 
-use std::{fs::File, path::Path};
+use std::{fs::File, path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
@@ -13,134 +13,8 @@ use crate::{
 };
 
 // Imports for capability discovery and dual-write
-use crate::common::server::ServerType;
-use crate::core::cache::{
-    CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo, RedbCacheManager,
-    manager::CacheConfig,
-};
+use crate::core::cache::{RedbCacheManager, manager::CacheConfig};
 
-// use crate::config::server::store_dual_write;
-// imported where used via fully-qualified path
-use crate::core::transport::{TransportType, connect_http_server, connect_server_simple};
-
-/// Discover capabilities and perform dual-write (SQLite shadow tables + REDB)
-async fn discover_and_dual_write(
-    pool: &Pool<Sqlite>,
-    redb: &RedbCacheManager,
-    server_id: &str,
-    server_name: &str,
-    server_type: ServerType,
-    server_config: &crate::core::models::MCPServerConfig,
-) -> anyhow::Result<()> {
-    // Connect using unified transport
-    let (service, tools, capabilities, _pid) = match server_type {
-        ServerType::Stdio => {
-            connect_server_simple(server_name, server_config, ServerType::Stdio, TransportType::Stdio).await?
-        }
-        ServerType::Sse => connect_http_server(server_name, server_config, TransportType::Sse)
-            .await
-            .map(|(s, t, c)| (s, t, c, None))?,
-        ServerType::StreamableHttp => connect_http_server(server_name, server_config, TransportType::StreamableHttp)
-            .await
-            .map(|(s, t, c)| (s, t, c, None))?,
-    };
-
-    // Tools
-    let mut cached_tools: Vec<CachedToolInfo> = Vec::new();
-    for t in &tools {
-        let schema = t.schema_as_json_value();
-        let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
-        cached_tools.push(CachedToolInfo {
-            name: t.name.to_string(),
-            description: t.description.clone().map(|d| d.into_owned()),
-            input_schema_json,
-            unique_name: None,
-            enabled: true,
-            cached_at: chrono::Utc::now(),
-        });
-    }
-
-    // Prompts
-    let mut cached_prompts: Vec<CachedPromptInfo> = Vec::new();
-    if capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
-        if let Ok(list_result) = service.list_prompts(None).await {
-            for p in list_result.prompts {
-                let converted_args = p
-                    .arguments
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|arg| crate::core::cache::PromptArgument {
-                        name: arg.name,
-                        description: arg.description,
-                        required: arg.required.unwrap_or(false),
-                    })
-                    .collect();
-                cached_prompts.push(CachedPromptInfo {
-                    name: p.name,
-                    description: p.description,
-                    arguments: converted_args,
-                    enabled: true,
-                    cached_at: chrono::Utc::now(),
-                });
-            }
-        }
-    }
-
-    // Resources & Templates
-    let mut cached_resources: Vec<CachedResourceInfo> = Vec::new();
-    let mut cached_templates: Vec<CachedResourceTemplateInfo> = Vec::new();
-    if capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
-        // Resources (single page; many servers return full list; pagination可后续扩展)
-        if let Ok(list_result) = service.list_resources(None).await {
-            for r in list_result.resources {
-                cached_resources.push(CachedResourceInfo {
-                    uri: r.uri.clone(),
-                    name: Some(r.name.clone()),
-                    description: r.description.clone(),
-                    mime_type: r.mime_type.clone(),
-                    enabled: true,
-                    cached_at: chrono::Utc::now(),
-                });
-            }
-        }
-        // Resource templates (分页)
-        let mut cursor = None;
-        while let Ok(result) = service
-            .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
-            .await
-        {
-            for t in result.resource_templates {
-                cached_templates.push(CachedResourceTemplateInfo {
-                    uri_template: t.uri_template.clone(),
-                    name: Some(t.name.clone()),
-                    description: t.description.clone(),
-                    mime_type: t.mime_type.clone(),
-                    enabled: true,
-                    cached_at: chrono::Utc::now(),
-                });
-            }
-            cursor = result.next_cursor;
-            if cursor.is_none() {
-                break;
-            }
-        }
-    }
-
-    // Dual-write through shared helper
-    crate::config::server::store_dual_write(
-        pool,
-        redb,
-        server_id,
-        server_name,
-        cached_tools,
-        cached_resources,
-        cached_prompts,
-        cached_templates,
-    )
-    .await?;
-
-    Ok(())
-}
 
 /// Import configuration from JSON files to database
 pub async fn import_from_mcp_config(
@@ -282,17 +156,26 @@ pub async fn import_from_mcp_config(
             Err(e) => tracing::error!("Failed to create metadata for server '{}': {}", name, e),
         }
 
-        // Discover capabilities and dual-write (SQLite + REDB)
-        if let Err(e) = discover_and_dual_write(
-            pool,
-            &redb_cache,
-            &meta.server_id,
-            &name,
+        // Use unified capability manager for import
+        let dummy_pool = Arc::new(tokio::sync::Mutex::new(
+            crate::core::pool::UpstreamConnectionPool::new(
+                Arc::new(Default::default()),
+                None,
+            )
+        ));
+        
+        let capability_manager = crate::config::server::capabilities::CapabilityManager::new(
+            Arc::new(pool.clone()),
+            Arc::new(redb_cache.clone()),
+            dummy_pool,
+        );
+        
+        let strategy = crate::config::server::capabilities::SyncStrategy::FromConfig(
+            server_cfg_for_discovery.clone(),
             server.server_type,
-            &server_cfg_for_discovery,
-        )
-        .await
-        {
+        );
+        
+        if let Err(e) = capability_manager.sync_server_capabilities(&meta.server_id, &name, strategy).await {
             tracing::warn!("Capability discovery failed for '{}': {}", name, e);
         }
     }
@@ -300,6 +183,7 @@ pub async fn import_from_mcp_config(
     tracing::info!("Configuration import completed successfully");
     Ok(())
 }
+
 
 /// Load MCP configuration from a file
 fn load_mcp_config_from_file<P: AsRef<Path>>(path: P) -> Result<Config> {
