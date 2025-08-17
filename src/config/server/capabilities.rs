@@ -418,7 +418,6 @@ pub async fn overwrite_capabilities(
     supports_tools: bool,
     supports_prompts: bool,
     supports_resources: bool,
-    supports_resource_templates: bool,
 ) -> Result<()> {
     let mut caps: Vec<&str> = Vec::new();
     if supports_tools {
@@ -429,9 +428,6 @@ pub async fn overwrite_capabilities(
     }
     if supports_resources {
         caps.push(CapabilityToken::Resources.as_str());
-    }
-    if supports_resource_templates {
-        caps.push(CapabilityToken::ResourceTemplates.as_str());
     }
     let caps_opt: Option<String> = if caps.is_empty() { None } else { Some(caps.join(",")) };
     sqlx::query(r#"UPDATE server_config SET capabilities = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#)
@@ -490,16 +486,7 @@ pub async fn sync_via_connection_pool(
     let supports_tools = !snap.tools.is_empty();
     let supports_prompts = !snap.prompts.is_empty();
     let supports_resources = !snap.resources.is_empty();
-    let supports_resource_templates = !snap.resource_templates.is_empty();
-    overwrite_capabilities(
-        db_pool,
-        server_id,
-        supports_tools,
-        supports_prompts,
-        supports_resources,
-        supports_resource_templates,
-    )
-    .await?;
+    overwrite_capabilities(db_pool, server_id, supports_tools, supports_prompts, supports_resources).await?;
 
     // Cleanup
     let _ = pool.destroy_validation_instance(server_name, "api").await;

@@ -219,9 +219,9 @@ pub async fn enrich_capability_items(
             let map = load_resource_template_mapping(pool, server_id).await;
             for v in &mut items {
                 if let Some(tpl) = v.get("uri_template").and_then(|x| x.as_str()) {
-                    if let Some((id, uname)) = map.get(tpl) {
+                    if let Some((id, unique_name)) = map.get(tpl) {
                         if let Some(obj) = v.as_object_mut() {
-                            obj.insert("unique_name".to_string(), serde_json::json!(uname));
+                            obj.insert("unique_uri_template".to_string(), serde_json::json!(unique_name));
                             obj.insert("id".to_string(), serde_json::json!(id));
                         }
                     }
@@ -290,7 +290,7 @@ pub fn resource_template_json(
     name: Option<String>,
     description: Option<String>,
     mime_type: Option<String>,
-    unique_name: Option<String>,
+    unique_uri_template: Option<String>,
     id: Option<String>,
 ) -> serde_json::Value {
     serde_json::json!({
@@ -298,7 +298,7 @@ pub fn resource_template_json(
         "name": name,
         "description": description,
         "mime_type": mime_type,
-        "unique_name": unique_name,
+        "unique_uri_template": unique_uri_template,
         "id": id,
     })
 }

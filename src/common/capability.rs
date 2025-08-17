@@ -5,7 +5,6 @@ pub enum CapabilityToken {
     Tools,
     Prompts,
     Resources,
-    ResourceTemplates,
 }
 
 impl CapabilityToken {
@@ -14,7 +13,6 @@ impl CapabilityToken {
             CapabilityToken::Tools => "tools",
             CapabilityToken::Prompts => "prompts",
             CapabilityToken::Resources => "resources",
-            CapabilityToken::ResourceTemplates => "resourceTemplates",
         }
     }
 }
