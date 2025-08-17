@@ -3,16 +3,21 @@
 
 use super::{common, shared::*};
 
-/// Get a specific MCP server
+/// Get a specific MCP server (ID-only)
 pub async fn get_server(
     State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<ServerResponse>, ApiError> {
     // Get database reference
     let db = common::get_database_from_state(&state)?;
 
-    // Get the server from the database using unified function
-    let (server, server_id) = common::get_server_by_identifier(&db.pool, &name).await?;
+    // Get the server by ID
+    let server = crate::config::server::get_server_by_id(&db.pool, &id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
+    let server_id = server.id.clone().unwrap_or_default();
+    let name = server.name.clone();
 
     // Get complete server details using unified function
     let details = common::get_complete_server_details(&db.pool, &server_id, &name, &state).await;
@@ -90,17 +95,18 @@ pub async fn list_servers(State(state): State<Arc<AppState>>) -> Result<Json<Ser
     Ok(Json(ServerListResponse { servers }))
 }
 
-/// List all instances for a specific MCP server
+/// List all instances for a specific MCP server (ID-only)
 pub async fn list_instances(
     State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<ServerInstancesResponse>, ApiError> {
-    // Check existence via shared helper
-    let pool = common::get_connection_pool_with_timeout(&state).await?;
-
-    if !pool.connections.contains_key(&name) {
-        return Err(ApiError::NotFound(format!("Server '{name}' not found")));
-    }
+    // Resolve server name by ID for pool access
+    let db = common::get_database_from_state(&state)?;
+    let server = crate::config::server::get_server_by_id(&db.pool, &id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
+    let name = server.name;
 
     // Reuse shared instance summarizer
     let instance_summaries = common::get_server_instances(&state, &name).await;

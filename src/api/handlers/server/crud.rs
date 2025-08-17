@@ -56,18 +56,6 @@ fn validate_server_config(
     Ok(())
 }
 
-/// Get existing server or return error
-async fn get_existing_server_or_error(
-    db: &Database,
-    name: &str,
-) -> Result<crate::config::models::Server, ApiError> {
-    let server = crate::config::server::get_server(&db.pool, name)
-        .await
-        .map_err(db_error)?;
-
-    server.ok_or_else(|| ApiError::NotFound(format!("Server '{name}' not found")))
-}
-
 /// Create server model from configuration
 fn create_server_from_config(
     name: String,
@@ -290,13 +278,16 @@ pub async fn create_server(
 /// Update an existing MCP server
 pub async fn update_server(
     State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     Json(payload): Json<UpdateServerRequest>,
 ) -> Result<Json<ServerResponse>, ApiError> {
     let db = common::get_database_from_state(&state)?;
 
-    // Get existing server
-    let existing_server = get_existing_server_or_error(&db, &name).await?;
+    // Get existing server by ID
+    let existing_server = crate::config::server::get_server_by_id(&db.pool, &id)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
     let server_id = existing_server
         .id
         .clone()
@@ -351,18 +342,18 @@ pub async fn update_server(
         add_server_to_suit_with_sync(&state, &db, &suit_id, &server_id, enabled).await?;
         tracing::info!(
             "Updated server '{}' enabled status to {} in default config suit",
-            name,
+            existing_server.name,
             enabled
         );
     }
 
     // Get server details via shared helper
-    let details = common::get_complete_server_details(&db.pool, &server_id, &name, &state).await;
+    let details = common::get_complete_server_details(&db.pool, &server_id, &existing_server.name, &state).await;
 
     // Return success response
     Ok(Json(ServerResponse {
         id: Some(server_id),
-        name,
+        name: existing_server.name,
         enabled: payload.enabled.unwrap_or(true),
         globally_enabled: details.globally_enabled,
         enabled_in_suits: details.enabled_in_suits,
@@ -531,29 +522,32 @@ async fn delete_server_records(
 /// Delete an existing MCP server
 pub async fn delete_server(
     State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     let db = common::get_database_from_state(&state)?;
 
-    // Get existing server
-    let existing_server = get_existing_server_or_error(&db, &name).await?;
+    // Get existing server by ID
+    let existing_server = crate::config::server::get_server_by_id(&db.pool, &id)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
     let server_id = existing_server
         .id
         .clone()
         .ok_or_else(|| internal_error("Server ID not found"))?;
 
     // Disconnect server instances
-    disconnect_server_instances(&state, &name).await;
+    disconnect_server_instances(&state, &existing_server.name).await;
 
     // Delete all server-related records
     delete_server_records(&db, &server_id).await?;
 
-    tracing::info!("Successfully deleted server '{}'", name);
+    tracing::info!("Successfully deleted server '{}'", existing_server.name);
 
     // Return success response
     Ok(Json(OperationResponse {
         id: server_id,
-        name,
+        name: existing_server.name,
         result: "Successfully deleted server".to_string(),
         status: "Deleted".to_string(),
         allowed_operations: Vec::new(),

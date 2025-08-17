@@ -18,18 +18,18 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/", get(server::list_servers))
         .route("/", post(server::create_server))
         .route("/import", post(server::import_servers))
-        // Server-specific operations (supports both name and ID)
-        .route("/{identifier}", get(server::get_server))
-        .route("/{identifier}", put(server::update_server))
-        .route("/{identifier}", delete(server::delete_server))
-        .route("/{identifier}/enable", post(server::enable_server))
-        .route("/{identifier}/disable", post(server::disable_server))
+        // Server-specific operations (ID-only)
+        .route("/{id}", get(server::get_server))
+        .route("/{id}", put(server::update_server))
+        .route("/{id}", delete(server::delete_server))
+        .route("/{id}/enable", post(server::enable_server))
+        .route("/{id}/disable", post(server::disable_server))
         // Inspect endpoints per refactor spec
-        .route("/{identifier}/tools", get(server::list_tools))
-        .route("/{identifier}/resources", get(server::list_resources))
-        .route("/{identifier}/resource-templates", get(server::list_resource_templates))
-        .route("/{identifier}/prompts", get(server::list_prompts))
-        .route("/{identifier}/prompts/arguments", get(server::get_prompt_arguments))
+        .route("/{id}/tools", get(server::list_tools))
+        .route("/{id}/resources", get(server::list_resources))
+        .route("/{id}/resources/templates", get(server::list_resource_templates))
+        .route("/{id}/prompts", get(server::list_prompts))
+        .route("/{id}/prompts/arguments", get(server::get_prompt_arguments))
         // Instance management
         .route("/{identifier}/instances", get(server::list_instances));
 
@@ -43,7 +43,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/{id}/recover", post(instance::recover_instance))
         .route("/{id}/cancel", post(instance::cancel));
 
-    let combined_router = servers_router.nest("/{name}/instances", instances_router);
+    let combined_router = servers_router.nest("/{id}/instances", instances_router);
 
     Router::new().nest("/mcp/servers", combined_router.with_state(state))
 }

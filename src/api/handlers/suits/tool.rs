@@ -4,8 +4,7 @@
 use std::collections::HashMap;
 
 use super::{
-    check_tool_belongs_to_suit, common::*, get_suit_or_error, get_tool_or_error,
-    get_tool_with_details_or_error, get_or_create_tool_by_name, resolve_tool_for_batch_operation,
+    check_tool_belongs_to_suit, common::*, get_suit_or_error, get_tool_or_error, get_tool_with_details_or_error,
 };
 
 /// List tools in a configuration suit
@@ -53,10 +52,10 @@ pub async fn list_tools(
     }))
 }
 
-/// Enable a tool in a configuration suit
+/// Enable a tool in a configuration suit (ID-only)
 pub async fn enable_tool(
     State(state): State<Arc<AppState>>,
-    Path((suit_id, tool_identifier)): Path<(String, String)>,
+    Path((suit_id, tool_id)): Path<(String, String)>,
 ) -> Result<Json<SuitOperationResponse>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
@@ -64,14 +63,8 @@ pub async fn enable_tool(
     // Get the suit
     let _suit = get_suit_or_error(&db, &suit_id).await?;
 
-    // Smart tool resolution: try ID first, then tool name
-    let tool = match get_tool_or_error(&db, &tool_identifier).await {
-        Ok(tool) => tool,
-        Err(_) => {
-            // If tool ID lookup failed, try to find or create by tool name
-            get_or_create_tool_by_name(&db, &suit_id, &tool_identifier).await?
-        }
-    };
+    // ID-only resolution
+    let tool = get_tool_or_error(&db, &tool_id).await?;
 
     // Check if the tool belongs to the specified suit
     check_tool_belongs_to_suit(&tool, &suit_id)?;
@@ -94,9 +87,7 @@ pub async fn enable_tool(
         .bind(&tool.id)
         .execute(&db.pool)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to enable tool in configuration suit: {e}"))
-        })?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to enable tool in configuration suit: {e}")))?;
 
     // Get tool details for response
     let tool_details = get_tool_with_details_or_error(&db, &tool.id).await?;
@@ -111,10 +102,10 @@ pub async fn enable_tool(
     }))
 }
 
-/// Disable a tool in a configuration suit
+/// Disable a tool in a configuration suit (ID-only)
 pub async fn disable_tool(
     State(state): State<Arc<AppState>>,
-    Path((suit_id, tool_identifier)): Path<(String, String)>,
+    Path((suit_id, tool_id)): Path<(String, String)>,
 ) -> Result<Json<SuitOperationResponse>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
@@ -122,14 +113,8 @@ pub async fn disable_tool(
     // Get the suit
     let _suit = get_suit_or_error(&db, &suit_id).await?;
 
-    // Smart tool resolution: try ID first, then tool name
-    let tool = match get_tool_or_error(&db, &tool_identifier).await {
-        Ok(tool) => tool,
-        Err(_) => {
-            // If tool ID lookup failed, try to find or create by tool name
-            get_or_create_tool_by_name(&db, &suit_id, &tool_identifier).await?
-        }
-    };
+    // ID-only resolution
+    let tool = get_tool_or_error(&db, &tool_id).await?;
 
     // Check if the tool belongs to the specified suit
     check_tool_belongs_to_suit(&tool, &suit_id)?;
@@ -152,9 +137,7 @@ pub async fn disable_tool(
         .bind(&tool.id)
         .execute(&db.pool)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to disable tool in configuration suit: {e}"))
-        })?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to disable tool in configuration suit: {e}")))?;
 
     // Get tool details for response
     let tool_details = get_tool_with_details_or_error(&db, &tool.id).await?;
@@ -184,10 +167,10 @@ pub async fn batch_enable_tools(
     let mut successful_ids = Vec::new();
     let mut failed_ids = HashMap::new();
 
-    // Process each tool identifier (ID or name)
-    for tool_identifier in payload.ids {
-        // Resolve tool identifier to ConfigSuitTool
-        match resolve_tool_for_batch_operation(&db, &suit_id, &tool_identifier).await {
+    // Process each tool id (ID-only)
+    for tool_id in payload.ids {
+        // Get by ID and validate suit ownership
+        match get_tool_or_error(&db, &tool_id).await {
             Ok(tool) => {
                 // Skip if already enabled
                 if tool.enabled {
@@ -201,15 +184,15 @@ pub async fn batch_enable_tools(
                     .await
                 {
                     Ok(_) => {
-                        successful_ids.push(tool_identifier.clone());
+                        successful_ids.push(tool_id.clone());
                     }
                     Err(e) => {
-                        failed_ids.insert(tool_identifier.clone(), format!("Failed to enable tool: {e}"));
+                        failed_ids.insert(tool_id.clone(), format!("Failed to enable tool: {e}"));
                     }
                 }
             }
             Err(e) => {
-                failed_ids.insert(tool_identifier.clone(), e);
+                failed_ids.insert(tool_id.clone(), e.to_string());
             }
         }
     }
@@ -237,10 +220,10 @@ pub async fn batch_disable_tools(
     let mut successful_ids = Vec::new();
     let mut failed_ids = HashMap::new();
 
-    // Process each tool identifier (ID or name)
-    for tool_identifier in payload.ids {
-        // Resolve tool identifier to ConfigSuitTool
-        match resolve_tool_for_batch_operation(&db, &suit_id, &tool_identifier).await {
+    // Process each tool id (ID-only)
+    for tool_id in payload.ids {
+        // Get by ID and validate suit ownership
+        match get_tool_or_error(&db, &tool_id).await {
             Ok(tool) => {
                 // Skip if already disabled
                 if !tool.enabled {
@@ -254,15 +237,15 @@ pub async fn batch_disable_tools(
                     .await
                 {
                     Ok(_) => {
-                        successful_ids.push(tool_identifier.clone());
+                        successful_ids.push(tool_id.clone());
                     }
                     Err(e) => {
-                        failed_ids.insert(tool_identifier.clone(), format!("Failed to disable tool: {e}"));
+                        failed_ids.insert(tool_id.clone(), format!("Failed to disable tool: {e}"));
                     }
                 }
             }
             Err(e) => {
-                failed_ids.insert(tool_identifier.clone(), e);
+                failed_ids.insert(tool_id.clone(), e.to_string());
             }
         }
     }

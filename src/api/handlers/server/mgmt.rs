@@ -58,14 +58,19 @@ fn create_operation_response(
 /// Enable a server by setting its global availability to enabled
 pub async fn enable_server(
     state: State<Arc<AppState>>,
-    Path(server_name): Path<String>,
+    Path(id): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     // Get database reference
     let db = common::get_database_from_state(&state)?;
 
-    // Get the server information
-    let (_server, server_id) = common::get_server_by_identifier(&db.pool, &server_name).await?;
+    // Get the server information by ID
+    let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
+    let server_id = server_row.id.clone().unwrap_or_default();
+    let server_name = server_row.name.clone();
 
     // Update the server's global enabled status
     match crate::config::server::update_server_global_status(&db.pool, &server_id, true).await {
@@ -250,14 +255,19 @@ pub async fn enable_server(
 /// Disable a server by setting its global availability to disabled
 pub async fn disable_server(
     state: State<Arc<AppState>>,
-    Path(server_name): Path<String>,
+    Path(id): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     // Get database reference
     let db = common::get_database_from_state(&state)?;
 
-    // Get the server information
-    let (_server, server_id) = common::get_server_by_identifier(&db.pool, &server_name).await?;
+    // Get the server information by ID
+    let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
+    let server_id = server_row.id.clone().unwrap_or_default();
+    let server_name = server_row.name.clone();
 
     // Update the server's global enabled status
     match crate::config::server::update_server_global_status(&db.pool, &server_id, false).await {

@@ -14,8 +14,7 @@ use super::capability::{
     CapabilityKind, enrich_capability_items, respond_with_enriched, tool_json, tool_json_from_cached,
 };
 use super::common::{
-    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
-    resolve_server_identifier, validate_server_id,
+    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
 };
 
 /// List all tools for a specific server
@@ -30,12 +29,19 @@ use super::common::{
 /// Supports both `server_name` and `server_id` as identifier.
 pub async fn list_tools(
     State(state): State<Arc<AppState>>,
-    Path(identifier): Path<String>,
+    Path(id): Path<String>,
     Query(query): Query<InspectQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Get database and resolve server identifier
+    // Get database and load server by ID
     let db = get_database_from_state(&state)?;
-    let server_info = resolve_server_identifier(&db.pool, &identifier).await?;
+    let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Database error: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
+    let server_info = super::common::ServerIdentification {
+        server_id: id.clone(),
+        server_name: server_row.name.clone(),
+    };
 
     // Validate server ID format
     validate_server_id(&server_info.server_id)?;
