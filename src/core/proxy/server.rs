@@ -22,6 +22,7 @@ use tracing;
 use crate::{
     config::database::Database,
     core::{pool::UpstreamConnectionPool, transport::TransportType},
+    mcper::builtin::BuiltinServiceRegistry,
 };
 
 /// Global instance of the proxy server
@@ -43,6 +44,8 @@ pub struct ProxyServer {
     pub runtime_cache: Arc<crate::runtime::RuntimeCache>,
     /// Paginator for aggregated results
     pub paginator: crate::core::foundation::pagination::ProxyPaginator,
+    /// Built-in services registry for MCPMate internal tools
+    pub builtin_services: Arc<BuiltinServiceRegistry>,
 }
 
 /// Configuration for the unified HTTP server
@@ -221,12 +224,16 @@ impl ProxyServer {
         // Create paginator with default config
         let paginator = crate::core::foundation::pagination::ProxyPaginator::new();
 
+        // Create builtin services registry (will be initialized when database is set)
+        let builtin_services = Arc::new(BuiltinServiceRegistry::new());
+
         Self {
             connection_pool,
             database: None,     // Database will be initialized separately
             suit_service: None, // Will be initialized when database is set
             runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
             paginator,
+            builtin_services,
         }
     }
 
@@ -244,6 +251,10 @@ impl ProxyServer {
         // Initialize Suit service
         self.suit_service = Some(Arc::new(crate::core::suit::SuitService::new(db_arc.clone())));
 
+        // Initialize builtin services registry with MCPMate services
+        self.builtin_services =
+            Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(db_arc.clone(), self.connection_pool.clone()));
+
         // Update connection pool with database reference and runtime cache
         {
             let mut pool = self.connection_pool.lock().await;
@@ -254,7 +265,9 @@ impl ProxyServer {
         // Setup event handlers with server manager callback
         self.setup_event_handlers().await?;
 
-        tracing::info!("Database connection, server manager, and event handlers set for proxy server");
+        tracing::info!(
+            "Database connection, builtin services, server manager, and event handlers set for proxy server"
+        );
         Ok(())
     }
 
@@ -461,6 +474,10 @@ impl ServerHandler for ProxyServer {
             tracing::warn!("Database not available for tool filtering; will use runtime fallback");
         }
 
+        // Always include builtin service tools
+        let builtin_tools = self.builtin_services.tools();
+        tracing::debug!("Including {} builtin service tools", builtin_tools.len());
+
         if tools_from_db.is_empty() {
             // Runtime fallback: aggregate tools from connected instances
             let mut aggregated: Vec<rmcp::model::Tool> = Vec::new();
@@ -472,16 +489,30 @@ impl ServerHandler for ProxyServer {
                     }
                 }
             }
+
+            // Add builtin tools to runtime fallback
+            aggregated.extend(builtin_tools);
+
             if aggregated.is_empty() {
-                tracing::warn!("Proxy runtime fallback found 0 tools across connected instances");
+                tracing::warn!("Proxy runtime fallback found 0 tools across connected instances and builtin services");
             } else {
-                tracing::info!("Proxy runtime fallback aggregated {} tools", aggregated.len());
+                tracing::info!(
+                    "Proxy runtime fallback aggregated {} tools (including builtin)",
+                    aggregated.len()
+                );
             }
             return Ok(rmcp::model::ListToolsResult {
                 tools: aggregated,
                 next_cursor: None,
             });
         }
+
+        // Add builtin tools to database-driven results
+        tools_from_db.extend(builtin_tools);
+        tracing::info!(
+            "Proxy listed {} total tools (including builtin services)",
+            tools_from_db.len()
+        );
 
         Ok(rmcp::model::ListToolsResult {
             tools: tools_from_db,
@@ -496,7 +527,19 @@ impl ServerHandler for ProxyServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::debug!("Calling tool: {}", request.name);
 
-        // Use database service for authoritative tool calling
+        // First check if this is a builtin service tool
+        if let Some(result) = self.builtin_services.call_tool(&request).await {
+            tracing::debug!("Tool '{}' handled by builtin service", request.name);
+            return match result {
+                Ok(call_result) => Ok(call_result),
+                Err(e) => {
+                    tracing::error!("Builtin service tool '{}' failed: {}", request.name, e);
+                    Err(McpError::internal_error(e.to_string(), None))
+                }
+            };
+        }
+
+        // If not a builtin tool, use database service for authoritative tool calling
         match &self.database {
             Some(db) => {
                 // Create database tool service
