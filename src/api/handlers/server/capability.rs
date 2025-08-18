@@ -111,11 +111,11 @@ pub async fn load_prompt_mapping(
 }
 
 /// Load resource URI to (id, unique_uri) mapping from database
-/// 
+///
 /// # Arguments
 /// * `pool` - SQLite connection pool
 /// * `server_id` - Server identifier to filter resources
-/// 
+///
 /// # Returns
 /// HashMap mapping resource URIs to their (id, unique_uri) tuples
 pub async fn load_resource_mapping(
@@ -570,21 +570,14 @@ pub async fn create_temporary_instance_for_capability(
             }
 
             let kind = to_kind(&capability_type);
-            if let Ok(db) = get_database_from_state(state) {
-                let enriched = enrich_capability_items(kind, &db.pool, &server_info.server_id, extracted.data).await;
-                return Ok(Some(respond_with_enriched(
-                    enriched,
-                    false,
-                    params.refresh,
-                    "temporary",
-                )));
-            }
-            return Ok(Some(respond_with_enriched(
-                Vec::new(),
-                false,
-                params.refresh,
-                "temporary",
-            )));
+            let data = extracted.data;
+
+            let items = match get_database_from_state(state) {
+                Ok(db) => enrich_capability_items(kind, &db.pool, &server_info.server_id, data).await,
+                Err(_) => Vec::new(),
+            };
+
+            Ok(Some(respond_with_enriched(items, false, params.refresh, "temporary")))
         }
         _ => Ok(None),
     }

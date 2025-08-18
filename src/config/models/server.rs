@@ -236,6 +236,19 @@ impl Server {
         }
     }
 
+    /// Convert to MCPServerConfig for capability discovery and connection
+    /// This eliminates duplicate config construction code across the codebase
+    pub fn to_mcp_config(&self) -> crate::core::models::MCPServerConfig {
+        crate::core::models::MCPServerConfig {
+            kind: self.server_type,
+            command: self.command.clone(),
+            url: self.url.clone(),
+            args: None, // Args are loaded separately when needed
+            env: None,  // Env vars are loaded separately when needed
+            transport_type: self.transport_type,
+        }
+    }
+
     /// find server config by name
     pub async fn find_by_name(
         pool: &Pool<Sqlite>,

@@ -92,17 +92,9 @@ fn create_router_internal(
         state_manager_clone.initialize().await;
     });
 
-    // Initialize Redb cache manager
-    // Allow override via MCPMATE_REDB_CACHE_PATH; default to ~/.mcpmate/cache/capability.redb
-    let redb_cache_path = if let Ok(p) = std::env::var("MCPMATE_REDB_CACHE_PATH") {
-        std::path::PathBuf::from(p)
-    } else {
-        crate::common::paths::global_paths().cache_dir().join("capability.redb")
-    };
-    let redb_cache = Arc::new(
-        crate::core::cache::RedbCacheManager::new(redb_cache_path, crate::core::cache::manager::CacheConfig::default())
-            .expect("Failed to initialize Redb cache manager"),
-    );
+    // Initialize standard Redb cache manager (same as used everywhere else)
+    let redb_cache = crate::config::server::capabilities::cache_utils::get_standard_cache_manager()
+        .expect("Failed to initialize standard Redb cache manager");
 
     let state = Arc::new(AppState {
         connection_pool,

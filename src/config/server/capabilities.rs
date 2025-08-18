@@ -15,6 +15,18 @@ use crate::core::{
 };
 use tokio::time::{Duration, timeout};
 
+/// Cache helpers used by API and startup paths
+pub mod cache_utils {
+    use super::*;
+
+    /// Create a standard Redb cache manager using the global cache directory
+    pub fn get_standard_cache_manager() -> anyhow::Result<Arc<RedbCacheManager>> {
+        let cache_path = crate::common::paths::global_paths().cache_dir().join("capability.redb");
+        let mgr = RedbCacheManager::new(cache_path, crate::core::cache::manager::CacheConfig::default())?;
+        Ok(Arc::new(mgr))
+    }
+}
+
 /// Unified capability snapshot container
 #[derive(Debug, Clone, Default)]
 pub struct CapabilitySnapshot {
@@ -666,16 +678,30 @@ impl CapabilityManager {
         &self,
         servers: Vec<(String, String, SyncStrategy)>, // (server_id, server_name, strategy)
     ) -> Result<Vec<CapabilitySync>> {
-        tracing::info!("Starting parallel capability sync for {} servers", servers.len());
+        use futures::stream::{self, StreamExt};
 
-        let mut results = Vec::new();
+        tracing::info!("Starting capability sync for {} servers (concurrent)", servers.len());
 
-        // Sync capabilities for each server
-        for (server_id, server_name, strategy) in servers {
-            match self.sync_server_capabilities(&server_id, &server_name, strategy).await {
+        // Limit concurrency based on CPU cores
+        let max_concurrency: usize = std::cmp::max(1, num_cpus::get());
+
+        let results = stream::iter(servers.into_iter())
+            .map(|(server_id, server_name, strategy)| async move {
+                (
+                    server_name.clone(),
+                    self.sync_server_capabilities(&server_id, &server_name, strategy).await,
+                )
+            })
+            .buffer_unordered(max_concurrency)
+            .collect::<Vec<(String, Result<CapabilitySync>)>>()
+            .await;
+
+        let mut successes = Vec::new();
+        for (server_name, res) in results {
+            match res {
                 Ok(sync) => {
                     tracing::debug!("Successfully synced capabilities for server '{}'", server_name);
-                    results.push(sync);
+                    successes.push(sync);
                 }
                 Err(e) => {
                     tracing::warn!("Failed to sync capabilities for server '{}': {}", server_name, e);
@@ -684,38 +710,46 @@ impl CapabilityManager {
         }
 
         tracing::info!(
-            "Completed parallel capability sync: {}/{} successful",
-            results.len(),
-            results.len()
+            "Completed capability sync: {}/{} successful",
+            successes.len(),
+            successes.len()
         );
-        Ok(results)
+        Ok(successes)
     }
 
-    /// Sync all connected servers from startup
+    /// Sync all servers from startup (all servers from database)
     pub async fn sync_connected_servers(&self) -> Result<Vec<CapabilitySync>> {
-        let connected_servers = {
-            let pool = self.connection_pool.lock().await;
-            pool.connections
-                .iter()
-                .filter_map(|(server_name, instances)| {
-                    if instances.values().any(|conn| conn.is_connected()) {
-                        Some(server_name.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
+        // Get all servers from database instead of relying on connection pool state
+        let all_servers = crate::config::server::get_all_servers(&self.db_pool).await?;
 
         let mut servers_with_strategy = Vec::new();
 
-        // Sync capabilities for each server
-        for server_name in connected_servers {
-            if let Ok(Some(server_row)) = crate::config::models::Server::find_by_name(&self.db_pool, &server_name).await
-            {
-                if let Some(server_id) = server_row.id {
-                    servers_with_strategy.push((server_id, server_name, SyncStrategy::FromConnection));
-                }
+        // Sync capabilities for each server using auto-strategy selection
+        for server in all_servers {
+            if let Some(server_id) = server.id {
+                // Use auto strategy: try connection first, fallback to config
+                let strategy = {
+                    let pool = self.connection_pool.lock().await;
+                    if pool
+                        .connections
+                        .get(&server.name)
+                        .map_or(false, |instances| instances.values().any(|conn| conn.is_connected()))
+                    {
+                        SyncStrategy::FromConnection
+                    } else {
+                        let config = crate::core::models::MCPServerConfig {
+                            kind: server.server_type,
+                            command: server.command,
+                            url: server.url,
+                            args: None,
+                            env: None,
+                            transport_type: server.transport_type,
+                        };
+                        SyncStrategy::FromConfig(config, server.server_type)
+                    }
+                };
+
+                servers_with_strategy.push((server_id, server.name, strategy));
             }
         }
 
@@ -743,16 +777,17 @@ impl CapabilityManager {
         server_name: &str,
     ) -> Result<CapabilitySnapshot> {
         let mut pool = self.connection_pool.lock().await;
+        let session_id = "capability_sync";
         let conn = pool
-            .get_or_create_validation_instance(server_name, "capability_sync", tokio::time::Duration::from_secs(30))
+            .get_or_create_validation_instance(server_name, session_id, tokio::time::Duration::from_secs(30))
             .await?
             .ok_or_else(|| anyhow::anyhow!("Failed to get connection for server '{}'", server_name))?;
 
         let snapshot = discover_from_connection(conn).await?;
 
         // Cleanup validation instance
-        if let Err(e) = pool.destroy_validation_instance(server_name, "capability_sync").await {
-            tracing::trace!(server_name = %server_name, error = %e, "Failed to destroy validation instance (capability_sync)");
+        if let Err(e) = pool.destroy_validation_instance(server_name, session_id).await {
+            tracing::trace!(server_name = %server_name, error = %e, "Failed to destroy validation instance");
         }
 
         Ok(snapshot)
