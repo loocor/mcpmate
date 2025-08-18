@@ -139,6 +139,45 @@ Supports multiple MCP transport protocols:
 - **SSE**: Server-Sent Events over HTTP
 - **streamable_http**: Bidirectional HTTP streaming
 
+#### Dual-Layer Server State Management Architecture
+
+MCPMate implements a sophisticated dual-layer architecture for managing MCP server states and capabilities:
+
+**Layer 1: Global Servers Management (Instance Lifecycle Control)**
+- **Direct Connection Pool Operations**: Creates, starts, stops, and terminates MCP server instances
+- **Resource Allocation Control**: Determines which servers can obtain system resources
+- **Instance Lifecycle Management**: Full control over server process creation and destruction
+- **Primary Authority**: Overrides all other state management layers
+
+**Layer 2: Config Suite Management (MCP Protocol Capability Filtering)**
+- **Capability Filtering Role**: Acts as filter/reference table for MCP protocol capabilities
+- **No Direct Instance Management**: Cannot directly create or terminate connection pool instances
+- **Protocol-Level Control**: Determines which server capabilities are exposed to MCP protocol clients
+- **Dual-Level Filtering System**:
+  - **Server-Level Toggle**: Enable/disable all capabilities from a specific server
+  - **Capability-Level Toggle**: Granular control over individual tools/prompts/resources/templates
+
+**Multi-Suite Combination Network**:
+- Multiple config suites can be simultaneously active
+- Automatic deduplication based on unique capability names
+- Combined capability sets are unified before transmission to downstream MCP clients
+- Example: Suite A [Server1, Server2, Server3] + Suite B [Server3, Server4, Server5] → Unified capability network
+
+**MCP Protocol vs HTTP Protocol Distinction**:
+- Config Suite filtering affects **MCP protocol operations** (list_tools, call_tool, etc.)
+- Downstream clients: Cursor, Winsurf, MCP Inspector, and other MCP-compatible clients
+- Separate from HTTP/RESTful API management interface used by the Board web application
+
+**Connection Pool Resource Management**:
+- Idle timeout mechanism: Automatically releases instances after N minutes of inactivity
+- Configurable timeout duration to balance resource usage vs startup latency
+- Instance cleanup and lifecycle management independent of config suite states
+
+**Architecture Constraint**:
+- Config Suite operations must **NEVER** affect connection pool instance lifecycle
+- Only Global Servers management layer should trigger instance creation/termination
+- Config Suite changes only affect MCP protocol capability transmission filtering
+
 ### API Integration
 RESTful API provides external control interface:
 - Server management: `/api/mcp/servers/*`
