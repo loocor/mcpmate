@@ -83,19 +83,7 @@ impl UpstreamConnectionPool {
         tracing::info!("DIAGNOSTIC: Disconnect initiated from: {}", backtrace);
 
         // Step 1: Cancel the token first to stop new operations
-        let token_opt = self
-            .cancellation_tokens
-            .get_mut(server_name)
-            .and_then(|tokens| tokens.remove(instance_id));
-
-        if let Some(token) = token_opt {
-            token.cancel();
-            tracing::debug!(
-                "Cancelled token for server '{}' instance '{}' to stop new operations",
-                server_name,
-                instance_id
-            );
-        }
+        self.cancel_connection_token(server_name, instance_id);
 
         // Step 2: Take the service from the connection
         let service = {
@@ -103,71 +91,17 @@ impl UpstreamConnectionPool {
             conn.service.take()
         };
 
-        // Step 3: If there's an active service, cancel it with timeout
+        // Step 3: Cancel active service if exists (early return if no service)
         if let Some(service_arc) = service {
-            // Give the service time to gracefully shutdown
-            let cancel_timeout = Duration::from_secs(5);
-
-            tracing::info!(
-                "DIAGNOSTIC: About to cancel service for '{}' instance '{}' with {}s timeout",
-                server_name,
-                instance_id,
-                cancel_timeout.as_secs()
-            );
-
-            // Try to extract the service from Arc for cancellation
-            match Arc::try_unwrap(service_arc) {
-                Ok(service) => {
-                    match tokio::time::timeout(cancel_timeout, service.cancel()).await {
-                        Ok(Ok(quit_reason)) => {
-                            tracing::info!(
-                                "DIAGNOSTIC: Service for server '{}' instance '{}' cancelled gracefully with reason: {:?} - Timestamp: {}",
-                                server_name,
-                                instance_id,
-                                quit_reason,
-                                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
-                            );
-                        }
-                        Ok(Err(e)) => {
-                            tracing::warn!(
-                                "DIAGNOSTIC: Error during graceful cancellation for '{}' instance '{}': {} - Timestamp: {}",
-                                server_name,
-                                instance_id,
-                                e,
-                                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
-                            );
-                        }
-                        Err(_) => {
-                            tracing::warn!(
-                                "DIAGNOSTIC: Service cancellation timeout for '{}' instance '{}', resources may be leaked - Timestamp: {}",
-                                server_name,
-                                instance_id,
-                                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
-                            );
-                        }
-                    }
-                }
-                Err(_arc) => {
-                    tracing::warn!(
-                        "DIAGNOSTIC: Cannot cancel service for '{}' instance '{}' - multiple references exist",
-                        server_name,
-                        instance_id
-                    );
-                }
-            }
+            self.cancel_service_with_timeout(server_name, instance_id, service_arc)
+                .await;
         }
 
         // Step 4: Update connection status
-        {
-            let conn = self.get_instance_mut(server_name, instance_id)?;
-            conn.update_disconnected();
-        }
+        let conn = self.get_instance_mut(server_name, instance_id)?;
+        conn.update_disconnected();
 
-        tracing::info!(
-            "Disconnected from server '{}' instance '{}'",
-            server_name,
-            instance_id
-        );
+        tracing::info!("Disconnected from server '{}' instance '{}'", server_name, instance_id);
 
         Ok(())
     }
@@ -238,10 +172,7 @@ impl UpstreamConnectionPool {
             "stdio" => self.connect_stdio(server_name, instance_id).await,
             "sse" => self.connect_sse(server_name, instance_id).await,
             "http" => self.connect_http(server_name, instance_id).await,
-            _ => Err(anyhow::anyhow!(
-                "Unsupported server type: {}",
-                server_config.kind
-            )),
+            _ => Err(anyhow::anyhow!("Unsupported server type: {}", server_config.kind)),
         };
 
         // Handle connection result
@@ -291,17 +222,16 @@ impl UpstreamConnectionPool {
         let database_pool = self.database.as_ref().map(|db| &db.pool);
 
         // Use the unified transport interface to reduce code duplication
-        let (service, tools, capabilities, process_id) =
-            crate::core::transport::unified::connect_server(
-                server_name,
-                server_config,
-                crate::common::server::ServerType::Stdio,
-                crate::common::server::TransportType::Stdio,
-                Some(ct),
-                database_pool,
-                self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
-            )
-            .await?;
+        let (service, tools, capabilities, process_id) = crate::core::transport::unified::connect_server(
+            server_name,
+            server_config,
+            crate::common::server::ServerType::Stdio,
+            crate::common::server::TransportType::Stdio,
+            Some(ct),
+            database_pool,
+            self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
+        )
+        .await?;
 
         // Update connection with service
         self.update_connection(server_name, instance_id, service, tools, capabilities);
@@ -351,6 +281,89 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
+    /// Cancel connection token for a specific instance
+    fn cancel_connection_token(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) {
+        let token_opt = self
+            .cancellation_tokens
+            .get_mut(server_name)
+            .and_then(|tokens| tokens.remove(instance_id));
+
+        let Some(token) = token_opt else {
+            return; // No token to cancel, early return
+        };
+
+        token.cancel();
+        tracing::debug!(
+            "Cancelled token for server '{}' instance '{}' to stop new operations",
+            server_name,
+            instance_id
+        );
+    }
+
+    /// Cancel service with timeout handling
+    async fn cancel_service_with_timeout(
+        &self,
+        server_name: &str,
+        instance_id: &str,
+        service_arc: Arc<RunningService<RoleClient, ()>>,
+    ) {
+        let cancel_timeout = Duration::from_secs(5);
+
+        tracing::info!(
+            "DIAGNOSTIC: About to cancel service for '{}' instance '{}' with {}s timeout",
+            server_name,
+            instance_id,
+            cancel_timeout.as_secs()
+        );
+
+        // Try to extract the service from Arc for cancellation
+        let service = match Arc::try_unwrap(service_arc) {
+            Ok(service) => service,
+            Err(_arc) => {
+                tracing::warn!(
+                    "DIAGNOSTIC: Cannot cancel service for '{}' instance '{}' - multiple references exist",
+                    server_name,
+                    instance_id
+                );
+                return; // Early return if multiple references exist
+            }
+        };
+
+        // Handle service cancellation with timeout
+        match tokio::time::timeout(cancel_timeout, service.cancel()).await {
+            Ok(Ok(quit_reason)) => {
+                tracing::info!(
+                    "DIAGNOSTIC: Service for server '{}' instance '{}' cancelled gracefully with reason: {:?} - Timestamp: {}",
+                    server_name,
+                    instance_id,
+                    quit_reason,
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                );
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    "DIAGNOSTIC: Error during graceful cancellation for '{}' instance '{}': {} - Timestamp: {}",
+                    server_name,
+                    instance_id,
+                    e,
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                );
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "DIAGNOSTIC: Service cancellation timeout for '{}' instance '{}', resources may be leaked - Timestamp: {}",
+                    server_name,
+                    instance_id,
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                );
+            }
+        }
+    }
+
     /// Update connection with service and metadata
     pub fn update_connection(
         &mut self,
@@ -360,103 +373,122 @@ impl UpstreamConnectionPool {
         tools: Vec<Tool>,
         capabilities: Option<rmcp::model::ServerCapabilities>,
     ) {
-        if let Ok(conn) = self.get_instance_mut(server_name, instance_id) {
-            // Check if server supports resources and prompts
-            let supports_resources = capabilities
-                .as_ref()
-                .and_then(|caps| caps.resources.as_ref())
-                .is_some();
-            let supports_prompts = capabilities
-                .as_ref()
-                .and_then(|caps| caps.prompts.as_ref())
-                .is_some();
-
-            // Clone service for database sync operations
-            let service_for_sync = service.peer().clone();
-
-            conn.service = Some(Arc::new(service));
-            conn.tools = tools.clone();
-            conn.capabilities = capabilities;
-            conn.update_ready();
-
-            tracing::info!(
-                "Updated connection for '{}' instance '{}' with service and {} tools",
+        // Early return if connection cannot be retrieved
+        let Ok(conn) = self.get_instance_mut(server_name, instance_id) else {
+            tracing::error!(
+                "Failed to update connection for '{}' instance '{}' - connection not found",
                 server_name,
-                instance_id,
-                conn.tools.len()
+                instance_id
             );
+            return;
+        };
 
-            // Sync to database if database reference is available
-            // Delegate to database.rs methods for cleaner separation of concerns
-            if let Some(db) = &self.database {
-                let db_clone = db.clone();
-                let tools_clone = tools.clone();
-                let server_name_clone = server_name.to_string();
-                let instance_id_clone = instance_id.to_string();
-                let service_for_sync = service_for_sync.clone();
+        // Check server capabilities
+        let supports_resources = capabilities.as_ref().and_then(|caps| caps.resources.as_ref()).is_some();
+        let supports_prompts = capabilities.as_ref().and_then(|caps| caps.prompts.as_ref()).is_some();
 
-                // Spawn async task to handle database sync operations
-                tokio::spawn(async move {
-                    // Always sync tools
-                    if let Err(e) = UpstreamConnectionPool::sync_tools_to_database(
-                        &db_clone,
-                        &server_name_clone,
-                        &tools_clone,
-                    )
-                    .await
-                    {
-                        tracing::error!(
-                            "Failed to sync tools to database for server '{}': {}",
-                            server_name_clone,
-                            e
-                        );
-                    }
+        // Clone service for database sync operations
+        let service_for_sync = service.peer().clone();
 
-                    // Conditionally sync resources if server supports them
-                    if supports_resources {
-                        if let Err(e) =
-                            UpstreamConnectionPool::sync_resources_to_database_with_service(
-                                &db_clone,
-                                &server_name_clone,
-                                &instance_id_clone,
-                                &service_for_sync,
-                            )
-                            .await
-                        {
-                            tracing::error!(
-                                "Failed to sync resources to database for server '{}': {}",
-                                server_name_clone,
-                                e
-                            );
-                        }
-                    }
+        // Update connection properties
+        conn.service = Some(Arc::new(service));
+        conn.tools = tools.clone();
+        conn.capabilities = capabilities;
+        conn.update_ready();
 
-                    // Conditionally sync prompts if server supports them
-                    if supports_prompts {
-                        if let Err(e) =
-                            UpstreamConnectionPool::sync_prompts_to_database_with_service(
-                                &db_clone,
-                                &server_name_clone,
-                                &instance_id_clone,
-                                &service_for_sync,
-                            )
-                            .await
-                        {
-                            tracing::error!(
-                                "Failed to sync prompts to database for server '{}': {}",
-                                server_name_clone,
-                                e
-                            );
-                        }
-                    }
+        tracing::info!(
+            "Updated connection for '{}' instance '{}' with service and {} tools",
+            server_name,
+            instance_id,
+            conn.tools.len()
+        );
 
-                    tracing::debug!(
-                        "Database sync operations completed for server '{}'",
-                        server_name_clone
-                    );
-                });
+        // Handle database sync (early return if no database)
+        let Some(db) = &self.database else {
+            return; // No database available, skip sync operations
+        };
+
+        self.spawn_database_sync_task(
+            db.clone(),
+            server_name.to_string(),
+            instance_id.to_string(),
+            tools,
+            service_for_sync,
+            supports_resources,
+            supports_prompts,
+        );
+    }
+
+    /// Spawn database sync operations in background task
+    fn spawn_database_sync_task(
+        &self,
+        db_clone: Arc<crate::config::database::Database>,
+        server_name_clone: String,
+        instance_id_clone: String,
+        tools_clone: Vec<Tool>,
+        service_for_sync: rmcp::service::Peer<rmcp::service::RoleClient>,
+        supports_resources: bool,
+        supports_prompts: bool,
+    ) {
+        tokio::spawn(async move {
+            // Always sync tools
+            if let Err(e) =
+                UpstreamConnectionPool::sync_tools_to_database(&db_clone, &server_name_clone, &tools_clone).await
+            {
+                tracing::error!(
+                    "Failed to sync tools to database for server '{}': {}",
+                    server_name_clone,
+                    e
+                );
             }
-        }
+
+            // Early return if no additional sync needed
+            if !supports_resources && !supports_prompts {
+                tracing::debug!(
+                    "Database sync operations completed for server '{}' (tools only)",
+                    server_name_clone
+                );
+                return;
+            }
+
+            // Conditionally sync resources if server supports them
+            if supports_resources {
+                if let Err(e) = UpstreamConnectionPool::sync_resources_to_database_with_service(
+                    &db_clone,
+                    &server_name_clone,
+                    &instance_id_clone,
+                    &service_for_sync,
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to sync resources to database for server '{}': {}",
+                        server_name_clone,
+                        e
+                    );
+                }
+            }
+
+            // Conditionally sync prompts if server supports them
+            if supports_prompts {
+                if let Err(e) = UpstreamConnectionPool::sync_prompts_to_database_with_service(
+                    &db_clone,
+                    &server_name_clone,
+                    &instance_id_clone,
+                    &service_for_sync,
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to sync prompts to database for server '{}': {}",
+                        server_name_clone,
+                        e
+                    );
+                }
+            }
+
+            tracing::debug!("Database sync operations completed for server '{}'", server_name_clone);
+        });
     }
 
     /// Perform an operation on a specific instance
@@ -573,62 +605,125 @@ impl UpstreamConnectionPool {
         enabled: bool,
     ) -> Result<()> {
         if enabled {
-            // Load latest config for this server
-            let db = self
-                .database
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
-
-            let (_, config) =
-                crate::core::foundation::loader::load_servers_from_active_suits(db).await?;
-
-            if let Some(_server_config) = config.mcp_servers.get(server_name) {
-                // Update config and start server
-                self.set_config(Arc::new(config))?;
-
-                // Create new connection if needed
-                if !self.connections.contains_key(server_name) {
-                    let connection =
-                        crate::core::connection::UpstreamConnection::new(server_name.to_string());
-                    let instance_id = connection.id.clone();
-                    let instances = self.connections.entry(server_name.to_string()).or_default();
-                    instances.insert(instance_id.clone(), connection);
-                }
-
-                // Get default instance ID and connect
-                let instance_id = self.get_default_instance_id(server_name)?;
-                self.trigger_connect(server_name, &instance_id).await?;
-
-                tracing::info!("Server '{}' enabled and started", server_name);
-            } else {
-                return Err(anyhow::anyhow!(
-                    "Server '{}' not found in active configuration suits",
-                    server_name
-                ));
-            }
+            self.enable_server_internal(server_name).await
         } else {
-            // Stop and remove server
-            if let Some(instances) = self.connections.get(server_name) {
-                let instance_ids: Vec<String> = instances.keys().cloned().collect();
-                for instance_id in instance_ids {
-                    if let Err(e) = self.disconnect(server_name, &instance_id).await {
-                        tracing::warn!(
-                            "Failed to disconnect server '{}' instance '{}': {}",
-                            server_name,
-                            instance_id,
-                            e
-                        );
-                    }
-                }
-            }
+            self.disable_server_internal(server_name).await
+        }
+    }
 
-            // Remove server from pool
-            self.connections.remove(server_name);
-            self.cancellation_tokens.remove(server_name);
+    /// Internal method to enable and start a server
+    async fn enable_server_internal(
+        &mut self,
+        server_name: &str,
+    ) -> Result<()> {
+        // Early return if database not available
+        let db = self
+            .database
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
-            tracing::info!("Server '{}' disabled and stopped", server_name);
+        // Load latest config for this server
+        let (_, config) = crate::core::foundation::loader::load_servers_from_active_suits(db).await?;
+
+        // Early return if server not found in config
+        let Some(_server_config) = config.mcp_servers.get(server_name) else {
+            return Err(anyhow::anyhow!(
+                "Server '{}' not found in active configuration suits",
+                server_name
+            ));
+        };
+
+        // Update config and start server
+        self.set_config(Arc::new(config))?;
+
+        // Create new connection if needed
+        if !self.connections.contains_key(server_name) {
+            let connection = crate::core::connection::UpstreamConnection::new(server_name.to_string());
+            let instance_id = connection.id.clone();
+            let instances = self.connections.entry(server_name.to_string()).or_default();
+            instances.insert(instance_id.clone(), connection);
         }
 
+        // Get default instance ID and connect
+        let instance_id = self.get_default_instance_id(server_name)?;
+        self.trigger_connect(server_name, &instance_id).await?;
+
+        tracing::info!("Server '{}' enabled and started", server_name);
         Ok(())
+    }
+
+    /// Internal method to disable and stop a server
+    async fn disable_server_internal(
+        &mut self,
+        server_name: &str,
+    ) -> Result<()> {
+        // Early return if database not available
+        let db = self
+            .database
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
+
+        // Check if server should remain enabled in any active suit
+        if let Some(server_id) = self.get_server_id_by_name(db, server_name).await? {
+            let still_enabled_in_suits =
+                crate::config::server::is_server_enabled_in_any_active_suit(&db.pool, &server_id)
+                    .await
+                    .unwrap_or(false);
+
+            // Early return if still enabled in other suits
+            if still_enabled_in_suits {
+                tracing::info!(
+                    "Server '{}' disabled in one suit but still enabled in other active suits, keeping instance running",
+                    server_name
+                );
+                return Ok(());
+            }
+        }
+
+        // Disconnect all instances
+        self.disconnect_all_instances(server_name).await;
+
+        // Remove server from pool
+        self.connections.remove(server_name);
+        self.cancellation_tokens.remove(server_name);
+
+        tracing::info!("Server '{}' disabled in all active suits and stopped", server_name);
+        Ok(())
+    }
+
+    /// Helper method to get server ID by name
+    async fn get_server_id_by_name(
+        &self,
+        db: &crate::config::database::Database,
+        server_name: &str,
+    ) -> Result<Option<String>> {
+        let all_servers = crate::config::server::get_all_servers(&db.pool).await?;
+        let server_id = all_servers
+            .iter()
+            .find(|s| s.name == server_name)
+            .and_then(|s| s.id.clone());
+        Ok(server_id)
+    }
+
+    /// Helper method to disconnect all instances of a server
+    async fn disconnect_all_instances(
+        &mut self,
+        server_name: &str,
+    ) {
+        let Some(instances) = self.connections.get(server_name) else {
+            return; // No instances to disconnect, early return
+        };
+
+        let instance_ids: Vec<String> = instances.keys().cloned().collect();
+        for instance_id in instance_ids {
+            if let Err(e) = self.disconnect(server_name, &instance_id).await {
+                tracing::warn!(
+                    "Failed to disconnect server '{}' instance '{}': {}",
+                    server_name,
+                    instance_id,
+                    e
+                );
+            }
+        }
     }
 }

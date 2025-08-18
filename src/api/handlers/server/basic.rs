@@ -22,8 +22,8 @@ pub async fn get_server(
     // Get complete server details using unified function
     let details = common::get_complete_server_details(&db.pool, &server_id, &name, &state).await;
 
-    // Calculate enabled status
-    let enabled = details.globally_enabled && details.enabled_in_suits;
+    // Use globally_enabled as the primary enabled status for global server API
+    let enabled = details.globally_enabled;
 
     // Format timestamps
     let created_at = server.created_at.map(|dt| dt.to_rfc3339());
@@ -66,8 +66,8 @@ pub async fn list_servers(State(state): State<Arc<AppState>>) -> Result<Json<Ser
         // Get complete server details using unified function
         let details = common::get_complete_server_details(&db.pool, &server_id, &name, &state).await;
 
-        // Calculate enabled status
-        let enabled = details.globally_enabled && details.enabled_in_suits;
+        // Use globally_enabled as the primary enabled status for global server API
+        let enabled = details.globally_enabled;
 
         // Format timestamps
         let created_at = server.created_at.map(|dt| dt.to_rfc3339());
