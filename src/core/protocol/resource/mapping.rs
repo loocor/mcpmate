@@ -366,7 +366,7 @@ pub async fn get_all_resources(
 /// # Returns
 /// * `Vec<rmcp::model::ResourceTemplate>` - A vector of all available resource templates
 pub async fn get_all_resource_templates(
-    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
 ) -> Vec<rmcp::model::ResourceTemplate> {
     let mut all_resource_templates = Vec::new();
 
@@ -407,9 +407,15 @@ pub async fn get_all_resource_templates(
         }
     }
 
-    tracing::debug!(
-        "Collected {} total resource templates",
-        all_resource_templates.len()
+    // Use the helper function to deduplicate by template name
+    let deduplicated_templates = crate::core::foundation::utils::deduplicate_by_key(
+        all_resource_templates,
+        |template| template.name.clone(),
     );
-    all_resource_templates
+
+    tracing::debug!(
+        "Collected {} unique resource templates",
+        deduplicated_templates.len()
+    );
+    deduplicated_templates
 }

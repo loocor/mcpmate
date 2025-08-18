@@ -90,14 +90,12 @@ pub async fn add_resource_to_config_suit(
     // Publish event if the resource is new or its enabled status has changed
     if is_new || (existing_enabled != Some(enabled)) {
         // Publish the event
-        crate::core::events::EventBus::global().publish(
-            crate::core::events::Event::ResourceEnabledInSuitChanged {
-                resource_id: id_to_return.clone(),
-                resource_uri: resource_uri.to_string(),
-                suit_id: config_suit_id.to_string(),
-                enabled,
-            },
-        );
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::ResourceEnabledInSuitChanged {
+            resource_id: id_to_return.clone(),
+            resource_uri: resource_uri.to_string(),
+            suit_id: config_suit_id.to_string(),
+            enabled,
+        });
 
         tracing::debug!(
             "Published ResourceEnabledInSuitChanged event for resource '{}' in suit ID {} ({})",
@@ -145,10 +143,7 @@ pub async fn get_resources_for_config_suit(
     pool: &Pool<Sqlite>,
     config_suit_id: &str,
 ) -> Result<Vec<crate::config::models::ConfigSuitResource>> {
-    tracing::debug!(
-        "Getting all resources for configuration suit ID {}",
-        config_suit_id
-    );
+    tracing::debug!("Getting all resources for configuration suit ID {}", config_suit_id);
 
     let resources = sqlx::query_as::<_, crate::config::models::ConfigSuitResource>(
         r#"
@@ -171,10 +166,7 @@ pub async fn get_enabled_resources_for_config_suit(
     pool: &Pool<Sqlite>,
     config_suit_id: &str,
 ) -> Result<Vec<crate::config::models::ConfigSuitResource>> {
-    tracing::debug!(
-        "Getting enabled resources for configuration suit ID {}",
-        config_suit_id
-    );
+    tracing::debug!("Getting enabled resources for configuration suit ID {}", config_suit_id);
 
     let resources = sqlx::query_as::<_, crate::config::models::ConfigSuitResource>(
         r#"
@@ -236,16 +228,30 @@ pub async fn update_resource_enabled_status(
         .fetch_one(pool)
         .await
         {
-            crate::core::events::EventBus::global().publish(
-                crate::core::events::Event::ResourceEnabledInSuitChanged {
-                    resource_id,
-                    resource_uri: resource_uri.to_string(),
-                    suit_id: config_suit_id.to_string(),
-                    enabled,
-                },
-            );
+            crate::core::events::EventBus::global().publish(crate::core::events::Event::ResourceEnabledInSuitChanged {
+                resource_id,
+                resource_uri: resource_uri.to_string(),
+                suit_id: config_suit_id.to_string(),
+                enabled,
+            });
         }
     }
 
     Ok(result.rows_affected() > 0)
+}
+
+/// Common query builder for enabled resources from active configuration suits.
+/// This helper reduces code duplication and ensures consistency.
+pub fn build_enabled_resources_query(additional_where: Option<&str>) -> String {
+    let base_query = r#"
+        SELECT DISTINCT csr.server_name, csr.resource_uri
+        FROM config_suit_resource csr
+        JOIN config_suit cs ON csr.config_suit_id = cs.id
+        WHERE cs.is_active = true AND csr.enabled = true
+    "#;
+
+    match additional_where {
+        Some(condition) => format!("{} AND {}", base_query, condition),
+        None => base_query.to_string(),
+    }
 }

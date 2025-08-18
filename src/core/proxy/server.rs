@@ -458,64 +458,39 @@ impl ServerHandler for ProxyServer {
         _request: Option<rmcp::model::PaginatedRequestParam>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, McpError> {
-        tracing::debug!("Listing tools from proxy server");
-
-        // Prefer database-driven list; fallback to runtime connections if empty
-        let mut tools_from_db: Vec<rmcp::model::Tool> = Vec::new();
-        if let Some(db) = &self.database {
-            let db_service = crate::core::protocol::DatabaseToolService::new(db.clone(), self.connection_pool.clone());
-            match db_service.get_enabled_tools().await {
-                Ok(ts) => tools_from_db = ts,
-                Err(e) => {
-                    tracing::error!("Failed to get tools using database service: {}", e);
-                }
-            }
-        } else {
-            tracing::warn!("Database not available for tool filtering; will use runtime fallback");
-        }
-
-        // Always include builtin service tools
-        let builtin_tools = self.builtin_services.tools();
-        tracing::debug!("Including {} builtin service tools", builtin_tools.len());
-
-        if tools_from_db.is_empty() {
-            // Runtime fallback: aggregate tools from connected instances
-            let mut aggregated: Vec<rmcp::model::Tool> = Vec::new();
-            let pool = self.connection_pool.lock().await;
-            for instances in pool.connections.values() {
-                for conn in instances.values() {
-                    if conn.is_connected() && !conn.tools.is_empty() {
-                        aggregated.extend(conn.tools.clone());
-                    }
-                }
-            }
-
-            // Add builtin tools to runtime fallback
-            aggregated.extend(builtin_tools);
-
-            if aggregated.is_empty() {
-                tracing::warn!("Proxy runtime fallback found 0 tools across connected instances and builtin services");
-            } else {
-                tracing::info!(
-                    "Proxy runtime fallback aggregated {} tools (including builtin)",
-                    aggregated.len()
-                );
-            }
+        // Early return if no database available
+        let Some(db) = &self.database else {
+            tracing::warn!("Database not available for tool filtering; returning only builtin tools");
+            let builtin_tools = self.builtin_services.tools();
             return Ok(rmcp::model::ListToolsResult {
-                tools: aggregated,
+                tools: builtin_tools,
                 next_cursor: None,
             });
-        }
+        };
 
-        // Add builtin tools to database-driven results
-        tools_from_db.extend(builtin_tools);
-        tracing::info!(
-            "Proxy listed {} total tools (including builtin services)",
-            tools_from_db.len()
-        );
+        // Get enabled tools from database configuration
+        let db_service = crate::core::protocol::DatabaseToolService::new(db.clone(), self.connection_pool.clone());
+        let mut tools = match db_service.get_enabled_tools().await {
+            Ok(tools) => {
+                tracing::info!("Proxy listed {} tools from database", tools.len());
+                tools
+            }
+            Err(e) => {
+                tracing::error!("Failed to get tools using database service: {}", e);
+                // Return empty list on error - no fallback to runtime aggregation
+                Vec::new()
+            }
+        };
+
+        // Always include builtin service tools (these are system tools, not user-configurable)
+        let builtin_tools = self.builtin_services.tools();
+        tracing::debug!("Including {} builtin service tools", builtin_tools.len());
+        tools.extend(builtin_tools);
+
+        tracing::info!("Proxy listed {} total tools (including builtin services)", tools.len());
 
         Ok(rmcp::model::ListToolsResult {
-            tools: tools_from_db,
+            tools,
             next_cursor: None,
         })
     }
@@ -570,10 +545,29 @@ impl ServerHandler for ProxyServer {
         _request: Option<PaginatedRequestParam>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        tracing::debug!("Listing resources from proxy server");
+        // Early return if no database available
+        let Some(db) = &self.database else {
+            tracing::warn!("Database not available for resource filtering; returning empty list");
+            return Ok(ListResourcesResult {
+                resources: Vec::new(),
+                next_cursor: None,
+            });
+        };
 
-        // Use core protocol implementation
-        let resources = crate::core::protocol::get_all_resources(&self.connection_pool).await;
+        // Get enabled resources from database configuration
+        let db_service =
+            crate::core::protocol::resource::DatabaseResourceService::new(db.clone(), self.connection_pool.clone());
+        let resources = match db_service.get_enabled_resources().await {
+            Ok(resources) => {
+                tracing::info!("Proxy listed {} total resources from database", resources.len());
+                resources
+            }
+            Err(e) => {
+                tracing::error!("Failed to get resources using database service: {}", e);
+                // Return empty list on error - no fallback to runtime aggregation
+                Vec::new()
+            }
+        };
 
         Ok(ListResourcesResult {
             resources,
@@ -586,10 +580,32 @@ impl ServerHandler for ProxyServer {
         _request: Option<PaginatedRequestParam>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        tracing::debug!("Listing resource templates from proxy server");
+        // Early return if no database available
+        let Some(db) = &self.database else {
+            tracing::warn!("Database not available for server filtering; returning empty list");
+            return Ok(ListResourceTemplatesResult {
+                resource_templates: Vec::new(),
+                next_cursor: None,
+            });
+        };
 
-        // Use core protocol implementation
-        let resource_templates = crate::core::protocol::get_all_resource_templates(&self.connection_pool).await;
+        // Get resource templates from enabled servers only
+        let db_service =
+            crate::core::protocol::resource::DatabaseResourceService::new(db.clone(), self.connection_pool.clone());
+        let resource_templates = match db_service.get_enabled_resource_templates().await {
+            Ok(templates) => {
+                tracing::info!(
+                    "Proxy listed {} resource templates from enabled servers",
+                    templates.len()
+                );
+                templates
+            }
+            Err(e) => {
+                tracing::error!("Failed to get resource templates using database service: {}", e);
+                // Return empty list on error - no fallback to runtime aggregation
+                Vec::new()
+            }
+        };
 
         Ok(ListResourceTemplatesResult {
             resource_templates,
@@ -630,10 +646,29 @@ impl ServerHandler for ProxyServer {
         _request: Option<PaginatedRequestParam>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        tracing::debug!("Listing prompts from proxy server");
+        // Early return if no database available
+        let Some(db) = &self.database else {
+            tracing::warn!("Database not available for prompt filtering; returning empty list");
+            return Ok(ListPromptsResult {
+                prompts: Vec::new(),
+                next_cursor: None,
+            });
+        };
 
-        // Use core protocol implementation
-        let prompts = crate::core::protocol::get_all_prompts(&self.connection_pool).await;
+        // Get enabled prompts from database configuration
+        let db_service =
+            crate::core::protocol::prompt::DatabasePromptService::new(db.clone(), self.connection_pool.clone());
+        let prompts = match db_service.get_enabled_prompts().await {
+            Ok(prompts) => {
+                tracing::info!("Proxy listed {} total prompts from database", prompts.len());
+                prompts
+            }
+            Err(e) => {
+                tracing::error!("Failed to get prompts using database service: {}", e);
+                // Return empty list on error - no fallback to runtime aggregation
+                Vec::new()
+            }
+        };
 
         Ok(ListPromptsResult {
             prompts,

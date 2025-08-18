@@ -272,3 +272,18 @@ pub async fn update_prompt_enabled_status(
 
     Ok(())
 }
+
+/// Common query builder for enabled prompts from active configuration suits.
+pub fn build_enabled_prompts_query(additional_where: Option<&str>) -> String {
+    let base_query = r#"
+        SELECT DISTINCT csp.server_name, csp.prompt_name
+        FROM config_suit_prompt csp
+        JOIN config_suit cs ON csp.config_suit_id = cs.id
+        WHERE cs.is_active = true AND csp.enabled = true
+    "#;
+
+    match additional_where {
+        Some(condition) => format!("{} AND {}", base_query, condition),
+        None => base_query.to_string(),
+    }
+}

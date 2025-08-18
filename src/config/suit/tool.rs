@@ -116,7 +116,7 @@ impl ToolStatusService {
 /// This helper reduces code duplication across the codebase
 pub fn build_enabled_tools_query(additional_where: Option<&str>) -> String {
     let base_query = r#"
-        SELECT st.unique_name, st.server_name, st.tool_name, st.server_id
+        SELECT DISTINCT st.unique_name, st.server_name, st.tool_name, st.server_id
         FROM config_suit_tool cst
         JOIN config_suit cs ON cst.config_suit_id = cs.id
         JOIN server_tools st ON cst.server_tool_id = st.id

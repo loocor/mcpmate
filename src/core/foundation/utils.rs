@@ -1,8 +1,8 @@
 //! Core Utility Functions
 //!
-//! utility functions for timeout configuration and command preparation
+//! utility functions for timeout configuration, command preparation, and common patterns
 
-use std::{future::Future, time::Duration};
+use std::{collections::HashSet, future::Future, hash::Hash, time::Duration};
 
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -195,6 +195,65 @@ pub fn transform_command(command: &str) -> String {
     }
 }
 
+/// Generic deduplication helper that removes duplicates based on a key function
+/// 
+/// This helper reduces code duplication across the codebase for common
+/// deduplication patterns using HashSet.
+/// 
+/// # Arguments
+/// * `items` - Vector of items to deduplicate
+/// * `key_fn` - Function that extracts the key for deduplication
+/// 
+/// # Returns
+/// * `Vec<T>` - Deduplicated vector maintaining original order for first occurrence
+pub fn deduplicate_by_key<T, K, F>(items: Vec<T>, key_fn: F) -> Vec<T>
+where
+    K: Hash + Eq,
+    F: Fn(&T) -> K,
+{
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    
+    for item in items {
+        let key = key_fn(&item);
+        if seen.insert(key) {
+            result.push(item);
+        }
+    }
+    
+    result
+}
+
+/// Database fallback helper for operations that require database access
+/// 
+/// This helper implements the early return pattern for database operations,
+/// providing a consistent way to handle missing database connections.
+/// 
+/// # Arguments
+/// * `db_option` - Optional reference to database
+/// * `operation` - Async operation to perform with database
+/// * `fallback_value` - Value to return if database is not available
+/// 
+/// # Returns
+/// * `Result<T>` - Operation result or fallback value
+pub async fn with_db_or_fallback<T, F, Fut>(
+    db_option: Option<&crate::config::database::Database>,
+    operation: F,
+    fallback_value: T,
+) -> anyhow::Result<T>
+where
+    F: FnOnce(&crate::config::database::Database) -> Fut,
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    match db_option {
+        Some(db) => operation(db).await,
+        None => {
+            tracing::warn!("Database not available, using fallback value");
+            Ok(fallback_value)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +269,23 @@ mod tests {
         assert_eq!(transform_command("docker"), "docker");
         assert_eq!(transform_command("node"), "node");
         assert_eq!(transform_command("python"), "python");
+    }
+
+    #[test]
+    fn test_deduplicate_by_key() {
+        // Test with integers using identity function
+        let items = vec![1, 2, 2, 3, 1, 4];
+        let result = deduplicate_by_key(items, |x| *x);
+        assert_eq!(result, vec![1, 2, 3, 4]);
+
+        // Test with tuples using first element as key
+        let items = vec![("a", 1), ("b", 2), ("a", 3), ("c", 4)];
+        let result = deduplicate_by_key(items, |x| x.0);
+        assert_eq!(result, vec![("a", 1), ("b", 2), ("c", 4)]);
+
+        // Test empty vector
+        let items: Vec<i32> = vec![];
+        let result = deduplicate_by_key(items, |x| *x);
+        assert_eq!(result, Vec::<i32>::new());
     }
 }
