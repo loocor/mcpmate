@@ -9,7 +9,7 @@ use rmcp::{
     transport::TokioChildProcess,
 };
 use sysinfo;
-use tokio::time::timeout;
+use tokio::{io::AsyncReadExt, time::timeout};
 use tokio_util::sync::CancellationToken;
 
 use crate::core::foundation::utils::{
@@ -107,10 +107,39 @@ async fn connect_with_timeout(
     server_name: &str,
     connection_timeout: std::time::Duration,
 ) -> Result<RunningService<RoleClient, ()>> {
-    let child_process = TokioChildProcess::new(cmd).map_err(|e| {
-        ct.cancel();
-        anyhow::anyhow!("Failed to create child process: {e}")
-    })?;
+    // Use builder to capture stderr for logging
+    let (child_process, stderr_handle) = TokioChildProcess::builder(cmd)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            ct.cancel();
+            anyhow::anyhow!("Failed to create child process: {e}")
+        })?;
+
+    // Spawn stderr monitoring task if stderr is available
+    if let Some(mut stderr) = stderr_handle {
+        let server_name = server_name.to_string();
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 1024];
+            loop {
+                match stderr.read(&mut buffer).await {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        let output = String::from_utf8_lossy(&buffer[..n]);
+                        for line in output.lines() {
+                            if !line.trim().is_empty() {
+                                tracing::info!("Log from {}: {}", server_name, line.trim());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("Stderr read error for server '{}': {}", server_name, e);
+                        break;
+                    }
+                }
+            }
+        });
+    }
 
     timeout(connection_timeout, async {
         serve_client_with_ct((), child_process, ct.clone())
@@ -185,7 +214,7 @@ async fn connect_stdio_server_core(
     let connection_timeout = get_connection_timeout(command);
     let tools_timeout = get_tools_timeout(command);
 
-    tracing::info!(
+    tracing::debug!(
         "Using timeouts for '{}': connection={}s, tools={}s",
         server_name,
         connection_timeout.as_secs(),
@@ -208,7 +237,7 @@ async fn connect_stdio_server_core(
     let pid = get_process_id_for_server(server_name, server_config).await;
     let capabilities = service.peer_info().map(|info| info.capabilities.clone());
 
-    tracing::info!(
+    tracing::debug!(
         "Connected to server '{}', found {} tools, capabilities: {:?}, process ID: {:?}",
         server_name,
         tools.len(),

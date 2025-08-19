@@ -57,7 +57,7 @@ impl UpstreamConnectionPool {
         // For now, use immediate reconnect to avoid the Weak reference bug
         // TODO: Implement proper Arc-based async scheduling
         tracing::warn!(
-            "DIAGNOSTIC: Using immediate reconnect to bypass Weak reference bug for '{}' instance '{}'",
+            "Using immediate reconnect to bypass Weak reference bug for '{}' instance '{}'",
             server_name,
             instance_id
         );
@@ -73,14 +73,14 @@ impl UpstreamConnectionPool {
         instance_id: &str,
     ) -> Result<()> {
         tracing::info!(
-            "DIAGNOSTIC: disconnect() called for '{}' instance '{}' - Stack trace requested",
+            "disconnect() called for '{}' instance '{}' - Stack trace requested",
             server_name,
             instance_id
         );
 
         // Add stack trace logging to identify caller
         let backtrace = std::backtrace::Backtrace::capture();
-        tracing::info!("DIAGNOSTIC: Disconnect initiated from: {}", backtrace);
+        tracing::info!("Disconnect initiated from: {}", backtrace);
 
         // Step 1: Cancel the token first to stop new operations
         self.cancel_connection_token(server_name, instance_id);
@@ -314,7 +314,7 @@ impl UpstreamConnectionPool {
         let cancel_timeout = Duration::from_secs(5);
 
         tracing::info!(
-            "DIAGNOSTIC: About to cancel service for '{}' instance '{}' with {}s timeout",
+            "About to cancel service for '{}' instance '{}' with {}s timeout",
             server_name,
             instance_id,
             cancel_timeout.as_secs()
@@ -325,7 +325,7 @@ impl UpstreamConnectionPool {
             Ok(service) => service,
             Err(_arc) => {
                 tracing::warn!(
-                    "DIAGNOSTIC: Cannot cancel service for '{}' instance '{}' - multiple references exist",
+                    "Cannot cancel service for '{}' instance '{}' - multiple references exist",
                     server_name,
                     instance_id
                 );
@@ -337,7 +337,7 @@ impl UpstreamConnectionPool {
         match tokio::time::timeout(cancel_timeout, service.cancel()).await {
             Ok(Ok(quit_reason)) => {
                 tracing::info!(
-                    "DIAGNOSTIC: Service for server '{}' instance '{}' cancelled gracefully with reason: {:?} - Timestamp: {}",
+                    "Service for server '{}' instance '{}' cancelled gracefully with reason: {:?} - Timestamp: {}",
                     server_name,
                     instance_id,
                     quit_reason,
@@ -346,7 +346,7 @@ impl UpstreamConnectionPool {
             }
             Ok(Err(e)) => {
                 tracing::warn!(
-                    "DIAGNOSTIC: Error during graceful cancellation for '{}' instance '{}': {} - Timestamp: {}",
+                    "Error during graceful cancellation for '{}' instance '{}': {} - Timestamp: {}",
                     server_name,
                     instance_id,
                     e,
@@ -355,7 +355,7 @@ impl UpstreamConnectionPool {
             }
             Err(_) => {
                 tracing::warn!(
-                    "DIAGNOSTIC: Service cancellation timeout for '{}' instance '{}', resources may be leaked - Timestamp: {}",
+                    "Service cancellation timeout for '{}' instance '{}', resources may be leaked - Timestamp: {}",
                     server_name,
                     instance_id,
                     chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")

@@ -9,18 +9,11 @@ use tracing_subscriber::{self, EnvFilter};
 use super::{Args, ProxyServer, args::StartupMode};
 
 // Import required types and modules from core and other modules
-use crate::{
-    api::handlers::system,
-    config::database::Database,
-    core::{events, foundation::loader},
-    // runtime::migration removed - simplified runtime management
-};
+use crate::{api::handlers::system, config::database::Database, core::foundation::loader};
 
 /// Setup logging based on command line arguments
 /// This function is safe to call multiple times - it will only initialize once
 pub fn setup_logging(args: &Args) -> Result<()> {
-    // Use try_init() to avoid panic on repeated calls
-
     // Create environment filter with smart defaults
     let (env_filter, log_config_msg) = if let Ok(rust_log) = std::env::var("RUST_LOG") {
         // If RUST_LOG is set, respect it completely - no overrides
@@ -120,9 +113,8 @@ pub async fn setup_proxy_server_with_params(
     let proxy_arc = Arc::new(proxy.clone());
     ProxyServer::set_global(Arc::new(tokio::sync::Mutex::new(proxy.clone())));
 
-    // Initialize the event system using core
-    let _ = events::init();
-    tracing::info!("Event system initialized using core");
+    // Event system will be initialized in proxy.set_database() with proper handlers
+    tracing::info!("Proxy server created, event system will be initialized with handlers");
 
     Ok((proxy, proxy_arc))
 }

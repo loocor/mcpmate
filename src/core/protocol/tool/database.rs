@@ -165,7 +165,7 @@ impl DatabaseToolService {
         // Add diagnostic logging when no tools are found
         if all_tools.is_empty() {
             tracing::warn!(
-                "DIAGNOSTIC: Tool database returned 0 enabled tools - Enabled tools in config: {}",
+                "Tool database returned 0 enabled tools - Enabled tools in config: {}",
                 enabled_tools_count
             );
 
@@ -174,7 +174,7 @@ impl DatabaseToolService {
                 if let Some(instances) = pool.connections.get(server_name) {
                     for (inst_id, conn) in instances {
                         tracing::warn!(
-                            "DIAGNOSTIC: Tool '{}' from server '{}' instance '{}' - Status: {:?}, Connected: {}, Disabled: {}",
+                            "Tool '{}' from server '{}' instance '{}' - Status: {:?}, Connected: {}, Disabled: {}",
                             unique_name,
                             server_name,
                             inst_id,
@@ -185,7 +185,7 @@ impl DatabaseToolService {
                     }
                 } else {
                     tracing::warn!(
-                        "DIAGNOSTIC: Tool '{}' from server '{}' - No instances in connection pool",
+                        "Tool '{}' from server '{}' - No instances in connection pool",
                         unique_name,
                         server_name
                     );

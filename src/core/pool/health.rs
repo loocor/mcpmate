@@ -46,10 +46,7 @@ impl UpstreamConnectionPool {
                             let now = std::time::Instant::now();
 
                             // Only monitor instances that should be monitored
-                            if !matches!(
-                                conn.status,
-                                ConnectionStatus::Ready | ConnectionStatus::Error(_)
-                            ) {
+                            if !matches!(conn.status, ConnectionStatus::Ready | ConnectionStatus::Error(_)) {
                                 continue;
                             }
 
@@ -64,16 +61,15 @@ impl UpstreamConnectionPool {
                                         // Every 60 minutes
                                         {
                                             tracing::info!(
-                                                "DIAGNOSTIC: Health check triggering periodic reconnect for '{}' instance '{}' - Last connected: {:?} ago, threshold: 3600s",
+                                                "Health check triggering periodic reconnect for '{}' instance '{}' - Last connected: {:?} ago, threshold: 3600s",
                                                 server_name,
                                                 instance_id,
                                                 now.duration_since(conn.last_connected)
                                             );
-                                            reconnects
-                                                .push((server_name.clone(), instance_id.clone()));
+                                            reconnects.push((server_name.clone(), instance_id.clone()));
                                         } else {
                                             tracing::debug!(
-                                                "DIAGNOSTIC: Health check - '{}' instance '{}' still healthy, connected {:?} ago",
+                                                "Health check - '{}' instance '{}' still healthy, connected {:?} ago",
                                                 server_name,
                                                 instance_id,
                                                 now.duration_since(conn.last_connected)
@@ -100,7 +96,7 @@ impl UpstreamConnectionPool {
                                 }
                                 ConnectionStatus::Error(error_details) => {
                                     tracing::debug!(
-                                        "DIAGNOSTIC: Health check found error state for '{}' instance '{}': {} (type: {:?}, failures: {})",
+                                        "Health check found error state for '{}' instance '{}': {} (type: {:?}, failures: {})",
                                         server_name,
                                         instance_id,
                                         error_details.message,
@@ -108,8 +104,7 @@ impl UpstreamConnectionPool {
                                         error_details.failure_count
                                     );
                                     // Skip permanent errors to avoid unnecessary reconnection attempts
-                                    if error_details.error_type
-                                        == crate::core::foundation::types::ErrorType::Permanent
+                                    if error_details.error_type == crate::core::foundation::types::ErrorType::Permanent
                                     {
                                         tracing::debug!(
                                             "Health check: Skipping permanent error for '{}' instance '{}'",
@@ -235,6 +230,7 @@ impl UpstreamConnectionPool {
             };
 
             match &conn.status {
+                // Ready state
                 ConnectionStatus::Ready => {
                     // Check if the service is still connected
                     if !conn.is_connected() {
@@ -261,6 +257,8 @@ impl UpstreamConnectionPool {
                         }
                     }
                 }
+
+                // Error state
                 ConnectionStatus::Error(error_details) => {
                     // Check if we should retry based on error type and failure count
                     let should_retry = match error_details.error_type {
@@ -285,8 +283,7 @@ impl UpstreamConnectionPool {
 
                                 // Calculate time since last failure
                                 let now = chrono::Local::now().timestamp() as u64;
-                                let seconds_since_last_failure =
-                                    now.saturating_sub(error_details.last_failure_time);
+                                let seconds_since_last_failure = now.saturating_sub(error_details.last_failure_time);
 
                                 // Only retry if enough time has passed based on progressive backoff
                                 if seconds_since_last_failure >= backoff_seconds {
@@ -320,8 +317,7 @@ impl UpstreamConnectionPool {
 
                             // Calculate time since last failure
                             let now = chrono::Local::now().timestamp() as u64;
-                            let seconds_since_last_failure =
-                                now.saturating_sub(error_details.last_failure_time);
+                            let seconds_since_last_failure = now.saturating_sub(error_details.last_failure_time);
 
                             // Only retry if enough time has passed
                             seconds_since_last_failure >= backoff_seconds
@@ -347,6 +343,8 @@ impl UpstreamConnectionPool {
                         }
                     }
                 }
+
+                // Disabled state
                 _ => {
                     // Other states don't need checking
                 }

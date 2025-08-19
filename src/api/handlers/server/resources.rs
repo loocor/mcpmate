@@ -34,7 +34,7 @@ fn db_error(e: impl std::fmt::Display) -> ApiError {
 /// 5) None: return empty.
 ///
 /// Supports both `server_name` and `server_id` as identifier.
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state), level = "debug")]
 pub async fn list_resources(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -238,7 +238,7 @@ pub async fn list_resources(
 /// 5) None: return empty.
 ///
 /// Supports both `server_name` and `server_id` as identifier.
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state), level = "debug")]
 pub async fn list_resource_templates(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,

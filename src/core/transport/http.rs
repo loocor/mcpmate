@@ -39,7 +39,7 @@ pub async fn connect_http_server(
     let service_timeout = get_sse_service_timeout();
     let tools_timeout = get_sse_tools_timeout();
 
-    tracing::info!(
+    tracing::debug!(
         "Using timeouts for '{}': connection={}s, service={}s, tools={}s",
         server_name,
         connection_timeout.as_secs(),

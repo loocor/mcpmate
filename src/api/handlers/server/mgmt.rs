@@ -55,7 +55,7 @@ fn create_operation_response(
 }
 
 /// Enable a server by setting its global availability to enabled
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state), level = "debug")]
 pub async fn enable_server(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -91,7 +91,7 @@ pub async fn enable_server(
 }
 
 /// Disable a server by setting its global availability to disabled
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state), level = "debug")]
 pub async fn disable_server(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
