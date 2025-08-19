@@ -24,6 +24,19 @@ pub struct ServerIdentification {
     pub server_name: String,
 }
 
+/// Helper function to create ServerIdentification from a server record
+#[inline]
+fn create_server_identification(server: crate::config::models::Server) -> Result<ServerIdentification, ApiError> {
+    let server_id = server
+        .id
+        .ok_or_else(|| ApiError::InternalError("Server found but missing ID".to_string()))?;
+
+    Ok(ServerIdentification {
+        server_id,
+        server_name: server.name,
+    })
+}
+
 /// Complete server details for response building
 #[derive(Debug, Default)]
 pub struct ServerDetails {
@@ -55,14 +68,7 @@ pub async fn resolve_server_identifier(
         .await
         .map_err(|e| ApiError::InternalError(format!("Database error: {e}")))?
     {
-        let server_id = server
-            .id
-            .ok_or_else(|| ApiError::InternalError("Server found but missing ID".to_string()))?;
-
-        return Ok(ServerIdentification {
-            server_id,
-            server_name: server.name,
-        });
+        return create_server_identification(server);
     }
 
     // Try to find server by name
@@ -70,14 +76,7 @@ pub async fn resolve_server_identifier(
         .await
         .map_err(|e| ApiError::InternalError(format!("Database error: {e}")))?
     {
-        let server_id = server
-            .id
-            .ok_or_else(|| ApiError::InternalError("Server found but missing ID".to_string()))?;
-
-        return Ok(ServerIdentification {
-            server_id,
-            server_name: server.name,
-        });
+        return create_server_identification(server);
     }
 
     // Server not found
@@ -102,34 +101,26 @@ pub async fn get_complete_server_details(
     // Get server arguments
     if !server_id.is_empty() {
         match server::get_server_args(pool, server_id).await {
-            Ok(server_args) => {
-                if !server_args.is_empty() {
-                    let mut sorted_args: Vec<_> = server_args.into_iter().collect();
-                    sorted_args.sort_by_key(|arg| arg.arg_index);
-                    details.args = Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect());
-                }
+            Ok(server_args) if !server_args.is_empty() => {
+                let mut sorted_args: Vec<_> = server_args.into_iter().collect();
+                sorted_args.sort_by_key(|arg| arg.arg_index);
+                details.args = Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect());
             }
-            Err(e) => {
-                tracing::warn!("Failed to get arguments for server '{}': {}", server_name, e);
-            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("Failed to get arguments for server '{}': {}", server_name, e),
         }
     }
 
     // Get server environment variables
     if !server_id.is_empty() {
         match server::get_server_env(pool, server_id).await {
-            Ok(env_map) => {
-                if !env_map.is_empty() {
-                    details.env = Some(env_map);
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to get environment variables for server '{}': {}",
-                    server_name,
-                    e
-                );
-            }
+            Ok(env_map) if !env_map.is_empty() => details.env = Some(env_map),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(
+                "Failed to get environment variables for server '{}': {}",
+                server_name,
+                e
+            ),
         }
     }
 
@@ -148,16 +139,15 @@ pub async fn get_complete_server_details(
                 });
             }
             Ok(None) => {}
-            Err(e) => {
-                tracing::warn!("Failed to get metadata for server '{}': {}", server_name, e);
-            }
+            Err(e) => tracing::warn!("Failed to get metadata for server '{}': {}", server_name, e),
         }
     }
 
     // Get server global enabled status
     details.globally_enabled = server::get_server_global_status(pool, server_id)
         .await
-        .unwrap_or(Some(true))
+        .ok()
+        .flatten()
         .unwrap_or(true);
 
     // Get server enabled status in config suits
@@ -179,48 +169,42 @@ pub async fn get_server_instances(
     state: &Arc<AppState>,
     server_name: &str,
 ) -> Vec<ServerInstanceSummary> {
-    match tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await {
-        Ok(pool) => {
-            if let Some(instances) = pool.connections.get(server_name) {
-                instances
-                    .iter()
-                    .map(|(id, conn)| {
-                        let connected_at = if conn.is_connected() {
-                            Some(
-                                chrono::DateTime::<chrono::Utc>::from(
-                                    std::time::SystemTime::now() - conn.time_since_last_connection(),
-                                )
-                                .to_rfc3339(),
-                            )
-                        } else {
-                            None
-                        };
-
-                        ServerInstanceSummary {
-                            id: id.clone(),
-                            status: conn.status_string(),
-                            started_at: Some(
-                                chrono::DateTime::<chrono::Utc>::from(
-                                    std::time::SystemTime::now() - conn.time_since_creation(),
-                                )
-                                .to_rfc3339(),
-                            ),
-                            connected_at,
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
-        }
+    let pool = match get_connection_pool_with_timeout(state).await {
+        Ok(pool) => pool,
         Err(_) => {
             tracing::warn!(
                 "Timed out waiting for connection pool lock for server '{}'",
                 server_name
             );
-            Vec::new()
+            return Vec::new();
         }
-    }
+    };
+
+    let instances = match pool.connections.get(server_name) {
+        Some(instances) => instances,
+        None => return Vec::new(),
+    };
+
+    let now = std::time::SystemTime::now();
+    instances
+        .iter()
+        .map(|(id, conn)| {
+            let connected_at = if conn.is_connected() {
+                Some(chrono::DateTime::<chrono::Utc>::from(now - conn.time_since_last_connection()).to_rfc3339())
+            } else {
+                None
+            };
+
+            let started_at = chrono::DateTime::<chrono::Utc>::from(now - conn.time_since_creation()).to_rfc3339();
+
+            ServerInstanceSummary {
+                id: id.clone(),
+                status: conn.status_string(),
+                started_at: Some(started_at),
+                connected_at,
+            }
+        })
+        .collect()
 }
 
 /// Get connection pool with timeout protection
@@ -262,6 +246,7 @@ pub async fn get_server_by_identifier(
 ///
 /// This function can be extended to include authorization checks,
 /// rate limiting, or other access control mechanisms.
+#[inline]
 pub async fn validate_server_access(
     _pool: &Pool<Sqlite>,
     _server_id: &str,
@@ -275,6 +260,7 @@ pub async fn validate_server_access(
 ///
 /// Helper function to extract database connection from AppState
 /// with proper error handling.
+#[inline]
 pub fn get_database_from_state(state: &Arc<AppState>) -> Result<Arc<Database>, ApiError> {
     state
         .http_proxy
@@ -323,7 +309,7 @@ impl InspectQuery {
     /// Convert to InspectParams
     pub fn to_params(&self) -> Result<InspectParams, crate::api::handlers::ApiError> {
         Ok(InspectParams {
-            refresh: self.refresh.or(Some(RefreshStrategy::CacheFirst)),
+            refresh: Some(self.refresh.unwrap_or_default()),
             format: self.format.clone(),
             include_meta: self.include_meta,
             timeout: self.timeout,
@@ -332,6 +318,7 @@ impl InspectQuery {
 }
 
 /// Map inspect RefreshStrategy to cache FreshnessLevel for Redb
+#[inline]
 pub fn map_refresh_to_freshness(refresh: RefreshStrategy) -> FreshnessLevel {
     match refresh {
         RefreshStrategy::CacheFirst => FreshnessLevel::Cached,
@@ -341,6 +328,7 @@ pub fn map_refresh_to_freshness(refresh: RefreshStrategy) -> FreshnessLevel {
 }
 
 /// Validate a cached snapshot for being non-empty
+#[inline]
 pub fn cached_snapshot_has_data(data: &crate::core::cache::CachedServerData) -> bool {
     !(data.tools.is_empty()
         && data.resources.is_empty()
@@ -356,19 +344,16 @@ pub fn build_cache_query(
     let refresh = params.refresh.unwrap_or_default();
     let freshness_level = map_refresh_to_freshness(refresh);
     CacheQuery {
-        server_id: server_id.to_string(),
+        server_id: server_id.to_owned(),
         freshness_level,
         include_disabled: false,
     }
 }
 
-
-
-
-
 /// Validate server ID format
 ///
 /// Ensures server ID follows expected format patterns
+#[inline]
 pub fn validate_server_id(server_id: &str) -> Result<(), ApiError> {
     if server_id.trim().is_empty() {
         return Err(ApiError::BadRequest("Server ID cannot be empty".to_string()));
@@ -388,6 +373,7 @@ pub fn validate_server_id(server_id: &str) -> Result<(), ApiError> {
 /// Handle inspect service errors with appropriate HTTP status codes
 ///
 /// Converts inspect service errors to appropriate API errors
+#[inline]
 pub fn handle_inspect_error(error: String) -> ApiError {
     ApiError::InternalError(error)
 }
@@ -403,17 +389,18 @@ pub fn create_runtime_cache_data(
     prompts: Vec<crate::core::cache::CachedPromptInfo>,
     resource_templates: Vec<crate::core::cache::CachedResourceTemplateInfo>,
 ) -> crate::core::cache::CachedServerData {
+    let now = chrono::Utc::now();
     crate::core::cache::CachedServerData {
         server_id: server_info.server_id.clone(),
         server_name: server_info.server_name.clone(),
         server_version: None,
-        protocol_version: "latest".to_string(),
+        protocol_version: "latest".to_owned(),
         tools,
         resources,
         prompts,
         resource_templates,
-        cached_at: chrono::Utc::now(),
-        fingerprint: format!("runtime:{}:{}", server_info.server_id, chrono::Utc::now().timestamp()),
+        cached_at: now,
+        fingerprint: format!("runtime:{}:{}", server_info.server_id, now.timestamp()),
     }
 }
 
@@ -443,3 +430,21 @@ pub fn create_inspect_response(
     }))
 }
 
+/// Try to enrich capability items with database mappings, fallback to plain response if DB unavailable
+#[inline]
+pub async fn try_enrich_or_fallback(
+    state: &Arc<AppState>,
+    kind: super::capability::CapabilityKind,
+    server_id: &str,
+    processed: Vec<serde_json::Value>,
+    cache_hit: bool,
+    refresh: Option<RefreshStrategy>,
+    strategy: &str,
+) -> Result<axum::Json<serde_json::Value>, ApiError> {
+    if let Ok(db) = get_database_from_state(state) {
+        let enriched = super::capability::enrich_capability_items(kind, &db.pool, server_id, processed).await;
+        Ok(super::capability::respond_with_enriched(enriched, cache_hit, refresh, strategy))
+    } else {
+        Ok(create_inspect_response(processed, cache_hit, refresh, strategy))
+    }
+}

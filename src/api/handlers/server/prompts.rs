@@ -17,6 +17,12 @@ use super::common::{
     InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
 };
 
+/// Convert database error to ApiError
+#[inline]
+fn db_error(e: impl std::fmt::Display) -> ApiError {
+    ApiError::InternalError(format!("Database error: {e}"))
+}
+
 /// List all prompts for a specific server
 ///
 /// Strategy order:
@@ -27,6 +33,7 @@ use super::common::{
 /// 5) None: return empty.
 ///
 /// Supports both `server_name` and `server_id` as identifier.
+#[tracing::instrument(skip(state))]
 pub async fn list_prompts(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -36,7 +43,7 @@ pub async fn list_prompts(
     let db = get_database_from_state(&state)?;
     let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Database error: {e}")))?
+        .map_err(db_error)?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
     let server_info = super::common::ServerIdentification {
         server_id: id.clone(),
@@ -78,31 +85,47 @@ pub async fn list_prompts(
                             processed,
                         )
                         .await;
-                        return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                        return Ok(respond_with_enriched(
+                            enriched,
+                            true,
+                            params.refresh,
+                            crate::common::constants::strategies::CACHE,
+                        ));
                     }
-                    return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
+                    return Ok(create_inspect_response(
+                        processed,
+                        true,
+                        params.refresh,
+                        crate::common::constants::strategies::CACHE,
+                    ));
                 }
             }
         }
     }
 
     // Runtime fallback: aggregate prompts via protocol helper
-    if let Ok(pool) = tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
+    if let Ok(pool) = tokio::time::timeout(
+        std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
+        state.connection_pool.lock(),
+    )
+    .await
+    {
         if let Some(instances) = pool.connections.get(&server_info.server_name) {
-            let mut prompts: Vec<serde_json::Value> = Vec::new();
-            let mut cached_prompts: Vec<crate::core::cache::CachedPromptInfo> = Vec::new();
+            let connected_instances: Vec<_> = instances
+                .values()
+                .filter(|conn| conn.is_connected() && conn.supports_prompts())
+                .collect();
 
-            for conn in instances.values() {
-                if !conn.is_connected() || !conn.supports_prompts() {
-                    continue;
-                }
+            let mut prompts = Vec::new();
+            let mut cached_prompts = Vec::new();
+
+            for conn in connected_instances {
                 if let Some(service) = &conn.service {
                     if let Ok(result) = service.list_prompts(None).await {
+                        let now = Utc::now();
                         for p in result.prompts {
-                            let converted_args: Vec<crate::core::cache::PromptArgument> = p
-                                .arguments
-                                .clone()
-                                .unwrap_or_default()
+                            let prompt_args = p.arguments.unwrap_or_default();
+                            let converted_args: Vec<crate::core::cache::PromptArgument> = prompt_args
                                 .into_iter()
                                 .map(|arg| crate::core::cache::PromptArgument {
                                     name: arg.name,
@@ -110,6 +133,7 @@ pub async fn list_prompts(
                                     required: arg.required.unwrap_or(false),
                                 })
                                 .collect();
+
                             prompts.push(prompt_json(
                                 &p.name,
                                 p.description.clone(),
@@ -122,7 +146,7 @@ pub async fn list_prompts(
                                 description: p.description,
                                 arguments: converted_args,
                                 enabled: true,
-                                cached_at: Utc::now(),
+                                cached_at: now,
                             });
                         }
                     }
@@ -138,9 +162,19 @@ pub async fn list_prompts(
                     let enriched =
                         enrich_capability_items(CapabilityKind::Prompts, &db.pool, &server_info.server_id, prompts)
                             .await;
-                    return Ok(respond_with_enriched(enriched, false, params.refresh, "runtime"));
+                    return Ok(respond_with_enriched(
+                        enriched,
+                        false,
+                        params.refresh,
+                        crate::common::constants::strategies::RUNTIME,
+                    ));
                 }
-                return Ok(create_inspect_response(prompts, false, params.refresh, "runtime"));
+                return Ok(create_inspect_response(
+                    prompts,
+                    false,
+                    params.refresh,
+                    crate::common::constants::strategies::RUNTIME,
+                ));
             }
         }
     }
@@ -164,14 +198,29 @@ pub async fn list_prompts(
             if let Ok(db) = get_database_from_state(&state) {
                 let enriched =
                     enrich_capability_items(CapabilityKind::Prompts, &db.pool, &server_info.server_id, processed).await;
-                return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                return Ok(respond_with_enriched(
+                    enriched,
+                    true,
+                    params.refresh,
+                    crate::common::constants::strategies::CACHE,
+                ));
             }
-            return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
+            return Ok(create_inspect_response(
+                processed,
+                true,
+                params.refresh,
+                crate::common::constants::strategies::CACHE,
+            ));
         }
     }
 
     // Return empty result if no data available from cache or runtime
-    Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
+    Ok(create_inspect_response(
+        Vec::new(),
+        false,
+        params.refresh,
+        crate::common::constants::strategies::NONE,
+    ))
 }
 
 /// Get detailed prompt argument information
@@ -189,7 +238,7 @@ pub async fn get_prompt_arguments(
     let db = get_database_from_state(&state)?;
     let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Database error: {e}")))?
+        .map_err(db_error)?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
     let server_info = super::common::ServerIdentification {
         server_id: id.clone(),

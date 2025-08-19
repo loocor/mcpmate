@@ -13,6 +13,7 @@ use super::{common, shared::*};
 // Helper functions for server management operations
 
 /// Sync server connections by invalidating suit service cache
+#[inline]
 async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> {
     if let Some(merge_service) = &state.suit_merge_service {
         // Invalidate cache to force re-merging of configurations
@@ -24,6 +25,7 @@ async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> 
 }
 
 /// Sync client configurations using the client manager
+#[inline]
 async fn sync_client_configurations(
     state: &Arc<AppState>,
     config_suit_id: Option<String>,
@@ -33,6 +35,7 @@ async fn sync_client_configurations(
 }
 
 /// Create operation response
+#[inline]
 fn create_operation_response(
     id: String,
     name: String,
@@ -40,11 +43,7 @@ fn create_operation_response(
     status: String,
     is_enabled: bool,
 ) -> Result<Json<OperationResponse>, ApiError> {
-    let allowed_operations = if is_enabled {
-        vec!["disable".to_string()]
-    } else {
-        vec!["enable".to_string()]
-    };
+    let allowed_operations = vec![if is_enabled { "disable" } else { "enable" }.to_owned()];
 
     Ok(Json(OperationResponse {
         id,
@@ -56,6 +55,7 @@ fn create_operation_response(
 }
 
 /// Enable a server by setting its global availability to enabled
+#[tracing::instrument(skip(state))]
 pub async fn enable_server(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -91,6 +91,7 @@ pub async fn enable_server(
 }
 
 /// Disable a server by setting its global availability to disabled
+#[tracing::instrument(skip(state))]
 pub async fn disable_server(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -111,6 +112,7 @@ pub async fn disable_server(
 }
 
 /// Helper function to get server info by ID with early return on error
+#[inline]
 async fn get_server_info_by_id(
     db: &Arc<crate::config::database::Database>,
     id: &str,
@@ -120,13 +122,14 @@ async fn get_server_info_by_id(
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
 
-    let server_id = server_row.id.clone().unwrap_or_default();
-    let server_name = server_row.name.clone();
+    let server_id = server_row.id.unwrap_or_default();
+    let server_name = server_row.name;
 
     Ok((server_id, server_name))
 }
 
 /// Helper function to update server global status with error handling
+#[inline]
 async fn update_server_global_status_wrapper(
     db: &Arc<crate::config::database::Database>,
     server_id: &str,
@@ -152,6 +155,7 @@ async fn update_server_global_status_wrapper(
 }
 
 /// Helper function to handle server sync operations
+#[inline]
 async fn handle_server_sync(
     state: &Arc<AppState>,
     query: &std::collections::HashMap<String, String>,
@@ -175,6 +179,7 @@ async fn handle_server_sync(
 }
 
 /// Helper function to handle server connection setup
+#[inline]
 async fn handle_server_connection_setup(
     state: &Arc<AppState>,
     server_name: &str,
@@ -215,12 +220,17 @@ async fn handle_server_connection_setup(
 }
 
 /// Helper function to handle connection pool disable operations
+#[inline]
 async fn handle_connection_pool_disable(
     state: &Arc<AppState>,
     server_name: &str,
 ) -> Result<Json<OperationResponse>, ApiError> {
     // Handle connection pool timeout (early return)
-    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
+    let pool_result = tokio::time::timeout(
+        std::time::Duration::from_secs(crate::common::constants::timeouts::POOL_DISABLE_SEC),
+        state.connection_pool.lock(),
+    )
+    .await;
 
     let mut pool = match pool_result {
         Ok(pool) => pool,
@@ -281,29 +291,33 @@ async fn handle_connection_pool_disable(
 }
 
 /// Helper function to disconnect server instances
+#[inline]
 async fn disconnect_server_instances(
     pool: &mut tokio::sync::MutexGuard<'_, crate::core::pool::UpstreamConnectionPool>,
     server_name: &str,
     instance_ids: &[String],
 ) -> (usize, usize) {
-    let mut success_count = 0;
     let total_count = instance_ids.len();
+    let mut success_count = 0;
 
     for instance_id in instance_ids {
-        if let Err(e) = pool.disconnect(server_name, instance_id).await {
-            tracing::error!(
-                "Failed to disconnect server '{}' instance '{}': {}",
-                server_name,
-                instance_id,
-                e
-            );
-        } else {
-            success_count += 1;
-            tracing::info!(
-                "Successfully disconnected server '{}' instance '{}'",
-                server_name,
-                instance_id
-            );
+        match pool.disconnect(server_name, instance_id).await {
+            Ok(()) => {
+                success_count += 1;
+                tracing::info!(
+                    "Successfully disconnected server '{}' instance '{}'",
+                    server_name,
+                    instance_id
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to disconnect server '{}' instance '{}': {}",
+                    server_name,
+                    instance_id,
+                    e
+                );
+            }
         }
     }
 

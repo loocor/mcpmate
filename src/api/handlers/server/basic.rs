@@ -16,11 +16,12 @@ pub async fn get_server(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
-    let server_id = server.id.clone().unwrap_or_default();
+    let id_opt = server.id.clone();
+    let server_id = id_opt.as_deref().unwrap_or_default();
     let name = server.name.clone();
 
     // Get complete server details using unified function
-    let details = common::get_complete_server_details(&db.pool, &server_id, &name, &state).await;
+    let details = common::get_complete_server_details(&db.pool, server_id, &name, &state).await;
 
     // Use globally_enabled as the primary enabled status for global server API
     let enabled = details.globally_enabled;
@@ -30,7 +31,7 @@ pub async fn get_server(
     let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
 
     Ok(Json(ServerResponse {
-        id: server.id.clone(),
+        id: id_opt,
         name,
         enabled,
         globally_enabled: details.globally_enabled,
@@ -58,13 +59,14 @@ pub async fn list_servers(State(state): State<Arc<AppState>>) -> Result<Json<Ser
         .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
 
     // Create server responses using unified detail fetching
-    let mut servers = Vec::new();
+    let mut servers = Vec::with_capacity(all_servers.len());
     for server in all_servers {
         let name = server.name.clone();
-        let server_id = server.id.clone().unwrap_or_default();
+        let id_opt = server.id.clone();
+        let server_id = id_opt.as_deref().unwrap_or_default();
 
         // Get complete server details using unified function
-        let details = common::get_complete_server_details(&db.pool, &server_id, &name, &state).await;
+        let details = common::get_complete_server_details(&db.pool, server_id, &name, &state).await;
 
         // Use globally_enabled as the primary enabled status for global server API
         let enabled = details.globally_enabled;
@@ -75,7 +77,7 @@ pub async fn list_servers(State(state): State<Arc<AppState>>) -> Result<Json<Ser
 
         // Create server response
         servers.push(ServerResponse {
-            id: server.id.clone(),
+            id: id_opt,
             name,
             enabled,
             globally_enabled: details.globally_enabled,

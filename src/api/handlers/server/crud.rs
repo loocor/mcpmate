@@ -19,44 +19,38 @@ use crate::{
 use axum::{Json, extract::State};
 
 /// Convert database error to ApiError
+#[inline]
 fn db_error(e: impl std::fmt::Display) -> ApiError {
     ApiError::InternalError(format!("Database error: {e}"))
 }
 
 /// Create internal error
+#[inline]
 fn internal_error(msg: &str) -> ApiError {
-    ApiError::InternalError(msg.to_string())
+    ApiError::InternalError(msg.to_owned())
 }
 
 /// Validate server configuration
+#[inline]
 fn validate_server_config(
     kind: &str,
     command: &Option<String>,
     url: &Option<String>,
 ) -> Result<(), ApiError> {
     match kind {
-        "stdio" => {
-            if command.is_none() {
-                return Err(ApiError::BadRequest(
-                    "Command is required for stdio servers".to_string(),
-                ));
-            }
+        "stdio" if command.is_none() => Err(ApiError::BadRequest("Command is required for stdio servers".to_owned())),
+        "sse" | "streamable_http" if url.is_none() => {
+            Err(ApiError::BadRequest(format!("URL is required for {kind} servers")))
         }
-        "sse" | "streamable_http" => {
-            if url.is_none() {
-                return Err(ApiError::BadRequest(format!("URL is required for {kind} servers")));
-            }
-        }
-        _ => {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
-            )));
-        }
+        "stdio" | "sse" | "streamable_http" => Ok(()),
+        _ => Err(ApiError::BadRequest(format!(
+            "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
+        ))),
     }
-    Ok(())
 }
 
 /// Create server model from configuration
+#[inline]
 fn create_server_from_config(
     name: String,
     kind: &str,
@@ -77,15 +71,17 @@ async fn get_or_create_default_config_suit(db: &Database) -> Result<String, ApiE
         .await
         .map_err(db_error)?;
 
-    if let Some(suit) = default_suit {
-        Ok(suit.id.unwrap())
-    } else {
-        let new_suit = ConfigSuit::new("default".to_string(), ConfigSuitType::Shared);
-        suit::upsert_config_suit(&db.pool, &new_suit).await.map_err(db_error)
+    match default_suit {
+        Some(suit) => suit.id.ok_or_else(|| internal_error("ConfigSuit id missing")),
+        None => {
+            let new_suit = ConfigSuit::new("default".to_owned(), ConfigSuitType::Shared);
+            suit::upsert_config_suit(&db.pool, &new_suit).await.map_err(db_error)
+        }
     }
 }
 
 /// Add server to config suit
+#[inline]
 async fn add_server_to_suit(
     db: &Database,
     suit_id: &str,
@@ -167,8 +163,8 @@ async fn create_server_metadata(
 ) -> Result<(), ApiError> {
     let meta = ServerMeta {
         id: None,
-        server_id: server_id.to_string(),
-        description: Some(description.to_string()),
+        server_id: server_id.to_owned(),
+        description: Some(description.to_owned()),
         author: None,
         website: None,
         repository: None,
@@ -257,6 +253,7 @@ pub async fn create_server(
     .await;
 
     // Return success response
+    let now = chrono::Utc::now();
     Ok(Json(ServerResponse {
         id: Some(server_id),
         name: payload.name.clone(),
@@ -269,8 +266,8 @@ pub async fn create_server(
         args: payload.args.clone(),
         env: payload.env.clone(),
         meta: None,
-        created_at: Some(chrono::Utc::now().to_rfc3339()),
-        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        created_at: Some(now.to_rfc3339()),
+        updated_at: Some(now.to_rfc3339()),
         instances: Vec::new(),
     }))
 }
@@ -302,17 +299,20 @@ pub async fn update_server(
 
     // Create updated server model
     let mut updated_server = existing_server.clone();
+
     if let Some(kind) = payload.kind {
         updated_server.server_type = kind.parse().unwrap_or(updated_server.server_type);
-        updated_server.transport_type = match updated_server.server_type {
-            ServerType::Stdio => Some(crate::common::server::TransportType::Stdio),
-            ServerType::Sse => Some(crate::common::server::TransportType::Sse),
-            ServerType::StreamableHttp => Some(crate::common::server::TransportType::StreamableHttp),
-        };
+        updated_server.transport_type = Some(match updated_server.server_type {
+            ServerType::Stdio => crate::common::server::TransportType::Stdio,
+            ServerType::Sse => crate::common::server::TransportType::Sse,
+            ServerType::StreamableHttp => crate::common::server::TransportType::StreamableHttp,
+        });
     }
+
     if let Some(command) = payload.command {
         updated_server.command = Some(command);
     }
+
     if let Some(url) = payload.url {
         updated_server.url = Some(url);
     }
@@ -431,9 +431,10 @@ pub async fn import_servers(
 ) -> Result<Json<ImportServersResponse>, ApiError> {
     let db = common::get_database_from_state(&state)?;
 
-    let mut imported_servers = Vec::new();
-    let mut failed_servers = Vec::new();
-    let mut error_details = HashMap::new();
+    let server_count = payload.mcp_servers.len();
+    let mut imported_servers = Vec::with_capacity(server_count);
+    let mut failed_servers = Vec::with_capacity(server_count);
+    let mut error_details = HashMap::with_capacity(server_count);
 
     // Process each server in the payload
     for (name, config) in payload.mcp_servers {
@@ -444,8 +445,9 @@ pub async fn import_servers(
             }
             Err(error_msg) => {
                 tracing::error!("Failed to import server '{}': {}", name, error_msg);
-                failed_servers.push(name.clone());
-                error_details.insert(name, error_msg);
+                let fail_name = name;
+                error_details.insert(fail_name.clone(), error_msg);
+                failed_servers.push(fail_name);
             }
         }
     }
@@ -468,24 +470,28 @@ async fn disconnect_server_instances(
     state: &Arc<AppState>,
     name: &str,
 ) {
-    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
-
-    if let Ok(mut pool) = pool_result {
-        if let Some(instances) = pool.connections.get(name) {
-            let instance_ids: Vec<String> = instances.keys().cloned().collect();
-            for instance_id in instance_ids {
-                if let Err(e) = pool.disconnect(name, &instance_id).await {
-                    tracing::warn!(
-                        "Failed to disconnect instance '{}' of server '{}': {}",
-                        instance_id,
-                        name,
-                        e
-                    );
-                }
-            }
+    let mut pool = match tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await {
+        Ok(pool) => pool,
+        Err(_) => {
+            tracing::warn!("Timed out waiting for connection pool lock, proceeding with server deletion anyway");
+            return;
         }
-    } else {
-        tracing::warn!("Timed out waiting for connection pool lock, proceeding with server deletion anyway");
+    };
+
+    let Some(instances) = pool.connections.get(name) else {
+        return;
+    };
+
+    let instance_ids: Vec<String> = instances.keys().cloned().collect();
+    for instance_id in instance_ids {
+        if let Err(e) = pool.disconnect(name, &instance_id).await {
+            tracing::warn!(
+                "Failed to disconnect instance '{}' of server '{}': {}",
+                instance_id,
+                name,
+                e
+            );
+        }
     }
 }
 

@@ -46,9 +46,30 @@ pub mod separators {
 
     /// Unix-like path separator
     pub const UNIX: &str = ":";
-    
+
     /// Get platform-specific path separator
     pub fn get_path_separator() -> &'static str {
         if cfg!(windows) { WINDOWS } else { UNIX }
     }
+}
+
+/// Common timeout constants
+pub mod timeouts {
+    /// Timeout for acquiring async locks in milliseconds (e.g., connection pool locks)
+    pub const LOCK_MS: u64 = 500;
+
+    /// Timeout for connection pool operations when disabling in seconds
+    pub const POOL_DISABLE_SEC: u64 = 1;
+}
+
+/// Common strategy labels for inspect responses
+pub mod strategies {
+    /// Data served from cache (fresh or offline)
+    pub const CACHE: &str = "cache";
+
+    /// Data aggregated at runtime from live instances
+    pub const RUNTIME: &str = "runtime";
+
+    /// No data available from any strategy
+    pub const NONE: &str = "none";
 }

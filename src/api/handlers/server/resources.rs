@@ -15,9 +15,14 @@ use super::capability::{
     resource_template_json_from_cached, respond_with_enriched,
 };
 use super::common::{
-    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state,
-    validate_server_id,
+    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
 };
+
+/// Convert database error to ApiError
+#[inline]
+fn db_error(e: impl std::fmt::Display) -> ApiError {
+    ApiError::InternalError(format!("Database error: {e}"))
+}
 
 /// List all resources for a specific server
 ///
@@ -29,6 +34,7 @@ use super::common::{
 /// 5) None: return empty.
 ///
 /// Supports both `server_name` and `server_id` as identifier.
+#[tracing::instrument(skip(state))]
 pub async fn list_resources(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -38,9 +44,12 @@ pub async fn list_resources(
     let db = get_database_from_state(&state)?;
     let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Database error: {e}")))?
+        .map_err(db_error)?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
-    let server_info = super::common::ServerIdentification { server_id: id.clone(), server_name: server_row.name.clone() };
+    let server_info = super::common::ServerIdentification {
+        server_id: id.clone(),
+        server_name: server_row.name.clone(),
+    };
 
     // Validate server ID format
     validate_server_id(&server_info.server_id)?;
@@ -78,27 +87,44 @@ pub async fn list_resources(
                             processed,
                         )
                         .await;
-                        return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                        return Ok(respond_with_enriched(
+                            enriched,
+                            true,
+                            params.refresh,
+                            crate::common::constants::strategies::CACHE,
+                        ));
                     }
-                    return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
+                    return Ok(create_inspect_response(
+                        processed,
+                        true,
+                        params.refresh,
+                        crate::common::constants::strategies::CACHE,
+                    ));
                 }
             }
         }
     }
 
     // Runtime fallback: attempt to collect via proxy service across connected instances
-    if let Ok(pool) = tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
+    if let Ok(pool) = tokio::time::timeout(
+        std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
+        state.connection_pool.lock(),
+    )
+    .await
+    {
         if let Some(instances) = pool.connections.get(&server_info.server_name) {
-            // Aggregate resources across connected instances using rmcp client
-            let mut resources: Vec<serde_json::Value> = Vec::new();
-            let mut cached_resources: Vec<crate::core::cache::CachedResourceInfo> = Vec::new();
+            let connected_instances: Vec<_> = instances
+                .values()
+                .filter(|conn| conn.is_connected() && conn.supports_resources())
+                .collect();
 
-            for conn in instances.values() {
-                if !conn.is_connected() || !conn.supports_resources() {
-                    continue;
-                }
+            let mut resources = Vec::new();
+            let mut cached_resources = Vec::new();
+
+            for conn in connected_instances {
                 // Use protocol helper to fetch all resources from this instance
                 if let Some(service) = &conn.service {
+                    let now = Utc::now();
                     let mut cursor = None;
                     while let Ok(result) = service
                         .list_resources(Some(rmcp::model::PaginatedRequestParam { cursor }))
@@ -119,7 +145,7 @@ pub async fn list_resources(
                                 description: r.description.clone(),
                                 mime_type: r.mime_type.clone(),
                                 enabled: true,
-                                cached_at: Utc::now(),
+                                cached_at: now,
                             });
                         }
                         cursor = result.next_cursor;
@@ -141,9 +167,19 @@ pub async fn list_resources(
                     let enriched =
                         enrich_capability_items(CapabilityKind::Resources, &db.pool, &server_info.server_id, resources)
                             .await;
-                    return Ok(respond_with_enriched(enriched, false, params.refresh, "runtime"));
+                    return Ok(respond_with_enriched(
+                        enriched,
+                        false,
+                        params.refresh,
+                        crate::common::constants::strategies::RUNTIME,
+                    ));
                 }
-                return Ok(create_inspect_response(resources, false, params.refresh, "runtime"));
+                return Ok(create_inspect_response(
+                    resources,
+                    false,
+                    params.refresh,
+                    crate::common::constants::strategies::RUNTIME,
+                ));
             }
         }
     }
@@ -172,9 +208,19 @@ pub async fn list_resources(
                 let enriched =
                     enrich_capability_items(CapabilityKind::Resources, &db.pool, &server_info.server_id, processed)
                         .await;
-                return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                return Ok(respond_with_enriched(
+                    enriched,
+                    true,
+                    params.refresh,
+                    crate::common::constants::strategies::CACHE,
+                ));
             }
-            return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
+            return Ok(create_inspect_response(
+                processed,
+                true,
+                params.refresh,
+                crate::common::constants::strategies::CACHE,
+            ));
         }
     }
 
@@ -192,6 +238,7 @@ pub async fn list_resources(
 /// 5) None: return empty.
 ///
 /// Supports both `server_name` and `server_id` as identifier.
+#[tracing::instrument(skip(state))]
 pub async fn list_resource_templates(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -201,9 +248,12 @@ pub async fn list_resource_templates(
     let db = get_database_from_state(&state)?;
     let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Database error: {e}")))?
+        .map_err(db_error)?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
-    let server_info = super::common::ServerIdentification { server_id: id.clone(), server_name: server_row.name.clone() };
+    let server_info = super::common::ServerIdentification {
+        server_id: id.clone(),
+        server_name: server_row.name.clone(),
+    };
 
     // Validate server ID format
     validate_server_id(&server_info.server_id)?;
@@ -244,24 +294,42 @@ pub async fn list_resource_templates(
                             processed,
                         )
                         .await;
-                        return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                        return Ok(respond_with_enriched(
+                            enriched,
+                            true,
+                            params.refresh,
+                            crate::common::constants::strategies::CACHE,
+                        ));
                     }
-                    return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
+                    return Ok(create_inspect_response(
+                        processed,
+                        true,
+                        params.refresh,
+                        crate::common::constants::strategies::CACHE,
+                    ));
                 }
             }
         }
     }
     // Runtime fallback aggregation using protocol helper
-    if let Ok(pool) = tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
+    if let Ok(pool) = tokio::time::timeout(
+        std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
+        state.connection_pool.lock(),
+    )
+    .await
+    {
         if let Some(instances) = pool.connections.get(&server_info.server_name) {
-            let mut templates: Vec<serde_json::Value> = Vec::new();
-            let mut cached_templates: Vec<crate::core::cache::CachedResourceTemplateInfo> = Vec::new();
+            let connected_instances: Vec<_> = instances
+                .values()
+                .filter(|conn| conn.is_connected() && conn.supports_resources())
+                .collect();
 
-            for conn in instances.values() {
-                if !conn.is_connected() || !conn.supports_resources() {
-                    continue;
-                }
+            let mut templates = Vec::new();
+            let mut cached_templates = Vec::new();
+
+            for conn in connected_instances {
                 if let Some(service) = &conn.service {
+                    let now = Utc::now();
                     let mut cursor = None;
                     while let Ok(result) = service
                         .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
@@ -282,7 +350,7 @@ pub async fn list_resource_templates(
                                 description: t.description.clone(),
                                 mime_type: t.mime_type.clone(),
                                 enabled: true,
-                                cached_at: Utc::now(),
+                                cached_at: now,
                             });
                         }
                         cursor = result.next_cursor;
@@ -306,9 +374,19 @@ pub async fn list_resource_templates(
                         templates,
                     )
                     .await;
-                    return Ok(respond_with_enriched(enriched, false, params.refresh, "runtime"));
+                    return Ok(respond_with_enriched(
+                        enriched,
+                        false,
+                        params.refresh,
+                        crate::common::constants::strategies::RUNTIME,
+                    ));
                 }
-                return Ok(create_inspect_response(templates, false, params.refresh, "runtime"));
+                return Ok(create_inspect_response(
+                    templates,
+                    false,
+                    params.refresh,
+                    crate::common::constants::strategies::RUNTIME,
+                ));
             }
         }
     }
@@ -342,11 +420,26 @@ pub async fn list_resource_templates(
                     processed,
                 )
                 .await;
-                return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
+                return Ok(respond_with_enriched(
+                    enriched,
+                    true,
+                    params.refresh,
+                    crate::common::constants::strategies::CACHE,
+                ));
             }
-            return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
+            return Ok(create_inspect_response(
+                processed,
+                true,
+                params.refresh,
+                crate::common::constants::strategies::CACHE,
+            ));
         }
     }
 
-    Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
+    Ok(create_inspect_response(
+        Vec::new(),
+        false,
+        params.refresh,
+        crate::common::constants::strategies::NONE,
+    ))
 }

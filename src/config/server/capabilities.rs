@@ -733,7 +733,7 @@ impl CapabilityManager {
                     if pool
                         .connections
                         .get(&server.name)
-                        .map_or(false, |instances| instances.values().any(|conn| conn.is_connected()))
+                        .is_some_and(|instances| instances.values().any(|conn| conn.is_connected()))
                     {
                         SyncStrategy::FromConnection
                     } else {
@@ -813,7 +813,7 @@ impl CapabilityManager {
             if pool
                 .connections
                 .get(server_name)
-                .map_or(false, |instances| instances.values().any(|conn| conn.is_connected()))
+                .is_some_and(|instances| instances.values().any(|conn| conn.is_connected()))
             {
                 SyncStrategy::FromConnection
             } else {

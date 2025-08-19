@@ -28,6 +28,7 @@ pub enum CapabilityType {
     ResourceTemplates,
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct ExtractedCapability {
     pub data: Vec<serde_json::Value>,
     pub tools: Vec<crate::core::cache::CachedToolInfo>,
@@ -38,13 +39,7 @@ pub struct ExtractedCapability {
 
 impl ExtractedCapability {
     pub fn empty() -> Self {
-        Self {
-            data: Vec::new(),
-            tools: Vec::new(),
-            prompts: Vec::new(),
-            resources: Vec::new(),
-            resource_templates: Vec::new(),
-        }
+        Self::default()
     }
 }
 
@@ -68,19 +63,16 @@ pub async fn load_tool_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> HashMap<String, (String, String)> {
-    let mut map = HashMap::new();
-    if let Ok(rows) = sqlx::query_as::<_, (String, String, String)>(
+    sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT tool_name, id, unique_name FROM server_tools WHERE server_id = ?"#,
     )
     .bind(server_id)
     .fetch_all(pool)
     .await
-    {
-        for (name, id, unique_name) in rows {
-            map.insert(name, (id, unique_name));
-        }
-    }
-    map
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(name, id, unique_name)| (name, (id, unique_name)))
+    .collect()
 }
 
 /// Load prompt name to (id, unique_name) mapping from database
@@ -95,19 +87,16 @@ pub async fn load_prompt_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> HashMap<String, (String, String)> {
-    let mut map = HashMap::new();
-    if let Ok(rows) = sqlx::query_as::<_, (String, String, String)>(
+    sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT prompt_name, id, unique_name FROM server_prompts WHERE server_id = ?"#,
     )
     .bind(server_id)
     .fetch_all(pool)
     .await
-    {
-        for (name, id, unique_name) in rows {
-            map.insert(name, (id, unique_name));
-        }
-    }
-    map
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(name, id, unique_name)| (name, (id, unique_name)))
+    .collect()
 }
 
 /// Load resource URI to (id, unique_uri) mapping from database
@@ -122,38 +111,104 @@ pub async fn load_resource_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> HashMap<String, (String, String)> {
-    let mut map = HashMap::new();
-    if let Ok(rows) = sqlx::query_as::<_, (String, String, String)>(
+    sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT resource_uri, id, unique_uri FROM server_resources WHERE server_id = ?"#,
     )
     .bind(server_id)
     .fetch_all(pool)
     .await
-    {
-        for (uri, id, unique_uri) in rows {
-            map.insert(uri, (id, unique_uri));
-        }
-    }
-    map
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(uri, id, unique_uri)| (uri, (id, unique_uri)))
+    .collect()
 }
 
 pub async fn load_resource_template_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> HashMap<String, (String, String)> {
-    let mut map = HashMap::new();
-    if let Ok(rows) = sqlx::query_as::<_, (String, String, String)>(
+    sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT uri_template, id, unique_name FROM server_resource_templates WHERE server_id = ?"#,
     )
     .bind(server_id)
     .fetch_all(pool)
     .await
-    {
-        for (tpl, id, unique_name) in rows {
-            map.insert(tpl, (id, unique_name));
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(tpl, id, unique_name)| (tpl, (id, unique_name)))
+    .collect()
+}
+
+/// Enrich tool items with database identifiers
+#[inline]
+fn enrich_tool_item(
+    item: serde_json::Value,
+    mapping: &HashMap<String, (String, String)>,
+) -> serde_json::Value {
+    let mut item = item;
+    if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
+        if let Some((id, unique_name)) = mapping.get(name) {
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("unique_name".to_string(), serde_json::json!(unique_name));
+                obj.insert("id".to_string(), serde_json::json!(id));
+            }
         }
     }
-    map
+    item
+}
+
+/// Enrich prompt items with database identifiers
+#[inline]
+fn enrich_prompt_item(
+    item: serde_json::Value,
+    mapping: &HashMap<String, (String, String)>,
+) -> serde_json::Value {
+    let mut item = item;
+    if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
+        if let Some((id, unique_name)) = mapping.get(name) {
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("unique_name".to_string(), serde_json::json!(unique_name));
+                obj.insert("id".to_string(), serde_json::json!(id));
+            }
+        }
+    }
+    item
+}
+
+/// Enrich resource items with database identifiers
+#[inline]
+fn enrich_resource_item(
+    item: serde_json::Value,
+    mapping: &HashMap<String, (String, String)>,
+) -> serde_json::Value {
+    let mut item = item;
+    if let Some(uri) = item.get("uri").and_then(|x| x.as_str()) {
+        if let Some((id, unique_uri)) = mapping.get(uri) {
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("unique_uri".to_string(), serde_json::json!(unique_uri));
+                obj.insert("id".to_string(), serde_json::json!(id));
+            }
+        }
+    }
+    item
+}
+
+/// Enrich resource template items with database identifiers
+#[inline]
+fn enrich_resource_template_item(
+    item: serde_json::Value,
+    mapping: &HashMap<String, (String, String)>,
+) -> serde_json::Value {
+    let mut item = item;
+    if let Some(tpl) = item.get("uri_template").and_then(|x| x.as_str()) {
+        if let Some((id, unique_name)) = mapping.get(tpl) {
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("unique_uri_template".to_string(), serde_json::json!(unique_name));
+                obj.insert("id".to_string(), serde_json::json!(id));
+            }
+        }
+    }
+    item
 }
 
 /// Enrich capability items with database-stored identifiers
@@ -173,63 +228,38 @@ pub async fn enrich_capability_items(
     kind: CapabilityKind,
     pool: &Pool<Sqlite>,
     server_id: &str,
-    mut items: Vec<serde_json::Value>,
+    items: Vec<serde_json::Value>,
 ) -> Vec<serde_json::Value> {
     match kind {
         CapabilityKind::Tools => {
-            let map = load_tool_mapping(pool, server_id).await;
-            for v in &mut items {
-                if let Some(name) = v.get("name").and_then(|x| x.as_str()) {
-                    if let Some((id, uname)) = map.get(name) {
-                        if let Some(obj) = v.as_object_mut() {
-                            obj.insert("unique_name".to_string(), serde_json::json!(uname));
-                            obj.insert("id".to_string(), serde_json::json!(id));
-                        }
-                    }
-                }
-            }
+            let mapping = load_tool_mapping(pool, server_id).await;
+            items
+                .into_iter()
+                .map(|item| enrich_tool_item(item, &mapping))
+                .collect()
         }
         CapabilityKind::Prompts => {
-            let map = load_prompt_mapping(pool, server_id).await;
-            for v in &mut items {
-                if let Some(name) = v.get("name").and_then(|x| x.as_str()) {
-                    if let Some((id, uname)) = map.get(name) {
-                        if let Some(obj) = v.as_object_mut() {
-                            obj.insert("unique_name".to_string(), serde_json::json!(uname));
-                            obj.insert("id".to_string(), serde_json::json!(id));
-                        }
-                    }
-                }
-            }
+            let mapping = load_prompt_mapping(pool, server_id).await;
+            items
+                .into_iter()
+                .map(|item| enrich_prompt_item(item, &mapping))
+                .collect()
         }
         CapabilityKind::Resources => {
-            let map = load_resource_mapping(pool, server_id).await;
-            for v in &mut items {
-                if let Some(uri) = v.get("uri").and_then(|x| x.as_str()) {
-                    if let Some((id, unique_uri)) = map.get(uri) {
-                        if let Some(obj) = v.as_object_mut() {
-                            obj.insert("unique_uri".to_string(), serde_json::json!(unique_uri));
-                            obj.insert("id".to_string(), serde_json::json!(id));
-                        }
-                    }
-                }
-            }
+            let mapping = load_resource_mapping(pool, server_id).await;
+            items
+                .into_iter()
+                .map(|item| enrich_resource_item(item, &mapping))
+                .collect()
         }
         CapabilityKind::ResourceTemplates => {
-            let map = load_resource_template_mapping(pool, server_id).await;
-            for v in &mut items {
-                if let Some(tpl) = v.get("uri_template").and_then(|x| x.as_str()) {
-                    if let Some((id, unique_name)) = map.get(tpl) {
-                        if let Some(obj) = v.as_object_mut() {
-                            obj.insert("unique_uri_template".to_string(), serde_json::json!(unique_name));
-                            obj.insert("id".to_string(), serde_json::json!(id));
-                        }
-                    }
-                }
-            }
+            let mapping = load_resource_template_mapping(pool, server_id).await;
+            items
+                .into_iter()
+                .map(|item| enrich_resource_template_item(item, &mapping))
+                .collect()
         }
     }
-    items
 }
 
 pub fn respond_with_enriched(
@@ -314,10 +344,9 @@ pub fn prompt_json(
     unique_name: Option<String>,
     id: Option<String>,
 ) -> serde_json::Value {
-    use crate::core::cache::PromptArgument;
     let args: Vec<serde_json::Value> = arguments
         .into_iter()
-        .map(|a: PromptArgument| {
+        .map(|a| {
             serde_json::json!({
                 "name": a.name,
                 "description": a.description,
@@ -325,6 +354,7 @@ pub fn prompt_json(
             })
         })
         .collect();
+
     serde_json::json!({
         "name": name,
         "description": description,
@@ -335,138 +365,221 @@ pub fn prompt_json(
 }
 
 pub fn prompt_json_from_cached(p: crate::core::cache::CachedPromptInfo) -> serde_json::Value {
-    prompt_json(&p.name, p.description, p.arguments, None, None)
+    prompt_json(&p.name, p.description.clone(), p.arguments.clone(), None, None)
 }
 
 pub async fn extract_tools_capability(
     conn: &crate::core::connection::UpstreamConnection
 ) -> Result<ExtractedCapability, ApiError> {
-    let mut result = ExtractedCapability::empty();
-    for t in &conn.tools {
-        let schema = t.schema_as_json_value();
-        result.data.push(serde_json::json!({
-            "name": t.name,
-            "description": t.description,
-            "input_schema": schema,
-            "unique_name": serde_json::Value::Null,
-        }));
+    let now = chrono::Utc::now();
 
-        let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
-        result.tools.push(crate::core::cache::CachedToolInfo {
-            name: t.name.to_string(),
-            description: t.description.clone().map(|d| d.into_owned()),
-            input_schema_json,
-            unique_name: None,
-            enabled: true,
-            cached_at: chrono::Utc::now(),
-        });
-    }
-    Ok(result)
+    let (data, tools): (Vec<_>, Vec<_>) = conn
+        .tools
+        .iter()
+        .map(|t| {
+            let schema = t.schema_as_json_value();
+            let data_item = serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": schema,
+                "unique_name": serde_json::Value::Null,
+            });
+
+            let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
+            let tool_info = crate::core::cache::CachedToolInfo {
+                name: t.name.to_string(),
+                description: t.description.clone().map(|d| d.into_owned()),
+                input_schema_json,
+                unique_name: None,
+                enabled: true,
+                cached_at: now,
+            };
+
+            (data_item, tool_info)
+        })
+        .unzip();
+
+    Ok(ExtractedCapability {
+        data,
+        tools,
+        prompts: Vec::new(),
+        resources: Vec::new(),
+        resource_templates: Vec::new(),
+    })
 }
 
 pub async fn extract_prompts_capability(
     conn: &crate::core::connection::UpstreamConnection
 ) -> Result<ExtractedCapability, ApiError> {
-    let mut result = ExtractedCapability::empty();
-    if conn.supports_prompts() {
-        if let Some(service) = &conn.service {
-            if let Ok(list_result) = service.list_prompts(None).await {
-                for p in list_result.prompts {
-                    result.data.push(serde_json::json!({
-                        "name": p.name,
-                        "description": p.description,
-                        "arguments": p.arguments.clone().unwrap_or_default(),
-                    }));
-                    let converted_args = p
-                        .arguments
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|arg| crate::core::cache::PromptArgument {
-                            name: arg.name,
-                            description: arg.description,
-                            required: arg.required.unwrap_or(false),
-                        })
-                        .collect();
-                    result.prompts.push(crate::core::cache::CachedPromptInfo {
-                        name: p.name,
-                        description: p.description,
-                        arguments: converted_args,
-                        enabled: true,
-                        cached_at: chrono::Utc::now(),
-                    });
-                }
-            }
-        }
+    if !conn.supports_prompts() {
+        return Ok(ExtractedCapability::empty());
     }
-    Ok(result)
+
+    let service = match &conn.service {
+        Some(service) => service,
+        None => return Ok(ExtractedCapability::empty()),
+    };
+
+    let list_result = service
+        .list_prompts(None)
+        .await
+        .map_err(|_| ApiError::InternalError("Failed to list prompts".to_string()))?;
+
+    let now = chrono::Utc::now();
+    let (data, prompts): (Vec<_>, Vec<_>) = list_result
+        .prompts
+        .into_iter()
+        .map(|p| {
+            let arguments = p.arguments.unwrap_or_default();
+
+            let prompt_info = crate::core::cache::CachedPromptInfo {
+                name: p.name,
+                description: p.description,
+                arguments: arguments
+                    .clone()
+                    .into_iter()
+                    .map(|arg| crate::core::cache::PromptArgument {
+                        name: arg.name,
+                        description: arg.description,
+                        required: arg.required.unwrap_or(false),
+                    })
+                    .collect(),
+                enabled: true,
+                cached_at: now,
+            };
+
+            let data_item = serde_json::json!({
+                "name": prompt_info.name,
+                "description": prompt_info.description,
+                "arguments": arguments,
+            });
+
+            (data_item, prompt_info)
+        })
+        .unzip();
+
+    Ok(ExtractedCapability {
+        data,
+        tools: Vec::new(),
+        prompts,
+        resources: Vec::new(),
+        resource_templates: Vec::new(),
+    })
 }
 
 pub async fn extract_resources_capability(
     conn: &crate::core::connection::UpstreamConnection
 ) -> Result<ExtractedCapability, ApiError> {
-    let mut result = ExtractedCapability::empty();
-    if conn.supports_resources() {
-        if let Some(service) = &conn.service {
-            if let Ok(list_result) = service.list_resources(None).await {
-                for r in list_result.resources {
-                    result.data.push(serde_json::json!({
-                        "uri": r.uri,
-                        "name": r.name,
-                        "description": r.description,
-                        "mime_type": r.mime_type,
-                    }));
-                    result.resources.push(crate::core::cache::CachedResourceInfo {
-                        uri: r.uri.clone(),
-                        name: Some(r.name.clone()),
-                        description: r.description.clone(),
-                        mime_type: r.mime_type.clone(),
-                        enabled: true,
-                        cached_at: chrono::Utc::now(),
-                    });
-                }
-            }
-        }
+    if !conn.supports_resources() {
+        return Ok(ExtractedCapability::empty());
     }
-    Ok(result)
+
+    let service = match &conn.service {
+        Some(service) => service,
+        None => return Ok(ExtractedCapability::empty()),
+    };
+
+    let list_result = service
+        .list_resources(None)
+        .await
+        .map_err(|_| ApiError::InternalError("Failed to list resources".to_string()))?;
+
+    let now = chrono::Utc::now();
+    let (data, resources): (Vec<_>, Vec<_>) = list_result
+        .resources
+        .into_iter()
+        .map(|r| {
+            let raw = &*r;
+            let resource_info = crate::core::cache::CachedResourceInfo {
+                uri: raw.uri.clone(),
+                name: Some(raw.name.clone()),
+                description: raw.description.clone(),
+                mime_type: raw.mime_type.clone(),
+                enabled: true,
+                cached_at: now,
+            };
+
+            let data_item = serde_json::json!({
+                "uri": resource_info.uri,
+                "name": resource_info.name,
+                "description": resource_info.description,
+                "mime_type": resource_info.mime_type,
+            });
+
+            (data_item, resource_info)
+        })
+        .unzip();
+
+    Ok(ExtractedCapability {
+        data,
+        tools: Vec::new(),
+        prompts: Vec::new(),
+        resources,
+        resource_templates: Vec::new(),
+    })
 }
 
 pub async fn extract_resource_templates_capability(
     conn: &crate::core::connection::UpstreamConnection
 ) -> Result<ExtractedCapability, ApiError> {
-    let mut result = ExtractedCapability::empty();
-    if conn.supports_resources() {
-        if let Some(service) = &conn.service {
-            let mut cursor = None;
-            while let Ok(list_result) = service
-                .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
-                .await
-            {
-                for t in list_result.resource_templates {
-                    result.data.push(serde_json::json!({
-                        "uri_template": t.uri_template,
-                        "name": t.name,
-                        "description": t.description,
-                        "mime_type": t.mime_type,
-                    }));
-                    result
-                        .resource_templates
-                        .push(crate::core::cache::CachedResourceTemplateInfo {
-                            uri_template: t.uri_template.clone(),
-                            name: Some(t.name.clone()),
-                            description: t.description.clone(),
-                            mime_type: t.mime_type.clone(),
-                            enabled: true,
-                            cached_at: chrono::Utc::now(),
-                        });
-                }
-                cursor = list_result.next_cursor;
-                if cursor.is_none() {
-                    break;
-                }
-            }
+    if !conn.supports_resources() {
+        return Ok(ExtractedCapability::empty());
+    }
+
+    let service = match &conn.service {
+        Some(service) => service,
+        None => return Ok(ExtractedCapability::empty()),
+    };
+
+    let now = chrono::Utc::now();
+    let mut all_templates = Vec::new();
+    let mut cursor = None;
+
+    // Paginated resource template collection
+    loop {
+        let list_result = service
+            .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
+            .await
+            .map_err(|_| ApiError::InternalError("Failed to list resource templates".to_string()))?;
+
+        all_templates.extend(list_result.resource_templates);
+        cursor = list_result.next_cursor;
+
+        if cursor.is_none() {
+            break;
         }
     }
-    Ok(result)
+
+    let (data, resource_templates): (Vec<_>, Vec<_>) = all_templates
+        .into_iter()
+        .map(|t| {
+            let data_item = serde_json::json!({
+                "uri_template": t.uri_template,
+                "name": t.name,
+                "description": t.description,
+                "mime_type": t.mime_type,
+            });
+
+            let template_info = crate::core::cache::CachedResourceTemplateInfo {
+                uri_template: t.uri_template.clone(),
+                name: Some(t.name.clone()),
+                description: t.description.clone(),
+                mime_type: t.mime_type.clone(),
+                enabled: true,
+                cached_at: now,
+            };
+
+            (data_item, template_info)
+        })
+        .unzip();
+
+    Ok(ExtractedCapability {
+        data,
+        tools: Vec::new(),
+        prompts: Vec::new(),
+        resources: Vec::new(),
+        resource_templates,
+    })
 }
 
 /// Create temporary server instance for capability extraction during force refresh
@@ -526,7 +639,7 @@ pub async fn create_temporary_instance_for_capability(
                 }
             }
 
-            let kind = to_kind(&capability_type);
+            let kind = CapabilityKind::from(&capability_type);
             if let Ok(db) = get_database_from_state(state) {
                 let enriched = enrich_capability_items(kind, &db.pool, &server_info.server_id, extracted.data).await;
                 return Ok(Some(respond_with_enriched(enriched, false, params.refresh, "runtime")));
@@ -569,7 +682,7 @@ pub async fn create_temporary_instance_for_capability(
                 }
             }
 
-            let kind = to_kind(&capability_type);
+            let kind = CapabilityKind::from(&capability_type);
             let data = extracted.data;
 
             let items = match get_database_from_state(state) {
@@ -583,11 +696,13 @@ pub async fn create_temporary_instance_for_capability(
     }
 }
 
-fn to_kind(cap: &CapabilityType) -> CapabilityKind {
-    match cap {
-        CapabilityType::Tools => CapabilityKind::Tools,
-        CapabilityType::Prompts => CapabilityKind::Prompts,
-        CapabilityType::Resources => CapabilityKind::Resources,
-        CapabilityType::ResourceTemplates => CapabilityKind::ResourceTemplates,
+impl From<&CapabilityType> for CapabilityKind {
+    fn from(value: &CapabilityType) -> Self {
+        match value {
+            CapabilityType::Tools => CapabilityKind::Tools,
+            CapabilityType::Prompts => CapabilityKind::Prompts,
+            CapabilityType::Resources => CapabilityKind::Resources,
+            CapabilityType::ResourceTemplates => CapabilityKind::ResourceTemplates,
+        }
     }
 }

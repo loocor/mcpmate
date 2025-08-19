@@ -234,3 +234,149 @@ Cross-compilation targets:
 - Policy-based access control
 - Input validation for all API endpoints
 - Secure handling of environment variables and credentials
+
+# 🦀 Rust Best Practices Coding Standards
+
+## Core Principles
+
+1. **Use widely acclaimed idiomatic coding style from the Rust community**
+2. **Prioritize ownership moves over unnecessary cloning and borrowing**
+3. **Leverage the type system fully, let the compiler help catch errors**
+4. **Embrace functional programming paradigms with iterator chaining**
+
+## Syntax Guidelines
+
+### Ownership Management
+- ✅ Prefer `into_iter()` over `iter()`
+- ✅ Move parameters when possible: `fn process(data: Vec<T>)` over `fn process(data: &Vec<T>)`
+- ✅ Use `String` instead of `&str` as return type (when ownership is needed)
+
+### Data Processing
+- ✅ Use `map()` for data transformation
+- ✅ Use `filter()` for data filtering
+- ✅ Use `filter_map()` for simultaneous filtering and transformation
+- ✅ Use `fold()` or `reduce()` for aggregation operations
+- ✅ Use `collect()` to collect iterator results
+
+### Error Handling
+- ✅ Use `?` operator for early return style error handling
+- ✅ Return `Result<T, E>` instead of `panic!`
+- ✅ Use `unwrap_or()` or `unwrap_or_else()` to provide default values
+
+### Pattern Matching
+- ✅ Use `match` for business logic branching
+- ✅ Leverage exhaustiveness checking in pattern matching
+- ✅ Use `if let` for single pattern matching
+
+### Chaining Style
+- ✅ Adopt chained method calls for improved readability
+- ✅ Each chain call on separate line for easier debugging and modification
+- ✅ Use `collect()` or terminal operations at the end of chains
+
+### Type Design
+- ✅ Use `newtype` pattern to enhance type safety
+- ✅ Implement necessary traits: `Debug`, `Clone`, `PartialEq`, etc.
+- ✅ Use `enum` to represent states and variants
+
+### Code Organization
+- ✅ Use `impl` blocks to organize related methods
+- ✅ Leverage `macro_rules!` to eliminate code duplication
+- ✅ Use modules `mod` for proper code grouping
+
+## Practice Checklist
+
+```rust
+// ✅ Example code template following standards
+fn process_data(input: Vec<String>) -> Result<Vec<ProcessedItem>, ProcessError> {
+    input
+        .into_iter()                                    // Ownership move
+        .filter(|item| !item.is_empty())                // Data filtering
+        .map(|item| item.trim().to_string())            // Data transformation
+        .map(ProcessedItem::try_from)                   // Type conversion
+        .collect::<Result<Vec<_>, _>>()                 // Error aggregation
+        .map_err(ProcessError::from)                    // Error conversion
+}
+
+// ✅ Error handling example
+fn load_and_process_config() -> Result<Config, ConfigError> {
+    let content = std::fs::read_to_string("config.toml")?;  // ? operator
+    let raw_config: RawConfig = toml::from_str(&content)?;
+
+    match raw_config.validate() {                           // match branching
+        Ok(config) => Ok(config),
+        Err(validation_errors) => Err(ConfigError::Invalid(validation_errors)),
+    }
+}
+
+// ✅ Type design example
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserId(u64);
+
+#[derive(Debug)]
+pub enum ProcessingState {
+    Pending,
+    InProgress { started_at: SystemTime },
+    Completed { result: ProcessResult },
+    Failed { error: ProcessError },
+}
+```
+
+## Code Review Points
+
+- [ ] Are unnecessary `.clone()` calls avoided?
+- [ ] Is `?` used instead of `unwrap()`?
+- [ ] Is chaining style adopted?
+- [ ] Are appropriate iterator methods used?
+- [ ] Are pattern matching advantages leveraged?
+- [ ] Are ownership best practices followed?
+- [ ] Is type-safe newtype pattern used?
+- [ ] Are necessary traits implemented?
+- [ ] Is `macro_rules!` used appropriately?
+- [ ] Are excessive lifetime annotations avoided?
+
+## Performance Optimization Points
+
+- [ ] Avoid string allocation in loops
+- [ ] Use `&str` for string slice operations
+- [ ] Leverage lazy evaluation characteristics of iterators
+- [ ] Use `Cow<str>` appropriately for potential string copying
+- [ ] Use `Vec::with_capacity()` for capacity pre-allocation
+- [ ] Avoid unnecessary intermediate collection allocations
+- [ ] Use `Box<str>` instead of `String` (when string is no longer modified)
+- [ ] Leverage `Arc<T>` and `Rc<T>` for sharing read-only data
+- [ ] Use `lazy_static!` or `once_cell` for static data initialization
+- [ ] Use `#[inline]` annotation for small functions appropriately
+
+## Anti-patterns to Avoid
+
+- ❌ Overusing `.clone()`
+- ❌ Using `unwrap()` without error handling
+- ❌ Passing `&Vec<T>` instead of `&[T]`
+- ❌ Passing `&String` instead of `&str`
+- ❌ Using `RefCell<T>` or `Mutex<T>` when unnecessary
+- ❌ Ignoring borrow checker warnings from compiler
+- ❌ Using too many lifetime parameters
+- ❌ Using complex smart pointers in simple cases
+
+## Memory Safety Guidelines
+
+- [ ] Prefer stack allocation over heap allocation when possible
+- [ ] Use `Box<T>` for single ownership of heap data
+- [ ] Use `Rc<T>` for multiple ownership in single-threaded contexts
+- [ ] Use `Arc<T>` for multiple ownership in multi-threaded contexts
+- [ ] Avoid cyclic references with `Weak<T>`
+- [ ] Use `Pin<T>` for self-referential structs when necessary
+
+## Concurrency Best Practices
+
+- [ ] Use `Send` and `Sync` traits appropriately
+- [ ] Prefer message passing over shared state
+- [ ] Use `tokio` for async programming
+- [ ] Use `Mutex<T>` and `RwLock<T>` for shared mutable state
+- [ ] Avoid blocking operations in async contexts
+- [ ] Use `Arc<Mutex<T>>` for shared mutable data across threads
+
+---
+
+*Last Updated: August 2025*
+*For Rust Development Projects*

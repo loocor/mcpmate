@@ -74,56 +74,10 @@ pub async fn start_background_connections(
         // This is consistent with the /api/system/status endpoint which shows total_servers as all servers in the system
         tracing::info!("Connected to {}/{} upstream servers", connected_count, total_count);
 
-        // Auto-sync capabilities for all servers on startup
-        if let Some(db) = proxy_arc_clone.database.as_ref() {
-            drop(pool); // Release lock before async operations
-
-            tracing::info!("Starting capability sync for all servers after connection establishment");
-
-            // Wait a bit for connections to stabilize
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            // Create redb cache for capability sync (use separate file for startup to avoid lock conflicts)
-            let redb_cache_path = crate::common::paths::global_paths()
-                .cache_dir()
-                .join("capability_startup.redb");
-            tracing::debug!("Creating redb cache at path: {:?}", redb_cache_path);
-
-            match crate::core::cache::RedbCacheManager::new(
-                redb_cache_path,
-                crate::core::cache::manager::CacheConfig::default(),
-            ) {
-                Ok(redb_cache) => {
-                    tracing::info!("Successfully created redb cache for capability sync");
-
-                    // Use unified capability manager for startup sync (all servers from database)
-                    let capability_manager = crate::config::server::capabilities::CapabilityManager::new(
-                        Arc::new(db.pool.clone()),
-                        Arc::new(redb_cache),
-                        connection_pool.clone(),
-                    );
-
-                    tracing::info!("Capability manager created, starting sync for all servers");
-
-                    match capability_manager.sync_connected_servers().await {
-                        Ok(synced_servers) => {
-                            tracing::info!(
-                                "Successfully synced server capabilities during startup for {} servers",
-                                synced_servers.len()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to sync server capabilities during startup: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to create redb cache for capability sync: {}", e);
-                }
-            }
-        } else {
-            tracing::warn!("No database available for capability sync during startup");
-        }
+        // Note: Capability sync is now handled after API server startup
+        // This avoids the need for temporary redb files and ensures clean separation
+        // between MCP protocol functionality (available immediately) and API caching (optimized later)
+        tracing::info!("Background connections established. Capability sync will be handled by API server startup.");
     });
 
     Ok(())

@@ -96,6 +96,42 @@ fn create_router_internal(
     let redb_cache = crate::config::server::capabilities::cache_utils::get_standard_cache_manager()
         .expect("Failed to initialize standard Redb cache manager");
 
+    // Start background capability sync after API server initialization
+    // This ensures capability caching is available for API queries while keeping
+    // MCP protocol functionality independent and immediately available
+    if let Some(database) = database.as_ref() {
+        let db_pool = Arc::new(database.pool.clone());
+        let redb_cache_for_sync = redb_cache.clone();
+        let connection_pool_for_sync = connection_pool.clone();
+        
+        tokio::spawn(async move {
+            // Wait a bit for API server to fully initialize
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            
+            tracing::info!("Starting capability sync for all servers after API initialization");
+            
+            let capability_manager = crate::config::server::capabilities::CapabilityManager::new(
+                db_pool,
+                redb_cache_for_sync,
+                connection_pool_for_sync,
+            );
+            
+            match capability_manager.sync_connected_servers().await {
+                Ok(synced_servers) => {
+                    tracing::info!(
+                        "Successfully completed post-startup capability sync for {} servers",
+                        synced_servers.len()
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Post-startup capability sync failed: {}", e);
+                }
+            }
+        });
+    } else {
+        tracing::warn!("No database available for post-startup capability sync");
+    }
+
     let state = Arc::new(AppState {
         connection_pool,
         metrics_collector,

@@ -10,12 +10,17 @@ use std::sync::Arc;
 use crate::api::{handlers::ApiError, routes::AppState};
 use chrono::Utc;
 
-use super::capability::{
-    CapabilityKind, enrich_capability_items, respond_with_enriched, tool_json, tool_json_from_cached,
-};
+use super::capability::{CapabilityKind, tool_json, tool_json_from_cached};
 use super::common::{
     InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
 };
+
+/// Convert database error to ApiError
+#[inline]
+fn db_error(e: impl std::fmt::Display) -> ApiError {
+    ApiError::InternalError(format!("Database error: {e}"))
+}
+
 
 /// List all tools for a specific server
 ///
@@ -27,6 +32,7 @@ use super::common::{
 /// 5) None: return empty.
 ///
 /// Supports both `server_name` and `server_id` as identifier.
+#[tracing::instrument(skip(state))]
 pub async fn list_tools(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -36,7 +42,7 @@ pub async fn list_tools(
     let db = get_database_from_state(&state)?;
     let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Database error: {e}")))?
+        .map_err(db_error)?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
     let server_info = super::common::ServerIdentification {
         server_id: id.clone(),
@@ -72,29 +78,36 @@ pub async fn list_tools(
                 let processed: Vec<serde_json::Value> =
                     data.tools.into_iter().map(|t| tool_json_from_cached(&t)).collect();
                 if !processed.is_empty() {
-                    if let Ok(db) = super::common::get_database_from_state(&state) {
-                        let enriched =
-                            enrich_capability_items(CapabilityKind::Tools, &db.pool, &server_info.server_id, processed)
-                                .await;
-                        return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
-                    }
-                    return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
+                    return super::common::try_enrich_or_fallback(
+                        &state,
+                        CapabilityKind::Tools,
+                        &server_info.server_id,
+                        processed,
+                        true,
+                        params.refresh,
+                        crate::common::constants::strategies::CACHE,
+                    )
+                    .await;
                 }
-                // empty cached snapshot is treated as miss; fall through to runtime/offline
             }
         }
     }
 
     // Runtime fallback: read tools from connected instances in the pool
-    if let Ok(pool) = tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
+    if let Ok(pool) = tokio::time::timeout(
+        std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
+        state.connection_pool.lock(),
+    )
+    .await
+    {
         if let Some(instances) = pool.connections.get(&server_info.server_name) {
-            // Collect tools from any connected instance
-            let mut tools: Vec<serde_json::Value> = Vec::new();
-            let mut cached_tools: Vec<crate::core::cache::CachedToolInfo> = Vec::new();
-            for conn in instances.values() {
-                if !conn.is_connected() {
-                    continue;
-                }
+            let connected_instances: Vec<_> = instances.values().filter(|conn| conn.is_connected()).collect();
+
+            let mut tools = Vec::new();
+            let mut cached_tools = Vec::new();
+            let now = Utc::now();
+
+            for conn in connected_instances {
                 for t in &conn.tools {
                     let schema = t.schema_as_json_value();
                     tools.push(tool_json(
@@ -113,7 +126,7 @@ pub async fn list_tools(
                         input_schema_json,
                         unique_name: None,
                         enabled: true,
-                        cached_at: Utc::now(),
+                        cached_at: now,
                     });
                 }
             }
@@ -124,12 +137,16 @@ pub async fn list_tools(
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
                 // Enrich tool list with id/unique_name from DB mapping
-                if let Ok(db) = get_database_from_state(&state) {
-                    let enriched =
-                        enrich_capability_items(CapabilityKind::Tools, &db.pool, &server_info.server_id, tools).await;
-                    return Ok(respond_with_enriched(enriched, false, params.refresh, "runtime"));
-                }
-                return Ok(create_inspect_response(tools, false, params.refresh, "runtime"));
+                return super::common::try_enrich_or_fallback(
+                    &state,
+                    CapabilityKind::Tools,
+                    &server_info.server_id,
+                    tools,
+                    false,
+                    params.refresh,
+                    crate::common::constants::strategies::RUNTIME,
+                )
+                .await;
             }
         }
     }
@@ -151,15 +168,24 @@ pub async fn list_tools(
         if !cached_tools.is_empty() {
             let processed: Vec<serde_json::Value> =
                 cached_tools.into_iter().map(|t| tool_json_from_cached(&t)).collect();
-            if let Ok(db) = get_database_from_state(&state) {
-                let enriched =
-                    enrich_capability_items(CapabilityKind::Tools, &db.pool, &server_info.server_id, processed).await;
-                return Ok(respond_with_enriched(enriched, true, params.refresh, "cache"));
-            }
-            return Ok(create_inspect_response(processed, true, params.refresh, "cache"));
+            return super::common::try_enrich_or_fallback(
+                &state,
+                CapabilityKind::Tools,
+                &server_info.server_id,
+                processed,
+                true,
+                params.refresh,
+                crate::common::constants::strategies::CACHE,
+            )
+            .await;
         }
     }
 
     // No data available
-    Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
+    Ok(create_inspect_response(
+        Vec::new(),
+        false,
+        params.refresh,
+        crate::common::constants::strategies::NONE,
+    ))
 }
