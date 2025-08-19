@@ -396,7 +396,7 @@ impl UpstreamConnectionPool {
         conn.capabilities = capabilities;
         conn.update_ready();
 
-        tracing::info!(
+        tracing::debug!(
             "Updated connection for '{}' instance '{}' with service and {} tools",
             server_name,
             instance_id,

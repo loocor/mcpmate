@@ -42,4 +42,34 @@ impl ApiServer {
 
         Ok(())
     }
+
+    /// Start the API server with graceful shutdown support
+    pub async fn start_with_shutdown(
+        &self,
+        connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
+        http_proxy: Option<Arc<ProxyServer>>,
+        cancellation_token: tokio_util::sync::CancellationToken,
+    ) -> Result<(), anyhow::Error> {
+        // Create the router with connection pool and HTTP proxy reference if available
+        let router = if let Some(proxy) = http_proxy {
+            create_router_with_proxy(connection_pool.clone(), proxy)
+        } else {
+            create_router(connection_pool.clone())
+        };
+
+        tracing::info!("Starting API server on {} with graceful shutdown support", self.address);
+
+        let listener = tokio::net::TcpListener::bind(self.address).await?;
+
+        // Start server with graceful shutdown
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                cancellation_token.cancelled().await;
+                tracing::info!("API server received shutdown signal");
+            })
+            .await?;
+
+        tracing::info!("API server shutdown completed");
+        Ok(())
+    }
 }

@@ -14,6 +14,8 @@ pub struct EventHandlers {
     pub suit_service: Option<Arc<crate::core::suit::SuitService>>,
     /// Optional connection pool for server management
     pub connection_pool: Option<Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>>,
+    /// Optional event-driven capability manager for server capability sync
+    pub event_capability_manager: Option<Arc<crate::core::events::capability::EventDrivenCapabilityManager>>,
 }
 
 impl Default for EventHandlers {
@@ -28,6 +30,7 @@ impl EventHandlers {
         Self {
             suit_service: None,
             connection_pool: None,
+            event_capability_manager: None,
         }
     }
 
@@ -47,6 +50,15 @@ impl EventHandlers {
     ) {
         self.connection_pool = Some(connection_pool);
         info!("Set connection pool for event handlers");
+    }
+
+    /// Set event-driven capability manager for server capability sync
+    pub fn set_event_capability_manager(
+        &mut self,
+        event_capability_manager: Arc<crate::core::events::capability::EventDrivenCapabilityManager>,
+    ) {
+        self.event_capability_manager = Some(event_capability_manager);
+        info!("Set event-driven capability manager for event handlers");
     }
 
     /// Initialize event handlers and register with the global event bus
@@ -76,10 +88,7 @@ impl EventHandlers {
         match event {
             // Config suit status changed - trigger server management
             Event::ConfigSuitStatusChanged { suit_id, enabled } => {
-                debug!(
-                    "Handling ConfigSuitStatusChanged: {} -> {}",
-                    suit_id, enabled
-                );
+                debug!("Handling ConfigSuitStatusChanged: {} -> {}", suit_id, enabled);
 
                 // Invalidate cache first
                 if let Some(suit_service) = &self.suit_service {
@@ -122,9 +131,7 @@ impl EventHandlers {
             }
 
             // Events that require server synchronization (but not specific server management)
-            Event::ServerGlobalStatusChanged { .. }
-            | Event::DatabaseChanged
-            | Event::ConfigReloaded => {
+            Event::ServerGlobalStatusChanged { .. } | Event::DatabaseChanged | Event::ConfigReloaded => {
                 debug!("Handling server sync event: {:?}", event);
 
                 // Invalidate cache
@@ -138,11 +145,8 @@ impl EventHandlers {
             | Event::ResourceEnabledInSuitChanged { .. }
             | Event::PromptEnabledInSuitChanged { .. } => {
                 debug!("Configuration changed, no server sync needed: {:?}", event);
-                // These events only affect protocol-level configuration
-                // No need to reconnect to servers
             }
 
-            // Cache events (informational only)
             Event::CacheUpdated {
                 server_id,
                 server_name,
@@ -152,39 +156,22 @@ impl EventHandlers {
                     "Cache updated for server '{}' ({}): {:?}",
                     server_name, server_id, update_type
                 );
-                // No action needed, this is informational
             }
 
-            Event::CacheInvalidated {
-                server_id,
-                server_name,
-            } => {
-                debug!(
-                    "Cache invalidated for server '{}' ({})",
-                    server_name, server_id
-                );
-                // No action needed, this is informational
+            Event::CacheInvalidated { server_id, server_name } => {
+                debug!("Cache invalidated for server '{}' ({})", server_name, server_id);
             }
 
             Event::CacheCleared => {
                 debug!("Cache cleared");
-                // No action needed, this is informational
             }
 
             // Transport and runtime events (handled by wait mechanism)
-            Event::ServerTransportReady {
-                transport_type,
-                ready,
-            } => {
+            Event::ServerTransportReady { transport_type, ready } => {
                 debug!("Transport event: {:?} ready={}", transport_type, ready);
-                // These events are handled by the wait mechanism
-                // No additional action needed here
             }
 
-            Event::RuntimeCheckStarted {
-                runtime_type,
-                version,
-            } => {
+            Event::RuntimeCheckStarted { runtime_type, version } => {
                 debug!("Runtime check started: {} {:?}", runtime_type, version);
             }
 
@@ -193,23 +180,14 @@ impl EventHandlers {
                 version,
                 bin_path,
             } => {
-                debug!(
-                    "Runtime check success: {} {} at {}",
-                    runtime_type, version, bin_path
-                );
+                debug!("Runtime check success: {} {} at {}", runtime_type, version, bin_path);
             }
 
-            Event::RuntimeCheckFailed {
-                runtime_type,
-                error,
-            } => {
+            Event::RuntimeCheckFailed { runtime_type, error } => {
                 debug!("Runtime check failed: {} - {}", runtime_type, error);
             }
 
-            Event::RuntimeDownloadStarted {
-                runtime_type,
-                version,
-            } => {
+            Event::RuntimeDownloadStarted { runtime_type, version } => {
                 debug!("Runtime download started: {} {}", runtime_type, version);
             }
 
@@ -229,16 +207,10 @@ impl EventHandlers {
                 version,
                 bin_path,
             } => {
-                debug!(
-                    "Runtime ready: {} {} at {}",
-                    runtime_type, version, bin_path
-                );
+                debug!("Runtime ready: {} {} at {}", runtime_type, version, bin_path);
             }
 
-            Event::RuntimeSetupFailed {
-                runtime_type,
-                error,
-            } => {
+            Event::RuntimeSetupFailed { runtime_type, error } => {
                 debug!("Runtime setup failed: {} - {}", runtime_type, error);
             }
 
@@ -271,11 +243,40 @@ impl EventHandlers {
             } => {
                 if success {
                     info!("Server {} startup completed successfully", server_name);
+
+                    // Trigger capability sync for newly connected server using lightweight manager
+                    if let Some(event_capability_manager) = &self.event_capability_manager {
+                        debug!(
+                            "Server '{}' connected successfully, triggering event-driven capability sync",
+                            server_name
+                        );
+
+                        match event_capability_manager.sync_single_server(&server_name).await {
+                            Ok(_) => {
+                                debug!(
+                                    "Successfully synced capabilities for newly connected server '{}' (event-driven)",
+                                    server_name
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to sync capabilities for newly connected server '{}': {}",
+                                    server_name, e
+                                );
+                            }
+                        }
+                    } else {
+                        debug!(
+                            "No event-driven capability manager available for server '{}' capability sync",
+                            server_name
+                        );
+                    }
                 } else {
-                    warn!(
-                        "Server {} startup failed: {}",
-                        server_name,
-                        error.unwrap_or_else(|| "Unknown error".to_string())
+                    let error_message = error.unwrap_or_else(|| "Unknown error".to_string());
+                    warn!("Server {} startup failed: {}", server_name, error_message);
+                    debug!(
+                        "Server '{}' connection failed: {}, skipping capability sync",
+                        server_name, error_message
                     );
                 }
             }
@@ -284,10 +285,7 @@ impl EventHandlers {
                 debug!("Server {} shutdown initiated", server_name);
             }
 
-            Event::ServerConnectionShutdownCompleted {
-                server_name,
-                success,
-            } => {
+            Event::ServerConnectionShutdownCompleted { server_name, success } => {
                 if success {
                     info!("Server {} shutdown completed successfully", server_name);
                 } else {

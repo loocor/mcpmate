@@ -20,26 +20,39 @@ use crate::{
 /// This function is safe to call multiple times - it will only initialize once
 pub fn setup_logging(args: &Args) -> Result<()> {
     // Use try_init() to avoid panic on repeated calls
-    let result = tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env()
-                .add_directive(
-                    args.log_level
-                        .parse()
-                        .unwrap_or(tracing::Level::WARN.into()), // Changed default from INFO to WARN
-                )
-                // Reduce noise from specific modules
-                .add_directive("rmcp=warn".parse().unwrap())
-                .add_directive("mcpmate::core::cache=warn".parse().unwrap())
-                .add_directive("mcpmate::core::transport=warn".parse().unwrap())
-                .add_directive("mcpmate::system::metrics=error".parse().unwrap())
-                .add_directive("sqlx=error".parse().unwrap())
-        )
-        .try_init();
+
+    // Create environment filter with smart defaults
+    let (env_filter, log_config_msg) = if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        // If RUST_LOG is set, respect it completely - no overrides
+        let msg = format!("Using RUST_LOG environment variable: {} (full control)", rust_log);
+        (EnvFilter::from_default_env(), msg)
+    } else {
+        // If RUST_LOG is not set, use application defaults with noise reduction
+        let default_level = args.log_level.parse().unwrap_or(tracing::Level::INFO.into());
+        let msg = format!(
+            "No RUST_LOG set, using application default: {} (with noise reduction)",
+            args.log_level
+        );
+
+        // Create filter with noise reduction for common noisy modules
+        let filter = EnvFilter::from_default_env()
+            .add_directive(default_level)
+            // Keep the really noisy third-party modules quiet
+            .add_directive("sqlx=warn".parse().unwrap()) // SQL queries are too verbose
+            .add_directive("rmcp=warn".parse().unwrap()) // MCP protocol noise
+            .add_directive("hyper=warn".parse().unwrap()) // HTTP client noise
+            .add_directive("reqwest=warn".parse().unwrap()) // HTTP requests
+            .add_directive("tokio=warn".parse().unwrap()); // Async runtime noise
+
+        (filter, msg)
+    };
+
+    let result = tracing_subscriber::fmt().with_env_filter(env_filter).try_init();
 
     match result {
         Ok(()) => {
             tracing::info!("Logging system initialized successfully");
+            tracing::info!("{}", log_config_msg);
         }
         Err(_) => {
             // Global subscriber already set, this is fine for FFI mode

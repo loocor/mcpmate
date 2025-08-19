@@ -121,10 +121,8 @@ impl DatabaseResourceService {
         }
 
         // Use the helper function to deduplicate by (server_name, template_name)
-        let all_templates = crate::core::foundation::utils::deduplicate_by_key(
-            all_templates,
-            |template| template.name.clone(),
-        );
+        let all_templates =
+            crate::core::foundation::utils::deduplicate_by_key(all_templates, |template| template.name.clone());
 
         tracing::info!(
             "Found {} enabled resource templates from enabled servers",

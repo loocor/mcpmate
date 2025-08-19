@@ -73,78 +73,99 @@ pub async fn start_background_connections(
         // Display system-wide server count, showing ratio of connected vs all configured servers
         // This is consistent with the /api/system/status endpoint which shows total_servers as all servers in the system
         tracing::info!("Connected to {}/{} upstream servers", connected_count, total_count);
-
-        // Note: Capability sync is now handled after API server startup
-        // This avoids the need for temporary redb files and ensures clean separation
-        // between MCP protocol functionality (available immediately) and API caching (optimized later)
-        tracing::info!("Background connections established. Capability sync will be handled by API server startup.");
     });
 
     Ok(())
 }
 
 /// Start the MCP proxy server with specified transport using core implementation
+/// Returns a JoinHandle for the MCP server that can be awaited for graceful shutdown
 pub async fn start_proxy_server(
     proxy: &mut ProxyServer,
     args: &Args,
-) -> Result<()> {
+) -> Result<Option<tokio::task::JoinHandle<Result<(), anyhow::Error>>>> {
     // Start proxy server with specified transport
     let mcp_bind_address = format!("127.0.0.1:{}", args.mcp_port).parse()?;
     tracing::info!("🚀 MCP Proxy Server binding to address: {}", mcp_bind_address);
     tracing::info!("🔧 Using port from args.port: {}", args.mcp_port);
 
-    // Check if using unified mode
-    if args.transport == "unified" || args.transport == "uni" {
-        tracing::info!(
-            "Starting MCP proxy server on {} with unified transport (both SSE and Streamable HTTP)",
-            mcp_bind_address
-        );
-
-        // Start the unified server using core implementation
-        if let Err(e) = proxy.start_unified(mcp_bind_address).await {
-            tracing::error!("Failed to start unified proxy server: {}", e);
-            return Err(e);
-        }
-    } else {
-        // Parse transport type for non-unified mode
-        let transport_type = match args.transport.as_str() {
-            "sse" => TransportType::Sse,
-            "streamable_http" | "streamablehttp" | "str" => TransportType::StreamableHttp,
-            _ => {
-                tracing::warn!("Unknown transport type: {}, defaulting to SSE", args.transport);
-                TransportType::Sse
-            }
-        };
-
-        tracing::info!(
-            "Starting MCP proxy server on {} with transport type {:?}",
-            mcp_bind_address,
-            transport_type
-        );
-
-        // Start the server with specific transport using core implementation
-        let path = match transport_type {
-            TransportType::Sse => "/sse",
-            TransportType::StreamableHttp => "/mcp", // Path for Streamable HTTP
-            _ => "/sse",                             // Default
-        };
-
-        tracing::info!("Using path '{}' for transport type {:?}", path, transport_type);
-
-        if let Err(e) = proxy.start(transport_type, mcp_bind_address).await {
-            tracing::error!("Failed to start proxy server: {}", e);
-            return Err(e);
-        }
+    // Start server based on transport mode using early return pattern
+    match args.transport.as_str() {
+        "unified" | "uni" => start_unified_server(proxy, mcp_bind_address).await,
+        transport => start_single_transport_server(proxy, mcp_bind_address, transport).await,
     }
-
-    Ok(())
 }
 
-/// Start the API server
+/// Start unified server (both SSE and Streamable HTTP)
+async fn start_unified_server(
+    proxy: &mut ProxyServer,
+    bind_address: SocketAddr,
+) -> Result<Option<tokio::task::JoinHandle<Result<(), anyhow::Error>>>> {
+    tracing::info!(
+        "Starting MCP proxy server on {} with unified transport (both SSE and Streamable HTTP)",
+        bind_address
+    );
+
+    let server_handle = proxy.start_unified(bind_address).await.map_err(|e| {
+        tracing::error!("Failed to start unified proxy server: {}", e);
+        e
+    })?;
+
+    Ok(Some(server_handle))
+}
+
+/// Start single transport server (SSE or Streamable HTTP)
+async fn start_single_transport_server(
+    proxy: &mut ProxyServer,
+    bind_address: SocketAddr,
+    transport: &str,
+) -> Result<Option<tokio::task::JoinHandle<Result<(), anyhow::Error>>>> {
+    let transport_type = parse_transport_type(transport);
+
+    tracing::info!(
+        "Starting MCP proxy server on {} with transport type {:?}",
+        bind_address,
+        transport_type
+    );
+
+    let path = get_transport_path(&transport_type);
+    tracing::info!("Using path '{}' for transport type {:?}", path, transport_type);
+
+    proxy.start(transport_type, bind_address).await.map_err(|e| {
+        tracing::error!("Failed to start proxy server: {}", e);
+        e
+    })?;
+
+    // Non-unified mode doesn't return a JoinHandle yet
+    Ok(None)
+}
+
+/// Parse transport type from string with fallback
+fn parse_transport_type(transport: &str) -> TransportType {
+    match transport {
+        "sse" => TransportType::Sse,
+        "streamable_http" | "streamablehttp" | "str" => TransportType::StreamableHttp,
+        _ => {
+            tracing::warn!("Unknown transport type: {}, defaulting to SSE", transport);
+            TransportType::Sse
+        }
+    }
+}
+
+/// Get endpoint path for transport type
+fn get_transport_path(transport_type: &TransportType) -> &'static str {
+    match transport_type {
+        TransportType::StreamableHttp => "/mcp",
+        TransportType::Sse => "/sse",
+        _ => "/sse",
+    }
+}
+
+/// Start the API server with graceful shutdown support
 pub async fn start_api_server(
     proxy_arc: Arc<ProxyServer>,
     args: &Args,
-) -> Result<tokio::task::JoinHandle<()>> {
+) -> Result<(tokio::task::JoinHandle<()>, tokio_util::sync::CancellationToken)> {
     // Start API server
     let api_bind_address: SocketAddr = format!("127.0.0.1:{}", args.api_port).parse()?;
     tracing::info!("🚀 API Server binding to address: {}", api_bind_address);
@@ -153,15 +174,22 @@ pub async fn start_api_server(
     // Clone necessary references for the API server
     let connection_pool = Arc::clone(&proxy_arc.connection_pool);
 
+    // Create cancellation token for API server
+    let api_cancellation_token = tokio_util::sync::CancellationToken::new();
+    let api_token_clone = api_cancellation_token.clone();
+
     // Start the API server in a background task
     let api_task = tokio::spawn(async move {
         let api_server = crate::api::ApiServer::new(api_bind_address);
 
-        if let Err(e) = api_server.start(connection_pool, Some(proxy_arc)).await {
+        if let Err(e) = api_server
+            .start_with_shutdown(connection_pool, Some(proxy_arc), api_token_clone)
+            .await
+        {
             tracing::error!("API server failed: {}", e);
         }
     });
 
     tracing::info!("API server started successfully on {}", api_bind_address);
-    Ok(api_task)
+    Ok((api_task, api_cancellation_token))
 }

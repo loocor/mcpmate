@@ -46,6 +46,8 @@ pub struct ProxyServer {
     pub paginator: crate::core::foundation::pagination::ProxyPaginator,
     /// Built-in services registry for MCPMate internal tools
     pub builtin_services: Arc<BuiltinServiceRegistry>,
+    /// Cancellation token for graceful shutdown
+    pub cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 /// Configuration for the unified HTTP server
@@ -234,6 +236,7 @@ impl ProxyServer {
             runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
             paginator,
             builtin_services,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -265,7 +268,7 @@ impl ProxyServer {
         // Setup event handlers with server manager callback
         self.setup_event_handlers().await?;
 
-        tracing::info!(
+        tracing::debug!(
             "Database connection, builtin services, server manager, and event handlers set for proxy server"
         );
         Ok(())
@@ -282,6 +285,18 @@ impl ProxyServer {
 
         // Set connection pool for server management
         handlers.set_connection_pool(self.connection_pool.clone());
+
+        // Set lightweight event-driven capability manager for server capability sync
+        if let Some(database) = &self.database {
+            let event_capability_manager = Arc::new(crate::core::events::EventDrivenCapabilityManager::new(
+                Arc::new(database.pool.clone()),
+                self.connection_pool.clone(),
+            ));
+
+            handlers.set_event_capability_manager(event_capability_manager);
+        } else {
+            tracing::warn!("No database available for event-driven capability manager in event handlers");
+        }
 
         // Initialize the event handlers
         crate::core::events::init_with_handlers(handlers)?;
@@ -306,29 +321,30 @@ impl ProxyServer {
     }
 
     /// Start the proxy server with unified transport (both SSE and Streamable HTTP)
+    /// Returns a JoinHandle that can be awaited for graceful shutdown
     pub async fn start_unified(
         &self,
         bind_address: SocketAddr,
-    ) -> Result<()> {
+    ) -> Result<tokio::task::JoinHandle<Result<(), anyhow::Error>>> {
         tracing::info!("Starting unified proxy server on {}", bind_address);
 
         // Create a service factory function
         let server_clone = self.clone();
         let factory = move || server_clone.clone();
 
-        // Create unified server config
+        // Create unified server config using proxy server's cancellation token
         let config = UnifiedHttpServerConfig {
             bind_address,
             streamable_http_path: "/mcp".to_string(),
             sse_path: "/sse".to_string(),
             sse_message_path: "/message".to_string(),
             keep_alive_interval: Some(std::time::Duration::from_secs(15)),
-            cancellation_token: tokio_util::sync::CancellationToken::new(),
+            cancellation_token: self.cancellation_token.clone(),
         };
 
         // Create and start the unified server
         let server = UnifiedHttpServer::with_config(config);
-        server.start(factory).await?;
+        let server_handle = tokio::spawn(async move { server.start(factory).await });
 
         // Publish server ready events
         crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
@@ -342,6 +358,32 @@ impl ProxyServer {
         });
 
         tracing::info!("Unified proxy server started successfully");
+        Ok(server_handle)
+    }
+
+    /// Initiate graceful shutdown of the proxy server
+    /// This sends the shutdown signal but doesn't wait for completion
+    pub async fn initiate_shutdown(&self) -> Result<()> {
+        tracing::info!("Initiating proxy server shutdown...");
+
+        // Cancel the server's main operations (this will trigger graceful shutdown)
+        self.cancellation_token.cancel();
+
+        tracing::info!("Shutdown signal sent to proxy server");
+        Ok(())
+    }
+
+    /// Complete the shutdown process by cleaning up connections
+    pub async fn complete_shutdown(&self) -> Result<()> {
+        tracing::info!("Completing proxy server shutdown...");
+
+        // Disconnect all connections in the pool
+        {
+            let mut pool = self.connection_pool.lock().await;
+            pool.disconnect_all().await?;
+        }
+
+        tracing::info!("Proxy server shutdown completed");
         Ok(())
     }
 

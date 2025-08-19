@@ -67,11 +67,7 @@ pub async fn build_prompt_mapping(
                                 },
                             );
 
-                            tracing::debug!(
-                                "Added prompt '{}' from server '{}'",
-                                prompt.name,
-                                server_name
-                            );
+                            tracing::debug!("Added prompt '{}' from server '{}'", prompt.name, server_name);
                         }
                     }
                     Err(e) => {
@@ -147,17 +143,12 @@ pub async fn build_prompt_template_mapping(
 ///
 /// # Returns
 /// * `Vec<rmcp::model::Prompt>` - A vector of all available prompts
-pub async fn get_all_prompts(
-    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> Vec<rmcp::model::Prompt> {
+pub async fn get_all_prompts(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>) -> Vec<rmcp::model::Prompt> {
     // Build the prompt mapping first
     let prompt_mapping = build_prompt_mapping(connection_pool).await;
 
     // Extract all prompts from the mapping
-    let all_prompts: Vec<rmcp::model::Prompt> = prompt_mapping
-        .into_values()
-        .map(|mapping| mapping.prompt)
-        .collect();
+    let all_prompts: Vec<rmcp::model::Prompt> = prompt_mapping.into_values().map(|mapping| mapping.prompt).collect();
 
     tracing::debug!("Collected {} total prompts", all_prompts.len());
     all_prompts

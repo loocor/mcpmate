@@ -14,9 +14,9 @@ use crate::common::constants::commands;
 pub fn get_connection_timeout(command: &str) -> Duration {
     match command {
         commands::DOCKER => Duration::from_secs(120), // Docker operations can take longer
-        commands::NPX => Duration::from_secs(60), // npm operations can take time (handled by transformation)
+        commands::NPX => Duration::from_secs(60),     // npm operations can take time (handled by transformation)
         commands::UVX | commands::BUNX => Duration::from_secs(30), // Runtime commands may need more time
-        _ => Duration::from_secs(10),                              // Regular commands
+        _ => Duration::from_secs(10),                 // Regular commands
     }
 }
 
@@ -26,7 +26,7 @@ pub fn get_tools_timeout(command: &str) -> Duration {
         commands::DOCKER => Duration::from_secs(60), // Docker operations can take longer
         commands::NPX => Duration::from_secs(60),    // npm timeout (handled by transformation)
         commands::UVX | commands::BUNX => Duration::from_secs(20), // Runtime commands may need more time
-        _ => Duration::from_secs(10),                              // Regular commands
+        _ => Duration::from_secs(10),                // Regular commands
     }
 }
 
@@ -81,24 +81,10 @@ where
             };
 
             match error_type {
-                TimeoutErrorType::Connection => Err(CoreError::connection_error(
-                    server_name,
-                    &error_msg,
-                    Some(e),
-                )),
-                TimeoutErrorType::Tools => {
-                    Err(CoreError::tools_error(server_name, &error_msg, Some(e)))
-                }
-                TimeoutErrorType::Service => Err(CoreError::connection_error(
-                    server_name,
-                    &error_msg,
-                    Some(e),
-                )),
-                TimeoutErrorType::Transport => Err(CoreError::connection_error(
-                    server_name,
-                    &error_msg,
-                    Some(e),
-                )),
+                TimeoutErrorType::Connection => Err(CoreError::connection_error(server_name, &error_msg, Some(e))),
+                TimeoutErrorType::Tools => Err(CoreError::tools_error(server_name, &error_msg, Some(e))),
+                TimeoutErrorType::Service => Err(CoreError::connection_error(server_name, &error_msg, Some(e))),
+                TimeoutErrorType::Transport => Err(CoreError::connection_error(server_name, &error_msg, Some(e))),
             }
         }
         Err(_) => {
@@ -114,18 +100,14 @@ where
                     format!("Service creation timeout for server '{server_name}' after {seconds}s")
                 }
                 TimeoutErrorType::Transport => {
-                    format!(
-                        "Transport creation timeout for server '{server_name}' after {seconds}s"
-                    )
+                    format!("Transport creation timeout for server '{server_name}' after {seconds}s")
                 }
             };
 
             tracing::warn!("{}", error_msg);
 
             match error_type {
-                TimeoutErrorType::Connection
-                | TimeoutErrorType::Service
-                | TimeoutErrorType::Transport => {
+                TimeoutErrorType::Connection | TimeoutErrorType::Service | TimeoutErrorType::Transport => {
                     Err(CoreError::connection_timeout(server_name, seconds))
                 }
                 TimeoutErrorType::Tools => Err(CoreError::tools_timeout(server_name, seconds)),
@@ -188,7 +170,7 @@ pub fn needs_runtime_setup(command: &str) -> bool {
 pub fn transform_command(command: &str) -> String {
     match command {
         "npx" => {
-            tracing::info!("Transforming npx command to bunx for better performance");
+            tracing::debug!("Transforming npx command to bunx for better performance");
             "bunx".to_string()
         }
         _ => command.to_string(),
@@ -196,44 +178,47 @@ pub fn transform_command(command: &str) -> String {
 }
 
 /// Generic deduplication helper that removes duplicates based on a key function
-/// 
+///
 /// This helper reduces code duplication across the codebase for common
 /// deduplication patterns using HashSet.
-/// 
+///
 /// # Arguments
 /// * `items` - Vector of items to deduplicate
 /// * `key_fn` - Function that extracts the key for deduplication
-/// 
+///
 /// # Returns
 /// * `Vec<T>` - Deduplicated vector maintaining original order for first occurrence
-pub fn deduplicate_by_key<T, K, F>(items: Vec<T>, key_fn: F) -> Vec<T>
+pub fn deduplicate_by_key<T, K, F>(
+    items: Vec<T>,
+    key_fn: F,
+) -> Vec<T>
 where
     K: Hash + Eq,
     F: Fn(&T) -> K,
 {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
-    
+
     for item in items {
         let key = key_fn(&item);
         if seen.insert(key) {
             result.push(item);
         }
     }
-    
+
     result
 }
 
 /// Database fallback helper for operations that require database access
-/// 
+///
 /// This helper implements the early return pattern for database operations,
 /// providing a consistent way to handle missing database connections.
-/// 
+///
 /// # Arguments
 /// * `db_option` - Optional reference to database
 /// * `operation` - Async operation to perform with database
 /// * `fallback_value` - Value to return if database is not available
-/// 
+///
 /// # Returns
 /// * `Result<T>` - Operation result or fallback value
 pub async fn with_db_or_fallback<T, F, Fut>(

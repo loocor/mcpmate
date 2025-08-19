@@ -65,23 +65,23 @@ impl Database {
 
         // Create database if it doesn't exist
         if !db_exists {
-            tracing::info!("Creating database at {}", database_url);
+            tracing::debug!("Creating database at {}", database_url);
             match Sqlite::create_database(&database_url).await {
-                Ok(_) => tracing::info!("Database created successfully"),
+                Ok(_) => tracing::debug!("Database created successfully"),
                 Err(e) => {
                     tracing::error!("Failed to create SQLite database: {}", e);
                     return Err(anyhow::anyhow!("Failed to create SQLite database: {}", e));
                 }
             }
         } else {
-            tracing::info!("Database already exists at {}", database_url);
+            tracing::debug!("Database already exists at {}", database_url);
         }
 
         // Connect to the database
         tracing::debug!("Connecting to database with max 5 connections");
         let pool = match SqlitePoolOptions::new().max_connections(5).connect(&database_url).await {
             Ok(pool) => {
-                tracing::info!("Successfully connected to database");
+                tracing::debug!("Successfully connected to database");
                 pool
             }
             Err(e) => {
@@ -125,7 +125,10 @@ impl Database {
                 if let Err(e) = db.import_from_files(default_config_path).await {
                     tracing::warn!("Failed to import MCP configuration: {}", e);
                 } else {
-                    tracing::info!("Imported MCP server configuration from {}", default_config_path.display());
+                    tracing::debug!(
+                        "Imported MCP server configuration from {}",
+                        default_config_path.display()
+                    );
                 }
             }
         }
@@ -202,7 +205,7 @@ impl Database {
 
         if suit_servers.is_empty() {
             let all_servers = server::get_all_servers(&self.pool).await?;
-            
+
             for server in &all_servers {
                 if let Some(server_id) = &server.id {
                     suit::add_server_to_config_suit(&self.pool, &suit_id, server_id, true).await?;

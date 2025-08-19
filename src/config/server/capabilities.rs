@@ -555,11 +555,15 @@ pub async fn sync_via_connection_pool(
     Ok(())
 }
 
-/// Unified capability management interface
-pub struct CapabilityManager {
-    db_pool: Arc<Pool<Sqlite>>,
-    redb_cache: Arc<RedbCacheManager>,
-    connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
+/// Capability sync strategy
+#[derive(Debug, Clone)]
+pub enum SyncStrategy {
+    /// Use existing connection from pool
+    FromConnection,
+    /// Create temporary connection for discovery
+    FromConfig(crate::core::models::MCPServerConfig, ServerType),
+    /// Force refresh capabilities
+    ForceRefresh,
 }
 
 /// Capability sync result
@@ -573,15 +577,11 @@ pub struct CapabilitySync {
     pub snapshot: CapabilitySnapshot,
 }
 
-/// Capability sync strategy
-#[derive(Debug, Clone)]
-pub enum SyncStrategy {
-    /// Use existing connection from pool
-    FromConnection,
-    /// Create temporary connection for discovery
-    FromConfig(crate::core::models::MCPServerConfig, ServerType),
-    /// Force refresh capabilities
-    ForceRefresh,
+/// Unified capability management interface
+pub struct CapabilityManager {
+    db_pool: Arc<Pool<Sqlite>>,
+    redb_cache: Arc<RedbCacheManager>,
+    connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
 }
 
 impl CapabilityManager {
@@ -828,6 +828,32 @@ impl CapabilityManager {
                 SyncStrategy::FromConfig(config, server_row.server_type)
             }
         };
+
+        self.sync_server_capabilities(&server_id, server_name, strategy).await
+    }
+
+    /// Sync capabilities for a single server that just connected successfully
+    /// This method is optimized for event-driven capability sync triggered by connection events
+    pub async fn sync_single_server(
+        &self,
+        server_name: &str,
+    ) -> Result<CapabilitySync> {
+        // Get server from database
+        let server_row = crate::config::models::Server::find_by_name(&self.db_pool, server_name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
+
+        let server_id = server_row
+            .id
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' has no ID", server_name))?;
+
+        // Use FromConnection strategy since we know the server just connected successfully
+        let strategy = SyncStrategy::FromConnection;
+
+        tracing::debug!(
+            "Syncing capabilities for newly connected server '{}' using FromConnection strategy",
+            server_name
+        );
 
         self.sync_server_capabilities(&server_id, server_name, strategy).await
     }

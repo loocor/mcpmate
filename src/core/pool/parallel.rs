@@ -97,10 +97,7 @@ impl ParallelConnectionManager {
             return Ok(());
         }
 
-        tracing::info!(
-            "Starting parallel connection to {} servers",
-            server_instances.len()
-        );
+        tracing::info!("Starting parallel connection to {} servers", server_instances.len());
 
         // Create parallel connection tasks
         let connection_tasks: Vec<_> = server_instances
@@ -109,12 +106,7 @@ impl ParallelConnectionManager {
                 let event_tx = self.event_tx.clone();
                 let pool = self.pool.clone();
 
-                tokio::spawn(Self::connect_single_server(
-                    server_name,
-                    instance_id,
-                    pool,
-                    event_tx,
-                ))
+                tokio::spawn(Self::connect_single_server(server_name, instance_id, pool, event_tx))
             })
             .collect();
 
@@ -213,10 +205,7 @@ impl ParallelConnectionManager {
         let server_config = match pool.config.mcp_servers.get(server_name) {
             Some(config) => config,
             None => {
-                return Err(format!(
-                    "Server configuration for '{}' not found",
-                    server_name
-                ));
+                return Err(format!("Server configuration for '{}' not found", server_name));
             }
         };
 
@@ -267,17 +256,11 @@ impl ParallelConnectionManager {
                 .await
             }
             ServerType::Sse => {
-                let (service, tools, capabilities) =
-                    connect_sse_server(server_name, server_config).await?;
+                let (service, tools, capabilities) = connect_sse_server(server_name, server_config).await?;
                 Ok((service, tools, capabilities, None))
             }
             ServerType::StreamableHttp => {
-                Self::perform_http_connection(
-                    server_name,
-                    server_config,
-                    TransportType::StreamableHttp,
-                )
-                .await
+                Self::perform_http_connection(server_name, server_config, TransportType::StreamableHttp).await
             }
         }
     }
@@ -333,8 +316,7 @@ impl ParallelConnectionManager {
         Option<rmcp::model::ServerCapabilities>,
         Option<u32>,
     )> {
-        let (service, tools, capabilities) =
-            connect_http_server(server_name, server_config, transport_type).await?;
+        let (service, tools, capabilities) = connect_http_server(server_name, server_config, transport_type).await?;
 
         Ok((service, tools, capabilities, None))
     }
@@ -346,6 +328,7 @@ impl ParallelConnectionManager {
     ) {
         while let Some(event) = event_rx.recv().await {
             match event {
+                // Handle connection initializing
                 ConnectionEvent::Connecting {
                     server_name,
                     instance_id,
@@ -360,6 +343,8 @@ impl ParallelConnectionManager {
                         );
                     }
                 }
+
+                // Handle connection success
                 ConnectionEvent::Connected {
                     server_name,
                     instance_id,
@@ -371,13 +356,7 @@ impl ParallelConnectionManager {
                     let mut pool = pool.lock().await;
 
                     // Update connection with service
-                    pool.update_connection(
-                        &server_name,
-                        &instance_id,
-                        service,
-                        tools,
-                        capabilities,
-                    );
+                    pool.update_connection(&server_name, &instance_id, service, tools, capabilities);
 
                     // Update process ID if available
                     if let Some(pid) = process_id {
@@ -386,12 +365,19 @@ impl ParallelConnectionManager {
                         }
                     }
 
-                    tracing::info!(
-                        "Successfully connected to '{}' instance '{}'",
-                        server_name,
-                        instance_id
+                    tracing::debug!("Successfully connected to '{}' instance '{}'", server_name, instance_id);
+
+                    // Publish connection success event for capability sync
+                    crate::core::events::EventBus::global().publish(
+                        crate::core::events::Event::ServerConnectionStartupCompleted {
+                            server_name: server_name.clone(),
+                            success: true,
+                            error: None,
+                        },
                     );
                 }
+
+                // Handle connection failure
                 ConnectionEvent::Failed {
                     server_name,
                     instance_id,
@@ -407,7 +393,18 @@ impl ParallelConnectionManager {
                             error
                         );
                     }
+
+                    // Publish connection failure event
+                    crate::core::events::EventBus::global().publish(
+                        crate::core::events::Event::ServerConnectionStartupCompleted {
+                            server_name: server_name.clone(),
+                            success: false,
+                            error: Some(error.to_string()),
+                        },
+                    );
                 }
+
+                // Store the token for later use
                 ConnectionEvent::TokenStore {
                     server_name,
                     instance_id,

@@ -32,30 +32,13 @@ pub async fn connect_server(
         ServerType::Stdio => {
             let ct = ct.unwrap_or_default();
 
-            let result = if let Some(cache) = runtime_cache {
-                stdio::connect_stdio_server_with_runtime_cache(
-                    server_name,
-                    server_config,
-                    ct,
-                    database_pool,
-                    cache,
-                )
-                .await?
-            } else {
-                stdio::connect_stdio_server_with_ct_and_db(
-                    server_name,
-                    server_config,
-                    ct,
-                    database_pool,
-                )
-                .await?
-            };
+            let result =
+                stdio::connect_stdio_server(server_name, server_config, ct, database_pool, runtime_cache).await?;
 
             Ok(result)
         }
         ServerType::Sse => {
-            let (service, tools, capabilities) =
-                sse::connect_sse_server(server_name, server_config).await?;
+            let (service, tools, capabilities) = sse::connect_sse_server(server_name, server_config).await?;
             Ok((service, tools, capabilities, None))
         }
         ServerType::StreamableHttp => {

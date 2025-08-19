@@ -39,10 +39,10 @@ async fn main() -> Result<()> {
     start_background_connections(&proxy, proxy_arc.clone()).await?;
 
     // Start proxy server
-    start_proxy_server(&mut proxy, &args).await?;
+    let mcp_server_handle = start_proxy_server(&mut proxy, &args).await?;
 
     // Start API server
-    let api_task = start_api_server(proxy_arc.clone(), &args).await?;
+    let (api_task, api_cancellation_token) = start_api_server(proxy_arc.clone(), &args).await?;
 
     tracing::info!("Servers started. Press Ctrl+C to stop.");
 
@@ -50,15 +50,49 @@ async fn main() -> Result<()> {
     tokio::signal::ctrl_c().await?;
     tracing::info!("Received Ctrl+C, shutting down...");
 
-    // Cancel API server task
-    api_task.abort();
+    // Step 1: Initiate MCP server shutdown first
+    tracing::info!("Step 1: Initiating MCP server shutdown...");
+    proxy.initiate_shutdown().await?;
 
-    // Disconnect from all servers
-    {
-        let mut pool = proxy.connection_pool.lock().await;
-        pool.disconnect_all().await?;
-        tracing::info!("Disconnected from all upstream servers");
+    // Step 2: Wait for MCP server to complete gracefully (if handle is available)
+    if let Some(mcp_handle) = mcp_server_handle {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), mcp_handle).await {
+            Ok(Ok(Ok(()))) => {
+                tracing::info!("MCP server shutdown completed successfully");
+            }
+            Ok(Ok(Err(e))) => {
+                tracing::warn!("MCP server completed with error: {}", e);
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("MCP server task panicked: {}", e);
+            }
+            Err(_) => {
+                tracing::warn!("MCP server shutdown timed out after 5 seconds");
+            }
+        }
+    } else {
+        tracing::info!("MCP server doesn't support graceful shutdown monitoring, proceeding...");
     }
+
+    // Step 2: Shutdown API server after MCP server is done
+    tracing::info!("Step 2: Initiating API server shutdown...");
+    api_cancellation_token.cancel();
+
+    match tokio::time::timeout(std::time::Duration::from_secs(5), api_task).await {
+        Ok(Ok(())) => {
+            tracing::info!("API server shutdown completed successfully");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("API server task completed with error: {}", e);
+        }
+        Err(_) => {
+            tracing::warn!("API server shutdown timed out after 5 seconds");
+        }
+    }
+
+    // Step 4: Complete proxy server cleanup (connections, etc.)
+    tracing::info!("Step 3: Completing proxy server cleanup...");
+    proxy.complete_shutdown().await?;
 
     Ok(())
 }

@@ -214,7 +214,7 @@ impl BridgeServer {
         // create SSE transport
         let sse_transport = match SseClientTransport::start(self.sse_url.as_str()).await {
             Ok(transport) => {
-                tracing::info!("Successfully connected to SSE server");
+                tracing::debug!("Successfully connected to SSE server");
                 transport
             }
             Err(e) => {
@@ -360,7 +360,7 @@ async fn main() -> Result<()> {
     // try to connect to the upstream SSE server
     tracing::info!("Connecting to upstream SSE server at {}", args.sse_url);
     match bridge_server.connect_to_sse().await {
-        Ok(_) => tracing::info!("Successfully connected to upstream SSE server"),
+        Ok(_) => tracing::debug!("Successfully connected to upstream SSE server"),
         Err(e) => {
             // record the error but continue to start the service
             tracing::error!("Failed to connect to upstream SSE server: {}", e);

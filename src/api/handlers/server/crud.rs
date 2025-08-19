@@ -143,7 +143,7 @@ async fn add_server_to_suit_with_sync(
                     e
                 );
             } else {
-                tracing::info!(
+                tracing::debug!(
                     "Successfully synced capabilities for server {} to suit {}",
                     server_id_clone,
                     suit_id_clone

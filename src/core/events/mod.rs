@@ -44,12 +44,14 @@
 //! ```
 
 pub mod bus;
+pub mod capability;
 pub mod handlers;
 pub mod types;
 pub mod wait;
 
 // Re-export public API
 pub use bus::EventBus;
+pub use capability::EventDrivenCapabilityManager;
 pub use handlers::{EventHandlers, init, init_with_handlers};
 pub use types::Event;
 pub use wait::{needs_transport_ready_wait, wait_for_transport_ready};

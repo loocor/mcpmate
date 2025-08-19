@@ -78,10 +78,7 @@ impl EventBus {
     {
         if let Ok(mut handlers) = self.handlers.write() {
             handlers.push(Box::new(handler));
-            debug!(
-                "Added core event handler, total handlers: {}",
-                handlers.len()
-            );
+            debug!("Added core event handler, total handlers: {}", handlers.len());
         } else {
             error!("Failed to acquire write lock on event handlers");
         }

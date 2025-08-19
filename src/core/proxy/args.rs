@@ -12,7 +12,7 @@ pub struct Args {
     #[arg(long, default_value = "8080")]
     pub api_port: u16,
 
-    /// Log level
+    /// Log level (when RUST_LOG is not set)
     #[arg(short, long, default_value = "info")]
     pub log_level: String,
 

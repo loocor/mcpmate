@@ -19,6 +19,148 @@ use crate::core::foundation::utils::{
 };
 use crate::core::models::MCPServerConfig;
 
+/// Prepare and configure command with environment variables
+async fn prepare_server_command(
+    server_config: &MCPServerConfig,
+    runtime_cache: Option<&crate::runtime::RuntimeCache>,
+) -> Result<(tokio::process::Command, String)> {
+    let command = server_config
+        .command
+        .as_ref()
+        .context("Command not specified for stdio server")?;
+
+    let transformed_command = crate::core::foundation::utils::transform_command(command);
+
+    tracing::debug!(
+        "Executing command: {} (transformed from: {})",
+        transformed_command,
+        command
+    );
+
+    let mut cmd = prepare_command(&transformed_command, server_config.args.as_ref());
+
+    // Handle runtime cache if available
+    if let Some(cache) = runtime_cache {
+        if let Some(runtime_path) = cache.get_runtime_for_command(&transformed_command).await {
+            tracing::debug!(
+                "Using MCPMate managed runtime for command '{}' (transformed from '{}'): {}",
+                transformed_command,
+                command,
+                runtime_path.display()
+            );
+
+            let runtime_command = runtime_path.to_string_lossy();
+            cmd = prepare_command(&runtime_command, server_config.args.as_ref());
+        } else {
+            tracing::warn!(
+                "MCPMate runtime for command '{}' (transformed from '{}') not available in .mcpmate/runtimes, falling back to system runtime",
+                transformed_command,
+                command
+            );
+        }
+    } else {
+        tracing::warn!("Runtime cache not available, using system runtime for command '{command}'");
+
+        // Create necessary directories for runtime
+        let paths = crate::common::paths::global_paths();
+        paths
+            .ensure_directories()
+            .context("Failed to create necessary directories")?;
+    }
+
+    Ok((cmd, transformed_command))
+}
+
+/// Apply environment variables to command
+async fn setup_command_environment(
+    cmd: &mut tokio::process::Command,
+    server_config: &MCPServerConfig,
+    transformed_command: &str,
+    database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
+) -> Result<()> {
+    // Add environment variables if any
+    if let Some(env) = &server_config.env {
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+    }
+
+    // Prepare environment variables based on runtime configuration
+    if let Err(e) = crate::config::runtime::prepare_command_env_with_db(cmd, transformed_command, database_pool).await {
+        tracing::warn!(
+            "Failed to prepare environment for command '{}': {}",
+            transformed_command,
+            e
+        );
+        tracing::info!("Attempting to continue with default environment");
+    } else {
+        tracing::debug!("Environment prepared for command '{}'", transformed_command);
+    }
+
+    Ok(())
+}
+
+/// Connect to server with timeout handling
+async fn connect_with_timeout(
+    cmd: tokio::process::Command,
+    ct: CancellationToken,
+    server_name: &str,
+    connection_timeout: std::time::Duration,
+) -> Result<RunningService<RoleClient, ()>> {
+    let child_process = TokioChildProcess::new(cmd).map_err(|e| {
+        ct.cancel();
+        anyhow::anyhow!("Failed to create child process: {e}")
+    })?;
+
+    timeout(connection_timeout, async {
+        serve_client_with_ct((), child_process, ct.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to connect to server: {e}"))
+    })
+    .await
+    .map_err(|_| {
+        ct.cancel();
+        anyhow::anyhow!(
+            "Connection timeout for server '{server_name}' after {}s",
+            connection_timeout.as_secs()
+        )
+    })?
+}
+
+/// Get tools from service with timeout handling
+async fn get_tools_with_timeout(
+    service: &RunningService<RoleClient, ()>,
+    server_name: &str,
+    tools_timeout: std::time::Duration,
+    ct: CancellationToken,
+) -> Result<Vec<Tool>> {
+    timeout(tools_timeout, service.list_all_tools())
+        .await
+        .map_err(|_| {
+            ct.cancel();
+            anyhow::anyhow!(
+                "Timeout listing tools for server '{server_name}' after {}s",
+                tools_timeout.as_secs()
+            )
+        })?
+        .map_err(|e| anyhow::anyhow!("Failed to list tools: {e}"))
+}
+
+/// Cancel service with timeout to prevent hanging
+async fn cancel_service_safely(service: RunningService<RoleClient, ()>) {
+    match tokio::time::timeout(std::time::Duration::from_secs(3), service.cancel()).await {
+        Ok(Ok(_)) => {
+            tracing::debug!("Service cancelled successfully");
+        }
+        Ok(Err(cancel_err)) => {
+            tracing::warn!("Error cancelling service: {}", cancel_err);
+        }
+        Err(_) => {
+            tracing::warn!("Service cancellation timeout, resources may be leaked");
+        }
+    }
+}
+
 /// Core connection function with customizable environment preparation
 async fn connect_stdio_server_core(
     server_name: &str,
@@ -32,90 +174,14 @@ async fn connect_stdio_server_core(
     Option<ServerCapabilities>,
     Option<u32>,
 )> {
-    // Get command and arguments
-    let command = server_config
-        .command
-        .as_ref()
-        .context("Command not specified for stdio server")?;
+    // Prepare command and handle runtime cache
+    let (mut cmd, transformed_command) = prepare_server_command(server_config, runtime_cache).await?;
 
-    // Transform command if needed (e.g., npx -> bunx)
-    let transformed_command = crate::core::foundation::utils::transform_command(command);
+    // Setup environment variables
+    setup_command_environment(&mut cmd, server_config, &transformed_command, database_pool).await?;
 
-    // Log the command being executed
-    tracing::debug!(
-        "Executing command: {} (transformed from: {})",
-        transformed_command,
-        command
-    );
-
-    // Create command with cross-platform support
-    let mut cmd = prepare_command(&transformed_command, server_config.args.as_ref());
-
-    // Add environment variables if any
-    if let Some(env) = &server_config.env {
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
-    }
-
-    // Use RuntimeCache for fast runtime queries if available
-    if let Some(cache) = runtime_cache {
-        // Check if runtime is available in cache (use transformed command)
-        if let Some(runtime_path) = cache.get_runtime_for_command(&transformed_command).await {
-            tracing::info!(
-                "Using MCPMate managed runtime for command '{}' (transformed from '{}'): {}",
-                transformed_command,
-                command,
-                runtime_path.display()
-            );
-
-            // Update command to use the cached runtime path with cross-platform support
-            let runtime_command = runtime_path.to_string_lossy();
-            cmd = prepare_command(&runtime_command, server_config.args.as_ref());
-
-            // Re-add environment variables if any
-            if let Some(env) = &server_config.env {
-                for (key, value) in env {
-                    cmd.env(key, value);
-                }
-            }
-        } else {
-            tracing::info!(
-                "MCPMate runtime for command '{}' (transformed from '{}') not available in .mcpmate/runtimes, falling back to system runtime",
-                transformed_command,
-                command
-            );
-        }
-    } else {
-        // Fallback to basic runtime detection
-        tracing::info!("Runtime cache not available, using system runtime for command '{command}'");
-
-        // Create necessary directories for runtime
-        let paths = crate::common::paths::global_paths();
-        paths
-            .ensure_directories()
-            .context("Failed to create necessary directories")?;
-    }
-
-    // Prepare environment variables based on runtime configuration (use transformed command)
-    if let Err(e) = crate::config::runtime::prepare_command_env_with_db(
-        &mut cmd,
-        &transformed_command,
-        database_pool,
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to prepare environment for command '{}': {}",
-            transformed_command,
-            e
-        );
-        tracing::info!("Attempting to continue with default environment");
-    } else {
-        tracing::debug!("Environment prepared for command '{}'", transformed_command);
-    }
-
-    // Determine appropriate timeout based on command type
+    // Determine appropriate timeouts
+    let command = server_config.command.as_ref().unwrap(); // Safe because prepare_server_command already checked
     let connection_timeout = get_connection_timeout(command);
     let tools_timeout = get_tools_timeout(command);
 
@@ -126,105 +192,33 @@ async fn connect_stdio_server_core(
         tools_timeout.as_secs()
     );
 
-    // Connect to the server with timeout and proper cleanup
-    let connect_result = match TokioChildProcess::new(cmd) {
-        Ok(child_process) => {
-            // Set a timeout for the connection process
-            match timeout(connection_timeout, async {
-                match serve_client_with_ct((), child_process, ct.clone()).await {
-                    Ok(service) => Ok(service),
-                    Err(e) => {
-                        let error_msg = format!("Failed to connect to server: {e}");
-                        Err(anyhow::anyhow!(error_msg))
-                    }
-                }
-            })
-            .await
-            {
-                Ok(result) => result,
-                Err(_) => {
-                    // Connection timeout - ensure cancellation token is triggered
-                    ct.cancel();
-                    let error_msg = format!(
-                        "Connection timeout for server '{server_name}' after {}s",
-                        connection_timeout.as_secs()
-                    );
-                    tracing::warn!("{}", error_msg);
-                    return Err(anyhow::anyhow!(error_msg));
-                }
-            }
-        }
+    // Connect to server with timeout handling
+    let service = connect_with_timeout(cmd, ct.clone(), server_name, connection_timeout).await?;
+
+    // Get tools with timeout handling
+    let tools = match get_tools_with_timeout(&service, server_name, tools_timeout, ct.clone()).await {
+        Ok(tools) => tools,
         Err(e) => {
-            // Failed to create child process - cancel token to clean up
-            ct.cancel();
-            let error_msg = format!("Failed to create child process: {e}");
-            return Err(anyhow::anyhow!(error_msg));
+            cancel_service_safely(service).await;
+            return Err(e);
         }
     };
 
-    // If connection was successful, get tools with timeout
-    match connect_result {
-        Ok(service) => {
-            // Set a timeout for listing tools
-            match timeout(tools_timeout, service.list_all_tools()).await {
-                Ok(Ok(tools)) => {
-                    // Try to get the process ID
-                    let pid = get_process_id_for_server(server_name, server_config).await;
+    // Get process ID and capabilities
+    let pid = get_process_id_for_server(server_name, server_config).await;
+    let capabilities = service.peer_info().map(|info| info.capabilities.clone());
 
-                    // Get server capabilities from peer info
-                    let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+    tracing::info!(
+        "Connected to server '{}', found {} tools, capabilities: {:?}, process ID: {:?}",
+        server_name,
+        tools.len(),
+        capabilities
+            .as_ref()
+            .map(|c| format!("resources={}", c.resources.is_some())),
+        pid
+    );
 
-                    tracing::info!(
-                        "Connected to server '{}', found {} tools, capabilities: {:?}, process ID: {:?}",
-                        server_name,
-                        tools.len(),
-                        capabilities
-                            .as_ref()
-                            .map(|c| format!("resources={}", c.resources.is_some())),
-                        pid
-                    );
-
-                    Ok((service, tools, capabilities, pid))
-                }
-                Ok(Err(e)) => {
-                    let error_msg = format!("Failed to list tools: {e}");
-                    // Make sure to cancel the service to avoid resource leaks
-                    if let Err(cancel_err) = service.cancel().await {
-                        tracing::warn!("Error cancelling service: {}", cancel_err);
-                    }
-                    Err(anyhow::anyhow!(error_msg))
-                }
-                Err(_) => {
-                    let error_msg = format!(
-                        "Timeout listing tools for server '{server_name}' after {}s",
-                        tools_timeout.as_secs()
-                    );
-                    tracing::warn!("{}", error_msg);
-                    // Cancel the token first to stop any ongoing operations
-                    ct.cancel();
-                    // Then cancel the service with timeout to avoid hanging
-                    match tokio::time::timeout(std::time::Duration::from_secs(3), service.cancel())
-                        .await
-                    {
-                        Ok(Ok(_)) => {
-                            tracing::debug!("Service cancelled successfully after tools timeout");
-                        }
-                        Ok(Err(cancel_err)) => {
-                            tracing::warn!(
-                                "Error cancelling service after tools timeout: {}",
-                                cancel_err
-                            );
-                        }
-                        Err(_) => {
-                            tracing::warn!("Service cancellation timeout, resources may be leaked");
-                        }
-                    }
-                    Err(anyhow::anyhow!(error_msg))
-                }
-            }
-        }
-        Err(e) => Err(e),
-    }
+    Ok((service, tools, capabilities, pid))
 }
 
 /// Helper function to get process ID for a server
@@ -266,54 +260,18 @@ async fn get_process_id_for_server(
     None
 }
 
-/// Connect to a stdio server with database and runtime cache support
-pub async fn connect_stdio_server_with_ct_and_db(
+/// Universal stdio server connection function with optional database and runtime cache support
+pub async fn connect_stdio_server(
     server_name: &str,
     server_config: &MCPServerConfig,
     ct: CancellationToken,
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
+    runtime_cache: Option<&crate::runtime::RuntimeCache>,
 ) -> Result<(
     RunningService<RoleClient, ()>,
     Vec<Tool>,
     Option<ServerCapabilities>,
     Option<u32>,
 )> {
-    connect_stdio_server_core(server_name, server_config, ct, database_pool, None).await
-}
-
-/// Connect to a stdio server with runtime cache support
-pub async fn connect_stdio_server_with_runtime_cache(
-    server_name: &str,
-    server_config: &MCPServerConfig,
-    ct: CancellationToken,
-    database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
-    runtime_cache: &crate::runtime::RuntimeCache,
-) -> Result<(
-    RunningService<RoleClient, ()>,
-    Vec<Tool>,
-    Option<ServerCapabilities>,
-    Option<u32>,
-)> {
-    connect_stdio_server_core(
-        server_name,
-        server_config,
-        ct,
-        database_pool,
-        Some(runtime_cache),
-    )
-    .await
-}
-
-/// Connect to a stdio server with basic cancellation token support
-pub async fn connect_stdio_server_with_ct(
-    server_name: &str,
-    server_config: &MCPServerConfig,
-    ct: CancellationToken,
-) -> Result<(
-    RunningService<RoleClient, ()>,
-    Vec<Tool>,
-    Option<ServerCapabilities>,
-    Option<u32>,
-)> {
-    connect_stdio_server_core(server_name, server_config, ct, None, None).await
+    connect_stdio_server_core(server_name, server_config, ct, database_pool, runtime_cache).await
 }

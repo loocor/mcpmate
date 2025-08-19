@@ -30,7 +30,7 @@ pub async fn prepare_command_env_with_db(
     use crate::runtime::RuntimeManager;
 
     // Log the command we're preparing environment for
-    tracing::info!(
+    tracing::debug!(
         "Preparing environment for command: {} (executable: {})",
         command_str,
         command.as_std().get_program().to_string_lossy()
@@ -48,7 +48,7 @@ pub async fn prepare_command_env_with_db(
         let manager = RuntimeManager::new();
 
         if let Some(runtime_path) = manager.get_executable_path(rt_type) {
-            tracing::info!(
+            tracing::debug!(
                 "Using MCPMate managed runtime for '{}': {}",
                 command_str,
                 runtime_path.display()
