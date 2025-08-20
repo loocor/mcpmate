@@ -1,11 +1,12 @@
 // MCP Proxy API models for system management
 // Contains data models for system endpoints
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// System status response
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct StatusResponse {
     /// System status (running, starting, stopping, etc.)
     pub status: String,
@@ -18,7 +19,7 @@ pub struct StatusResponse {
 }
 
 /// System status response
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SystemStatusResponse {
     /// System version
     pub version: String,
@@ -33,7 +34,7 @@ pub struct SystemStatusResponse {
 }
 
 /// System metrics response
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SystemMetricsResponse {
     /// System uptime in seconds
     pub uptime_seconds: u64,
@@ -72,7 +73,7 @@ pub struct SystemMetricsResponse {
 }
 
 /// Configuration application status
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct ConfigApplicationStatus {
     /// Whether a configuration application is currently in progress
     pub in_progress: bool,
@@ -97,7 +98,7 @@ pub struct ConfigApplicationStatus {
 }
 
 /// Server connection status for detailed reporting
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct ServerConnectionStatus {
     /// Server name
     pub server_name: String,

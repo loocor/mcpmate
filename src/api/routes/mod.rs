@@ -5,6 +5,7 @@ pub mod board;
 pub mod cache;
 pub mod clients;
 pub mod notifs;
+pub mod openapi;
 pub mod runtime;
 pub mod server;
 pub mod suits;
@@ -12,6 +13,7 @@ pub mod system;
 
 use std::sync::Arc;
 
+use aide::{axum::ApiRouter, openapi::OpenApi};
 use axum::Router;
 use tokio::sync::Mutex;
 
@@ -108,19 +110,24 @@ fn create_router_internal(
         redb_cache,
     });
 
-    // Create API router
-    let api_router = Router::new()
+    // Create OpenAPI specification
+    let mut api = OpenApi::default();
+
+    // Create API router with aide support
+    let api_router = ApiRouter::new()
         .merge(server::routes(state.clone()))
         .merge(system::routes(state.clone()))
         .merge(cache::routes(state.clone()))
         .merge(notifs::routes(state.clone()))
         .merge(suits::routes(state.clone()))
         .merge(runtime::routes(state.clone()))
-        .merge(clients::routes(state.clone()));
+        .merge(clients::routes(state.clone()))
+        .finish_api_with(&mut api, openapi::api_docs);
 
-    // Create main router with API routes and board static files
+    // Create main router with API routes, docs, and board static files
     // Note: API routes must come first to avoid being intercepted by board fallback
     Router::new()
         .nest("/api", api_router)
+        .merge(openapi::openapi_routes(api))
         .merge(board::routes(state.clone()))
 }

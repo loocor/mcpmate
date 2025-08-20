@@ -12,9 +12,7 @@ use crate::api::{
 };
 
 /// Get system status
-pub async fn get_status(
-    State(state): State<Arc<AppState>>
-) -> Result<Json<StatusResponse>, ApiError> {
+pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<StatusResponse>, ApiError> {
     // Get all servers count (including disabled)
     let mut total_servers = 0;
     if let Some(http_proxy) = &state.http_proxy {
@@ -33,11 +31,7 @@ pub async fn get_status(
     }
 
     // Use timeout to avoid blocking indefinitely
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        state.connection_pool.lock(),
-    )
-    .await;
+    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
 
     let instances_map = match pool_result {
         Ok(pool) => pool.get_all_server_instances(),
@@ -73,9 +67,7 @@ pub async fn get_status(
 }
 
 /// Get system metrics
-pub async fn get_metrics(
-    State(state): State<Arc<AppState>>
-) -> Result<Json<SystemMetricsResponse>, ApiError> {
+pub async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<SystemMetricsResponse>, ApiError> {
     // We'll get metrics directly from sysinfo instead of the metrics collector
 
     // Get connection pool metrics
@@ -137,12 +129,11 @@ pub async fn get_metrics(
     let pid = std::process::id();
 
     // Get process metrics
-    let (cpu_usage, memory_usage) =
-        if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
-            (Some(process.cpu_usage()), Some(process.memory()))
-        } else {
-            (None, None)
-        };
+    let (cpu_usage, memory_usage) = if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
+        (Some(process.cpu_usage()), Some(process.memory()))
+    } else {
+        (None, None)
+    };
 
     // Get system metrics
     let system_cpu_usage = Some(system.global_cpu_info().cpu_usage());
