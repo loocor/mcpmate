@@ -3,25 +3,24 @@
 
 use crate::common::ClientCategory;
 use anyhow::Result;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
 // Re-export detection models to avoid duplication
-pub use crate::system::detection::models::{
-    ClientApp, DetectedApp, DetectionMethod, DetectionResult, DetectionRule,
-};
+pub use crate::system::detection::models::{ClientApp, DetectedApp, DetectionMethod, DetectionResult, DetectionRule};
 
-/// Configuration type enum for different client configuration formats
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(description = "Configuration file format type - standard, mixed, or array")]
 pub enum ConfigType {
-    /// Standard JSON configuration (e.g., Cursor, Windsurf)
     #[default]
+    #[schemars(description = "Standard JSON configuration format")]
     Standard,
-    /// Mixed configuration with existing content (e.g., Claude Desktop)
+    #[schemars(description = "Mixed configuration with existing content")]
     Mixed,
-    /// Array-based configuration format
+    #[schemars(description = "Array-based configuration format")]
     Array,
 }
 
@@ -76,7 +75,7 @@ pub struct DetectionRuleDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_app_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_identifier: Option<String>,
+    pub identifier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
 
@@ -106,7 +105,7 @@ pub struct ConfigRulesDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_app_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_identifier: Option<String>,
+    pub identifier: Option<String>,
 
     // Business logic fields
     pub top_level_key: String,
@@ -213,10 +212,7 @@ impl ClientRuleManager {
 
             // Validate detection rules
             if client.detection_rules.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "Client '{}' has no detection rules",
-                    client.identifier
-                ));
+                return Err(anyhow::anyhow!("Client '{}' has no detection rules", client.identifier));
             }
 
             // Validate config rules
@@ -228,10 +224,7 @@ impl ClientRuleManager {
             }
 
             if client.config_rules.format_rules.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "Client '{}' has no format rules",
-                    client.identifier
-                ));
+                return Err(anyhow::anyhow!("Client '{}' has no format rules", client.identifier));
             }
         }
 
@@ -259,11 +252,7 @@ impl ClientDefinition {
         // Prepare nested detection rules
         for (platform, rules) in &mut self.detection_rules {
             for rule in rules {
-                rule.prepare_for_db_insert(
-                    client_id.clone(),
-                    self.identifier.clone(),
-                    platform.clone(),
-                );
+                rule.prepare_for_db_insert(client_id.clone(), self.identifier.clone(), platform.clone());
             }
         }
 
@@ -278,12 +267,12 @@ impl DetectionRuleDefinition {
     pub fn prepare_for_db_insert(
         &mut self,
         client_app_id: String,
-        client_identifier: String,
+        identifier: String,
         platform: String,
     ) {
         self.id = Some(crate::generate_id!("rule"));
         self.client_app_id = Some(client_app_id);
-        self.client_identifier = Some(client_identifier);
+        self.identifier = Some(identifier);
         self.platform = Some(platform);
         self.enabled = Some(true);
 
@@ -299,11 +288,11 @@ impl ConfigRulesDefinition {
     pub fn prepare_for_db_insert(
         &mut self,
         client_app_id: String,
-        client_identifier: String,
+        identifier: String,
     ) {
         self.id = Some(crate::generate_id!("conf"));
         self.client_app_id = Some(client_app_id);
-        self.client_identifier = Some(client_identifier);
+        self.identifier = Some(identifier);
     }
 }
 
@@ -313,7 +302,7 @@ impl ConfigRulesDefinition {
 pub struct ConfigRule {
     pub id: String,
     pub client_app_id: String,
-    pub client_identifier: String,
+    pub identifier: String,
     pub top_level_key: String,
     pub config_type: ConfigType,
     pub supported_transports: Vec<String>,
@@ -348,7 +337,7 @@ pub enum GenerationMode {
 /// Request for configuration generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationRequest {
-    pub client_identifier: String,
+    pub identifier: String,
     pub mode: GenerationMode,
     pub config_suit_id: Option<String>,
     pub servers: Option<Vec<String>>, // Specific servers to include
@@ -357,18 +346,18 @@ pub struct GenerationRequest {
 /// Generated configuration result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneratedConfig {
-    pub client_identifier: String,
+    pub identifier: String,
     pub mode: GenerationMode,
     pub config_content: String, // JSON string
     pub config_path: String,
     pub backup_needed: bool,
-    pub preview_only: bool,
+    pub preview: bool,
 }
 
 /// Configuration application request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplicationRequest {
-    pub client_identifier: String,
+    pub identifier: String,
     pub config: GeneratedConfig,
     pub create_backup: bool,
     pub dry_run: bool,
@@ -378,7 +367,7 @@ pub struct ApplicationRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplicationResult {
     pub success: bool,
-    pub client_identifier: String,
+    pub identifier: String,
     pub config_path: String,
     pub backup_path: Option<String>,
     pub error_message: Option<String>,
@@ -440,16 +429,12 @@ impl ConfigRule {
     }
 
     /// Parse supported_runtimes from JSON string
-    pub fn parse_supported_runtimes(
-        json_str: &str
-    ) -> Result<HashMap<String, Vec<String>>, serde_json::Error> {
+    pub fn parse_supported_runtimes(json_str: &str) -> Result<HashMap<String, Vec<String>>, serde_json::Error> {
         serde_json::from_str(json_str)
     }
 
     /// Parse format_rules from JSON string
-    pub fn parse_format_rules(
-        json_str: &str
-    ) -> Result<HashMap<String, FormatRule>, serde_json::Error> {
+    pub fn parse_format_rules(json_str: &str) -> Result<HashMap<String, FormatRule>, serde_json::Error> {
         serde_json::from_str(json_str)
     }
 

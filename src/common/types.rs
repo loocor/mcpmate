@@ -1,19 +1,20 @@
 // Common type definitions for MCPMate
 // This module contains shared enums and types used across the application
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
 
-/// Represents the category of a client application
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[schemars(description = "Client application category - application or extension")]
 pub enum ClientCategory {
-    /// Standalone application that can run independently
     #[default]
+    #[schemars(description = "Standalone application that runs independently")]
     Application,
-    /// Extension or plugin that depends on another application
+    #[schemars(description = "Extension or plugin requiring host application")]
     Extension,
 }
 
@@ -30,17 +31,14 @@ impl fmt::Display for ClientCategory {
 }
 
 impl ClientCategory {
-    /// Returns true if this is an application category
     pub fn is_application(&self) -> bool {
         matches!(self, ClientCategory::Application)
     }
 
-    /// Returns true if this is an extension category
     pub fn is_extension(&self) -> bool {
         matches!(self, ClientCategory::Extension)
     }
 
-    /// Parse from string representation (convenience method)
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "application" | "app" => Some(ClientCategory::Application),
@@ -49,7 +47,6 @@ impl ClientCategory {
         }
     }
 
-    /// Get all possible values
     pub fn all() -> &'static [ClientCategory] {
         &[ClientCategory::Application, ClientCategory::Extension]
     }
@@ -102,16 +99,19 @@ impl RuntimeType {
         let base_name = self.as_str();
         format!("{}{}", base_name, Self::executable_extension())
     }
-    
+
     /// Get the platform-specific executable extension
     pub fn executable_extension() -> &'static str {
         if cfg!(windows) { ".exe" } else { "" }
     }
 
     /// Get the executable name for a specific command
-    pub fn executable_name_for_command(&self, command: &str) -> String {
+    pub fn executable_name_for_command(
+        &self,
+        command: &str,
+    ) -> String {
         use super::constants::commands;
-        
+
         let exe_name = match command {
             commands::UVX => "uvx",
             commands::BUNX => "bunx",
@@ -128,7 +128,10 @@ impl RuntimeType {
 }
 
 impl fmt::Display for RuntimeType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         match self {
             RuntimeType::Uv => write!(f, "uv"),
             RuntimeType::Bun => write!(f, "bun"),
@@ -141,7 +144,7 @@ impl FromStr for RuntimeType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use super::constants::commands;
-        
+
         match s.to_lowercase().as_str() {
             "uv" | commands::UVX => Ok(RuntimeType::Uv),
             "bun" | "bunjs" | commands::BUNX => Ok(RuntimeType::Bun),
@@ -161,10 +164,7 @@ pub enum RuntimeError {
     UnsupportedPlatform { os: String, arch: String },
 
     #[error("Version {version} does not exist in runtime {runtime_type}")]
-    VersionNotFound {
-        runtime_type: String,
-        version: String,
-    },
+    VersionNotFound { runtime_type: String, version: String },
 
     #[error("Download failed: {0}")]
     DownloadFailed(String),
@@ -203,44 +203,20 @@ mod tests {
 
     #[test]
     fn test_client_category_parse() {
-        assert_eq!(
-            ClientCategory::parse("application"),
-            Some(ClientCategory::Application)
-        );
-        assert_eq!(
-            ClientCategory::parse("extension"),
-            Some(ClientCategory::Extension)
-        );
-        assert_eq!(
-            ClientCategory::parse("app"),
-            Some(ClientCategory::Application)
-        );
-        assert_eq!(
-            ClientCategory::parse("ext"),
-            Some(ClientCategory::Extension)
-        );
+        assert_eq!(ClientCategory::parse("application"), Some(ClientCategory::Application));
+        assert_eq!(ClientCategory::parse("extension"), Some(ClientCategory::Extension));
+        assert_eq!(ClientCategory::parse("app"), Some(ClientCategory::Application));
+        assert_eq!(ClientCategory::parse("ext"), Some(ClientCategory::Extension));
         assert_eq!(ClientCategory::parse("invalid"), None);
     }
 
     #[test]
     fn test_client_category_from_str() {
         use std::str::FromStr;
-        assert_eq!(
-            ClientCategory::from_str("application"),
-            Ok(ClientCategory::Application)
-        );
-        assert_eq!(
-            ClientCategory::from_str("extension"),
-            Ok(ClientCategory::Extension)
-        );
-        assert_eq!(
-            ClientCategory::from_str("app"),
-            Ok(ClientCategory::Application)
-        );
-        assert_eq!(
-            ClientCategory::from_str("ext"),
-            Ok(ClientCategory::Extension)
-        );
+        assert_eq!(ClientCategory::from_str("application"), Ok(ClientCategory::Application));
+        assert_eq!(ClientCategory::from_str("extension"), Ok(ClientCategory::Extension));
+        assert_eq!(ClientCategory::from_str("app"), Ok(ClientCategory::Application));
+        assert_eq!(ClientCategory::from_str("ext"), Ok(ClientCategory::Extension));
         assert!(ClientCategory::from_str("invalid").is_err());
     }
 

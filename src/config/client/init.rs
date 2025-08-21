@@ -48,7 +48,7 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
         CREATE TABLE IF NOT EXISTS client_detection_rules (
             id TEXT PRIMARY KEY,
             client_app_id TEXT NOT NULL,
-            client_identifier TEXT NOT NULL,
+            identifier TEXT NOT NULL,
             platform TEXT NOT NULL,
             detection_method TEXT NOT NULL,
             detection_value TEXT NOT NULL,
@@ -70,7 +70,7 @@ async fn create_client_apps_tables(pool: &SqlitePool) -> Result<()> {
         CREATE TABLE IF NOT EXISTS client_config_rules (
             id TEXT PRIMARY KEY,
             client_app_id TEXT NOT NULL,
-            client_identifier TEXT NOT NULL,
+            identifier TEXT NOT NULL,
             top_level_key TEXT NOT NULL,
             config_type TEXT DEFAULT 'standard',
             supported_transports TEXT NOT NULL,
@@ -151,13 +151,13 @@ async fn insert_clients_from_config(
                 sqlx::query(
                     r#"
                     INSERT INTO client_detection_rules
-                    (id, client_app_id, client_identifier, platform, detection_method, detection_value, config_path, priority)
+                    (id, client_app_id, identifier, platform, detection_method, detection_value, config_path, priority)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(rule.id.as_ref().unwrap())
                 .bind(rule.client_app_id.as_ref().unwrap())
-                .bind(rule.client_identifier.as_ref().unwrap())
+                .bind(rule.identifier.as_ref().unwrap())
                 .bind(rule.platform.as_ref().unwrap())
                 .bind(&rule.detection_method)
                 .bind(&rule.detection_value)
@@ -191,14 +191,14 @@ async fn insert_clients_from_config(
         sqlx::query(
             r#"
             INSERT INTO client_config_rules
-            (id, client_app_id, client_identifier, top_level_key, config_type,
+            (id, client_app_id, identifier, top_level_key, config_type,
              supported_transports, supported_runtimes, format_rules, security_features)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(client.config_rules.id.as_ref().unwrap())
         .bind(client.config_rules.client_app_id.as_ref().unwrap())
-        .bind(client.config_rules.client_identifier.as_ref().unwrap())
+        .bind(client.config_rules.identifier.as_ref().unwrap())
         .bind(&client.config_rules.top_level_key)
         .bind(config_type_str)
         .bind(supported_transports_json)

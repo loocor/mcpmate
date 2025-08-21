@@ -75,7 +75,7 @@ pub async fn serve_docs() -> Html<&'static str> {
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
             </head>
             <body>
-                <script id="api-reference" data-url="/openapi.json"></script>
+                <script id="api-reference" data-url="/openapi.json" data-theme="dark" data-layout="modern"></script>
                 <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
             </body>
             </html>
@@ -91,9 +91,9 @@ pub async fn serve_docs() -> Html<&'static str> {
 /// # Usage
 /// ```rust
 /// aide_wrapper!(
-///     system::get_status,   // Full handler path (enables VS Code jump + auto tag)
-///     StatusResponse,       // Response type
-///     "Get system status"  // Description (tag auto-extracted from module name)
+///     system::get_status,         // Full handler path (enables VS Code jump + auto tag)
+///     StatusResponse,             // Response type
+///     "Get system status"         // Description (tag auto-extracted from module name)
 /// );
 /// ```
 ///
@@ -127,6 +127,89 @@ macro_rules! aide_wrapper {
                 op.description($description)
                     .tag(stringify!($module))  // auto-extract tag from module name
                     .response::<200, axum::Json<$response_type>>()
+                    .response::<500, ()>()
+            }
+        }
+    };
+}
+
+/// Macro for GET endpoints with query parameters
+///
+/// Usage:
+/// ```rust
+/// aide_get_with_query!(
+///     capabilities::details,                      // Handler function path
+///     DetailsQuery,                               // Query parameter type
+///     serde_json::Value,                          // Response type
+///     "Get cache details with filtering options"  // Description
+/// );
+/// ```
+#[macro_export]
+macro_rules! aide_wrapper_query {
+    ($module:ident :: $handler:ident, $query_type:ty, $response_type:ty, $description:expr) => {
+        paste::paste! {
+            /// Aide-compatible wrapper function for GET with query parameters
+            pub async fn [<$handler _aide>](
+                axum::extract::Query(query): axum::extract::Query<$query_type>,
+                axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::api::routes::AppState>>
+            ) -> impl aide::axum::IntoApiResponse {
+                use axum::response::IntoResponse;
+                match $module::$handler(axum::extract::State(state), axum::extract::Query(query)).await {
+                    Ok(json_response) => json_response.into_response(),
+                    Err(api_error) => api_error.into_response(),
+                }
+            }
+
+            /// Documentation function for GET with query parameters
+            pub fn [<$handler _docs>](
+                op: aide::transform::TransformOperation
+            ) -> aide::transform::TransformOperation {
+                op.description(&format!("{} (WIP)", $description))
+                    .tag(stringify!($module))
+                    .response::<200, axum::Json<$response_type>>()
+                    .response::<400, ()>()
+                    .response::<500, ()>()
+            }
+        }
+    };
+}
+
+/// Macro for POST endpoints with payload body
+///
+/// Usage:
+/// ```rust
+/// aide_wrapper_payload!(
+///     clients::update,                    // Handler function path
+///     ClientConfigUpdateReq,              // Payload body type
+///     ConfigResponse,                     // Response type
+///     "Update client configuration"       // Description
+/// );
+/// ```
+#[macro_export]
+macro_rules! aide_wrapper_payload {
+    ($module:ident :: $handler:ident, $json_type:ty, $response_type:ty, $description:expr) => {
+        paste::paste! {
+            /// Aide-compatible wrapper function for POST with payload body
+            pub async fn [<$handler _aide>](
+                axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::api::routes::AppState>>,
+                axum::extract::Json(json): axum::extract::Json<$json_type>
+            ) -> impl aide::axum::IntoApiResponse {
+                use axum::response::IntoResponse;
+                match $module::$handler(axum::extract::State(state), axum::extract::Json(json)).await {
+                    Ok(json_response) => json_response.into_response(),
+                    Err(status_code) => status_code.into_response(),
+                }
+            }
+
+            /// Documentation function for POST with payload body
+            pub fn [<$handler _docs>](
+                op: aide::transform::TransformOperation
+            ) -> aide::transform::TransformOperation {
+                op.description($description)
+                    .tag(stringify!($module))
+                    .input::<axum::Json<$json_type>>()
+                    .response::<200, axum::Json<$response_type>>()
+                    .response::<400, ()>()
                     .response::<500, ()>()
             }
         }

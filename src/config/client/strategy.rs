@@ -59,9 +59,7 @@ impl TransportStrategy {
         mode: &GenerationMode,
     ) -> Result<Value> {
         match mode {
-            GenerationMode::Transparent => {
-                self.generate_transparent_config(config_rule, server).await
-            }
+            GenerationMode::Transparent => self.generate_transparent_config(config_rule, server).await,
             GenerationMode::Hosted => self.generate_hosted_config(config_rule, server).await,
         }
     }
@@ -73,14 +71,11 @@ impl TransportStrategy {
         server: &ServerInfo,
     ) -> Result<Value> {
         // In transparent mode, skip servers with unsupported transport types
-        if !config_rule
-            .supported_transports
-            .contains(&server.server_type)
-        {
+        if !config_rule.supported_transports.contains(&server.server_type) {
             return Err(anyhow::anyhow!(
                 "Transport type '{}' is not supported by client '{}' in transparent mode",
                 server.server_type,
-                config_rule.client_identifier
+                config_rule.identifier
             ));
         }
 
@@ -88,12 +83,9 @@ impl TransportStrategy {
         let format_rule = config_rule
             .format_rules
             .get(&server.server_type)
-            .ok_or_else(|| {
-                anyhow::anyhow!("No format rule for transport: {}", server.server_type)
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("No format rule for transport: {}", server.server_type))?;
 
-        self.apply_format_rule(format_rule, server, &server.server_type)
-            .await
+        self.apply_format_rule(format_rule, server, &server.server_type).await
     }
 
     /// Generate hosted mode configuration
@@ -104,17 +96,12 @@ impl TransportStrategy {
     ) -> Result<Value> {
         // In hosted mode, use direct endpoints if client supports the transport type,
         // otherwise fall back to bridge stdio
-        if config_rule
-            .supported_transports
-            .contains(&server.server_type)
-        {
+        if config_rule.supported_transports.contains(&server.server_type) {
             // Client supports this transport type, use direct endpoint
             let format_rule = config_rule
                 .format_rules
                 .get(&server.server_type)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("No format rule for transport: {}", server.server_type)
-                })?;
+                .ok_or_else(|| anyhow::anyhow!("No format rule for transport: {}", server.server_type))?;
 
             self.generate_hosted_endpoint_config(format_rule, server, &server.server_type)
                 .await
@@ -156,18 +143,10 @@ impl TransportStrategy {
                             runtime_config.mcp_port, server.id
                         ))
                     }
-                    _ => {
-                        self.template_engine
-                            .apply_template(template, server, transport)
-                            .await?
-                    }
+                    _ => self.template_engine.apply_template(template, server, transport).await?,
                 },
                 "headers" => json!({}),
-                _ => {
-                    self.template_engine
-                        .apply_template(template, server, transport)
-                        .await?
-                }
+                _ => self.template_engine.apply_template(template, server, transport).await?,
             };
             config[key] = value;
         }
@@ -195,11 +174,7 @@ impl TransportStrategy {
                         runtime_config.mcp_port, server.id
                     ))
                 }
-                _ => {
-                    self.template_engine
-                        .apply_template(template, server, STDIO)
-                        .await?
-                }
+                _ => self.template_engine.apply_template(template, server, STDIO).await?,
             };
             config[key] = value;
         }
@@ -211,7 +186,7 @@ impl TransportStrategy {
     pub async fn generate_unified_endpoint_config(
         &self,
         config_rule: &ConfigRule,
-        client_identifier: &str,
+        identifier: &str,
         transport: &str,
     ) -> Result<Value> {
         // Use the appropriate format rule for the transport type
@@ -241,7 +216,7 @@ impl TransportStrategy {
             vec![],
             {
                 let mut env = std::collections::HashMap::new();
-                env.insert("X-Client-ID".to_string(), client_identifier.to_string());
+                env.insert("X-Client-ID".to_string(), identifier.to_string());
                 env
             },
             transport,
@@ -254,7 +229,7 @@ impl TransportStrategy {
                 "headers" => {
                     match transport {
                         t if t == STREAMABLE_HTTP => json!({}), // Streamable HTTP doesn't use custom headers in this format
-                        _ => json!({"X-Client-ID": client_identifier}),
+                        _ => json!({"X-Client-ID": identifier}),
                     }
                 }
                 _ => {
@@ -273,7 +248,7 @@ impl TransportStrategy {
     pub async fn generate_unified_bridge_config(
         &self,
         config_rule: &ConfigRule,
-        client_identifier: &str,
+        identifier: &str,
     ) -> Result<Value> {
         // Use stdio format rule for the bridge configuration
         let format_rule = config_rule
@@ -284,13 +259,9 @@ impl TransportStrategy {
         let mut config = json!({});
 
         // Get dynamic bridge path
-        let bridge_path = get_bridge_path()
-            .map_err(|e| anyhow::anyhow!("Failed to locate bridge component: {}", e))?;
+        let bridge_path = get_bridge_path().map_err(|e| anyhow::anyhow!("Failed to locate bridge component: {}", e))?;
 
-        tracing::debug!(
-            "Using dynamic bridge path for client config: {}",
-            bridge_path
-        );
+        tracing::debug!("Using dynamic bridge path for client config: {}", bridge_path);
 
         // Create a mock server info for hosted mode bridge configuration
         let bridge_server = TemplateEngine::create_mock_server(
@@ -301,7 +272,7 @@ impl TransportStrategy {
             vec![],
             {
                 let mut env = std::collections::HashMap::new();
-                env.insert("APPID".to_string(), client_identifier.to_string());
+                env.insert("APPID".to_string(), identifier.to_string());
                 env
             },
             STDIO,
@@ -334,10 +305,7 @@ impl TransportStrategy {
 
         // Apply template with actual values
         for (key, template) in &format_rule.template {
-            let value = self
-                .template_engine
-                .apply_template(template, server, transport)
-                .await?;
+            let value = self.template_engine.apply_template(template, server, transport).await?;
             config[key] = value;
         }
 

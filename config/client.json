@@ -32,27 +32,11 @@
       "config_rules": {
         "config_type": "mixed",
         "top_level_key": "mcpServers",
-        "supported_transports": [
-          "stdio"
-        ],
+        "supported_transports": ["stdio"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {
@@ -98,28 +82,11 @@
       "config_rules": {
         "config_type": "standard",
         "top_level_key": "mcpServers",
-        "supported_transports": [
-          "stdio",
-          "sse"
-        ],
+        "supported_transports": ["stdio", "sse"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {
@@ -142,82 +109,6 @@
         "security_features": {
           "supports_inputs": true,
           "supports_env_file": true
-        }
-      }
-    },
-    {
-      "identifier": "cursor",
-      "display_name": "Cursor",
-      "logo_url": "https://www.cursor.com/apple-touch-icon.png",
-      "category": "application",
-      "detection_rules": {
-        "macos": [
-          {
-            "method": "file_path",
-            "value": "/Applications/Cursor.app",
-            "config_path": "~/.cursor/mcp.json",
-            "priority": 1
-          },
-          {
-            "method": "file_path",
-            "value": "~/.cursor/mcp.json",
-            "config_path": "~/.cursor/mcp.json",
-            "priority": 2
-          }
-        ]
-      },
-      "config_rules": {
-        "config_type": "standard",
-        "top_level_key": "mcpServers",
-        "supported_transports": [
-          "stdio",
-          "sse",
-          "streamableHttp"
-        ],
-        "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
-        },
-        "format_rules": {
-          "stdio": {
-            "template": {
-              "type": "stdio",
-              "command": "{{command}}",
-              "args": "{{args}}",
-              "env": "{{env}}"
-            },
-            "requires_type_field": false
-          },
-          "sse": {
-            "template": {
-              "url": "{{url}}",
-              "type": "sse",
-              "headers": "{{headers}}"
-            },
-            "requires_type_field": false
-          },
-          "streamableHttp": {
-            "template": {
-              "type": "streamableHttp",
-              "url": "{{url}}"
-            },
-            "requires_type_field": false
-          }
         }
       }
     },
@@ -273,27 +164,11 @@
       "config_rules": {
         "config_type": "mixed",
         "top_level_key": "context_servers",
-        "supported_transports": [
-          "stdio"
-        ],
+        "supported_transports": ["stdio"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {
@@ -342,27 +217,11 @@
       "config_rules": {
         "config_type": "array",
         "top_level_key": "",
-        "supported_transports": [
-          "stdio"
-        ],
+        "supported_transports": ["stdio"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {
@@ -402,29 +261,11 @@
       "config_rules": {
         "config_type": "standard",
         "top_level_key": "mcpServers",
-        "supported_transports": [
-          "stdio",
-          "sse",
-          "streamableHttp"
-        ],
+        "supported_transports": ["stdio", "sse", "streamableHttp"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {
@@ -506,29 +347,11 @@
       "config_rules": {
         "config_type": "mixed",
         "top_level_key": "mcp.servers",
-        "supported_transports": [
-          "stdio",
-          "sse",
-          "streamableHttp"
-        ],
+        "supported_transports": ["stdio", "sse", "streamableHttp"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {
@@ -576,29 +399,11 @@
       "config_rules": {
         "config_type": "standard",
         "top_level_key": "mcpServers",
-        "supported_transports": [
-          "stdio",
-          "sse",
-          "streamableHttp"
-        ],
+        "supported_transports": ["stdio", "sse", "streamableHttp"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {
@@ -646,29 +451,11 @@
       "config_rules": {
         "config_type": "standard",
         "top_level_key": "mcpServers",
-        "supported_transports": [
-          "stdio",
-          "sse",
-          "streamableHttp"
-        ],
+        "supported_transports": ["stdio", "sse", "streamableHttp"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {
@@ -717,29 +504,11 @@
         "config_type": "standard",
         "top_level_key": "mcpServers",
         "keep_original_config": true,
-        "supported_transports": [
-          "stdio",
-          "sse",
-          "streamableHttp"
-        ],
+        "supported_transports": ["stdio", "sse", "streamableHttp"],
         "supported_runtimes": {
-          "macos": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "linux": [
-            "npx",
-            "uvx",
-            "docker",
-            "binary"
-          ],
-          "windows": [
-            "npx",
-            "uvx",
-            "binary"
-          ]
+          "macos": ["npx", "uvx", "docker", "binary"],
+          "linux": ["npx", "uvx", "docker", "binary"],
+          "windows": ["npx", "uvx", "binary"]
         },
         "format_rules": {
           "stdio": {

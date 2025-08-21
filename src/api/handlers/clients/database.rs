@@ -1,15 +1,14 @@
 // Database operations for client handlers
 
-use super::models::{ClientAppRow, SimpleDetectedApp};
+use crate::api::models::clients::{ClientAppRow, ClientInfo, SimpleDetectedApp};
+use crate::common::json::strip_comments;
 use crate::config::client::models::ConfigType;
 use crate::system::detection::detector::AppDetector;
 use anyhow::Result;
 use std::sync::Arc;
 
 /// Helper function to get all client apps from database
-pub async fn get_all_client_apps(
-    db_pool: &sqlx::SqlitePool
-) -> Result<Vec<ClientAppRow>, sqlx::Error> {
+pub async fn get_all_client_apps(db_pool: &sqlx::SqlitePool) -> Result<Vec<ClientAppRow>, sqlx::Error> {
     sqlx::query_as::<_, ClientAppRow>(
         r#"
         SELECT id, identifier, display_name, description, logo_url, category, enabled, detected,
@@ -100,9 +99,7 @@ pub async fn get_supported_runtimes(
                     }
 
                     // Fallback: try to get any platform's runtimes
-                    for (_, platform_runtimes) in
-                        platforms.as_object().unwrap_or(&serde_json::Map::new())
-                    {
+                    for (_, platform_runtimes) in platforms.as_object().unwrap_or(&serde_json::Map::new()) {
                         if let Some(runtimes_array) = platform_runtimes.as_array() {
                             return runtimes_array
                                 .iter()
@@ -160,17 +157,10 @@ pub async fn get_client_config_path(
     // Use the unified path service
     let path_service = crate::system::paths::service::get_path_service();
 
-    match path_service
-        .get_client_config_path(db_pool, client_id)
-        .await
-    {
+    match path_service.get_client_config_path(db_pool, client_id).await {
         Ok(path) => path,
         Err(e) => {
-            tracing::warn!(
-                "Failed to get client config path for '{}': {}",
-                client_id,
-                e
-            );
+            tracing::warn!("Failed to get client config path for '{}': {}", client_id, e);
             format!("~/.config/{}/config.json", client_id)
         }
     }
@@ -218,4 +208,111 @@ pub async fn update_client_detection_status(
     .await?;
 
     Ok(())
+}
+
+/// Build ClientInfo from database row and optional detected app data
+pub async fn build_client_info(
+    client: &ClientAppRow,
+    detected_app: Option<&SimpleDetectedApp>,
+    db_pool: &sqlx::SqlitePool,
+) -> ClientInfo {
+    let client_id = &client.identifier;
+    let category = client.get_category();
+
+    // Get supported transports, runtimes, and config type from database
+    let supported_transports = get_supported_transports(client_id, db_pool).await;
+    let supported_runtimes = get_supported_runtimes(client_id, db_pool).await;
+    let config_type = get_config_type(client_id, db_pool).await;
+
+    // Determine detection status and paths
+    let (detected, install_path, config_path, config_exists, has_mcp_config) = if let Some(detected_app) = detected_app
+    {
+        (
+            true,
+            Some(detected_app.install_path.to_string_lossy().to_string()),
+            detected_app.config_path.to_string_lossy().to_string(),
+            detected_app.config_path.exists(),
+            check_mcp_config_exists(&detected_app.config_path, client_id, db_pool).await,
+        )
+    } else {
+        // Use database values or get config path from detection rules
+        let config_path = get_client_config_path(client_id, db_pool).await;
+        let config_path_buf = std::path::PathBuf::from(&config_path);
+        (
+            client.detected,
+            client.install_path.clone(),
+            config_path,
+            config_path_buf.exists(),
+            check_mcp_config_exists(&config_path_buf, client_id, db_pool).await,
+        )
+    };
+
+    ClientInfo {
+        identifier: client.identifier.clone(),
+        display_name: client.display_name.clone(),
+        logo_url: client.logo_url.clone(),
+        category,
+        enabled: client.enabled,
+        detected,
+        install_path,
+        config_path,
+        config_exists,
+        has_mcp_config,
+        supported_transports,
+        supported_runtimes,
+        config_mode: client.config_mode.clone(),
+        config_type,
+        last_detected_at: client.last_detected_at.map(|dt| dt.to_rfc3339()),
+        last_modified: None,
+        mcp_servers_count: None,
+    }
+}
+
+/// Helper function to check if MCP config exists and parse content
+async fn check_mcp_config_exists(
+    config_path: &std::path::Path,
+    _client_id: &str,
+    _db_pool: &sqlx::SqlitePool,
+) -> bool {
+    // This is a simplified version - you may want to implement more sophisticated checking
+    if !config_path.exists() {
+        return false;
+    }
+
+    if let Ok(content) = std::fs::read_to_string(config_path) {
+        // Simple check for MCP-related content
+        content.contains("mcpServers") || content.contains("mcp_servers")
+    } else {
+        false
+    }
+}
+
+/// Parse JSON content with fallback for JSONC (JSON with comments)
+pub fn parse_json_resilient(content: &str) -> serde_json::Value {
+    if content.is_empty() {
+        return serde_json::Value::Object(serde_json::Map::new());
+    }
+
+    // Try to parse as standard JSON first
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(json) => json,
+        Err(_) => {
+            // If standard JSON parsing fails, try to strip JSONC comments and parse again
+            let cleaned_content = strip_comments(content);
+            match serde_json::from_str::<serde_json::Value>(&cleaned_content) {
+                Ok(json) => {
+                    tracing::debug!("Successfully parsed JSONC content after stripping comments");
+                    json
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse content as JSON/JSONC: {}. Using raw string as value.",
+                        e
+                    );
+                    // If both attempts fail, wrap the raw content as a string value
+                    serde_json::Value::String(content.to_string())
+                }
+            }
+        }
+    }
 }

@@ -36,31 +36,24 @@ impl ConfigBuilder {
         request: &GenerationRequest,
     ) -> Result<GeneratedConfig> {
         // Get client configuration rule
-        let config_rule = self.get_config_rule(&request.client_identifier).await?;
+        let config_rule = self.get_config_rule(&request.identifier).await?;
 
         // Get servers to include in configuration
-        let servers = self
-            .server_loader
-            .get_servers_for_generation(request)
-            .await?;
+        let servers = self.server_loader.get_servers_for_generation(request).await?;
 
         // Generate configuration content based on client rules
-        let config_content = self
-            .generate_config_content(&config_rule, &servers, request)
-            .await?;
+        let config_content = self.generate_config_content(&config_rule, &servers, request).await?;
 
         // Get config path for the client
-        let config_path = self
-            .get_client_config_path(&request.client_identifier)
-            .await?;
+        let config_path = self.get_client_config_path(&request.identifier).await?;
 
         Ok(GeneratedConfig {
-            client_identifier: request.client_identifier.clone(),
+            identifier: request.identifier.clone(),
             mode: request.mode.clone(),
             config_content,
             config_path,
             backup_needed: true,
-            preview_only: false,
+            preview: false,
         })
     }
 
@@ -70,7 +63,7 @@ impl ConfigBuilder {
         request: &GenerationRequest,
     ) -> Result<GeneratedConfig> {
         let mut config = self.generate_config(request).await?;
-        config.preview_only = true;
+        config.preview = true;
         config.backup_needed = false;
         Ok(config)
     }
@@ -78,28 +71,25 @@ impl ConfigBuilder {
     /// Get configuration rule for a client
     async fn get_config_rule(
         &self,
-        client_identifier: &str,
+        identifier: &str,
     ) -> Result<ConfigRule> {
         let row = sqlx::query(
             r#"
-            SELECT id, client_app_id, client_identifier, top_level_key, config_type,
+            SELECT id, client_app_id, identifier, top_level_key, config_type,
                    supported_transports, supported_runtimes, format_rules, security_features
             FROM client_config_rules
-            WHERE client_identifier = ?
+            WHERE identifier = ?
             "#,
         )
-        .bind(client_identifier)
+        .bind(identifier)
         .fetch_one(self.db_pool.as_ref())
         .await?;
 
-        let supported_transports: Vec<String> =
-            serde_json::from_str(&row.get::<String, _>("supported_transports"))?;
+        let supported_transports: Vec<String> = serde_json::from_str(&row.get::<String, _>("supported_transports"))?;
         let supported_runtimes: std::collections::HashMap<String, Vec<String>> =
             serde_json::from_str(&row.get::<String, _>("supported_runtimes"))?;
-        let format_rules: std::collections::HashMap<
-            String,
-            crate::config::client::models::FormatRule,
-        > = serde_json::from_str(&row.get::<String, _>("format_rules"))?;
+        let format_rules: std::collections::HashMap<String, crate::config::client::models::FormatRule> =
+            serde_json::from_str(&row.get::<String, _>("format_rules"))?;
         let security_features: Option<crate::config::client::models::SecurityFeatures> = row
             .get::<Option<String>, _>("security_features")
             .map(|s| serde_json::from_str(&s))
@@ -116,7 +106,7 @@ impl ConfigBuilder {
         Ok(ConfigRule {
             id: row.get("id"),
             client_app_id: row.get("client_app_id"),
-            client_identifier: row.get("client_identifier"),
+            identifier: row.get("identifier"),
             top_level_key: row.get("top_level_key"),
             config_type,
             supported_transports,
@@ -129,7 +119,7 @@ impl ConfigBuilder {
     /// Get client configuration path
     async fn get_client_config_path(
         &self,
-        client_identifier: &str,
+        identifier: &str,
     ) -> Result<String> {
         // Get current platform
         let current_platform = {
@@ -155,12 +145,12 @@ impl ConfigBuilder {
             r#"
             SELECT config_path
             FROM client_detection_rules
-            WHERE client_identifier = ? AND platform = ? AND enabled = TRUE
+            WHERE identifier = ? AND platform = ? AND enabled = TRUE
             ORDER BY priority ASC
             LIMIT 1
             "#,
         )
-        .bind(client_identifier)
+        .bind(identifier)
         .bind(current_platform)
         .fetch_one(self.db_pool.as_ref())
         .await?;
@@ -178,13 +168,10 @@ impl ConfigBuilder {
         // process array config or object config based on the rule
         let json_value = match config_rule.config_type {
             crate::config::client::models::ConfigType::Array => {
-                self.generate_array_config_value(config_rule, servers, request)
-                    .await?
+                self.generate_array_config_value(config_rule, servers, request).await?
             }
-            crate::config::client::models::ConfigType::Standard
-            | crate::config::client::models::ConfigType::Mixed => {
-                self.generate_object_config_value(config_rule, servers, request)
-                    .await?
+            crate::config::client::models::ConfigType::Standard | crate::config::client::models::ConfigType::Mixed => {
+                self.generate_object_config_value(config_rule, servers, request).await?
             }
         };
 
@@ -217,7 +204,7 @@ impl ConfigBuilder {
             GenerationMode::Hosted => {
                 // Handle hosted mode (unified endpoint)
                 let endpoint_config = self
-                    .get_unified_endpoint_config(config_rule, &request.client_identifier)
+                    .get_unified_endpoint_config(config_rule, &request.identifier)
                     .await?;
 
                 // Add the endpoint config to the top-level key (supports nested paths like "mcp.servers")
@@ -257,7 +244,7 @@ impl ConfigBuilder {
             GenerationMode::Hosted => {
                 // Handle hosted mode (unified endpoint)
                 let endpoint_config = self
-                    .get_unified_endpoint_config(config_rule, &request.client_identifier)
+                    .get_unified_endpoint_config(config_rule, &request.identifier)
                     .await?;
 
                 // Create a MCPMate config object and add to array
@@ -292,8 +279,7 @@ impl ConfigBuilder {
                 {
                     Ok(server_config) => {
                         // Add server name to the config
-                        let mut config_with_name =
-                            server_config.as_object().cloned().unwrap_or_default();
+                        let mut config_with_name = server_config.as_object().cloned().unwrap_or_default();
                         config_with_name.insert("name".to_string(), json!(server.name));
                         server_configs.push(json!(config_with_name));
                     }
@@ -333,39 +319,27 @@ impl ConfigBuilder {
     async fn get_unified_endpoint_config(
         &self,
         config_rule: &ConfigRule,
-        client_identifier: &str,
+        identifier: &str,
     ) -> Result<Value> {
-        let best_transport = self
-            .transport_strategy
-            .get_best_supported_transport(config_rule);
+        let best_transport = self.transport_strategy.get_best_supported_transport(config_rule);
 
         match best_transport.as_str() {
             t if t == transport_formats::STREAMABLE_HTTP => {
                 self.transport_strategy
-                    .generate_unified_endpoint_config(
-                        config_rule,
-                        client_identifier,
-                        transport_formats::STREAMABLE_HTTP,
-                    )
+                    .generate_unified_endpoint_config(config_rule, identifier, transport_formats::STREAMABLE_HTTP)
                     .await
             }
             t if t == transport_formats::SSE => {
                 self.transport_strategy
-                    .generate_unified_endpoint_config(
-                        config_rule,
-                        client_identifier,
-                        transport_formats::SSE,
-                    )
+                    .generate_unified_endpoint_config(config_rule, identifier, transport_formats::SSE)
                     .await
             }
             t if t == transport_formats::STDIO => {
                 self.transport_strategy
-                    .generate_unified_bridge_config(config_rule, client_identifier)
+                    .generate_unified_bridge_config(config_rule, identifier)
                     .await
             }
-            _ => Err(anyhow::anyhow!(
-                "No supported transport types found for client"
-            )),
+            _ => Err(anyhow::anyhow!("No supported transport types found for client")),
         }
     }
 

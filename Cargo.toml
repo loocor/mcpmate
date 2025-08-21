@@ -103,7 +103,7 @@ aide = { version = "0.15", features = [
   "axum-query",
   "scalar",
 ] }
-schemars = { version = "0.9", features = ["chrono04"] }
+schemars = { version = "0.9", features = ["chrono04", "derive"] }
 paste = "1.0"
 
 # Build Targets

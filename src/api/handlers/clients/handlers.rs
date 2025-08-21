@@ -1,23 +1,21 @@
 // HTTP handlers for client management API
 
-use super::config::{analyze_config_content, check_mcp_config_exists, get_config_last_modified};
+use super::config::{analyze_config_content, get_config_last_modified};
 use super::database::{
-    get_all_client_apps, get_client_config_path, get_config_type, get_supported_runtimes,
-    get_supported_transports, perform_client_detection, update_client_detection_status,
+    build_client_info, get_all_client_apps, get_client_config_path, get_config_type, parse_json_resilient,
+    perform_client_detection, update_client_detection_status,
 };
 
 use super::import::import_servers_from_config;
-use super::models::ClientsQuery;
 use crate::api::models::clients::*;
 use crate::api::routes::AppState;
-use crate::common::json::strip_comments;
+
 use crate::config::client::manager::ClientManager;
 use crate::config::client::models::{ApplicationRequest, GenerationMode, GenerationRequest};
 use crate::config::suit::basic::get_active_config_suits;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Json, Query, State},
     http::StatusCode,
-    response::Json,
 };
 use std::sync::Arc;
 
@@ -33,27 +31,65 @@ macro_rules! get_db_pool {
 
 /// Handler for GET /api/clients
 /// Detects and returns all clients, with optional force refresh
-pub async fn get_clients(
-    Query(params): Query<ClientsQuery>,
+pub async fn check(
     State(app_state): State<Arc<AppState>>,
-) -> Result<Json<ApiResponse<Vec<ClientInfo>>>, StatusCode> {
+    Query(request): Query<ClientsCheckReq>,
+) -> Result<Json<ApiResponse<ClientsCheckResp>>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
 
+    let result = clients_check_core(&request, &db_pool).await?;
+
+    Ok(Json(result))
+}
+
+/// Handler for GET /api/clients/{identifier}
+/// Returns current configuration content
+pub async fn details(
+    State(app_state): State<Arc<AppState>>,
+    Query(request): Query<ClientConfigReq>,
+) -> Result<Json<ApiResponse<ClientConfigResp>>, StatusCode> {
+    let db_pool = get_db_pool!(app_state);
+
+    let result = client_config_details_core(&request, &db_pool).await?;
+
+    Ok(Json(result))
+}
+
+/// Handler for POST /api/clients/{identifier}
+/// Generates and optionally applies configuration
+pub async fn update(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientConfigUpdateReq>,
+) -> Result<Json<ApiResponse<ClientConfigUpdateResp>>, StatusCode> {
+    let db_pool = get_db_pool!(app_state);
+
+    let result = client_config_update_core(&request, &db_pool).await?;
+
+    Ok(Json(result))
+}
+
+// ==================== Core Business Functions ====================
+
+/// Core business logic for clients check operation
+async fn clients_check_core(
+    request: &ClientsCheckReq,
+    db_pool: &sqlx::SqlitePool,
+) -> Result<ApiResponse<ClientsCheckResp>, StatusCode> {
     // Get all client apps from database (not just enabled ones)
-    let mut all_clients = match get_all_client_apps(&db_pool).await {
+    let mut all_clients = match get_all_client_apps(db_pool).await {
         Ok(clients) => clients,
         Err(e) => {
             tracing::error!("Failed to get client apps from database: {e}");
-            return Ok(Json(ApiResponse::error(
+            return Ok(ApiResponse::error(
                 "DATABASE_ERROR",
                 &format!("Failed to get client apps: {e}"),
-            )));
+            ));
         }
     };
 
-    // If force_refresh is requested, perform actual detection
+    // If refresh is requested, perform actual detection
     let mut detected_apps_map = std::collections::HashMap::new();
-    if params.force_refresh {
+    if request.refresh {
         tracing::info!(
             "Force refresh requested, performing detection for {} clients",
             all_clients.len()
@@ -63,7 +99,7 @@ pub async fn get_clients(
         for client in &all_clients {
             tracing::debug!("Attempting to detect client: {}", client.identifier);
 
-            match perform_client_detection(&client.identifier, &db_pool).await {
+            match perform_client_detection(&client.identifier, db_pool).await {
                 Ok(Some(detected_app)) => {
                     tracing::info!(
                         "Successfully detected client: {} at {}",
@@ -91,19 +127,10 @@ pub async fn get_clients(
                     };
 
                     // Update database with detection results
-                    if let Err(e) = update_client_detection_status(
-                        &client.identifier,
-                        true,
-                        install_path_to_store,
-                        &db_pool,
-                    )
-                    .await
+                    if let Err(e) =
+                        update_client_detection_status(&client.identifier, true, install_path_to_store, db_pool).await
                     {
-                        tracing::warn!(
-                            "Failed to update detection status for {}: {}",
-                            client.identifier,
-                            e
-                        );
+                        tracing::warn!("Failed to update detection status for {}: {}", client.identifier, e);
                     }
 
                     detected_apps_map.insert(client.identifier.clone(), detected_app);
@@ -112,15 +139,8 @@ pub async fn get_clients(
                     tracing::debug!("Client not detected: {}", client.identifier);
 
                     // Update database to mark as not detected
-                    if let Err(e) =
-                        update_client_detection_status(&client.identifier, false, None, &db_pool)
-                            .await
-                    {
-                        tracing::warn!(
-                            "Failed to update detection status for {}: {}",
-                            client.identifier,
-                            e
-                        );
+                    if let Err(e) = update_client_detection_status(&client.identifier, false, None, db_pool).await {
+                        tracing::warn!("Failed to update detection status for {}: {}", client.identifier, e);
                     }
                 }
                 Err(e) => {
@@ -135,146 +155,76 @@ pub async fn get_clients(
         );
 
         // Re-fetch client data from database to get updated detection status
-        all_clients = match get_all_client_apps(&db_pool).await {
+        all_clients = match get_all_client_apps(db_pool).await {
             Ok(clients) => clients,
             Err(e) => {
                 tracing::error!("Failed to re-fetch client apps after detection: {e}");
-                return Ok(Json(ApiResponse::error(
+                return Ok(ApiResponse::error(
                     "DATABASE_ERROR",
                     "Failed to retrieve updated client information",
-                )));
+                ));
             }
         };
     }
 
-    // Convert all client apps to ClientInfo
+    // Convert all client apps to ClientInfo using the shared function
     let mut client_infos = Vec::new();
     for client in all_clients {
-        let client_id = &client.identifier;
-        let category = client.get_category();
-
-        // Get supported transports, runtimes, and config type from database
-        let supported_transports = get_supported_transports(client_id, &db_pool).await;
-        let supported_runtimes = get_supported_runtimes(client_id, &db_pool).await;
-        let config_type = get_config_type(client_id, &db_pool).await;
-
-        // Check if this client was detected (if force_refresh was used)
-        let (detected, install_path, config_path, config_exists, has_mcp_config) =
-            if let Some(detected_app) = detected_apps_map.get(client_id) {
-                (
-                    true,
-                    Some(detected_app.install_path.to_string_lossy().to_string()),
-                    detected_app.config_path.to_string_lossy().to_string(),
-                    detected_app.config_path.exists(),
-                    check_mcp_config_exists(&detected_app.config_path, client_id, &db_pool).await,
-                )
-            } else {
-                // Use database values or get config path from detection rules
-                let config_path = get_client_config_path(client_id, &db_pool).await;
-                let config_path_buf = std::path::PathBuf::from(&config_path);
-                (
-                    client.detected,
-                    client.install_path,
-                    config_path,
-                    config_path_buf.exists(),
-                    check_mcp_config_exists(&config_path_buf, client_id, &db_pool).await,
-                )
-            };
-        client_infos.push(ClientInfo {
-            identifier: client.identifier,
-            display_name: client.display_name,
-            logo_url: client.logo_url,
-            category,
-            enabled: client.enabled,
-            detected,
-            install_path,
-            config_path,
-            config_exists,
-            has_mcp_config,
-            supported_transports,
-            supported_runtimes,
-            config_mode: client.config_mode,
-            config_type,
-            last_detected_at: client.last_detected_at.map(|dt| dt.to_rfc3339()),
-        });
+        let detected_app = detected_apps_map.get(&client.identifier);
+        let info = build_client_info(&client, detected_app, db_pool).await;
+        client_infos.push(info);
     }
 
-    Ok(Json(ApiResponse::success(client_infos)))
+    let response = ClientsCheckResp {
+        total: client_infos.len(),
+        clients: client_infos,
+        last_updated: chrono::Utc::now().to_rfc3339(),
+    };
+
+    Ok(ApiResponse::success(response))
 }
 
-/// Handler for GET /api/clients/{client_identifier}/config
-/// Returns current configuration content
-pub async fn get_config(
-    Path(client_identifier): Path<String>,
-    Query(query): Query<std::collections::HashMap<String, String>>,
-    State(app_state): State<Arc<AppState>>,
-) -> Result<Json<ApiResponse<ConfigViewResponse>>, StatusCode> {
-    let db_pool = get_db_pool!(app_state);
+/// Core business logic for client config details operation
+async fn client_config_details_core(
+    request: &ClientConfigReq,
+    db_pool: &sqlx::SqlitePool,
+) -> Result<ApiResponse<ClientConfigResp>, StatusCode> {
+    let identifier = &request.identifier;
     let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
 
     // Get current configuration
-    match client_manager.get_current_config(&client_identifier).await {
+    match client_manager.get_current_config(identifier).await {
         Ok(content) => {
             // Get actual config path from client manager
-            let config_path = get_client_config_path(&client_identifier, &db_pool).await;
+            let config_path = get_client_config_path(identifier, db_pool).await;
             let config_exists = !content.is_empty();
 
             // Parse and analyze the configuration first (while we still have content)
-            let (has_mcp_config, mcp_servers_count) =
-                analyze_config_content(&content, &client_identifier, &db_pool).await;
+            let (has_mcp_config, mcp_servers_count) = analyze_config_content(&content, identifier, db_pool).await;
 
-            // Parse configuration content to JSON object
-            let json_content = if content.is_empty() {
-                serde_json::Value::Object(serde_json::Map::new())
-            } else {
-                // Try to parse as standard JSON first
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(json) => json,
-                    Err(_) => {
-                        // If standard JSON parsing fails, try to strip JSONC comments and parse again
-                        let cleaned_content = strip_comments(&content);
-                        match serde_json::from_str::<serde_json::Value>(&cleaned_content) {
-                            Ok(json) => {
-                                tracing::debug!(
-                                    "Successfully parsed JSONC content for {}",
-                                    client_identifier
-                                );
-                                json
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to parse config content as JSON/JSONC for {}: {}. Using raw string as value.",
-                                    client_identifier,
-                                    e
-                                );
-                                // If both attempts fail, wrap the raw content as a string value
-                                serde_json::Value::String(content)
-                            }
-                        }
-                    }
-                }
-            };
+            // Parse configuration content to JSON object using resilient parser
+            let json_content = parse_json_resilient(&content);
 
             // Get file modification time
             let last_modified = get_config_last_modified(&config_path);
 
             // Get config type for this client
-            let config_type = get_config_type(&client_identifier, &db_pool).await;
+            let config_type = get_config_type(identifier, db_pool).await;
 
             // Check if import is requested and client is in transparent mode
-            let imported_servers = if query.get("import").map(|v| v == "true").unwrap_or(false) {
+            let imported_servers = if request.import {
                 // Check if client is in transparent mode (or has no config_mode set)
                 let is_transparent = sqlx::query_scalar::<_, bool>(
-                    "SELECT (config_mode = 'transparent' OR config_mode IS NULL) FROM client_apps WHERE identifier = ?"
+                    "SELECT (config_mode = 'transparent' OR config_mode IS NULL) FROM client_apps WHERE identifier = ?",
                 )
-                .bind(&client_identifier)
-                .fetch_optional(&db_pool)
+                .bind(identifier)
+                .fetch_optional(db_pool)
                 .await
                 .unwrap_or(Some(true)) // Default to true if client not found
                 .unwrap_or(true);
 
                 if is_transparent {
-                    match import_servers_from_config(&json_content, &db_pool).await {
+                    match import_servers_from_config(&json_content, db_pool).await {
                         Ok(servers) => Some(servers),
                         Err(e) => {
                             tracing::warn!("Failed to import servers from config: {}", e);
@@ -282,17 +232,14 @@ pub async fn get_config(
                         }
                     }
                 } else {
-                    tracing::info!(
-                        "Skipping import for client {} in hosted mode",
-                        client_identifier
-                    );
+                    tracing::info!("Skipping import for client {} in hosted mode", identifier);
                     None
                 }
             } else {
                 None
             };
 
-            let response = ConfigViewResponse {
+            let response = ClientConfigResp {
                 config_path,
                 config_exists,
                 content: json_content,
@@ -303,26 +250,24 @@ pub async fn get_config(
                 imported_servers,
             };
 
-            Ok(Json(ApiResponse::success(response)))
+            Ok(ApiResponse::success(response))
         }
         Err(e) => {
-            tracing::error!("Failed to get config for {}: {}", client_identifier, e);
-            Ok(Json(ApiResponse::error(
+            tracing::error!("Failed to get config for {}: {}", identifier, e);
+            Ok(ApiResponse::error(
                 "CONFIG_READ_FAILED",
                 &format!("Failed to read configuration: {e}"),
-            )))
+            ))
         }
     }
 }
 
-/// Handler for POST /api/clients/{client_identifier}/config
-/// Generates and optionally applies configuration
-pub async fn manage_config(
-    Path(client_identifier): Path<String>,
-    State(app_state): State<Arc<AppState>>,
-    Json(request): Json<ConfigRequest>,
-) -> Result<Json<ApiResponse<ConfigResponse>>, StatusCode> {
-    let db_pool = get_db_pool!(app_state);
+/// Core business logic for client config update operation
+async fn client_config_update_core(
+    request: &ClientConfigUpdateReq,
+    db_pool: &sqlx::SqlitePool,
+) -> Result<ApiResponse<ClientConfigUpdateResp>, StatusCode> {
+    let identifier = &request.identifier;
     let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
 
     // Convert API request to internal request format
@@ -330,7 +275,7 @@ pub async fn manage_config(
         SelectedConfig::Suit { config_suit_id } => Some(config_suit_id.clone()),
         SelectedConfig::Default => {
             // For Default mode, get the currently active config suit ID
-            match get_active_config_suits(&db_pool).await {
+            match get_active_config_suits(db_pool).await {
                 Ok(active_suits) => {
                     if let Some(suit) = active_suits.first() {
                         suit.id.clone()
@@ -349,7 +294,7 @@ pub async fn manage_config(
     };
 
     let generation_request = GenerationRequest {
-        client_identifier: client_identifier.clone(),
+        identifier: identifier.to_string(),
         mode: match request.mode {
             ConfigMode::Hosted => GenerationMode::Hosted,
             ConfigMode::Transparent => GenerationMode::Transparent,
@@ -372,28 +317,18 @@ pub async fn manage_config(
     let generated_config = match client_manager.generate_config(&generation_request).await {
         Ok(config) => config,
         Err(e) => {
-            tracing::error!("Failed to generate config for {}: {}", client_identifier, e);
-            return Ok(Json(ApiResponse::error(
+            tracing::error!("Failed to generate config for {}: {}", identifier, e);
+            return Ok(ApiResponse::error(
                 "GENERATION_FAILED",
                 &format!("Failed to generate configuration: {}", e),
-            )));
+            ));
         }
     };
 
-    // Parse the generated config content to JSON
-    let preview_json =
-        match serde_json::from_str::<serde_json::Value>(&generated_config.config_content) {
-            Ok(json) => json,
-            Err(e) => {
-                tracing::error!("Failed to parse generated config as JSON: {}", e);
-                return Ok(Json(ApiResponse::error(
-                    "CONFIG_PARSE_FAILED",
-                    &format!("Failed to parse generated configuration as JSON: {}", e),
-                )));
-            }
-        };
+    // Parse the generated config content to JSON using resilient parser
+    let preview_json = parse_json_resilient(&generated_config.config_content);
 
-    let mut response = ConfigResponse {
+    let mut response = ClientConfigUpdateResp {
         success: true,
         preview: preview_json,
         applied: false,
@@ -401,10 +336,10 @@ pub async fn manage_config(
         warnings: vec![],
     };
 
-    // Apply configuration if not preview-only
-    if !request.preview_only {
+    // Apply configuration if not preview only
+    if !request.preview {
         let application_request = ApplicationRequest {
-            client_identifier: client_identifier.clone(),
+            identifier: identifier.to_string(),
             config: generated_config,
             create_backup: true,
             dry_run: false,
@@ -422,34 +357,25 @@ pub async fn manage_config(
                         ConfigMode::Hosted => "hosted",
                     };
 
-                    if let Err(e) = client_manager
-                        .update_client_config_mode(&client_identifier, config_mode)
-                        .await
-                    {
-                        tracing::warn!(
-                            "Failed to update config_mode for client {}: {}",
-                            client_identifier,
-                            e
-                        );
+                    if let Err(e) = client_manager.update_client_config_mode(identifier, config_mode).await {
+                        tracing::warn!("Failed to update config_mode for client {}: {}", identifier, e);
                     }
                 }
 
                 // If application failed, add error message to warnings
                 if !result.success {
-                    response
-                        .warnings
-                        .push(result.error_message.unwrap_or_default());
+                    response.warnings.push(result.error_message.unwrap_or_default());
                 }
             }
             Err(e) => {
-                tracing::error!("Failed to apply config for {}: {}", client_identifier, e);
-                return Ok(Json(ApiResponse::error(
+                tracing::error!("Failed to apply config for {}: {}", identifier, e);
+                return Ok(ApiResponse::error(
                     "APPLICATION_FAILED",
                     &format!("Failed to apply configuration: {}", e),
-                )));
+                ));
             }
         }
     }
 
-    Ok(Json(ApiResponse::success(response)))
+    Ok(ApiResponse::success(response))
 }

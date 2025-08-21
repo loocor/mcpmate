@@ -145,7 +145,7 @@ impl ClientManager {
         if request.dry_run {
             return Ok(ApplicationResult {
                 success: true,
-                client_identifier: request.client_identifier.clone(),
+                identifier: request.identifier.clone(),
                 config_path: request.config.config_path.clone(),
                 backup_path,
                 error_message: None,
@@ -156,7 +156,7 @@ impl ClientManager {
         match self.write_config_file(&request.config).await {
             Ok(_) => Ok(ApplicationResult {
                 success: true,
-                client_identifier: request.client_identifier.clone(),
+                identifier: request.identifier.clone(),
                 config_path: request.config.config_path.clone(),
                 backup_path,
                 error_message: None,
@@ -169,7 +169,7 @@ impl ClientManager {
 
                 Ok(ApplicationResult {
                     success: false,
-                    client_identifier: request.client_identifier.clone(),
+                    identifier: request.identifier.clone(),
                     config_path: request.config.config_path.clone(),
                     backup_path,
                     error_message: Some(e.to_string()),
@@ -194,7 +194,7 @@ impl ClientManager {
         for client in enabled_clients {
             // Generate configuration for this client
             let generation_request = GenerationRequest {
-                client_identifier: client.identifier.clone(),
+                identifier: client.identifier.clone(),
                 mode: GenerationMode::Transparent,
                 config_suit_id: config_suit_id.clone(),
                 servers: None, // Use all servers from the suit
@@ -214,7 +214,7 @@ impl ClientManager {
 
             // Apply config
             let application_request = ApplicationRequest {
-                client_identifier: client.identifier.clone(),
+                identifier: client.identifier.clone(),
                 config: generated_config,
                 create_backup: true,
                 dry_run: false,
@@ -330,9 +330,9 @@ impl ClientManager {
     ) -> Result<bool> {
         // Query database to check if this client uses mixed config type
         let config_type: Option<String> = sqlx::query_scalar(
-            "SELECT config_type FROM client_config_rules WHERE client_identifier = ?",
+            "SELECT config_type FROM client_config_rules WHERE identifier = ?",
         )
-        .bind(&config.client_identifier)
+        .bind(&config.identifier)
         .fetch_optional(&*self.db_pool)
         .await?;
 
@@ -367,7 +367,7 @@ impl ClientManager {
 
         // Get the top-level key for this client (e.g., "mcpServers" or "context_servers")
         let top_level_key = self
-            .get_client_top_level_key(&config.client_identifier)
+            .get_client_top_level_key(&config.identifier)
             .await?;
 
         // Update only the MCP-related section (supports nested paths like "mcp.servers")
@@ -385,12 +385,12 @@ impl ClientManager {
     /// Get the top-level key for a client (e.g., "mcpServers", "context_servers")
     async fn get_client_top_level_key(
         &self,
-        client_identifier: &str,
+        identifier: &str,
     ) -> Result<String> {
         let top_level_key: String = sqlx::query_scalar(
-            "SELECT top_level_key FROM client_config_rules WHERE client_identifier = ?",
+            "SELECT top_level_key FROM client_config_rules WHERE identifier = ?",
         )
-        .bind(client_identifier)
+        .bind(identifier)
         .fetch_one(&*self.db_pool)
         .await?;
 
@@ -475,7 +475,7 @@ impl ClientManager {
     /// Update client's config_mode in the database
     pub async fn update_client_config_mode(
         &self,
-        client_identifier: &str,
+        identifier: &str,
         config_mode: &str,
     ) -> Result<()> {
         sqlx::query(
@@ -486,7 +486,7 @@ impl ClientManager {
             "#,
         )
         .bind(config_mode)
-        .bind(client_identifier)
+        .bind(identifier)
         .execute(&*self.db_pool)
         .await?;
 
