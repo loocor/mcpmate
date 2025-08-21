@@ -89,7 +89,10 @@ pub struct DetectionRuleDefinition {
     pub priority: i32,
 
     // Database state fields
-    #[serde(default = "default_true", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default = "crate::api::models::default_true_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -127,11 +130,6 @@ pub struct ConfigRulesDefinition {
 pub struct ClientConfigFile {
     pub version: String,
     pub clients: Vec<ClientDefinition>,
-}
-
-/// Helper function for default true values
-fn default_true() -> Option<bool> {
-    Some(true)
 }
 
 /// Helper function for default application category

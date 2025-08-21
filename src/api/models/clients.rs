@@ -266,7 +266,7 @@ pub struct ClientConfigUpdateReq {
     #[serde(default)]
     #[schemars(description = "Configuration mode - hosted or transparent (default: hosted)")]
     pub mode: ConfigMode,
-    #[serde(default = "default_true")]
+    #[serde(default = "super::default_true")]
     #[schemars(description = "Whether to only preview changes without applying them (default: true)")]
     pub preview: bool,
     #[serde(default)]
@@ -274,10 +274,7 @@ pub struct ClientConfigUpdateReq {
     pub selected_config: SelectedConfig,
 }
 
-/// Default value function for bool fields that should default to true
-fn default_true() -> bool {
-    true
-}
+
 
 /// Legacy query parameters for client detection (kept for backward compatibility)
 #[derive(Debug, Deserialize, JsonSchema)]
