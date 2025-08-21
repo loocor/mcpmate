@@ -3,16 +3,29 @@
 
 use std::sync::Arc;
 
-use axum::{Router, routing::post};
+use aide::axum::{ApiRouter, routing::post_with};
 
 use super::AppState;
-use crate::api::handlers::notifs;
+use crate::{
+    aide_wrapper_payload,
+    api::{
+        handlers::notifs,
+        models::notifs::{ToolsChangedReq, ToolsChangedResp},
+    },
+};
 
-/// Create notification routes
-pub fn routes(state: Arc<AppState>) -> Router {
-    let notifs_router = Router::new()
-        .route("/tools/changed", post(notifs::notify_tools_changed))
+// Generate aide-compatible wrapper for tools_changed function (with JSON payload)
+aide_wrapper_payload!(
+    notifs::tools_changed,
+    ToolsChangedReq,
+    ToolsChangedResp,
+    "Notify clients that the tools list has changed"
+);
+
+pub fn routes(state: Arc<AppState>) -> ApiRouter {
+    let notifs_router = ApiRouter::new()
+        .api_route("/tools/changed", post_with(tools_changed_aide, tools_changed_docs))
         .with_state(state);
 
-    Router::new().nest("/notifs", notifs_router)
+    ApiRouter::new().nest("/notifs", notifs_router)
 }
