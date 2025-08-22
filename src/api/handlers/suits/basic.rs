@@ -9,10 +9,8 @@ use axum::{
 use std::sync::Arc;
 
 use crate::api::{
+    models::suits::{SuitResp, SuitData, SuitsListResp, SuitsListData},
     routes::AppState,
-    models::suits::{
-        SuitsListResp, ConfigSuitResp, SuitsListApiResp, ConfigSuitApiResp
-    }
 };
 use crate::config::suit::{get_all_config_suits, get_config_suit};
 use chrono;
@@ -26,8 +24,8 @@ async fn get_database(state: &Arc<AppState>) -> Result<Arc<crate::config::databa
 }
 
 /// Convert suit database model to response format
-fn suit_to_response(suit: &crate::config::models::suit::ConfigSuit) -> ConfigSuitResp {
-    ConfigSuitResp {
+fn suit_to_response(suit: &crate::config::models::suit::ConfigSuit) -> SuitData {
+    SuitData {
         id: suit.id.clone().unwrap_or_default(),
         name: suit.name.clone(),
         description: suit.description.clone(),
@@ -41,9 +39,7 @@ fn suit_to_response(suit: &crate::config::models::suit::ConfigSuit) -> ConfigSui
 }
 
 /// List all configuration suits
-pub async fn list_suits(
-    State(state): State<Arc<AppState>>
-) -> Result<Json<SuitsListApiResp>, StatusCode> {
+pub async fn list_suits(State(state): State<Arc<AppState>>) -> Result<Json<SuitsListResp>, StatusCode> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -55,21 +51,21 @@ pub async fn list_suits(
     // Convert to response format
     let suit_responses = suits.iter().map(suit_to_response).collect();
 
-    let list_resp = SuitsListResp {
+    let list_resp = SuitsListData {
         suits: suit_responses,
         total: suits.len(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
 
     // Return response
-    Ok(Json(SuitsListApiResp::success(list_resp)))
+    Ok(Json(SuitsListResp::success(list_resp)))
 }
 
 /// Get a specific configuration suit
 pub async fn get_suit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<ConfigSuitApiResp>, StatusCode> {
+) -> Result<Json<SuitResp>, StatusCode> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -82,9 +78,9 @@ pub async fn get_suit(
     let suit = match suit {
         Some(s) => s,
         None => {
-            return Ok(Json(ConfigSuitApiResp::error(
+            return Ok(Json(SuitResp::error(
                 "NOT_FOUND",
-                &format!("Configuration suit with ID '{id}' not found")
+                &format!("Configuration suit with ID '{id}' not found"),
             )));
         }
     };
@@ -93,5 +89,5 @@ pub async fn get_suit(
     let response = suit_to_response(&suit);
 
     // Return response
-    Ok(Json(ConfigSuitApiResp::success(response)))
+    Ok(Json(SuitResp::success(response)))
 }

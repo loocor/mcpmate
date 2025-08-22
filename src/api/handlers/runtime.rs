@@ -8,10 +8,7 @@ use axum::{Json, extract::State, http::StatusCode};
 use tokio::process::Command as AsyncCommand;
 
 use crate::{
-    api::{
-        models::{runtime::*},
-        routes::AppState,
-    },
+    api::{models::runtime::*, routes::AppState},
     common::{RuntimeType, paths::global_paths},
     runtime::{RuntimeInstaller, RuntimeManager},
 };
@@ -19,19 +16,17 @@ use crate::{
 pub async fn install(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<RuntimeInstallReq>,
-) -> Result<Json<RuntimeInstallApiResp>, StatusCode> {
+) -> Result<Json<RuntimeInstallResp>, StatusCode> {
     let result = runtime_install_core(&request, &app_state).await?;
     Ok(Json(result))
 }
 
-pub async fn status(
-    State(app_state): State<Arc<AppState>>
-) -> Result<Json<RuntimeStatusApiResp>, StatusCode> {
+pub async fn status(State(app_state): State<Arc<AppState>>) -> Result<Json<RuntimeStatusResp>, StatusCode> {
     let result = runtime_status_core(&app_state).await?;
     Ok(Json(result))
 }
 
-pub async fn cache(State(app_state): State<Arc<AppState>>) -> Result<Json<RuntimeCacheApiResp>, StatusCode> {
+pub async fn cache(State(app_state): State<Arc<AppState>>) -> Result<Json<RuntimeCacheResp>, StatusCode> {
     let result = runtime_cache_core(&app_state).await?;
     Ok(Json(result))
 }
@@ -39,7 +34,7 @@ pub async fn cache(State(app_state): State<Arc<AppState>>) -> Result<Json<Runtim
 pub async fn reset_cache(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<RuntimeCacheResetReq>,
-) -> Result<Json<RuntimeCacheResetApiResp>, StatusCode> {
+) -> Result<Json<RuntimeCacheResetResp>, StatusCode> {
     let result = reset_cache_core(&request, &app_state).await?;
     Ok(Json(result))
 }
@@ -47,7 +42,7 @@ pub async fn reset_cache(
 async fn runtime_install_core(
     request: &RuntimeInstallReq,
     app_state: &AppState,
-) -> Result<RuntimeInstallApiResp, StatusCode> {
+) -> Result<RuntimeInstallResp, StatusCode> {
     let runtime_type: RuntimeType = request.runtime_type.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let manager = RuntimeManager::new();
@@ -56,7 +51,7 @@ async fn runtime_install_core(
     if manager.is_installed(runtime_type) {
         tracing::info!("Runtime {} already installed", runtime_type);
 
-        return Ok(RuntimeInstallApiResp::success(RuntimeInstallResp {
+        return Ok(RuntimeInstallResp::success(RuntimeInstallData {
             success: true,
             message: format!("Runtime {} already installed", runtime_type),
             runtime_type: request.runtime_type.clone(),
@@ -72,14 +67,14 @@ async fn runtime_install_core(
     perform_installation(app_state, request, runtime_type)
         .await
         .map(|_| {
-            RuntimeInstallApiResp::success(RuntimeInstallResp {
+            RuntimeInstallResp::success(RuntimeInstallData {
                 success: true,
                 message: format!("Successfully downloaded and installed {}", request.runtime_type),
                 runtime_type: request.runtime_type.clone(),
             })
         })
         .or_else(|e| {
-            Ok(RuntimeInstallApiResp::success(RuntimeInstallResp {
+            Ok(RuntimeInstallResp::success(RuntimeInstallData {
                 success: false,
                 message: format!("Installation failed: {e}"),
                 runtime_type: request.runtime_type.clone(),
@@ -95,13 +90,13 @@ async fn perform_installation(
     RuntimeInstaller::new().install_runtime(runtime_type).await.map(|_| ())
 }
 
-async fn runtime_status_core(_app_state: &AppState) -> Result<RuntimeStatusApiResp, StatusCode> {
+async fn runtime_status_core(_app_state: &AppState) -> Result<RuntimeStatusResp, StatusCode> {
     let (uv_status, bun_status) = tokio::join!(
         create_runtime_status(RuntimeType::Uv),
         create_runtime_status(RuntimeType::Bun)
     );
 
-    Ok(RuntimeStatusApiResp::success(RuntimeStatusResp {
+    Ok(RuntimeStatusResp::success(RuntimeStatusData {
         uv: uv_status,
         bun: bun_status,
     }))
@@ -136,11 +131,11 @@ async fn create_runtime_status(runtime_type: RuntimeType) -> RuntimeStatus {
     }
 }
 
-async fn runtime_cache_core(_app_state: &AppState) -> Result<RuntimeCacheApiResp, StatusCode> {
+async fn runtime_cache_core(_app_state: &AppState) -> Result<RuntimeCacheResp, StatusCode> {
     let (uv_cache, bun_cache) = tokio::join!(get_cache_info(RuntimeType::Uv), get_cache_info(RuntimeType::Bun));
 
-    Ok(RuntimeCacheApiResp::success(RuntimeCacheResp {
-        summary: CacheSummaryInfo {
+    Ok(RuntimeCacheResp::success(RuntimeCacheData {
+        summary: RuntimeCacheSummary {
             total_size_bytes: uv_cache.size_bytes + bun_cache.size_bytes,
             last_cleanup: get_last_cleanup_time(),
         },
@@ -149,11 +144,11 @@ async fn runtime_cache_core(_app_state: &AppState) -> Result<RuntimeCacheApiResp
     }))
 }
 
-async fn get_cache_info(runtime_type: RuntimeType) -> CacheItem {
+async fn get_cache_info(runtime_type: RuntimeType) -> RuntimeCacheItem {
     let paths = global_paths();
     let cache_path = paths.runtime_cache_dir(runtime_type.as_str());
 
-    CacheItem {
+    RuntimeCacheItem {
         path: cache_path.to_string_lossy().to_string(),
         size_bytes: calculate_dir_size(&cache_path),
         package_count: count_packages_in_cache(&cache_path),
@@ -164,7 +159,7 @@ async fn get_cache_info(runtime_type: RuntimeType) -> CacheItem {
 async fn reset_cache_core(
     request: &RuntimeCacheResetReq,
     _app_state: &AppState,
-) -> Result<RuntimeCacheResetApiResp, StatusCode> {
+) -> Result<RuntimeCacheResetResp, StatusCode> {
     let paths = global_paths();
     let base = paths.cache_dir();
 
@@ -205,7 +200,7 @@ async fn reset_cache_core(
             .unwrap_or_else(|e| tracing::warn!("Failed to write cleanup timestamp: {}", e));
     }
 
-    Ok(RuntimeCacheResetApiResp::success(RuntimeCacheResetResp {
+    Ok(RuntimeCacheResetResp::success(RuntimeCacheResetData {
         success: all_successful,
     }))
 }

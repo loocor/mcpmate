@@ -3,7 +3,7 @@
 
 // Re-export all public functions from submodules
 pub use self::{
-    basic::{server_details, instance_list, server_list},
+    basic::{instance_list, server_details, server_list},
     crud::{create_server, delete_server, import_servers, update_server},
     mgmt::{disable_server, enable_server, manage_server},
     prompts::{server_prompt_arguments, server_prompts},
@@ -35,13 +35,7 @@ pub(crate) mod shared {
     };
 
     pub use crate::{
-        api::{
-            handlers::ApiError,
-            models::server::{
-                OperationResp, InstanceListResp, ServerListResp, ServerDetailsResp,
-            },
-            routes::AppState,
-        },
+        api::{handlers::ApiError, models::server::ServerOperationData, routes::AppState},
         config::models::Server,
     };
 }

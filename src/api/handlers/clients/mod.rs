@@ -7,4 +7,4 @@ pub mod handlers;
 pub mod import;
 
 // Re-export the main handler functions for use in routes
-pub use handlers::{check, details, update};
+pub use handlers::{details, list, update};

@@ -1,15 +1,20 @@
 // Server tools handlers
 // Provides handlers for server tool inspect endpoints
 
-use axum::{extract::{Query, State}, response::Json, http::StatusCode};
-use std::sync::Arc;
-use crate::api::{models::{server::{ServerCapabilityReq, ServerToolsResp, ServerToolsApiResp, CapabilityMeta}}, routes::AppState};
+use crate::api::{
+    models::server::{ServerCapabilityMeta, ServerCapabilityReq, ServerToolsData, ServerToolsResp},
+    routes::AppState,
+};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::Json,
+};
 use chrono::Utc;
+use std::sync::Arc;
 
 use super::capability::{tool_json, tool_json_from_cached};
-use super::common::{
-    InspectQuery, create_inspect_response, create_runtime_cache_data, validate_server_id,
-};
+use super::common::{InspectQuery, create_inspect_response, create_runtime_cache_data, validate_server_id};
 
 /// Macro to extract database pool from app state with early return on error
 macro_rules! get_db_pool {
@@ -22,45 +27,47 @@ macro_rules! get_db_pool {
 }
 
 /// Helper function to convert Json response to ServerToolsResp
-fn json_to_server_tools_resp(json_response: axum::Json<serde_json::Value>) -> ServerToolsResp {
+fn json_to_server_tools_resp(json_response: axum::Json<serde_json::Value>) -> ServerToolsData {
     let json_value = json_response.0;
-    
+
     // Extract data from the JSON response
-    let data = json_value.get("data")
+    let data = json_value
+        .get("data")
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .collect();
-    
-    let state = json_value.get("state")
+
+    let state = json_value
+        .get("state")
         .and_then(|s| s.as_str())
         .unwrap_or("ok")
         .to_string();
-    
+
     let meta_value = json_value.get("meta").cloned().unwrap_or_default();
-    let meta = CapabilityMeta {
-        cache_hit: meta_value.get("cache_hit")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        strategy: meta_value.get("strategy")
+    let meta = ServerCapabilityMeta {
+        cache_hit: meta_value.get("cache_hit").and_then(|v| v.as_bool()).unwrap_or(false),
+        strategy: meta_value
+            .get("strategy")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
-        source: meta_value.get("source")
+        source: meta_value
+            .get("source")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
     };
-    
-    ServerToolsResp { data, state, meta }
+
+    ServerToolsData { data, state, meta }
 }
 
 /// List all tools for a specific server
 pub async fn server_tools(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerCapabilityReq>,
-) -> Result<Json<ServerToolsApiResp>, StatusCode> {
+) -> Result<Json<ServerToolsResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
     let result = server_tools_core(&request, &db_pool, &app_state).await?;
     Ok(Json(result))
@@ -71,13 +78,13 @@ async fn server_tools_core(
     request: &ServerCapabilityReq,
     db_pool: &sqlx::SqlitePool,
     state: &Arc<AppState>,
-) -> Result<ServerToolsApiResp, StatusCode> {
+) -> Result<ServerToolsResp, StatusCode> {
     // Convert ServerCapabilityReq to InspectQuery for compatibility with existing logic
     let query = InspectQuery {
         refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::RefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::RefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::RefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
+            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
         }),
         format: None,
         include_meta: None,
@@ -92,7 +99,7 @@ async fn server_tools_core(
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
-    
+
     let server_info = super::common::ServerIdentification {
         server_id: request.id.clone(),
         server_name: server_row.name.clone(),
@@ -109,14 +116,9 @@ async fn server_tools_core(
         if server_row.capabilities.is_some()
             && !server_row.has_capability(crate::common::capability::CapabilityToken::Tools)
         {
-            let result = create_inspect_response(
-                Vec::new(),
-                false,
-                params.refresh,
-                "capability-tools-unsupported",
-            );
+            let result = create_inspect_response(Vec::new(), false, params.refresh, "capability-tools-unsupported");
             let tools_resp = json_to_server_tools_resp(result);
-            return Ok(ServerToolsApiResp::success(tools_resp));
+            return Ok(ServerToolsResp::success(tools_resp));
         }
     }
 
@@ -136,7 +138,7 @@ async fn server_tools_core(
                         crate::common::constants::strategies::CACHE,
                     );
                     let tools_resp = json_to_server_tools_resp(result);
-                    return Ok(ServerToolsApiResp::success(tools_resp));
+                    return Ok(ServerToolsResp::success(tools_resp));
                 }
             }
         }
@@ -192,7 +194,7 @@ async fn server_tools_core(
                     crate::common::constants::strategies::RUNTIME,
                 );
                 let tools_resp = json_to_server_tools_resp(result);
-                return Ok(ServerToolsApiResp::success(tools_resp));
+                return Ok(ServerToolsResp::success(tools_resp));
             }
         }
     }
@@ -208,7 +210,7 @@ async fn server_tools_core(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         let tools_resp = json_to_server_tools_resp(response);
-        return Ok(ServerToolsApiResp::success(tools_resp));
+        return Ok(ServerToolsResp::success(tools_resp));
     }
 
     // Last resort: return any cached tools ignoring freshness if available (support offline access)
@@ -223,7 +225,7 @@ async fn server_tools_core(
                 crate::common::constants::strategies::CACHE,
             );
             let tools_resp = json_to_server_tools_resp(result);
-            return Ok(ServerToolsApiResp::success(tools_resp));
+            return Ok(ServerToolsResp::success(tools_resp));
         }
     }
 
@@ -235,5 +237,5 @@ async fn server_tools_core(
         crate::common::constants::strategies::NONE,
     );
     let tools_resp = json_to_server_tools_resp(result);
-    Ok(ServerToolsApiResp::success(tools_resp))
+    Ok(ServerToolsResp::success(tools_resp))
 }

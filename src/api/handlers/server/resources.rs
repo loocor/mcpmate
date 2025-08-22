@@ -3,95 +3,103 @@
 
 use axum::{
     extract::{Query, State},
-    response::Json,
     http::StatusCode,
+    response::Json,
 };
 use std::sync::Arc;
 
-use crate::api::{routes::AppState, models::{server::{ServerCapabilityReq, ServerResourcesResp, ServerResourcesApiResp, ServerResourceTemplatesResp, ServerResourceTemplatesApiResp, CapabilityMeta}}};
+use crate::api::{
+    models::server::{
+        ServerCapabilityMeta, ServerCapabilityReq, ServerResourceTemplatesData, ServerResourceTemplatesResp,
+        ServerResourcesData, ServerResourcesResp,
+    },
+    routes::AppState,
+};
 use chrono::Utc;
 
 use super::capability::{
     CapabilityKind, enrich_capability_items, resource_json, resource_json_from_cached, resource_template_json,
     resource_template_json_from_cached, respond_with_enriched,
 };
-use super::common::{
-    create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
-};
+use super::common::{create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id};
 
 /// Helper function to convert Json response to ServerResourcesResp
-fn json_to_server_resources_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourcesResp {
+fn json_to_server_resources_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourcesData {
     let json_value = json_response.0;
-    
-    let data = json_value.get("data")
+
+    let data = json_value
+        .get("data")
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .collect();
-    
-    let state = json_value.get("state")
+
+    let state = json_value
+        .get("state")
         .and_then(|s| s.as_str())
         .unwrap_or("ok")
         .to_string();
-    
+
     let meta_value = json_value.get("meta").cloned().unwrap_or_default();
-    let meta = CapabilityMeta {
-        cache_hit: meta_value.get("cache_hit")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        strategy: meta_value.get("strategy")
+    let meta = ServerCapabilityMeta {
+        cache_hit: meta_value.get("cache_hit").and_then(|v| v.as_bool()).unwrap_or(false),
+        strategy: meta_value
+            .get("strategy")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
-        source: meta_value.get("source")
+        source: meta_value
+            .get("source")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
     };
-    
-    ServerResourcesResp { data, state, meta }
+
+    ServerResourcesData { data, state, meta }
 }
 
 /// Helper function to convert Json response to ServerResourceTemplatesResp
-fn json_to_server_resource_templates_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourceTemplatesResp {
+fn json_to_server_resource_templates_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourceTemplatesData {
     let json_value = json_response.0;
-    
-    let data = json_value.get("data")
+
+    let data = json_value
+        .get("data")
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .collect();
-    
-    let state = json_value.get("state")
+
+    let state = json_value
+        .get("state")
         .and_then(|s| s.as_str())
         .unwrap_or("ok")
         .to_string();
-    
+
     let meta_value = json_value.get("meta").cloned().unwrap_or_default();
-    let meta = CapabilityMeta {
-        cache_hit: meta_value.get("cache_hit")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        strategy: meta_value.get("strategy")
+    let meta = ServerCapabilityMeta {
+        cache_hit: meta_value.get("cache_hit").and_then(|v| v.as_bool()).unwrap_or(false),
+        strategy: meta_value
+            .get("strategy")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
-        source: meta_value.get("source")
+        source: meta_value
+            .get("source")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
     };
-    
-    ServerResourceTemplatesResp { data, state, meta }
+
+    ServerResourceTemplatesData { data, state, meta }
 }
 
 /// List all resources for a specific server with standardized signature
 pub async fn server_resources(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerCapabilityReq>,
-) -> Result<Json<ServerResourcesApiResp>, StatusCode> {
+) -> Result<Json<ServerResourcesResp>, StatusCode> {
     let result = server_resources_core(&request, &app_state).await?;
     Ok(Json(result))
 }
@@ -101,13 +109,13 @@ pub async fn server_resources(
 async fn server_resources_core(
     request: &ServerCapabilityReq,
     app_state: &Arc<AppState>,
-) -> Result<ServerResourcesApiResp, StatusCode> {
+) -> Result<ServerResourcesResp, StatusCode> {
     // Convert request to internal query format
     let query = super::common::InspectQuery {
         refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::RefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::RefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::RefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
+            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
         }),
         format: None,
         include_meta: None,
@@ -136,14 +144,10 @@ async fn server_resources_core(
         if server_row.capabilities.is_some()
             && !server_row.has_capability(crate::common::capability::CapabilityToken::Resources)
         {
-            let response_data = create_inspect_response(
-                Vec::new(),
-                false,
-                params.refresh,
-                "capability-resources-unsupported",
-            );
+            let response_data =
+                create_inspect_response(Vec::new(), false, params.refresh, "capability-resources-unsupported");
             let resources_resp = json_to_server_resources_resp(response_data);
-            return Ok(ServerResourcesApiResp::success(resources_resp));
+            return Ok(ServerResourcesResp::success(resources_resp));
         }
     }
 
@@ -170,7 +174,7 @@ async fn server_resources_core(
                             crate::common::constants::strategies::CACHE,
                         );
                         let resources_resp = json_to_server_resources_resp(response_data);
-                        return Ok(ServerResourcesApiResp::success(resources_resp));
+                        return Ok(ServerResourcesResp::success(resources_resp));
                     }
                     let response_data = create_inspect_response(
                         processed,
@@ -179,7 +183,7 @@ async fn server_resources_core(
                         crate::common::constants::strategies::CACHE,
                     );
                     let resources_resp = json_to_server_resources_resp(response_data);
-                    return Ok(ServerResourcesApiResp::success(resources_resp));
+                    return Ok(ServerResourcesResp::success(resources_resp));
                 }
             }
         }
@@ -254,7 +258,7 @@ async fn server_resources_core(
                         crate::common::constants::strategies::RUNTIME,
                     );
                     let resources_resp = json_to_server_resources_resp(response_data);
-                    return Ok(ServerResourcesApiResp::success(resources_resp));
+                    return Ok(ServerResourcesResp::success(resources_resp));
                 }
                 let response_data = create_inspect_response(
                     resources,
@@ -263,7 +267,7 @@ async fn server_resources_core(
                     crate::common::constants::strategies::RUNTIME,
                 );
                 let resources_resp = json_to_server_resources_resp(response_data);
-                return Ok(ServerResourcesApiResp::success(resources_resp));
+                return Ok(ServerResourcesResp::success(resources_resp));
             }
         }
     }
@@ -275,10 +279,11 @@ async fn server_resources_core(
         &params,
         super::capability::CapabilityType::Resources,
     )
-    .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         let resources_resp = json_to_server_resources_resp(response);
-        return Ok(ServerResourcesApiResp::success(resources_resp));
+        return Ok(ServerResourcesResp::success(resources_resp));
     }
 
     // Last resort: return any cached copy ignoring freshness for offline access
@@ -300,7 +305,7 @@ async fn server_resources_core(
                     crate::common::constants::strategies::CACHE,
                 );
                 let resources_resp = json_to_server_resources_resp(response_data);
-                return Ok(ServerResourcesApiResp::success(resources_resp));
+                return Ok(ServerResourcesResp::success(resources_resp));
             }
             let response_data = create_inspect_response(
                 processed,
@@ -309,21 +314,21 @@ async fn server_resources_core(
                 crate::common::constants::strategies::CACHE,
             );
             let resources_resp = json_to_server_resources_resp(response_data);
-            return Ok(ServerResourcesApiResp::success(resources_resp));
+            return Ok(ServerResourcesResp::success(resources_resp));
         }
     }
 
     // Fallback empty
     let response_data = create_inspect_response(Vec::new(), false, params.refresh, "none");
     let resources_resp = json_to_server_resources_resp(response_data);
-    Ok(ServerResourcesApiResp::success(resources_resp))
+    Ok(ServerResourcesResp::success(resources_resp))
 }
 
 /// List resource templates for a specific server with standardized signature
 pub async fn server_resource_templates(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerCapabilityReq>,
-) -> Result<Json<ServerResourceTemplatesApiResp>, StatusCode> {
+) -> Result<Json<ServerResourceTemplatesResp>, StatusCode> {
     let result = server_resource_templates_core(&request, &app_state).await?;
     Ok(Json(result))
 }
@@ -333,13 +338,13 @@ pub async fn server_resource_templates(
 async fn server_resource_templates_core(
     request: &ServerCapabilityReq,
     app_state: &Arc<AppState>,
-) -> Result<ServerResourceTemplatesApiResp, StatusCode> {
+) -> Result<ServerResourceTemplatesResp, StatusCode> {
     // Convert request to internal query format
     let query = super::common::InspectQuery {
         refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::RefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::RefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::RefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
+            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
         }),
         format: None,
         include_meta: None,
@@ -368,14 +373,10 @@ async fn server_resource_templates_core(
         if server_row.capabilities.is_some()
             && !server_row.has_capability(crate::common::capability::CapabilityToken::Resources)
         {
-            let response_data = create_inspect_response(
-                Vec::new(),
-                false,
-                params.refresh,
-                "capability-resources-unsupported",
-            );
+            let response_data =
+                create_inspect_response(Vec::new(), false, params.refresh, "capability-resources-unsupported");
             let templates_resp = json_to_server_resource_templates_resp(response_data);
-            return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
+            return Ok(ServerResourceTemplatesResp::success(templates_resp));
         }
     }
 
@@ -405,7 +406,7 @@ async fn server_resource_templates_core(
                             crate::common::constants::strategies::CACHE,
                         );
                         let templates_resp = json_to_server_resource_templates_resp(response_data);
-                        return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
+                        return Ok(ServerResourceTemplatesResp::success(templates_resp));
                     }
                     let response_data = create_inspect_response(
                         processed,
@@ -414,7 +415,7 @@ async fn server_resource_templates_core(
                         crate::common::constants::strategies::CACHE,
                     );
                     let templates_resp = json_to_server_resource_templates_resp(response_data);
-                    return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
+                    return Ok(ServerResourceTemplatesResp::success(templates_resp));
                 }
             }
         }
@@ -489,7 +490,7 @@ async fn server_resource_templates_core(
                         crate::common::constants::strategies::RUNTIME,
                     );
                     let templates_resp = json_to_server_resource_templates_resp(response_data);
-                    return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
+                    return Ok(ServerResourceTemplatesResp::success(templates_resp));
                 }
                 let response_data = create_inspect_response(
                     templates,
@@ -498,7 +499,7 @@ async fn server_resource_templates_core(
                     crate::common::constants::strategies::RUNTIME,
                 );
                 let templates_resp = json_to_server_resource_templates_resp(response_data);
-                return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
+                return Ok(ServerResourceTemplatesResp::success(templates_resp));
             }
         }
     }
@@ -510,10 +511,11 @@ async fn server_resource_templates_core(
         &params,
         super::capability::CapabilityType::ResourceTemplates,
     )
-    .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         let templates_resp = json_to_server_resource_templates_resp(response);
-        return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
+        return Ok(ServerResourceTemplatesResp::success(templates_resp));
     }
 
     // Last resort: return any cached copy ignoring freshness
@@ -540,7 +542,7 @@ async fn server_resource_templates_core(
                     crate::common::constants::strategies::CACHE,
                 );
                 let templates_resp = json_to_server_resource_templates_resp(response_data);
-                return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
+                return Ok(ServerResourceTemplatesResp::success(templates_resp));
             }
             let response_data = create_inspect_response(
                 processed,
@@ -549,7 +551,7 @@ async fn server_resource_templates_core(
                 crate::common::constants::strategies::CACHE,
             );
             let templates_resp = json_to_server_resource_templates_resp(response_data);
-            return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
+            return Ok(ServerResourceTemplatesResp::success(templates_resp));
         }
     }
 
@@ -560,5 +562,5 @@ async fn server_resource_templates_core(
         crate::common::constants::strategies::NONE,
     );
     let templates_resp = json_to_server_resource_templates_resp(response_data);
-    Ok(ServerResourceTemplatesApiResp::success(templates_resp))
+    Ok(ServerResourceTemplatesResp::success(templates_resp))
 }

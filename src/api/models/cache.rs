@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 #[schemars(description = "View type for cache details")]
-pub enum ViewType {
+pub enum CacheViewType {
     #[default]
     #[schemars(description = "Show storage statistics and performance metrics")]
     Stats,
@@ -17,10 +17,10 @@ pub enum ViewType {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Query parameters for cache details")]
-pub struct DetailsQuery {
+pub struct CacheDetailsReq {
     #[serde(default)]
     #[schemars(description = "View type - stats or keys")]
-    pub view: ViewType,
+    pub view: CacheViewType,
     #[schemars(description = "Optional server ID to filter by")]
     pub server_id: Option<String>,
     #[schemars(description = "Maximum number of items to return (max 1000)")]
@@ -37,13 +37,13 @@ pub struct DetailsQuery {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Cache details response")]
-pub struct CacheDetailsResp {
+pub struct CacheDetailsData {
     #[schemars(description = "Cache keys information (when view=keys)")]
-    pub keys: Option<Vec<KeyItem>>,
+    pub keys: Option<Vec<CacheKeyItem>>,
     #[schemars(description = "Storage statistics (when view=stats)")]
-    pub storage: Option<StorageStats>,
+    pub storage: Option<CacheStorageStats>,
     #[schemars(description = "Performance metrics (when view=stats)")]
-    pub metrics: Option<MetricsStats>,
+    pub metrics: Option<CacheMetricsStats>,
     #[schemars(description = "Total count of items")]
     pub total: Option<usize>,
     #[schemars(description = "ISO 8601 timestamp when data was generated")]
@@ -52,7 +52,7 @@ pub struct CacheDetailsResp {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Cache reset operation response")]
-pub struct CacheResetResp {
+pub struct CacheResetData {
     #[schemars(description = "Whether the reset operation was successful")]
     pub success: bool,
     #[schemars(description = "Optional message about the operation")]
@@ -63,20 +63,20 @@ pub struct CacheResetResp {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Storage statistics for cache database")]
-pub struct StorageStats {
+pub struct CacheStorageStats {
     #[schemars(description = "Path to the cache database file")]
     pub db_path: String,
     #[schemars(description = "Total cache size in bytes")]
     pub cache_size_bytes: u64,
     #[schemars(description = "Count of items in each table")]
-    pub tables: TablesCount,
+    pub tables: CacheTablesCount,
     #[schemars(description = "ISO 8601 timestamp of last cleanup")]
     pub last_cleanup: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Count of items in each cache table")]
-pub struct TablesCount {
+pub struct CacheTablesCount {
     #[schemars(description = "Number of cached servers")]
     pub servers: u64,
     #[schemars(description = "Number of cached tools")]
@@ -92,7 +92,7 @@ pub struct TablesCount {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Cache performance metrics")]
-pub struct MetricsStats {
+pub struct CacheMetricsStats {
     #[serde(rename = "totalQueries")]
     #[schemars(description = "Total number of cache queries")]
     pub total_queries: u64,
@@ -118,7 +118,7 @@ pub struct MetricsStats {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[schemars(description = "Individual cache key item")]
-pub struct KeyItem {
+pub struct CacheKeyItem {
     #[schemars(description = "Cache key identifier")]
     pub key: String,
     #[serde(rename = "serverId")]
@@ -141,11 +141,11 @@ use crate::api::models::clients::ApiError;
 /// Response for cache details operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Cache details API response")]
-pub struct CacheDetailsApiResp {
+pub struct CacheDetailsResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<CacheDetailsResp>,
+    pub data: Option<CacheDetailsData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -153,30 +153,46 @@ pub struct CacheDetailsApiResp {
 /// Response for cache reset operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Cache reset API response")]
-pub struct CacheResetApiResp {
+pub struct CacheResetResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<CacheResetResp>,
+    pub data: Option<CacheResetData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
 
 // Implementation blocks
-impl CacheDetailsApiResp {
-    pub fn success(data: CacheDetailsResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl CacheDetailsResp {
+    pub fn success(data: CacheDetailsData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }
 
-impl CacheResetApiResp {
-    pub fn success(data: CacheResetResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl CacheResetResp {
+    pub fn success(data: CacheResetData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }

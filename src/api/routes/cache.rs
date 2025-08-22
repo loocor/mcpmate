@@ -8,13 +8,13 @@ use aide::axum::{
 
 use super::AppState;
 use crate::api::handlers::cache::capabilities;
-use crate::api::models::cache::{CacheDetailsResp, CacheResetResp, DetailsQuery};
+use crate::api::models::cache::{CacheDetailsReq, CacheDetailsResp, CacheResetResp};
 use crate::{aide_wrapper, aide_wrapper_query};
 
 // Generate aide-compatible wrapper for details function (with query parameters)
 aide_wrapper_query!(
     capabilities::details,
-    DetailsQuery,
+    CacheDetailsReq,
     CacheDetailsResp,
     "Get cache details. Query params: view (stats|keys), server_id (optional), limit (optional, max 1000)"
 );

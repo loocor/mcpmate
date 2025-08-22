@@ -8,12 +8,12 @@ use aide::axum::{ApiRouter, routing::get_with};
 use super::AppState;
 use crate::aide_wrapper;
 use crate::api::handlers::system;
-use crate::api::models::system::{StatusResp, SystemMetricsResp};
+use crate::api::models::system::{SystemMetricsResp, SystemStatusResp};
 
 // Generate aide-compatible wrappers for system handlers
 aide_wrapper!(
     system::get_status,
-    StatusResp,
+    SystemStatusResp,
     "Get system status including uptime and server counts"
 );
 

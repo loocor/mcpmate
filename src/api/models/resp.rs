@@ -26,9 +26,7 @@ pub struct ErrorDetails {
 
 impl ResponseConverter {
     /// Convert ConfigSuit to ConfigSuitResponse with consistent logic
-    pub fn suit_to_response(
-        suit: &crate::config::models::ConfigSuit
-    ) -> crate::api::models::suits::ConfigSuitResp {
+    pub fn suit_to_response(suit: &crate::config::models::ConfigSuit) -> crate::api::models::suits::SuitData {
         let mut allowed_operations = Vec::new();
 
         // Add allowed operations based on current state
@@ -42,7 +40,7 @@ impl ResponseConverter {
         allowed_operations.push("update".to_string());
         allowed_operations.push("delete".to_string());
 
-        crate::api::models::suits::ConfigSuitResp {
+        crate::api::models::suits::SuitData {
             id: suit.id.clone().unwrap_or_default(),
             name: suit.name.clone(),
             description: suit.description.clone(),
@@ -59,7 +57,7 @@ impl ResponseConverter {
     pub fn server_to_suit_response(
         server: &crate::config::models::Server,
         enabled: bool,
-    ) -> crate::api::models::suits::ConfigSuitServerResp {
+    ) -> crate::api::models::suits::SuitServerResp {
         let mut allowed_operations = Vec::new();
         if enabled {
             allowed_operations.push("disable".to_string());
@@ -67,7 +65,7 @@ impl ResponseConverter {
             allowed_operations.push("enable".to_string());
         }
 
-        crate::api::models::suits::ConfigSuitServerResp {
+        crate::api::models::suits::SuitServerResp {
             id: server.id.clone().unwrap_or_default(),
             name: server.name.clone(),
             enabled,

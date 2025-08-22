@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     api::{
         handlers::ApiError,
-        models::server::{ServerInstanceSummary, ServerMetaInfo},
+        models::server::{InstanceSummary, ServerMetaInfo},
         routes::AppState,
     },
     config::{database::Database, server},
@@ -45,7 +45,7 @@ pub struct ServerDetails {
     pub meta: Option<ServerMetaInfo>,
     pub globally_enabled: bool,
     pub enabled_in_suits: bool,
-    pub instances: Vec<ServerInstanceSummary>,
+    pub instances: Vec<InstanceSummary>,
 }
 
 /// Resolve server identifier (name or ID) to complete server information
@@ -168,7 +168,7 @@ pub async fn get_complete_server_details(
 pub async fn get_server_instances(
     state: &Arc<AppState>,
     server_name: &str,
-) -> Vec<ServerInstanceSummary> {
+) -> Vec<InstanceSummary> {
     let pool = match get_connection_pool_with_timeout(state).await {
         Ok(pool) => pool,
         Err(_) => {
@@ -197,7 +197,7 @@ pub async fn get_server_instances(
 
             let started_at = chrono::DateTime::<chrono::Utc>::from(now - conn.time_since_creation()).to_rfc3339();
 
-            ServerInstanceSummary {
+            InstanceSummary {
                 id: id.clone(),
                 status: conn.status_string(),
                 started_at: Some(started_at),
@@ -443,7 +443,9 @@ pub async fn try_enrich_or_fallback(
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
     if let Ok(db) = get_database_from_state(state) {
         let enriched = super::capability::enrich_capability_items(kind, &db.pool, server_id, processed).await;
-        Ok(super::capability::respond_with_enriched(enriched, cache_hit, refresh, strategy))
+        Ok(super::capability::respond_with_enriched(
+            enriched, cache_hit, refresh, strategy,
+        ))
     } else {
         Ok(create_inspect_response(processed, cache_hit, refresh, strategy))
     }

@@ -3,89 +3,96 @@
 
 use axum::{
     extract::{Query, State},
-    response::Json,
     http::StatusCode,
+    response::Json,
 };
 use std::sync::Arc;
 
-use crate::api::{routes::AppState, models::{server::{ServerCapabilityReq, ServerPromptsResp, ServerPromptsApiResp, ServerPromptArgumentsResp, ServerPromptArgumentsApiResp, CapabilityMeta}}};
+use crate::api::{
+    models::server::{
+        ServerCapabilityMeta, ServerCapabilityReq, ServerPromptArgumentsData, ServerPromptArgumentsResp,
+        ServerPromptsData, ServerPromptsResp,
+    },
+    routes::AppState,
+};
 use chrono::Utc;
 
 use super::capability::{
     CapabilityKind, enrich_capability_items, prompt_json, prompt_json_from_cached, respond_with_enriched,
 };
-use super::common::{
-    create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
-};
+use super::common::{create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id};
 
 /// Helper function to convert Json response to ServerPromptsResp
-fn json_to_server_prompts_resp(json_response: axum::Json<serde_json::Value>) -> ServerPromptsResp {
+fn json_to_server_prompts_resp(json_response: axum::Json<serde_json::Value>) -> ServerPromptsData {
     let json_value = json_response.0;
-    
-    let data = json_value.get("data")
+
+    let data = json_value
+        .get("data")
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .collect();
-    
-    let state = json_value.get("state")
+
+    let state = json_value
+        .get("state")
         .and_then(|s| s.as_str())
         .unwrap_or("ok")
         .to_string();
-    
+
     let meta_value = json_value.get("meta").cloned().unwrap_or_default();
-    let meta = CapabilityMeta {
-        cache_hit: meta_value.get("cache_hit")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        strategy: meta_value.get("strategy")
+    let meta = ServerCapabilityMeta {
+        cache_hit: meta_value.get("cache_hit").and_then(|v| v.as_bool()).unwrap_or(false),
+        strategy: meta_value
+            .get("strategy")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
-        source: meta_value.get("source")
+        source: meta_value
+            .get("source")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
     };
-    
-    ServerPromptsResp { data, state, meta }
+
+    ServerPromptsData { data, state, meta }
 }
 
 /// Helper function to convert Json response to ServerPromptArgumentsResp
-fn json_to_server_prompt_arguments_resp(json_response: axum::Json<serde_json::Value>) -> ServerPromptArgumentsResp {
+fn json_to_server_prompt_arguments_resp(json_response: axum::Json<serde_json::Value>) -> ServerPromptArgumentsData {
     let json_value = json_response.0;
-    
-    let data = json_value.get("data")
+
+    let data = json_value
+        .get("data")
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default()
         .into_iter()
         .collect();
-    
+
     let meta_value = json_value.get("meta").cloned().unwrap_or_default();
-    let meta = CapabilityMeta {
-        cache_hit: meta_value.get("cache_hit")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        strategy: meta_value.get("strategy")
+    let meta = ServerCapabilityMeta {
+        cache_hit: meta_value.get("cache_hit").and_then(|v| v.as_bool()).unwrap_or(false),
+        strategy: meta_value
+            .get("strategy")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
-        source: meta_value.get("source")
+        source: meta_value
+            .get("source")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string(),
     };
-    
-    ServerPromptArgumentsResp { data, meta }
+
+    ServerPromptArgumentsData { data, meta }
 }
 
 /// List all prompts for a specific server with standardized signature
 pub async fn server_prompts(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerCapabilityReq>,
-) -> Result<Json<ServerPromptsApiResp>, StatusCode> {
+) -> Result<Json<ServerPromptsResp>, StatusCode> {
     let result = server_prompts_core(&request, &app_state).await?;
     Ok(Json(result))
 }
@@ -95,13 +102,13 @@ pub async fn server_prompts(
 async fn server_prompts_core(
     request: &ServerCapabilityReq,
     app_state: &Arc<AppState>,
-) -> Result<ServerPromptsApiResp, StatusCode> {
+) -> Result<ServerPromptsResp, StatusCode> {
     // Convert request to internal query format
     let query = super::common::InspectQuery {
         refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::RefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::RefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::RefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
+            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
         }),
         format: None,
         include_meta: None,
@@ -130,14 +137,10 @@ async fn server_prompts_core(
         if server_row.capabilities.is_some()
             && !server_row.has_capability(crate::common::capability::CapabilityToken::Prompts)
         {
-            let response_data = create_inspect_response(
-                Vec::new(),
-                false,
-                params.refresh,
-                "capability-prompts-unsupported",
-            );
+            let response_data =
+                create_inspect_response(Vec::new(), false, params.refresh, "capability-prompts-unsupported");
             let prompts_resp = json_to_server_prompts_resp(response_data);
-            return Ok(ServerPromptsApiResp::success(prompts_resp));
+            return Ok(ServerPromptsResp::success(prompts_resp));
         }
     }
 
@@ -163,7 +166,7 @@ async fn server_prompts_core(
                             crate::common::constants::strategies::CACHE,
                         );
                         let prompts_resp = json_to_server_prompts_resp(response_data);
-                        return Ok(ServerPromptsApiResp::success(prompts_resp));
+                        return Ok(ServerPromptsResp::success(prompts_resp));
                     }
                     let response_data = create_inspect_response(
                         processed,
@@ -172,7 +175,7 @@ async fn server_prompts_core(
                         crate::common::constants::strategies::CACHE,
                     );
                     let prompts_resp = json_to_server_prompts_resp(response_data);
-                    return Ok(ServerPromptsApiResp::success(prompts_resp));
+                    return Ok(ServerPromptsResp::success(prompts_resp));
                 }
             }
         }
@@ -244,7 +247,7 @@ async fn server_prompts_core(
                         crate::common::constants::strategies::RUNTIME,
                     );
                     let prompts_resp = json_to_server_prompts_resp(response_data);
-                    return Ok(ServerPromptsApiResp::success(prompts_resp));
+                    return Ok(ServerPromptsResp::success(prompts_resp));
                 }
                 let response_data = create_inspect_response(
                     prompts,
@@ -253,7 +256,7 @@ async fn server_prompts_core(
                     crate::common::constants::strategies::RUNTIME,
                 );
                 let prompts_resp = json_to_server_prompts_resp(response_data);
-                return Ok(ServerPromptsApiResp::success(prompts_resp));
+                return Ok(ServerPromptsResp::success(prompts_resp));
             }
         }
     }
@@ -265,14 +268,19 @@ async fn server_prompts_core(
         &params,
         super::capability::CapabilityType::Prompts,
     )
-    .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         let prompts_resp = json_to_server_prompts_resp(response);
-        return Ok(ServerPromptsApiResp::success(prompts_resp));
+        return Ok(ServerPromptsResp::success(prompts_resp));
     }
 
     // Last resort: offline cache
-    if let Ok(cached) = app_state.redb_cache.get_server_prompts(&server_info.server_id, false).await {
+    if let Ok(cached) = app_state
+        .redb_cache
+        .get_server_prompts(&server_info.server_id, false)
+        .await
+    {
         if !cached.is_empty() {
             let processed: Vec<serde_json::Value> = cached.into_iter().map(prompt_json_from_cached).collect();
             if let Ok(db) = get_database_from_state(app_state) {
@@ -285,7 +293,7 @@ async fn server_prompts_core(
                     crate::common::constants::strategies::CACHE,
                 );
                 let prompts_resp = json_to_server_prompts_resp(response_data);
-                return Ok(ServerPromptsApiResp::success(prompts_resp));
+                return Ok(ServerPromptsResp::success(prompts_resp));
             }
             let response_data = create_inspect_response(
                 processed,
@@ -294,7 +302,7 @@ async fn server_prompts_core(
                 crate::common::constants::strategies::CACHE,
             );
             let prompts_resp = json_to_server_prompts_resp(response_data);
-            return Ok(ServerPromptsApiResp::success(prompts_resp));
+            return Ok(ServerPromptsResp::success(prompts_resp));
         }
     }
 
@@ -306,14 +314,14 @@ async fn server_prompts_core(
         crate::common::constants::strategies::NONE,
     );
     let prompts_resp = json_to_server_prompts_resp(response_data);
-    Ok(ServerPromptsApiResp::success(prompts_resp))
+    Ok(ServerPromptsResp::success(prompts_resp))
 }
 
 /// Get detailed prompt argument information with standardized signature
 pub async fn server_prompt_arguments(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerCapabilityReq>,
-) -> Result<Json<ServerPromptArgumentsApiResp>, StatusCode> {
+) -> Result<Json<ServerPromptArgumentsResp>, StatusCode> {
     let result = server_prompt_arguments_core(&request, &app_state).await?;
     Ok(Json(result))
 }
@@ -322,13 +330,13 @@ pub async fn server_prompt_arguments(
 async fn server_prompt_arguments_core(
     request: &ServerCapabilityReq,
     app_state: &Arc<AppState>,
-) -> Result<ServerPromptArgumentsApiResp, StatusCode> {
+) -> Result<ServerPromptArgumentsResp, StatusCode> {
     // Convert request to internal query format
     let query = super::common::InspectQuery {
         refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::RefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::RefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::RefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
+            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
         }),
         format: None,
         include_meta: None,
@@ -358,5 +366,5 @@ async fn server_prompt_arguments_core(
         "meta": { "cache_hit": false, "strategy": params.refresh.unwrap_or_default() }
     }));
     let arguments_resp = json_to_server_prompt_arguments_resp(response_data);
-    Ok(ServerPromptArgumentsApiResp::success(arguments_resp))
+    Ok(ServerPromptArgumentsResp::success(arguments_resp))
 }

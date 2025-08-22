@@ -8,8 +8,9 @@ use axum::extract::{Json, Path, State};
 use super::ApiError;
 use crate::{
     api::{
-        models::{
-            notifs::{ToolChangeOperation, ToolChangeScope, ToolsChangedDetails, ToolsChangedReq, ToolsChangedResp, ToolsChangedApiResp},
+        models::notifs::{
+            ToolChangeOperation, ToolChangeScope, ToolsChangedData, ToolsChangedDetails, ToolsChangedReq,
+            ToolsChangedResp,
         },
         routes::AppState,
     },
@@ -21,7 +22,7 @@ use crate::{
 pub async fn tools_changed(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ToolsChangedReq>,
-) -> Result<Json<ToolsChangedApiResp>, ApiError> {
+) -> Result<Json<ToolsChangedResp>, ApiError> {
     let result = tools_changed_core(&request, &state).await?;
     Ok(Json(result))
 }
@@ -30,7 +31,7 @@ pub async fn tools_changed(
 async fn tools_changed_core(
     request: &ToolsChangedReq,
     state: &Arc<AppState>,
-) -> Result<ToolsChangedApiResp, ApiError> {
+) -> Result<ToolsChangedResp, ApiError> {
     // Early return validation using pattern matching
     match (&request.scope, &request.service_ids, &request.tools) {
         (ToolChangeScope::Services, None, _) => {
@@ -70,7 +71,7 @@ async fn tools_changed_core(
         .filter(|conn| matches!(conn.status, ConnectionStatus::Ready) && conn.service.is_some())
         .count();
 
-    Ok(ToolsChangedApiResp::success(ToolsChangedResp {
+    Ok(ToolsChangedResp::success(ToolsChangedData {
         notified_clients: notified_count,
         message: format!("Notified {notified_count} clients about tools list change"),
         details: ToolsChangedDetails {

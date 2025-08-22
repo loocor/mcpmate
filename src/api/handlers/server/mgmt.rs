@@ -8,8 +8,8 @@
 // 4. Changes to server status in config suits trigger connection/disconnection operations
 // 5. This creates a one-way synchronization where API operations take priority
 
-use crate::api::models::server::{OperationResp, ServerManageReq, ManageAction};
 use super::{common, shared::*};
+use crate::api::models::server::{ServerOperationData, ServerManageAction, ServerManageReq};
 
 // Helper functions for server management operations
 
@@ -43,10 +43,10 @@ fn create_operation_response(
     result: String,
     status: String,
     is_enabled: bool,
-) -> Result<Json<OperationResp>, ApiError> {
+) -> Result<Json<ServerOperationData>, ApiError> {
     let allowed_operations = vec![if is_enabled { "disable" } else { "enable" }.to_owned()];
 
-    Ok(Json(OperationResp {
+    Ok(Json(ServerOperationData {
         id,
         name,
         result,
@@ -57,22 +57,19 @@ fn create_operation_response(
 
 /// Unified server management function that handles enable/disable operations
 /// based on the action specified in the request payload
-/// 
+///
 /// **Endpoint:** `POST /mcp/servers/manage`
 #[tracing::instrument(skip(state), level = "debug")]
 pub async fn manage_server(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ServerManageReq>,
-) -> Result<Json<OperationResp>, ApiError> {
+) -> Result<Json<ServerOperationData>, ApiError> {
     match request.action {
-        ManageAction::Enable => {
+        ServerManageAction::Enable => {
             // Convert to the format expected by enable_server
             let id = request.id.clone();
             let sync_query = if request.sync {
-                [("sync".to_string(), "true".to_string())]
-                    .iter()
-                    .cloned()
-                    .collect()
+                [("sync".to_string(), "true".to_string())].iter().cloned().collect()
             } else {
                 std::collections::HashMap::new()
             };
@@ -80,14 +77,11 @@ pub async fn manage_server(
             // Call the existing enable_server logic
             enable_server_core(State(state), id, sync_query).await
         }
-        ManageAction::Disable => {
+        ServerManageAction::Disable => {
             // Convert to the format expected by disable_server
             let id = request.id.clone();
             let sync_query = if request.sync {
-                [("sync".to_string(), "true".to_string())]
-                    .iter()
-                    .cloned()
-                    .collect()
+                [("sync".to_string(), "true".to_string())].iter().cloned().collect()
             } else {
                 std::collections::HashMap::new()
             };
@@ -99,14 +93,14 @@ pub async fn manage_server(
 }
 /// Enable a server by setting its global availability to enabled
 /// (Legacy function for backwards compatibility - consider using manage_server instead)
-/// 
+///
 /// **Endpoint:** `POST /mcp/servers/{id}/enable`
 #[tracing::instrument(skip(state), level = "debug")]
 pub async fn enable_server(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<OperationResp>, ApiError> {
+) -> Result<Json<ServerOperationData>, ApiError> {
     enable_server_core(State(state), id, query).await
 }
 
@@ -115,7 +109,7 @@ async fn enable_server_core(
     State(state): State<Arc<AppState>>,
     id: String,
     query: std::collections::HashMap<String, String>,
-) -> Result<Json<OperationResp>, ApiError> {
+) -> Result<Json<ServerOperationData>, ApiError> {
     // Get database reference and server info
     let db = common::get_database_from_state(&state)?;
     let (server_id, server_name) = get_server_info_by_id(&db, &id).await?;
@@ -147,14 +141,14 @@ async fn enable_server_core(
 
 /// Disable a server by setting its global availability to disabled
 /// (Legacy function for backwards compatibility - consider using manage_server instead)
-/// 
+///
 /// **Endpoint:** `POST /mcp/servers/{id}/disable`
 #[tracing::instrument(skip(state), level = "debug")]
 pub async fn disable_server(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<OperationResp>, ApiError> {
+) -> Result<Json<ServerOperationData>, ApiError> {
     disable_server_core(state, id, query).await
 }
 
@@ -163,7 +157,7 @@ async fn disable_server_core(
     State(state): State<Arc<AppState>>,
     id: String,
     query: std::collections::HashMap<String, String>,
-) -> Result<Json<OperationResp>, ApiError> {
+) -> Result<Json<ServerOperationData>, ApiError> {
     // Get database reference and server info
     let db = common::get_database_from_state(&state)?;
     let (server_id, server_name) = get_server_info_by_id(&db, &id).await?;
@@ -250,7 +244,7 @@ async fn handle_server_sync(
 async fn handle_server_connection_setup(
     state: &Arc<AppState>,
     server_name: &str,
-) -> Result<Json<OperationResp>, ApiError> {
+) -> Result<Json<ServerOperationData>, ApiError> {
     let mut pool = common::get_connection_pool_with_timeout(state).await?;
 
     match pool.update_server_status(server_name, true).await {
@@ -291,7 +285,7 @@ async fn handle_server_connection_setup(
 async fn handle_connection_pool_disable(
     state: &Arc<AppState>,
     server_name: &str,
-) -> Result<Json<OperationResp>, ApiError> {
+) -> Result<Json<ServerOperationData>, ApiError> {
     // Handle connection pool timeout (early return)
     let pool_result = tokio::time::timeout(
         std::time::Duration::from_secs(crate::common::constants::timeouts::POOL_DISABLE_SEC),

@@ -14,7 +14,7 @@ pub use crate::system::detection::models::{ClientApp, DetectedApp, DetectionMeth
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(description = "Configuration file format type - standard, mixed, or array")]
-pub enum ConfigType {
+pub enum ClientConfigType {
     #[default]
     #[schemars(description = "Standard JSON configuration format")]
     Standard,
@@ -113,7 +113,7 @@ pub struct ConfigRulesDefinition {
     // Business logic fields
     pub top_level_key: String,
     #[serde(default)]
-    pub config_type: ConfigType,
+    pub config_type: ClientConfigType,
     pub supported_transports: Vec<String>,
     pub supported_runtimes: HashMap<String, Vec<String>>,
     pub format_rules: HashMap<String, serde_json::Value>,
@@ -302,7 +302,7 @@ pub struct ConfigRule {
     pub client_app_id: String,
     pub identifier: String,
     pub top_level_key: String,
-    pub config_type: ConfigType,
+    pub config_type: ClientConfigType,
     pub supported_transports: Vec<String>,
     pub supported_runtimes: HashMap<String, Vec<String>>,
     pub format_rules: HashMap<String, FormatRule>,

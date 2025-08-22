@@ -27,6 +27,16 @@ pub fn api_docs(api: TransformOpenApi) -> TransformOpenApi {
             ..Default::default()
         })
         .tag(Tag {
+            name: "runtime".into(),
+            description: Some("Runtime management endpoints".into()),
+            ..Default::default()
+        })
+        .tag(Tag {
+            name: "clients".into(),
+            description: Some("Client management endpoints".into()),
+            ..Default::default()
+        })
+        .tag(Tag {
             name: "server".into(),
             description: Some("Server management endpoints".into()),
             ..Default::default()
@@ -37,23 +47,13 @@ pub fn api_docs(api: TransformOpenApi) -> TransformOpenApi {
             ..Default::default()
         })
         .tag(Tag {
-            name: "cache".into(),
+            name: "capabilities".into(),
             description: Some("Cache management endpoints".into()),
             ..Default::default()
         })
         .tag(Tag {
             name: "suits".into(),
             description: Some("Configuration suit management endpoints".into()),
-            ..Default::default()
-        })
-        .tag(Tag {
-            name: "runtime".into(),
-            description: Some("Runtime management endpoints".into()),
-            ..Default::default()
-        })
-        .tag(Tag {
-            name: "clients".into(),
-            description: Some("Client management endpoints".into()),
             ..Default::default()
         })
         .tag(Tag {
@@ -73,9 +73,14 @@ pub async fn serve_docs() -> Html<&'static str> {
                 <title>MCPMate API Documentation</title>
                 <meta charset="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <style>
+                    :root {
+                        --scalar-sidebar-width: 360px;
+                    }
+                </style>
             </head>
             <body>
-                <script id="api-reference" data-url="/openapi.json" data-theme="dark" data-layout="modern"></script>
+                <script id="api-reference" data-url="/openapi.json"></script>
                 <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
             </body>
             </html>
@@ -215,5 +220,3 @@ macro_rules! aide_wrapper_payload {
         }
     };
 }
-
-

@@ -20,7 +20,7 @@ pub struct RuntimeInstallReq {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for runtime installation")]
-pub struct RuntimeInstallResp {
+pub struct RuntimeInstallData {
     #[schemars(description = "Whether installation was successful")]
     pub success: bool,
     #[schemars(description = "Installation result message")]
@@ -46,7 +46,7 @@ pub struct RuntimeStatus {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for runtime status check")]
-pub struct RuntimeStatusResp {
+pub struct RuntimeStatusData {
     #[schemars(description = "UV runtime status")]
     pub uv: RuntimeStatus,
     #[schemars(description = "Bun runtime status")]
@@ -54,8 +54,8 @@ pub struct RuntimeStatusResp {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Cache summary information")]
-pub struct CacheSummaryInfo {
+#[schemars(description = "Runtime cache summary information")]
+pub struct RuntimeCacheSummary {
     #[schemars(description = "Total cache size in bytes")]
     pub total_size_bytes: u64,
     #[schemars(description = "ISO 8601 timestamp of last cleanup")]
@@ -63,8 +63,8 @@ pub struct CacheSummaryInfo {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Cache item details")]
-pub struct CacheItem {
+#[schemars(description = "Runtime cache item details")]
+pub struct RuntimeCacheItem {
     #[schemars(description = "Cache directory path")]
     pub path: String,
     #[schemars(description = "Cache size in bytes")]
@@ -77,13 +77,13 @@ pub struct CacheItem {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for runtime cache information")]
-pub struct RuntimeCacheResp {
+pub struct RuntimeCacheData {
     #[schemars(description = "Cache summary across all runtimes")]
-    pub summary: CacheSummaryInfo,
+    pub summary: RuntimeCacheSummary,
     #[schemars(description = "UV cache details")]
-    pub uv: CacheItem,
+    pub uv: RuntimeCacheItem,
     #[schemars(description = "Bun cache details")]
-    pub bun: CacheItem,
+    pub bun: RuntimeCacheItem,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -96,7 +96,7 @@ pub struct RuntimeCacheResetReq {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for cache reset operation")]
-pub struct RuntimeCacheResetResp {
+pub struct RuntimeCacheResetData {
     #[schemars(description = "Whether cache reset was successful")]
     pub success: bool,
 }
@@ -110,11 +110,11 @@ use crate::api::models::clients::ApiError;
 /// Response for runtime install operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Runtime install API response")]
-pub struct RuntimeInstallApiResp {
+pub struct RuntimeInstallResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<RuntimeInstallResp>,
+    pub data: Option<RuntimeInstallData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -122,11 +122,11 @@ pub struct RuntimeInstallApiResp {
 /// Response for runtime status operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Runtime status API response")]
-pub struct RuntimeStatusApiResp {
+pub struct RuntimeStatusResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<RuntimeStatusResp>,
+    pub data: Option<RuntimeStatusData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -134,11 +134,11 @@ pub struct RuntimeStatusApiResp {
 /// Response for runtime cache operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Runtime cache API response")]
-pub struct RuntimeCacheApiResp {
+pub struct RuntimeCacheResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<RuntimeCacheResp>,
+    pub data: Option<RuntimeCacheData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -146,48 +146,80 @@ pub struct RuntimeCacheApiResp {
 /// Response for runtime cache reset operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Runtime cache reset API response")]
-pub struct RuntimeCacheResetApiResp {
+pub struct RuntimeCacheResetResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<RuntimeCacheResetResp>,
+    pub data: Option<RuntimeCacheResetData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
 
 // Implementation blocks for success and error methods
-impl RuntimeInstallApiResp {
-    pub fn success(data: RuntimeInstallResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl RuntimeInstallResp {
+    pub fn success(data: RuntimeInstallData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }
 
-impl RuntimeStatusApiResp {
-    pub fn success(data: RuntimeStatusResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl RuntimeStatusResp {
+    pub fn success(data: RuntimeStatusData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }
 
-impl RuntimeCacheApiResp {
-    pub fn success(data: RuntimeCacheResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl RuntimeCacheResp {
+    pub fn success(data: RuntimeCacheData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }
 
-impl RuntimeCacheResetApiResp {
-    pub fn success(data: RuntimeCacheResetResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl RuntimeCacheResetResp {
+    pub fn success(data: RuntimeCacheResetData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }

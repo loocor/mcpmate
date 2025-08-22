@@ -16,9 +16,8 @@ pub use self::{
     server::{batch_disable_servers, batch_enable_servers, disable_server, enable_server, list_servers},
     // NEW STANDARDIZED HANDLERS
     standardized::{
-        create_suit as create_suit_standardized, delete_suit as delete_suit_standardized, manage_suit,
-        manage_suit_component, manage_suits_batch, suit_details, suit_servers_list, suit_tools_list, suits_list,
-        update_suit as update_suit_standardized,
+        create_suit as create_suit_standardized, delete_suit as delete_suit_standardized, manage_component,
+        manage_suit, servers_list, suit_details, suits_list, tools_list, update_suit as update_suit_standardized,
     },
     tool::{batch_disable_tools, batch_enable_tools, disable_tool, enable_tool, list_tools},
 };
@@ -50,18 +49,18 @@ pub(crate) mod common {
                 ResponseConverter,
                 suits::{
                     // Legacy models still needed for compatibility
-                    BatchOperationReq,
-                    BatchOperationResp,
-                    ConfigSuitPromptResp,
-                    ConfigSuitPromptsResp,
-                    ConfigSuitResourceResp,
-                    ConfigSuitResourcesResp,
-                    ConfigSuitResp,
-                    ConfigSuitServersResp,
-                    ConfigSuitToolResp,
-                    ConfigSuitToolsResp,
-                    SuitOperationResp,
-                    UpdateConfigSuitReq,
+                    SuitBatchOperationReq,
+                    SuitBatchOperationResp,
+                    SuitData,
+                    SuitOperationData,
+                    SuitPromptData,
+                    SuitPromptsResp,
+                    SuitResourceData,
+                    SuitResourcesResp,
+                    SuitServersResp,
+                    SuitToolData,
+                    SuitToolsResp,
+                    SuitUpdateReq,
                 },
             },
             routes::AppState,
@@ -78,7 +77,7 @@ pub(crate) mod common {
     }
 
     /// Convert ConfigSuit to ConfigSuitResponse using unified converter
-    pub fn suit_to_response(suit: &ConfigSuit) -> ConfigSuitResp {
+    pub fn suit_to_response(suit: &ConfigSuit) -> SuitData {
         ResponseConverter::suit_to_response(suit)
     }
 }

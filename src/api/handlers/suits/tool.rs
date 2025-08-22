@@ -11,7 +11,7 @@ use super::{
 pub async fn list_tools(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<ConfigSuitToolsResp>, ApiError> {
+) -> Result<Json<SuitToolsResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -33,7 +33,7 @@ pub async fn list_tools(
             allowed_operations.push("enable".to_string());
         }
 
-        tool_responses.push(ConfigSuitToolResp {
+        tool_responses.push(SuitToolData {
             id: config.id,
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
@@ -45,7 +45,7 @@ pub async fn list_tools(
     }
 
     // Return response
-    Ok(Json(ConfigSuitToolsResp {
+    Ok(Json(SuitToolsResp {
         suit_id: id,
         suit_name: suit.name,
         tools: tool_responses,
@@ -56,7 +56,7 @@ pub async fn list_tools(
 pub async fn enable_tool(
     State(state): State<Arc<AppState>>,
     Path((suit_id, tool_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationResp>, ApiError> {
+) -> Result<Json<SuitOperationData>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -73,7 +73,7 @@ pub async fn enable_tool(
     if tool.enabled {
         // Get tool details for response
         let tool_details = get_tool_with_details_or_error(&db, &tool.id).await?;
-        return Ok(Json(SuitOperationResp {
+        return Ok(Json(SuitOperationData {
             id: tool.id.clone(),
             name: format!("{}/{}", tool_details.server_name, tool_details.tool_name),
             result: "Tool is already enabled in this configuration suit".to_string(),
@@ -93,7 +93,7 @@ pub async fn enable_tool(
     let tool_details = get_tool_with_details_or_error(&db, &tool.id).await?;
 
     // Return success response
-    Ok(Json(SuitOperationResp {
+    Ok(Json(SuitOperationData {
         id: tool.id,
         name: format!("{}/{}", tool_details.server_name, tool_details.tool_name),
         result: "Successfully enabled tool in configuration suit".to_string(),
@@ -106,7 +106,7 @@ pub async fn enable_tool(
 pub async fn disable_tool(
     State(state): State<Arc<AppState>>,
     Path((suit_id, tool_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationResp>, ApiError> {
+) -> Result<Json<SuitOperationData>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -123,7 +123,7 @@ pub async fn disable_tool(
     if !tool.enabled {
         // Get tool details for response
         let tool_details = get_tool_with_details_or_error(&db, &tool.id).await?;
-        return Ok(Json(SuitOperationResp {
+        return Ok(Json(SuitOperationData {
             id: tool.id.clone(),
             name: format!("{}/{}", tool_details.server_name, tool_details.tool_name),
             result: "Tool is already disabled in this configuration suit".to_string(),
@@ -143,7 +143,7 @@ pub async fn disable_tool(
     let tool_details = get_tool_with_details_or_error(&db, &tool.id).await?;
 
     // Return success response
-    Ok(Json(SuitOperationResp {
+    Ok(Json(SuitOperationData {
         id: tool.id,
         name: format!("{}/{}", tool_details.server_name, tool_details.tool_name),
         result: "Successfully disabled tool in configuration suit".to_string(),
@@ -156,8 +156,8 @@ pub async fn disable_tool(
 pub async fn batch_enable_tools(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-    Json(payload): Json<BatchOperationReq>,
-) -> Result<Json<BatchOperationResp>, ApiError> {
+    Json(payload): Json<SuitBatchOperationReq>,
+) -> Result<Json<SuitBatchOperationResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -198,7 +198,7 @@ pub async fn batch_enable_tools(
     }
 
     // Return response
-    Ok(Json(BatchOperationResp {
+    Ok(Json(SuitBatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,
@@ -209,8 +209,8 @@ pub async fn batch_enable_tools(
 pub async fn batch_disable_tools(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-    Json(payload): Json<BatchOperationReq>,
-) -> Result<Json<BatchOperationResp>, ApiError> {
+    Json(payload): Json<SuitBatchOperationReq>,
+) -> Result<Json<SuitBatchOperationResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -251,7 +251,7 @@ pub async fn batch_disable_tools(
     }
 
     // Return response
-    Ok(Json(BatchOperationResp {
+    Ok(Json(SuitBatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,

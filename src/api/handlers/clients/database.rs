@@ -1,8 +1,8 @@
 // Database operations for client handlers
 
-use crate::api::models::clients::{ClientAppRow, ClientInfo, SimpleDetectedApp};
+use crate::api::models::clients::{ClientAppRow, ClientDetectedApp, ClientInfo};
 use crate::common::json::strip_comments;
-use crate::config::client::models::ConfigType;
+use crate::config::client::models::ClientConfigType;
 use crate::system::detection::detector::AppDetector;
 use anyhow::Result;
 use std::sync::Arc;
@@ -121,7 +121,7 @@ pub async fn get_supported_runtimes(
 pub async fn get_config_type(
     client_id: &str,
     db_pool: &sqlx::SqlitePool,
-) -> Option<ConfigType> {
+) -> Option<ClientConfigType> {
     // Query the database for config_type
     let query = "
         SELECT config_type
@@ -139,10 +139,10 @@ pub async fn get_config_type(
     {
         Ok(Some(config_type_str)) => {
             match config_type_str.as_str() {
-                "mixed" => Some(ConfigType::Mixed),
-                "array" => Some(ConfigType::Array),
-                "standard" => Some(ConfigType::Standard),
-                _ => Some(ConfigType::Standard), // Default fallback
+                "mixed" => Some(ClientConfigType::Mixed),
+                "array" => Some(ClientConfigType::Array),
+                "standard" => Some(ClientConfigType::Standard),
+                _ => Some(ClientConfigType::Standard), // Default fallback
             }
         }
         _ => None,
@@ -170,13 +170,13 @@ pub async fn get_client_config_path(
 pub async fn perform_client_detection(
     client_id: &str,
     db_pool: &sqlx::SqlitePool,
-) -> Result<Option<SimpleDetectedApp>, anyhow::Error> {
+) -> Result<Option<ClientDetectedApp>, anyhow::Error> {
     // Create app detector
     let detector = AppDetector::new(Arc::new(db_pool.clone())).await?;
 
     // Detect the specific client
     match detector.detect_by_identifier(client_id).await? {
-        Some(detected_app) => Ok(Some(SimpleDetectedApp {
+        Some(detected_app) => Ok(Some(ClientDetectedApp {
             install_path: detected_app.install_path,
             config_path: detected_app.config_path,
         })),
@@ -213,7 +213,7 @@ pub async fn update_client_detection_status(
 /// Build ClientInfo from database row and optional detected app data
 pub async fn build_client_info(
     client: &ClientAppRow,
-    detected_app: Option<&SimpleDetectedApp>,
+    detected_app: Option<&ClientDetectedApp>,
     db_pool: &sqlx::SqlitePool,
 ) -> ClientInfo {
     let client_id = &client.identifier;

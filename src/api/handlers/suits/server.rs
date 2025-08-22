@@ -76,7 +76,7 @@ async fn invalidate_suit_cache(state: &Arc<AppState>) {
 pub async fn list_servers(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<ConfigSuitServersResp>, ApiError> {
+) -> Result<Json<SuitServersResp>, ApiError> {
     let db = get_database(&state).await?;
     let suit = get_suit_or_error(&db, &id).await?;
 
@@ -114,7 +114,7 @@ pub async fn list_servers(
         id
     );
 
-    Ok(Json(ConfigSuitServersResp {
+    Ok(Json(SuitServersResp {
         suit_id: id,
         suit_name: suit.name,
         servers,
@@ -125,7 +125,7 @@ pub async fn list_servers(
 pub async fn enable_server(
     State(state): State<Arc<AppState>>,
     Path((suit_id, server_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationResp>, ApiError> {
+) -> Result<Json<SuitOperationData>, ApiError> {
     let db = get_database(&state).await?;
     let server = get_server_or_error(&db, &server_id).await?;
 
@@ -136,7 +136,7 @@ pub async fn enable_server(
 
     // Early return if server is already enabled
     if let Some(true) = find_server_config_status(&server_configs, &server_id) {
-        return Ok(Json(SuitOperationResp {
+        return Ok(Json(SuitOperationData {
             id: server_id,
             name: server.name,
             result: "Server is already enabled in this configuration suit".to_string(),
@@ -156,7 +156,7 @@ pub async fn enable_server(
     // Invalidate cache
     invalidate_suit_cache(&state).await;
 
-    Ok(Json(SuitOperationResp {
+    Ok(Json(SuitOperationData {
         id: server_id,
         name: server.name,
         result: "Successfully enabled server in configuration suit".to_string(),
@@ -169,7 +169,7 @@ pub async fn enable_server(
 pub async fn disable_server(
     State(state): State<Arc<AppState>>,
     Path((suit_id, server_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationResp>, ApiError> {
+) -> Result<Json<SuitOperationData>, ApiError> {
     let db = get_database(&state).await?;
     let server = get_server_or_error(&db, &server_id).await?;
 
@@ -180,7 +180,7 @@ pub async fn disable_server(
 
     // Early return if server is already disabled
     if let Some(false) = find_server_config_status(&server_configs, &server_id) {
-        return Ok(Json(SuitOperationResp {
+        return Ok(Json(SuitOperationData {
             id: server_id,
             name: server.name,
             result: "Server is already disabled in this configuration suit".to_string(),
@@ -197,7 +197,7 @@ pub async fn disable_server(
     // Invalidate cache
     invalidate_suit_cache(&state).await;
 
-    Ok(Json(SuitOperationResp {
+    Ok(Json(SuitOperationData {
         id: server_id,
         name: server.name,
         result: "Successfully disabled server in configuration suit".to_string(),
@@ -233,8 +233,8 @@ async fn process_server_enable(
 pub async fn batch_enable_servers(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-    Json(payload): Json<BatchOperationReq>,
-) -> Result<Json<BatchOperationResp>, ApiError> {
+    Json(payload): Json<SuitBatchOperationReq>,
+) -> Result<Json<SuitBatchOperationResp>, ApiError> {
     let db = get_database(&state).await?;
     let _suit = get_suit_or_error(&db, &suit_id).await?;
 
@@ -271,7 +271,7 @@ pub async fn batch_enable_servers(
         invalidate_suit_cache(&state).await;
     }
 
-    Ok(Json(BatchOperationResp {
+    Ok(Json(SuitBatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,
@@ -305,8 +305,8 @@ async fn process_server_disable(
 pub async fn batch_disable_servers(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-    Json(payload): Json<BatchOperationReq>,
-) -> Result<Json<BatchOperationResp>, ApiError> {
+    Json(payload): Json<SuitBatchOperationReq>,
+) -> Result<Json<SuitBatchOperationResp>, ApiError> {
     let db = get_database(&state).await?;
     let _suit = get_suit_or_error(&db, &suit_id).await?;
 
@@ -339,7 +339,7 @@ pub async fn batch_disable_servers(
         invalidate_suit_cache(&state).await;
     }
 
-    Ok(Json(BatchOperationResp {
+    Ok(Json(SuitBatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,

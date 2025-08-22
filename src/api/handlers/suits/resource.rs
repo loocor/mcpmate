@@ -9,7 +9,7 @@ use super::{check_resource_belongs_to_suit, common::*, get_resource_by_id, get_r
 pub async fn list_resources(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<ConfigSuitResourcesResp>, ApiError> {
+) -> Result<Json<SuitResourcesResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -38,7 +38,7 @@ pub async fn list_resources(
             allowed_operations.push("enable".to_string());
         }
 
-        resource_responses.push(ConfigSuitResourceResp {
+        resource_responses.push(SuitResourceData {
             id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
@@ -49,7 +49,7 @@ pub async fn list_resources(
     }
 
     // Return response
-    Ok(Json(ConfigSuitResourcesResp {
+    Ok(Json(SuitResourcesResp {
         suit_id: id,
         suit_name: suit.name,
         resources: resource_responses,
@@ -60,7 +60,7 @@ pub async fn list_resources(
 pub async fn enable_resource(
     State(state): State<Arc<AppState>>,
     Path((suit_id, resource_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationResp>, ApiError> {
+) -> Result<Json<SuitOperationData>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -73,7 +73,7 @@ pub async fn enable_resource(
 
     // Check if the resource is already enabled
     if resource.enabled {
-        return Ok(Json(SuitOperationResp {
+        return Ok(Json(SuitOperationData {
             id: resource_id,
             name: format!("{}/{}", resource.server_name, resource.resource_uri),
             result: "Resource is already enabled in this configuration suit".to_string(),
@@ -94,7 +94,7 @@ pub async fn enable_resource(
     .map_err(|e| ApiError::InternalError(format!("Failed to enable resource in configuration suit: {e}")))?;
 
     // Return success response
-    Ok(Json(SuitOperationResp {
+    Ok(Json(SuitOperationData {
         id: resource_id,
         name: format!("{}/{}", resource.server_name, resource.resource_uri),
         result: "Successfully enabled resource in configuration suit".to_string(),
@@ -107,7 +107,7 @@ pub async fn enable_resource(
 pub async fn disable_resource(
     State(state): State<Arc<AppState>>,
     Path((suit_id, resource_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationResp>, ApiError> {
+) -> Result<Json<SuitOperationData>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -120,7 +120,7 @@ pub async fn disable_resource(
 
     // Check if the resource is already disabled
     if !resource.enabled {
-        return Ok(Json(SuitOperationResp {
+        return Ok(Json(SuitOperationData {
             id: resource_id,
             name: format!("{}/{}", resource.server_name, resource.resource_uri),
             result: "Resource is already disabled in this configuration suit".to_string(),
@@ -141,7 +141,7 @@ pub async fn disable_resource(
     .map_err(|e| ApiError::InternalError(format!("Failed to disable resource in configuration suit: {e}")))?;
 
     // Return success response
-    Ok(Json(SuitOperationResp {
+    Ok(Json(SuitOperationData {
         id: resource_id,
         name: format!("{}/{}", resource.server_name, resource.resource_uri),
         result: "Successfully disabled resource in configuration suit".to_string(),
@@ -154,8 +154,8 @@ pub async fn disable_resource(
 pub async fn batch_enable_resources(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-    Json(payload): Json<BatchOperationReq>,
-) -> Result<Json<BatchOperationResp>, ApiError> {
+    Json(payload): Json<SuitBatchOperationReq>,
+) -> Result<Json<SuitBatchOperationResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -211,7 +211,7 @@ pub async fn batch_enable_resources(
     }
 
     // Return response
-    Ok(Json(BatchOperationResp {
+    Ok(Json(SuitBatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,
@@ -222,8 +222,8 @@ pub async fn batch_enable_resources(
 pub async fn batch_disable_resources(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-    Json(payload): Json<BatchOperationReq>,
-) -> Result<Json<BatchOperationResp>, ApiError> {
+    Json(payload): Json<SuitBatchOperationReq>,
+) -> Result<Json<SuitBatchOperationResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -279,7 +279,7 @@ pub async fn batch_disable_resources(
     }
 
     // Return response
-    Ok(Json(BatchOperationResp {
+    Ok(Json(SuitBatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,

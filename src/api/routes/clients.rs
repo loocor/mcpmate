@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 // Generate aide-compatible wrapper for client check (with query parameters)
 aide_wrapper_query!(
-    clients::check,
+    clients::list,
     ClientsCheckReq,
     ClientsCheckResp,
     "Get all clients with optional force refresh."
@@ -38,10 +38,8 @@ aide_wrapper_payload!(
 /// Create client management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
-        // Client detection and info
-        .api_route("/clients", get_with(check_aide, check_docs))
-        // Configuration details and update
-        .api_route("/clients/{identifier}", get_with(details_aide, details_docs))
+        .api_route("/clients/list", get_with(list_aide, list_docs))
+        .api_route("/clients/details", get_with(details_aide, details_docs))
         .api_route("/clients/update", post_with(update_aide, update_docs))
         .with_state(state)
 }

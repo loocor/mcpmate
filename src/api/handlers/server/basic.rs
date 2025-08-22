@@ -2,11 +2,9 @@
 // Contains handler functions for listing and getting servers
 
 use super::{common, shared::*};
-use crate::api::models::{
-    server::{
-        ServerListReq, ServerDetailsReq, InstanceListReq,
-        ServerDetailsApiResp, ServerListApiResp, InstanceListApiResp
-    }
+use crate::api::models::server::{
+    InstanceListData, InstanceListReq, InstanceListResp, ServerDetailsData, ServerDetailsReq, ServerDetailsResp,
+    ServerListData, ServerListReq, ServerListResp,
 };
 use axum::http::StatusCode;
 
@@ -21,36 +19,36 @@ macro_rules! get_db_pool {
 }
 
 /// Get details for a specific MCP server
-/// 
+///
 /// **Endpoint:** `GET /mcp/servers/details?id={server_id}`
 pub async fn server_details(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerDetailsReq>,
-) -> Result<Json<ServerDetailsApiResp>, StatusCode> {
+) -> Result<Json<ServerDetailsResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
     let result = server_details_core(&request, &db_pool, &app_state).await?;
     Ok(Json(result))
 }
 
 /// List all MCP servers with optional filtering
-/// 
+///
 /// **Endpoint:** `GET /mcp/servers/list?enabled={bool}&server_type={type}&limit={limit}&offset={offset}`
 pub async fn server_list(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerListReq>,
-) -> Result<Json<ServerListApiResp>, StatusCode> {
+) -> Result<Json<ServerListResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
     let result = server_list_core(&request, &db_pool, &app_state).await?;
     Ok(Json(result))
 }
 
 /// List instances for servers
-/// 
+///
 /// **Endpoint:** `GET /mcp/servers/instances/list?id={server_id}`
 pub async fn instance_list(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<InstanceListReq>,
-) -> Result<Json<InstanceListApiResp>, StatusCode> {
+) -> Result<Json<InstanceListResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
     let result = instance_list_core(&request, &db_pool, &app_state).await?;
     Ok(Json(result))
@@ -63,7 +61,7 @@ async fn server_details_core(
     request: &ServerDetailsReq,
     db_pool: &sqlx::SqlitePool,
     state: &Arc<AppState>,
-) -> Result<ServerDetailsApiResp, StatusCode> {
+) -> Result<ServerDetailsResp, StatusCode> {
     // Get the server by ID
     let server = crate::config::server::get_server_by_id(db_pool, &request.id)
         .await
@@ -83,7 +81,7 @@ async fn server_details_core(
     let created_at = server.created_at.map(|dt| dt.to_rfc3339());
     let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
 
-    let server_details = ServerDetailsResp {
+    let server_details = ServerDetailsData {
         id: id_opt,
         name,
         enabled,
@@ -100,7 +98,7 @@ async fn server_details_core(
         instances: details.instances,
     };
 
-    Ok(ServerDetailsApiResp::success(server_details))
+    Ok(ServerDetailsResp::success(server_details))
 }
 
 /// Core business logic for server list operation
@@ -108,14 +106,12 @@ async fn server_list_core(
     request: &ServerListReq,
     db_pool: &sqlx::SqlitePool,
     state: &Arc<AppState>,
-) -> Result<ServerListApiResp, StatusCode> {
+) -> Result<ServerListResp, StatusCode> {
     // Get all servers from the database
-    let all_servers = crate::config::server::get_all_servers(db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get servers: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let all_servers = crate::config::server::get_all_servers(db_pool).await.map_err(|e| {
+        tracing::error!("Failed to get servers: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Apply filtering and pagination
     let mut filtered_servers = Vec::new();
@@ -154,7 +150,7 @@ async fn server_list_core(
             let created_at = server.created_at.map(|dt| dt.to_rfc3339());
             let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
 
-            filtered_servers.push(ServerDetailsResp {
+            filtered_servers.push(ServerDetailsData {
                 id: id_opt,
                 name,
                 enabled,
@@ -173,7 +169,7 @@ async fn server_list_core(
         }
     }
 
-    Ok(ServerListApiResp::success(ServerListResp {
+    Ok(ServerListResp::success(ServerListData {
         servers: filtered_servers,
     }))
 }
@@ -183,7 +179,7 @@ async fn instance_list_core(
     request: &InstanceListReq,
     db_pool: &sqlx::SqlitePool,
     state: &Arc<AppState>,
-) -> Result<InstanceListApiResp, StatusCode> {
+) -> Result<InstanceListResp, StatusCode> {
     if let Some(ref server_id) = request.id {
         // List instances for specific server
         let server = crate::config::server::get_server_by_id(db_pool, server_id)
@@ -197,18 +193,13 @@ async fn instance_list_core(
         let name = server.name;
         let instance_summaries = common::get_server_instances(state, &name).await;
 
-        Ok(InstanceListApiResp::success(InstanceListResp {
+        Ok(InstanceListResp::success(InstanceListData {
             name,
             instances: instance_summaries,
         }))
     } else {
         // List all instances for all servers
-        let pool = match tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            state.connection_pool.lock(),
-        )
-        .await
-        {
+        let pool = match tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await {
             Ok(pool) => pool,
             Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
         };
@@ -221,7 +212,7 @@ async fn instance_list_core(
                 let duration_since_created = conn.created_at.elapsed();
                 let created_time = now - duration_since_created;
                 let started_at = Some(chrono::DateTime::<chrono::Utc>::from(created_time).to_rfc3339());
-                
+
                 let connected_at = if conn.is_connected() {
                     let duration_since_connected = conn.last_connected.elapsed();
                     let connected_time = now - duration_since_connected;
@@ -230,7 +221,7 @@ async fn instance_list_core(
                     None
                 };
 
-                all_instances.push(crate::api::models::server::ServerInstanceSummary {
+                all_instances.push(crate::api::models::server::InstanceSummary {
                     id: instance_id.clone(),
                     status: conn.status_string(),
                     started_at,
@@ -239,7 +230,7 @@ async fn instance_list_core(
             }
         }
 
-        Ok(InstanceListApiResp::success(InstanceListResp {
+        Ok(InstanceListResp::success(InstanceListData {
             name: "all".to_string(),
             instances: all_instances,
         }))

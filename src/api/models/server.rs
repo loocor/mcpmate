@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::common::server::ServerType;
 
@@ -43,7 +43,7 @@ pub struct ServerDetailsReq {
 /// Request for server deletion
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Request for server deletion")]
-pub struct DeleteServerReq {
+pub struct ServerDeleteReq {
     #[schemars(description = "Server ID")]
     pub id: String,
 }
@@ -55,18 +55,18 @@ pub struct ServerManageReq {
     #[schemars(description = "Server ID")]
     pub id: String,
 
-    #[schemars(description = "Management action: enable|disable")]
-    pub action: ManageAction,
+    #[schemars(description = "Server management action: enable|disable")]
+    pub action: ServerManageAction,
 
     #[serde(default)]
     #[schemars(description = "Whether to sync client configuration")]
     pub sync: bool,
 }
 
-/// Management action enum
+/// Server management action enum
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Management action enum")]
-pub enum ManageAction {
+#[schemars(description = "Server management action enum")]
+pub enum ServerManageAction {
     #[schemars(description = "Enable the server")]
     Enable,
     #[schemars(description = "Disable the server")]
@@ -82,13 +82,13 @@ pub struct ServerCapabilityReq {
 
     #[serde(default)]
     #[schemars(description = "Refresh strategy: auto|force|cache")]
-    pub refresh: Option<RefreshStrategy>,
+    pub refresh: Option<ServerRefreshStrategy>,
 }
 
-/// Refresh strategy enum
+/// Server refresh strategy enum
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Refresh strategy enum")]
-pub enum RefreshStrategy {
+#[schemars(description = "Server refresh strategy enum")]
+pub enum ServerRefreshStrategy {
     #[schemars(description = "Auto refresh based on cache policy")]
     Auto,
     #[schemars(description = "Force refresh from server")]
@@ -142,9 +142,9 @@ pub struct InstanceManageReq {
     pub action: InstanceAction,
 }
 
-/// Instance management action enum
+/// Server instance management action enum
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Instance management action enum")]
+#[schemars(description = "Server instance management action enum")]
 pub enum InstanceAction {
     #[schemars(description = "Disconnect normally")]
     Disconnect,
@@ -166,7 +166,7 @@ pub enum InstanceAction {
 /// Instance status information
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Instance status information")]
-pub struct InstanceStatus {
+pub struct ServerInstanceStatus {
     /// Instance ID
     pub id: String,
     /// Instance status
@@ -182,13 +182,13 @@ pub struct ServerStatusResp {
     /// Server status summary
     pub status: String,
     /// List of instances
-    pub instances: Vec<InstanceStatus>,
+    pub instances: Vec<ServerInstanceStatus>,
 }
 
 /// Instance Summary
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Instance Summary")]
-pub struct ServerInstanceSummary {
+pub struct InstanceSummary {
     /// Instance ID
     pub id: String,
     /// Instance status
@@ -202,7 +202,7 @@ pub struct ServerInstanceSummary {
 /// Server details response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server details response")]
-pub struct ServerDetailsResp {
+pub struct ServerDetailsData {
     /// Server ID (unique identifier)
     pub id: Option<String>,
     /// Server name
@@ -230,7 +230,7 @@ pub struct ServerDetailsResp {
     /// When the configuration was last updated
     pub updated_at: Option<String>,
     /// Summary of instances
-    pub instances: Vec<ServerInstanceSummary>,
+    pub instances: Vec<InstanceSummary>,
 }
 
 /// Server Metadata Information
@@ -253,20 +253,20 @@ pub struct ServerMetaInfo {
     pub rating: Option<i32>,
 }
 
-/// Instance list response
+/// Server instance list response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Instance list response")]
-pub struct InstanceListResp {
+#[schemars(description = "Server instance list response")]
+pub struct InstanceListData {
     /// Server name
     pub name: String,
     /// List of instances
-    pub instances: Vec<ServerInstanceSummary>,
+    pub instances: Vec<InstanceSummary>,
 }
 
-/// Resource metrics for an instance
+/// Server resource metrics for an instance
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Resource metrics for an instance")]
-pub struct ResourceMetrics {
+#[schemars(description = "Server resource metrics for an instance")]
+pub struct ServerResourceMetrics {
     /// CPU usage percentage of the instance process
     pub cpu_usage: Option<f32>,
     /// Memory usage in bytes of the instance process
@@ -278,7 +278,7 @@ pub struct ResourceMetrics {
 /// Server Instance Details
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server instance details")]
-pub struct ServerInstanceDetails {
+pub struct InstanceDetails {
     /// Connection attempts
     pub connection_attempts: u32,
     /// Last connected time (seconds since connection)
@@ -299,10 +299,10 @@ pub struct ServerInstanceDetails {
     pub last_health_check: Option<String>,
 }
 
-/// Instance details response
+/// Server instance details response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Instance details response")]
-pub struct InstanceDetailsResp {
+#[schemars(description = "Server instance details response")]
+pub struct InstanceDetailsData {
     /// Instance ID
     pub id: String,
     /// Server name
@@ -312,13 +312,13 @@ pub struct InstanceDetailsResp {
     /// Allowed operations
     pub allowed_operations: Vec<String>,
     /// Instance details
-    pub details: ServerInstanceDetails,
+    pub details: InstanceDetails,
 }
 
-/// Instance health response
+/// Server instance health response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Instance health response")]
-pub struct InstanceHealthResp {
+#[schemars(description = "Server instance health response")]
+pub struct InstanceHealthData {
     /// Instance ID
     pub id: String,
     /// Server name
@@ -332,7 +332,7 @@ pub struct InstanceHealthResp {
     /// Last health check time (ISO 8601 format)
     pub checked_at: String,
     /// Resource usage metrics for the instance
-    pub resource_metrics: Option<ResourceMetrics>,
+    pub resource_metrics: Option<ServerResourceMetrics>,
     /// Stability score based on connection history (0.0-1.0)
     pub connection_stability: Option<f32>,
 }
@@ -340,65 +340,65 @@ pub struct InstanceHealthResp {
 /// Server tools response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server tools response")]
-pub struct ServerToolsResp {
+pub struct ServerToolsData {
     /// List of tools
     pub data: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
     /// Metadata about the response
-    pub meta: CapabilityMeta,
+    pub meta: ServerCapabilityMeta,
 }
 
 /// Server resources response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Server resources response")]
-pub struct ServerResourcesResp {
+#[schemars(description = "Server resources data")]
+pub struct ServerResourcesData {
     /// List of resources
     pub data: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
     /// Metadata about the response
-    pub meta: CapabilityMeta,
+    pub meta: ServerCapabilityMeta,
 }
 
 /// Server resource templates response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Server resource templates response")]
-pub struct ServerResourceTemplatesResp {
+#[schemars(description = "Server resource templates response data")]
+pub struct ServerResourceTemplatesData {
     /// List of resource templates
     pub data: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
     /// Metadata about the response
-    pub meta: CapabilityMeta,
+    pub meta: ServerCapabilityMeta,
 }
 
 /// Server prompts response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server prompts response")]
-pub struct ServerPromptsResp {
+pub struct ServerPromptsData {
     /// List of prompts
     pub data: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
     /// Metadata about the response
-    pub meta: CapabilityMeta,
+    pub meta: ServerCapabilityMeta,
 }
 
 /// Server prompt arguments response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server prompt arguments response")]
-pub struct ServerPromptArgumentsResp {
+pub struct ServerPromptArgumentsData {
     /// List of prompt arguments
     pub data: Vec<serde_json::Value>,
     /// Metadata about the response
-    pub meta: CapabilityMeta,
+    pub meta: ServerCapabilityMeta,
 }
 
-/// Capability response metadata
+/// Server capability response metadata
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Capability response metadata")]
-pub struct CapabilityMeta {
+#[schemars(description = "Server capability response metadata")]
+pub struct ServerCapabilityMeta {
     /// Whether data came from cache
     pub cache_hit: bool,
     /// Refresh strategy used
@@ -407,20 +407,20 @@ pub struct CapabilityMeta {
     pub source: String,
 }
 
-/// Operation Request
+/// Server operation request
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Operation request")]
-pub struct OperationReq {
+#[schemars(description = "Server operation request")]
+pub struct ServerOperationReq {
     /// Force the operation (optional, for disconnect)
     pub force: Option<bool>,
     /// Reset the connection (optional, for reconnect)
     pub reset: Option<bool>,
 }
 
-/// Operation response
+/// Server operation response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Operation response")]
-pub struct OperationResp {
+#[schemars(description = "Server operation response")]
+pub struct ServerOperationData {
     /// Instance ID
     pub id: String,
     /// Server name
@@ -436,33 +436,15 @@ pub struct OperationResp {
 /// Server list response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server list response")]
-pub struct ServerListResp {
+pub struct ServerListData {
     /// List of servers
-    pub servers: Vec<ServerDetailsResp>,
-}
-
-/// Instance details
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Instance details")]
-pub struct InstanceDetails {
-    /// Instance ID
-    pub id: String,
-    /// Instance status
-    pub status: String,
-    /// Connection attempts
-    pub connection_attempts: u32,
-    /// Last connected time (seconds since connection)
-    pub last_connected_seconds: Option<u64>,
-    /// Number of tools available
-    pub tools_count: usize,
-    /// Error message if status is Error
-    pub error_message: Option<String>,
+    pub servers: Vec<ServerDetailsData>,
 }
 
 /// Create server request
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Create server request")]
-pub struct CreateServerReq {
+pub struct ServerCreateReq {
     /// Server name
     pub name: String,
     /// Server type (stdio, sse, streamable_http)
@@ -482,7 +464,7 @@ pub struct CreateServerReq {
 /// Update server request
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Update server request")]
-pub struct UpdateServerReq {
+pub struct ServerUpdateReq {
     /// Server ID
     pub id: String,
     /// Server type (stdio, sse, streamable_http)
@@ -502,16 +484,16 @@ pub struct UpdateServerReq {
 /// Import servers request
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Import servers request")]
-pub struct ImportServersReq {
+pub struct ServersImportReq {
     /// Map of MCP server name to configuration
     #[serde(rename = "mcpServers")]
-    pub mcp_servers: HashMap<String, ImportServerConfig>,
+    pub mcp_servers: HashMap<String, ServersImportConfig>,
 }
 
 /// Import server configuration
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Import server configuration")]
-pub struct ImportServerConfig {
+pub struct ServersImportConfig {
     /// Type of the server (stdio, sse, streamable_http)
     #[serde(rename = "type")]
     pub kind: String,
@@ -528,7 +510,7 @@ pub struct ImportServerConfig {
 /// Import servers response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Import servers response")]
-pub struct ImportServersResp {
+pub struct ServersImportData {
     /// Number of servers imported
     pub imported_count: usize,
     /// List of imported server names
@@ -549,11 +531,11 @@ use crate::api::models::clients::ApiError;
 /// Response for server details operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server details API response")]
-pub struct ServerDetailsApiResp {
+pub struct ServerDetailsResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ServerDetailsResp>,
+    pub data: Option<ServerDetailsData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -561,11 +543,11 @@ pub struct ServerDetailsApiResp {
 /// Response for server list operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server list API response")]
-pub struct ServerListApiResp {
+pub struct ServerListResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ServerListResp>,
+    pub data: Option<ServerListData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -573,11 +555,11 @@ pub struct ServerListApiResp {
 /// Response for instance list operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Instance list API response")]
-pub struct InstanceListApiResp {
+pub struct InstanceListResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<InstanceListResp>,
+    pub data: Option<InstanceListData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -585,11 +567,11 @@ pub struct InstanceListApiResp {
 /// Response for instance details operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Instance details API response")]
-pub struct InstanceDetailsApiResp {
+pub struct InstanceDetailsResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<InstanceDetailsResp>,
+    pub data: Option<InstanceDetailsData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -597,11 +579,11 @@ pub struct InstanceDetailsApiResp {
 /// Response for instance health operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Instance health API response")]
-pub struct InstanceHealthApiResp {
+pub struct InstanceHealthResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<InstanceHealthResp>,
+    pub data: Option<InstanceHealthData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -609,11 +591,11 @@ pub struct InstanceHealthApiResp {
 /// Response for server tools operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server tools API response")]
-pub struct ServerToolsApiResp {
+pub struct ServerToolsResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ServerToolsResp>,
+    pub data: Option<ServerToolsData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -621,11 +603,11 @@ pub struct ServerToolsApiResp {
 /// Response for server resources operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server resources API response")]
-pub struct ServerResourcesApiResp {
+pub struct ServerResourcesResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ServerResourcesResp>,
+    pub data: Option<ServerResourcesData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -633,11 +615,11 @@ pub struct ServerResourcesApiResp {
 /// Response for server prompts operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server prompts API response")]
-pub struct ServerPromptsApiResp {
+pub struct ServerPromptsResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ServerPromptsResp>,
+    pub data: Option<ServerPromptsData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -645,11 +627,11 @@ pub struct ServerPromptsApiResp {
 /// Response for import servers operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Import servers API response")]
-pub struct ImportServersApiResp {
+pub struct ServersImportResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ImportServersResp>,
+    pub data: Option<ServersImportData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -657,11 +639,11 @@ pub struct ImportServersApiResp {
 /// Response for operation results
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Operation result API response")]
-pub struct OperationApiResp {
+pub struct ServerOperationResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<OperationResp>,
+    pub data: Option<ServerOperationData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -669,11 +651,11 @@ pub struct OperationApiResp {
 /// Response for server resource templates operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server resource templates API response")]
-pub struct ServerResourceTemplatesApiResp {
+pub struct ServerResourceTemplatesResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ServerResourceTemplatesResp>,
+    pub data: Option<ServerResourceTemplatesData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -681,11 +663,11 @@ pub struct ServerResourceTemplatesApiResp {
 /// Response for server prompt arguments operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server prompt arguments API response")]
-pub struct ServerPromptArgumentsApiResp {
+pub struct ServerPromptArgumentsResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ServerPromptArgumentsResp>,
+    pub data: Option<ServerPromptArgumentsData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -694,8 +676,8 @@ pub struct ServerPromptArgumentsApiResp {
 // RESPONSE IMPLEMENTATION METHODS
 // ==========================================
 
-impl ServerDetailsApiResp {
-    pub fn success(data: ServerDetailsResp) -> Self {
+impl ServerDetailsResp {
+    pub fn success(data: ServerDetailsData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -703,7 +685,10 @@ impl ServerDetailsApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -716,8 +701,8 @@ impl ServerDetailsApiResp {
     }
 }
 
-impl ServerListApiResp {
-    pub fn success(data: ServerListResp) -> Self {
+impl ServerListResp {
+    pub fn success(data: ServerListData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -725,7 +710,10 @@ impl ServerListApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -738,8 +726,8 @@ impl ServerListApiResp {
     }
 }
 
-impl InstanceListApiResp {
-    pub fn success(data: InstanceListResp) -> Self {
+impl InstanceListResp {
+    pub fn success(data: InstanceListData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -747,7 +735,10 @@ impl InstanceListApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -760,8 +751,8 @@ impl InstanceListApiResp {
     }
 }
 
-impl InstanceDetailsApiResp {
-    pub fn success(data: InstanceDetailsResp) -> Self {
+impl InstanceDetailsResp {
+    pub fn success(data: InstanceDetailsData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -769,7 +760,10 @@ impl InstanceDetailsApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -782,8 +776,8 @@ impl InstanceDetailsApiResp {
     }
 }
 
-impl InstanceHealthApiResp {
-    pub fn success(data: InstanceHealthResp) -> Self {
+impl InstanceHealthResp {
+    pub fn success(data: InstanceHealthData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -791,7 +785,10 @@ impl InstanceHealthApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -804,8 +801,8 @@ impl InstanceHealthApiResp {
     }
 }
 
-impl ServerToolsApiResp {
-    pub fn success(data: ServerToolsResp) -> Self {
+impl ServerToolsResp {
+    pub fn success(data: ServerToolsData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -813,7 +810,10 @@ impl ServerToolsApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -826,8 +826,8 @@ impl ServerToolsApiResp {
     }
 }
 
-impl ServerResourcesApiResp {
-    pub fn success(data: ServerResourcesResp) -> Self {
+impl ServerResourcesResp {
+    pub fn success(data: ServerResourcesData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -835,7 +835,10 @@ impl ServerResourcesApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -848,8 +851,8 @@ impl ServerResourcesApiResp {
     }
 }
 
-impl ServerPromptsApiResp {
-    pub fn success(data: ServerPromptsResp) -> Self {
+impl ServerPromptsResp {
+    pub fn success(data: ServerPromptsData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -857,7 +860,10 @@ impl ServerPromptsApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -870,8 +876,8 @@ impl ServerPromptsApiResp {
     }
 }
 
-impl ImportServersApiResp {
-    pub fn success(data: ImportServersResp) -> Self {
+impl ServersImportResp {
+    pub fn success(data: ServersImportData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -879,7 +885,10 @@ impl ImportServersApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -892,8 +901,8 @@ impl ImportServersApiResp {
     }
 }
 
-impl OperationApiResp {
-    pub fn success(data: OperationResp) -> Self {
+impl ServerOperationResp {
+    pub fn success(data: ServerOperationData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -901,7 +910,10 @@ impl OperationApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -914,8 +926,8 @@ impl OperationApiResp {
     }
 }
 
-impl ServerResourceTemplatesApiResp {
-    pub fn success(data: ServerResourceTemplatesResp) -> Self {
+impl ServerResourceTemplatesResp {
+    pub fn success(data: ServerResourceTemplatesData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -923,7 +935,10 @@ impl ServerResourceTemplatesApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -936,8 +951,8 @@ impl ServerResourceTemplatesApiResp {
     }
 }
 
-impl ServerPromptArgumentsApiResp {
-    pub fn success(data: ServerPromptArgumentsResp) -> Self {
+impl ServerPromptArgumentsResp {
+    pub fn success(data: ServerPromptArgumentsData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -945,7 +960,10 @@ impl ServerPromptArgumentsApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,

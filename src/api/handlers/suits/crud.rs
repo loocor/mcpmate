@@ -9,10 +9,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::api::{
-    models::suits::{
-        ConfigSuitApiResp, ConfigSuitResp, CreateConfigSuitReq, SuitOperationApiResp, SuitOperationResp,
-        UpdateConfigSuitReq,
-    },
+    models::suits::{SuitCreateReq, SuitData, SuitOperationData, SuitOperationResp, SuitResp, SuitUpdateReq},
     routes::AppState,
 };
 use crate::common::config::ConfigSuitType;
@@ -29,8 +26,8 @@ async fn get_database(state: &Arc<AppState>) -> Result<Arc<crate::config::databa
 }
 
 /// Convert suit database model to response format
-fn suit_to_response(suit: &ConfigSuit) -> ConfigSuitResp {
-    ConfigSuitResp {
+fn suit_to_response(suit: &ConfigSuit) -> SuitData {
+    SuitData {
         id: suit.id.clone().unwrap_or_default(),
         name: suit.name.clone(),
         description: suit.description.clone(),
@@ -46,8 +43,8 @@ fn suit_to_response(suit: &ConfigSuit) -> ConfigSuitResp {
 /// Create a new configuration suit
 pub async fn create_suit(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<CreateConfigSuitReq>,
-) -> Result<Json<ConfigSuitApiResp>, StatusCode> {
+    Json(payload): Json<SuitCreateReq>,
+) -> Result<Json<SuitResp>, StatusCode> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -57,7 +54,7 @@ pub async fn create_suit(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if existing_suit.is_some() {
-        return Ok(Json(ConfigSuitApiResp::error(
+        return Ok(Json(SuitResp::error(
             "CONFLICT",
             &format!("Configuration suit with name '{}' already exists", payload.name),
         )));
@@ -67,7 +64,7 @@ pub async fn create_suit(
     let suit_type = match ConfigSuitType::from_str(&payload.suit_type) {
         Ok(t) => t,
         Err(_) => {
-            return Ok(Json(ConfigSuitApiResp::error(
+            return Ok(Json(SuitResp::error(
                 "INVALID_TYPE",
                 &format!(
                     "Invalid configuration suit type: {}. Must be one of: host_app, scenario, shared",
@@ -106,7 +103,7 @@ pub async fn create_suit(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         if source_suit.is_none() {
-            return Ok(Json(ConfigSuitApiResp::error(
+            return Ok(Json(SuitResp::error(
                 "NOT_FOUND",
                 &format!("Source configuration suit with ID '{clone_from_id}' not found"),
             )));
@@ -187,15 +184,15 @@ pub async fn create_suit(
     let response = suit_to_response(&created_suit);
 
     // Return response
-    Ok(Json(ConfigSuitApiResp::success(response)))
+    Ok(Json(SuitResp::success(response)))
 }
 
 /// Update an existing configuration suit
 pub async fn update_suit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(payload): Json<UpdateConfigSuitReq>,
-) -> Result<Json<ConfigSuitApiResp>, StatusCode> {
+    Json(payload): Json<SuitUpdateReq>,
+) -> Result<Json<SuitResp>, StatusCode> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -208,7 +205,7 @@ pub async fn update_suit(
     let mut suit = match existing_suit {
         Some(s) => s,
         None => {
-            return Ok(Json(ConfigSuitApiResp::error(
+            return Ok(Json(SuitResp::error(
                 "NOT_FOUND",
                 &format!("Configuration suit with ID '{id}' not found"),
             )));
@@ -225,7 +222,7 @@ pub async fn update_suit(
 
             if let Some(existing) = existing_suit {
                 if existing.id != suit.id {
-                    return Ok(Json(ConfigSuitApiResp::error(
+                    return Ok(Json(SuitResp::error(
                         "CONFLICT",
                         &format!("Configuration suit with name '{name}' already exists"),
                     )));
@@ -244,7 +241,7 @@ pub async fn update_suit(
         let parsed_type = match ConfigSuitType::from_str(&suit_type) {
             Ok(t) => t,
             Err(_) => {
-                return Ok(Json(ConfigSuitApiResp::error(
+                return Ok(Json(SuitResp::error(
                     "INVALID_TYPE",
                     &format!(
                         "Invalid configuration suit type: {suit_type}. Must be one of: host_app, scenario, shared"
@@ -286,14 +283,14 @@ pub async fn update_suit(
     let response = suit_to_response(&updated_suit);
 
     // Return response
-    Ok(Json(ConfigSuitApiResp::success(response)))
+    Ok(Json(SuitResp::success(response)))
 }
 
 /// Delete a configuration suit
 pub async fn delete_suit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<SuitOperationApiResp>, StatusCode> {
+) -> Result<Json<SuitOperationResp>, StatusCode> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -306,7 +303,7 @@ pub async fn delete_suit(
     let suit = match suit {
         Some(s) => s,
         None => {
-            return Ok(Json(SuitOperationApiResp::error(
+            return Ok(Json(SuitOperationResp::error(
                 "NOT_FOUND",
                 &format!("Configuration suit with ID '{id}' not found"),
             )));
@@ -315,7 +312,7 @@ pub async fn delete_suit(
 
     // Check if this is the default suit
     if suit.is_default {
-        return Ok(Json(SuitOperationApiResp::error(
+        return Ok(Json(SuitOperationResp::error(
             "BAD_REQUEST",
             "Cannot delete the default configuration suit",
         )));
@@ -327,14 +324,14 @@ pub async fn delete_suit(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if !deleted {
-        return Ok(Json(SuitOperationApiResp::error(
+        return Ok(Json(SuitOperationResp::error(
             "INTERNAL_ERROR",
             &format!("Failed to delete configuration suit with ID '{id}'"),
         )));
     }
 
     // Return success response
-    Ok(Json(SuitOperationApiResp::success(SuitOperationResp {
+    Ok(Json(SuitOperationResp::success(SuitOperationData {
         id,
         name: suit.name,
         result: "Successfully deleted configuration suit".to_string(),

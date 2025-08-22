@@ -11,11 +11,11 @@ use aide::axum::{
 use super::AppState;
 use crate::api::handlers::{instance, server};
 use crate::api::models::server::{
-    CreateServerReq, DeleteServerReq, ImportServersApiResp, ImportServersReq, InstanceDetailsApiResp,
-    InstanceDetailsReq, InstanceHealthApiResp, InstanceHealthReq, InstanceListApiResp, InstanceListReq,
-    InstanceManageReq, OperationApiResp, ServerCapabilityReq, ServerDetailsApiResp, ServerDetailsReq,
-    ServerListApiResp, ServerListReq, ServerManageReq, ServerPromptArgumentsApiResp, ServerPromptsApiResp,
-    ServerResourceTemplatesApiResp, ServerResourcesApiResp, ServerToolsApiResp, UpdateServerReq,
+    InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq, InstanceListResp,
+    InstanceManageReq, ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp,
+    ServerListReq, ServerListResp, ServerManageReq, ServerOperationResp, ServerPromptArgumentsResp, ServerPromptsResp,
+    ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp, ServerUpdateReq, ServersImportReq,
+    ServersImportResp,
 };
 use crate::{aide_wrapper_payload, aide_wrapper_query};
 
@@ -84,36 +84,36 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
 aide_wrapper_query!(
     server::server_list,
     ServerListReq,
-    ServerListApiResp,
+    ServerListResp,
     "List all MCP servers with optional filtering"
 );
 
 aide_wrapper_query!(
     server::server_details,
     ServerDetailsReq,
-    ServerDetailsApiResp,
+    ServerDetailsResp,
     "Get details for a specific MCP server"
 );
 
 aide_wrapper_query!(
     server::instance_list,
     InstanceListReq,
-    InstanceListApiResp,
+    InstanceListResp,
     "List instances for servers"
 );
 
 // Generate aide-compatible wrappers for CRUD server handlers
 aide_wrapper_payload!(
     server::create_server,
-    CreateServerReq,
-    ServerDetailsApiResp,
+    ServerCreateReq,
+    ServerDetailsResp,
     "Create a new MCP server"
 );
 
 aide_wrapper_payload!(
     server::import_servers,
-    ImportServersReq,
-    ImportServersApiResp,
+    ServersImportReq,
+    ServersImportResp,
     "Import servers from JSON configuration"
 );
 
@@ -121,35 +121,35 @@ aide_wrapper_payload!(
 aide_wrapper_query!(
     server::server_tools,
     ServerCapabilityReq,
-    ServerToolsApiResp,
+    ServerToolsResp,
     "List all tools for a specific server"
 );
 
 aide_wrapper_query!(
     server::server_resources,
     ServerCapabilityReq,
-    ServerResourcesApiResp,
+    ServerResourcesResp,
     "List all resources for a specific server"
 );
 
 aide_wrapper_query!(
     server::server_resource_templates,
     ServerCapabilityReq,
-    ServerResourceTemplatesApiResp,
+    ServerResourceTemplatesResp,
     "List all resource templates for a specific server"
 );
 
 aide_wrapper_query!(
     server::server_prompts,
     ServerCapabilityReq,
-    ServerPromptsApiResp,
+    ServerPromptsResp,
     "List all prompts for a specific server"
 );
 
 aide_wrapper_query!(
     server::server_prompt_arguments,
     ServerCapabilityReq,
-    ServerPromptArgumentsApiResp,
+    ServerPromptArgumentsResp,
     "List all prompt arguments for a specific server"
 );
 
@@ -157,7 +157,7 @@ aide_wrapper_query!(
 aide_wrapper_payload!(
     server::manage_server,
     ServerManageReq,
-    OperationApiResp,
+    ServerOperationResp,
     "Manage server (enable/disable with sync options)"
 );
 
@@ -165,22 +165,22 @@ aide_wrapper_payload!(
 aide_wrapper_payload!(
     instance::manage_instance,
     InstanceManageReq,
-    OperationApiResp,
+    ServerOperationResp,
     "Manage instance operations (disconnect, reconnect, recover, cancel)"
 );
 
 // Generate aide-compatible wrappers for updated CRUD handlers
 aide_wrapper_payload!(
     server::update_server,
-    UpdateServerReq,
-    ServerDetailsApiResp,
+    ServerUpdateReq,
+    ServerDetailsResp,
     "Update server configuration"
 );
 
 aide_wrapper_payload!(
     server::delete_server,
-    DeleteServerReq,
-    OperationApiResp,
+    ServerDeleteReq,
+    ServerOperationResp,
     "Delete a server"
 );
 
@@ -188,13 +188,13 @@ aide_wrapper_payload!(
 aide_wrapper_query!(
     instance::get_instance,
     InstanceDetailsReq,
-    InstanceDetailsApiResp,
+    InstanceDetailsResp,
     "Get details for a specific server instance"
 );
 
 aide_wrapper_query!(
     instance::check_health,
     InstanceHealthReq,
-    InstanceHealthApiResp,
+    InstanceHealthResp,
     "Check health status of a specific server instance"
 );

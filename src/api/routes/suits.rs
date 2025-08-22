@@ -11,17 +11,15 @@ use aide::axum::{
 use super::AppState;
 use crate::api::handlers::suits;
 use crate::api::models::suits::{
-    ConfigSuitApiResp, CreateConfigSuitReq, DeleteSuitReq, SuitBatchManageApiResp, SuitBatchManageReq,
-    SuitComponentListReq, SuitComponentManageApiResp, SuitComponentManageReq, SuitDetailsApiResp, SuitDetailsReq,
-    SuitManageApiResp, SuitManageReq, SuitServersListApiResp, SuitToolsListApiResp, SuitsListApiResp, SuitsListReq,
-    UpdateConfigSuitReq,
+    SuitComponentListReq, SuitComponentManageReq, SuitCreateReq, SuitDeleteReq, SuitDetailsReq, SuitDetailsResp,
+    SuitManageReq, SuitManageResp, SuitResp, SuitServerManageResp, SuitServersListResp, SuitToolsListResp,
+    SuitUpdateReq, SuitsListReq, SuitsListResp,
 };
 use crate::{aide_wrapper_payload, aide_wrapper_query};
 
 /// Create Config Suit management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
-        // Basic CRUD operations - following server module patterns
         .api_route("/mcp/suits/list", get_with(suits_list_aide, suits_list_docs))
         .api_route("/mcp/suits/details", get_with(suit_details_aide, suit_details_docs))
         .api_route(
@@ -36,29 +34,19 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             "/mcp/suits/delete",
             delete_with(delete_suit_standardized_aide, delete_suit_standardized_docs),
         )
-        // Management operations - action-based consolidation
         .api_route("/mcp/suits/manage", post_with(manage_suit_aide, manage_suit_docs))
         .api_route(
-            "/mcp/suits/manage/batch",
-            post_with(manage_suits_batch_aide, manage_suits_batch_docs),
-        )
-        // Component list operations - query-based parameters
-        .api_route(
             "/mcp/suits/servers/list",
-            get_with(suit_servers_list_aide, suit_servers_list_docs),
+            get_with(servers_list_aide, servers_list_docs),
         )
-        .api_route(
-            "/mcp/suits/tools/list",
-            get_with(suit_tools_list_aide, suit_tools_list_docs),
-        )
-        // Component management operations - action-based consolidation
         .api_route(
             "/mcp/suits/servers/manage",
-            post_with(manage_suit_component_aide, manage_suit_component_docs),
+            post_with(manage_component_aide, manage_component_docs),
         )
+        .api_route("/mcp/suits/tools/list", get_with(tools_list_aide, tools_list_docs))
         .api_route(
             "/mcp/suits/tools/manage",
-            post_with(manage_suit_component_aide, manage_suit_component_docs),
+            post_with(manage_component_aide, manage_component_docs),
         )
         .with_state(state)
 }
@@ -67,36 +55,36 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
 aide_wrapper_query!(
     suits::suits_list,
     SuitsListReq,
-    SuitsListApiResp,
+    SuitsListResp,
     "List all configuration suits with optional filtering"
 );
 
 aide_wrapper_query!(
     suits::suit_details,
     SuitDetailsReq,
-    SuitDetailsApiResp,
+    SuitDetailsResp,
     "Get details for a specific configuration suit"
 );
 
 // Generate aide-compatible wrappers for CRUD operations
 aide_wrapper_payload!(
     suits::create_suit_standardized,
-    CreateConfigSuitReq,
-    ConfigSuitApiResp,
+    SuitCreateReq,
+    SuitResp,
     "Create a new configuration suit"
 );
 
 aide_wrapper_payload!(
     suits::update_suit_standardized,
-    UpdateConfigSuitReq,
-    ConfigSuitApiResp,
+    SuitUpdateReq,
+    SuitResp,
     "Update an existing configuration suit"
 );
 
 aide_wrapper_payload!(
     suits::delete_suit_standardized,
-    DeleteSuitReq,
-    SuitManageApiResp,
+    SuitDeleteReq,
+    SuitManageResp,
     "Delete a configuration suit"
 );
 
@@ -104,36 +92,29 @@ aide_wrapper_payload!(
 aide_wrapper_payload!(
     suits::manage_suit,
     SuitManageReq,
-    SuitManageApiResp,
+    SuitManageResp,
     "Manage suit operations (activate/deactivate)"
-);
-
-aide_wrapper_payload!(
-    suits::manage_suits_batch,
-    SuitBatchManageReq,
-    SuitBatchManageApiResp,
-    "Batch manage suit operations"
 );
 
 // Generate aide-compatible wrappers for component list operations
 aide_wrapper_query!(
-    suits::suit_servers_list,
+    suits::servers_list,
     SuitComponentListReq,
-    SuitServersListApiResp,
+    SuitServersListResp,
     "List servers in a configuration suit"
 );
 
 aide_wrapper_query!(
-    suits::suit_tools_list,
+    suits::tools_list,
     SuitComponentListReq,
-    SuitToolsListApiResp,
+    SuitToolsListResp,
     "List tools in a configuration suit"
 );
 
 // Generate aide-compatible wrappers for component management
 aide_wrapper_payload!(
-    suits::manage_suit_component,
+    suits::manage_component,
     SuitComponentManageReq,
-    SuitComponentManageApiResp,
+    SuitServerManageResp,
     "Manage component operations (enable/disable servers, tools, etc.)"
 );

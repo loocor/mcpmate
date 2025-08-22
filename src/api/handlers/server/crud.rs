@@ -4,8 +4,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::api::models::{server::{CreateServerReq, UpdateServerReq, DeleteServerReq, ImportServersReq, ImportServersResp, ServerDetailsResp}};
 use super::{common, shared::*};
+use crate::api::models::server::{
+    ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerUpdateReq, ServersImportData,
+    ServersImportReq,
+};
 use crate::{
     api::handlers::ApiError,
     common::{config::ConfigSuitType, server::ServerType},
@@ -183,11 +186,11 @@ async fn create_server_metadata(
 }
 
 /// Create a new MCP server
-/// 
+///
 /// **Endpoint:** `POST /mcp/servers/create`
 pub async fn create_server(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<CreateServerReq>,
+    Json(payload): Json<ServerCreateReq>,
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let db = common::get_database_from_state(&state)?;
 
@@ -257,7 +260,7 @@ pub async fn create_server(
 
     // Return success response
     let now = chrono::Utc::now();
-    Ok(Json(ServerDetailsResp {
+    Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: payload.name.clone(),
         enabled,
@@ -272,20 +275,20 @@ pub async fn create_server(
         created_at: Some(now.to_rfc3339()),
         updated_at: Some(now.to_rfc3339()),
         instances: Vec::new(),
-    }))
+    })))
 }
 
 /// Update an existing MCP server (updated for payload parameters)
-/// 
+///
 /// **Endpoint:** `POST /mcp/servers/update`
 pub async fn update_server(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<UpdateServerReq>,
+    Json(payload): Json<ServerUpdateReq>,
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let db = common::get_database_from_state(&state)?;
-    
+
     let id = payload.id.clone();
-    
+
     // Get existing server by ID
     let existing_server = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
@@ -357,7 +360,7 @@ pub async fn update_server(
     let details = common::get_complete_server_details(&db.pool, &server_id, &existing_server.name, &state).await;
 
     // Return success response
-    Ok(Json(ServerDetailsResp {
+    Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: existing_server.name,
         enabled: payload.enabled.unwrap_or(true),
@@ -372,7 +375,7 @@ pub async fn update_server(
         created_at: updated_server.created_at.map(|dt| dt.to_rfc3339()),
         updated_at: updated_server.updated_at.map(|dt| dt.to_rfc3339()),
         instances: details.instances,
-    }))
+    })))
 }
 
 /// Helper function to import a single server
@@ -380,7 +383,7 @@ async fn import_single_server(
     state: &Arc<AppState>,
     db: &Database,
     name: String,
-    config: crate::api::models::server::ImportServerConfig,
+    config: crate::api::models::server::ServersImportConfig,
 ) -> Result<(), String> {
     // Check if server already exists
     if crate::config::server::get_server(&db.pool, &name)
@@ -431,12 +434,12 @@ async fn import_single_server(
 }
 
 /// Import servers from JSON configuration
-/// 
+///
 /// **Endpoint:** `POST /mcp/servers/import`
 pub async fn import_servers(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<ImportServersReq>,
-) -> Result<Json<ImportServersResp>, ApiError> {
+    Json(payload): Json<ServersImportReq>,
+) -> Result<Json<ServersImportData>, ApiError> {
     let db = common::get_database_from_state(&state)?;
 
     let server_count = payload.mcp_servers.len();
@@ -461,7 +464,7 @@ pub async fn import_servers(
     }
 
     // Return success response
-    Ok(Json(ImportServersResp {
+    Ok(Json(ServersImportData {
         imported_count: imported_servers.len(),
         imported_servers,
         failed_servers,
@@ -534,14 +537,14 @@ async fn delete_server_records(
 }
 
 /// Delete an existing MCP server (updated for payload parameters)
-/// 
+///
 /// **Endpoint:** `DELETE /mcp/servers/delete`
 pub async fn delete_server(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<DeleteServerReq>,
-) -> Result<Json<OperationResp>, ApiError> {
+    Json(request): Json<ServerDeleteReq>,
+) -> Result<Json<ServerOperationData>, ApiError> {
     let db = common::get_database_from_state(&state)?;
-    
+
     let id = request.id;
 
     // Get existing server by ID
@@ -563,7 +566,7 @@ pub async fn delete_server(
     tracing::info!("Successfully deleted server '{}'", existing_server.name);
 
     // Return success response
-    Ok(Json(OperationResp {
+    Ok(Json(ServerOperationData {
         id: server_id,
         name: existing_server.name,
         result: "Successfully deleted server".to_string(),

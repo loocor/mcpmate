@@ -6,7 +6,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
-use crate::api::models::clients::ImportedServer;
+use crate::api::models::clients::ClientImportedServer;
 use crate::config::models::server::Server;
 use crate::config::server::{args, crud, env};
 
@@ -15,7 +15,7 @@ use crate::config::server::{args, crud, env};
 pub async fn import_servers_from_config(
     config_content: &Value,
     db_pool: &SqlitePool,
-) -> Result<Vec<ImportedServer>> {
+) -> Result<Vec<ClientImportedServer>> {
     let mut imported_servers = Vec::new();
 
     // Extract servers using simple parsing
@@ -82,12 +82,7 @@ fn parse_server_config(config: &Value) -> Option<ServerConfig> {
     let args = config
         .get("args")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(String::from)
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).map(String::from).collect())
         .unwrap_or_default();
 
     let env = config
@@ -108,7 +103,7 @@ async fn create_and_save_server(
     name: &str,
     config: &ServerConfig,
     db_pool: &SqlitePool,
-) -> Result<ImportedServer> {
+) -> Result<ClientImportedServer> {
     // Create server using existing constructor
     let server = Server::new_stdio(name.to_string(), Some(config.command.clone()));
 
@@ -123,7 +118,7 @@ async fn create_and_save_server(
         env::upsert_server_env(db_pool, &server_id, &config.env).await?;
     }
 
-    Ok(ImportedServer {
+    Ok(ClientImportedServer {
         name: name.to_string(),
         command: config.command.clone(),
         args: config.args.clone(),

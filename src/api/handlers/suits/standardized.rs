@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use super::common::*;
 use crate::api::models::suits::{
-    ComponentAction, ConfigSuitApiResp, ConfigSuitServerResp, ConfigSuitToolResp, CreateConfigSuitReq, DeleteSuitReq,
-    SuitAction, SuitBatchManageApiResp, SuitBatchManageReq, SuitBatchManageResp, SuitComponentListReq,
-    SuitComponentManageApiResp, SuitComponentManageReq, SuitComponentManageResp, SuitDetailsApiResp, SuitDetailsReq,
-    SuitDetailsResp, SuitManageApiResp, SuitManageReq, SuitManageResp, SuitServersListApiResp, SuitServersListResp,
-    SuitToolsListApiResp, SuitToolsListResp, SuitsListApiResp, SuitsListReq, SuitsListResp,
+    SuitAction, SuitComponentAction, SuitComponentListReq, SuitComponentManageReq, SuitCreateReq, SuitDeleteReq,
+    SuitDetailsData, SuitDetailsReq, SuitDetailsResp, SuitManageData, SuitManageReq, SuitManageResp,
+    SuitOperationResult, SuitResp, SuitServerManageData, SuitServerManageResp, SuitServerResp, SuitServersListData,
+    SuitServersListResp, SuitToolData, SuitToolsListData, SuitToolsListResp, SuitsListData, SuitsListReq,
+    SuitsListResp,
 };
 
 // ==========================================
@@ -26,7 +26,7 @@ use crate::api::models::suits::{
 pub async fn suits_list(
     State(state): State<Arc<AppState>>,
     Query(request): Query<SuitsListReq>,
-) -> Result<Json<SuitsListApiResp>, ApiError> {
+) -> Result<Json<SuitsListResp>, ApiError> {
     let db = get_database(&state).await?;
 
     // Apply filters and pagination (simplified for now)
@@ -67,13 +67,13 @@ pub async fn suits_list(
 
     let suit_responses = paginated_suits.iter().map(suit_to_response).collect();
 
-    let response = SuitsListResp {
+    let response = SuitsListData {
         suits: suit_responses,
         total,
         timestamp: Utc::now().to_rfc3339(),
     };
 
-    Ok(Json(SuitsListApiResp::success(response)))
+    Ok(Json(SuitsListResp::success(response)))
 }
 
 /// Get details for a specific configuration suit
@@ -82,7 +82,7 @@ pub async fn suits_list(
 pub async fn suit_details(
     State(state): State<Arc<AppState>>,
     Query(request): Query<SuitDetailsReq>,
-) -> Result<Json<SuitDetailsApiResp>, ApiError> {
+) -> Result<Json<SuitDetailsResp>, ApiError> {
     let db = get_database(&state).await?;
 
     // Get the configuration suit
@@ -119,7 +119,7 @@ pub async fn suit_details(
     let resources_count = 0;
     let prompts_count = 0;
 
-    let response = SuitDetailsResp {
+    let response = SuitDetailsData {
         suit: suit_to_response(&suit),
         servers_count,
         tools_count,
@@ -127,7 +127,7 @@ pub async fn suit_details(
         prompts_count,
     };
 
-    Ok(Json(SuitDetailsApiResp::success(response)))
+    Ok(Json(SuitDetailsResp::success(response)))
 }
 
 /// Delete a configuration suit
@@ -135,8 +135,8 @@ pub async fn suit_details(
 /// **Endpoint:** `DELETE /mcp/suits/delete`
 pub async fn delete_suit(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<DeleteSuitReq>,
-) -> Result<Json<SuitManageApiResp>, ApiError> {
+    Json(request): Json<SuitDeleteReq>,
+) -> Result<Json<SuitManageResp>, ApiError> {
     let db = get_database(&state).await?;
 
     // Get the existing suit to check if it exists and get its name
@@ -166,15 +166,20 @@ pub async fn delete_suit(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to delete configuration suit: {e}")))?;
 
-    let response = SuitManageResp {
-        id: request.id,
-        name: suit.name,
-        result: "deleted".to_string(),
-        status: "inactive".to_string(),
+    let response = SuitManageData {
+        success_count: 1,
+        failed_count: 0,
+        results: vec![SuitOperationResult {
+            id: request.id.clone(),
+            name: suit.name,
+            result: "deleted".to_string(),
+            status: "inactive".to_string(),
+            error: None,
+        }],
         timestamp: Utc::now().to_rfc3339(),
     };
 
-    Ok(Json(SuitManageApiResp::success(response)))
+    Ok(Json(SuitManageResp::success(response)))
 }
 
 /// Create a new configuration suit
@@ -182,8 +187,8 @@ pub async fn delete_suit(
 /// **Endpoint:** `POST /mcp/suits/create`
 pub async fn create_suit(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<CreateConfigSuitReq>,
-) -> Result<Json<ConfigSuitApiResp>, ApiError> {
+    Json(request): Json<SuitCreateReq>,
+) -> Result<Json<SuitResp>, ApiError> {
     // Call the legacy handler and wrap the response
     match super::crud::create_suit(State(state), Json(request)).await {
         Ok(Json(legacy_response)) => Ok(Json(legacy_response)),
@@ -201,8 +206,8 @@ pub async fn create_suit(
 /// **Endpoint:** `POST /mcp/suits/update`
 pub async fn update_suit(
     State(_state): State<Arc<AppState>>,
-    Json(_request): Json<UpdateConfigSuitReq>,
-) -> Result<Json<ConfigSuitApiResp>, ApiError> {
+    Json(_request): Json<SuitUpdateReq>,
+) -> Result<Json<SuitResp>, ApiError> {
     // For now, we need to extract an ID from the request
     // In a full refactor, we'd add the ID to the UpdateConfigSuitReq
     // For now, return an error asking for the ID to be provided differently
@@ -215,17 +220,57 @@ pub async fn update_suit(
 // SUIT MANAGEMENT OPERATIONS
 // ==========================================
 
-/// Manage suit operations (activate/deactivate)
+/// Manage suit operations (activate/deactivate) - supports single or multiple suits
 ///
 /// **Endpoint:** `POST /mcp/suits/manage`
 pub async fn manage_suit(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SuitManageReq>,
-) -> Result<Json<SuitManageApiResp>, ApiError> {
+) -> Result<Json<SuitManageResp>, ApiError> {
     let db = get_database(&state).await?;
 
+    let mut results = Vec::new();
+    let mut success_count = 0;
+    let mut failed_count = 0;
+
+    // Process each suit ID
+    for suit_id in &request.ids {
+        match process_single_suit_operation(&db.pool, suit_id, &request.action).await {
+            Ok(result) => {
+                success_count += 1;
+                results.push(result);
+            }
+            Err(e) => {
+                failed_count += 1;
+                results.push(SuitOperationResult {
+                    id: suit_id.clone(),
+                    name: "Unknown".to_string(),
+                    result: "failed".to_string(),
+                    status: "unknown".to_string(),
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    }
+
+    let response = SuitManageData {
+        success_count,
+        failed_count,
+        results,
+        timestamp: Utc::now().to_rfc3339(),
+    };
+
+    Ok(Json(SuitManageResp::success(response)))
+}
+
+/// Process a single suit operation
+async fn process_single_suit_operation(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    suit_id: &str,
+    action: &SuitAction,
+) -> Result<SuitOperationResult, ApiError> {
     // Get the existing suit
-    let existing_suit = crate::config::suit::get_config_suit(&db.pool, &request.id)
+    let existing_suit = crate::config::suit::get_config_suit(pool, suit_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
@@ -234,13 +279,13 @@ pub async fn manage_suit(
         None => {
             return Err(ApiError::NotFound(format!(
                 "Configuration suit with ID '{}' not found",
-                request.id
+                suit_id
             )));
         }
     };
 
     // Perform the action
-    let (result, new_status) = match request.action {
+    let (result, new_status) = match action {
         SuitAction::Activate => {
             suit.is_active = true;
             ("activated", "active")
@@ -258,55 +303,17 @@ pub async fn manage_suit(
     };
 
     // Update the suit in database
-    crate::config::suit::upsert_config_suit(&db.pool, &suit)
+    crate::config::suit::upsert_config_suit(pool, &suit)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to update configuration suit: {e}")))?;
 
-    let response = SuitManageResp {
-        id: request.id,
+    Ok(SuitOperationResult {
+        id: suit_id.to_string(),
         name: suit.name,
         result: result.to_string(),
         status: new_status.to_string(),
-        timestamp: Utc::now().to_rfc3339(),
-    };
-
-    Ok(Json(SuitManageApiResp::success(response)))
-}
-
-/// Batch manage suit operations
-///
-/// **Endpoint:** `POST /mcp/suits/manage/batch`
-pub async fn manage_suits_batch(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<SuitBatchManageReq>,
-) -> Result<Json<SuitBatchManageApiResp>, ApiError> {
-    let _db = get_database(&state).await?;
-
-    let mut successful_ids = Vec::new();
-    let mut failed_operations = std::collections::HashMap::new();
-
-    for suit_id in &request.ids {
-        let individual_request = SuitManageReq {
-            id: suit_id.clone(),
-            action: request.action.clone(),
-        };
-
-        match manage_suit(State(state.clone()), Json(individual_request)).await {
-            Ok(_) => successful_ids.push(suit_id.clone()),
-            Err(e) => {
-                failed_operations.insert(suit_id.clone(), e.to_string());
-            }
-        }
-    }
-
-    let response = SuitBatchManageResp {
-        success_count: successful_ids.len(),
-        successful_ids,
-        failed_operations,
-        timestamp: Utc::now().to_rfc3339(),
-    };
-
-    Ok(Json(SuitBatchManageApiResp::success(response)))
+        error: None,
+    })
 }
 
 // ==========================================
@@ -316,10 +323,10 @@ pub async fn manage_suits_batch(
 /// List servers in a configuration suit
 ///
 /// **Endpoint:** `GET /mcp/suits/servers/list?suit_id={suit_id}&enabled_only={bool}`
-pub async fn suit_servers_list(
+pub async fn servers_list(
     State(state): State<Arc<AppState>>,
     Query(request): Query<SuitComponentListReq>,
-) -> Result<Json<SuitServersListApiResp>, ApiError> {
+) -> Result<Json<SuitServersListResp>, ApiError> {
     let db = get_database(&state).await?;
 
     // Verify suit exists
@@ -347,7 +354,7 @@ pub async fn suit_servers_list(
     for server_config in server_configs {
         // Get server details from server_config table
         if let Ok(Some(server)) = crate::config::server::get_server_by_id(&db.pool, &server_config.server_id).await {
-            servers.push(ConfigSuitServerResp {
+            servers.push(SuitServerResp {
                 id: server_config.server_id.clone(),
                 name: server.name,
                 enabled: server_config.enabled,
@@ -362,23 +369,23 @@ pub async fn suit_servers_list(
     }
 
     let total = servers.len();
-    let response = SuitServersListResp {
+    let response = SuitServersListData {
         suit_id: request.suit_id,
         suit_name: suit.name,
         servers,
         total,
     };
 
-    Ok(Json(SuitServersListApiResp::success(response)))
+    Ok(Json(SuitServersListResp::success(response)))
 }
 
 /// List tools in a configuration suit
 ///
 /// **Endpoint:** `GET /mcp/suits/tools/list?suit_id={suit_id}&enabled_only={bool}`
-pub async fn suit_tools_list(
+pub async fn tools_list(
     State(state): State<Arc<AppState>>,
     Query(request): Query<SuitComponentListReq>,
-) -> Result<Json<SuitToolsListApiResp>, ApiError> {
+) -> Result<Json<SuitToolsListResp>, ApiError> {
     let db = get_database(&state).await?;
 
     // Verify suit exists
@@ -406,7 +413,7 @@ pub async fn suit_tools_list(
     for tool_config in tool_configs {
         // Get server details to include server name
         if let Ok(Some(server)) = crate::config::server::get_server_by_id(&db.pool, &tool_config.server_id).await {
-            tools.push(ConfigSuitToolResp {
+            tools.push(SuitToolData {
                 id: tool_config.id.clone(),
                 server_id: tool_config.server_id.clone(),
                 server_name: server.name,
@@ -424,14 +431,14 @@ pub async fn suit_tools_list(
     }
 
     let total = tools.len();
-    let response = SuitToolsListResp {
+    let response = SuitToolsListData {
         suit_id: request.suit_id,
         suit_name: suit.name,
         tools,
         total,
     };
 
-    Ok(Json(SuitToolsListApiResp::success(response)))
+    Ok(Json(SuitToolsListResp::success(response)))
 }
 
 // ==========================================
@@ -441,22 +448,22 @@ pub async fn suit_tools_list(
 /// Manage component operations (enable/disable servers, tools, etc.)
 ///
 /// **Endpoint:** `POST /mcp/suits/servers/manage` or `POST /mcp/suits/tools/manage`
-pub async fn manage_suit_component(
+pub async fn manage_component(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SuitComponentManageReq>,
-) -> Result<Json<SuitComponentManageApiResp>, ApiError> {
+) -> Result<Json<SuitServerManageResp>, ApiError> {
     let db = get_database(&state).await?;
 
     // For now, implement server management (most common case)
     let (result, status) = match request.action {
-        ComponentAction::Enable => {
+        SuitComponentAction::Enable => {
             // Add server to suit (this enables it)
             crate::config::suit::add_server_to_config_suit(&db.pool, &request.suit_id, &request.component_id, true)
                 .await
                 .map_err(|e| ApiError::InternalError(format!("Failed to enable server: {e}")))?;
             ("enabled", "active")
         }
-        ComponentAction::Disable => {
+        SuitComponentAction::Disable => {
             // Remove server from suit (this disables it)
             crate::config::suit::remove_server_from_config_suit(&db.pool, &request.suit_id, &request.component_id)
                 .await
@@ -465,7 +472,7 @@ pub async fn manage_suit_component(
         }
     };
 
-    let response = SuitComponentManageResp {
+    let response = SuitServerManageData {
         suit_id: request.suit_id,
         component_id: request.component_id,
         component_type: "server".to_string(), // TODO: Auto-detect
@@ -474,5 +481,5 @@ pub async fn manage_suit_component(
         timestamp: Utc::now().to_rfc3339(),
     };
 
-    Ok(Json(SuitComponentManageApiResp::success(response)))
+    Ok(Json(SuitServerManageResp::success(response)))
 }

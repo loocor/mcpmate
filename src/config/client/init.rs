@@ -169,10 +169,8 @@ async fn insert_clients_from_config(
         }
 
         // Insert config rules
-        let supported_transports_json =
-            serde_json::to_string(&client.config_rules.supported_transports)?;
-        let supported_runtimes_json =
-            serde_json::to_string(&client.config_rules.supported_runtimes)?;
+        let supported_transports_json = serde_json::to_string(&client.config_rules.supported_transports)?;
+        let supported_runtimes_json = serde_json::to_string(&client.config_rules.supported_runtimes)?;
         let format_rules_json = serde_json::to_string(&client.config_rules.format_rules)?;
         let security_features_json = client
             .config_rules
@@ -183,9 +181,9 @@ async fn insert_clients_from_config(
 
         // Convert config_type to string for database storage
         let config_type_str = match client.config_rules.config_type {
-            crate::config::client::models::ConfigType::Standard => "standard",
-            crate::config::client::models::ConfigType::Mixed => "mixed",
-            crate::config::client::models::ConfigType::Array => "array",
+            crate::config::client::models::ClientConfigType::Standard => "standard",
+            crate::config::client::models::ClientConfigType::Mixed => "mixed",
+            crate::config::client::models::ClientConfigType::Array => "array",
         };
 
         sqlx::query(
@@ -209,10 +207,7 @@ async fn insert_clients_from_config(
         .await?;
     }
 
-    tracing::info!(
-        "Inserted {} client applications from config file",
-        config.clients.len()
-    );
+    tracing::info!("Inserted {} client applications from config file", config.clients.len());
     Ok(())
 }
 

@@ -8,10 +8,9 @@ use super::database::{
 
 use super::import::import_servers_from_config;
 use crate::api::models::clients::{
-    ClientsCheckReq, ClientConfigReq, ClientConfigUpdateReq,
-    ClientsCheckResp, ClientConfigResp, ClientConfigUpdateResp,
-    ClientsCheckApiResp, ClientConfigApiResp, ClientConfigUpdateApiResp,
-    ConfigMode, SelectedConfig
+    ClientConfigData, ClientConfigMode, ClientConfigReq, ClientConfigResp, ClientConfigSelected,
+    ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientsCheckData, ClientsCheckReq,
+    ClientsCheckResp,
 };
 use crate::api::routes::AppState;
 
@@ -36,10 +35,10 @@ macro_rules! get_db_pool {
 
 /// Handler for GET /api/clients
 /// Detects and returns all clients, with optional force refresh
-pub async fn check(
+pub async fn list(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ClientsCheckReq>,
-) -> Result<Json<ClientsCheckApiResp>, StatusCode> {
+) -> Result<Json<ClientsCheckResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
 
     let result = clients_check_core(&request, &db_pool).await?;
@@ -52,7 +51,7 @@ pub async fn check(
 pub async fn details(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ClientConfigReq>,
-) -> Result<Json<ClientConfigApiResp>, StatusCode> {
+) -> Result<Json<ClientConfigResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
 
     let result = client_config_details_core(&request, &db_pool).await?;
@@ -65,7 +64,7 @@ pub async fn details(
 pub async fn update(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<ClientConfigUpdateReq>,
-) -> Result<Json<ClientConfigUpdateApiResp>, StatusCode> {
+) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
 
     let result = client_config_update_core(&request, &db_pool).await?;
@@ -79,13 +78,13 @@ pub async fn update(
 async fn clients_check_core(
     request: &ClientsCheckReq,
     db_pool: &sqlx::SqlitePool,
-) -> Result<ClientsCheckApiResp, StatusCode> {
+) -> Result<ClientsCheckResp, StatusCode> {
     // Get all client apps from database (not just enabled ones)
     let mut all_clients = match get_all_client_apps(db_pool).await {
         Ok(clients) => clients,
         Err(e) => {
             tracing::error!("Failed to get client apps from database: {e}");
-            return Ok(ClientsCheckApiResp::error(
+            return Ok(ClientsCheckResp::error(
                 "DATABASE_ERROR",
                 &format!("Failed to get client apps: {e}"),
             ));
@@ -164,7 +163,7 @@ async fn clients_check_core(
             Ok(clients) => clients,
             Err(e) => {
                 tracing::error!("Failed to re-fetch client apps after detection: {e}");
-                return Ok(ClientsCheckApiResp::error(
+                return Ok(ClientsCheckResp::error(
                     "DATABASE_ERROR",
                     "Failed to retrieve updated client information",
                 ));
@@ -180,20 +179,20 @@ async fn clients_check_core(
         client_infos.push(info);
     }
 
-    let response = ClientsCheckResp {
+    let response = ClientsCheckData {
         total: client_infos.len(),
         clients: client_infos,
         last_updated: chrono::Utc::now().to_rfc3339(),
     };
 
-    Ok(ClientsCheckApiResp::success(response))
+    Ok(ClientsCheckResp::success(response))
 }
 
 /// Core business logic for client config details operation
 async fn client_config_details_core(
     request: &ClientConfigReq,
     db_pool: &sqlx::SqlitePool,
-) -> Result<ClientConfigApiResp, StatusCode> {
+) -> Result<ClientConfigResp, StatusCode> {
     let identifier = &request.identifier;
     let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
 
@@ -244,7 +243,7 @@ async fn client_config_details_core(
                 None
             };
 
-            let response = ClientConfigResp {
+            let response = ClientConfigData {
                 config_path,
                 config_exists,
                 content: json_content,
@@ -255,11 +254,11 @@ async fn client_config_details_core(
                 imported_servers,
             };
 
-            Ok(ClientConfigApiResp::success(response))
+            Ok(ClientConfigResp::success(response))
         }
         Err(e) => {
             tracing::error!("Failed to get config for {}: {}", identifier, e);
-            Ok(ClientConfigApiResp::error(
+            Ok(ClientConfigResp::error(
                 "CONFIG_READ_FAILED",
                 &format!("Failed to read configuration: {e}"),
             ))
@@ -271,14 +270,14 @@ async fn client_config_details_core(
 async fn client_config_update_core(
     request: &ClientConfigUpdateReq,
     db_pool: &sqlx::SqlitePool,
-) -> Result<ClientConfigUpdateApiResp, StatusCode> {
+) -> Result<ClientConfigUpdateResp, StatusCode> {
     let identifier = &request.identifier;
     let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
 
     // Convert API request to internal request format
     let config_suit_id = match &request.selected_config {
-        SelectedConfig::Suit { config_suit_id } => Some(config_suit_id.clone()),
-        SelectedConfig::Default => {
+        ClientConfigSelected::Suit { config_suit_id } => Some(config_suit_id.clone()),
+        ClientConfigSelected::Default => {
             // For Default mode, get the currently active config suit ID
             match get_active_config_suits(db_pool).await {
                 Ok(active_suits) => {
@@ -301,14 +300,14 @@ async fn client_config_update_core(
     let generation_request = GenerationRequest {
         identifier: identifier.to_string(),
         mode: match request.mode {
-            ConfigMode::Hosted => GenerationMode::Hosted,
-            ConfigMode::Transparent => GenerationMode::Transparent,
+            ClientConfigMode::Hosted => GenerationMode::Hosted,
+            ClientConfigMode::Transparent => GenerationMode::Transparent,
         },
         config_suit_id,
         servers: match &request.selected_config {
-            SelectedConfig::Servers { server_ids } => {
+            ClientConfigSelected::Servers { server_ids } => {
                 // For hosted mode, ignore servers parameter
-                if matches!(request.mode, ConfigMode::Hosted) {
+                if matches!(request.mode, ClientConfigMode::Hosted) {
                     None
                 } else {
                     Some(server_ids.clone())
@@ -323,7 +322,7 @@ async fn client_config_update_core(
         Ok(config) => config,
         Err(e) => {
             tracing::error!("Failed to generate config for {}: {}", identifier, e);
-            return Ok(ClientConfigUpdateApiResp::error(
+            return Ok(ClientConfigUpdateResp::error(
                 "GENERATION_FAILED",
                 &format!("Failed to generate configuration: {}", e),
             ));
@@ -333,7 +332,7 @@ async fn client_config_update_core(
     // Parse the generated config content to JSON using resilient parser
     let preview_json = parse_json_resilient(&generated_config.config_content);
 
-    let mut response = ClientConfigUpdateResp {
+    let mut response = ClientConfigUpdateData {
         success: true,
         preview: preview_json,
         applied: false,
@@ -358,8 +357,8 @@ async fn client_config_update_core(
                 // If application succeeded, update the client's config_mode
                 if result.success {
                     let config_mode = match request.mode {
-                        ConfigMode::Transparent => "transparent",
-                        ConfigMode::Hosted => "hosted",
+                        ClientConfigMode::Transparent => "transparent",
+                        ClientConfigMode::Hosted => "hosted",
                     };
 
                     if let Err(e) = client_manager.update_client_config_mode(identifier, config_mode).await {
@@ -374,7 +373,7 @@ async fn client_config_update_core(
             }
             Err(e) => {
                 tracing::error!("Failed to apply config for {}: {}", identifier, e);
-                return Ok(ClientConfigUpdateApiResp::error(
+                return Ok(ClientConfigUpdateResp::error(
                     "APPLICATION_FAILED",
                     &format!("Failed to apply configuration: {}", e),
                 ));
@@ -382,5 +381,5 @@ async fn client_config_update_core(
         }
     }
 
-    Ok(ClientConfigUpdateApiResp::success(response))
+    Ok(ClientConfigUpdateResp::success(response))
 }

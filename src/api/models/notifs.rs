@@ -75,7 +75,7 @@ pub struct ToolsChangedReq {
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Tools changed notification response")]
-pub struct ToolsChangedResp {
+pub struct ToolsChangedData {
     #[schemars(description = "Number of clients notified")]
     pub notified_clients: usize,
     #[schemars(description = "Success message")]
@@ -106,18 +106,18 @@ use crate::api::models::clients::ApiError;
 /// Response for tools changed operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Tools changed API response")]
-pub struct ToolsChangedApiResp {
+pub struct ToolsChangedResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ToolsChangedResp>,
+    pub data: Option<ToolsChangedData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
 
-impl ToolsChangedApiResp {
+impl ToolsChangedResp {
     /// Create a success response
-    pub fn success(data: ToolsChangedResp) -> Self {
+    pub fn success(data: ToolsChangedData) -> Self {
         Self {
             success: true,
             data: Some(data),

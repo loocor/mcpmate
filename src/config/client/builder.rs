@@ -98,9 +98,9 @@ impl ConfigBuilder {
         // Parse config_type from database
         let config_type_str: String = row.get("config_type");
         let config_type = match config_type_str.as_str() {
-            "mixed" => crate::config::client::models::ConfigType::Mixed,
-            "array" => crate::config::client::models::ConfigType::Array,
-            _ => crate::config::client::models::ConfigType::Standard,
+            "mixed" => crate::config::client::models::ClientConfigType::Mixed,
+            "array" => crate::config::client::models::ClientConfigType::Array,
+            _ => crate::config::client::models::ClientConfigType::Standard,
         };
 
         Ok(ConfigRule {
@@ -167,10 +167,11 @@ impl ConfigBuilder {
     ) -> Result<String> {
         // process array config or object config based on the rule
         let json_value = match config_rule.config_type {
-            crate::config::client::models::ConfigType::Array => {
+            crate::config::client::models::ClientConfigType::Array => {
                 self.generate_array_config_value(config_rule, servers, request).await?
             }
-            crate::config::client::models::ConfigType::Standard | crate::config::client::models::ConfigType::Mixed => {
+            crate::config::client::models::ClientConfigType::Standard
+            | crate::config::client::models::ClientConfigType::Mixed => {
                 self.generate_object_config_value(config_rule, servers, request).await?
             }
         };

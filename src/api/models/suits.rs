@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 // ==========================================
 // STANDARDIZED REQUEST/RESPONSE MODELS
@@ -25,7 +25,7 @@ pub enum SuitAction {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[schemars(description = "Available component management actions")]
-pub enum ComponentAction {
+pub enum SuitComponentAction {
     #[schemars(description = "Enable the component")]
     Enable,
     #[schemars(description = "Disable the component")]
@@ -39,15 +39,15 @@ pub struct SuitsListReq {
     #[serde(default)]
     #[schemars(description = "Filter by suit status: active, inactive, all")]
     pub filter_type: Option<String>,
-    
+
     #[serde(default)]
     #[schemars(description = "Filter by suit type: host_app, scenario, shared")]
     pub suit_type: Option<String>,
-    
+
     #[serde(default)]
     #[schemars(description = "Page limit for pagination (max 100)")]
     pub limit: Option<usize>,
-    
+
     #[serde(default)]
     #[schemars(description = "Page offset for pagination")]
     pub offset: Option<usize>,
@@ -65,7 +65,7 @@ pub struct SuitDetailsReq {
 pub struct SuitComponentListReq {
     #[schemars(description = "Suit identifier")]
     pub suit_id: String,
-    
+
     #[serde(default)]
     #[schemars(description = "Show only enabled components")]
     pub enabled_only: Option<bool>,
@@ -75,34 +75,26 @@ pub struct SuitComponentListReq {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for suit management operations")]
 pub struct SuitManageReq {
-    #[schemars(description = "Unique suit identifier")]
-    pub id: String,
-    
+    #[schemars(description = "Suit identifiers (single or multiple)")]
+    pub ids: Vec<String>,
+
     #[schemars(description = "Management action to perform")]
     pub action: SuitAction,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(description = "Request for suit batch management operations")]
-pub struct SuitBatchManageReq {
-    #[schemars(description = "List of suit identifiers")]
-    pub ids: Vec<String>,
-    
-    #[schemars(description = "Management action to perform on all suits")]
-    pub action: SuitAction,
-}
+
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for component management operations")]
 pub struct SuitComponentManageReq {
     #[schemars(description = "Suit identifier")]
     pub suit_id: String,
-    
+
     #[schemars(description = "Component identifier (server_id, tool_id, etc.)")]
     pub component_id: String,
-    
+
     #[schemars(description = "Management action to perform on component")]
-    pub action: ComponentAction,
+    pub action: SuitComponentAction,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -110,17 +102,17 @@ pub struct SuitComponentManageReq {
 pub struct SuitComponentBatchManageReq {
     #[schemars(description = "Suit identifier")]
     pub suit_id: String,
-    
+
     #[schemars(description = "List of component identifiers")]
     pub component_ids: Vec<String>,
-    
+
     #[schemars(description = "Management action to perform on all components")]
-    pub action: ComponentAction,
+    pub action: SuitComponentAction,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for suit deletion")]
-pub struct DeleteSuitReq {
+pub struct SuitDeleteReq {
     #[schemars(description = "Unique suit identifier to delete")]
     pub id: String,
 }
@@ -128,99 +120,101 @@ pub struct DeleteSuitReq {
 // Response Models (with Resp suffix)
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for suits list operation")]
-pub struct SuitsListResp {
+pub struct SuitsListData {
     #[schemars(description = "List of configuration suits")]
-    pub suits: Vec<ConfigSuitResp>,
-    
+    pub suits: Vec<SuitData>,
+
     #[schemars(description = "Total number of suits matching filter")]
     pub total: usize,
-    
+
     #[schemars(description = "ISO 8601 timestamp of response")]
     pub timestamp: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for suit details operation")]
-pub struct SuitDetailsResp {
+pub struct SuitDetailsData {
     #[schemars(description = "Suit details")]
-    pub suit: ConfigSuitResp,
-    
+    pub suit: SuitData,
+
     #[schemars(description = "Number of enabled servers in suit")]
     pub servers_count: usize,
-    
+
     #[schemars(description = "Number of enabled tools in suit")]
     pub tools_count: usize,
-    
+
     #[schemars(description = "Number of enabled resources in suit")]
     pub resources_count: usize,
-    
+
     #[schemars(description = "Number of enabled prompts in suit")]
     pub prompts_count: usize,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Response for suit management operations")]
-pub struct SuitManageResp {
+#[schemars(description = "Single suit operation result")]
+pub struct SuitOperationResult {
     #[schemars(description = "Suit identifier")]
     pub id: String,
-    
+
     #[schemars(description = "Suit name")]
     pub name: String,
-    
+
     #[schemars(description = "Operation result")]
     pub result: String,
-    
+
     #[schemars(description = "Current suit status after operation")]
     pub status: String,
-    
+
+    #[schemars(description = "Error message if operation failed")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Response for suit management operations")]
+pub struct SuitManageData {
+    #[schemars(description = "Number of successful operations")]
+    pub success_count: usize,
+
+    #[schemars(description = "Number of failed operations")]
+    pub failed_count: usize,
+
+    #[schemars(description = "List of operation results")]
+    pub results: Vec<SuitOperationResult>,
+
     #[schemars(description = "ISO 8601 timestamp of operation")]
     pub timestamp: String,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Response for suit batch management operations")]
-pub struct SuitBatchManageResp {
-    #[schemars(description = "Number of successful operations")]
-    pub success_count: usize,
-    
-    #[schemars(description = "List of successfully processed suit IDs")]
-    pub successful_ids: Vec<String>,
-    
-    #[schemars(description = "Map of failed suit IDs to error messages")]
-    pub failed_operations: HashMap<String, String>,
-    
-    #[schemars(description = "ISO 8601 timestamp of operation")]
-    pub timestamp: String,
-}
+
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for suit servers list operation")]
-pub struct SuitServersListResp {
+pub struct SuitServersListData {
     #[schemars(description = "Suit identifier")]
     pub suit_id: String,
-    
+
     #[schemars(description = "Suit name")]
     pub suit_name: String,
-    
+
     #[schemars(description = "List of servers in this suit")]
-    pub servers: Vec<ConfigSuitServerResp>,
-    
+    pub servers: Vec<SuitServerResp>,
+
     #[schemars(description = "Total number of servers in suit")]
     pub total: usize,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for suit tools list operation")]
-pub struct SuitToolsListResp {
+pub struct SuitToolsListData {
     #[schemars(description = "Suit identifier")]
     pub suit_id: String,
-    
+
     #[schemars(description = "Suit name")]
     pub suit_name: String,
-    
+
     #[schemars(description = "List of tools in this suit")]
-    pub tools: Vec<ConfigSuitToolResp>,
-    
+    pub tools: Vec<SuitToolData>,
+
     #[schemars(description = "Total number of tools in suit")]
     pub total: usize,
 }
@@ -230,13 +224,13 @@ pub struct SuitToolsListResp {
 pub struct SuitResourcesListResp {
     #[schemars(description = "Suit identifier")]
     pub suit_id: String,
-    
+
     #[schemars(description = "Suit name")]
     pub suit_name: String,
-    
+
     #[schemars(description = "List of resources in this suit")]
-    pub resources: Vec<ConfigSuitResourceResp>,
-    
+    pub resources: Vec<SuitResourceData>,
+
     #[schemars(description = "Total number of resources in suit")]
     pub total: usize,
 }
@@ -246,35 +240,35 @@ pub struct SuitResourcesListResp {
 pub struct SuitPromptsListResp {
     #[schemars(description = "Suit identifier")]
     pub suit_id: String,
-    
+
     #[schemars(description = "Suit name")]
     pub suit_name: String,
-    
+
     #[schemars(description = "List of prompts in this suit")]
-    pub prompts: Vec<ConfigSuitPromptResp>,
-    
+    pub prompts: Vec<SuitPromptData>,
+
     #[schemars(description = "Total number of prompts in suit")]
     pub total: usize,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for component management operations")]
-pub struct SuitComponentManageResp {
+pub struct SuitServerManageData {
     #[schemars(description = "Suit identifier")]
     pub suit_id: String,
-    
+
     #[schemars(description = "Component identifier")]
     pub component_id: String,
-    
+
     #[schemars(description = "Component type (server, tool, resource, prompt)")]
     pub component_type: String,
-    
+
     #[schemars(description = "Operation result")]
     pub result: String,
-    
+
     #[schemars(description = "Current component status after operation")]
     pub status: String,
-    
+
     #[schemars(description = "ISO 8601 timestamp of operation")]
     pub timestamp: String,
 }
@@ -285,7 +279,7 @@ pub struct SuitComponentManageResp {
 
 /// Config Suit response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ConfigSuitResp {
+pub struct SuitData {
     /// Unique ID
     pub id: String,
     /// Name of the configuration suit
@@ -308,14 +302,14 @@ pub struct ConfigSuitResp {
 
 /// Config Suit list response
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigSuitListResp {
+pub struct SuitListResp {
     /// List of configuration suits
-    pub suits: Vec<ConfigSuitResp>,
+    pub suits: Vec<SuitData>,
 }
 
 /// Create Config Suit request
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct CreateConfigSuitReq {
+pub struct SuitCreateReq {
     /// Name of the configuration suit
     pub name: String,
     /// Description of the configuration suit
@@ -336,7 +330,7 @@ pub struct CreateConfigSuitReq {
 
 /// Update Config Suit request
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct UpdateConfigSuitReq {
+pub struct SuitUpdateReq {
     /// Name of the configuration suit
     pub name: Option<String>,
     /// Description of the configuration suit
@@ -355,7 +349,7 @@ pub struct UpdateConfigSuitReq {
 
 /// Batch operation request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BatchOperationReq {
+pub struct SuitBatchOperationReq {
     /// List of IDs to operate on
     pub ids: Vec<String>,
 }
@@ -363,7 +357,7 @@ pub struct BatchOperationReq {
 /// Operation response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Operation response details")]
-pub struct SuitOperationResp {
+pub struct SuitOperationData {
     /// Unique ID
     #[schemars(description = "Unique identifier of the configuration suit")]
     pub id: String,
@@ -383,7 +377,7 @@ pub struct SuitOperationResp {
 
 /// Batch operation response
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BatchOperationResp {
+pub struct SuitBatchOperationResp {
     /// Number of successful operations
     pub success_count: usize,
     /// List of successful operations
@@ -394,7 +388,7 @@ pub struct BatchOperationResp {
 
 /// Config Suit server response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ConfigSuitServerResp {
+pub struct SuitServerResp {
     /// Server ID
     pub id: String,
     /// Server name
@@ -407,18 +401,18 @@ pub struct ConfigSuitServerResp {
 
 /// Config Suit servers list response
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigSuitServersResp {
+pub struct SuitServersResp {
     /// Configuration suit ID
     pub suit_id: String,
     /// Configuration suit name
     pub suit_name: String,
     /// List of servers in this configuration suit
-    pub servers: Vec<ConfigSuitServerResp>,
+    pub servers: Vec<SuitServerResp>,
 }
 
 /// Config Suit tool response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ConfigSuitToolResp {
+pub struct SuitToolData {
     /// Tool ID
     pub id: String,
     /// Server ID
@@ -437,18 +431,18 @@ pub struct ConfigSuitToolResp {
 
 /// Config Suit tools list response
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigSuitToolsResp {
+pub struct SuitToolsResp {
     /// Configuration suit ID
     pub suit_id: String,
     /// Configuration suit name
     pub suit_name: String,
     /// List of tools in this configuration suit
-    pub tools: Vec<ConfigSuitToolResp>,
+    pub tools: Vec<SuitToolData>,
 }
 
 /// Config Suit resource response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ConfigSuitResourceResp {
+pub struct SuitResourceData {
     /// Resource ID
     pub id: String,
     /// Server ID
@@ -465,18 +459,18 @@ pub struct ConfigSuitResourceResp {
 
 /// Config Suit resources list response
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigSuitResourcesResp {
+pub struct SuitResourcesResp {
     /// Configuration suit ID
     pub suit_id: String,
     /// Configuration suit name
     pub suit_name: String,
     /// List of resources in this configuration suit
-    pub resources: Vec<ConfigSuitResourceResp>,
+    pub resources: Vec<SuitResourceData>,
 }
 
 /// Config Suit prompt response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ConfigSuitPromptResp {
+pub struct SuitPromptData {
     /// Prompt ID
     pub id: String,
     /// Server ID
@@ -493,13 +487,13 @@ pub struct ConfigSuitPromptResp {
 
 /// Config Suit prompts list response
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ConfigSuitPromptsResp {
+pub struct SuitPromptsResp {
     /// Configuration suit ID
     pub suit_id: String,
     /// Configuration suit name
     pub suit_name: String,
     /// List of prompts in this configuration suit
-    pub prompts: Vec<ConfigSuitPromptResp>,
+    pub prompts: Vec<SuitPromptData>,
 }
 
 // ==========================================
@@ -511,11 +505,11 @@ use crate::api::models::clients::ApiError;
 /// Response for suits list operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Suits list API response")]
-pub struct SuitsListApiResp {
+pub struct SuitsListResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitsListResp>,
+    pub data: Option<SuitsListData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -523,11 +517,11 @@ pub struct SuitsListApiResp {
 /// Response for suit details operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Suit details API response")]
-pub struct SuitDetailsApiResp {
+pub struct SuitDetailsResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitDetailsResp>,
+    pub data: Option<SuitDetailsData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -535,11 +529,11 @@ pub struct SuitDetailsApiResp {
 /// Response for suit management operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Suit management API response")]
-pub struct SuitManageApiResp {
+pub struct SuitManageResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitManageResp>,
+    pub data: Option<SuitManageData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -547,23 +541,11 @@ pub struct SuitManageApiResp {
 /// Response for config suit create/update operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Config suit API response")]
-pub struct ConfigSuitApiResp {
+pub struct SuitResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ConfigSuitResp>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for suit batch manage operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Suit batch manage API response")]
-pub struct SuitBatchManageApiResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitBatchManageResp>,
+    pub data: Option<SuitData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -571,11 +553,11 @@ pub struct SuitBatchManageApiResp {
 /// Response for suit servers list operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Suit servers list API response")]
-pub struct SuitServersListApiResp {
+pub struct SuitServersListResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitServersListResp>,
+    pub data: Option<SuitServersListData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -583,11 +565,11 @@ pub struct SuitServersListApiResp {
 /// Response for suit tools list operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Suit tools list API response")]
-pub struct SuitToolsListApiResp {
+pub struct SuitToolsListResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitToolsListResp>,
+    pub data: Option<SuitToolsListData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -595,11 +577,11 @@ pub struct SuitToolsListApiResp {
 /// Response for suit component manage operations
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Suit component manage API response")]
-pub struct SuitComponentManageApiResp {
+pub struct SuitServerManageResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitComponentManageResp>,
+    pub data: Option<SuitServerManageData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -608,8 +590,8 @@ pub struct SuitComponentManageApiResp {
 // RESPONSE IMPLEMENTATION METHODS
 // ==========================================
 
-impl SuitsListApiResp {
-    pub fn success(data: SuitsListResp) -> Self {
+impl SuitsListResp {
+    pub fn success(data: SuitsListData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -617,7 +599,10 @@ impl SuitsListApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -630,8 +615,8 @@ impl SuitsListApiResp {
     }
 }
 
-impl SuitDetailsApiResp {
-    pub fn success(data: SuitDetailsResp) -> Self {
+impl SuitDetailsResp {
+    pub fn success(data: SuitDetailsData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -639,7 +624,10 @@ impl SuitDetailsApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -652,8 +640,8 @@ impl SuitDetailsApiResp {
     }
 }
 
-impl SuitManageApiResp {
-    pub fn success(data: SuitManageResp) -> Self {
+impl SuitManageResp {
+    pub fn success(data: SuitManageData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -661,7 +649,10 @@ impl SuitManageApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -674,8 +665,8 @@ impl SuitManageApiResp {
     }
 }
 
-impl ConfigSuitApiResp {
-    pub fn success(data: ConfigSuitResp) -> Self {
+impl SuitResp {
+    pub fn success(data: SuitData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -683,7 +674,10 @@ impl ConfigSuitApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -696,29 +690,22 @@ impl ConfigSuitApiResp {
     }
 }
 
-impl SuitBatchManageApiResp {
-    pub fn success(data: SuitBatchManageResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
-    }
-}
+
 
 /// Response for suit operation API calls
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Suit operation API response")]
-pub struct SuitOperationApiResp {
+pub struct SuitOperationResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitOperationResp>,
+    pub data: Option<SuitOperationData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
 
-impl SuitOperationApiResp {
-    pub fn success(data: SuitOperationResp) -> Self {
+impl SuitOperationResp {
+    pub fn success(data: SuitOperationData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -726,7 +713,10 @@ impl SuitOperationApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -739,29 +729,53 @@ impl SuitOperationApiResp {
     }
 }
 
-impl SuitServersListApiResp {
-    pub fn success(data: SuitServersListResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl SuitServersListResp {
+    pub fn success(data: SuitServersListData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }
 
-impl SuitToolsListApiResp {
-    pub fn success(data: SuitToolsListResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl SuitToolsListResp {
+    pub fn success(data: SuitToolsListData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }
 
-impl SuitComponentManageApiResp {
-    pub fn success(data: SuitComponentManageResp) -> Self {
-        Self { success: true, data: Some(data), error: None }
+impl SuitServerManageResp {
+    pub fn success(data: SuitServerManageData) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
     pub fn error(error: ApiError) -> Self {
-        Self { success: false, data: None, error: Some(error) }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
     }
 }

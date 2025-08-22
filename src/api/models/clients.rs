@@ -1,5 +1,5 @@
 use crate::common::ClientCategory;
-use crate::config::client::models::ConfigType;
+use crate::config::client::models::ClientConfigType;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx;
@@ -65,7 +65,7 @@ pub struct ClientInfo {
     #[schemars(description = "Configuration management mode")]
     pub config_mode: Option<String>,
     #[schemars(description = "Format type of configuration file")]
-    pub config_type: Option<ConfigType>,
+    pub config_type: Option<ClientConfigType>,
     #[schemars(description = "ISO 8601 timestamp of last detection")]
     pub last_detected_at: Option<String>,
     #[schemars(description = "ISO 8601 timestamp of last config modification")]
@@ -77,9 +77,9 @@ pub struct ClientInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 #[schemars(description = "Configuration mode - hosted or transparent")]
-pub enum ConfigMode {
+pub enum ClientConfigMode {
     #[default]
-    #[schemars(description = "MCPMate manages all server configurations")]
+    #[schemars(description = "MCPMate manages all server configurations ")]
     Hosted,
     #[schemars(description = "Merge with existing client configuration")]
     Transparent,
@@ -88,7 +88,7 @@ pub enum ConfigMode {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 #[schemars(description = "Selected configuration source - suit, servers, or default")]
-pub enum SelectedConfig {
+pub enum ClientConfigSelected {
     #[schemars(description = "Use a configuration suit by ID")]
     Suit {
         #[schemars(description = "Configuration suit identifier")]
@@ -106,7 +106,7 @@ pub enum SelectedConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Response containing detected client applications")]
-pub struct ClientsCheckResp {
+pub struct ClientsCheckData {
     #[schemars(description = "Array of client applications with their detection status")]
     pub clients: Vec<ClientInfo>,
     #[schemars(description = "Total count of client applications")]
@@ -117,7 +117,7 @@ pub struct ClientsCheckResp {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Configuration management response")]
-pub struct ClientConfigUpdateResp {
+pub struct ClientConfigUpdateData {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Preview of configuration changes")]
@@ -132,7 +132,7 @@ pub struct ClientConfigUpdateResp {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Configuration view response")]
-pub struct ClientConfigResp {
+pub struct ClientConfigData {
     #[schemars(description = "Path to configuration file")]
     pub config_path: String,
     #[schemars(description = "Whether configuration file exists")]
@@ -146,14 +146,14 @@ pub struct ClientConfigResp {
     #[schemars(description = "ISO 8601 timestamp of last modification")]
     pub last_modified: Option<String>,
     #[schemars(description = "Configuration file format type")]
-    pub config_type: Option<ConfigType>,
+    pub config_type: Option<ClientConfigType>,
     #[schemars(description = "List of imported server configurations")]
-    pub imported_servers: Option<Vec<ImportedServer>>,
+    pub imported_servers: Option<Vec<ClientImportedServer>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Information about an imported server")]
-pub struct ImportedServer {
+pub struct ClientImportedServer {
     #[schemars(description = "Server name identifier")]
     pub name: String,
     #[schemars(description = "Command to execute the server")]
@@ -184,11 +184,11 @@ pub struct ApiError {
 /// Response for client check/list operations
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Client applications detection response")]
-pub struct ClientsCheckApiResp {
+pub struct ClientsCheckResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ClientsCheckResp>,
+    pub data: Option<ClientsCheckData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -196,11 +196,11 @@ pub struct ClientsCheckApiResp {
 /// Response for client configuration details operations
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Client configuration details response")]
-pub struct ClientConfigApiResp {
+pub struct ClientConfigResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ClientConfigResp>,
+    pub data: Option<ClientConfigData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -208,11 +208,11 @@ pub struct ClientConfigApiResp {
 /// Response for client configuration update operations
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Client configuration update response")]
-pub struct ClientConfigUpdateApiResp {
+pub struct ClientConfigUpdateResp {
     #[schemars(description = "Whether the operation was successful")]
     pub success: bool,
     #[schemars(description = "Response data when successful")]
-    pub data: Option<ClientConfigUpdateResp>,
+    pub data: Option<ClientConfigUpdateData>,
     #[schemars(description = "Error information when failed")]
     pub error: Option<ApiError>,
 }
@@ -221,8 +221,8 @@ pub struct ClientConfigUpdateApiResp {
 // RESPONSE IMPLEMENTATION METHODS
 // ==========================================
 
-impl ClientsCheckApiResp {
-    pub fn success(data: ClientsCheckResp) -> Self {
+impl ClientsCheckResp {
+    pub fn success(data: ClientsCheckData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -230,7 +230,10 @@ impl ClientsCheckApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -243,8 +246,8 @@ impl ClientsCheckApiResp {
     }
 }
 
-impl ClientConfigApiResp {
-    pub fn success(data: ClientConfigResp) -> Self {
+impl ClientConfigResp {
+    pub fn success(data: ClientConfigData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -252,7 +255,10 @@ impl ClientConfigApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -265,8 +271,8 @@ impl ClientConfigApiResp {
     }
 }
 
-impl ClientConfigUpdateApiResp {
-    pub fn success(data: ClientConfigUpdateResp) -> Self {
+impl ClientConfigUpdateResp {
+    pub fn success(data: ClientConfigUpdateData) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -274,7 +280,10 @@ impl ClientConfigUpdateApiResp {
         }
     }
 
-    pub fn error(code: &str, message: &str) -> Self {
+    pub fn error(
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -286,7 +295,11 @@ impl ClientConfigUpdateApiResp {
         }
     }
 
-    pub fn error_with_details(code: &str, message: &str, details: serde_json::Value) -> Self {
+    pub fn error_with_details(
+        code: &str,
+        message: &str,
+        details: serde_json::Value,
+    ) -> Self {
         Self {
             success: false,
             data: None,
@@ -335,28 +348,18 @@ pub struct ClientConfigUpdateReq {
     pub identifier: String,
     #[serde(default)]
     #[schemars(description = "Configuration mode - hosted or transparent (default: hosted)")]
-    pub mode: ConfigMode,
+    pub mode: ClientConfigMode,
     #[serde(default = "super::default_true")]
     #[schemars(description = "Whether to only preview changes without applying them (default: true)")]
     pub preview: bool,
     #[serde(default)]
     #[schemars(description = "Selected configuration source (default: default)")]
-    pub selected_config: SelectedConfig,
+    pub selected_config: ClientConfigSelected,
 }
 
-
-
-/// Legacy query parameters for client detection (kept for backward compatibility)
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CheckQuery {
-    #[serde(default)]
-    #[schemars(description = "Whether to force refresh the client list")]
-    pub refresh: bool,
-}
-
-/// Simple structure to hold detection results
 #[derive(Debug, Clone, JsonSchema)]
-pub struct SimpleDetectedApp {
+#[schemars(description = "Detection results for a client application")]
+pub struct ClientDetectedApp {
     #[schemars(description = "Installation path of the client application")]
     pub install_path: std::path::PathBuf,
     #[schemars(description = "Path to client configuration file")]
