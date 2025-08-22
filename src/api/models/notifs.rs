@@ -96,3 +96,41 @@ pub struct ToolsChangedDetails {
     #[schemars(description = "Number of tools affected")]
     pub tools_affected: usize,
 }
+
+// ==========================================
+// SPECIFIC API RESPONSE TYPES
+// ==========================================
+
+use crate::api::models::clients::ApiError;
+
+/// Response for tools changed operations
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Tools changed API response")]
+pub struct ToolsChangedApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<ToolsChangedResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+impl ToolsChangedApiResp {
+    /// Create a success response
+    pub fn success(data: ToolsChangedResp) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
+    }
+
+    /// Create an error response
+    pub fn error(error: ApiError) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+        }
+    }
+}

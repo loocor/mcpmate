@@ -1,28 +1,65 @@
 // MCPMate Proxy API handlers for Config Suit CRUD operations
 // Contains handler functions for creating, updating, and deleting Config Suits
 
+use axum::{
+    extract::{Json, Path, State},
+    http::StatusCode,
+};
 use std::str::FromStr;
+use std::sync::Arc;
 
-use super::common::*;
+use crate::api::{
+    models::suits::{
+        ConfigSuitApiResp, ConfigSuitResp, CreateConfigSuitReq, SuitOperationApiResp, SuitOperationResp,
+        UpdateConfigSuitReq,
+    },
+    routes::AppState,
+};
+use crate::common::config::ConfigSuitType;
+use crate::config::models::suit::{ConfigSuit, ConfigSuitServer};
+use crate::config::suit::get_config_suit_by_name;
 use crate::generate_id;
+
+/// Get database pool from app state
+async fn get_database(state: &Arc<AppState>) -> Result<Arc<crate::config::database::Database>, StatusCode> {
+    match &state.database {
+        Some(db) => Ok(db.clone()),
+        None => Err(StatusCode::SERVICE_UNAVAILABLE),
+    }
+}
+
+/// Convert suit database model to response format
+fn suit_to_response(suit: &ConfigSuit) -> ConfigSuitResp {
+    ConfigSuitResp {
+        id: suit.id.clone().unwrap_or_default(),
+        name: suit.name.clone(),
+        description: suit.description.clone(),
+        suit_type: suit.suit_type.to_string(),
+        multi_select: suit.multi_select,
+        priority: suit.priority,
+        is_active: suit.is_active,
+        is_default: suit.is_default,
+        allowed_operations: vec!["update".to_string(), "delete".to_string()],
+    }
+}
 
 /// Create a new configuration suit
 pub async fn create_suit(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<CreateConfigSuitRequest>,
-) -> Result<Json<ConfigSuitResponse>, ApiError> {
+    Json(payload): Json<CreateConfigSuitReq>,
+) -> Result<Json<ConfigSuitApiResp>, StatusCode> {
     // Get database reference
     let db = get_database(&state).await?;
 
     // Check if a suit with the same name already exists
-    let existing_suit = crate::config::suit::get_config_suit_by_name(&db.pool, &payload.name)
+    let existing_suit = get_config_suit_by_name(&db.pool, &payload.name)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to check configuration suit: {e}")))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if existing_suit.is_some() {
-        return Err(ApiError::Conflict(format!(
-            "Configuration suit with name '{}' already exists",
-            payload.name
+        return Ok(Json(ConfigSuitApiResp::error(
+            "CONFLICT",
+            &format!("Configuration suit with name '{}' already exists", payload.name),
         )));
     }
 
@@ -30,19 +67,18 @@ pub async fn create_suit(
     let suit_type = match ConfigSuitType::from_str(&payload.suit_type) {
         Ok(t) => t,
         Err(_) => {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid configuration suit type: {}. Must be one of: host_app, scenario, shared",
-                payload.suit_type
+            return Ok(Json(ConfigSuitApiResp::error(
+                "INVALID_TYPE",
+                &format!(
+                    "Invalid configuration suit type: {}. Must be one of: host_app, scenario, shared",
+                    payload.suit_type
+                ),
             )));
         }
     };
 
     // Create new configuration suit
-    let mut new_suit = ConfigSuit::new_with_description(
-        payload.name.clone(),
-        payload.description.clone(),
-        suit_type,
-    );
+    let mut new_suit = ConfigSuit::new_with_description(payload.name.clone(), payload.description.clone(), suit_type);
 
     // Set optional fields
     if let Some(multi_select) = payload.multi_select {
@@ -67,35 +103,27 @@ pub async fn create_suit(
         // Check if the source suit exists
         let source_suit = crate::config::suit::get_config_suit(&db.pool, &clone_from_id)
             .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to get source configuration suit: {e}"))
-            })?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         if source_suit.is_none() {
-            return Err(ApiError::NotFound(format!(
-                "Source configuration suit with ID '{clone_from_id}' not found"
+            return Ok(Json(ConfigSuitApiResp::error(
+                "NOT_FOUND",
+                &format!("Source configuration suit with ID '{clone_from_id}' not found"),
             )));
         }
 
         // Start a transaction
-        let mut tx =
-            db.pool.begin().await.map_err(|e| {
-                ApiError::InternalError(format!("Failed to begin transaction: {e}"))
-            })?;
+        let mut tx = db.pool.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         // Insert the new suit
         crate::config::suit::upsert_config_suit_tx(&mut tx, &new_suit)
             .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to create configuration suit: {e}"))
-            })?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         // Copy server associations
         let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &clone_from_id)
             .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to get server configurations: {e}"))
-            })?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         for server_config in server_configs {
             let new_server_config = ConfigSuitServer {
@@ -119,17 +147,13 @@ pub async fn create_suit(
             .bind(new_server_config.enabled)
             .execute(&mut *tx)
             .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to create server association: {e}"))
-            })?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
 
         // Copy tool associations (using new architecture)
         let tool_configs = crate::config::suit::get_config_suit_tools(&db.pool, &clone_from_id)
             .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to get tool configurations: {e}"))
-            })?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         for tool_config in tool_configs {
             // Use the new architecture to add tools to the config suit
@@ -141,59 +165,52 @@ pub async fn create_suit(
                 tool_config.enabled,
             )
             .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to create tool association: {e}"))
-            })?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
 
         // Commit the transaction
-        tx.commit()
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to commit transaction: {e}")))?;
+        tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     } else {
         // Insert the new suit without cloning
         crate::config::suit::upsert_config_suit(&db.pool, &new_suit)
             .await
-            .map_err(|e| {
-                ApiError::InternalError(format!("Failed to create configuration suit: {e}"))
-            })?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
     // Get the created suit
     let created_suit = crate::config::suit::get_config_suit(&db.pool, &suit_id)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get created configuration suit: {e}"))
-        })?
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .unwrap();
 
     // Convert to response format
     let response = suit_to_response(&created_suit);
 
     // Return response
-    Ok(Json(response))
+    Ok(Json(ConfigSuitApiResp::success(response)))
 }
 
 /// Update an existing configuration suit
 pub async fn update_suit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(payload): Json<UpdateConfigSuitRequest>,
-) -> Result<Json<ConfigSuitResponse>, ApiError> {
+    Json(payload): Json<UpdateConfigSuitReq>,
+) -> Result<Json<ConfigSuitApiResp>, StatusCode> {
     // Get database reference
     let db = get_database(&state).await?;
 
     // Get the existing suit
     let existing_suit = crate::config::suit::get_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Check if the suit exists
     let mut suit = match existing_suit {
         Some(s) => s,
         None => {
-            return Err(ApiError::NotFound(format!(
-                "Configuration suit with ID '{id}' not found"
+            return Ok(Json(ConfigSuitApiResp::error(
+                "NOT_FOUND",
+                &format!("Configuration suit with ID '{id}' not found"),
             )));
         }
     };
@@ -204,14 +221,13 @@ pub async fn update_suit(
         if name != suit.name {
             let existing_suit = crate::config::suit::get_config_suit_by_name(&db.pool, &name)
                 .await
-                .map_err(|e| {
-                    ApiError::InternalError(format!("Failed to check configuration suit: {e}"))
-                })?;
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             if let Some(existing) = existing_suit {
                 if existing.id != suit.id {
-                    return Err(ApiError::Conflict(format!(
-                        "Configuration suit with name '{name}' already exists"
+                    return Ok(Json(ConfigSuitApiResp::error(
+                        "CONFLICT",
+                        &format!("Configuration suit with name '{name}' already exists"),
                     )));
                 }
             }
@@ -228,8 +244,11 @@ pub async fn update_suit(
         let parsed_type = match ConfigSuitType::from_str(&suit_type) {
             Ok(t) => t,
             Err(_) => {
-                return Err(ApiError::BadRequest(format!(
-                    "Invalid configuration suit type: {suit_type}. Must be one of: host_app, scenario, shared"
+                return Ok(Json(ConfigSuitApiResp::error(
+                    "INVALID_TYPE",
+                    &format!(
+                        "Invalid configuration suit type: {suit_type}. Must be one of: host_app, scenario, shared"
+                    ),
                 )));
             }
         };
@@ -255,74 +274,71 @@ pub async fn update_suit(
     // Update the suit
     crate::config::suit::upsert_config_suit(&db.pool, &suit)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to update configuration suit: {e}"))
-        })?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Get the updated suit
     let updated_suit = crate::config::suit::get_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to get updated configuration suit: {e}"))
-        })?
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .unwrap();
 
     // Convert to response format
     let response = suit_to_response(&updated_suit);
 
     // Return response
-    Ok(Json(response))
+    Ok(Json(ConfigSuitApiResp::success(response)))
 }
 
 /// Delete a configuration suit
 pub async fn delete_suit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<SuitOperationResponse>, ApiError> {
+) -> Result<Json<SuitOperationApiResp>, StatusCode> {
     // Get database reference
     let db = get_database(&state).await?;
 
     // Get the suit to check if it exists and get its name
     let suit = crate::config::suit::get_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Check if the suit exists
     let suit = match suit {
         Some(s) => s,
         None => {
-            return Err(ApiError::NotFound(format!(
-                "Configuration suit with ID '{id}' not found"
+            return Ok(Json(SuitOperationApiResp::error(
+                "NOT_FOUND",
+                &format!("Configuration suit with ID '{id}' not found"),
             )));
         }
     };
 
     // Check if this is the default suit
     if suit.is_default {
-        return Err(ApiError::BadRequest(
-            "Cannot delete the default configuration suit".to_string(),
-        ));
+        return Ok(Json(SuitOperationApiResp::error(
+            "BAD_REQUEST",
+            "Cannot delete the default configuration suit",
+        )));
     }
 
     // Delete the suit
     let deleted = crate::config::suit::delete_config_suit(&db.pool, &id)
         .await
-        .map_err(|e| {
-            ApiError::InternalError(format!("Failed to delete configuration suit: {e}"))
-        })?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if !deleted {
-        return Err(ApiError::InternalError(format!(
-            "Failed to delete configuration suit with ID '{id}'"
+        return Ok(Json(SuitOperationApiResp::error(
+            "INTERNAL_ERROR",
+            &format!("Failed to delete configuration suit with ID '{id}'"),
         )));
     }
 
     // Return success response
-    Ok(Json(SuitOperationResponse {
+    Ok(Json(SuitOperationApiResp::success(SuitOperationResp {
         id,
         name: suit.name,
         result: "Successfully deleted configuration suit".to_string(),
         status: "Deleted".to_string(),
         allowed_operations: Vec::new(),
-    }))
+    })))
 }

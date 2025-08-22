@@ -2,12 +2,13 @@
 // Provides handlers for server resource inspect endpoints
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Query, State},
     response::Json,
+    http::StatusCode,
 };
 use std::sync::Arc;
 
-use crate::api::{handlers::ApiError, routes::AppState};
+use crate::api::{routes::AppState, models::{server::{ServerCapabilityReq, ServerResourcesResp, ServerResourcesApiResp, ServerResourceTemplatesResp, ServerResourceTemplatesApiResp, CapabilityMeta}}};
 use chrono::Utc;
 
 use super::capability::{
@@ -15,71 +16,146 @@ use super::capability::{
     resource_template_json_from_cached, respond_with_enriched,
 };
 use super::common::{
-    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
+    create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
 };
 
-/// Convert database error to ApiError
-#[inline]
-fn db_error(e: impl std::fmt::Display) -> ApiError {
-    ApiError::InternalError(format!("Database error: {e}"))
+/// Helper function to convert Json response to ServerResourcesResp
+fn json_to_server_resources_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourcesResp {
+    let json_value = json_response.0;
+    
+    let data = json_value.get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    
+    let state = json_value.get("state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("ok")
+        .to_string();
+    
+    let meta_value = json_value.get("meta").cloned().unwrap_or_default();
+    let meta = CapabilityMeta {
+        cache_hit: meta_value.get("cache_hit")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        strategy: meta_value.get("strategy")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        source: meta_value.get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    };
+    
+    ServerResourcesResp { data, state, meta }
 }
 
-/// List all resources for a specific server
-///
-/// Strategy order:
-/// 1) Cache-first: query Redb snapshot with freshness policy.
-/// 2) Runtime fallback: aggregate via connected instances (proxy service).
-/// 3) Force refresh (if requested): create a temporary instance to fetch data.
-/// 4) Offline cache: return any cached copy ignoring freshness.
-/// 5) None: return empty.
-///
-/// Supports both `server_name` and `server_id` as identifier.
-#[tracing::instrument(skip(state), level = "debug")]
-pub async fn list_resources(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(query): Query<InspectQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+/// Helper function to convert Json response to ServerResourceTemplatesResp
+fn json_to_server_resource_templates_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourceTemplatesResp {
+    let json_value = json_response.0;
+    
+    let data = json_value.get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    
+    let state = json_value.get("state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("ok")
+        .to_string();
+    
+    let meta_value = json_value.get("meta").cloned().unwrap_or_default();
+    let meta = CapabilityMeta {
+        cache_hit: meta_value.get("cache_hit")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        strategy: meta_value.get("strategy")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        source: meta_value.get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    };
+    
+    ServerResourceTemplatesResp { data, state, meta }
+}
+
+/// List all resources for a specific server with standardized signature
+pub async fn server_resources(
+    State(app_state): State<Arc<AppState>>,
+    Query(request): Query<ServerCapabilityReq>,
+) -> Result<Json<ServerResourcesApiResp>, StatusCode> {
+    let result = server_resources_core(&request, &app_state).await?;
+    Ok(Json(result))
+}
+
+/// Core business logic for listing server resources
+#[tracing::instrument(skip(app_state), level = "debug")]
+async fn server_resources_core(
+    request: &ServerCapabilityReq,
+    app_state: &Arc<AppState>,
+) -> Result<ServerResourcesApiResp, StatusCode> {
+    // Convert request to internal query format
+    let query = super::common::InspectQuery {
+        refresh: request.refresh.as_ref().map(|r| match r {
+            crate::api::models::server::RefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::RefreshStrategy::Force => super::common::RefreshStrategy::Force,
+            crate::api::models::server::RefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
+        }),
+        format: None,
+        include_meta: None,
+        timeout: None,
+    };
+
     // Get database and load server by ID
-    let db = get_database_from_state(&state)?;
-    let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
+    let db = get_database_from_state(app_state).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let server_row = crate::config::server::get_server_by_id(&db.pool, &request.id)
         .await
-        .map_err(db_error)?
-        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let server_info = super::common::ServerIdentification {
-        server_id: id.clone(),
+        server_id: request.id.clone(),
         server_name: server_row.name.clone(),
     };
 
     // Validate server ID format
-    validate_server_id(&server_info.server_id)?;
+    validate_server_id(&server_info.server_id).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Parse query parameters
-    let params = query.to_params()?;
+    let params = query.to_params().map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Short-circuit only if the server explicitly declares capabilities and lacks resources capability
     if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
         if server_row.capabilities.is_some()
             && !server_row.has_capability(crate::common::capability::CapabilityToken::Resources)
         {
-            return Ok(create_inspect_response(
+            let response_data = create_inspect_response(
                 Vec::new(),
                 false,
                 params.refresh,
                 "capability-resources-unsupported",
-            ));
+            );
+            let resources_resp = json_to_server_resources_resp(response_data);
+            return Ok(ServerResourcesApiResp::success(resources_resp));
         }
     }
 
     // Try Redb cache with freshness policy on full server snapshot
     let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
-    if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
+    if let Ok(cache_result) = app_state.redb_cache.get_server_data(&cache_query).await {
         if cache_result.cache_hit {
             if let Some(data) = cache_result.data {
                 let processed: Vec<serde_json::Value> =
                     data.resources.into_iter().map(resource_json_from_cached).collect();
                 if !processed.is_empty() {
-                    if let Ok(db) = get_database_from_state(&state) {
+                    if let Ok(db) = get_database_from_state(app_state) {
                         let enriched = enrich_capability_items(
                             CapabilityKind::Resources,
                             &db.pool,
@@ -87,19 +163,23 @@ pub async fn list_resources(
                             processed,
                         )
                         .await;
-                        return Ok(respond_with_enriched(
+                        let response_data = respond_with_enriched(
                             enriched,
                             true,
                             params.refresh,
                             crate::common::constants::strategies::CACHE,
-                        ));
+                        );
+                        let resources_resp = json_to_server_resources_resp(response_data);
+                        return Ok(ServerResourcesApiResp::success(resources_resp));
                     }
-                    return Ok(create_inspect_response(
+                    let response_data = create_inspect_response(
                         processed,
                         true,
                         params.refresh,
                         crate::common::constants::strategies::CACHE,
-                    ));
+                    );
+                    let resources_resp = json_to_server_resources_resp(response_data);
+                    return Ok(ServerResourcesApiResp::success(resources_resp));
                 }
             }
         }
@@ -108,7 +188,7 @@ pub async fn list_resources(
     // Runtime fallback: attempt to collect via proxy service across connected instances
     if let Ok(pool) = tokio::time::timeout(
         std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
-        state.connection_pool.lock(),
+        app_state.connection_pool.lock(),
     )
     .await
     {
@@ -160,124 +240,148 @@ pub async fn list_resources(
                 // Persist partial snapshot into Redb
                 let server_data =
                     create_runtime_cache_data(&server_info, Vec::new(), cached_resources, Vec::new(), Vec::new());
-                let _ = state.redb_cache.store_server_data(&server_data).await;
+                let _ = app_state.redb_cache.store_server_data(&server_data).await;
 
                 // Enrich resources with id/unique_name from DB mapping
-                if let Ok(db) = get_database_from_state(&state) {
+                if let Ok(db) = get_database_from_state(app_state) {
                     let enriched =
                         enrich_capability_items(CapabilityKind::Resources, &db.pool, &server_info.server_id, resources)
                             .await;
-                    return Ok(respond_with_enriched(
+                    let response_data = respond_with_enriched(
                         enriched,
                         false,
                         params.refresh,
                         crate::common::constants::strategies::RUNTIME,
-                    ));
+                    );
+                    let resources_resp = json_to_server_resources_resp(response_data);
+                    return Ok(ServerResourcesApiResp::success(resources_resp));
                 }
-                return Ok(create_inspect_response(
+                let response_data = create_inspect_response(
                     resources,
                     false,
                     params.refresh,
                     crate::common::constants::strategies::RUNTIME,
-                ));
+                );
+                let resources_resp = json_to_server_resources_resp(response_data);
+                return Ok(ServerResourcesApiResp::success(resources_resp));
             }
         }
     }
 
     // Force refresh: create temporary instance if refresh=force and no runtime data found
     if let Some(response) = super::capability::create_temporary_instance_for_capability(
-        &state,
+        app_state,
         &server_info,
         &params,
         super::capability::CapabilityType::Resources,
     )
-    .await?
+    .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        return Ok(response);
+        let resources_resp = json_to_server_resources_resp(response);
+        return Ok(ServerResourcesApiResp::success(resources_resp));
     }
 
     // Last resort: return any cached copy ignoring freshness for offline access
-    if let Ok(cached) = state
+    if let Ok(cached) = app_state
         .redb_cache
         .get_server_resources(&server_info.server_id, false)
         .await
     {
         if !cached.is_empty() {
             let processed: Vec<serde_json::Value> = cached.into_iter().map(resource_json_from_cached).collect();
-            if let Ok(db) = get_database_from_state(&state) {
+            if let Ok(db) = get_database_from_state(app_state) {
                 let enriched =
                     enrich_capability_items(CapabilityKind::Resources, &db.pool, &server_info.server_id, processed)
                         .await;
-                return Ok(respond_with_enriched(
+                let response_data = respond_with_enriched(
                     enriched,
                     true,
                     params.refresh,
                     crate::common::constants::strategies::CACHE,
-                ));
+                );
+                let resources_resp = json_to_server_resources_resp(response_data);
+                return Ok(ServerResourcesApiResp::success(resources_resp));
             }
-            return Ok(create_inspect_response(
+            let response_data = create_inspect_response(
                 processed,
                 true,
                 params.refresh,
                 crate::common::constants::strategies::CACHE,
-            ));
+            );
+            let resources_resp = json_to_server_resources_resp(response_data);
+            return Ok(ServerResourcesApiResp::success(resources_resp));
         }
     }
 
     // Fallback empty
-    Ok(create_inspect_response(Vec::new(), false, params.refresh, "none"))
+    let response_data = create_inspect_response(Vec::new(), false, params.refresh, "none");
+    let resources_resp = json_to_server_resources_resp(response_data);
+    Ok(ServerResourcesApiResp::success(resources_resp))
 }
 
-/// List resource templates for a specific server
-///
-/// Strategy order:
-/// 1) Cache-first: query Redb snapshot with freshness policy.
-/// 2) Runtime fallback: aggregate via connected instances (proxy service).
-/// 3) Force refresh (if requested): create a temporary instance to fetch data.
-/// 4) Offline cache: return any cached copy ignoring freshness.
-/// 5) None: return empty.
-///
-/// Supports both `server_name` and `server_id` as identifier.
-#[tracing::instrument(skip(state), level = "debug")]
-pub async fn list_resource_templates(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(query): Query<InspectQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+/// List resource templates for a specific server with standardized signature
+pub async fn server_resource_templates(
+    State(app_state): State<Arc<AppState>>,
+    Query(request): Query<ServerCapabilityReq>,
+) -> Result<Json<ServerResourceTemplatesApiResp>, StatusCode> {
+    let result = server_resource_templates_core(&request, &app_state).await?;
+    Ok(Json(result))
+}
+
+/// Core business logic for listing server resource templates
+#[tracing::instrument(skip(app_state), level = "debug")]
+async fn server_resource_templates_core(
+    request: &ServerCapabilityReq,
+    app_state: &Arc<AppState>,
+) -> Result<ServerResourceTemplatesApiResp, StatusCode> {
+    // Convert request to internal query format
+    let query = super::common::InspectQuery {
+        refresh: request.refresh.as_ref().map(|r| match r {
+            crate::api::models::server::RefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::RefreshStrategy::Force => super::common::RefreshStrategy::Force,
+            crate::api::models::server::RefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
+        }),
+        format: None,
+        include_meta: None,
+        timeout: None,
+    };
+
     // Get database and load server by ID
-    let db = get_database_from_state(&state)?;
-    let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
+    let db = get_database_from_state(app_state).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let server_row = crate::config::server::get_server_by_id(&db.pool, &request.id)
         .await
-        .map_err(db_error)?
-        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     let server_info = super::common::ServerIdentification {
-        server_id: id.clone(),
+        server_id: request.id.clone(),
         server_name: server_row.name.clone(),
     };
 
     // Validate server ID format
-    validate_server_id(&server_info.server_id)?;
+    validate_server_id(&server_info.server_id).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Parse query parameters
-    let params = query.to_params()?;
+    let params = query.to_params().map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Short-circuit only if the server explicitly declares capabilities and lacks resources capability
     if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
         if server_row.capabilities.is_some()
             && !server_row.has_capability(crate::common::capability::CapabilityToken::Resources)
         {
-            return Ok(create_inspect_response(
+            let response_data = create_inspect_response(
                 Vec::new(),
                 false,
                 params.refresh,
                 "capability-resources-unsupported",
-            ));
+            );
+            let templates_resp = json_to_server_resource_templates_resp(response_data);
+            return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
         }
     }
 
     // Try Redb cache first with freshness policy on full snapshot
     let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
-    if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
+    if let Ok(cache_result) = app_state.redb_cache.get_server_data(&cache_query).await {
         if cache_result.cache_hit {
             if let Some(data) = cache_result.data {
                 let processed: Vec<serde_json::Value> = data
@@ -286,7 +390,7 @@ pub async fn list_resource_templates(
                     .map(resource_template_json_from_cached)
                     .collect();
                 if !processed.is_empty() {
-                    if let Ok(db) = get_database_from_state(&state) {
+                    if let Ok(db) = get_database_from_state(app_state) {
                         let enriched = enrich_capability_items(
                             CapabilityKind::ResourceTemplates,
                             &db.pool,
@@ -294,19 +398,23 @@ pub async fn list_resource_templates(
                             processed,
                         )
                         .await;
-                        return Ok(respond_with_enriched(
+                        let response_data = respond_with_enriched(
                             enriched,
                             true,
                             params.refresh,
                             crate::common::constants::strategies::CACHE,
-                        ));
+                        );
+                        let templates_resp = json_to_server_resource_templates_resp(response_data);
+                        return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
                     }
-                    return Ok(create_inspect_response(
+                    let response_data = create_inspect_response(
                         processed,
                         true,
                         params.refresh,
                         crate::common::constants::strategies::CACHE,
-                    ));
+                    );
+                    let templates_resp = json_to_server_resource_templates_resp(response_data);
+                    return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
                 }
             }
         }
@@ -314,7 +422,7 @@ pub async fn list_resource_templates(
     // Runtime fallback aggregation using protocol helper
     if let Ok(pool) = tokio::time::timeout(
         std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
-        state.connection_pool.lock(),
+        app_state.connection_pool.lock(),
     )
     .await
     {
@@ -364,9 +472,9 @@ pub async fn list_resource_templates(
             if !templates.is_empty() {
                 let server_data =
                     create_runtime_cache_data(&server_info, Vec::new(), Vec::new(), Vec::new(), cached_templates);
-                let _ = state.redb_cache.store_server_data(&server_data).await;
+                let _ = app_state.redb_cache.store_server_data(&server_data).await;
 
-                if let Ok(db) = get_database_from_state(&state) {
+                if let Ok(db) = get_database_from_state(app_state) {
                     let enriched = enrich_capability_items(
                         CapabilityKind::ResourceTemplates,
                         &db.pool,
@@ -374,37 +482,42 @@ pub async fn list_resource_templates(
                         templates,
                     )
                     .await;
-                    return Ok(respond_with_enriched(
+                    let response_data = respond_with_enriched(
                         enriched,
                         false,
                         params.refresh,
                         crate::common::constants::strategies::RUNTIME,
-                    ));
+                    );
+                    let templates_resp = json_to_server_resource_templates_resp(response_data);
+                    return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
                 }
-                return Ok(create_inspect_response(
+                let response_data = create_inspect_response(
                     templates,
                     false,
                     params.refresh,
                     crate::common::constants::strategies::RUNTIME,
-                ));
+                );
+                let templates_resp = json_to_server_resource_templates_resp(response_data);
+                return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
             }
         }
     }
 
     // Force refresh: create temporary instance if refresh=force and no runtime data found
     if let Some(response) = super::capability::create_temporary_instance_for_capability(
-        &state,
+        app_state,
         &server_info,
         &params,
         super::capability::CapabilityType::ResourceTemplates,
     )
-    .await?
+    .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        return Ok(response);
+        let templates_resp = json_to_server_resource_templates_resp(response);
+        return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
     }
 
     // Last resort: return any cached copy ignoring freshness
-    if let Ok(cached) = state
+    if let Ok(cached) = app_state
         .redb_cache
         .get_server_resource_templates(&server_info.server_id, false)
         .await
@@ -412,7 +525,7 @@ pub async fn list_resource_templates(
         if !cached.is_empty() {
             let processed: Vec<serde_json::Value> =
                 cached.into_iter().map(resource_template_json_from_cached).collect();
-            if let Ok(db) = get_database_from_state(&state) {
+            if let Ok(db) = get_database_from_state(app_state) {
                 let enriched = enrich_capability_items(
                     CapabilityKind::ResourceTemplates,
                     &db.pool,
@@ -420,26 +533,32 @@ pub async fn list_resource_templates(
                     processed,
                 )
                 .await;
-                return Ok(respond_with_enriched(
+                let response_data = respond_with_enriched(
                     enriched,
                     true,
                     params.refresh,
                     crate::common::constants::strategies::CACHE,
-                ));
+                );
+                let templates_resp = json_to_server_resource_templates_resp(response_data);
+                return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
             }
-            return Ok(create_inspect_response(
+            let response_data = create_inspect_response(
                 processed,
                 true,
                 params.refresh,
                 crate::common::constants::strategies::CACHE,
-            ));
+            );
+            let templates_resp = json_to_server_resource_templates_resp(response_data);
+            return Ok(ServerResourceTemplatesApiResp::success(templates_resp));
         }
     }
 
-    Ok(create_inspect_response(
+    let response_data = create_inspect_response(
         Vec::new(),
         false,
         params.refresh,
         crate::common::constants::strategies::NONE,
-    ))
+    );
+    let templates_resp = json_to_server_resource_templates_resp(response_data);
+    Ok(ServerResourceTemplatesApiResp::success(templates_resp))
 }

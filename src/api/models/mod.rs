@@ -11,7 +11,7 @@ pub mod suits;
 pub mod system;
 
 // Re-export commonly used types for convenience
-pub use resp::{ErrorDetails, ErrorResponse, ResponseConverter, SuccessResponse};
+pub use resp::{ErrorDetails, ErrorResp, ResponseConverter, SuccessResp};
 
 // Common default value functions for serde
 pub fn default_all() -> String {

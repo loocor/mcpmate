@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "System status response")]
-pub struct StatusResponse {
+pub struct StatusResp {
     #[schemars(description = "System status - running, starting, stopping, etc.")]
     pub status: String,
     #[schemars(description = "System uptime in seconds")]
@@ -20,7 +20,7 @@ pub struct StatusResponse {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "System status response")]
-pub struct SystemStatusResponse {
+pub struct SystemStatusResp {
     #[schemars(description = "System version")]
     pub version: String,
     #[schemars(description = "System uptime in seconds")]
@@ -35,7 +35,7 @@ pub struct SystemStatusResponse {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "System metrics response")]
-pub struct SystemMetricsResponse {
+pub struct SystemMetricsResp {
     #[schemars(description = "System uptime in seconds")]
     pub uptime_seconds: u64,
     #[schemars(description = "Current timestamp in ISO 8601 format")]

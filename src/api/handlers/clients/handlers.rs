@@ -7,7 +7,12 @@ use super::database::{
 };
 
 use super::import::import_servers_from_config;
-use crate::api::models::clients::*;
+use crate::api::models::clients::{
+    ClientsCheckReq, ClientConfigReq, ClientConfigUpdateReq,
+    ClientsCheckResp, ClientConfigResp, ClientConfigUpdateResp,
+    ClientsCheckApiResp, ClientConfigApiResp, ClientConfigUpdateApiResp,
+    ConfigMode, SelectedConfig
+};
 use crate::api::routes::AppState;
 
 use crate::config::client::manager::ClientManager;
@@ -34,7 +39,7 @@ macro_rules! get_db_pool {
 pub async fn check(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ClientsCheckReq>,
-) -> Result<Json<ApiResponse<ClientsCheckResp>>, StatusCode> {
+) -> Result<Json<ClientsCheckApiResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
 
     let result = clients_check_core(&request, &db_pool).await?;
@@ -47,7 +52,7 @@ pub async fn check(
 pub async fn details(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ClientConfigReq>,
-) -> Result<Json<ApiResponse<ClientConfigResp>>, StatusCode> {
+) -> Result<Json<ClientConfigApiResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
 
     let result = client_config_details_core(&request, &db_pool).await?;
@@ -60,7 +65,7 @@ pub async fn details(
 pub async fn update(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<ClientConfigUpdateReq>,
-) -> Result<Json<ApiResponse<ClientConfigUpdateResp>>, StatusCode> {
+) -> Result<Json<ClientConfigUpdateApiResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
 
     let result = client_config_update_core(&request, &db_pool).await?;
@@ -74,13 +79,13 @@ pub async fn update(
 async fn clients_check_core(
     request: &ClientsCheckReq,
     db_pool: &sqlx::SqlitePool,
-) -> Result<ApiResponse<ClientsCheckResp>, StatusCode> {
+) -> Result<ClientsCheckApiResp, StatusCode> {
     // Get all client apps from database (not just enabled ones)
     let mut all_clients = match get_all_client_apps(db_pool).await {
         Ok(clients) => clients,
         Err(e) => {
             tracing::error!("Failed to get client apps from database: {e}");
-            return Ok(ApiResponse::error(
+            return Ok(ClientsCheckApiResp::error(
                 "DATABASE_ERROR",
                 &format!("Failed to get client apps: {e}"),
             ));
@@ -159,7 +164,7 @@ async fn clients_check_core(
             Ok(clients) => clients,
             Err(e) => {
                 tracing::error!("Failed to re-fetch client apps after detection: {e}");
-                return Ok(ApiResponse::error(
+                return Ok(ClientsCheckApiResp::error(
                     "DATABASE_ERROR",
                     "Failed to retrieve updated client information",
                 ));
@@ -181,14 +186,14 @@ async fn clients_check_core(
         last_updated: chrono::Utc::now().to_rfc3339(),
     };
 
-    Ok(ApiResponse::success(response))
+    Ok(ClientsCheckApiResp::success(response))
 }
 
 /// Core business logic for client config details operation
 async fn client_config_details_core(
     request: &ClientConfigReq,
     db_pool: &sqlx::SqlitePool,
-) -> Result<ApiResponse<ClientConfigResp>, StatusCode> {
+) -> Result<ClientConfigApiResp, StatusCode> {
     let identifier = &request.identifier;
     let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
 
@@ -250,11 +255,11 @@ async fn client_config_details_core(
                 imported_servers,
             };
 
-            Ok(ApiResponse::success(response))
+            Ok(ClientConfigApiResp::success(response))
         }
         Err(e) => {
             tracing::error!("Failed to get config for {}: {}", identifier, e);
-            Ok(ApiResponse::error(
+            Ok(ClientConfigApiResp::error(
                 "CONFIG_READ_FAILED",
                 &format!("Failed to read configuration: {e}"),
             ))
@@ -266,7 +271,7 @@ async fn client_config_details_core(
 async fn client_config_update_core(
     request: &ClientConfigUpdateReq,
     db_pool: &sqlx::SqlitePool,
-) -> Result<ApiResponse<ClientConfigUpdateResp>, StatusCode> {
+) -> Result<ClientConfigUpdateApiResp, StatusCode> {
     let identifier = &request.identifier;
     let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
 
@@ -318,7 +323,7 @@ async fn client_config_update_core(
         Ok(config) => config,
         Err(e) => {
             tracing::error!("Failed to generate config for {}: {}", identifier, e);
-            return Ok(ApiResponse::error(
+            return Ok(ClientConfigUpdateApiResp::error(
                 "GENERATION_FAILED",
                 &format!("Failed to generate configuration: {}", e),
             ));
@@ -369,7 +374,7 @@ async fn client_config_update_core(
             }
             Err(e) => {
                 tracing::error!("Failed to apply config for {}: {}", identifier, e);
-                return Ok(ApiResponse::error(
+                return Ok(ClientConfigUpdateApiResp::error(
                     "APPLICATION_FAILED",
                     &format!("Failed to apply configuration: {}", e),
                 ));
@@ -377,5 +382,5 @@ async fn client_config_update_core(
         }
     }
 
-    Ok(ApiResponse::success(response))
+    Ok(ClientConfigUpdateApiResp::success(response))
 }

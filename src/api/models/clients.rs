@@ -167,17 +167,6 @@ pub struct ImportedServer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Standard API response wrapper")]
-pub struct ApiResponse<T> {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<T>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "API error structure")]
 pub struct ApiError {
     #[schemars(description = "Error code identifier")]
@@ -188,8 +177,52 @@ pub struct ApiError {
     pub details: Option<serde_json::Value>,
 }
 
-impl<T> ApiResponse<T> {
-    pub fn success(data: T) -> Self {
+// ==========================================
+// SPECIFIC API RESPONSE TYPES
+// ==========================================
+
+/// Response for client check/list operations
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client applications detection response")]
+pub struct ClientsCheckApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<ClientsCheckResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+/// Response for client configuration details operations
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client configuration details response")]
+pub struct ClientConfigApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<ClientConfigResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+/// Response for client configuration update operations
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client configuration update response")]
+pub struct ClientConfigUpdateApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<ClientConfigUpdateResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+// ==========================================
+// RESPONSE IMPLEMENTATION METHODS
+// ==========================================
+
+impl ClientsCheckApiResp {
+    pub fn success(data: ClientsCheckResp) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -197,10 +230,51 @@ impl<T> ApiResponse<T> {
         }
     }
 
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
+    pub fn error(code: &str, message: &str) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code: code.to_string(),
+                message: message.to_string(),
+                details: None,
+            }),
+        }
+    }
+}
+
+impl ClientConfigApiResp {
+    pub fn success(data: ClientConfigResp) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
+    }
+
+    pub fn error(code: &str, message: &str) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code: code.to_string(),
+                message: message.to_string(),
+                details: None,
+            }),
+        }
+    }
+}
+
+impl ClientConfigUpdateApiResp {
+    pub fn success(data: ClientConfigUpdateResp) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
+    }
+
+    pub fn error(code: &str, message: &str) -> Self {
         Self {
             success: false,
             data: None,
@@ -212,11 +286,7 @@ impl<T> ApiResponse<T> {
         }
     }
 
-    pub fn error_with_details(
-        code: &str,
-        message: &str,
-        details: serde_json::Value,
-    ) -> Self {
+    pub fn error_with_details(code: &str, message: &str, details: serde_json::Value) -> Self {
         Self {
             success: false,
             data: None,

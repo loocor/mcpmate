@@ -164,7 +164,7 @@ macro_rules! aide_wrapper_query {
             pub fn [<$handler _docs>](
                 op: aide::transform::TransformOperation
             ) -> aide::transform::TransformOperation {
-                op.description(&format!("{} (WIP)", $description))
+                op.description($description)
                     .tag(stringify!($module))
                     .response::<200, axum::Json<$response_type>>()
                     .response::<400, ()>()
@@ -197,7 +197,7 @@ macro_rules! aide_wrapper_payload {
                 use axum::response::IntoResponse;
                 match $module::$handler(axum::extract::State(state), axum::extract::Json(json)).await {
                     Ok(json_response) => json_response.into_response(),
-                    Err(status_code) => status_code.into_response(),
+                    Err(api_error) => api_error.into_response(),
                 }
             }
 
@@ -215,3 +215,5 @@ macro_rules! aide_wrapper_payload {
         }
     };
 }
+
+

@@ -4,6 +4,7 @@
 
 use std::{fmt, str::FromStr};
 
+use schemars::JsonSchema;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, Visitor},
@@ -34,7 +35,8 @@ pub const TRANSPORT_PRIORITY: &[&str] = &[
 ];
 
 /// Server type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+#[schemars(description = "Server type enum")]
 pub enum ServerType {
     /// Standard input/output server
     Stdio,
@@ -248,9 +250,7 @@ impl FromStr for TransportType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "StreamableHttp" | "streamable_http" | "streamablehttp" => {
-                Ok(TransportType::StreamableHttp)
-            }
+            "StreamableHttp" | "streamable_http" | "streamablehttp" => Ok(TransportType::StreamableHttp),
             "Sse" | "sse" => Ok(TransportType::Sse),
             "Stdio" | "stdio" => Ok(TransportType::Stdio),
             _ => Err(ParseTransportTypeError),
@@ -289,8 +289,7 @@ impl<'de> Visitor<'de> for TransportTypeVisitor {
     where
         E: de::Error,
     {
-        TransportType::from_str(value)
-            .map_err(|_| E::custom(format!("invalid transport type: {value}")))
+        TransportType::from_str(value).map_err(|_| E::custom(format!("invalid transport type: {value}")))
     }
 }
 

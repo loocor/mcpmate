@@ -1,70 +1,122 @@
 // Server tools handlers
 // Provides handlers for server tool inspect endpoints
 
-use axum::{
-    extract::{Path, Query, State},
-    response::Json,
-};
+use axum::{extract::{Query, State}, response::Json, http::StatusCode};
 use std::sync::Arc;
-
-use crate::api::{handlers::ApiError, routes::AppState};
+use crate::api::{models::{server::{ServerCapabilityReq, ServerToolsResp, ServerToolsApiResp, CapabilityMeta}}, routes::AppState};
 use chrono::Utc;
 
-use super::capability::{CapabilityKind, tool_json, tool_json_from_cached};
+use super::capability::{tool_json, tool_json_from_cached};
 use super::common::{
-    InspectQuery, create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id,
+    InspectQuery, create_inspect_response, create_runtime_cache_data, validate_server_id,
 };
 
-/// Convert database error to ApiError
-#[inline]
-fn db_error(e: impl std::fmt::Display) -> ApiError {
-    ApiError::InternalError(format!("Database error: {e}"))
+/// Macro to extract database pool from app state with early return on error
+macro_rules! get_db_pool {
+    ($app_state:expr) => {
+        match &$app_state.database {
+            Some(db) => db.pool.clone(),
+            None => return Err(StatusCode::SERVICE_UNAVAILABLE),
+        }
+    };
+}
+
+/// Helper function to convert Json response to ServerToolsResp
+fn json_to_server_tools_resp(json_response: axum::Json<serde_json::Value>) -> ServerToolsResp {
+    let json_value = json_response.0;
+    
+    // Extract data from the JSON response
+    let data = json_value.get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    
+    let state = json_value.get("state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("ok")
+        .to_string();
+    
+    let meta_value = json_value.get("meta").cloned().unwrap_or_default();
+    let meta = CapabilityMeta {
+        cache_hit: meta_value.get("cache_hit")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        strategy: meta_value.get("strategy")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        source: meta_value.get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    };
+    
+    ServerToolsResp { data, state, meta }
 }
 
 /// List all tools for a specific server
-///
-/// Strategy order:
-/// 1) Cache-first: query Redb snapshot with freshness policy.
-/// 2) Runtime fallback: aggregate via connected instances (proxy service).
-/// 3) Force refresh (if requested): create a temporary instance to fetch data.
-/// 4) Offline cache: return any cached copy ignoring freshness.
-/// 5) None: return empty.
-///
-/// Supports both `server_name` and `server_id` as identifier.
-#[tracing::instrument(skip(state), level = "debug")]
-pub async fn list_tools(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(query): Query<InspectQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    // Get database and load server by ID
-    let db = get_database_from_state(&state)?;
-    let server_row = crate::config::server::get_server_by_id(&db.pool, &id)
+pub async fn server_tools(
+    State(app_state): State<Arc<AppState>>,
+    Query(request): Query<ServerCapabilityReq>,
+) -> Result<Json<ServerToolsApiResp>, StatusCode> {
+    let db_pool = get_db_pool!(app_state);
+    let result = server_tools_core(&request, &db_pool, &app_state).await?;
+    Ok(Json(result))
+}
+
+/// Core business logic for server tools operation
+async fn server_tools_core(
+    request: &ServerCapabilityReq,
+    db_pool: &sqlx::SqlitePool,
+    state: &Arc<AppState>,
+) -> Result<ServerToolsApiResp, StatusCode> {
+    // Convert ServerCapabilityReq to InspectQuery for compatibility with existing logic
+    let query = InspectQuery {
+        refresh: request.refresh.as_ref().map(|r| match r {
+            crate::api::models::server::RefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
+            crate::api::models::server::RefreshStrategy::Force => super::common::RefreshStrategy::Force,
+            crate::api::models::server::RefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
+        }),
+        format: None,
+        include_meta: None,
+        timeout: None,
+    };
+
+    // Get server by ID
+    let server_row = crate::config::server::get_server_by_id(db_pool, &request.id)
         .await
-        .map_err(db_error)?
-        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
+        .map_err(|e| {
+            tracing::error!("Failed to get server: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    
     let server_info = super::common::ServerIdentification {
-        server_id: id.clone(),
+        server_id: request.id.clone(),
         server_name: server_row.name.clone(),
     };
 
     // Validate server ID format
-    validate_server_id(&server_info.server_id)?;
+    validate_server_id(&server_info.server_id).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Parse query parameters
-    let params = query.to_params()?;
+    let params = query.to_params().map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // If the server explicitly declares capabilities and lacks tools, short-circuit
-    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
+    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(db_pool, &server_info.server_name).await {
         if server_row.capabilities.is_some()
             && !server_row.has_capability(crate::common::capability::CapabilityToken::Tools)
         {
-            return Ok(create_inspect_response(
+            let result = create_inspect_response(
                 Vec::new(),
                 false,
                 params.refresh,
                 "capability-tools-unsupported",
-            ));
+            );
+            let tools_resp = json_to_server_tools_resp(result);
+            return Ok(ServerToolsApiResp::success(tools_resp));
         }
     }
 
@@ -77,16 +129,14 @@ pub async fn list_tools(
                 let processed: Vec<serde_json::Value> =
                     data.tools.into_iter().map(|t| tool_json_from_cached(&t)).collect();
                 if !processed.is_empty() {
-                    return super::common::try_enrich_or_fallback(
-                        &state,
-                        CapabilityKind::Tools,
-                        &server_info.server_id,
+                    let result = create_inspect_response(
                         processed,
                         true,
                         params.refresh,
                         crate::common::constants::strategies::CACHE,
-                    )
-                    .await;
+                    );
+                    let tools_resp = json_to_server_tools_resp(result);
+                    return Ok(ServerToolsApiResp::success(tools_resp));
                 }
             }
         }
@@ -135,31 +185,30 @@ pub async fn list_tools(
                     create_runtime_cache_data(&server_info, cached_tools, Vec::new(), Vec::new(), Vec::new());
                 let _ = state.redb_cache.store_server_data(&server_data).await;
 
-                // Enrich tool list with id/unique_name from DB mapping
-                return super::common::try_enrich_or_fallback(
-                    &state,
-                    CapabilityKind::Tools,
-                    &server_info.server_id,
+                let result = create_inspect_response(
                     tools,
                     false,
                     params.refresh,
                     crate::common::constants::strategies::RUNTIME,
-                )
-                .await;
+                );
+                let tools_resp = json_to_server_tools_resp(result);
+                return Ok(ServerToolsApiResp::success(tools_resp));
             }
         }
     }
 
     // Force refresh: create temporary instance if refresh=force and no runtime data found
     if let Some(response) = super::capability::create_temporary_instance_for_capability(
-        &state,
+        state,
         &server_info,
         &params,
         super::capability::CapabilityType::Tools,
     )
-    .await?
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        return Ok(response);
+        let tools_resp = json_to_server_tools_resp(response);
+        return Ok(ServerToolsApiResp::success(tools_resp));
     }
 
     // Last resort: return any cached tools ignoring freshness if available (support offline access)
@@ -167,24 +216,24 @@ pub async fn list_tools(
         if !cached_tools.is_empty() {
             let processed: Vec<serde_json::Value> =
                 cached_tools.into_iter().map(|t| tool_json_from_cached(&t)).collect();
-            return super::common::try_enrich_or_fallback(
-                &state,
-                CapabilityKind::Tools,
-                &server_info.server_id,
+            let result = create_inspect_response(
                 processed,
                 true,
                 params.refresh,
                 crate::common::constants::strategies::CACHE,
-            )
-            .await;
+            );
+            let tools_resp = json_to_server_tools_resp(result);
+            return Ok(ServerToolsApiResp::success(tools_resp));
         }
     }
 
     // No data available
-    Ok(create_inspect_response(
+    let result = create_inspect_response(
         Vec::new(),
         false,
         params.refresh,
         crate::common::constants::strategies::NONE,
-    ))
+    );
+    let tools_resp = json_to_server_tools_resp(result);
+    Ok(ServerToolsApiResp::success(tools_resp))
 }

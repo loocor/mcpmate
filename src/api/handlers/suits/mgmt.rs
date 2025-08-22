@@ -19,7 +19,7 @@ pub async fn activate_suit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<SuitOperationResponse>, ApiError> {
+) -> Result<Json<SuitOperationResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -40,7 +40,7 @@ pub async fn activate_suit(
 
     // Check if the suit is already active
     if suit.is_active {
-        return Ok(Json(SuitOperationResponse {
+        return Ok(Json(SuitOperationResp {
             id: id.clone(),
             name: suit.name.clone(),
             result: "Configuration suit is already active".to_string(),
@@ -89,7 +89,7 @@ pub async fn activate_suit(
     }
 
     // Return success response
-    Ok(Json(SuitOperationResponse {
+    Ok(Json(SuitOperationResp {
         id,
         name: suit.name,
         result: "Successfully activated configuration suit".to_string(),
@@ -107,7 +107,7 @@ pub async fn deactivate_suit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<SuitOperationResponse>, ApiError> {
+) -> Result<Json<SuitOperationResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -128,7 +128,7 @@ pub async fn deactivate_suit(
 
     // Check if the suit is already inactive
     if !suit.is_active {
-        return Ok(Json(SuitOperationResponse {
+        return Ok(Json(SuitOperationResp {
             id: id.clone(),
             name: suit.name.clone(),
             result: "Configuration suit is already inactive".to_string(),
@@ -176,7 +176,7 @@ pub async fn deactivate_suit(
     }
 
     // Return success response
-    Ok(Json(SuitOperationResponse {
+    Ok(Json(SuitOperationResp {
         id,
         name: suit.name,
         result: "Successfully deactivated configuration suit".to_string(),
@@ -192,8 +192,8 @@ pub async fn deactivate_suit(
 /// Batch activate configuration suits
 pub async fn batch_activate_suits(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<BatchOperationRequest>,
-) -> Result<Json<BatchOperationResponse>, ApiError> {
+    Json(payload): Json<BatchOperationReq>,
+) -> Result<Json<BatchOperationResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -250,7 +250,7 @@ pub async fn batch_activate_suits(
     }
 
     // Return response
-    Ok(Json(BatchOperationResponse {
+    Ok(Json(BatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,
@@ -260,8 +260,8 @@ pub async fn batch_activate_suits(
 /// Batch deactivate configuration suits
 pub async fn batch_deactivate_suits(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<BatchOperationRequest>,
-) -> Result<Json<BatchOperationResponse>, ApiError> {
+    Json(payload): Json<BatchOperationReq>,
+) -> Result<Json<BatchOperationResp>, ApiError> {
     // Get database reference
     let db = get_database(&state).await?;
 
@@ -318,7 +318,7 @@ pub async fn batch_deactivate_suits(
     }
 
     // Return response
-    Ok(Json(BatchOperationResponse {
+    Ok(Json(BatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,

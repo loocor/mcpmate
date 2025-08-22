@@ -100,3 +100,94 @@ pub struct RuntimeCacheResetResp {
     #[schemars(description = "Whether cache reset was successful")]
     pub success: bool,
 }
+
+// ==========================================
+// SPECIFIC API RESPONSE TYPES
+// ==========================================
+
+use crate::api::models::clients::ApiError;
+
+/// Response for runtime install operations
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Runtime install API response")]
+pub struct RuntimeInstallApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<RuntimeInstallResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+/// Response for runtime status operations
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Runtime status API response")]
+pub struct RuntimeStatusApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<RuntimeStatusResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+/// Response for runtime cache operations
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Runtime cache API response")]
+pub struct RuntimeCacheApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<RuntimeCacheResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+/// Response for runtime cache reset operations
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Runtime cache reset API response")]
+pub struct RuntimeCacheResetApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<RuntimeCacheResetResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+// Implementation blocks for success and error methods
+impl RuntimeInstallApiResp {
+    pub fn success(data: RuntimeInstallResp) -> Self {
+        Self { success: true, data: Some(data), error: None }
+    }
+    pub fn error(error: ApiError) -> Self {
+        Self { success: false, data: None, error: Some(error) }
+    }
+}
+
+impl RuntimeStatusApiResp {
+    pub fn success(data: RuntimeStatusResp) -> Self {
+        Self { success: true, data: Some(data), error: None }
+    }
+    pub fn error(error: ApiError) -> Self {
+        Self { success: false, data: None, error: Some(error) }
+    }
+}
+
+impl RuntimeCacheApiResp {
+    pub fn success(data: RuntimeCacheResp) -> Self {
+        Self { success: true, data: Some(data), error: None }
+    }
+    pub fn error(error: ApiError) -> Self {
+        Self { success: false, data: None, error: Some(error) }
+    }
+}
+
+impl RuntimeCacheResetApiResp {
+    pub fn success(data: RuntimeCacheResetResp) -> Self {
+        Self { success: true, data: Some(data), error: None }
+    }
+    pub fn error(error: ApiError) -> Self {
+        Self { success: false, data: None, error: Some(error) }
+    }
+}

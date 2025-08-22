@@ -131,3 +131,52 @@ pub struct KeyItem {
     #[schemars(description = "ISO 8601 timestamp when this item was cached")]
     pub cached_at: Option<String>,
 }
+
+// ==========================================
+// SPECIFIC API RESPONSE TYPES
+// ==========================================
+
+use crate::api::models::clients::ApiError;
+
+/// Response for cache details operations
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Cache details API response")]
+pub struct CacheDetailsApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<CacheDetailsResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+/// Response for cache reset operations
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Cache reset API response")]
+pub struct CacheResetApiResp {
+    #[schemars(description = "Whether the operation was successful")]
+    pub success: bool,
+    #[schemars(description = "Response data when successful")]
+    pub data: Option<CacheResetResp>,
+    #[schemars(description = "Error information when failed")]
+    pub error: Option<ApiError>,
+}
+
+// Implementation blocks
+impl CacheDetailsApiResp {
+    pub fn success(data: CacheDetailsResp) -> Self {
+        Self { success: true, data: Some(data), error: None }
+    }
+    pub fn error(error: ApiError) -> Self {
+        Self { success: false, data: None, error: Some(error) }
+    }
+}
+
+impl CacheResetApiResp {
+    pub fn success(data: CacheResetResp) -> Self {
+        Self { success: true, data: Some(data), error: None }
+    }
+    pub fn error(error: ApiError) -> Self {
+        Self { success: false, data: None, error: Some(error) }
+    }
+}

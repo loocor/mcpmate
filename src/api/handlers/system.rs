@@ -7,12 +7,12 @@ use axum::{Json, extract::State};
 
 use super::ApiError;
 use crate::api::{
-    models::system::{StatusResponse, SystemMetricsResponse},
+    models::system::{StatusResp, SystemMetricsResp},
     routes::AppState,
 };
 
 /// Get system status
-pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<StatusResponse>, ApiError> {
+pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<StatusResp>, ApiError> {
     // Get all servers count (including disabled)
     let mut total_servers = 0;
     if let Some(http_proxy) = &state.http_proxy {
@@ -38,7 +38,7 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Statu
         Err(_) => {
             // If we can't get the lock within the timeout, return a partial response
             tracing::warn!("Timed out waiting for connection pool lock in get_status");
-            return Ok(Json(StatusResponse {
+            return Ok(Json(StatusResp {
                 status: "running".to_string(),
                 uptime: get_uptime_seconds(),
                 total_servers,
@@ -58,7 +58,7 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Statu
         .filter(|instances| instances.iter().any(|(_, conn)| conn.is_connected()))
         .count();
 
-    Ok(Json(StatusResponse {
+    Ok(Json(StatusResp {
         status: "running".to_string(),
         uptime: get_uptime_seconds(),
         total_servers,
@@ -67,7 +67,7 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Statu
 }
 
 /// Get system metrics
-pub async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<SystemMetricsResponse>, ApiError> {
+pub async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<SystemMetricsResp>, ApiError> {
     // We'll get metrics directly from sysinfo instead of the metrics collector
 
     // Get connection pool metrics
@@ -149,7 +149,7 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Syst
     // Get configuration application status
     let config_application_status = state.config_application_state.get_current_status().await;
 
-    Ok(Json(SystemMetricsResponse {
+    Ok(Json(SystemMetricsResp {
         uptime_seconds,
         timestamp,
         connected_servers_count,

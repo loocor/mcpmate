@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, State, Query},
 };
 
 use super::ApiError;
 use crate::{
     api::{
-        models::server::{InstanceHealthResponse, OperationResponse, ServerInstanceResponse},
+        models::server::{InstanceHealthResp, OperationResp, InstanceDetailsResp, InstanceDetailsReq, InstanceHealthReq, InstanceManageReq, InstanceAction},
         routes::AppState,
     },
     common::server::ServerType,
@@ -29,11 +29,22 @@ fn get_allowed_operations(conn: &UpstreamConnection) -> Vec<String> {
         .collect()
 }
 
-/// Get a specific instance for a specific MCP server
+/// Get a specific instance for a specific MCP server (updated for query parameters)
+/// 
+/// **Endpoint:** `GET /mcp/servers/instances/details?server={server_id}&instance={instance_id}`
 pub async fn get_instance(
     State(state): State<Arc<AppState>>,
-    Path((name, id)): Path<(String, String)>,
-) -> Result<Json<ServerInstanceResponse>, ApiError> {
+    Query(request): Query<InstanceDetailsReq>,
+) -> Result<Json<InstanceDetailsResp>, ApiError> {
+    get_instance_core(State(state), request.server, request.instance).await
+}
+
+/// Core get instance logic for reuse
+async fn get_instance_core(
+    State(state): State<Arc<AppState>>,
+    name: String,
+    id: String,
+) -> Result<Json<InstanceDetailsResp>, ApiError> {
     // Use a timeout to avoid blocking indefinitely
     let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
 
@@ -73,7 +84,7 @@ pub async fn get_instance(
         last_health_check: Some(chrono::Local::now().to_rfc3339()),
     };
 
-    Ok(Json(ServerInstanceResponse {
+    Ok(Json(InstanceDetailsResp {
         id,
         name,
         status: conn.status_string(),
@@ -82,11 +93,22 @@ pub async fn get_instance(
     }))
 }
 
-/// Check the health of a specific instance
+/// Check the health of a specific instance (updated for query parameters)
+/// 
+/// **Endpoint:** `GET /mcp/servers/instances/health?server={server_id}&instance={instance_id}`
 pub async fn check_health(
     State(state): State<Arc<AppState>>,
-    Path((name, id)): Path<(String, String)>,
-) -> Result<Json<InstanceHealthResponse>, ApiError> {
+    Query(request): Query<InstanceHealthReq>,
+) -> Result<Json<InstanceHealthResp>, ApiError> {
+    check_health_core(State(state), request.server, request.instance).await
+}
+
+/// Core check health logic for reuse
+async fn check_health_core(
+    State(state): State<Arc<AppState>>,
+    name: String,
+    id: String,
+) -> Result<Json<InstanceHealthResp>, ApiError> {
     // Use a timeout to avoid blocking indefinitely
     let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
 
@@ -162,7 +184,7 @@ pub async fn check_health(
         Some((base_score - penalty).max(0.0))
     };
 
-    Ok(Json(InstanceHealthResponse {
+    Ok(Json(InstanceHealthResp {
         id,
         name,
         healthy,
@@ -174,11 +196,54 @@ pub async fn check_health(
     }))
 }
 
-/// Disconnect an instance
+/// Unified instance management function that handles all instance operations
+/// based on the action specified in the request payload
+/// 
+/// **Endpoint:** `POST /mcp/servers/instances/manage`
+#[tracing::instrument(skip(state), level = "debug")]
+pub async fn manage_instance(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<InstanceManageReq>,
+) -> Result<Json<OperationResp>, ApiError> {
+    let name = request.server.clone();
+    let id = request.instance.clone();
+    
+    match request.action {
+        InstanceAction::Disconnect => {
+            disconnect_core(State(state), name, id).await
+        }
+        InstanceAction::ForceDisconnect => {
+            force_disconnect_core(State(state), name, id).await
+        }
+        InstanceAction::Reconnect => {
+            reconnect_core(State(state), name, id).await
+        }
+        InstanceAction::ResetReconnect => {
+            reset_reconnect_core(State(state), name, id).await
+        }
+        InstanceAction::Recover => {
+            recover_instance_core(State(state), name, id).await
+        }
+        InstanceAction::Cancel => {
+            cancel_core(State(state), name, id).await
+        }
+    }
+}
+
+/// Disconnect an instance (legacy function for backwards compatibility)
 pub async fn disconnect(
     State(state): State<Arc<AppState>>,
     Path((name, id)): Path<(String, String)>,
-) -> Result<Json<OperationResponse>, ApiError> {
+) -> Result<Json<OperationResp>, ApiError> {
+    disconnect_core(State(state), name, id).await
+}
+
+/// Core disconnect logic for reuse
+async fn disconnect_core(
+    State(state): State<Arc<AppState>>,
+    name: String,
+    id: String,
+) -> Result<Json<OperationResp>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
     // Use regular disconnect operation
@@ -190,7 +255,7 @@ pub async fn disconnect(
             // Get the updated instance
             let conn = pool.get_instance(&name, &id)?;
 
-            Ok(Json(OperationResponse {
+            Ok(Json(OperationResp {
                 id,
                 name,
                 result: "Successfully disconnected instance".to_string(),
@@ -202,11 +267,20 @@ pub async fn disconnect(
     }
 }
 
-/// Force disconnect an instance
+/// Force disconnect an instance (legacy function for backwards compatibility)
 pub async fn force_disconnect(
     State(state): State<Arc<AppState>>,
     Path((name, id)): Path<(String, String)>,
-) -> Result<Json<OperationResponse>, ApiError> {
+) -> Result<Json<OperationResp>, ApiError> {
+    force_disconnect_core(State(state), name, id).await
+}
+
+/// Core force disconnect logic for reuse
+async fn force_disconnect_core(
+    State(state): State<Arc<AppState>>,
+    name: String,
+    id: String,
+) -> Result<Json<OperationResp>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
     // Perform the operation
@@ -215,7 +289,7 @@ pub async fn force_disconnect(
             // Get the updated instance
             let conn = pool.get_instance(&name, &id)?;
 
-            Ok(Json(OperationResponse {
+            Ok(Json(OperationResp {
                 id,
                 name,
                 result: "Successfully force disconnected instance".to_string(),
@@ -229,11 +303,20 @@ pub async fn force_disconnect(
     }
 }
 
-/// Reconnect an instance
+/// Reconnect an instance (legacy function for backwards compatibility)
 pub async fn reconnect(
     State(state): State<Arc<AppState>>,
     Path((name, id)): Path<(String, String)>,
-) -> Result<Json<OperationResponse>, ApiError> {
+) -> Result<Json<OperationResp>, ApiError> {
+    reconnect_core(State(state), name, id).await
+}
+
+/// Core reconnect logic for reuse
+async fn reconnect_core(
+    State(state): State<Arc<AppState>>,
+    name: String,
+    id: String,
+) -> Result<Json<OperationResp>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
     // Use regular reconnect operation
@@ -245,7 +328,7 @@ pub async fn reconnect(
             // Get the updated instance
             let conn = pool.get_instance(&name, &id)?;
 
-            Ok(Json(OperationResponse {
+            Ok(Json(OperationResp {
                 id,
                 name,
                 result: "Successfully reconnected instance".to_string(),
@@ -257,11 +340,20 @@ pub async fn reconnect(
     }
 }
 
-/// Reset and reconnect an instance
+/// Reset and reconnect an instance (legacy function for backwards compatibility)
 pub async fn reset_reconnect(
     State(state): State<Arc<AppState>>,
     Path((name, id)): Path<(String, String)>,
-) -> Result<Json<OperationResponse>, ApiError> {
+) -> Result<Json<OperationResp>, ApiError> {
+    reset_reconnect_core(State(state), name, id).await
+}
+
+/// Core reset reconnect logic for reuse
+async fn reset_reconnect_core(
+    State(state): State<Arc<AppState>>,
+    name: String,
+    id: String,
+) -> Result<Json<OperationResp>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
     // Perform the operation
@@ -270,7 +362,7 @@ pub async fn reset_reconnect(
             // Get the updated instance
             let conn = pool.get_instance(&name, &id)?;
 
-            Ok(Json(OperationResponse {
+            Ok(Json(OperationResp {
                 id,
                 name,
                 result: "Successfully reset and reconnected instance".to_string(),
@@ -284,11 +376,20 @@ pub async fn reset_reconnect(
     }
 }
 
-/// Manually recover a disabled instance
+/// Manually recover a disabled instance (legacy function for backwards compatibility)
 pub async fn recover_instance(
     State(state): State<Arc<AppState>>,
     Path((name, id)): Path<(String, String)>,
-) -> Result<Json<OperationResponse>, ApiError> {
+) -> Result<Json<OperationResp>, ApiError> {
+    recover_instance_core(State(state), name, id).await
+}
+
+/// Core recover instance logic for reuse
+async fn recover_instance_core(
+    State(state): State<Arc<AppState>>,
+    name: String,
+    id: String,
+) -> Result<Json<OperationResp>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
     // Get the instance
@@ -314,7 +415,7 @@ pub async fn recover_instance(
             // Get the updated instance
             let conn = pool.get_instance(&name, &id)?;
 
-            Ok(Json(OperationResponse {
+            Ok(Json(OperationResp {
                 id,
                 name,
                 result: "Successfully recovered disabled instance".to_string(),
@@ -326,11 +427,20 @@ pub async fn recover_instance(
     }
 }
 
-/// Cancel an initializing instance
+/// Cancel an initializing instance (legacy function for backwards compatibility)
 pub async fn cancel(
     State(state): State<Arc<AppState>>,
     Path((name, id)): Path<(String, String)>,
-) -> Result<Json<OperationResponse>, ApiError> {
+) -> Result<Json<OperationResp>, ApiError> {
+    cancel_core(State(state), name, id).await
+}
+
+/// Core cancel logic for reuse
+async fn cancel_core(
+    State(state): State<Arc<AppState>>,
+    name: String,
+    id: String,
+) -> Result<Json<OperationResp>, ApiError> {
     let mut pool = state.connection_pool.lock().await;
 
     // Perform the operation
@@ -339,7 +449,7 @@ pub async fn cancel(
             // Get the updated instance
             let conn = pool.get_instance(&name, &id)?;
 
-            Ok(Json(OperationResponse {
+            Ok(Json(OperationResp {
                 id,
                 name,
                 result: "Successfully cancelled instance initialization".to_string(),

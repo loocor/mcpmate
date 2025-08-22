@@ -3,14 +3,14 @@ pub struct ResponseConverter;
 
 /// Generic success response
 #[derive(serde::Serialize)]
-pub struct SuccessResponse {
+pub struct SuccessResp {
     /// Success message
     pub message: String,
 }
 
 /// Generic error response
 #[derive(serde::Serialize)]
-pub struct ErrorResponse {
+pub struct ErrorResp {
     /// Error details
     pub error: ErrorDetails,
 }
@@ -28,7 +28,7 @@ impl ResponseConverter {
     /// Convert ConfigSuit to ConfigSuitResponse with consistent logic
     pub fn suit_to_response(
         suit: &crate::config::models::ConfigSuit
-    ) -> crate::api::models::suits::ConfigSuitResponse {
+    ) -> crate::api::models::suits::ConfigSuitResp {
         let mut allowed_operations = Vec::new();
 
         // Add allowed operations based on current state
@@ -42,7 +42,7 @@ impl ResponseConverter {
         allowed_operations.push("update".to_string());
         allowed_operations.push("delete".to_string());
 
-        crate::api::models::suits::ConfigSuitResponse {
+        crate::api::models::suits::ConfigSuitResp {
             id: suit.id.clone().unwrap_or_default(),
             name: suit.name.clone(),
             description: suit.description.clone(),
@@ -59,7 +59,7 @@ impl ResponseConverter {
     pub fn server_to_suit_response(
         server: &crate::config::models::Server,
         enabled: bool,
-    ) -> crate::api::models::suits::ConfigSuitServerResponse {
+    ) -> crate::api::models::suits::ConfigSuitServerResp {
         let mut allowed_operations = Vec::new();
         if enabled {
             allowed_operations.push("disable".to_string());
@@ -67,7 +67,7 @@ impl ResponseConverter {
             allowed_operations.push("enable".to_string());
         }
 
-        crate::api::models::suits::ConfigSuitServerResponse {
+        crate::api::models::suits::ConfigSuitServerResp {
             id: server.id.clone().unwrap_or_default(),
             name: server.name.clone(),
             enabled,
@@ -84,8 +84,8 @@ impl ResponseConverter {
     pub fn create_error_response(
         message: &str,
         status: u16,
-    ) -> ErrorResponse {
-        ErrorResponse {
+    ) -> ErrorResp {
+        ErrorResp {
             error: ErrorDetails {
                 message: message.to_string(),
                 status,

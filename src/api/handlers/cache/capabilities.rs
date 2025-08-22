@@ -9,8 +9,9 @@ use axum::{
 
 use crate::api::models::cache::{
     CacheDetailsResp, CacheResetResp, DetailsQuery, KeyItem, MetricsStats, StorageStats, TablesCount, ViewType,
+    CacheDetailsApiResp, CacheResetApiResp,
 };
-use crate::api::models::clients::ApiResponse;
+
 use crate::api::routes::AppState;
 
 const DEFAULT_LIMIT: usize = 50;
@@ -19,12 +20,12 @@ const MAX_LIMIT: usize = 1000;
 pub async fn details(
     State(state): State<Arc<AppState>>,
     Query(query): Query<DetailsQuery>,
-) -> Result<Json<ApiResponse<CacheDetailsResp>>, StatusCode> {
+) -> Result<Json<CacheDetailsApiResp>, StatusCode> {
     let result = cache_details_core(&query, &state).await?;
     Ok(Json(result))
 }
 
-pub async fn reset(State(state): State<Arc<AppState>>) -> Result<Json<ApiResponse<CacheResetResp>>, StatusCode> {
+pub async fn reset(State(state): State<Arc<AppState>>) -> Result<Json<CacheResetApiResp>, StatusCode> {
     let result = cache_reset_core(&state).await?;
     Ok(Json(result))
 }
@@ -34,7 +35,7 @@ pub async fn reset(State(state): State<Arc<AppState>>) -> Result<Json<ApiRespons
 async fn cache_details_core(
     query: &DetailsQuery,
     state: &Arc<AppState>,
-) -> Result<ApiResponse<CacheDetailsResp>, StatusCode> {
+) -> Result<CacheDetailsApiResp, StatusCode> {
     match query.view {
         ViewType::Keys => {
             let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
@@ -67,7 +68,7 @@ async fn cache_details_core(
                 generated_at: None,
             };
 
-            Ok(ApiResponse::success(response))
+            Ok(CacheDetailsApiResp::success(response))
         }
         ViewType::Stats => {
             let stats = state.redb_cache.get_stats().await;
@@ -109,12 +110,12 @@ async fn cache_details_core(
                 generated_at: Some(stats.last_updated.to_rfc3339()),
             };
 
-            Ok(ApiResponse::success(response))
+            Ok(CacheDetailsApiResp::success(response))
         }
     }
 }
 
-async fn cache_reset_core(state: &Arc<AppState>) -> Result<ApiResponse<CacheResetResp>, StatusCode> {
+async fn cache_reset_core(state: &Arc<AppState>) -> Result<CacheResetApiResp, StatusCode> {
     state.redb_cache.clear_all().await.map_err(|e| {
         tracing::error!("Failed to clear cache: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -125,5 +126,5 @@ async fn cache_reset_core(state: &Arc<AppState>) -> Result<ApiResponse<CacheRese
         message: Some("Cache cleared successfully".to_string()),
     };
 
-    Ok(ApiResponse::success(response))
+    Ok(CacheResetApiResp::success(response))
 }

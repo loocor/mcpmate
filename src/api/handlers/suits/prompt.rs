@@ -8,7 +8,7 @@ use super::helpers::get_suit_or_error;
 pub async fn list_prompts(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-) -> Result<Json<ConfigSuitPromptsResponse>, ApiError> {
+) -> Result<Json<ConfigSuitPromptsResp>, ApiError> {
     let db = state
         .database
         .as_ref()
@@ -23,9 +23,9 @@ pub async fn list_prompts(
         .map_err(|e| ApiError::InternalError(format!("Failed to get prompts: {e}")))?;
 
     // Convert to response format
-    let prompt_responses: Vec<ConfigSuitPromptResponse> = prompts
+    let prompt_responses: Vec<ConfigSuitPromptResp> = prompts
         .into_iter()
-        .map(|prompt| ConfigSuitPromptResponse {
+        .map(|prompt| ConfigSuitPromptResp {
             id: prompt.id.unwrap_or_default(),
             server_id: prompt.server_id,
             server_name: prompt.server_name,
@@ -35,7 +35,7 @@ pub async fn list_prompts(
         })
         .collect();
 
-    Ok(Json(ConfigSuitPromptsResponse {
+    Ok(Json(ConfigSuitPromptsResp {
         suit_id: suit_id.clone(),
         suit_name: suit.name,
         prompts: prompt_responses,
@@ -46,7 +46,7 @@ pub async fn list_prompts(
 pub async fn enable_prompt(
     State(state): State<Arc<AppState>>,
     Path((suit_id, prompt_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationResponse>, ApiError> {
+) -> Result<Json<SuitOperationResp>, ApiError> {
     let db = state
         .database
         .as_ref()
@@ -60,7 +60,7 @@ pub async fn enable_prompt(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to enable prompt: {e}")))?;
 
-    Ok(Json(SuitOperationResponse {
+    Ok(Json(SuitOperationResp {
         id: prompt_id.clone(),
         name: format!("Prompt {}", prompt_id),
         result: "enabled".to_string(),
@@ -73,7 +73,7 @@ pub async fn enable_prompt(
 pub async fn disable_prompt(
     State(state): State<Arc<AppState>>,
     Path((suit_id, prompt_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationResponse>, ApiError> {
+) -> Result<Json<SuitOperationResp>, ApiError> {
     let db = state
         .database
         .as_ref()
@@ -87,7 +87,7 @@ pub async fn disable_prompt(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to disable prompt: {e}")))?;
 
-    Ok(Json(SuitOperationResponse {
+    Ok(Json(SuitOperationResp {
         id: prompt_id.clone(),
         name: format!("Prompt {}", prompt_id),
         result: "disabled".to_string(),
@@ -100,8 +100,8 @@ pub async fn disable_prompt(
 pub async fn batch_enable_prompts(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-    Json(request): Json<BatchOperationRequest>,
-) -> Result<Json<BatchOperationResponse>, ApiError> {
+    Json(request): Json<BatchOperationReq>,
+) -> Result<Json<BatchOperationResp>, ApiError> {
     let db = state
         .database
         .as_ref()
@@ -124,7 +124,7 @@ pub async fn batch_enable_prompts(
         }
     }
 
-    Ok(Json(BatchOperationResponse {
+    Ok(Json(BatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,
@@ -135,8 +135,8 @@ pub async fn batch_enable_prompts(
 pub async fn batch_disable_prompts(
     State(state): State<Arc<AppState>>,
     Path(suit_id): Path<String>,
-    Json(request): Json<BatchOperationRequest>,
-) -> Result<Json<BatchOperationResponse>, ApiError> {
+    Json(request): Json<BatchOperationReq>,
+) -> Result<Json<BatchOperationResp>, ApiError> {
     let db = state
         .database
         .as_ref()
@@ -159,7 +159,7 @@ pub async fn batch_disable_prompts(
         }
     }
 
-    Ok(Json(BatchOperationResponse {
+    Ok(Json(BatchOperationResp {
         success_count: successful_ids.len(),
         successful_ids,
         failed_ids,
