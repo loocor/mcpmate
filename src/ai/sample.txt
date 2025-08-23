@@ -1,0 +1,16 @@
+Method 2: Manual Configuration
+If you prefer manual setup, add this to your IDE's MCP config file:
+
+{
+  "mcpServers": {
+    "@21st-dev/magic": {
+      "command": "npx",
+      "args": ["-y", "@21st-dev/magic@latest", "API_KEY=\"your-api-key\""]
+    }
+  }
+}
+Config file locations:
+
+Cursor: ~/.cursor/mcp.json
+Windsurf: ~/.codeium/windsurf/mcp_config.json
+Cline: ~/.cline/mcp_config.json

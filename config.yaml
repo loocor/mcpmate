@@ -1,0 +1,69 @@
+# Claude Code Companion 默认配置文件
+# 这是自动生成的默认配置文件，请根据需要修改各项配置
+# 注意：endpoints 中的示例端点默认为禁用状态，需要配置正确的 API 密钥并启用
+
+server:
+    host: 127.0.0.1
+    port: 8080
+endpoints:
+    - name: example-anthropic
+      url: https://api.anthropic.com
+      endpoint_type: anthropic
+      auth_type: api_key
+      auth_value: YOUR_ANTHROPIC_API_KEY_HERE
+      enabled: false
+      priority: 1
+      tags: []
+    - name: example-openai
+      url: https://api.openai.com
+      endpoint_type: openai
+      path_prefix: /v1/chat/completions
+      auth_type: auth_token
+      auth_value: YOUR_OPENAI_API_KEY_HERE
+      enabled: false
+      priority: 2
+      tags: []
+    - name: example-anthropic-oauth
+      url: https://api.anthropic.com
+      endpoint_type: anthropic
+      auth_type: oauth
+      auth_value: ""
+      enabled: false
+      priority: 3
+      tags: []
+      oauth_config:
+        access_token: sk-ant-oat01-YOUR_ACCESS_TOKEN_HERE
+        refresh_token: sk-ant-ort01-YOUR_REFRESH_TOKEN_HERE
+        expires_at: 1724924000000
+        token_url: https://console.anthropic.com/v1/oauth/token
+        client_id: 9d1c250a-e61b-44d9-88ed-5944d1962f5e
+        scopes:
+            - user:inference
+            - user:profile
+        auto_refresh: true
+logging:
+    level: info
+    log_request_types: failed
+    log_request_body: truncated
+    log_response_body: truncated
+    log_directory: ./logs
+validation:
+    python_json_fixing:
+        enabled: false
+        target_tools: []
+        debug_logging: false
+        max_attempts: 0
+tagging:
+    pipeline_timeout: 5s
+    taggers: []
+timeouts:
+    tls_handshake: 10s
+    response_header: 60s
+    idle_connection: 90s
+    health_check_timeout: 30s
+    check_interval: 30s
+    recovery_threshold: 0
+i18n:
+    enabled: false
+    default_language: ""
+    locales_path: ""

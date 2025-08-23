@@ -1,0 +1,9 @@
+Validate that the following JSON is a proper MCP server configuration:
+
+REQUIREMENTS:
+1. Must have "mcpServers" as root key
+2. Each server must have "command" field
+3. "args" field is optional but must be array if present
+4. No extra fields outside MCP specification
+
+Return "VALID" if correct, or describe the issue if invalid.
