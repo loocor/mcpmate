@@ -38,6 +38,9 @@ pub mod suit;
 // cache system - high-performance Redb-based caching
 pub mod cache;
 
+// AI system - for MCP configuration extraction
+pub mod ai;
+
 // proxy core business logic - depends on protocol layer
 pub use proxy::{Args as ProxyArgs, ProxyServer};
 
@@ -85,3 +88,6 @@ pub use protocol::{
     validate_prompt_name,
     validate_resource_uri,
 };
+
+// AI module re-exports
+pub use ai::{AiConfig, TextMcpExtractor, extract_mcp_config, default_model_path};

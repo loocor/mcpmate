@@ -1,6 +1,7 @@
 // MCP Proxy API routes module
 // Contains route definitions for the API server
 
+pub mod ai;
 pub mod board;
 pub mod cache;
 pub mod clients;
@@ -115,6 +116,7 @@ fn create_router_internal(
 
     // Create API router with aide support
     let api_router = ApiRouter::new()
+        .merge(ai::routes(state.clone()))
         .merge(server::routes(state.clone()))
         .merge(system::routes(state.clone()))
         .merge(cache::routes(state.clone()))

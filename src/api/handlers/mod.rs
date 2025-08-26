@@ -1,6 +1,7 @@
 // MCP Proxy API handlers module
 // Contains handler functions for API endpoints
 
+pub mod ai;
 pub mod clients;
 pub mod instance;
 pub mod notifs;

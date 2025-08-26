@@ -106,6 +106,13 @@ aide = { version = "0.15", features = [
 schemars = { version = "0.9", features = ["chrono04", "derive"] }
 paste = "1.0"
 
+# AI module dependencies
+candle-core = { version = "0.8", features = ["metal"] }
+candle-transformers = { version = "0.8", features = ["metal"] }
+candle-nn = { version = "0.8", features = ["metal"] }
+tokenizers = "0.15"
+hf-hub = "0.3"
+
 # Build Targets
 [[bin]]
 name = "bridge"
