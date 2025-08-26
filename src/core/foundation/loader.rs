@@ -77,7 +77,10 @@ pub async fn load_servers_from_active_suits(
                 transport_type: server.transport_type,
             };
 
-            mcp_servers.insert(server.name, server_config);
+            // Use server_id as key instead of server_name
+            if let Some(server_id) = &server.id {
+                mcp_servers.insert(server_id.clone(), server_config);
+            }
         }
     }
 
@@ -193,8 +196,10 @@ pub async fn load_server_config_with_params(
             transport_type,
         };
 
-        // Add to config
-        config.mcp_servers.insert(server.name, server_config);
+        // Add to config using server_id as key
+        if let Some(server_id) = &server.id {
+            config.mcp_servers.insert(server_id.clone(), server_config);
+        }
     }
 
     tracing::info!(

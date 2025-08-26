@@ -42,11 +42,11 @@ pub use sync::ServerSyncManager;
 /// by dedicated managers (PoolConfigManager and ServerSyncManager).
 #[derive(Debug, Clone)]
 pub struct UpstreamConnectionPool {
-    /// Map of server name to map of instance ID to connection
+    /// Map of server ID to map of instance ID to connection
     pub connections: HashMap<String, HashMap<String, UpstreamConnection>>,
-    /// Exploration sessions: session_id -> map of server_name to connection (minimal skeleton)
+    /// Exploration sessions: session_id -> map of server_id to connection (minimal skeleton)
     pub exploration_sessions: HashMap<String, HashMap<String, UpstreamConnection>>,
-    /// Validation sessions: session_id -> map of server_name to connection (minimal skeleton)
+    /// Validation sessions: session_id -> map of server_id to connection (minimal skeleton)
     pub validation_sessions: HashMap<String, HashMap<String, UpstreamConnection>>,
     /// Exploration session expirations
     pub exploration_expirations: HashMap<String, std::time::Instant>,
@@ -54,7 +54,7 @@ pub struct UpstreamConnectionPool {
     pub validation_expirations: HashMap<String, std::time::Instant>,
     /// Server configuration
     pub config: Arc<Config>,
-    /// Map of server name to map of instance ID to cancellation token
+    /// Map of server ID to map of instance ID to cancellation token
     pub cancellation_tokens: HashMap<String, HashMap<String, CancellationToken>>,
     /// Process monitor for tracking resource usage
     pub process_monitor: Option<Arc<ProcessMonitor>>,

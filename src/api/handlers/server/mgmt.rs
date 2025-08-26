@@ -136,7 +136,7 @@ async fn enable_server_core(
     }
 
     // Handle connection setup
-    handle_server_connection_setup(&state, &server_name).await
+    handle_server_connection_setup(&state, &server_id).await
 }
 
 /// Disable a server by setting its global availability to disabled
@@ -169,7 +169,7 @@ async fn disable_server_core(
     handle_server_sync(&state, &query).await?;
 
     // Handle connection pool operations
-    handle_connection_pool_disable(&state, &server_name).await
+    handle_connection_pool_disable(&state, &server_id).await
 }
 
 /// Helper function to get server info by ID with early return on error
@@ -243,18 +243,18 @@ async fn handle_server_sync(
 #[inline]
 async fn handle_server_connection_setup(
     state: &Arc<AppState>,
-    server_name: &str,
+    server_id: &str,
 ) -> Result<Json<ServerOperationData>, ApiError> {
     let mut pool = common::get_connection_pool_with_timeout(state).await?;
 
-    match pool.update_server_status(server_name, true).await {
+    match pool.update_server_status(server_id, true).await {
         Ok(()) => {
             let instance_id = pool
-                .get_default_instance_id(server_name)
+                .get_default_instance_id(server_id)
                 .unwrap_or_else(|_| "default".to_string());
             create_operation_response(
                 instance_id,
-                server_name.to_string(),
+                server_id.to_string(),
                 "Successfully enabled server with new connection".to_string(),
                 "Enabled".to_string(),
                 true,
@@ -263,15 +263,15 @@ async fn handle_server_connection_setup(
         Err(e) => {
             tracing::warn!(
                 "Failed to start server '{}' after enabling globally: {}",
-                server_name,
+                server_id,
                 e
             );
             let instance_id = pool
-                .get_default_instance_id(server_name)
+                .get_default_instance_id(server_id)
                 .unwrap_or_else(|_| "default".to_string());
             create_operation_response(
                 instance_id,
-                server_name.to_string(),
+                server_id.to_string(),
                 format!("Server enabled in configuration but connection failed: {}", e),
                 "Enabled (Connection Failed)".to_string(),
                 true,
@@ -284,7 +284,7 @@ async fn handle_server_connection_setup(
 #[inline]
 async fn handle_connection_pool_disable(
     state: &Arc<AppState>,
-    server_name: &str,
+    server_id: &str,
 ) -> Result<Json<ServerOperationData>, ApiError> {
     // Handle connection pool timeout (early return)
     let pool_result = tokio::time::timeout(
@@ -298,7 +298,7 @@ async fn handle_connection_pool_disable(
         Err(_) => {
             return create_operation_response(
                 "all".to_string(),
-                server_name.to_string(),
+                server_id.to_string(),
                 "Server disabled in configuration (connection pool unavailable)".to_string(),
                 "Disabled".to_string(),
                 false,
@@ -307,10 +307,10 @@ async fn handle_connection_pool_disable(
     };
 
     // Early return if server not in connection pool
-    if !pool.connections.contains_key(server_name) {
+    if !pool.connections.contains_key(server_id) {
         return create_operation_response(
             "all".to_string(),
-            server_name.to_string(),
+            server_id.to_string(),
             "Server already disabled (not in connection pool)".to_string(),
             "Disabled".to_string(),
             false,
@@ -318,11 +318,11 @@ async fn handle_connection_pool_disable(
     }
 
     // Early return if no instances
-    let instance_ids: Vec<String> = pool.connections.get(server_name).unwrap().keys().cloned().collect();
+    let instance_ids: Vec<String> = pool.connections.get(server_id).unwrap().keys().cloned().collect();
     if instance_ids.is_empty() {
         return create_operation_response(
             "all".to_string(),
-            server_name.to_string(),
+            server_id.to_string(),
             "Server already disabled (no instances)".to_string(),
             "Disabled".to_string(),
             false,
@@ -330,11 +330,11 @@ async fn handle_connection_pool_disable(
     }
 
     // Disconnect instances and clean up
-    let (success_count, total_count) = disconnect_server_instances(&mut pool, server_name, &instance_ids).await;
+    let (success_count, total_count) = disconnect_server_instances(&mut pool, server_id, &instance_ids).await;
 
     // Remove server from pool to enforce global disable
-    pool.connections.remove(server_name);
-    pool.cancellation_tokens.remove(server_name);
+    pool.connections.remove(server_id);
+    pool.cancellation_tokens.remove(server_id);
 
     let status = if success_count == total_count {
         "Disabled"
@@ -344,7 +344,7 @@ async fn handle_connection_pool_disable(
 
     create_operation_response(
         "all".to_string(),
-        server_name.to_string(),
+        server_id.to_string(),
         format!("Successfully disabled server ({success_count} of {total_count} instances disconnected)"),
         status.to_string(),
         false,
@@ -355,26 +355,26 @@ async fn handle_connection_pool_disable(
 #[inline]
 async fn disconnect_server_instances(
     pool: &mut tokio::sync::MutexGuard<'_, crate::core::pool::UpstreamConnectionPool>,
-    server_name: &str,
+    server_id: &str,
     instance_ids: &[String],
 ) -> (usize, usize) {
     let total_count = instance_ids.len();
     let mut success_count = 0;
 
     for instance_id in instance_ids {
-        match pool.disconnect(server_name, instance_id).await {
+        match pool.disconnect(server_id, instance_id).await {
             Ok(()) => {
                 success_count += 1;
                 tracing::info!(
                     "Successfully disconnected server '{}' instance '{}'",
-                    server_name,
+                    server_id,
                     instance_id
                 );
             }
             Err(e) => {
                 tracing::error!(
                     "Failed to disconnect server '{}' instance '{}': {}",
-                    server_name,
+                    server_id,
                     instance_id,
                     e
                 );

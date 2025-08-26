@@ -156,7 +156,7 @@ pub async fn get_complete_server_details(
         .unwrap_or(false);
 
     // Get instance information from connection pool
-    details.instances = get_server_instances(state, server_name).await;
+    details.instances = get_server_instances(state, server_id).await;
 
     details
 }
@@ -167,20 +167,20 @@ pub async fn get_complete_server_details(
 /// that was duplicated across multiple handlers.
 pub async fn get_server_instances(
     state: &Arc<AppState>,
-    server_name: &str,
+    server_id: &str,
 ) -> Vec<InstanceSummary> {
     let pool = match get_connection_pool_with_timeout(state).await {
         Ok(pool) => pool,
         Err(_) => {
             tracing::warn!(
                 "Timed out waiting for connection pool lock for server '{}'",
-                server_name
+                server_id
             );
             return Vec::new();
         }
     };
 
-    let instances = match pool.connections.get(server_name) {
+    let instances = match pool.connections.get(server_id) {
         Some(instances) => instances,
         None => return Vec::new(),
     };

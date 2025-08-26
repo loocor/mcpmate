@@ -191,7 +191,7 @@ async fn instance_list_core(
             .ok_or(StatusCode::NOT_FOUND)?;
 
         let name = server.name;
-        let instance_summaries = common::get_server_instances(state, &name).await;
+        let instance_summaries = common::get_server_instances(state, server_id).await;
 
         Ok(InstanceListResp::success(InstanceListData {
             name,

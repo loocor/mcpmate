@@ -34,14 +34,14 @@ impl UpstreamConnectionPool {
     /// The actual reconnection happens asynchronously after the backoff period.
     pub async fn reconnect(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
         // First disconnect
-        self.disconnect(server_name, instance_id).await?;
+        self.disconnect(server_id, instance_id).await?;
 
         // Get connection for backoff calculation
-        let conn = self.get_instance(server_name, instance_id)?;
+        let conn = self.get_instance(server_id, instance_id)?;
 
         // Calculate backoff time using exponential backoff with longer delays for better fault isolation
         // MAX 300 seconds (5 minutes), exponential up to 2^8=256 seconds
@@ -49,7 +49,7 @@ impl UpstreamConnectionPool {
 
         tracing::info!(
             "Scheduling reconnection to '{}' instance '{}' in {}s (non-blocking)",
-            server_name,
+            server_id,
             instance_id,
             backoff
         );
@@ -58,23 +58,23 @@ impl UpstreamConnectionPool {
         // TODO: Implement proper Arc-based async scheduling
         tracing::warn!(
             "Using immediate reconnect to bypass Weak reference bug for '{}' instance '{}'",
-            server_name,
+            server_id,
             instance_id
         );
 
         // Immediate reconnect instead of async scheduling
-        self.trigger_connect(server_name, instance_id).await
+        self.trigger_connect(server_id, instance_id).await
     }
 
     /// Disconnect from a specific instance of a server with improved resource cleanup
     pub async fn disconnect(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
         tracing::info!(
             "disconnect() called for '{}' instance '{}' - Stack trace requested",
-            server_name,
+            server_id,
             instance_id
         );
 
@@ -83,39 +83,39 @@ impl UpstreamConnectionPool {
         tracing::info!("Disconnect initiated from: {}", backtrace);
 
         // Step 1: Cancel the token first to stop new operations
-        self.cancel_connection_token(server_name, instance_id);
+        self.cancel_connection_token(server_id, instance_id);
 
         // Step 2: Take the service from the connection
         let service = {
-            let conn = self.get_instance_mut(server_name, instance_id)?;
+            let conn = self.get_instance_mut(server_id, instance_id)?;
             conn.service.take()
         };
 
         // Step 3: Cancel active service if exists (early return if no service)
         if let Some(service_arc) = service {
-            self.cancel_service_with_timeout(server_name, instance_id, service_arc)
+            self.cancel_service_with_timeout(server_id, instance_id, service_arc)
                 .await;
         }
 
         // Step 4: Update connection status
-        let conn = self.get_instance_mut(server_name, instance_id)?;
+        let conn = self.get_instance_mut(server_id, instance_id)?;
         conn.update_disconnected();
 
-        tracing::info!("Disconnected from server '{}' instance '{}'", server_name, instance_id);
+        tracing::info!("Disconnected from server '{}' instance '{}'", server_id, instance_id);
 
         Ok(())
     }
 
     /// Disconnect from all servers
     pub async fn disconnect_all(&mut self) -> Result<()> {
-        for server_name in self.connections.keys().cloned().collect::<Vec<_>>() {
+        for server_id in self.connections.keys().cloned().collect::<Vec<_>>() {
             // Get all instances for this server
-            if let Some(instances) = self.connections.get(&server_name) {
+            if let Some(instances) = self.connections.get(&server_id) {
                 for instance_id in instances.keys().cloned().collect::<Vec<_>>() {
-                    if let Err(e) = self.disconnect(&server_name, &instance_id).await {
+                    if let Err(e) = self.disconnect(&server_id, &instance_id).await {
                         tracing::error!(
                             "Failed to disconnect from server '{}' instance '{}': {}",
-                            server_name,
+                            server_id,
                             instance_id,
                             e
                         );
@@ -131,25 +131,25 @@ impl UpstreamConnectionPool {
     /// Trigger connection to a specific instance of a server
     pub async fn trigger_connect(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        self.connect_core(server_name, instance_id, false).await
+        self.connect_core(server_id, instance_id, false).await
     }
 
     /// Connect to a specific instance of a server and wait for result
     pub async fn connect(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        self.connect_core(server_name, instance_id, true).await
+        self.connect_core(server_id, instance_id, true).await
     }
 
     /// Core connection logic
     async fn connect_core(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
         _wait_for_result: bool,
     ) -> Result<()> {
@@ -157,21 +157,21 @@ impl UpstreamConnectionPool {
         let server_config = self
             .config
             .mcp_servers
-            .get(server_name)
-            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", server_name))?
+            .get(server_id)
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", server_id))?
             .clone();
 
         // Update connection status to initializing
         {
-            let conn = self.get_instance_mut(server_name, instance_id)?;
+            let conn = self.get_instance_mut(server_id, instance_id)?;
             conn.update_initializing();
         }
 
         // Connect based on server type
         let result = match server_config.kind.as_str() {
-            "stdio" => self.connect_stdio(server_name, instance_id).await,
-            "sse" => self.connect_sse(server_name, instance_id).await,
-            "http" => self.connect_http(server_name, instance_id).await,
+            "stdio" => self.connect_stdio(server_id, instance_id).await,
+            "sse" => self.connect_sse(server_id, instance_id).await,
+            "http" => self.connect_http(server_id, instance_id).await,
             _ => Err(anyhow::anyhow!("Unsupported server type: {}", server_config.kind)),
         };
 
@@ -180,19 +180,19 @@ impl UpstreamConnectionPool {
             Ok(()) => {
                 tracing::info!(
                     "Successfully initiated connection to '{}' instance '{}'",
-                    server_name,
+                    server_id,
                     instance_id
                 );
                 Ok(())
             }
             Err(e) => {
                 // Update connection with progressive failure escalation
-                let conn = self.get_instance_mut(server_name, instance_id)?;
+                let conn = self.get_instance_mut(server_id, instance_id)?;
                 conn.update_error_with_escalation(format!("Connection failed: {}", e));
 
                 tracing::error!(
                     "Failed to connect to '{}' instance '{}': {} (progressive escalation applied)",
-                    server_name,
+                    server_id,
                     instance_id,
                     e
                 );
@@ -204,17 +204,17 @@ impl UpstreamConnectionPool {
     /// Connect to stdio server
     async fn connect_stdio(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        let server_config = self.config.mcp_servers.get(server_name).unwrap();
+        let server_config = self.config.mcp_servers.get(server_id).unwrap();
 
         // Create cancellation token for this connection
         let ct = tokio_util::sync::CancellationToken::new();
 
         // Store the cancellation token
         self.cancellation_tokens
-            .entry(server_name.to_string())
+            .entry(server_id.to_string())
             .or_default()
             .insert(instance_id.to_string(), ct.clone());
 
@@ -222,9 +222,10 @@ impl UpstreamConnectionPool {
         let database_pool = self.database.as_ref().map(|db| &db.pool);
 
         // Use the unified transport interface to reduce code duplication
+        // Note: connect_server still needs server_name for logging, so we use server_id as name for now
         let (service, tools, capabilities, process_id) = crate::core::transport::unified::connect_server(
-            server_name,
-            server_config,
+            server_id,
+            &server_config,
             crate::common::server::ServerType::Stdio,
             crate::common::server::TransportType::Stdio,
             Some(ct),
@@ -234,11 +235,11 @@ impl UpstreamConnectionPool {
         .await?;
 
         // Update connection with service
-        self.update_connection(server_name, instance_id, service, tools, capabilities);
+        self.update_connection(server_id, instance_id, service, tools, capabilities);
 
         // Update process ID if available
         if let Some(pid) = process_id {
-            if let Ok(conn) = self.get_instance_mut(server_name, instance_id) {
+            if let Ok(conn) = self.get_instance_mut(server_id, instance_id) {
                 conn.process_id = Some(pid);
             }
         }
@@ -249,16 +250,16 @@ impl UpstreamConnectionPool {
     /// Connect to SSE server
     async fn connect_sse(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        let server_config = self.config.mcp_servers.get(server_name).unwrap();
+        let server_config = self.config.mcp_servers.get(server_id).unwrap();
 
         // Use the core transport module
-        let (service, tools, capabilities) = connect_sse_server(server_name, server_config).await?;
+        let (service, tools, capabilities) = connect_sse_server(server_id, server_config).await?;
 
         // Update connection with service
-        self.update_connection(server_name, instance_id, service, tools, capabilities);
+        self.update_connection(server_id, instance_id, service, tools, capabilities);
 
         Ok(())
     }
@@ -266,17 +267,17 @@ impl UpstreamConnectionPool {
     /// Connect to HTTP server
     async fn connect_http(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        let server_config = self.config.mcp_servers.get(server_name).unwrap();
+        let server_config = self.config.mcp_servers.get(server_id).unwrap();
 
         // Use the core transport module - default to StreamableHttp transport type
         let (service, tools, capabilities) =
-            connect_http_server(server_name, server_config, TransportType::StreamableHttp).await?;
+            connect_http_server(server_id, server_config, TransportType::StreamableHttp).await?;
 
         // Update connection with service
-        self.update_connection(server_name, instance_id, service, tools, capabilities);
+        self.update_connection(server_id, instance_id, service, tools, capabilities);
 
         Ok(())
     }
@@ -367,17 +368,17 @@ impl UpstreamConnectionPool {
     /// Update connection with service and metadata
     pub fn update_connection(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
         service: RunningService<RoleClient, ()>,
         tools: Vec<Tool>,
         capabilities: Option<rmcp::model::ServerCapabilities>,
     ) {
         // Early return if connection cannot be retrieved
-        let Ok(conn) = self.get_instance_mut(server_name, instance_id) else {
+        let Ok(conn) = self.get_instance_mut(server_id, instance_id) else {
             tracing::error!(
                 "Failed to update connection for '{}' instance '{}' - connection not found",
-                server_name,
+                server_id,
                 instance_id
             );
             return;
@@ -398,7 +399,7 @@ impl UpstreamConnectionPool {
 
         tracing::debug!(
             "Updated connection for '{}' instance '{}' with service and {} tools",
-            server_name,
+            server_id,
             instance_id,
             conn.tools.len()
         );
@@ -410,7 +411,7 @@ impl UpstreamConnectionPool {
 
         self.spawn_database_sync_task(
             db.clone(),
-            server_name.to_string(),
+            server_id.to_string(),
             instance_id.to_string(),
             tools,
             service_for_sync,
@@ -601,20 +602,20 @@ impl UpstreamConnectionPool {
     /// and load_server_config_dynamic functions with a single, more consistent interface.
     pub async fn update_server_status(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         enabled: bool,
     ) -> Result<()> {
         if enabled {
-            self.enable_server_internal(server_name).await
+            self.enable_server_internal(server_id).await
         } else {
-            self.disable_server_internal(server_name).await
+            self.disable_server_internal(server_id).await
         }
     }
 
     /// Internal method to enable and start a server
     async fn enable_server_internal(
         &mut self,
-        server_name: &str,
+        server_id: &str,
     ) -> Result<()> {
         // Early return if database not available
         let db = self
@@ -626,10 +627,10 @@ impl UpstreamConnectionPool {
         let (_, config) = crate::core::foundation::loader::load_servers_from_active_suits(db).await?;
 
         // Early return if server not found in config
-        let Some(_server_config) = config.mcp_servers.get(server_name) else {
+        let Some(_server_config) = config.mcp_servers.get(server_id) else {
             return Err(anyhow::anyhow!(
                 "Server '{}' not found in active configuration suits",
-                server_name
+                server_id
             ));
         };
 
@@ -637,25 +638,25 @@ impl UpstreamConnectionPool {
         self.set_config(Arc::new(config))?;
 
         // Create new connection if needed
-        if !self.connections.contains_key(server_name) {
-            let connection = crate::core::connection::UpstreamConnection::new(server_name.to_string());
+        if !self.connections.contains_key(server_id) {
+            let connection = crate::core::connection::UpstreamConnection::new(server_id.to_string());
             let instance_id = connection.id.clone();
-            let instances = self.connections.entry(server_name.to_string()).or_default();
+            let instances = self.connections.entry(server_id.to_string()).or_default();
             instances.insert(instance_id.clone(), connection);
         }
 
         // Get default instance ID and connect
-        let instance_id = self.get_default_instance_id(server_name)?;
-        self.trigger_connect(server_name, &instance_id).await?;
+        let instance_id = self.get_default_instance_id(server_id)?;
+        self.trigger_connect(server_id, &instance_id).await?;
 
-        tracing::info!("Server '{}' enabled and started", server_name);
+        tracing::info!("Server '{}' enabled and started", server_id);
         Ok(())
     }
 
     /// Internal method to disable and stop a server
     async fn disable_server_internal(
         &mut self,
-        server_name: &str,
+        server_id: &str,
     ) -> Result<()> {
         // Early return if database not available
         let db = self
@@ -664,62 +665,46 @@ impl UpstreamConnectionPool {
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
         // Check if server should remain enabled in any active suit
-        if let Some(server_id) = self.get_server_id_by_name(db, server_name).await? {
-            let still_enabled_in_suits =
-                crate::config::server::is_server_enabled_in_any_active_suit(&db.pool, &server_id)
-                    .await
-                    .unwrap_or(false);
+        let still_enabled_in_suits =
+            crate::config::server::is_server_enabled_in_any_active_suit(&db.pool, server_id)
+                .await
+                .unwrap_or(false);
 
-            // Early return if still enabled in other suits
-            if still_enabled_in_suits {
-                tracing::info!(
-                    "Server '{}' disabled in one suit but still enabled in other active suits, keeping instance running",
-                    server_name
-                );
-                return Ok(());
-            }
+        // Early return if still enabled in other suits
+        if still_enabled_in_suits {
+            tracing::info!(
+                "Server '{}' disabled in one suit but still enabled in other active suits, keeping instance running",
+                server_id
+            );
+            return Ok(());
         }
 
         // Disconnect all instances
-        self.disconnect_all_instances(server_name).await;
+        self.disconnect_all_instances(server_id).await;
 
         // Remove server from pool
-        self.connections.remove(server_name);
-        self.cancellation_tokens.remove(server_name);
+        self.connections.remove(server_id);
+        self.cancellation_tokens.remove(server_id);
 
-        tracing::info!("Server '{}' disabled in all active suits and stopped", server_name);
+        tracing::info!("Server '{}' disabled in all active suits and stopped", server_id);
         Ok(())
-    }
-
-    /// Helper method to get server ID by name
-    async fn get_server_id_by_name(
-        &self,
-        db: &crate::config::database::Database,
-        server_name: &str,
-    ) -> Result<Option<String>> {
-        let all_servers = crate::config::server::get_all_servers(&db.pool).await?;
-        let server_id = all_servers
-            .iter()
-            .find(|s| s.name == server_name)
-            .and_then(|s| s.id.clone());
-        Ok(server_id)
     }
 
     /// Helper method to disconnect all instances of a server
     async fn disconnect_all_instances(
         &mut self,
-        server_name: &str,
+        server_id: &str,
     ) {
-        let Some(instances) = self.connections.get(server_name) else {
+        let Some(instances) = self.connections.get(server_id) else {
             return; // No instances to disconnect, early return
         };
 
         let instance_ids: Vec<String> = instances.keys().cloned().collect();
         for instance_id in instance_ids {
-            if let Err(e) = self.disconnect(server_name, &instance_id).await {
+            if let Err(e) = self.disconnect(server_id, &instance_id).await {
                 tracing::warn!(
                     "Failed to disconnect server '{}' instance '{}': {}",
-                    server_name,
+                    server_id,
                     instance_id,
                     e
                 );

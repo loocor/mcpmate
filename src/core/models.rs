@@ -17,7 +17,7 @@ pub struct PaginationConfig {
 /// MCP server configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
-    /// Map of MCP server name to configuration
+    /// Map of MCP server ID to configuration
     #[serde(rename = "mcpServers", default)]
     pub mcp_servers: HashMap<String, MCPServerConfig>,
     /// Pagination configuration for proxy responses

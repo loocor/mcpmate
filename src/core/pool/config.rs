@@ -88,14 +88,9 @@ impl PoolConfigManager {
             config.mcp_servers.len()
         );
 
-        for name in config.mcp_servers.keys() {
-            // Skip the proxy server itself
-            if name == "proxy" {
-                continue;
-            }
-
+        for server_id in config.mcp_servers.keys() {
             // Create a new connection instance
-            Self::create_server_instance(connections, name);
+            Self::create_server_instance(connections, server_id);
         }
 
         // Count total instances
@@ -178,9 +173,9 @@ impl PoolConfigManager {
         }
 
         // Add new servers from the configuration
-        for server_name in &changes.servers_to_add {
-            Self::create_server_instance(connections, server_name);
-            tracing::debug!("Added server '{}' to connection pool", server_name);
+        for server_id in &changes.servers_to_add {
+            Self::create_server_instance(connections, server_id);
+            tracing::debug!("Added server '{}' to connection pool", server_id);
         }
 
         // Servers to keep remain unchanged (preserve existing connections)
@@ -197,19 +192,19 @@ impl PoolConfigManager {
     /// Create a new server instance in the connection pool
     fn create_server_instance(
         connections: &mut HashMap<String, HashMap<String, UpstreamConnection>>,
-        server_name: &str,
+        server_id: &str,
     ) {
         // Skip if connection already exists
-        if connections.contains_key(server_name) {
+        if connections.contains_key(server_id) {
             return;
         }
 
-        // Create a new connection
-        let connection = UpstreamConnection::new(server_name.to_string());
+        // Create a new connection (still use server_id as the name for now)
+        let connection = UpstreamConnection::new(server_id.to_string());
         let instance_id = connection.id.clone();
 
         // Create a new map for this server
-        let instances = connections.entry(server_name.to_string()).or_default();
+        let instances = connections.entry(server_id.to_string()).or_default();
 
         // Add the connection to the map
         instances.insert(instance_id, connection);

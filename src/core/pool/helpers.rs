@@ -21,7 +21,7 @@ impl super::UpstreamConnectionPool {
     /// Helper method to get a specific instance of a server
     ///
     /// # Arguments
-    /// * `server_name` - Name of the server
+    /// * `server_id` - ID of the server
     /// * `instance_id` - ID of the specific instance
     ///
     /// # Returns
@@ -29,22 +29,22 @@ impl super::UpstreamConnectionPool {
     /// * `Err(...)` - If server or instance not found
     pub fn get_instance(
         &self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<&UpstreamConnection> {
-        let instances = self.connections.get(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
+        let instances = self.connections.get(server_id).context(format!(
+            "Server '{server_id}' not found in connection pool"
         ))?;
 
         instances.get(instance_id).context(format!(
-            "Instance '{instance_id}' not found for server '{server_name}'"
+            "Instance '{instance_id}' not found for server '{server_id}'"
         ))
     }
 
     /// Helper method to get a mutable reference to a specific instance of a server
     ///
     /// # Arguments
-    /// * `server_name` - Name of the server
+    /// * `server_id` - ID of the server
     /// * `instance_id` - ID of the specific instance
     ///
     /// # Returns
@@ -52,15 +52,15 @@ impl super::UpstreamConnectionPool {
     /// * `Err(...)` - If server or instance not found
     pub fn get_instance_mut(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<&mut UpstreamConnection> {
-        let instances = self.connections.get_mut(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
+        let instances = self.connections.get_mut(server_id).context(format!(
+            "Server '{server_id}' not found in connection pool"
         ))?;
 
         instances.get_mut(instance_id).context(format!(
-            "Instance '{instance_id}' not found for server '{server_name}'"
+            "Instance '{instance_id}' not found for server '{server_id}'"
         ))
     }
 
@@ -70,23 +70,23 @@ impl super::UpstreamConnectionPool {
     /// this could be enhanced with more sophisticated selection logic.
     ///
     /// # Arguments
-    /// * `server_name` - Name of the server
+    /// * `server_id` - ID of the server
     ///
     /// # Returns
     /// * `Ok((String, &UpstreamConnection))` - Tuple of (instance_id, connection_ref)
     /// * `Err(...)` - If server not found or has no instances
     pub fn get_default_instance(
         &self,
-        server_name: &str,
+        server_id: &str,
     ) -> Result<(String, &UpstreamConnection)> {
-        let instances = self.connections.get(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
+        let instances = self.connections.get(server_id).context(format!(
+            "Server '{server_id}' not found in connection pool"
         ))?;
 
         if instances.is_empty() {
             return Err(anyhow::anyhow!(
                 "No instances found for server '{}'",
-                server_name
+                server_id
             ));
         }
 
@@ -101,23 +101,23 @@ impl super::UpstreamConnectionPool {
     /// this could be enhanced with more sophisticated selection logic.
     ///
     /// # Arguments
-    /// * `server_name` - Name of the server
+    /// * `server_id` - ID of the server
     ///
     /// # Returns
     /// * `Ok((String, &mut UpstreamConnection))` - Tuple of (instance_id, mutable_connection_ref)
     /// * `Err(...)` - If server not found or has no instances
     pub fn get_default_instance_mut(
         &mut self,
-        server_name: &str,
+        server_id: &str,
     ) -> Result<(String, &mut UpstreamConnection)> {
-        let instances = self.connections.get_mut(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
+        let instances = self.connections.get_mut(server_id).context(format!(
+            "Server '{server_id}' not found in connection pool"
         ))?;
 
         if instances.is_empty() {
             return Err(anyhow::anyhow!(
                 "No instances found for server '{}'",
-                server_name
+                server_id
             ));
         }
 
@@ -132,33 +132,33 @@ impl super::UpstreamConnectionPool {
     /// This is useful when you only need the instance ID for other operations.
     ///
     /// # Arguments
-    /// * `server_name` - Name of the server
+    /// * `server_id` - ID of the server
     ///
     /// # Returns
     /// * `Ok(String)` - The default instance ID
     /// * `Err(...)` - If server not found or has no instances
     pub fn get_default_instance_id(
         &self,
-        server_name: &str,
+        server_id: &str,
     ) -> Result<String> {
-        let (instance_id, _) = self.get_default_instance(server_name)?;
+        let (instance_id, _) = self.get_default_instance(server_id)?;
         Ok(instance_id)
     }
 
     /// Get all instance IDs for a server
     ///
     /// # Arguments
-    /// * `server_name` - Name of the server
+    /// * `server_id` - ID of the server
     ///
     /// # Returns
     /// * `Ok(Vec<String>)` - List of all instance IDs for the server
     /// * `Err(...)` - If server not found
     pub fn get_all_instance_ids(
         &self,
-        server_name: &str,
+        server_id: &str,
     ) -> Result<Vec<String>> {
-        let instances = self.connections.get(server_name).context(format!(
-            "Server '{server_name}' not found in connection pool"
+        let instances = self.connections.get(server_id).context(format!(
+            "Server '{server_id}' not found in connection pool"
         ))?;
 
         Ok(instances.keys().cloned().collect())
@@ -262,10 +262,10 @@ impl super::UpstreamConnectionPool {
     /// Get status of a specific instance of a server
     pub fn get_instance_status(
         &self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) -> Result<String> {
-        let conn = self.get_instance(server_name, instance_id)?;
+        let conn = self.get_instance(server_id, instance_id)?;
 
         Ok(conn.status_string())
     }
@@ -274,13 +274,13 @@ impl super::UpstreamConnectionPool {
     pub fn get_all_server_instances(&self) -> HashMap<String, Vec<(String, UpstreamConnection)>> {
         let mut result = HashMap::new();
 
-        for (server_name, instances) in &self.connections {
+        for (server_id, instances) in &self.connections {
             let instance_clones: Vec<(String, UpstreamConnection)> = instances
                 .iter()
                 .map(|(id, conn)| (id.clone(), conn.clone()))
                 .collect();
 
-            result.insert(server_name.clone(), instance_clones);
+            result.insert(server_id.clone(), instance_clones);
         }
 
         result
@@ -289,11 +289,11 @@ impl super::UpstreamConnectionPool {
     /// Get server type
     pub fn get_server_type(
         &self,
-        server_name: &str,
+        server_id: &str,
     ) -> Option<String> {
         self.config
             .mcp_servers
-            .get(server_name)
+            .get(server_id)
             .map(|cfg| cfg.kind.to_string())
     }
 
