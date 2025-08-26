@@ -3,7 +3,6 @@
 
 pub mod ai;
 pub mod clients;
-pub mod instance;
 pub mod notifs;
 pub mod runtime;
 pub mod server;

@@ -5,6 +5,7 @@
 pub use self::{
     basic::{instance_list, server_details, server_list},
     crud::{create_server, delete_server, import_servers, update_server},
+    instance::{check_health, get_instance, manage_instance},
     mgmt::{disable_server, enable_server, manage_server},
     prompts::{server_prompt_arguments, server_prompts},
     resources::{server_resource_templates, server_resources},
@@ -24,6 +25,7 @@ mod tools;
 // Shared utilities
 pub mod capability;
 pub mod common;
+pub mod instance;
 
 // Common imports for all submodules
 pub(crate) mod shared {

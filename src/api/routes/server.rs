@@ -9,7 +9,7 @@ use aide::axum::{
 };
 
 use super::AppState;
-use crate::api::handlers::{instance, server};
+use crate::api::handlers::server;
 use crate::api::models::server::{
     InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq, InstanceListResp,
     InstanceManageReq, ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp,
@@ -163,7 +163,7 @@ aide_wrapper_payload!(
 
 // Generate aide-compatible wrapper for instance management
 aide_wrapper_payload!(
-    instance::manage_instance,
+    server::manage_instance,
     InstanceManageReq,
     ServerOperationResp,
     "Manage instance operations (disconnect, reconnect, recover, cancel)"
@@ -186,14 +186,14 @@ aide_wrapper_payload!(
 
 // Generate aide-compatible wrappers for instance handlers with query parameters
 aide_wrapper_query!(
-    instance::get_instance,
+    server::get_instance,
     InstanceDetailsReq,
     InstanceDetailsResp,
     "Get details for a specific server instance"
 );
 
 aide_wrapper_query!(
-    instance::check_health,
+    server::check_health,
     InstanceHealthReq,
     InstanceHealthResp,
     "Check health status of a specific server instance"

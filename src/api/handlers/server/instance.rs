@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 
-use super::ApiError;
+use crate::api::handlers::ApiError;
 use crate::{
     api::{
         models::server::{
