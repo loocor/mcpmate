@@ -424,7 +424,7 @@ impl UpstreamConnectionPool {
     fn spawn_database_sync_task(
         &self,
         db_clone: Arc<crate::config::database::Database>,
-        server_name_clone: String,
+        server_id_clone: String,
         instance_id_clone: String,
         tools_clone: Vec<Tool>,
         service_for_sync: rmcp::service::Peer<rmcp::service::RoleClient>,
@@ -434,11 +434,11 @@ impl UpstreamConnectionPool {
         tokio::spawn(async move {
             // Always sync tools
             if let Err(e) =
-                UpstreamConnectionPool::sync_tools_to_database(&db_clone, &server_name_clone, &tools_clone).await
+                UpstreamConnectionPool::sync_tools_to_database(&db_clone, &server_id_clone, &tools_clone).await
             {
                 tracing::error!(
                     "Failed to sync tools to database for server '{}': {}",
-                    server_name_clone,
+                    server_id_clone,
                     e
                 );
             }
@@ -447,7 +447,7 @@ impl UpstreamConnectionPool {
             if !supports_resources && !supports_prompts {
                 tracing::debug!(
                     "Database sync operations completed for server '{}' (tools only)",
-                    server_name_clone
+                    server_id_clone
                 );
                 return;
             }
@@ -456,7 +456,7 @@ impl UpstreamConnectionPool {
             if supports_resources {
                 if let Err(e) = UpstreamConnectionPool::sync_resources_to_database_with_service(
                     &db_clone,
-                    &server_name_clone,
+                    &server_id_clone,
                     &instance_id_clone,
                     &service_for_sync,
                 )
@@ -464,7 +464,7 @@ impl UpstreamConnectionPool {
                 {
                     tracing::error!(
                         "Failed to sync resources to database for server '{}': {}",
-                        server_name_clone,
+                        server_id_clone,
                         e
                     );
                 }
@@ -474,7 +474,7 @@ impl UpstreamConnectionPool {
             if supports_prompts {
                 if let Err(e) = UpstreamConnectionPool::sync_prompts_to_database_with_service(
                     &db_clone,
-                    &server_name_clone,
+                    &server_id_clone,
                     &instance_id_clone,
                     &service_for_sync,
                 )
@@ -482,13 +482,13 @@ impl UpstreamConnectionPool {
                 {
                     tracing::error!(
                         "Failed to sync prompts to database for server '{}': {}",
-                        server_name_clone,
+                        server_id_clone,
                         e
                     );
                 }
             }
 
-            tracing::debug!("Database sync operations completed for server '{}'", server_name_clone);
+            tracing::debug!("Database sync operations completed for server '{}'", server_id_clone);
         });
     }
 

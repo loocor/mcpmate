@@ -237,46 +237,47 @@ impl EventHandlers {
             }
 
             Event::ServerConnectionStartupCompleted {
+                server_id,
                 server_name,
                 success,
                 error,
             } => {
                 if success {
-                    info!("Server {} startup completed successfully", server_name);
+                    info!("Server {} (ID: {}) startup completed successfully", server_name, server_id);
 
                     // Trigger capability sync for newly connected server using lightweight manager
                     if let Some(event_capability_manager) = &self.event_capability_manager {
                         debug!(
-                            "Server '{}' connected successfully, triggering event-driven capability sync",
-                            server_name
+                            "Server '{}' (ID: {}) connected successfully, triggering event-driven capability sync",
+                            server_name, server_id
                         );
 
-                        match event_capability_manager.sync_single_server(&server_name).await {
+                        match event_capability_manager.sync_single_server(&server_id).await {
                             Ok(_) => {
                                 debug!(
-                                    "Successfully synced capabilities for newly connected server '{}' (event-driven)",
-                                    server_name
+                                    "Successfully synced capabilities for newly connected server '{}' (ID: {}) (event-driven)",
+                                    server_name, server_id
                                 );
                             }
                             Err(e) => {
                                 warn!(
-                                    "Failed to sync capabilities for newly connected server '{}': {}",
-                                    server_name, e
+                                    "Failed to sync capabilities for newly connected server '{}' (ID: {}): {}",
+                                    server_name, server_id, e
                                 );
                             }
                         }
                     } else {
                         debug!(
-                            "No event-driven capability manager available for server '{}' capability sync",
-                            server_name
+                            "No event-driven capability manager available for server '{}' (ID: {}) capability sync",
+                            server_name, server_id
                         );
                     }
                 } else {
                     let error_message = error.unwrap_or_else(|| "Unknown error".to_string());
-                    warn!("Server {} startup failed: {}", server_name, error_message);
+                    warn!("Server {} (ID: {}) startup failed: {}", server_name, server_id, error_message);
                     debug!(
-                        "Server '{}' connection failed: {}, skipping capability sync",
-                        server_name, error_message
+                        "Server '{}' (ID: {}) connection failed: {}, skipping capability sync",
+                        server_name, server_id, error_message
                     );
                 }
             }

@@ -40,20 +40,25 @@ impl EventDrivenCapabilityManager {
     /// the actual capabilities discovered from the connected server.
     pub async fn sync_single_server(
         &self,
-        server_name: &str,
+        server_id: &str,
     ) -> Result<()> {
+        // Get server name for logging purposes
+        let server_name = crate::config::operations::utils::get_server_name(&self.db_pool, server_id)
+            .await
+            .unwrap_or_else(|_| server_id.to_string());
+
         debug!(
-            "Event-driven capability sync for server '{}' - syncing capabilities to SQLite",
-            server_name
+            "Event-driven capability sync for server '{}' (ID: {}) - syncing capabilities to SQLite",
+            server_name, server_id
         );
 
         // Get server connection info
-        let (tools_count, supports_prompts, supports_resources, server_id) = {
+        let (tools_count, supports_prompts, supports_resources) = {
             let pool = self.connection_pool.lock().await;
 
             let instances = pool
                 .connections
-                .get(server_name)
+                .get(server_id)
                 .context("Server not found in connection pool")?;
 
             let conn = instances
@@ -65,23 +70,14 @@ impl EventDrivenCapabilityManager {
             let supports_prompts = conn.supports_prompts();
             let supports_resources = conn.supports_resources();
 
-            // Get server ID from database
-            drop(pool); // Release pool lock before database operation
-
-            let server = crate::config::models::Server::find_by_name(&self.db_pool, server_name)
-                .await?
-                .context("Server not found in database")?;
-
-            let server_id = server.id.context("Server has no ID in database")?;
-
-            (tools_count, supports_prompts, supports_resources, server_id)
+            (tools_count, supports_prompts, supports_resources)
         };
 
         // Update capabilities in SQLite
         let supports_tools = tools_count > 0;
         crate::config::server::capabilities::overwrite_capabilities(
             &self.db_pool,
-            &server_id,
+            server_id,
             supports_tools,
             supports_prompts,
             supports_resources,
@@ -89,8 +85,8 @@ impl EventDrivenCapabilityManager {
         .await?;
 
         debug!(
-            "Event-driven capability sync completed for server '{}': tools={}, prompts={}, resources={}",
-            server_name, supports_tools, supports_prompts, supports_resources
+            "Event-driven capability sync completed for server '{}' (ID: {}): tools={}, prompts={}, resources={}",
+            server_name, server_id, supports_tools, supports_prompts, supports_resources
         );
 
         Ok(())

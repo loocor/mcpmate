@@ -204,6 +204,8 @@ pub enum Event {
 
     /// Server connection startup completed
     ServerConnectionStartupCompleted {
+        /// Server ID
+        server_id: String,
         /// Server name
         server_name: String,
         /// Whether startup was successful

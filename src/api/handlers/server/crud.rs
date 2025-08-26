@@ -363,7 +363,7 @@ pub async fn update_server(
     Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: existing_server.name,
-        enabled: payload.enabled.unwrap_or(true),
+        enabled: details.globally_enabled && details.enabled_in_suits,
         globally_enabled: details.globally_enabled,
         enabled_in_suits: details.enabled_in_suits,
         server_type: updated_server.server_type,

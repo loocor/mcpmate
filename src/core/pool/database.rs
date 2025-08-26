@@ -18,29 +18,27 @@ impl UpstreamConnectionPool {
     /// This reduces duplication in the three sync methods
     async fn get_server_and_suits(
         db: &Arc<crate::config::database::Database>,
-        server_name: &str,
+        server_id: &str,
     ) -> AnyhowResult<(String, Vec<(String, String)>)> {
-        // Get the server ID
-        let server = crate::config::server::get_server(&db.pool, server_name)
+        // Verify the server exists
+        let server = crate::config::server::get_server_by_id(&db.pool, server_id)
             .await
-            .context(format!("Failed to get server '{server_name}'"))?;
+            .context(format!("Failed to get server '{server_id}'"))?;
 
-        if let Some(server) = server {
-            if let Some(server_id) = &server.id {
-                // Get all config suits that have this server enabled
-                let suits_with_server = Self::get_suits_with_server(&db.pool, server_id).await?;
+        if let Some(_server) = server {
+            // Get all config suits that have this server enabled
+            let suits_with_server = Self::get_suits_with_server(&db.pool, server_id).await?;
 
-                // Collect suit data for concurrent processing
-                let suit_data: Vec<(String, String)> = suits_with_server
-                    .into_iter()
-                    .filter_map(|suit| suit.id.map(|suit_id| (suit_id, suit.name)))
-                    .collect();
+            // Collect suit data for concurrent processing
+            let suit_data: Vec<(String, String)> = suits_with_server
+                .into_iter()
+                .filter_map(|suit| suit.id.map(|suit_id| (suit_id, suit.name)))
+                .collect();
 
-                return Ok((server_id.clone(), suit_data));
-            }
+            return Ok((server_id.to_string(), suit_data));
         }
 
-        Err(anyhow::anyhow!("Server '{}' not found", server_name))
+        Err(anyhow::anyhow!("Server '{}' not found", server_id))
     }
 
     /// Helper function to get config suits that have a specific server enabled
@@ -135,17 +133,23 @@ impl UpstreamConnectionPool {
     /// It adds tools to all config suits that have the server enabled.
     pub(super) async fn sync_tools_to_database(
         db: &Arc<crate::config::database::Database>,
-        server_name: &str,
+        server_id: &str,
         tools: &[Tool],
     ) -> AnyhowResult<()> {
+        // Get server name for logging purposes
+        let server_name = crate::config::operations::utils::get_server_name(&db.pool, server_id)
+            .await
+            .unwrap_or_else(|_| server_id.to_string());
+
         tracing::debug!(
-            "Syncing {} tools from server '{}' to database",
+            "Syncing {} tools from server '{}' (ID: {}) to database",
             tools.len(),
-            server_name
+            server_name,
+            server_id
         );
 
         // Use common helper to get server and suits
-        let (server_id, suit_data) = Self::get_server_and_suits(db, server_name).await?;
+        let (server_id, suit_data) = Self::get_server_and_suits(db, server_id).await?;
 
         // Sync tools to each suit concurrently
         let sync_futures: Vec<_> =
@@ -154,7 +158,7 @@ impl UpstreamConnectionPool {
                 .map(|(suit_id, suit_name)| {
                     let pool = db.pool.clone();
                     let server_id = server_id.clone();
-                    let server_name = server_name.to_string();
+                    let server_name = server_name.clone();
                     let tools = tools.to_vec();
 
                     async move {
@@ -165,9 +169,10 @@ impl UpstreamConnectionPool {
 
         futures::future::try_join_all(sync_futures).await?;
         tracing::debug!(
-            "Successfully synced {} tools from server '{}'",
+            "Successfully synced {} tools from server '{}' (ID: {})",
             tools.len(),
-            server_name
+            server_name,
+            server_id
         );
         Ok(())
     }
@@ -234,27 +239,34 @@ impl UpstreamConnectionPool {
     /// It adds resources to all config suits that have the server enabled.
     pub(super) async fn sync_resources_to_database_with_service(
         db: &Arc<crate::config::database::Database>,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
         service: &rmcp::service::Peer<rmcp::service::RoleClient>,
     ) -> AnyhowResult<()> {
+        // Get server name for logging purposes
+        let server_name = crate::config::operations::utils::get_server_name(&db.pool, server_id)
+            .await
+            .unwrap_or_else(|_| server_id.to_string());
+
         // Fetch resources from the service
-        let server_resources = Self::fetch_resources_from_service(service, server_name, instance_id).await;
+        let server_resources = Self::fetch_resources_from_service(service, &server_name, instance_id).await;
 
         tracing::debug!(
-            "Syncing {} resources from server '{}' (instance: {}) to database",
+            "Syncing {} resources from server '{}' (ID: {}, instance: {}) to database",
             server_resources.len(),
             server_name,
+            server_id,
             instance_id
         );
 
         // Use common helper to get server and suits
-        let (server_id, suit_data) = Self::get_server_and_suits(db, server_name).await?;
+        let (server_id, suit_data) = Self::get_server_and_suits(db, server_id).await?;
 
         tracing::debug!(
-            "Found {} config suits with server '{}' enabled",
+            "Found {} config suits with server '{}' (ID: {}) enabled",
             suit_data.len(),
-            server_name
+            server_name,
+            server_id
         );
 
         // Create concurrent futures for all suits
@@ -263,7 +275,7 @@ impl UpstreamConnectionPool {
             .map(|(suit_id, suit_name)| {
                 let pool = db.pool.clone();
                 let server_id = server_id.clone();
-                let server_name = server_name.to_string();
+                let server_name = server_name.clone();
                 let server_resources = server_resources.clone();
 
                 async move {
@@ -284,9 +296,10 @@ impl UpstreamConnectionPool {
         futures::future::try_join_all(sync_futures).await?;
 
         tracing::debug!(
-            "Successfully synced {} resources from server '{}' (instance: {}) to database",
+            "Successfully synced {} resources from server '{}' (ID: {}, instance: {}) to database",
             server_resources.len(),
             server_name,
+            server_id,
             instance_id
         );
 
@@ -351,27 +364,34 @@ impl UpstreamConnectionPool {
     /// It adds prompts to all config suits that have the server enabled.
     pub(super) async fn sync_prompts_to_database_with_service(
         db: &Arc<crate::config::database::Database>,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
         service: &rmcp::service::Peer<rmcp::service::RoleClient>,
     ) -> AnyhowResult<()> {
+        // Get server name for logging purposes
+        let server_name = crate::config::operations::utils::get_server_name(&db.pool, server_id)
+            .await
+            .unwrap_or_else(|_| server_id.to_string());
+
         // Fetch prompts from the service
-        let all_prompts = Self::fetch_prompts_from_service(service, server_name, instance_id).await?;
+        let all_prompts = Self::fetch_prompts_from_service(service, &server_name, instance_id).await?;
 
         tracing::debug!(
-            "Syncing {} prompts from server '{}' (instance: {}) to database",
+            "Syncing {} prompts from server '{}' (ID: {}, instance: {}) to database",
             all_prompts.len(),
             server_name,
+            server_id,
             instance_id
         );
 
         // Use common helper to get server and suits
-        let (server_id, suit_data) = Self::get_server_and_suits(db, server_name).await?;
+        let (server_id, suit_data) = Self::get_server_and_suits(db, server_id).await?;
 
         tracing::debug!(
-            "Found {} config suits with server '{}' enabled",
+            "Found {} config suits with server '{}' (ID: {}) enabled",
             suit_data.len(),
-            server_name
+            server_name,
+            server_id
         );
 
         // Create concurrent futures for all suits
@@ -380,7 +400,7 @@ impl UpstreamConnectionPool {
             .map(|(suit_id, suit_name)| {
                 let pool = db.pool.clone();
                 let server_id = server_id.clone();
-                let server_name = server_name.to_string();
+                let server_name = server_name.clone();
                 let all_prompts = all_prompts.clone();
 
                 async move {
@@ -394,9 +414,10 @@ impl UpstreamConnectionPool {
         futures::future::try_join_all(sync_futures).await?;
 
         tracing::debug!(
-            "Successfully synced {} prompts from server '{}' (instance: {}) to database",
+            "Successfully synced {} prompts from server '{}' (ID: {}, instance: {}) to database",
             all_prompts.len(),
             server_name,
+            server_id,
             instance_id
         );
 
