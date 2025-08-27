@@ -4,6 +4,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx;
 
+// Import the unified response macro
+use crate::macros::resp::api_resp;
+
 /// Database row structure for client_apps table
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ClientAppRow {
@@ -181,147 +184,25 @@ pub struct ApiError {
 // SPECIFIC API RESPONSE TYPES
 // ==========================================
 
-/// Response for client check/list operations
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Client applications detection response")]
-pub struct ClientsCheckResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<ClientsCheckData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
+// Generate response structures using macro
+api_resp!(
+    ClientsCheckResp,
+    ClientsCheckData,
+    "Client applications detection response"
+);
+api_resp!(
+    ClientConfigResp,
+    ClientConfigData,
+    "Client configuration details response"
+);
+api_resp!(
+    ClientConfigUpdateResp,
+    ClientConfigUpdateData,
+    "Client configuration update response"
+);
 
-/// Response for client configuration details operations
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Client configuration details response")]
-pub struct ClientConfigResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<ClientConfigData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for client configuration update operations
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Client configuration update response")]
-pub struct ClientConfigUpdateResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<ClientConfigUpdateData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
+// REQUEST STRUCTURES
 // ==========================================
-// RESPONSE IMPLEMENTATION METHODS
-// ==========================================
-
-impl ClientsCheckResp {
-    pub fn success(data: ClientsCheckData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: None,
-            }),
-        }
-    }
-}
-
-impl ClientConfigResp {
-    pub fn success(data: ClientConfigData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: None,
-            }),
-        }
-    }
-}
-
-impl ClientConfigUpdateResp {
-    pub fn success(data: ClientConfigUpdateData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: None,
-            }),
-        }
-    }
-
-    pub fn error_with_details(
-        code: &str,
-        message: &str,
-        details: serde_json::Value,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: Some(details),
-            }),
-        }
-    }
-}
-
-/// Convert from anyhow::Error to API error
-impl From<anyhow::Error> for ApiError {
-    fn from(err: anyhow::Error) -> Self {
-        Self {
-            code: "INTERNAL_ERROR".to_string(),
-            message: err.to_string(),
-            details: None,
-        }
-    }
-}
 
 /// Request for client list/check operation
 #[derive(Debug, Deserialize, JsonSchema)]

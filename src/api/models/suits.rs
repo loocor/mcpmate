@@ -4,6 +4,21 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+// Import the unified response macro
+use crate::macros::resp::api_resp;
+
+// ==========================================
+// COMMON REQUEST STRUCTURES
+// ==========================================
+
+/// Generic request with suit ID
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Request with suit ID")]
+pub struct SuitIdReq {
+    #[schemars(description = "Suit ID")]
+    pub id: String,
+}
+
 // ==========================================
 // STANDARDIZED REQUEST/RESPONSE MODELS
 // Following server module patterns with JsonSchema annotations
@@ -51,12 +66,8 @@ pub struct SuitsListReq {
     pub offset: Option<usize>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(description = "Request for suit details operation")]
-pub struct SuitDetailsReq {
-    #[schemars(description = "Unique suit identifier")]
-    pub id: String,
-}
+/// Request for suit details operation
+pub type SuitDetailsReq = SuitIdReq;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for suit component list (servers, tools, etc.)")]
@@ -97,12 +108,8 @@ pub struct SuitComponentManageReq {
     pub action: SuitComponentAction,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(description = "Request for suit deletion")]
-pub struct SuitDeleteReq {
-    #[schemars(description = "Unique suit identifier to delete")]
-    pub id: String,
-}
+/// Request for suit deletion
+pub type SuitDeleteReq = SuitIdReq;
 
 // Response Models (with Resp suffix)
 #[derive(Debug, Serialize, JsonSchema)]
@@ -204,16 +211,11 @@ pub struct SuitToolsListData {
     pub total: usize,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Response for suit resources list operation")]
-pub struct SuitResourcesListResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitResourcesListData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
+api_resp!(
+    SuitResourcesListResp,
+    SuitResourcesListData,
+    "Response for suit resources list operation"
+);
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Data for suit resources list operation")]
@@ -231,16 +233,11 @@ pub struct SuitResourcesListData {
     pub total: usize,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Response for suit prompts list operation")]
-pub struct SuitPromptsListResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitPromptsListData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
+api_resp!(
+    SuitPromptsListResp,
+    SuitPromptsListData,
+    "Response for suit prompts list operation"
+);
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Data for suit prompts list operation")]
@@ -457,314 +454,20 @@ pub struct SuitPromptData {
 // SPECIFIC API RESPONSE TYPES
 // ==========================================
 
-use crate::api::models::clients::ApiError;
+// Generate response structures using macro
+api_resp!(SuitsListResp, SuitsListData, "Suits list API response");
+api_resp!(SuitDetailsResp, SuitDetailsData, "Suit details API response");
 
-/// Response for suits list operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Suits list API response")]
-pub struct SuitsListResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitsListData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for suit details operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Suit details API response")]
-pub struct SuitDetailsResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitDetailsData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for suit management operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Suit management API response")]
-pub struct SuitManageResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitManageData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for config suit create/update operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Config suit API response")]
-pub struct SuitResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for suit servers list operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Suit servers list API response")]
-pub struct SuitServersListResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitServersListData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for suit tools list operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Suit tools list API response")]
-pub struct SuitToolsListResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitToolsListData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for suit component manage operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Suit component manage API response")]
-pub struct SuitServerManageResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitServerManageData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-// ==========================================
-// RESPONSE IMPLEMENTATION METHODS
-// ==========================================
-
-impl SuitsListResp {
-    pub fn success(data: SuitsListData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: None,
-            }),
-        }
-    }
-}
-
-impl SuitDetailsResp {
-    pub fn success(data: SuitDetailsData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: None,
-            }),
-        }
-    }
-}
-
-impl SuitManageResp {
-    pub fn success(data: SuitManageData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: None,
-            }),
-        }
-    }
-}
-
-impl SuitResp {
-    pub fn success(data: SuitData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: None,
-            }),
-        }
-    }
-}
-
-/// Response for suit operation API calls
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Suit operation API response")]
-pub struct SuitOperationResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<SuitOperationData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-impl SuitOperationResp {
-    pub fn success(data: SuitOperationData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-
-    pub fn error(
-        code: &str,
-        message: &str,
-    ) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(ApiError {
-                code: code.to_string(),
-                message: message.to_string(),
-                details: None,
-            }),
-        }
-    }
-}
-
-impl SuitServersListResp {
-    pub fn success(data: SuitServersListData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-impl SuitToolsListResp {
-    pub fn success(data: SuitToolsListData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-impl SuitResourcesListResp {
-    pub fn success(data: SuitResourcesListData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-impl SuitPromptsListResp {
-    pub fn success(data: SuitPromptsListData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-impl SuitServerManageResp {
-    pub fn success(data: SuitServerManageData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
+api_resp!(SuitManageResp, SuitManageData, "Suit management API response");
+api_resp!(SuitResp, SuitData, "Config suit API response");
+api_resp!(
+    SuitServersListResp,
+    SuitServersListData,
+    "Suit servers list API response"
+);
+api_resp!(SuitToolsListResp, SuitToolsListData, "Suit tools list API response");
+api_resp!(
+    SuitServerManageResp,
+    SuitServerManageData,
+    "Suit component manage API response"
+);

@@ -84,7 +84,7 @@ async fn clients_check_core(
         Ok(clients) => clients,
         Err(e) => {
             tracing::error!("Failed to get client apps from database: {e}");
-            return Ok(ClientsCheckResp::error(
+            return Ok(ClientsCheckResp::error_simple(
                 "DATABASE_ERROR",
                 &format!("Failed to get client apps: {e}"),
             ));
@@ -163,7 +163,7 @@ async fn clients_check_core(
             Ok(clients) => clients,
             Err(e) => {
                 tracing::error!("Failed to re-fetch client apps after detection: {e}");
-                return Ok(ClientsCheckResp::error(
+                return Ok(ClientsCheckResp::error_simple(
                     "DATABASE_ERROR",
                     "Failed to retrieve updated client information",
                 ));
@@ -258,7 +258,7 @@ async fn client_config_details_core(
         }
         Err(e) => {
             tracing::error!("Failed to get config for {}: {}", identifier, e);
-            Ok(ClientConfigResp::error(
+            Ok(ClientConfigResp::error_simple(
                 "CONFIG_READ_FAILED",
                 &format!("Failed to read configuration: {e}"),
             ))
@@ -322,7 +322,7 @@ async fn client_config_update_core(
         Ok(config) => config,
         Err(e) => {
             tracing::error!("Failed to generate config for {}: {}", identifier, e);
-            return Ok(ClientConfigUpdateResp::error(
+            return Ok(ClientConfigUpdateResp::error_simple(
                 "GENERATION_FAILED",
                 &format!("Failed to generate configuration: {}", e),
             ));
@@ -373,7 +373,7 @@ async fn client_config_update_core(
             }
             Err(e) => {
                 tracing::error!("Failed to apply config for {}: {}", identifier, e);
-                return Ok(ClientConfigUpdateResp::error(
+                return Ok(ClientConfigUpdateResp::error_simple(
                     "APPLICATION_FAILED",
                     &format!("Failed to apply configuration: {}", e),
                 ));

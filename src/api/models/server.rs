@@ -8,47 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::server::ServerType;
 
-// ==========================================
-// API RESPONSE MACRO
-// ==========================================
-
-/// Macro to generate API response structures with consistent pattern
-///
-/// This macro generates response structures that maintain clean OpenAPI documentation
-/// while eliminating code duplication. Each generated struct has its own name in
-/// the OpenAPI schema, avoiding generic naming issues.
-macro_rules! api_response {
-    ($name:ident, $data_type:ty, $description:expr) => {
-        #[derive(Debug, Serialize, JsonSchema)]
-        #[schemars(description = $description)]
-        pub struct $name {
-            #[schemars(description = "Whether the operation was successful")]
-            pub success: bool,
-            #[schemars(description = "Response data when successful")]
-            pub data: Option<$data_type>,
-            #[schemars(description = "Error information when failed")]
-            pub error: Option<crate::api::models::clients::ApiError>,
-        }
-
-        impl $name {
-            pub fn success(data: $data_type) -> Self {
-                Self {
-                    success: true,
-                    data: Some(data),
-                    error: None,
-                }
-            }
-
-            pub fn error(error: crate::api::models::clients::ApiError) -> Self {
-                Self {
-                    success: false,
-                    data: None,
-                    error: Some(error),
-                }
-            }
-        }
-    };
-}
+// Import the unified response macro
+use crate::macros::resp::api_resp;
 
 // API Request Models
 //
@@ -622,34 +583,34 @@ pub struct ServersImportData {
 // ==========================================
 
 // Generate response structures using macro
-api_response!(ServerDetailsResp, ServerDetailsData, "Server details API response");
-api_response!(ServerListResp, ServerListData, "Server list API response");
-api_response!(InstanceListResp, InstanceListData, "Instance list API response");
-api_response!(
+api_resp!(ServerDetailsResp, ServerDetailsData, "Server details API response");
+api_resp!(ServerListResp, ServerListData, "Server list API response");
+api_resp!(InstanceListResp, InstanceListData, "Instance list API response");
+api_resp!(
     InstanceDetailsResp,
     InstanceDetailsData,
     "Instance details API response"
 );
-api_response!(InstanceHealthResp, InstanceHealthData, "Instance health API response");
-api_response!(ServerToolsResp, ServerToolsData, "Server tools API response");
-api_response!(
+api_resp!(InstanceHealthResp, InstanceHealthData, "Instance health API response");
+api_resp!(ServerToolsResp, ServerToolsData, "Server tools API response");
+api_resp!(
     ServerResourcesResp,
     ServerResourcesData,
     "Server resources API response"
 );
-api_response!(ServerPromptsResp, ServerPromptsData, "Server prompts API response");
-api_response!(ServersImportResp, ServersImportData, "Import servers API response");
-api_response!(
+api_resp!(ServerPromptsResp, ServerPromptsData, "Server prompts API response");
+api_resp!(ServersImportResp, ServersImportData, "Import servers API response");
+api_resp!(
     ServerOperationResp,
     ServerOperationData,
     "Operation result API response"
 );
-api_response!(
+api_resp!(
     ServerResourceTemplatesResp,
     ServerResourceTemplatesData,
     "Server resource templates API response"
 );
-api_response!(
+api_resp!(
     ServerPromptArgumentsResp,
     ServerPromptArgumentsData,
     "Server prompt arguments API response"

@@ -1,6 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+// Import the unified response macro
+use crate::macros::resp::api_resp;
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for runtime installation")]
 pub struct RuntimeInstallReq {
@@ -105,121 +108,12 @@ pub struct RuntimeCacheResetData {
 // SPECIFIC API RESPONSE TYPES
 // ==========================================
 
-use crate::api::models::clients::ApiError;
-
-/// Response for runtime install operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Runtime install API response")]
-pub struct RuntimeInstallResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<RuntimeInstallData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for runtime status operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Runtime status API response")]
-pub struct RuntimeStatusResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<RuntimeStatusData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for runtime cache operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Runtime cache API response")]
-pub struct RuntimeCacheResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<RuntimeCacheData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for runtime cache reset operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Runtime cache reset API response")]
-pub struct RuntimeCacheResetResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<RuntimeCacheResetData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-// Implementation blocks for success and error methods
-impl RuntimeInstallResp {
-    pub fn success(data: RuntimeInstallData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-impl RuntimeStatusResp {
-    pub fn success(data: RuntimeStatusData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-impl RuntimeCacheResp {
-    pub fn success(data: RuntimeCacheData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-impl RuntimeCacheResetResp {
-    pub fn success(data: RuntimeCacheResetData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
+// Generate response structures using macro
+api_resp!(RuntimeInstallResp, RuntimeInstallData, "Runtime install API response");
+api_resp!(RuntimeStatusResp, RuntimeStatusData, "Runtime status API response");
+api_resp!(RuntimeCacheResp, RuntimeCacheData, "Runtime cache API response");
+api_resp!(
+    RuntimeCacheResetResp,
+    RuntimeCacheResetData,
+    "Runtime cache reset API response"
+);

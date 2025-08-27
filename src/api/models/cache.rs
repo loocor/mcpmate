@@ -2,6 +2,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+// Import the unified response macro
+use crate::macros::resp::api_resp;
+
 // ==================== Request Models ====================
 
 #[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
@@ -136,63 +139,6 @@ pub struct CacheKeyItem {
 // SPECIFIC API RESPONSE TYPES
 // ==========================================
 
-use crate::api::models::clients::ApiError;
-
-/// Response for cache details operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Cache details API response")]
-pub struct CacheDetailsResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<CacheDetailsData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-/// Response for cache reset operations
-#[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Cache reset API response")]
-pub struct CacheResetResp {
-    #[schemars(description = "Whether the operation was successful")]
-    pub success: bool,
-    #[schemars(description = "Response data when successful")]
-    pub data: Option<CacheResetData>,
-    #[schemars(description = "Error information when failed")]
-    pub error: Option<ApiError>,
-}
-
-// Implementation blocks
-impl CacheDetailsResp {
-    pub fn success(data: CacheDetailsData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
-
-impl CacheResetResp {
-    pub fn success(data: CacheResetData) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-        }
-    }
-    pub fn error(error: ApiError) -> Self {
-        Self {
-            success: false,
-            data: None,
-            error: Some(error),
-        }
-    }
-}
+// Generate response structures using macro
+api_resp!(CacheDetailsResp, CacheDetailsData, "Cache details API response");
+api_resp!(CacheResetResp, CacheResetData, "Cache reset API response");
