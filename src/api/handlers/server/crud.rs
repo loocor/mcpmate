@@ -2,6 +2,7 @@
 // Contains handler functions for creating, updating, and importing servers
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use super::{common, shared::*};
@@ -53,19 +54,18 @@ fn validate_server_config(
     }
 }
 
-/// Create server model from configuration
+/// Create server model from configuration using strict ServerType enum
 #[inline]
 fn create_server_from_config(
     name: String,
-    kind: &str,
+    kind: ServerType,
     command: Option<String>,
     url: Option<String>,
 ) -> Server {
     match kind {
-        "stdio" => Server::new_stdio(name, command),
-        "sse" => Server::new_sse(name, url),
-        "streamable_http" => Server::new_streamable_http(name, url),
-        _ => unreachable!(), // Already validated
+        ServerType::Stdio => Server::new_stdio(name, command),
+        ServerType::Sse => Server::new_sse(name, url),
+        ServerType::StreamableHttp => Server::new_streamable_http(name, url),
     }
 }
 
@@ -185,9 +185,31 @@ async fn create_server_metadata(
         .map(|_| ())
 }
 
-/// Create a new MCP server
+/// Create a new MCP server configuration
 ///
-/// **Endpoint:** `POST /mcp/servers/create`
+/// This endpoint creates a new MCP server configuration. Server types must strictly use the following standard formats:
+/// - `"stdio"`: Standard input/output server, launched via command line
+/// - `"sse"`: Server-Sent Events server, connected via HTTP SSE
+/// - `"streamable_http"`: Streamable HTTP server, connected via HTTP streaming
+///
+/// **Important**: The system will reject any non-standard formats such as "http", "streamable-http", "streamableHttp", etc.
+///
+/// **Endpoint**: `POST /mcp/servers/create`
+///
+/// # Parameters
+/// - `payload`: Server creation request containing server name, type, command or URL, etc.
+///
+/// # Returns
+/// - Success: Returns detailed information of the created server
+/// - Failure: Returns specific error information and correction suggestions
+///
+/// # Error Handling
+/// - 400 Bad Request: Server type format is incorrect or configuration is invalid
+/// - 409 Conflict: Server name already exists
+/// - 500 Internal Server Error: Database operation failed
+///
+/// # Server Type Validation
+/// The system will strictly validate server type formats. Any input that does not conform to standards will be rejected with detailed error information.
 pub async fn create_server(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerCreateReq>,
@@ -206,13 +228,25 @@ pub async fn create_server(
         )));
     }
 
+    // Strictly validate server type format
+    let server_type = ServerType::from_str(&payload.kind).map_err(|_| {
+        ApiError::BadRequest(format!(
+            "Invalid server type '{}'.\n\nCorrect format requirements:\n\
+                - Use \"stdio\" (not \"Stdio\" or other variants)\n\
+                - Use \"sse\" (not \"SSE\" or other variants)\n\
+                - Use \"streamable_http\" (not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
+                Please check your input and use the correct standard format.",
+            payload.kind
+        ))
+    })?;
+
     // Validate server configuration
     validate_server_config(&payload.kind, &payload.command, &payload.url)?;
 
-    // Create server model
+    // Create server model using validated ServerType
     let server = create_server_from_config(
         payload.name.clone(),
-        &payload.kind,
+        server_type,
         payload.command.clone(),
         payload.url.clone(),
     );
@@ -278,9 +312,28 @@ pub async fn create_server(
     })))
 }
 
-/// Update an existing MCP server (updated for payload parameters)
+/// Update an existing MCP server configuration
 ///
-/// **Endpoint:** `POST /mcp/servers/update`
+/// This endpoint updates an existing MCP server configuration. If updating the server type, it must strictly use standard formats:
+/// - `"stdio"`: Standard input/output server
+/// - `"sse"`: Server-Sent Events server
+/// - `"streamable_http"`: Streamable HTTP server
+///
+/// **Important**: The system will reject any non-standard server type formats
+///
+/// **Endpoint**: `POST /mcp/servers/update`
+///
+/// # Parameters
+/// - `payload`: Server update request containing fields to be updated
+///
+/// # Returns
+/// - Success: Returns detailed information of the updated server
+/// - Failure: Returns specific error information and correction suggestions
+///
+/// # Error Handling
+/// - 400 Bad Request: Server type format is incorrect or configuration is invalid
+/// - 404 Not Found: The specified server does not exist
+/// - 500 Internal Server Error: Database operation failed
 pub async fn update_server(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerUpdateReq>,
@@ -299,19 +352,34 @@ pub async fn update_server(
         .clone()
         .ok_or_else(|| internal_error("Server ID not found"))?;
 
-    // Validate server type if provided
-    if let Some(kind) = &payload.kind {
+    // Strictly validate server type format (if provided)
+    let validated_server_type = if let Some(ref kind) = payload.kind {
+        let server_type = ServerType::from_str(kind).map_err(|_| {
+            ApiError::BadRequest(format!(
+                "Invalid server type '{}'.\n\nCorrect format requirements:\n\
+                    - Use \"stdio\" (not \"Stdio\" or other variants)\n\
+                    - Use \"sse\" (not \"SSE\" or other variants)\n\
+                    - Use \"streamable_http\" (not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
+                    Please check your input and use the correct standard format.",
+                kind
+            ))
+        })?;
+
         let command = payload.command.as_ref().or(existing_server.command.as_ref());
         let url = payload.url.as_ref().or(existing_server.url.as_ref());
         validate_server_config(kind, &command.cloned(), &url.cloned())?;
-    }
+
+        Some(server_type)
+    } else {
+        None
+    };
 
     // Create updated server model
     let mut updated_server = existing_server.clone();
 
-    if let Some(kind) = payload.kind {
-        updated_server.server_type = kind.parse().unwrap_or(updated_server.server_type);
-        updated_server.transport_type = Some(match updated_server.server_type {
+    if let Some(server_type) = validated_server_type {
+        updated_server.server_type = server_type;
+        updated_server.transport_type = Some(match server_type {
             ServerType::Stdio => crate::common::server::TransportType::Stdio,
             ServerType::Sse => crate::common::server::TransportType::Sse,
             ServerType::StreamableHttp => crate::common::server::TransportType::StreamableHttp,
@@ -396,9 +464,11 @@ async fn import_single_server(
         ));
     }
 
-    // Validate and create server
+    // Validate and create server with strict type checking
+    let server_type =
+        ServerType::from_str(&config.kind).map_err(|_| format!("Invalid server type '{}'", config.kind))?;
     validate_server_config(&config.kind, &config.command, &config.url).map_err(|e| e.to_string())?;
-    let server = create_server_from_config(name.clone(), &config.kind, config.command.clone(), config.url.clone());
+    let server = create_server_from_config(name.clone(), server_type, config.command.clone(), config.url.clone());
 
     // Insert server into database
     let server_id = crate::config::server::upsert_server(&db.pool, &server)

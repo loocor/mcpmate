@@ -29,10 +29,14 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
         CREATE TABLE IF NOT EXISTS server_config (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
-            server_type TEXT NOT NULL,
+            server_type TEXT NOT NULL CHECK (
+                server_type IN ('stdio', 'sse', 'streamable_http')
+            ),
             command TEXT,
             url TEXT,
-            transport_type TEXT,
+            transport_type TEXT CHECK (
+                transport_type IN ('Stdio', 'Sse', 'StreamableHttp') OR transport_type IS NULL
+            ),
             capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

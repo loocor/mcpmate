@@ -9,7 +9,7 @@
 // 5. This creates a one-way synchronization where API operations take priority
 
 use super::{common, shared::*};
-use crate::api::models::server::{ServerOperationData, ServerManageAction, ServerManageReq};
+use crate::api::models::server::{ServerManageAction, ServerManageReq, ServerOperationData};
 
 // Helper functions for server management operations
 
@@ -112,7 +112,7 @@ async fn enable_server_core(
 ) -> Result<Json<ServerOperationData>, ApiError> {
     // Get database reference and server info
     let db = common::get_database_from_state(&state)?;
-    let (server_id, server_name) = get_server_info_by_id(&db, &id).await?;
+    let (server_id, server_name) = common::get_server_info_by_id(&db.pool, &id).await?;
 
     // Update global status (early return on failure)
     update_server_global_status_wrapper(&db, &server_id, &server_name, true).await?;
@@ -160,7 +160,7 @@ async fn disable_server_core(
 ) -> Result<Json<ServerOperationData>, ApiError> {
     // Get database reference and server info
     let db = common::get_database_from_state(&state)?;
-    let (server_id, server_name) = get_server_info_by_id(&db, &id).await?;
+    let (server_id, server_name) = common::get_server_info_by_id(&db.pool, &id).await?;
 
     // Update global status (early return on failure)
     update_server_global_status_wrapper(&db, &server_id, &server_name, false).await?;
@@ -170,23 +170,6 @@ async fn disable_server_core(
 
     // Handle connection pool operations
     handle_connection_pool_disable(&state, &server_id).await
-}
-
-/// Helper function to get server info by ID with early return on error
-#[inline]
-async fn get_server_info_by_id(
-    db: &Arc<crate::config::database::Database>,
-    id: &str,
-) -> Result<(String, String), ApiError> {
-    let server_row = crate::config::server::get_server_by_id(&db.pool, id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?
-        .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
-
-    let server_id = server_row.id.unwrap_or_default();
-    let server_name = server_row.name;
-
-    Ok((server_id, server_name))
 }
 
 /// Helper function to update server global status with error handling
@@ -261,11 +244,7 @@ async fn handle_server_connection_setup(
             )
         }
         Err(e) => {
-            tracing::warn!(
-                "Failed to start server '{}' after enabling globally: {}",
-                server_id,
-                e
-            );
+            tracing::warn!("Failed to start server '{}' after enabling globally: {}", server_id, e);
             let instance_id = pool
                 .get_default_instance_id(server_id)
                 .unwrap_or_else(|_| "default".to_string());

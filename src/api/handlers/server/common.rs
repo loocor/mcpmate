@@ -14,6 +14,7 @@ use crate::{
     core::cache::{CacheQuery, FreshnessLevel},
     core::pool::UpstreamConnectionPool,
 };
+use axum::http::StatusCode;
 
 /// Server identification result
 #[derive(Debug, Clone)]
@@ -172,10 +173,7 @@ pub async fn get_server_instances(
     let pool = match get_connection_pool_with_timeout(state).await {
         Ok(pool) => pool,
         Err(_) => {
-            tracing::warn!(
-                "Timed out waiting for connection pool lock for server '{}'",
-                server_id
-            );
+            tracing::warn!("Timed out waiting for connection pool lock for server '{}'", server_id);
             return Vec::new();
         }
     };
@@ -240,6 +238,97 @@ pub async fn get_server_by_identifier(
         .ok_or_else(|| ApiError::InternalError(format!("Server '{identifier}' has no ID")))?;
 
     Ok((server, server_id))
+}
+
+/// Get server by ID or return error (unified interface)
+///
+/// Replaces suits/helpers.rs::get_server_or_error with standardized interface.
+/// This function provides a clean, consistent way to get a server by ID.
+pub async fn get_server_or_error(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<crate::config::models::Server, ApiError> {
+    let server = server::get_server_by_id(pool, server_id)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
+
+    server.ok_or_else(|| ApiError::NotFound(format!("Server with ID '{server_id}' not found")))
+}
+
+/// Get server info by ID (unified interface)
+///
+/// Replaces server/mgmt.rs::get_server_info_by_id with standardized interface.
+/// Returns (server_id, server_name) tuple for lightweight operations.
+pub async fn get_server_info_by_id(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<(String, String), ApiError> {
+    let server = get_server_or_error(pool, server_id).await?;
+
+    let actual_server_id = server
+        .id
+        .ok_or_else(|| ApiError::InternalError("Server found but missing ID".to_string()))?;
+
+    Ok((actual_server_id, server.name))
+}
+
+/// Get server info for inspect endpoints (unified interface)
+///
+/// Replaces the repeated validation pattern in resources.rs, prompts.rs, and tools.rs.
+/// This function consolidates database access, server validation, and info creation.
+pub async fn get_server_info_for_inspect(
+    app_state: &Arc<AppState>,
+    server_id: &str,
+    query: &InspectQuery,
+) -> Result<
+    (
+        Arc<crate::config::database::Database>,
+        ServerIdentification,
+        InspectParams,
+    ),
+    StatusCode,
+> {
+    // Get database from app state
+    let db = get_database_from_state(app_state).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Get server by ID
+    let server_row = crate::config::server::get_server_by_id(&db.pool, server_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // Create server identification
+    let server_info = ServerIdentification {
+        server_id: server_id.to_string(),
+        server_name: server_row.name.clone(),
+    };
+
+    // Validate server ID format
+    validate_server_id(&server_info.server_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Parse query parameters
+    let params = query.to_params().map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    Ok((db, server_info, params))
+}
+
+/// Check server capability or return error (unified interface)
+///
+/// Replaces the repeated capability checking pattern in resources.rs, prompts.rs, and tools.rs.
+/// Returns Some(response) if the server doesn't support the capability, None if it does support it.
+pub async fn check_capability_or_error(
+    pool: &Pool<Sqlite>,
+    server_info: &ServerIdentification,
+    capability: crate::common::capability::CapabilityToken,
+    params: &InspectParams,
+) -> Option<axum::Json<serde_json::Value>> {
+    if let Ok((server_row, _id)) = get_server_by_identifier(pool, &server_info.server_name).await {
+        if server_row.capabilities.is_some() && !server_row.has_capability(capability) {
+            let strategy = format!("capability-{}-unsupported", capability.as_str().to_lowercase());
+            return Some(create_inspect_response(Vec::new(), false, params.refresh, &strategy));
+        }
+    }
+    None
 }
 
 /// Note: Validate server access permissions (placeholder for future authorization)

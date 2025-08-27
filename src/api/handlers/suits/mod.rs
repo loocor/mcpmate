@@ -4,10 +4,7 @@
 // Re-export all public functions from submodules
 pub use self::{
     capabilities::{component_manage, prompts_list, resources_list, tools_list},
-    helpers::{
-         get_server_or_error,
-        get_suit_or_error, get_tool_or_error, get_tool_with_details_or_error,
-    },
+    helpers::{get_suit_or_error, get_tool_or_error, get_tool_with_details_or_error},
     mgmt::{suit_create, suit_delete, suit_details, suit_manage, suit_update, suits_list},
     server::{server_manage, servers_list},
 };

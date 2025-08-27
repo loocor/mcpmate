@@ -14,69 +14,20 @@ use chrono::Utc;
 use std::sync::Arc;
 
 use super::capability::{tool_json, tool_json_from_cached};
-use super::common::{InspectQuery, create_inspect_response, create_runtime_cache_data, validate_server_id};
-
-/// Macro to extract database pool from app state with early return on error
-macro_rules! get_db_pool {
-    ($app_state:expr) => {
-        match &$app_state.database {
-            Some(db) => db.pool.clone(),
-            None => return Err(StatusCode::SERVICE_UNAVAILABLE),
-        }
-    };
-}
-
-/// Helper function to convert Json response to ServerToolsResp
-fn json_to_server_tools_resp(json_response: axum::Json<serde_json::Value>) -> ServerToolsData {
-    let json_value = json_response.0;
-
-    // Extract data from the JSON response
-    let data = json_value
-        .get("data")
-        .and_then(|d| d.as_array())
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-
-    let state = json_value
-        .get("state")
-        .and_then(|s| s.as_str())
-        .unwrap_or("ok")
-        .to_string();
-
-    let meta_value = json_value.get("meta").cloned().unwrap_or_default();
-    let meta = ServerCapabilityMeta {
-        cache_hit: meta_value.get("cache_hit").and_then(|v| v.as_bool()).unwrap_or(false),
-        strategy: meta_value
-            .get("strategy")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string(),
-        source: meta_value
-            .get("source")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string(),
-    };
-
-    ServerToolsData { data, state, meta }
-}
+use super::common::{InspectQuery, create_inspect_response, create_runtime_cache_data};
 
 /// List all tools for a specific server
 pub async fn server_tools(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerCapabilityReq>,
 ) -> Result<Json<ServerToolsResp>, StatusCode> {
-    let db_pool = get_db_pool!(app_state);
-    let result = server_tools_core(&request, &db_pool, &app_state).await?;
+    let result = server_tools_core(&request, &app_state).await?;
     Ok(Json(result))
 }
 
 /// Core business logic for server tools operation
 async fn server_tools_core(
     request: &ServerCapabilityReq,
-    db_pool: &sqlx::SqlitePool,
     state: &Arc<AppState>,
 ) -> Result<ServerToolsResp, StatusCode> {
     // Convert ServerCapabilityReq to InspectQuery for compatibility with existing logic
@@ -91,35 +42,20 @@ async fn server_tools_core(
         timeout: None,
     };
 
-    // Get server by ID
-    let server_row = crate::config::server::get_server_by_id(db_pool, &request.id)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get server: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    // Validate and get server info using unified function
+    let (db, server_info, params) = super::common::get_server_info_for_inspect(state, &request.id, &query).await?;
 
-    let server_info = super::common::ServerIdentification {
-        server_id: request.id.clone(),
-        server_name: server_row.name.clone(),
-    };
-
-    // Validate server ID format
-    validate_server_id(&server_info.server_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Parse query parameters
-    let params = query.to_params().map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // If the server explicitly declares capabilities and lacks tools, short-circuit
-    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(db_pool, &server_info.server_name).await {
-        if server_row.capabilities.is_some()
-            && !server_row.has_capability(crate::common::capability::CapabilityToken::Tools)
-        {
-            let result = create_inspect_response(Vec::new(), false, params.refresh, "capability-tools-unsupported");
-            let tools_resp = json_to_server_tools_resp(result);
-            return Ok(ServerToolsResp::success(tools_resp));
-        }
+    // Check if server supports tools capability
+    if let Some(response) = super::common::check_capability_or_error(
+        &db.pool,
+        &server_info,
+        crate::common::capability::CapabilityToken::Tools,
+        &params,
+    )
+    .await
+    {
+        let tools_resp = json_to_server_tools_resp(response);
+        return Ok(ServerToolsResp::success(tools_resp));
     }
 
     // Try Redb cache first with freshness policy
@@ -238,4 +174,41 @@ async fn server_tools_core(
     );
     let tools_resp = json_to_server_tools_resp(result);
     Ok(ServerToolsResp::success(tools_resp))
+}
+
+/// Helper function to convert Json response to ServerToolsResp
+fn json_to_server_tools_resp(json_response: axum::Json<serde_json::Value>) -> ServerToolsData {
+    let json_value = json_response.0;
+
+    // Extract data from the JSON response
+    let data = json_value
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    let state = json_value
+        .get("state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("ok")
+        .to_string();
+
+    let meta_value = json_value.get("meta").cloned().unwrap_or_default();
+    let meta = ServerCapabilityMeta {
+        cache_hit: meta_value.get("cache_hit").and_then(|v| v.as_bool()).unwrap_or(false),
+        strategy: meta_value
+            .get("strategy")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        source: meta_value
+            .get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    };
+
+    ServerToolsData { data, state, meta }
 }

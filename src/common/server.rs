@@ -104,11 +104,18 @@ impl FromStr for ServerType {
     type Err = ParseServerTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
+        // Strict matching, no variants or case conversion allowed
+        match s {
             "stdio" => Ok(ServerType::Stdio),
             "sse" => Ok(ServerType::Sse),
-            "streamable_http" | "streamablehttp" => Ok(ServerType::StreamableHttp),
-            _ => Err(ParseServerTypeError),
+            "streamable_http" => Ok(ServerType::StreamableHttp),
+            _ => {
+                tracing::error!(
+                    "Invalid server type '{}'. Only strict standard formats allowed: 'stdio', 'sse', 'streamable_http'",
+                    s
+                );
+                Err(ParseServerTypeError)
+            }
         }
     }
 }
@@ -249,11 +256,18 @@ impl FromStr for TransportType {
     type Err = ParseTransportTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Strict matching, no variants allowed
         match s {
-            "StreamableHttp" | "streamable_http" | "streamablehttp" => Ok(TransportType::StreamableHttp),
-            "Sse" | "sse" => Ok(TransportType::Sse),
-            "Stdio" | "stdio" => Ok(TransportType::Stdio),
-            _ => Err(ParseTransportTypeError),
+            "StreamableHttp" => Ok(TransportType::StreamableHttp),
+            "Sse" => Ok(TransportType::Sse),
+            "Stdio" => Ok(TransportType::Stdio),
+            _ => {
+                tracing::error!(
+                    "Invalid transport type '{}'. Only strict standard formats allowed: 'StreamableHttp', 'Sse', 'Stdio'",
+                    s
+                );
+                Err(ParseTransportTypeError)
+            }
         }
     }
 }

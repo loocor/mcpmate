@@ -5,7 +5,7 @@ use crate::{
     api::handlers::ApiError,
     config::{
         database::Database,
-        models::{ConfigSuit, ConfigSuitTool, Server},
+        models::{ConfigSuit, ConfigSuitTool},
     },
 };
 
@@ -25,21 +25,6 @@ pub async fn get_suit_or_error(
         None => Err(ApiError::NotFound(format!(
             "Configuration suit with ID '{suit_id}' not found"
         ))),
-    }
-}
-
-/// Get a server by ID or return an error
-pub async fn get_server_or_error(
-    db: &Database,
-    server_id: &str,
-) -> Result<Server, ApiError> {
-    let server = crate::config::server::get_server_by_id(&db.pool, server_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server: {e}")))?;
-
-    match server {
-        Some(s) => Ok(s),
-        None => Err(ApiError::NotFound(format!("Server with ID '{server_id}' not found"))),
     }
 }
 

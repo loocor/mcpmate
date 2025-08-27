@@ -1,7 +1,7 @@
 // MCPMate Proxy API handlers for Config Suit server management
 // Contains handler functions for managing servers in Config Suits
 
-use super::{common::*, get_server_or_error, get_suit_or_error};
+use super::{common::*, get_suit_or_error};
 use crate::api::models::suits::{
     SuitComponentAction, SuitComponentListReq, SuitComponentManageReq, SuitServerManageData, SuitServerManageResp,
     SuitServerResp, SuitServersListData, SuitServersListResp,
@@ -143,7 +143,7 @@ pub async fn server_manage(
     let component_id = &request.component_ids[0];
 
     // Get server details (verify server exists)
-    let _server = get_server_or_error(&db, component_id).await?;
+    let _server = crate::api::handlers::server::common::get_server_or_error(&db.pool, component_id).await?;
 
     // Perform the action
     let (result, status) = match request.action {

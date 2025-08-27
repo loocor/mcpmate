@@ -14,7 +14,7 @@ use tracing;
 
 use super::UpstreamConnectionPool;
 use crate::{
-    common::server::TransportType,
+    common::server::{ServerType, TransportType},
     core::{
         foundation::types::{
             ConnectionOperation, // action to perform on the connection
@@ -167,12 +167,11 @@ impl UpstreamConnectionPool {
             conn.update_initializing();
         }
 
-        // Connect based on server type
-        let result = match server_config.kind.as_str() {
-            "stdio" => self.connect_stdio(server_id, instance_id).await,
-            "sse" => self.connect_sse(server_id, instance_id).await,
-            "http" => self.connect_http(server_id, instance_id).await,
-            _ => Err(anyhow::anyhow!("Unsupported server type: {}", server_config.kind)),
+        // Connect based on server type using enum matching (strict type safety)
+        let result = match server_config.kind {
+            ServerType::Stdio => self.connect_stdio(server_id, instance_id).await,
+            ServerType::Sse => self.connect_sse(server_id, instance_id).await,
+            ServerType::StreamableHttp => self.connect_http(server_id, instance_id).await,
         };
 
         // Handle connection result
@@ -665,10 +664,9 @@ impl UpstreamConnectionPool {
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
         // Check if server should remain enabled in any active suit
-        let still_enabled_in_suits =
-            crate::config::server::is_server_enabled_in_any_active_suit(&db.pool, server_id)
-                .await
-                .unwrap_or(false);
+        let still_enabled_in_suits = crate::config::server::is_server_enabled_in_any_active_suit(&db.pool, server_id)
+            .await
+            .unwrap_or(false);
 
         // Early return if still enabled in other suits
         if still_enabled_in_suits {

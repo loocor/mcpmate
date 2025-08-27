@@ -21,7 +21,7 @@ use super::capability::{
     CapabilityKind, enrich_capability_items, resource_json, resource_json_from_cached, resource_template_json,
     resource_template_json_from_cached, respond_with_enriched,
 };
-use super::common::{create_inspect_response, create_runtime_cache_data, get_database_from_state, validate_server_id};
+use super::common::{create_inspect_response, create_runtime_cache_data, get_database_from_state};
 
 /// Helper function to convert Json response to ServerResourcesResp
 fn json_to_server_resources_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourcesData {
@@ -122,33 +122,20 @@ async fn server_resources_core(
         timeout: None,
     };
 
-    // Get database and load server by ID
-    let db = get_database_from_state(app_state).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let server_row = crate::config::server::get_server_by_id(&db.pool, &request.id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let server_info = super::common::ServerIdentification {
-        server_id: request.id.clone(),
-        server_name: server_row.name.clone(),
-    };
+    // Validate and get server info using unified function
+    let (db, server_info, params) = super::common::get_server_info_for_inspect(app_state, &request.id, &query).await?;
 
-    // Validate server ID format
-    validate_server_id(&server_info.server_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Parse query parameters
-    let params = query.to_params().map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Short-circuit only if the server explicitly declares capabilities and lacks resources capability
-    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
-        if server_row.capabilities.is_some()
-            && !server_row.has_capability(crate::common::capability::CapabilityToken::Resources)
-        {
-            let response_data =
-                create_inspect_response(Vec::new(), false, params.refresh, "capability-resources-unsupported");
-            let resources_resp = json_to_server_resources_resp(response_data);
-            return Ok(ServerResourcesResp::success(resources_resp));
-        }
+    // Check if server supports resources capability
+    if let Some(response) = super::common::check_capability_or_error(
+        &db.pool,
+        &server_info,
+        crate::common::capability::CapabilityToken::Resources,
+        &params,
+    )
+    .await
+    {
+        let resources_resp = json_to_server_resources_resp(response);
+        return Ok(ServerResourcesResp::success(resources_resp));
     }
 
     // Try Redb cache with freshness policy on full server snapshot
@@ -351,33 +338,20 @@ async fn server_resource_templates_core(
         timeout: None,
     };
 
-    // Get database and load server by ID
-    let db = get_database_from_state(app_state).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let server_row = crate::config::server::get_server_by_id(&db.pool, &request.id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let server_info = super::common::ServerIdentification {
-        server_id: request.id.clone(),
-        server_name: server_row.name.clone(),
-    };
+    // Validate and get server info using unified function
+    let (db, server_info, params) = super::common::get_server_info_for_inspect(app_state, &request.id, &query).await?;
 
-    // Validate server ID format
-    validate_server_id(&server_info.server_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Parse query parameters
-    let params = query.to_params().map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Short-circuit only if the server explicitly declares capabilities and lacks resources capability
-    if let Ok((server_row, _id)) = super::common::get_server_by_identifier(&db.pool, &server_info.server_name).await {
-        if server_row.capabilities.is_some()
-            && !server_row.has_capability(crate::common::capability::CapabilityToken::Resources)
-        {
-            let response_data =
-                create_inspect_response(Vec::new(), false, params.refresh, "capability-resources-unsupported");
-            let templates_resp = json_to_server_resource_templates_resp(response_data);
-            return Ok(ServerResourceTemplatesResp::success(templates_resp));
-        }
+    // Check if server supports resources capability
+    if let Some(response) = super::common::check_capability_or_error(
+        &db.pool,
+        &server_info,
+        crate::common::capability::CapabilityToken::Resources,
+        &params,
+    )
+    .await
+    {
+        let templates_resp = json_to_server_resource_templates_resp(response);
+        return Ok(ServerResourceTemplatesResp::success(templates_resp));
     }
 
     // Try Redb cache first with freshness policy on full snapshot
