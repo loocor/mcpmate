@@ -2,7 +2,7 @@
 // Contains create, update, delete and status management operations
 
 use anyhow::{Context, Result};
-use sqlx::{Pool, Sqlite, Transaction};
+use sqlx::{Pool, Sqlite};
 
 use crate::{config::models::ConfigSuit, generate_id};
 
@@ -13,30 +13,16 @@ pub async fn upsert_config_suit(
     pool: &Pool<Sqlite>,
     suit: &ConfigSuit,
 ) -> Result<String> {
-    tracing::debug!(
-        "Upserting configuration suit '{}', type: {}",
-        suit.name,
-        suit.suit_type
-    );
+    tracing::debug!("Upserting configuration suit '{}', type: {}", suit.name, suit.suit_type);
 
-    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-    let suit_id = upsert_config_suit_tx(&mut tx, suit).await?;
-    tx.commit().await.context("Failed to commit transaction")?;
-
-    Ok(suit_id)
-}
-
-/// Create or update a configuration suit in the database (transaction version)
-pub async fn upsert_config_suit_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    suit: &ConfigSuit,
-) -> Result<String> {
     // Generate an ID for the suit if it doesn't have one
     let suit_id = if let Some(id) = &suit.id {
         id.clone()
     } else {
         generate_id!("suit")
     };
+
+    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
     let result = sqlx::query(
         r#"
@@ -60,11 +46,11 @@ pub async fn upsert_config_suit_tx(
     .bind(suit.priority)
     .bind(suit.is_active)
     .bind(suit.is_default)
-    .execute(&mut **tx)
+    .execute(&mut *tx)
     .await
     .context("Failed to upsert configuration suit")?;
 
-    if result.rows_affected() == 0 {
+    let final_suit_id = if result.rows_affected() == 0 {
         // If no rows were affected, get the existing ID
         let existing_id = sqlx::query_scalar::<_, String>(
             r#"
@@ -73,14 +59,65 @@ pub async fn upsert_config_suit_tx(
             "#,
         )
         .bind(&suit.name)
-        .fetch_one(&mut **tx)
+        .fetch_one(&mut *tx)
         .await
         .context("Failed to get configuration suit ID")?;
 
-        return Ok(existing_id);
+        existing_id
+    } else {
+        suit_id
+    };
+
+    tx.commit().await.context("Failed to commit transaction")?;
+
+    Ok(final_suit_id)
+}
+
+/// Update an existing configuration suit by ID
+///
+/// This function is specifically designed for updating existing suits based on their ID,
+/// unlike upsert_config_suit which is designed for creation scenarios with name-based conflict detection.
+pub async fn update_config_suit(
+    pool: &Pool<Sqlite>,
+    suit: &ConfigSuit,
+) -> Result<()> {
+    let suit_id = suit
+        .id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Configuration suit ID is required for update operation"))?;
+
+    tracing::debug!("Updating configuration suit '{}' with ID '{}'", suit.name, suit_id);
+
+    let result = sqlx::query(
+        r#"
+        UPDATE config_suit
+        SET name = ?, description = ?, type = ?, multi_select = ?, priority = ?, is_active = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+    )
+    .bind(&suit.name)
+    .bind(&suit.description)
+    .bind(suit.suit_type)
+    .bind(suit.multi_select)
+    .bind(suit.priority)
+    .bind(suit.is_active)
+    .bind(suit.is_default)
+    .bind(suit_id)
+    .execute(pool)
+    .await
+    .context("Failed to update configuration suit")?;
+
+    if result.rows_affected() == 0 {
+        return Err(anyhow::anyhow!("Configuration suit with ID '{}' not found", suit_id));
     }
 
-    Ok(suit_id)
+    tracing::debug!(
+        "Successfully updated configuration suit '{}' with ID '{}'",
+        suit.name,
+        suit_id
+    );
+
+    Ok(())
 }
 
 /// Set a configuration suit as active or inactive
@@ -101,10 +138,7 @@ pub async fn set_config_suit_active(
     // Get the configuration suit to check multi_select
     let suit = get_config_suit(pool, suit_id).await?;
     if suit.is_none() {
-        return Err(anyhow::anyhow!(
-            "Configuration suit with ID {} not found",
-            suit_id
-        ));
+        return Err(anyhow::anyhow!("Configuration suit with ID {} not found", suit_id));
     }
     let suit = suit.unwrap();
 
@@ -144,12 +178,10 @@ pub async fn set_config_suit_active(
     tx.commit().await.context("Failed to commit transaction")?;
 
     // Publish the event
-    crate::core::events::EventBus::global().publish(
-        crate::core::events::Event::ConfigSuitStatusChanged {
-            suit_id: suit_id.to_string(),
-            enabled: active,
-        },
-    );
+    crate::core::events::EventBus::global().publish(crate::core::events::Event::ConfigSuitStatusChanged {
+        suit_id: suit_id.to_string(),
+        enabled: active,
+    });
 
     tracing::info!(
         "Published ConfigSuitStatusChanged event for suit ID {} ({})",

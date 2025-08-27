@@ -11,14 +11,13 @@ pub mod tool;
 
 // Basic query operations
 pub use basic::{
-    get_active_config_suits, get_all_config_suits, get_config_suit, get_config_suit_by_name,
-    get_config_suits_by_type, get_default_config_suit,
+    get_active_config_suits, get_all_config_suits, get_config_suit, get_config_suit_by_name, get_config_suits_by_type,
+    get_default_config_suit,
 };
 
 // Management operations
 pub use mgmt::{
-    delete_config_suit, set_config_suit_active, set_config_suit_default, upsert_config_suit,
-    upsert_config_suit_tx,
+    delete_config_suit, set_config_suit_active, set_config_suit_default, update_config_suit, upsert_config_suit,
 };
 
 // Prompt association operations
@@ -35,9 +34,8 @@ pub use server::{
 
 // Resource association operations
 pub use resource::{
-    add_resource_to_config_suit, get_enabled_resources_for_config_suit,
-    get_resources_for_config_suit, remove_resource_from_config_suit,
-    update_resource_enabled_status,
+    add_resource_to_config_suit, get_enabled_resources_for_config_suit, get_resources_for_config_suit,
+    remove_resource_from_config_suit, update_resource_enabled_status,
 };
 
 // Tool association operations

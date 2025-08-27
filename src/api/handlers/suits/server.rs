@@ -1,9 +1,11 @@
 // MCPMate Proxy API handlers for Config Suit server management
 // Contains handler functions for managing servers in Config Suits
 
-use std::collections::HashMap;
-
 use super::{common::*, get_server_or_error, get_suit_or_error};
+use crate::api::models::suits::{
+    SuitComponentAction, SuitComponentListReq, SuitComponentManageReq, SuitServerManageData, SuitServerManageResp,
+    SuitServerResp, SuitServersListData, SuitServersListResp,
+};
 use sqlx::{Pool, Sqlite};
 
 // Shared semaphore to limit concurrent capability sync operations (max 2 concurrent syncs)
@@ -53,17 +55,6 @@ fn spawn_capability_sync(
     });
 }
 
-/// Find server configuration status in the suit configurations
-fn find_server_config_status(
-    server_configs: &[ConfigSuitServer],
-    server_id: &str,
-) -> Option<bool> {
-    server_configs
-        .iter()
-        .find(|config| config.server_id == server_id)
-        .map(|config| config.enabled)
-}
-
 /// Invalidate suit cache if merge service is available
 async fn invalidate_suit_cache(state: &Arc<AppState>) {
     if let Some(merge_service) = &state.suit_merge_service {
@@ -72,276 +63,127 @@ async fn invalidate_suit_cache(state: &Arc<AppState>) {
     }
 }
 
-/// List servers in a configuration suit
-pub async fn list_servers(
+/// List servers in a configuration suit (standardized version)
+///
+/// **Endpoint:** `GET /mcp/suits/servers/list?suit_id={suit_id}&enabled_only={bool}`
+pub async fn servers_list(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<SuitServersResp>, ApiError> {
+    Query(request): Query<SuitComponentListReq>,
+) -> Result<Json<SuitServersListResp>, ApiError> {
     let db = get_database(&state).await?;
-    let suit = get_suit_or_error(&db, &id).await?;
 
-    // Get all available servers in the system
-    let all_servers = crate::config::server::get_all_servers(&db.pool)
+    // Verify suit exists
+    let suit = crate::config::suit::get_config_suit(&db.pool, &request.suit_id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get servers: {e}")))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get configuration suit: {e}")))?;
 
-    // Get servers currently configured in this suit
-    let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &id)
+    let suit = match suit {
+        Some(s) => s,
+        None => {
+            return Err(ApiError::NotFound(format!(
+                "Configuration suit with ID '{}' not found",
+                request.suit_id
+            )));
+        }
+    };
+
+    // Get servers in the suit
+    let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &request.suit_id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server configurations: {e}")))?;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get suit servers: {e}")))?;
 
-    // Create a map of server ID to enabled status in this suit
-    let suit_server_status: HashMap<String, bool> = server_configs
-        .into_iter()
-        .map(|config| (config.server_id, config.enabled))
-        .collect();
+    // Convert to response format (simplified for now)
+    let mut servers = Vec::new();
+    for server_config in server_configs {
+        // Get server details from server_config table
+        if let Ok(Some(server)) = crate::config::server::get_server_by_id(&db.pool, &server_config.server_id).await {
+            servers.push(SuitServerResp {
+                id: server_config.server_id.clone(),
+                name: server.name,
+                enabled: server_config.enabled,
+                allowed_operations: vec!["enable".to_string(), "disable".to_string()],
+            });
+        }
+    }
 
-    // Convert to response format using functional approach
-    let servers = all_servers
-        .into_iter()
-        .filter_map(|server| {
-            server.id.as_ref().map(|server_id| {
-                let enabled = suit_server_status.get(server_id).copied().unwrap_or(false);
-                ResponseConverter::server_to_suit_response(&server, enabled)
-            })
-        })
-        .collect::<Vec<_>>();
+    // Apply enabled filter if requested
+    if request.enabled_only.unwrap_or(false) {
+        servers.retain(|s| s.enabled);
+    }
 
-    tracing::debug!(
-        "Listed {} total servers for configuration suit '{}' ({})",
-        servers.len(),
-        suit.name,
-        id
-    );
-
-    Ok(Json(SuitServersResp {
-        suit_id: id,
+    let total = servers.len();
+    let response = SuitServersListData {
+        suit_id: request.suit_id,
         suit_name: suit.name,
         servers,
-    }))
+        total,
+    };
+
+    Ok(Json(SuitServersListResp::success(response)))
 }
 
-/// Enable a server in a configuration suit
-pub async fn enable_server(
+/// Manage server operations (enable/disable) in configuration suits
+///
+/// **Endpoint:** `POST /mcp/suits/servers/manage`
+pub async fn server_manage(
     State(state): State<Arc<AppState>>,
-    Path((suit_id, server_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationData>, ApiError> {
+    Json(request): Json<SuitComponentManageReq>,
+) -> Result<Json<SuitServerManageResp>, ApiError> {
     let db = get_database(&state).await?;
-    let server = get_server_or_error(&db, &server_id).await?;
 
-    // Check if the server is already enabled in the suit
-    let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &suit_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server configurations: {e}")))?;
+    // Verify suit exists
+    let _suit = get_suit_or_error(&db, &request.suit_id).await?;
 
-    // Early return if server is already enabled
-    if let Some(true) = find_server_config_status(&server_configs, &server_id) {
-        return Ok(Json(SuitOperationData {
-            id: server_id,
-            name: server.name,
-            result: "Server is already enabled in this configuration suit".to_string(),
-            status: "Enabled".to_string(),
-            allowed_operations: vec!["disable".to_string()],
-        }));
+    // Get component ID (server.rs only supports single server operations)
+    if request.component_ids.len() != 1 {
+        return Err(ApiError::BadRequest(
+            "Server operations only support single component ID".to_string(),
+        ));
     }
+    let component_id = &request.component_ids[0];
 
-    // Enable the server in the suit
-    crate::config::suit::add_server_to_config_suit(&db.pool, &suit_id, &server_id, true)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to enable server in configuration suit: {e}")))?;
+    // Get server details (verify server exists)
+    let _server = get_server_or_error(&db, component_id).await?;
 
-    // Sync server capabilities asynchronously
-    spawn_capability_sync(db.pool.clone(), suit_id.clone(), server_id.clone());
+    // Perform the action
+    let (result, status) = match request.action {
+        SuitComponentAction::Enable => {
+            // Add server to suit (this enables it)
+            crate::config::suit::add_server_to_config_suit(&db.pool, &request.suit_id, component_id, true)
+                .await
+                .map_err(|e| ApiError::InternalError(format!("Failed to enable server: {e}")))?;
+
+            // Sync server capabilities asynchronously
+            spawn_capability_sync(db.pool.clone(), request.suit_id.clone(), component_id.clone());
+
+            ("enabled", "active")
+        }
+        SuitComponentAction::Disable => {
+            // Disable server in suit
+            crate::config::suit::add_server_to_config_suit(&db.pool, &request.suit_id, component_id, false)
+                .await
+                .map_err(|e| ApiError::InternalError(format!("Failed to disable server: {e}")))?;
+
+            ("disabled", "inactive")
+        }
+    };
 
     // Invalidate cache
     invalidate_suit_cache(&state).await;
 
-    Ok(Json(SuitOperationData {
-        id: server_id,
-        name: server.name,
-        result: "Successfully enabled server in configuration suit".to_string(),
-        status: "Enabled".to_string(),
-        allowed_operations: vec!["disable".to_string()],
-    }))
-}
+    let response = SuitServerManageData {
+        suit_id: request.suit_id,
+        results: vec![crate::api::models::suits::ComponentOperationResult {
+            component_id: component_id.clone(),
+            component_type: "server".to_string(),
+            success: true,
+            result: result.to_string(),
+            error: None,
+        }],
+        summary: format!("Server {}", result),
+        status: status.to_string(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
 
-/// Disable a server in a configuration suit
-pub async fn disable_server(
-    State(state): State<Arc<AppState>>,
-    Path((suit_id, server_id)): Path<(String, String)>,
-) -> Result<Json<SuitOperationData>, ApiError> {
-    let db = get_database(&state).await?;
-    let server = get_server_or_error(&db, &server_id).await?;
-
-    // Check if the server is already disabled in the suit
-    let server_configs = crate::config::suit::get_config_suit_servers(&db.pool, &suit_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server configurations: {e}")))?;
-
-    // Early return if server is already disabled
-    if let Some(false) = find_server_config_status(&server_configs, &server_id) {
-        return Ok(Json(SuitOperationData {
-            id: server_id,
-            name: server.name,
-            result: "Server is already disabled in this configuration suit".to_string(),
-            status: "Disabled".to_string(),
-            allowed_operations: vec!["enable".to_string()],
-        }));
-    }
-
-    // Disable the server in the suit
-    crate::config::suit::add_server_to_config_suit(&db.pool, &suit_id, &server_id, false)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to disable server in configuration suit: {e}")))?;
-
-    // Invalidate cache
-    invalidate_suit_cache(&state).await;
-
-    Ok(Json(SuitOperationData {
-        id: server_id,
-        name: server.name,
-        result: "Successfully disabled server in configuration suit".to_string(),
-        status: "Disabled".to_string(),
-        allowed_operations: vec!["enable".to_string()],
-    }))
-}
-
-/// Process a single server for batch enable operation
-async fn process_server_enable(
-    pool: &Pool<Sqlite>,
-    suit_id: &str,
-    server_id: String,
-) -> Result<String, String> {
-    // Check if server exists
-    let server = crate::config::server::get_server_by_id(pool, &server_id)
-        .await
-        .map_err(|e| format!("Failed to get server: {e}"))?;
-
-    if server.is_none() {
-        return Err("Server not found".to_string());
-    }
-
-    // Enable the server in the suit
-    crate::config::suit::add_server_to_config_suit(pool, suit_id, &server_id, true)
-        .await
-        .map_err(|e| format!("Failed to enable server: {e}"))?;
-
-    Ok(server_id)
-}
-
-/// Batch enable servers in a configuration suit
-pub async fn batch_enable_servers(
-    State(state): State<Arc<AppState>>,
-    Path(suit_id): Path<String>,
-    Json(payload): Json<SuitBatchOperationReq>,
-) -> Result<Json<SuitBatchOperationResp>, ApiError> {
-    let db = get_database(&state).await?;
-    let _suit = get_suit_or_error(&db, &suit_id).await?;
-
-    // Process all servers using functional approach with parallel processing
-    let results = futures::future::join_all(
-        payload
-            .ids
-            .into_iter()
-            .map(|server_id| process_server_enable(&db.pool, &suit_id, server_id)),
-    )
-    .await;
-
-    // Partition results into successful and failed
-    let mut successful_ids = Vec::new();
-    let mut failed_ids = HashMap::new();
-
-    for result in results {
-        match result {
-            Ok(server_id) => {
-                // Sync capabilities asynchronously for successful servers
-                spawn_capability_sync(db.pool.clone(), suit_id.clone(), server_id.clone());
-                successful_ids.push(server_id);
-            }
-            Err(e) => {
-                // Extract server_id from error context if possible, otherwise use a placeholder
-                let server_id = e.split(':').next().unwrap_or("unknown").to_string();
-                failed_ids.insert(server_id, e);
-            }
-        }
-    }
-
-    // Invalidate cache if any servers were successfully enabled
-    if !successful_ids.is_empty() {
-        invalidate_suit_cache(&state).await;
-    }
-
-    Ok(Json(SuitBatchOperationResp {
-        success_count: successful_ids.len(),
-        successful_ids,
-        failed_ids,
-    }))
-}
-
-/// Process a single server for batch disable operation
-async fn process_server_disable(
-    pool: &Pool<Sqlite>,
-    suit_id: &str,
-    server_id: String,
-) -> Result<String, String> {
-    // Check if server exists
-    let server = crate::config::server::get_server_by_id(pool, &server_id)
-        .await
-        .map_err(|e| format!("Failed to get server: {e}"))?;
-
-    if server.is_none() {
-        return Err("Server not found".to_string());
-    }
-
-    // Disable the server in the suit
-    crate::config::suit::add_server_to_config_suit(pool, suit_id, &server_id, false)
-        .await
-        .map_err(|e| format!("Failed to disable server: {e}"))?;
-
-    Ok(server_id)
-}
-
-/// Batch disable servers in a configuration suit
-pub async fn batch_disable_servers(
-    State(state): State<Arc<AppState>>,
-    Path(suit_id): Path<String>,
-    Json(payload): Json<SuitBatchOperationReq>,
-) -> Result<Json<SuitBatchOperationResp>, ApiError> {
-    let db = get_database(&state).await?;
-    let _suit = get_suit_or_error(&db, &suit_id).await?;
-
-    // Process all servers using functional approach with parallel processing
-    let results = futures::future::join_all(
-        payload
-            .ids
-            .into_iter()
-            .map(|server_id| process_server_disable(&db.pool, &suit_id, server_id)),
-    )
-    .await;
-
-    // Partition results into successful and failed
-    let mut successful_ids = Vec::new();
-    let mut failed_ids = HashMap::new();
-
-    for result in results {
-        match result {
-            Ok(server_id) => successful_ids.push(server_id),
-            Err(e) => {
-                // Extract server_id from error context if possible, otherwise use a placeholder
-                let server_id = e.split(':').next().unwrap_or("unknown").to_string();
-                failed_ids.insert(server_id, e);
-            }
-        }
-    }
-
-    // Invalidate cache if any servers were successfully disabled
-    if !successful_ids.is_empty() {
-        invalidate_suit_cache(&state).await;
-    }
-
-    Ok(Json(SuitBatchOperationResp {
-        success_count: successful_ids.len(),
-        successful_ids,
-        failed_ids,
-    }))
+    Ok(Json(SuitServerManageResp::success(response)))
 }

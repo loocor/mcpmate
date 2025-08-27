@@ -16,18 +16,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(title = "AI Extract Request")]
-pub struct AIExtractReq {
-    #[schemars(description = "Base64 encoded text content to extract MCP configuration from")]
-    pub text_base64: String,
-
-    #[schemars(description = "Optional AI configuration")]
-    pub config: Option<ExtractConfig>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(title = "Extract Configuration")]
-pub struct ExtractConfig {
+pub struct AIExtractConfig {
     #[schemars(description = "Maximum number of tokens to generate")]
     pub max_tokens: Option<usize>,
 
@@ -38,8 +27,16 @@ pub struct ExtractConfig {
     pub debug: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AIExtractReq {
+    #[schemars(description = "Base64 encoded text content to extract MCP configuration from")]
+    pub text_base64: String,
+
+    #[schemars(description = "Optional AI configuration")]
+    pub config: Option<AIExtractConfig>,
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
-#[schemars(title = "AI Extract Response")]
 pub struct AIExtractResp {
     #[schemars(description = "Extracted MCP configuration")]
     pub config: Value,

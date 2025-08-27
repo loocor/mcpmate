@@ -3,35 +3,20 @@
 
 // Re-export all public functions from submodules
 pub use self::{
-    basic::{get_suit, list_suits},
-    crud::{create_suit, delete_suit, update_suit},
+    capabilities::{component_manage, prompts_list, resources_list, tools_list},
     helpers::{
-        check_resource_belongs_to_suit, check_tool_belongs_to_suit, get_or_create_tool_by_name, get_resource_by_id,
-        get_resource_or_error, get_server_or_error, get_suit_or_error, get_tool_or_error,
-        get_tool_with_details_or_error, resolve_tool_for_batch_operation,
+         get_server_or_error,
+        get_suit_or_error, get_tool_or_error, get_tool_with_details_or_error,
     },
-    mgmt::{activate_suit, batch_activate_suits, batch_deactivate_suits, deactivate_suit},
-    prompt::{batch_disable_prompts, batch_enable_prompts, disable_prompt, enable_prompt, list_prompts},
-    resource::{batch_disable_resources, batch_enable_resources, disable_resource, enable_resource, list_resources},
-    server::{batch_disable_servers, batch_enable_servers, disable_server, enable_server, list_servers},
-    // NEW STANDARDIZED HANDLERS
-    standardized::{
-        create_suit as create_suit_standardized, delete_suit as delete_suit_standardized, manage_component,
-        manage_suit, servers_list, suit_details, suits_list, tools_list, update_suit as update_suit_standardized,
-    },
-    tool::{batch_disable_tools, batch_enable_tools, disable_tool, enable_tool, list_tools},
+    mgmt::{suit_create, suit_delete, suit_details, suit_manage, suit_update, suits_list},
+    server::{server_manage, servers_list},
 };
 
 // Submodules
-mod basic;
-mod crud;
+mod capabilities;
 pub mod helpers;
 mod mgmt;
-mod prompt;
-mod resource;
 mod server;
-mod standardized;
-mod tool; // NEW: Standardized handlers following server module patterns
 
 // Common imports for all submodules
 pub(crate) mod common {
@@ -39,33 +24,16 @@ pub(crate) mod common {
 
     pub use axum::{
         Json,
-        extract::{Path, Query, State},
+        extract::{Query, State},
     };
 
     pub use crate::{
         api::{
             handlers::ApiError,
-            models::{
-                ResponseConverter,
-                suits::{
-                    // Legacy models still needed for compatibility
-                    SuitBatchOperationReq,
-                    SuitBatchOperationResp,
-                    SuitData,
-                    SuitOperationData,
-                    SuitPromptData,
-                    SuitPromptsResp,
-                    SuitResourceData,
-                    SuitResourcesResp,
-                    SuitServersResp,
-                    SuitToolData,
-                    SuitToolsResp,
-                    SuitUpdateReq,
-                },
-            },
+            models::{ResponseConverter, suits::SuitData},
             routes::AppState,
         },
-        config::models::{ConfigSuit, ConfigSuitServer},
+        config::models::ConfigSuit,
     };
 
     /// Get database reference from AppState
