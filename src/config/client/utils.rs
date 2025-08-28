@@ -5,7 +5,11 @@ use serde_json::Value;
 
 /// Helper function to set a value at a nested path in a JSON object
 /// Supports paths like "mcp.servers" which creates nested structure
-pub fn set_nested_value(config: &mut Value, path: &str, value: Value) {
+pub fn set_nested_value(
+    config: &mut Value,
+    path: &str,
+    value: Value,
+) {
     if path.is_empty() {
         return;
     }
@@ -19,24 +23,29 @@ pub fn set_nested_value(config: &mut Value, path: &str, value: Value) {
 
     // Navigate/create nested structure
     let mut current = config;
+    let last_index = parts.len() - 1;
+
     for (i, part) in parts.iter().enumerate() {
-        if i == parts.len() - 1 {
-            // Last part: set the value
+        // Handle last part - set the value
+        if i == last_index {
             current[part] = value;
-            break;
-        } else {
-            // Intermediate part: ensure object exists
-            if !current[part].is_object() {
-                current[part] = serde_json::json!({});
-            }
-            current = &mut current[part];
+            return;
         }
+
+        // Handle intermediate parts - ensure object exists
+        if !current[part].is_object() {
+            current[part] = serde_json::json!({});
+        }
+        current = &mut current[part];
     }
 }
 
 /// Helper function to get a value from a nested path in a JSON object
 /// Supports paths like "mcp.servers"
-pub fn get_nested_value<'a>(config: &'a Value, path: &str) -> Option<&'a Value> {
+pub fn get_nested_value<'a>(
+    config: &'a Value,
+    path: &str,
+) -> Option<&'a Value> {
     if path.is_empty() {
         return Some(config);
     }

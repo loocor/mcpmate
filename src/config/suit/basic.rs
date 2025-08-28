@@ -4,27 +4,17 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::{common::config::ConfigSuitType, config::models::ConfigSuit};
+use crate::{
+    common::{
+        config::ConfigSuitType,
+        database::{fetch_all_ordered, fetch_optional},
+    },
+    config::models::ConfigSuit,
+};
 
 /// Get all configuration suits from the database
 pub async fn get_all_config_suits(pool: &Pool<Sqlite>) -> Result<Vec<ConfigSuit>> {
-    tracing::debug!("Executing SQL query to get all configuration suits");
-
-    let suits = sqlx::query_as::<_, ConfigSuit>(
-        r#"
-        SELECT * FROM config_suit
-        ORDER BY name
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to fetch configuration suits")?;
-
-    tracing::debug!(
-        "Successfully fetched {} configuration suits from database",
-        suits.len()
-    );
-    Ok(suits)
+    fetch_all_ordered(pool, "config_suit", Some("name")).await
 }
 
 /// Get all active configuration suits from the database
@@ -112,21 +102,7 @@ pub async fn get_config_suit(
     pool: &Pool<Sqlite>,
     id: &str,
 ) -> Result<Option<ConfigSuit>> {
-    tracing::debug!(
-        "Executing SQL query to get configuration suit with ID {}",
-        id
-    );
-
-    let suit = sqlx::query_as::<_, ConfigSuit>(
-        r#"
-        SELECT * FROM config_suit
-        WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to fetch configuration suit")?;
+    let suit: Option<ConfigSuit> = fetch_optional(pool, "config_suit", "id", id).await?;
 
     if let Some(ref s) = suit {
         tracing::debug!(

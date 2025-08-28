@@ -95,7 +95,7 @@ pub enum ClientConfigSelected {
     #[schemars(description = "Use a configuration suit by ID")]
     Suit {
         #[schemars(description = "Configuration suit identifier")]
-        config_suit_id: String,
+        suit_id: String,
     },
     #[schemars(description = "Use specific servers by their IDs")]
     Servers {

@@ -1,5 +1,6 @@
 // Configuration file processing for client handlers
 
+use crate::common::ConfigChecker;
 use crate::config::client::utils::get_nested_value;
 use sqlx::Row;
 
@@ -10,11 +11,13 @@ pub async fn check_mcp_config_exists(
     client_identifier: &str,
     db_pool: &sqlx::SqlitePool,
 ) -> bool {
-    if !config_path.exists() {
+    // Use the unified configuration checker for basic checks
+    let checker = ConfigChecker::new();
+    if !checker.check_mcp_config_exists(config_path).await {
         return false;
     }
 
-    // Try to read and parse the config file
+    // If basic checks pass, perform more detailed client-specific checks
     match std::fs::read_to_string(config_path) {
         Ok(content) => {
             let (has_mcp, _) = analyze_config_content(&content, client_identifier, db_pool).await;
@@ -76,24 +79,29 @@ pub async fn analyze_config_content(
         }
         Err(_) => {
             // If not valid JSON, do simple text search
+
+            // Early return for array configs
             if is_array_config {
-                // For array configs like Augment, look for typical array patterns
                 let has_mcp =
                     content.contains("[{") && (content.contains("\"command\"") || content.contains("\"url\""));
                 return (has_mcp, 0);
-            } else if !top_level_key.is_empty() {
-                // For object configs, look for the top-level key (handle nested paths)
-                let search_key = if top_level_key.contains('.') {
-                    // For nested paths like "mcp.servers", search for the last part
-                    top_level_key.split('.').next_back().unwrap_or(&top_level_key)
-                } else {
-                    &top_level_key
-                };
-                let has_mcp = content.contains(search_key);
-                return (has_mcp, 0);
             }
 
-            (false, 0)
+            // Early return if no top-level key
+            if top_level_key.is_empty() {
+                return (false, 0);
+            }
+
+            // Handle object configs with top-level key search
+            let search_key = if top_level_key.contains('.') {
+                // For nested paths like "mcp.servers", search for the last part
+                top_level_key.split('.').next_back().unwrap_or(&top_level_key)
+            } else {
+                &top_level_key
+            };
+
+            let has_mcp = content.contains(search_key);
+            (has_mcp, 0)
         }
     }
 }

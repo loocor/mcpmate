@@ -4,28 +4,16 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
 
+use crate::common::{
+    constants::database::{columns, tables},
+    database::{fetch_all_ordered, fetch_optional},
+};
 use crate::config::models::Server;
 use crate::generate_id;
 
 /// Get all servers from the database
 pub async fn get_all_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
-    tracing::debug!("Executing SQL query to get all servers");
-
-    let servers = sqlx::query_as::<_, Server>(
-        r#"
-        SELECT * FROM server_config
-        ORDER BY name
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to fetch servers")?;
-
-    tracing::debug!(
-        "Successfully fetched {} servers from database",
-        servers.len()
-    );
-    Ok(servers)
+    fetch_all_ordered(pool, tables::SERVER_CONFIG, Some(columns::NAME)).await
 }
 
 /// Get a specific server from the database by name
@@ -33,18 +21,7 @@ pub async fn get_server(
     pool: &Pool<Sqlite>,
     name: &str,
 ) -> Result<Option<Server>> {
-    tracing::debug!("Executing SQL query to get server '{}'", name);
-
-    let server = sqlx::query_as::<_, Server>(
-        r#"
-        SELECT * FROM server_config
-        WHERE name = ?
-        "#,
-    )
-    .bind(name)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to fetch server")?;
+    let server: Option<Server> = fetch_optional(pool, tables::SERVER_CONFIG, columns::NAME, name).await?;
 
     if let Some(ref s) = server {
         tracing::debug!("Found server '{}', type: {}", name, s.server_type);
@@ -62,12 +39,14 @@ pub async fn get_server_by_id(
 ) -> Result<Option<Server>> {
     tracing::debug!("Executing SQL query to get server with ID '{}'", id);
 
-    let server = sqlx::query_as::<_, Server>(
+    let server = sqlx::query_as::<_, Server>(&format!(
         r#"
-        SELECT * FROM server_config
-        WHERE id = ?
+        SELECT * FROM {}
+        WHERE {} = ?
         "#,
-    )
+        tables::SERVER_CONFIG,
+        columns::ID
+    ))
     .bind(id)
     .fetch_optional(pool)
     .await
@@ -87,11 +66,7 @@ pub async fn upsert_server(
     pool: &Pool<Sqlite>,
     server: &Server,
 ) -> Result<String> {
-    tracing::debug!(
-        "Upserting server '{}', type: {}",
-        server.name,
-        server.server_type
-    );
+    tracing::debug!("Upserting server '{}', type: {}", server.name, server.server_type);
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
     let server_id = upsert_server_tx(&mut tx, server).await?;
@@ -112,19 +87,39 @@ pub async fn upsert_server_tx(
         generate_id!("serv")
     };
 
-    let result = sqlx::query(
+    let result = sqlx::query(&format!(
         r#"
-        INSERT INTO server_config (id, name, server_type, command, url, transport_type, capabilities)
+        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {})
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-            server_type = excluded.server_type,
-            command = excluded.command,
-            url = excluded.url,
-            transport_type = excluded.transport_type,
-            capabilities = excluded.capabilities,
-            updated_at = CURRENT_TIMESTAMP
+        ON CONFLICT({}) DO UPDATE SET
+            {} = excluded.{},
+            {} = excluded.{},
+            {} = excluded.{},
+            {} = excluded.{},
+            {} = excluded.{},
+            {} = CURRENT_TIMESTAMP
         "#,
-    )
+        tables::SERVER_CONFIG,
+        columns::ID,
+        columns::NAME,
+        columns::SERVER_TYPE,
+        columns::COMMAND,
+        columns::URL,
+        columns::TRANSPORT_TYPE,
+        columns::CAPABILITIES,
+        columns::NAME,
+        columns::SERVER_TYPE,
+        columns::SERVER_TYPE,
+        columns::COMMAND,
+        columns::COMMAND,
+        columns::URL,
+        columns::URL,
+        columns::TRANSPORT_TYPE,
+        columns::TRANSPORT_TYPE,
+        columns::CAPABILITIES,
+        columns::CAPABILITIES,
+        columns::UPDATED_AT
+    ))
     .bind(&server_id)
     .bind(&server.name)
     .bind(server.server_type)
@@ -138,12 +133,15 @@ pub async fn upsert_server_tx(
 
     if result.rows_affected() == 0 {
         // If no rows were affected, get the existing ID
-        let existing_id = sqlx::query_scalar::<_, String>(
+        let existing_id = sqlx::query_scalar::<_, String>(&format!(
             r#"
-            SELECT id FROM server_config
-            WHERE name = ?
+            SELECT {} FROM {}
+            WHERE {} = ?
             "#,
-        )
+            columns::ID,
+            tables::SERVER_CONFIG,
+            columns::NAME
+        ))
         .bind(&server.name)
         .fetch_one(&mut **tx)
         .await

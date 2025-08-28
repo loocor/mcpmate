@@ -13,8 +13,7 @@ use crate::{
 };
 
 // Imports for capability discovery and dual-write
-use crate::core::cache::{RedbCacheManager, manager::CacheConfig};
-
+use crate::core::cache::RedbCacheManager;
 
 /// Import configuration from JSON files to database
 pub async fn import_from_mcp_config(
@@ -68,14 +67,9 @@ pub async fn import_from_mcp_config(
         }
     };
 
-    // Initialize Redb cache manager (match API default path logic)
-    let redb_cache_path = if let Ok(p) = std::env::var("MCPMATE_REDB_CACHE_PATH") {
-        std::path::PathBuf::from(p)
-    } else {
-        crate::common::paths::global_paths().cache_dir().join("capability.redb")
-    };
-    let redb_cache = RedbCacheManager::new(redb_cache_path, CacheConfig::default())
-        .map_err(|e| anyhow::anyhow!(format!("Failed to init REDB cache: {}", e)))?;
+    // Initialize Redb cache manager using global singleton
+    let redb_cache =
+        RedbCacheManager::global().map_err(|e| anyhow::anyhow!(format!("Failed to init REDB cache: {}", e)))?;
 
     // Migrate server configurations
     for (name, server_config) in mcp_config.mcp_servers {
@@ -157,25 +151,26 @@ pub async fn import_from_mcp_config(
         }
 
         // Use unified capability manager for import
-        let dummy_pool = Arc::new(tokio::sync::Mutex::new(
-            crate::core::pool::UpstreamConnectionPool::new(
-                Arc::new(Default::default()),
-                None,
-            )
-        ));
-        
+        let dummy_pool = Arc::new(tokio::sync::Mutex::new(crate::core::pool::UpstreamConnectionPool::new(
+            Arc::new(Default::default()),
+            None,
+        )));
+
         let capability_manager = crate::config::server::capabilities::CapabilityManager::new(
             Arc::new(pool.clone()),
-            Arc::new(redb_cache.clone()),
+            redb_cache.clone(),
             dummy_pool,
         );
-        
+
         let strategy = crate::config::server::capabilities::SyncStrategy::FromConfig(
             server_cfg_for_discovery.clone(),
             server.server_type,
         );
-        
-        if let Err(e) = capability_manager.sync_server_capabilities(&meta.server_id, &name, strategy).await {
+
+        if let Err(e) = capability_manager
+            .sync_server_capabilities(&meta.server_id, &name, strategy)
+            .await
+        {
             tracing::warn!("Capability discovery failed for '{}': {}", name, e);
         }
     }
@@ -183,7 +178,6 @@ pub async fn import_from_mcp_config(
     tracing::info!("Configuration import completed successfully");
     Ok(())
 }
-
 
 /// Load MCP configuration from a file
 fn load_mcp_config_from_file<P: AsRef<Path>>(path: P) -> Result<Config> {

@@ -3,6 +3,7 @@
 
 pub mod ai;
 pub mod clients;
+pub mod common;
 pub mod notifs;
 pub mod runtime;
 pub mod server;

@@ -2,7 +2,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use anyhow::Result;
@@ -19,6 +19,9 @@ use super::{
     statistics::{CacheStatistics, FingerprintOperations},
     types::*,
 };
+
+// Global singleton instance
+static GLOBAL_CACHE_INSTANCE: OnceLock<Arc<RedbCacheManager>> = OnceLock::new();
 
 /// High-performance cache manager using Redb
 pub struct RedbCacheManager {
@@ -94,6 +97,22 @@ impl CacheMetrics {
 }
 
 impl RedbCacheManager {
+    /// Get or create global singleton instance
+    pub fn global() -> Result<Arc<RedbCacheManager>> {
+        Ok(GLOBAL_CACHE_INSTANCE
+            .get_or_init(|| {
+                let cache_path = crate::common::paths::global_paths().cache_dir().join("capability.redb");
+                match Self::new(cache_path, CacheConfig::default()) {
+                    Ok(manager) => Arc::new(manager),
+                    Err(e) => {
+                        tracing::error!("Failed to initialize global cache manager: {}", e);
+                        panic!("Failed to initialize global cache manager: {}", e);
+                    }
+                }
+            })
+            .clone())
+    }
+
     /// Generate cache key from server_id and instance_type (consistent with operations.rs)
     fn generate_cache_key(
         &self,

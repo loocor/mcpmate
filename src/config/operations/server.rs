@@ -5,6 +5,8 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use tracing;
 
+use crate::common::database::fetch_scalar;
+
 /// Get server name by server ID with underscore replacement for safe usage
 ///
 /// This function retrieves the server name from the database and replaces spaces
@@ -23,16 +25,7 @@ pub async fn get_server_name_safe(
 ) -> Result<String> {
     tracing::debug!("Getting safe server name for server ID: {}", server_id);
 
-    let server_name = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT name FROM server_config
-        WHERE id = ?
-        "#,
-    )
-    .bind(server_id)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to get server name")?;
+    let server_name: Option<String> = fetch_scalar(pool, "server_config", "name", "id", server_id).await?;
 
     match server_name {
         Some(name) => {
@@ -46,10 +39,7 @@ pub async fn get_server_name_safe(
             Ok(safe_name)
         }
         None => {
-            tracing::warn!(
-                "Server ID {} not found, using 'unknown' as server_name",
-                server_id
-            );
+            tracing::warn!("Server ID {} not found, using 'unknown' as server_name", server_id);
             Ok("unknown".to_string())
         }
     }

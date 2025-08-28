@@ -275,8 +275,8 @@ async fn client_config_update_core(
     let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
 
     // Convert API request to internal request format
-    let config_suit_id = match &request.selected_config {
-        ClientConfigSelected::Suit { config_suit_id } => Some(config_suit_id.clone()),
+    let suit_id = match &request.selected_config {
+        ClientConfigSelected::Suit { suit_id } => Some(suit_id.clone()),
         ClientConfigSelected::Default => {
             // For Default mode, get the currently active config suit ID
             match get_active_config_suits(db_pool).await {
@@ -303,7 +303,7 @@ async fn client_config_update_core(
             ClientConfigMode::Hosted => GenerationMode::Hosted,
             ClientConfigMode::Transparent => GenerationMode::Transparent,
         },
-        config_suit_id,
+        suit_id,
         servers: match &request.selected_config {
             ClientConfigSelected::Servers { server_ids } => {
                 // For hosted mode, ignore servers parameter

@@ -35,9 +35,21 @@ pub mod config_keys {
     pub const MCPMATE: &str = "MCPMate";
 }
 
+/// Port configuration constants
+pub mod ports {
+    /// API server port (standard)
+    pub const API_PORT: u16 = 8080;
+    /// MCP proxy server port (standard)
+    pub const MCP_PORT: u16 = 8000;
+    /// Legacy port for backward compatibility
+    #[deprecated(note = "Use API_PORT instead")]
+    pub const LEGACY_PORT: u16 = 8033;
+}
+
 /// Default values used in configuration
 pub mod defaults {
-    /// Default server port
+    /// Default server port (use ports::API_PORT instead)
+    #[deprecated(note = "Use ports::API_PORT instead")]
     pub const DEFAULT_PORT: u16 = 8033;
     /// Default server host
     pub const DEFAULT_HOST: &str = "127.0.0.1";
@@ -139,8 +151,7 @@ impl<'de> Visitor<'de> for ConfigSuitTypeVisitor {
     where
         E: de::Error,
     {
-        ConfigSuitType::from_str(value)
-            .map_err(|_| E::custom(format!("invalid config suit type: {value}")))
+        ConfigSuitType::from_str(value).map_err(|_| E::custom(format!("invalid config suit type: {value}")))
     }
 }
 

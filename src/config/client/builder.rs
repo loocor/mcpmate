@@ -10,8 +10,7 @@ use super::loader::{ServerInfo, ServerLoader};
 use super::models::{ConfigRule, GeneratedConfig, GenerationMode, GenerationRequest};
 use super::strategy::TransportStrategy;
 use super::utils::set_nested_value;
-use crate::common::config::config_keys;
-use crate::common::server::transport_formats;
+use crate::common::{config::config_keys, constants::transport};
 
 /// Configuration builder that orchestrates the generation process
 pub struct ConfigBuilder {
@@ -325,17 +324,17 @@ impl ConfigBuilder {
         let best_transport = self.transport_strategy.get_best_supported_transport(config_rule);
 
         match best_transport.as_str() {
-            t if t == transport_formats::STREAMABLE_HTTP => {
+            t if t == transport::STREAMABLE_HTTP => {
                 self.transport_strategy
-                    .generate_unified_endpoint_config(config_rule, identifier, transport_formats::STREAMABLE_HTTP)
+                    .generate_unified_endpoint_config(config_rule, identifier, transport::STREAMABLE_HTTP)
                     .await
             }
-            t if t == transport_formats::SSE => {
+            t if t == transport::SSE => {
                 self.transport_strategy
-                    .generate_unified_endpoint_config(config_rule, identifier, transport_formats::SSE)
+                    .generate_unified_endpoint_config(config_rule, identifier, transport::SSE)
                     .await
             }
-            t if t == transport_formats::STDIO => {
+            t if t == transport::STDIO => {
                 self.transport_strategy
                     .generate_unified_bridge_config(config_rule, identifier)
                     .await

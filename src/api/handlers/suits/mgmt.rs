@@ -380,12 +380,12 @@ pub async fn suit_manage(
 
         tokio::spawn(async move {
             // For activation, pass the first successful suit ID; for deactivation, pass None
-            let config_suit_id = match request.action {
+            let suit_id = match request.action {
                 SuitAction::Activate => successful_suit_ids.first().cloned(),
                 SuitAction::Deactivate => None,
             };
 
-            if let Err(e) = helpers::sync_client_configurations(&state_clone, config_suit_id).await {
+            if let Err(e) = helpers::sync_client_configurations(&state_clone, suit_id).await {
                 tracing::warn!("Failed to sync client configurations: {}", e);
             }
         });

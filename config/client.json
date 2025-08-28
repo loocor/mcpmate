@@ -261,7 +261,7 @@
       "config_rules": {
         "config_type": "standard",
         "top_level_key": "mcpServers",
-        "supported_transports": ["stdio", "sse", "streamableHttp"],
+        "supported_transports": ["stdio", "sse", "streamable_http"],
         "supported_runtimes": {
           "macos": ["npx", "uvx", "docker", "binary"],
           "linux": ["npx", "uvx", "docker", "binary"],
@@ -285,9 +285,9 @@
             },
             "requires_type_field": false
           },
-          "streamableHttp": {
+          "streamable_http": {
             "template": {
-              "type": "streamableHttp",
+              "type": "streamable_http",
               "url": "{{url}}"
             },
             "requires_type_field": false
@@ -347,7 +347,7 @@
       "config_rules": {
         "config_type": "mixed",
         "top_level_key": "mcp.servers",
-        "supported_transports": ["stdio", "sse", "streamableHttp"],
+        "supported_transports": ["stdio", "sse", "streamable_http"],
         "supported_runtimes": {
           "macos": ["npx", "uvx", "docker", "binary"],
           "linux": ["npx", "uvx", "docker", "binary"],
@@ -371,9 +371,9 @@
             },
             "requires_type_field": false
           },
-          "streamableHttp": {
+          "streamable_http": {
             "template": {
-              "type": "streamableHttp",
+              "type": "streamable_http",
               "url": "{{url}}"
             },
             "requires_type_field": false
@@ -399,7 +399,7 @@
       "config_rules": {
         "config_type": "standard",
         "top_level_key": "mcpServers",
-        "supported_transports": ["stdio", "sse", "streamableHttp"],
+        "supported_transports": ["stdio", "sse", "streamable_http"],
         "supported_runtimes": {
           "macos": ["npx", "uvx", "docker", "binary"],
           "linux": ["npx", "uvx", "docker", "binary"],
@@ -423,9 +423,9 @@
             },
             "requires_type_field": false
           },
-          "streamableHttp": {
+          "streamable_http": {
             "template": {
-              "type": "streamableHttp",
+              "type": "streamable_http",
               "url": "{{url}}"
             },
             "requires_type_field": false
@@ -451,7 +451,7 @@
       "config_rules": {
         "config_type": "standard",
         "top_level_key": "mcpServers",
-        "supported_transports": ["stdio", "sse", "streamableHttp"],
+        "supported_transports": ["stdio", "sse", "streamable_http"],
         "supported_runtimes": {
           "macos": ["npx", "uvx", "docker", "binary"],
           "linux": ["npx", "uvx", "docker", "binary"],
@@ -475,9 +475,9 @@
             },
             "requires_type_field": false
           },
-          "streamableHttp": {
+          "streamable_http": {
             "template": {
-              "type": "streamableHttp",
+              "type": "streamable_http",
               "url": "{{url}}"
             },
             "requires_type_field": false
@@ -504,7 +504,7 @@
         "config_type": "standard",
         "top_level_key": "mcpServers",
         "keep_original_config": true,
-        "supported_transports": ["stdio", "sse", "streamableHttp"],
+        "supported_transports": ["stdio", "sse", "streamable_http"],
         "supported_runtimes": {
           "macos": ["npx", "uvx", "docker", "binary"],
           "linux": ["npx", "uvx", "docker", "binary"],
@@ -528,9 +528,9 @@
             },
             "requires_type_field": false
           },
-          "streamableHttp": {
+          "streamable_http": {
             "template": {
-              "type": "streamableHttp",
+              "type": "streamable_http",
               "url": "{{url}}"
             },
             "requires_type_field": false

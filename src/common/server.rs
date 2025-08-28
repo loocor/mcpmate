@@ -16,23 +16,11 @@ use sqlx::{
     sqlite::{SqliteArgumentValue, SqliteTypeInfo, SqliteValueRef},
 };
 
-/// Transport format constants for client configuration
-/// These are the string representations used in client config files
-pub mod transport_formats {
-    /// Standard input/output transport format
-    pub const STDIO: &str = "stdio";
-    /// Server-Sent Events transport format
-    pub const SSE: &str = "sse";
-    /// Streamable HTTP transport format (client-side representation)
-    pub const STREAMABLE_HTTP: &str = "streamableHttp";
-}
+// Transport format constants moved to src/common/constants.rs::transport module
+use crate::common::constants::transport;
 
 /// Transport priority order for hosted mode selection
-pub const TRANSPORT_PRIORITY: &[&str] = &[
-    transport_formats::STREAMABLE_HTTP,
-    transport_formats::SSE,
-    transport_formats::STDIO,
-];
+pub const TRANSPORT_PRIORITY: &[&str] = &[transport::STREAMABLE_HTTP, transport::SSE, transport::STDIO];
 
 /// Server type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
@@ -59,18 +47,18 @@ impl ServerType {
     /// Get the client-side representation (for JSON configs)
     pub fn client_format(&self) -> &'static str {
         match self {
-            ServerType::Stdio => transport_formats::STDIO,
-            ServerType::Sse => transport_formats::SSE,
-            ServerType::StreamableHttp => transport_formats::STREAMABLE_HTTP,
+            ServerType::Stdio => transport::STDIO,
+            ServerType::Sse => transport::SSE,
+            ServerType::StreamableHttp => transport::STREAMABLE_HTTP,
         }
     }
 
     /// Create from client format string
     pub fn from_client_format(s: &str) -> Result<Self, ParseServerTypeError> {
         match s {
-            s if s == transport_formats::STDIO => Ok(ServerType::Stdio),
-            s if s == transport_formats::SSE => Ok(ServerType::Sse),
-            s if s == transport_formats::STREAMABLE_HTTP => Ok(ServerType::StreamableHttp),
+            s if s == transport::STDIO => Ok(ServerType::Stdio),
+            s if s == transport::SSE => Ok(ServerType::Sse),
+            s if s == transport::STREAMABLE_HTTP => Ok(ServerType::StreamableHttp),
             _ => Err(ParseServerTypeError),
         }
     }
@@ -211,18 +199,18 @@ impl TransportType {
     /// Get the client-side representation (for JSON configs)
     pub fn client_format(&self) -> &'static str {
         match self {
-            TransportType::Stdio => transport_formats::STDIO,
-            TransportType::Sse => transport_formats::SSE,
-            TransportType::StreamableHttp => transport_formats::STREAMABLE_HTTP,
+            TransportType::Stdio => transport::STDIO,
+            TransportType::Sse => transport::SSE,
+            TransportType::StreamableHttp => transport::STREAMABLE_HTTP,
         }
     }
 
     /// Create from client format string
     pub fn from_client_format(s: &str) -> Result<Self, ParseTransportTypeError> {
         match s {
-            s if s == transport_formats::STDIO => Ok(TransportType::Stdio),
-            s if s == transport_formats::SSE => Ok(TransportType::Sse),
-            s if s == transport_formats::STREAMABLE_HTTP => Ok(TransportType::StreamableHttp),
+            s if s == transport::STDIO => Ok(TransportType::Stdio),
+            s if s == transport::SSE => Ok(TransportType::Sse),
+            s if s == transport::STREAMABLE_HTTP => Ok(TransportType::StreamableHttp),
             _ => Err(ParseTransportTypeError),
         }
     }

@@ -85,7 +85,7 @@ pub struct ConfigSuitServer {
     /// Unique ID
     pub id: Option<String>,
     /// Configuration suit ID
-    pub config_suit_id: String,
+    pub suit_id: String,
     /// Server ID
     pub server_id: String,
     /// Whether the server is enabled in this configuration suit
@@ -123,7 +123,7 @@ pub struct ConfigSuitTool {
     /// Unique ID (generated with "cstool" prefix)
     pub id: String,
     /// Configuration suit ID
-    pub config_suit_id: String,
+    pub suit_id: String,
     /// Server tool ID (references server_tools.id)
     pub server_tool_id: String,
     /// Whether the tool is enabled in this configuration suit
@@ -140,7 +140,7 @@ pub struct ConfigSuitToolWithDetails {
     /// Config suit tool ID
     pub id: String,
     /// Configuration suit ID
-    pub config_suit_id: String,
+    pub suit_id: String,
     /// Server tool ID (references server_tools.id)
     pub server_tool_id: String,
     /// Whether the tool is enabled in this configuration suit

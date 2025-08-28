@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Sqlite};
 
 use crate::common::{
+    constants::database::{columns, tables},
     server::{ServerType, TransportType},
     status::EnabledStatus,
 };
@@ -41,7 +42,7 @@ pub struct Server {
 #[async_trait]
 impl DatabaseEntity for Server {
     fn table_name() -> &'static str {
-        "server_config"
+        tables::SERVER_CONFIG
     }
 
     fn get_id(&self) -> Option<String> {
@@ -256,10 +257,14 @@ impl Server {
     ) -> Result<Option<Self>> {
         use sqlx::query_as;
 
-        let server = query_as("SELECT * FROM server_config WHERE name = ?")
-            .bind(name)
-            .fetch_optional(pool)
-            .await?;
+        let server = query_as(&format!(
+            "SELECT * FROM {} WHERE {} = ?",
+            tables::SERVER_CONFIG,
+            columns::NAME
+        ))
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
 
         Ok(server)
     }
@@ -271,10 +276,14 @@ impl Server {
     ) -> Result<Vec<Self>> {
         use sqlx::query_as;
 
-        let servers = query_as("SELECT * FROM server_config WHERE server_type = ?")
-            .bind(server_type)
-            .fetch_all(pool)
-            .await?;
+        let servers = query_as(&format!(
+            "SELECT * FROM {} WHERE {} = ?",
+            tables::SERVER_CONFIG,
+            columns::SERVER_TYPE
+        ))
+        .bind(server_type)
+        .fetch_all(pool)
+        .await?;
 
         Ok(servers)
     }

@@ -109,9 +109,12 @@ impl Database {
         let default_config_path = std::path::Path::new("config/mcp.json");
         if default_config_path.exists() {
             // Check if database already has server configurations
-            let has_server_configs = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
-                .fetch_one(&db.pool)
-                .await
+            let has_server_configs = match sqlx::query_scalar::<_, i64>(&format!(
+                "SELECT COUNT(*) FROM {}",
+                crate::common::constants::database::tables::SERVER_CONFIG
+            ))
+            .fetch_one(&db.pool)
+            .await
             {
                 Ok(count) => count > 0,
                 Err(e) => {

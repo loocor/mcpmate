@@ -3,6 +3,7 @@
 //! This module provides global runtime configuration that can be set from
 //! command line arguments and accessed throughout the application.
 
+use crate::common::config::ports;
 use std::sync::OnceLock;
 
 /// Global runtime port configuration
@@ -42,8 +43,8 @@ impl RuntimePortConfig {
 impl Default for RuntimePortConfig {
     fn default() -> Self {
         Self {
-            api_port: 8080,
-            mcp_port: 8000,
+            api_port: ports::API_PORT,
+            mcp_port: ports::MCP_PORT,
         }
     }
 }

@@ -141,7 +141,7 @@ pub async fn get_tools_by_suit_id(
     let tools = sqlx::query_as::<_, ConfigSuitTool>(
         r#"
         SELECT * FROM config_suit_tool
-        WHERE config_suit_id = ?
+        WHERE suit_id = ?
         "#,
     )
     .bind(suit_id)

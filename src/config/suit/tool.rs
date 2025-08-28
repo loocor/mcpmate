@@ -118,7 +118,7 @@ pub fn build_enabled_tools_query(additional_where: Option<&str>) -> String {
     let base_query = r#"
         SELECT DISTINCT st.unique_name, st.server_name, st.tool_name, st.server_id
         FROM config_suit_tool cst
-        JOIN config_suit cs ON cst.config_suit_id = cs.id
+        JOIN config_suit cs ON cst.suit_id = cs.id
         JOIN server_tools st ON cst.server_tool_id = st.id
         WHERE cs.is_active = true AND cst.enabled = true"#;
 
@@ -134,7 +134,7 @@ pub fn build_tool_details_query(additional_where: Option<&str>) -> String {
     let base_query = r#"
         SELECT
             cst.id,
-            cst.config_suit_id,
+            cst.suit_id,
             cst.server_tool_id,
             cst.enabled,
             cst.created_at,
@@ -156,20 +156,20 @@ pub fn build_tool_details_query(additional_where: Option<&str>) -> String {
 /// Get all tools for a configuration suit from the database (new architecture)
 pub async fn get_config_suit_tools(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
 ) -> Result<Vec<ConfigSuitToolWithDetails>> {
     tracing::debug!(
         "Executing SQL query to get tools for configuration suit with ID {}",
-        config_suit_id
+        suit_id
     );
 
     let query = format!(
-        "{} WHERE cst.config_suit_id = ? ORDER BY st.server_name, st.tool_name",
+        "{} WHERE cst.suit_id = ? ORDER BY st.server_name, st.tool_name",
         build_tool_details_query(None)
     );
 
     let tools = sqlx::query_as::<_, ConfigSuitToolWithDetails>(&query)
-        .bind(config_suit_id)
+        .bind(suit_id)
         .fetch_all(pool)
         .await
         .context("Failed to fetch configuration suit tools")?;
@@ -177,7 +177,7 @@ pub async fn get_config_suit_tools(
     tracing::debug!(
         "Successfully fetched {} tools for configuration suit with ID {}",
         tools.len(),
-        config_suit_id
+        suit_id
     );
     Ok(tools)
 }
@@ -190,7 +190,7 @@ pub async fn get_config_suit_tools(
 /// If the tool is added or updated, it also publishes a ToolEnabledInSuitChanged event.
 pub async fn add_tool_to_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
     server_id: &str,
     tool_name: &str,
     enabled: bool,
@@ -199,7 +199,7 @@ pub async fn add_tool_to_config_suit(
         "Adding tool '{}' from server ID {} to configuration suit ID {}, enabled: {}",
         tool_name,
         server_id,
-        config_suit_id,
+        suit_id,
         enabled
     );
 
@@ -222,10 +222,10 @@ pub async fn add_tool_to_config_suit(
     let existing_enabled = sqlx::query_scalar::<_, bool>(
         r#"
         SELECT enabled FROM config_suit_tool
-        WHERE config_suit_id = ? AND server_tool_id = ?
+        WHERE suit_id = ? AND server_tool_id = ?
         "#,
     )
-    .bind(config_suit_id)
+    .bind(suit_id)
     .bind(&server_tool_id)
     .fetch_optional(pool)
     .await
@@ -236,15 +236,15 @@ pub async fn add_tool_to_config_suit(
 
     let result = sqlx::query(
         r#"
-        INSERT INTO config_suit_tool (id, config_suit_id, server_tool_id, enabled)
+        INSERT INTO config_suit_tool (id, suit_id, server_tool_id, enabled)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(config_suit_id, server_tool_id) DO UPDATE SET
+        ON CONFLICT(suit_id, server_tool_id) DO UPDATE SET
             enabled = excluded.enabled,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
     .bind(&config_suit_tool_id)
-    .bind(config_suit_id)
+    .bind(suit_id)
     .bind(&server_tool_id)
     .bind(enabled)
     .execute(pool)
@@ -259,10 +259,10 @@ pub async fn add_tool_to_config_suit(
         sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM config_suit_tool
-            WHERE config_suit_id = ? AND server_tool_id = ?
+            WHERE suit_id = ? AND server_tool_id = ?
             "#,
         )
-        .bind(config_suit_id)
+        .bind(suit_id)
         .bind(&server_tool_id)
         .fetch_one(pool)
         .await
@@ -276,7 +276,7 @@ pub async fn add_tool_to_config_suit(
             crate::core::events::Event::ToolEnabledInSuitChanged {
                 tool_id: id_to_return.clone(),
                 tool_name: tool_name.to_string(),
-                suit_id: config_suit_id.to_string(),
+                suit_id: suit_id.to_string(),
                 enabled,
             },
         );
@@ -284,7 +284,7 @@ pub async fn add_tool_to_config_suit(
         tracing::debug!(
             "Published ToolEnabledInSuitChanged event for tool '{}' in suit ID {} ({})",
             tool_name,
-            config_suit_id,
+            suit_id,
             enabled
         );
     }
@@ -295,7 +295,7 @@ pub async fn add_tool_to_config_suit(
 /// Remove a tool from a configuration suit (new architecture)
 pub async fn remove_tool_from_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
     server_id: &str,
     tool_name: &str,
 ) -> Result<bool> {
@@ -303,7 +303,7 @@ pub async fn remove_tool_from_config_suit(
         "Removing tool '{}' from server ID {} from configuration suit ID {}",
         tool_name,
         server_id,
-        config_suit_id
+        suit_id
     );
 
     // First, find the server_tool_id
@@ -320,10 +320,10 @@ pub async fn remove_tool_from_config_suit(
         let result = sqlx::query(
             r#"
             DELETE FROM config_suit_tool
-            WHERE config_suit_id = ? AND server_tool_id = ?
+            WHERE suit_id = ? AND server_tool_id = ?
             "#,
         )
-        .bind(config_suit_id)
+        .bind(suit_id)
         .bind(&server_tool_id)
         .execute(pool)
         .await

@@ -5,6 +5,8 @@ use anyhow::Result;
 use sqlx::{Pool, Sqlite};
 use tracing;
 
+use crate::common::constants::database::tables;
+
 /// Initialize all server-related database tables
 pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Initializing server-related database tables");
@@ -22,20 +24,22 @@ pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
 
 /// Create server_config table if it doesn't exist
 async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
+    use crate::common::constants::transport;
+
     tracing::debug!("Creating server_config table if it doesn't exist");
 
-    sqlx::query(
+    let create_sql = format!(
         r#"
         CREATE TABLE IF NOT EXISTS server_config (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
             server_type TEXT NOT NULL CHECK (
-                server_type IN ('stdio', 'sse', 'streamable_http')
+                server_type IN ('{}', '{}', '{}')
             ),
             command TEXT,
             url TEXT,
             transport_type TEXT CHECK (
-                transport_type IN ('Stdio', 'Sse', 'StreamableHttp') OR transport_type IS NULL
+                transport_type IN ('{}', '{}', '{}') OR transport_type IS NULL
             ),
             capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
@@ -43,10 +47,15 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
+        transport::STDIO,
+        transport::SSE,
+        transport::STREAMABLE_HTTP,
+        transport::STDIO,
+        transport::SSE,
+        transport::STREAMABLE_HTTP
+    );
+
+    sqlx::query(&create_sql).execute(pool).await.map_err(|e| {
         tracing::error!("Failed to create server_config table: {}", e);
         anyhow::anyhow!("Failed to create server_config table: {}", e)
     })?;
@@ -148,9 +157,12 @@ async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
 
 /// Verify that all server tables were created successfully
 async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
-    let tables = vec!["server_config", "server_args", "server_env", "server_meta"];
-
-    for table in tables {
+    for table in [
+        tables::SERVER_CONFIG,
+        tables::SERVER_ARGS,
+        tables::SERVER_ENV,
+        tables::SERVER_META,
+    ] {
         sqlx::query(&format!(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'"
         ))

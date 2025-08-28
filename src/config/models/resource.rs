@@ -11,7 +11,7 @@ pub struct ConfigSuitResource {
     /// Unique ID (UUID)
     pub id: Option<String>,
     /// Configuration suit ID
-    pub config_suit_id: String,
+    pub suit_id: String,
     /// Server ID
     pub server_id: String,
     /// Server name (for human identification during development)

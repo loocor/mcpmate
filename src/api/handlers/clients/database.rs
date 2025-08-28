@@ -1,7 +1,7 @@
 // Database operations for client handlers
 
 use crate::api::models::clients::{ClientAppRow, ClientDetectedApp, ClientInfo};
-use crate::common::json::strip_comments;
+use crate::common::{ConfigChecker, json::strip_comments};
 use crate::config::client::models::ClientConfigType;
 use crate::system::detection::detector::AppDetector;
 use anyhow::Result;
@@ -53,11 +53,33 @@ pub async fn get_supported_transports(
     }
 }
 
+/// Get current platform identifier
+fn get_current_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux" // Default fallback
+    }
+}
+
+/// Extract runtimes from JSON array value
+fn extract_runtimes_from_array(array: &serde_json::Value) -> Option<Vec<String>> {
+    array
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+}
+
 /// Helper function to get supported runtimes for a client from database
 pub async fn get_supported_runtimes(
     client_id: &str,
     db_pool: &sqlx::SqlitePool,
 ) -> Vec<String> {
+    const DEFAULT_RUNTIME: &str = "npx";
+
     // Query the database for supported runtimes (stored as JSON by platform)
     let query = "
         SELECT supported_runtimes
@@ -68,53 +90,46 @@ pub async fn get_supported_runtimes(
         LIMIT 1
     ";
 
-    match sqlx::query_scalar::<_, String>(query)
+    // Early return if database query fails
+    let json_str = match sqlx::query_scalar::<_, String>(query)
         .bind(client_id)
         .fetch_optional(db_pool)
         .await
     {
-        Ok(Some(json_str)) => {
-            // Parse JSON object with platform-specific runtimes
-            match serde_json::from_str::<serde_json::Value>(&json_str) {
-                Ok(platforms) => {
-                    // Get current platform
-                    let current_platform = if cfg!(target_os = "macos") {
-                        "macos"
-                    } else if cfg!(target_os = "linux") {
-                        "linux"
-                    } else if cfg!(target_os = "windows") {
-                        "windows"
-                    } else {
-                        "linux"
-                    };
+        Ok(Some(json_str)) => json_str,
+        _ => return vec![DEFAULT_RUNTIME.to_string()],
+    };
 
-                    // Extract runtimes for current platform
-                    if let Some(platform_runtimes) = platforms.get(current_platform) {
-                        if let Some(runtimes_array) = platform_runtimes.as_array() {
-                            return runtimes_array
-                                .iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect();
-                        }
-                    }
+    // Early return if JSON parsing fails
+    let platforms = match serde_json::from_str::<serde_json::Value>(&json_str) {
+        Ok(platforms) => platforms,
+        Err(_) => return vec![DEFAULT_RUNTIME.to_string()],
+    };
 
-                    // Fallback: try to get any platform's runtimes
-                    for (_, platform_runtimes) in platforms.as_object().unwrap_or(&serde_json::Map::new()) {
-                        if let Some(runtimes_array) = platform_runtimes.as_array() {
-                            return runtimes_array
-                                .iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect();
-                        }
-                    }
+    let current_platform = get_current_platform();
 
-                    vec!["npx".to_string()]
-                }
-                Err(_) => vec!["npx".to_string()],
+    // Try current platform first
+    if let Some(platform_runtimes) = platforms.get(current_platform) {
+        if let Some(runtimes) = extract_runtimes_from_array(platform_runtimes) {
+            if !runtimes.is_empty() {
+                return runtimes;
             }
         }
-        _ => vec!["npx".to_string()],
     }
+
+    // Fallback: try any platform's runtimes
+    if let Some(platforms_obj) = platforms.as_object() {
+        for (_, platform_runtimes) in platforms_obj {
+            if let Some(runtimes) = extract_runtimes_from_array(platform_runtimes) {
+                if !runtimes.is_empty() {
+                    return runtimes;
+                }
+            }
+        }
+    }
+
+    // Final fallback
+    vec![DEFAULT_RUNTIME.to_string()]
 }
 
 /// Helper function to get the config type for a client from database
@@ -225,27 +240,27 @@ pub async fn build_client_info(
     let config_type = get_config_type(client_id, db_pool).await;
 
     // Determine detection status and paths
-    let (detected, install_path, config_path, config_exists, has_mcp_config) = if let Some(detected_app) = detected_app
-    {
+    let (detected, install_path, config_path_buf) = if let Some(detected_app) = detected_app {
         (
             true,
             Some(detected_app.install_path.to_string_lossy().to_string()),
-            detected_app.config_path.to_string_lossy().to_string(),
-            detected_app.config_path.exists(),
-            check_mcp_config_exists(&detected_app.config_path, client_id, db_pool).await,
+            detected_app.config_path.clone(),
         )
     } else {
         // Use database values or get config path from detection rules
         let config_path = get_client_config_path(client_id, db_pool).await;
-        let config_path_buf = std::path::PathBuf::from(&config_path);
         (
             client.detected,
             client.install_path.clone(),
-            config_path,
-            config_path_buf.exists(),
-            check_mcp_config_exists(&config_path_buf, client_id, db_pool).await,
+            std::path::PathBuf::from(config_path),
         )
     };
+
+    // Unified config checks
+    let config_path = config_path_buf.to_string_lossy().to_string();
+    let config_exists = config_path_buf.exists();
+    let checker = ConfigChecker::new();
+    let has_mcp_config = checker.check_mcp_config_exists(&config_path_buf).await;
 
     ClientInfo {
         identifier: client.identifier.clone(),
@@ -268,25 +283,6 @@ pub async fn build_client_info(
     }
 }
 
-/// Helper function to check if MCP config exists and parse content
-async fn check_mcp_config_exists(
-    config_path: &std::path::Path,
-    _client_id: &str,
-    _db_pool: &sqlx::SqlitePool,
-) -> bool {
-    // This is a simplified version - you may want to implement more sophisticated checking
-    if !config_path.exists() {
-        return false;
-    }
-
-    if let Ok(content) = std::fs::read_to_string(config_path) {
-        // Simple check for MCP-related content
-        content.contains("mcpServers") || content.contains("mcp_servers")
-    } else {
-        false
-    }
-}
-
 /// Parse JSON content with fallback for JSONC (JSON with comments)
 pub fn parse_json_resilient(content: &str) -> serde_json::Value {
     if content.is_empty() {
@@ -294,25 +290,18 @@ pub fn parse_json_resilient(content: &str) -> serde_json::Value {
     }
 
     // Try to parse as standard JSON first
-    match serde_json::from_str::<serde_json::Value>(content) {
-        Ok(json) => json,
-        Err(_) => {
-            // If standard JSON parsing fails, try to strip JSONC comments and parse again
-            let cleaned_content = strip_comments(content);
-            match serde_json::from_str::<serde_json::Value>(&cleaned_content) {
-                Ok(json) => {
-                    tracing::debug!("Successfully parsed JSONC content after stripping comments");
-                    json
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to parse content as JSON/JSONC: {}. Using raw string as value.",
-                        e
-                    );
-                    // If both attempts fail, wrap the raw content as a string value
-                    serde_json::Value::String(content.to_string())
-                }
-            }
-        }
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(content) {
+        return json;
     }
+
+    // If standard JSON parsing fails, try to strip JSONC comments and parse again
+    let cleaned_content = strip_comments(content);
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&cleaned_content) {
+        tracing::debug!("Successfully parsed JSONC content after stripping comments");
+        return json;
+    }
+
+    // If both attempts fail, wrap the raw content as a string value
+    tracing::warn!("Failed to parse content as JSON/JSONC. Using raw string as value.");
+    serde_json::Value::String(content.to_string())
 }

@@ -678,27 +678,14 @@ impl CapabilityManager {
         &self,
         servers: Vec<(String, String, SyncStrategy)>, // (server_id, server_name, strategy)
     ) -> Result<Vec<CapabilitySync>> {
-        use futures::stream::{self, StreamExt};
-
         tracing::info!("Starting capability sync for {} servers (concurrent)", servers.len());
 
-        // Limit concurrency based on CPU cores
-        let max_concurrency: usize = std::cmp::max(1, num_cpus::get());
-
-        let results = stream::iter(servers.into_iter())
-            .map(|(server_id, server_name, strategy)| async move {
-                (
-                    server_name.clone(),
-                    self.sync_server_capabilities(&server_id, &server_name, strategy).await,
-                )
-            })
-            .buffer_unordered(max_concurrency)
-            .collect::<Vec<(String, Result<CapabilitySync>)>>()
-            .await;
-
+        // Process servers sequentially to collect results
+        // Note: This could be optimized with concurrent processing if needed
         let mut successes = Vec::new();
-        for (server_name, res) in results {
-            match res {
+
+        for (server_id, server_name, strategy) in servers {
+            match self.sync_server_capabilities(&server_id, &server_name, strategy).await {
                 Ok(sync) => {
                     tracing::debug!("Successfully synced capabilities for server '{}'", server_name);
                     successes.push(sync);

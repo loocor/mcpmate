@@ -65,10 +65,10 @@ pub async fn get_tool_with_details_or_error(
 
 /// Get the config suit ID to use, either from parameter or first active suit
 pub async fn get_config_suit_id(
-    config_suit_id: Option<String>,
+    suit_id: Option<String>,
     db_pool: &sqlx::SqlitePool,
 ) -> Result<String, ApiError> {
-    match config_suit_id {
+    match suit_id {
         Some(id) => Ok(id),
         None => {
             // Get the first active config suit
@@ -90,13 +90,13 @@ pub async fn get_config_suit_id(
 /// Sync client configurations using the specified or first active config suit
 pub async fn sync_client_configurations(
     state: &std::sync::Arc<crate::api::routes::AppState>,
-    config_suit_id: Option<String>,
+    suit_id: Option<String>,
 ) -> Result<(), ApiError> {
     // Get database reference
     let db = get_database(state).await?;
 
     // Get the config suit ID to use
-    let suit_id = get_config_suit_id(config_suit_id, &db.pool).await?;
+    let suit_id = get_config_suit_id(suit_id, &db.pool).await?;
 
     // Create client manager
     let mut client_manager = crate::config::client::manager::ClientManager::new(std::sync::Arc::new(db.pool.clone()));

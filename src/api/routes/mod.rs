@@ -95,10 +95,10 @@ fn create_router_internal(
         state_manager_clone.initialize().await;
     });
 
-    // Initialize standard Redb cache manager for API operations
+    // Initialize standard Redb cache manager for API operations using global singleton
     // Note: EventHandlers now uses a lightweight capability manager without RedbCacheManager
     // This eliminates file lock conflicts while maintaining API query performance
-    let redb_cache = crate::config::server::capabilities::cache_utils::get_standard_cache_manager()
+    let redb_cache = crate::core::cache::RedbCacheManager::global()
         .expect("Failed to initialize standard Redb cache manager for API operations");
 
     let state = Arc::new(AppState {

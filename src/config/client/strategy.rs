@@ -7,11 +7,9 @@ use serde_json::{Value, json};
 use super::loader::ServerInfo;
 use super::models::{ConfigRule, FormatRule, GenerationMode};
 use super::template::TemplateEngine;
+use crate::common::constants::transport::{SSE, STDIO, STREAMABLE_HTTP};
 use crate::common::get_bridge_path;
-use crate::common::server::{
-    TRANSPORT_PRIORITY,
-    transport_formats::{SSE, STDIO, STREAMABLE_HTTP},
-};
+use crate::common::server::TRANSPORT_PRIORITY;
 use crate::system::config::get_runtime_port_config;
 
 /// Transport strategy handler
@@ -34,7 +32,7 @@ impl TransportStrategy {
     }
 
     /// Get the best supported transport type based on priority
-    /// Priority: streamableHttp > sse > stdio
+    /// Priority: streamable_http > sse > stdio
     pub fn get_best_supported_transport(
         &self,
         config_rule: &ConfigRule,

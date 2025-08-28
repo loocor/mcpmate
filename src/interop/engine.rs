@@ -12,9 +12,7 @@ use tokio::sync::Mutex;
 
 use super::types::{PortConfig, ServiceInfo, ServiceStatus, StartupConfig, StartupProgress};
 use crate::core::proxy::init::{setup_database, setup_logging, setup_proxy_server_with_params};
-use crate::core::proxy::startup::{
-    start_api_server, start_background_connections, start_proxy_server,
-};
+use crate::core::proxy::startup::{start_api_server, start_background_connections, start_proxy_server};
 use crate::core::proxy::{Args, ProxyServer};
 
 /// MCPMate Interop Engine
@@ -50,6 +48,7 @@ impl Default for MCPMateEngine {
 impl MCPMateEngine {
     /// Create a new MCPMate engine instance
     pub fn new() -> Self {
+        use crate::common::config::ports;
         Self {
             runtime: Some(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime")),
             proxy_handle: None,
@@ -58,8 +57,8 @@ impl MCPMateEngine {
             status: Arc::new(Mutex::new(ServiceStatus::Unknown)),
             is_running: Arc::new(AtomicBool::new(false)),
             start_time: Arc::new(AtomicU64::new(0)),
-            api_port: 8080,
-            mcp_port: 3000,
+            api_port: ports::API_PORT,
+            mcp_port: ports::MCP_PORT,
         }
     }
 
@@ -130,10 +129,7 @@ impl MCPMateEngine {
 
         // Start the service in background
         let _handle = runtime.spawn(async move {
-            if let Err(e) =
-                Self::start_service_async_with_config(config, startup_progress, status, is_running)
-                    .await
-            {
+            if let Err(e) = Self::start_service_async_with_config(config, startup_progress, status, is_running).await {
                 tracing::error!("Failed to start MCPMate service: {}", e);
             }
         });
@@ -235,8 +231,7 @@ impl MCPMateEngine {
             Self::debug_environment().await;
 
             // Step 5: Start background connections (70%)
-            Self::update_progress(&startup_progress, 0.7, "Starting background connections...")
-                .await;
+            Self::update_progress(&startup_progress, 0.7, "Starting background connections...").await;
             start_background_connections(&proxy, proxy_arc.clone()).await?;
 
             // Step 6: Start proxy server (85%)
@@ -248,20 +243,12 @@ impl MCPMateEngine {
             start_proxy_server(&mut proxy, &args).await?;
         } else {
             tracing::info!("Minimal mode: skipping MCP server and background connections");
-            Self::update_progress(
-                &startup_progress,
-                0.85,
-                "Skipping MCP server (minimal mode)...",
-            )
-            .await;
+            Self::update_progress(&startup_progress, 0.85, "Skipping MCP server (minimal mode)...").await;
         }
 
         // Step 7: Start API server (100%)
         Self::update_progress(&startup_progress, 1.0, "Starting API server...").await;
-        tracing::info!(
-            "Starting API server on port {} (from Interop config)",
-            args.api_port
-        );
+        tracing::info!("Starting API server on port {} (from Interop config)", args.api_port);
         let _api_task = start_api_server(proxy_arc.clone(), &args).await?;
 
         // Mark as running
@@ -428,20 +415,14 @@ impl MCPMateEngine {
             }
 
             // Also test direct access to expected paths
-            let expected_paths = [
-                format!("/opt/homebrew/bin/{}", cmd),
-                format!("/usr/local/bin/{}", cmd),
-            ];
+            let expected_paths = [format!("/opt/homebrew/bin/{}", cmd), format!("/usr/local/bin/{}", cmd)];
 
             for expected_path in expected_paths {
                 if std::path::Path::new(&expected_path).exists() {
                     tracing::info!("✅ Direct path exists: {}", expected_path);
 
                     // Test if it's executable
-                    match std::process::Command::new(&expected_path)
-                        .arg("--version")
-                        .output()
-                    {
+                    match std::process::Command::new(&expected_path).arg("--version").output() {
                         Ok(output) => {
                             let stdout = String::from_utf8_lossy(&output.stdout);
                             if output.status.success() {
@@ -451,11 +432,7 @@ impl MCPMateEngine {
                                     stdout.lines().next().unwrap_or("").trim()
                                 );
                             } else {
-                                tracing::warn!(
-                                    "❌ {} not executable: status={}",
-                                    expected_path,
-                                    output.status
-                                );
+                                tracing::warn!("❌ {} not executable: status={}", expected_path, output.status);
                             }
                         }
                         Err(e) => {

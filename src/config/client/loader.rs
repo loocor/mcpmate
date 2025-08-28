@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::common::config::defaults;
-use crate::common::server::transport_formats;
+
 use crate::config::client::models::GenerationRequest;
 
 /// Server information for configuration generation
@@ -44,9 +44,9 @@ impl ServerLoader {
             return self.get_servers_by_ids(server_ids).await;
         }
 
-        // If config_suit_id is provided, get servers from that suit
-        if let Some(config_suit_id) = &request.config_suit_id {
-            return self.get_servers_by_config_suit(config_suit_id).await;
+        // If suit_id is provided, get servers from that suit
+        if let Some(suit_id) = &request.suit_id {
+            return self.get_servers_by_config_suit(suit_id).await;
         }
 
         // Default: get all enabled servers
@@ -70,7 +70,7 @@ impl ServerLoader {
     /// Get servers by config suit ID
     pub async fn get_servers_by_config_suit(
         &self,
-        config_suit_id: &str,
+        suit_id: &str,
     ) -> Result<Vec<ServerInfo>> {
         let rows = sqlx::query(
             r#"
@@ -78,11 +78,11 @@ impl ServerLoader {
                    s.command, s.url, s.server_type, s.transport_type
             FROM config_suit_server cs
             JOIN server_config s ON cs.server_id = s.id
-            WHERE cs.config_suit_id = ? AND cs.enabled = TRUE AND s.enabled = TRUE
+            WHERE cs.suit_id = ? AND cs.enabled = TRUE AND s.enabled = TRUE
             ORDER BY cs.server_name
             "#,
         )
-        .bind(config_suit_id)
+        .bind(suit_id)
         .fetch_all(self.db_pool.as_ref())
         .await?;
 
@@ -104,9 +104,10 @@ impl ServerLoader {
                 args,
                 env,
                 runtime: defaults::RUNTIME.to_string(), // TODO: Load from appropriate table if needed
-                server_type: row
-                    .get::<Option<String>, _>("server_type")
-                    .unwrap_or_else(|| transport_formats::STDIO.to_string()),
+                server_type: row.get::<Option<String>, _>("server_type").unwrap_or_else(|| {
+                    use crate::common::constants::transport;
+                    transport::STDIO.to_string()
+                }),
             });
         }
         Ok(servers)
@@ -143,9 +144,10 @@ impl ServerLoader {
                 args,
                 env,
                 runtime: defaults::RUNTIME.to_string(), // TODO: Load from appropriate table if needed
-                server_type: row
-                    .get::<Option<String>, _>("server_type")
-                    .unwrap_or_else(|| transport_formats::STDIO.to_string()),
+                server_type: row.get::<Option<String>, _>("server_type").unwrap_or_else(|| {
+                    use crate::common::constants::transport;
+                    transport::STDIO.to_string()
+                }),
             });
         }
         Ok(servers)
@@ -183,9 +185,10 @@ impl ServerLoader {
             args,
             env,
             runtime: defaults::RUNTIME.to_string(), // TODO: Load from appropriate table if needed
-            server_type: row
-                .get::<Option<String>, _>("server_type")
-                .unwrap_or_else(|| transport_formats::STDIO.to_string()),
+            server_type: row.get::<Option<String>, _>("server_type").unwrap_or_else(|| {
+                use crate::common::constants::transport;
+                transport::STDIO.to_string()
+            }),
         })
     }
 

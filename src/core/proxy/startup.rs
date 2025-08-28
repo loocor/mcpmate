@@ -142,9 +142,12 @@ async fn start_single_transport_server(
 
 /// Parse transport type from string with fallback
 fn parse_transport_type(transport: &str) -> TransportType {
+    use crate::common::constants::transport;
+
     match transport {
-        "sse" => TransportType::Sse,
-        "streamable_http" | "streamablehttp" | "str" => TransportType::StreamableHttp,
+        t if t == transport::SSE => TransportType::Sse,
+        t if t == transport::STREAMABLE_HTTP => TransportType::StreamableHttp,
+        t if t == transport::STDIO => TransportType::Stdio,
         _ => {
             tracing::warn!("Unknown transport type: {}, defaulting to SSE", transport);
             TransportType::Sse

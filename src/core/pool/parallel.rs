@@ -15,7 +15,10 @@ use tracing;
 
 use super::UpstreamConnectionPool;
 use crate::{
-    common::server::{ServerType, TransportType},
+    common::{
+        server::{ServerType, TransportType},
+        sync::SyncHelper,
+    },
     core::transport::{
         connect_http_server, // connect to an HTTP server
         connect_sse_server,  // connect to an SSE server
@@ -99,26 +102,28 @@ impl ParallelConnectionManager {
 
         tracing::info!("Starting parallel connection to {} servers", server_instances.len());
 
-        // Create parallel connection tasks
-        let connection_tasks: Vec<_> = server_instances
-            .into_iter()
-            .map(|(server_id, instance_id)| {
-                let event_tx = self.event_tx.clone();
-                let pool = self.pool.clone();
+        // Clone needed values outside the closure to avoid lifetime issues
+        let event_tx = self.event_tx.clone();
+        let pool = self.pool.clone();
 
-                tokio::spawn(Self::connect_single_server(server_id, instance_id, pool, event_tx))
-            })
-            .collect();
+        // Use unified sync framework for concurrent connections
+        let sync_result = SyncHelper::execute_concurrent_sync(
+            server_instances,
+            "server_connections",
+            4, // max concurrent connections
+            move |(server_id, instance_id)| {
+                let event_tx = event_tx.clone();
+                let pool = pool.clone();
+                async move { Self::connect_single_server(server_id, instance_id, pool, event_tx).await }
+            },
+        )
+        .await;
 
-        // Wait for all connection tasks to complete
-        let results = futures::future::join_all(connection_tasks).await;
-
-        // Count successful tasks
-        let successful_tasks = results.iter().filter(|r| r.is_ok()).count();
         tracing::info!(
-            "Parallel connection completed: {}/{} tasks successful",
-            successful_tasks,
-            results.len()
+            "Parallel connection completed: {}/{} tasks successful ({:.1}% success rate)",
+            sync_result.synced,
+            sync_result.processed,
+            sync_result.success_rate()
         );
 
         Ok(())
@@ -245,15 +250,8 @@ impl ParallelConnectionManager {
 
         match server_type {
             ServerType::Stdio => {
-                Self::perform_stdio_connection(
-                    server_id,
-                    instance_id,
-                    server_config,
-                    database,
-                    runtime_cache,
-                    event_tx,
-                )
-                .await
+                Self::perform_stdio_connection(server_id, instance_id, server_config, database, runtime_cache, event_tx)
+                    .await
             }
             ServerType::Sse => {
                 let (service, tools, capabilities) = connect_sse_server(server_id, server_config).await?;
@@ -329,18 +327,11 @@ impl ParallelConnectionManager {
         while let Some(event) = event_rx.recv().await {
             match event {
                 // Handle connection initializing
-                ConnectionEvent::Connecting {
-                    server_id,
-                    instance_id,
-                } => {
+                ConnectionEvent::Connecting { server_id, instance_id } => {
                     let mut pool = pool.lock().await;
                     if let Ok(conn) = pool.get_instance_mut(&server_id, &instance_id) {
                         conn.update_initializing();
-                        tracing::debug!(
-                            "Updated '{}' instance '{}' to connecting state",
-                            server_id,
-                            instance_id
-                        );
+                        tracing::debug!("Updated '{}' instance '{}' to connecting state", server_id, instance_id);
                     }
                 }
 

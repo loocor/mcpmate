@@ -2,6 +2,7 @@
 //!
 //! Defines data structures that can be safely passed between different languages
 
+use crate::common::config::ports;
 use serde::{Deserialize, Serialize};
 
 /// Port configuration for MCPMate services
@@ -16,8 +17,8 @@ pub struct PortConfig {
 impl Default for PortConfig {
     fn default() -> Self {
         Self {
-            api_port: 8080,
-            mcp_port: 8000,
+            api_port: ports::API_PORT,
+            mcp_port: ports::MCP_PORT,
         }
     }
 }
@@ -100,8 +101,8 @@ impl Default for ServiceInfo {
     fn default() -> Self {
         Self {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            api_port: 8080,
-            mcp_port: 8000,
+            api_port: ports::API_PORT,
+            mcp_port: ports::MCP_PORT,
             uptime_seconds: 0,
             is_running: false,
             active_connections: 0,
@@ -156,8 +157,6 @@ pub struct StartupConfig {
     /// Start in minimal mode (API only, no config suites loaded)
     pub minimal: bool,
 }
-
-
 
 impl StartupConfig {
     /// Create a new startup configuration

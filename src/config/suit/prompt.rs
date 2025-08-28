@@ -13,7 +13,7 @@ use crate::generate_id;
 /// If the prompt is added or updated, it also publishes a PromptEnabledInSuitChanged event.
 pub async fn add_prompt_to_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
     server_id: &str,
     prompt_name: &str,
     enabled: bool,
@@ -22,7 +22,7 @@ pub async fn add_prompt_to_config_suit(
         "Adding prompt '{}' from server ID {} to configuration suit ID {}, enabled: {}",
         prompt_name,
         server_id,
-        config_suit_id,
+        suit_id,
         enabled
     );
 
@@ -30,10 +30,10 @@ pub async fn add_prompt_to_config_suit(
     let existing_prompt = sqlx::query_scalar::<_, String>(
         r#"
         SELECT id FROM config_suit_prompt
-        WHERE config_suit_id = ? AND server_id = ? AND prompt_name = ?
+        WHERE suit_id = ? AND server_id = ? AND prompt_name = ?
         "#,
     )
-    .bind(config_suit_id)
+    .bind(suit_id)
     .bind(server_id)
     .bind(prompt_name)
     .fetch_optional(pool)
@@ -78,12 +78,12 @@ pub async fn add_prompt_to_config_suit(
 
         sqlx::query(
             r#"
-            INSERT INTO config_suit_prompt (id, config_suit_id, server_id, server_name, prompt_name, enabled)
+            INSERT INTO config_suit_prompt (id, suit_id, server_id, server_name, prompt_name, enabled)
             VALUES (?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&new_id)
-        .bind(config_suit_id)
+        .bind(suit_id)
         .bind(server_id)
         .bind(&server_name)
         .bind(prompt_name)
@@ -99,7 +99,7 @@ pub async fn add_prompt_to_config_suit(
     let event = crate::core::events::Event::PromptEnabledInSuitChanged {
         prompt_id: prompt_id.clone(),
         prompt_name: prompt_name.to_string(),
-        suit_id: config_suit_id.to_string(),
+        suit_id: suit_id.to_string(),
         enabled,
     };
 
@@ -117,7 +117,7 @@ pub async fn add_prompt_to_config_suit(
 /// Remove a prompt from a configuration suit
 pub async fn remove_prompt_from_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
     server_id: &str,
     prompt_name: &str,
 ) -> Result<()> {
@@ -125,16 +125,16 @@ pub async fn remove_prompt_from_config_suit(
         "Removing prompt '{}' from server ID {} from configuration suit ID {}",
         prompt_name,
         server_id,
-        config_suit_id
+        suit_id
     );
 
     let result = sqlx::query(
         r#"
         DELETE FROM config_suit_prompt
-        WHERE config_suit_id = ? AND server_id = ? AND prompt_name = ?
+        WHERE suit_id = ? AND server_id = ? AND prompt_name = ?
         "#,
     )
-    .bind(config_suit_id)
+    .bind(suit_id)
     .bind(server_id)
     .bind(prompt_name)
     .execute(pool)
@@ -146,7 +146,7 @@ pub async fn remove_prompt_from_config_suit(
             "No prompt '{}' found for server ID {} in configuration suit ID {}",
             prompt_name,
             server_id,
-            config_suit_id
+            suit_id
         );
     } else {
         tracing::debug!(
@@ -161,22 +161,22 @@ pub async fn remove_prompt_from_config_suit(
 /// Get all prompts for a configuration suit
 pub async fn get_prompts_for_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
 ) -> Result<Vec<crate::config::models::ConfigSuitPrompt>> {
     tracing::debug!(
         "Getting all prompts for configuration suit ID {}",
-        config_suit_id
+        suit_id
     );
 
     let prompts = sqlx::query_as::<_, crate::config::models::ConfigSuitPrompt>(
         r#"
-        SELECT id, config_suit_id, server_id, server_name, prompt_name, enabled, created_at, updated_at
+        SELECT id, suit_id, server_id, server_name, prompt_name, enabled, created_at, updated_at
         FROM config_suit_prompt
-        WHERE config_suit_id = ?
+        WHERE suit_id = ?
         ORDER BY server_name, prompt_name
         "#,
     )
-    .bind(config_suit_id)
+    .bind(suit_id)
     .fetch_all(pool)
     .await
     .context("Failed to get prompts for configuration suit")?;
@@ -187,22 +187,22 @@ pub async fn get_prompts_for_config_suit(
 /// Get enabled prompts for a configuration suit
 pub async fn get_enabled_prompts_for_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
 ) -> Result<Vec<crate::config::models::ConfigSuitPrompt>> {
     tracing::debug!(
         "Getting enabled prompts for configuration suit ID {}",
-        config_suit_id
+        suit_id
     );
 
     let prompts = sqlx::query_as::<_, crate::config::models::ConfigSuitPrompt>(
         r#"
-        SELECT id, config_suit_id, server_id, server_name, prompt_name, enabled, created_at, updated_at
+        SELECT id, suit_id, server_id, server_name, prompt_name, enabled, created_at, updated_at
         FROM config_suit_prompt
-        WHERE config_suit_id = ? AND enabled = 1
+        WHERE suit_id = ? AND enabled = 1
         ORDER BY server_name, prompt_name
         "#,
     )
-    .bind(config_suit_id)
+    .bind(suit_id)
     .fetch_all(pool)
     .await
     .context("Failed to get enabled prompts for configuration suit")?;
@@ -225,7 +225,7 @@ pub async fn update_prompt_enabled_status(
     // Get prompt info for event publishing
     let prompt_info = sqlx::query_as::<_, (String, String, String)>(
         r#"
-        SELECT prompt_name, config_suit_id, server_id
+        SELECT prompt_name, suit_id, server_id
         FROM config_suit_prompt
         WHERE id = ?
         "#,
@@ -278,7 +278,7 @@ pub fn build_enabled_prompts_query(additional_where: Option<&str>) -> String {
     let base_query = r#"
         SELECT DISTINCT csp.server_name, csp.prompt_name
         FROM config_suit_prompt csp
-        JOIN config_suit cs ON csp.config_suit_id = cs.id
+        JOIN config_suit cs ON csp.suit_id = cs.id
         WHERE cs.is_active = true AND csp.enabled = true
     "#;
 

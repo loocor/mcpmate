@@ -5,6 +5,8 @@ use anyhow::Result;
 use sqlx::{Pool, Sqlite};
 use tracing;
 
+use crate::common::constants::database::tables;
+
 /// Initialize all config suit-related database tables
 pub async fn initialize_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Initializing config suit-related database tables");
@@ -34,11 +36,11 @@ pub async fn initialize_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
 
 /// Create config_suit table if it doesn't exist
 async fn create_config_suit_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating config_suit table if it doesn't exist");
+    tracing::debug!("Creating {} table if it doesn't exist", tables::CONFIG_SUIT);
 
-    sqlx::query(
+    let create_sql = format!(
         r#"
-        CREATE TABLE IF NOT EXISTS config_suit (
+        CREATE TABLE IF NOT EXISTS {} (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
             description TEXT,
@@ -51,15 +53,15 @@ async fn create_config_suit_table(pool: &Pool<Sqlite>) -> Result<()> {
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to create config_suit table: {}", e);
-        anyhow::anyhow!("Failed to create config_suit table: {}", e)
+        tables::CONFIG_SUIT
+    );
+
+    sqlx::query(&create_sql).execute(pool).await.map_err(|e| {
+        tracing::error!("Failed to create {} table: {}", tables::CONFIG_SUIT, e);
+        anyhow::anyhow!("Failed to create {} table: {}", tables::CONFIG_SUIT, e)
     })?;
 
-    tracing::debug!("config_suit table created or already exists");
+    tracing::debug!("{} table created or already exists", tables::CONFIG_SUIT);
     Ok(())
 }
 
@@ -71,15 +73,15 @@ async fn create_config_suit_server_table(pool: &Pool<Sqlite>) -> Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_server (
             id TEXT PRIMARY KEY,
-            config_suit_id TEXT NOT NULL,
+            suit_id TEXT NOT NULL,
             server_id TEXT NOT NULL,
             server_name TEXT NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (config_suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
+            FOREIGN KEY (suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
-            UNIQUE(config_suit_id, server_id)
+            UNIQUE(suit_id, server_id)
         )
         "#,
     )
@@ -433,14 +435,14 @@ async fn create_config_suit_tool_table(pool: &Pool<Sqlite>) -> Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_tool (
             id TEXT PRIMARY KEY,
-            config_suit_id TEXT NOT NULL,
+            suit_id TEXT NOT NULL,
             server_tool_id TEXT NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (config_suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
+            FOREIGN KEY (suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
             FOREIGN KEY (server_tool_id) REFERENCES server_tools (id) ON DELETE CASCADE,
-            UNIQUE(config_suit_id, server_tool_id)
+            UNIQUE(suit_id, server_tool_id)
         )
         "#,
     )
@@ -459,11 +461,11 @@ async fn create_config_suit_tool_table(pool: &Pool<Sqlite>) -> Result<()> {
 async fn create_config_suit_tool_index(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating indexes on config_suit_tool table for performance");
 
-    // Index for lookup by config_suit_id and enabled status
+    // Index for lookup by suit_id and enabled status
     sqlx::query(
         r#"
         CREATE INDEX IF NOT EXISTS idx_config_suit_tool_lookup
-        ON config_suit_tool(config_suit_id, enabled)
+        ON config_suit_tool(suit_id, enabled)
         "#,
     )
     .execute(pool)
@@ -499,16 +501,16 @@ async fn create_config_suit_resource_table(pool: &Pool<Sqlite>) -> Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_resource (
             id TEXT PRIMARY KEY,
-            config_suit_id TEXT NOT NULL,
+            suit_id TEXT NOT NULL,
             server_id TEXT NOT NULL,
             server_name TEXT NOT NULL,
             resource_uri TEXT NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (config_suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
+            FOREIGN KEY (suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
-            UNIQUE(config_suit_id, server_id, resource_uri)
+            UNIQUE(suit_id, server_id, resource_uri)
         )
         "#,
     )
@@ -530,7 +532,7 @@ async fn create_config_suit_resource_index(pool: &Pool<Sqlite>) -> Result<()> {
     sqlx::query(
         r#"
         CREATE INDEX IF NOT EXISTS idx_config_suit_resource_lookup
-        ON config_suit_resource(config_suit_id, enabled)
+        ON config_suit_resource(suit_id, enabled)
         "#,
     )
     .execute(pool)
@@ -552,16 +554,16 @@ async fn create_config_suit_prompt_table(pool: &Pool<Sqlite>) -> Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS config_suit_prompt (
             id TEXT PRIMARY KEY,
-            config_suit_id TEXT NOT NULL,
+            suit_id TEXT NOT NULL,
             server_id TEXT NOT NULL,
             server_name TEXT NOT NULL,
             prompt_name TEXT NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (config_suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
+            FOREIGN KEY (suit_id) REFERENCES config_suit (id) ON DELETE CASCADE,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
-            UNIQUE(config_suit_id, server_id, prompt_name)
+            UNIQUE(suit_id, server_id, prompt_name)
         )
         "#,
     )
@@ -583,7 +585,7 @@ async fn create_config_suit_prompt_index(pool: &Pool<Sqlite>) -> Result<()> {
     sqlx::query(
         r#"
         CREATE INDEX IF NOT EXISTS idx_config_suit_prompt_lookup
-        ON config_suit_prompt(config_suit_id, enabled)
+        ON config_suit_prompt(suit_id, enabled)
         "#,
     )
     .execute(pool)
@@ -599,19 +601,17 @@ async fn create_config_suit_prompt_index(pool: &Pool<Sqlite>) -> Result<()> {
 
 /// Verify that all config suit tables were created successfully
 async fn verify_suit_tables(pool: &Pool<Sqlite>) -> Result<()> {
-    let tables = vec![
-        "config_suit",
-        "config_suit_server",
-        "server_tools",
-        "server_prompts",
-        "server_resources",
-        "server_resource_templates",
-        "config_suit_tool",
-        "config_suit_resource",
-        "config_suit_prompt",
-    ];
-
-    for table in tables {
+    for table in [
+        tables::CONFIG_SUIT,
+        tables::CONFIG_SUIT_SERVER,
+        tables::SERVER_TOOLS,
+        tables::SERVER_PROMPTS,
+        tables::SERVER_RESOURCES,
+        tables::SERVER_RESOURCE_TEMPLATES,
+        tables::CONFIG_SUIT_TOOL,
+        tables::CONFIG_SUIT_RESOURCE,
+        tables::CONFIG_SUIT_PROMPT,
+    ] {
         sqlx::query(&format!(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'"
         ))

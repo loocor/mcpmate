@@ -3,19 +3,27 @@
 //! This module provides shared functionality used across different parts of MCPMate,
 //! helping to eliminate code duplication and improve maintainability.
 
+pub mod capability;
+pub mod checker;
 pub mod config;
 pub mod connection;
 pub mod constants;
-pub mod capability;
+pub mod database;
 pub mod env;
 pub mod json;
 pub mod paths;
 pub mod server;
 pub mod status;
+pub mod sync;
 pub mod types;
+pub mod validation;
 
 // Re-export commonly used items for convenience
+pub use checker::{ConfigCheckResult, ConfigChecker};
+pub use database::{count_records, fetch_all_ordered, fetch_optional, fetch_scalar, fetch_where, record_exists};
 pub use env::{EnvironmentManager, create_runtime_environment, prepare_command_environment};
 pub use json::strip_comments;
 pub use paths::{MCPMatePaths, get_bridge_path, global_paths};
-pub use types::{ClientCategory, RuntimeType, RuntimeError};
+pub use sync::{SyncContext, SyncHelper, SyncResult};
+pub use types::{ClientCategory, RuntimeError, RuntimeType};
+pub use validation::{FieldValidation, ValidationBuilder, ValidationResult, Validator};

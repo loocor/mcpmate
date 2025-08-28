@@ -181,7 +181,7 @@ impl ClientManager {
     /// Apply configuration to all enabled clients (batch operation)
     pub async fn apply_config_batch(
         &mut self,
-        config_suit_id: Option<String>,
+        suit_id: Option<String>,
     ) -> Result<BatchApplicationResult> {
         self.ensure_loaded().await?;
 
@@ -196,7 +196,7 @@ impl ClientManager {
             let generation_request = GenerationRequest {
                 identifier: client.identifier.clone(),
                 mode: GenerationMode::Transparent,
-                config_suit_id: config_suit_id.clone(),
+                suit_id: suit_id.clone(),
                 servers: None, // Use all servers from the suit
             };
 

@@ -1,3 +1,4 @@
+use crate::common::config::ports;
 use clap::Parser;
 
 /// Command line arguments for the MCP proxy server
@@ -5,11 +6,11 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Port to listen on for MCP server
-    #[arg(short, long, default_value = "8000")]
+    #[arg(short, long, default_value_t = ports::MCP_PORT)]
     pub mcp_port: u16,
 
     /// Port to listen on for API server
-    #[arg(long, default_value = "8080")]
+    #[arg(long, default_value_t = ports::API_PORT)]
     pub api_port: u16,
 
     /// Log level (when RUST_LOG is not set)
@@ -66,11 +67,7 @@ impl Args {
             StartupMode::Minimal
         } else if let Some(ref suites) = self.config_suites {
             // Filter out empty strings and check if we have any valid suite IDs
-            let valid_suites: Vec<String> = suites
-                .iter()
-                .filter(|s| !s.trim().is_empty())
-                .cloned()
-                .collect();
+            let valid_suites: Vec<String> = suites.iter().filter(|s| !s.trim().is_empty()).cloned().collect();
 
             if valid_suites.is_empty() {
                 StartupMode::NoSuites

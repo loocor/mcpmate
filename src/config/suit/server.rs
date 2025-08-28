@@ -4,26 +4,33 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::{config::models::ConfigSuitServer, generate_id};
+use crate::{
+    common::constants::database::{columns, tables},
+    config::models::ConfigSuitServer,
+    generate_id,
+};
 
 /// Get all servers for a configuration suit from the database
 pub async fn get_config_suit_servers(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
 ) -> Result<Vec<ConfigSuitServer>> {
     tracing::debug!(
         "Executing SQL query to get servers for configuration suit with ID {}",
-        config_suit_id
+        suit_id
     );
 
-    let servers = sqlx::query_as::<_, ConfigSuitServer>(
+    let servers = sqlx::query_as::<_, ConfigSuitServer>(&format!(
         r#"
-        SELECT * FROM config_suit_server
-        WHERE config_suit_id = ?
-        ORDER BY server_id
+        SELECT * FROM {}
+        WHERE {} = ?
+        ORDER BY {}
         "#,
-    )
-    .bind(config_suit_id)
+        tables::CONFIG_SUIT_SERVER,
+        columns::SUIT_ID,
+        columns::SERVER_ID
+    ))
+    .bind(suit_id)
     .fetch_all(pool)
     .await
     .context("Failed to fetch configuration suit servers")?;
@@ -31,7 +38,7 @@ pub async fn get_config_suit_servers(
     tracing::debug!(
         "Successfully fetched {} servers for configuration suit with ID {}",
         servers.len(),
-        config_suit_id
+        suit_id
     );
     Ok(servers)
 }
@@ -42,14 +49,14 @@ pub async fn get_config_suit_servers(
 /// If the server is added or updated, it also publishes a ServerEnabledInSuitChanged event.
 pub async fn add_server_to_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
     server_id: &str,
     enabled: bool,
 ) -> Result<String> {
     tracing::debug!(
         "Adding server ID {} to configuration suit ID {}, enabled: {}",
         server_id,
-        config_suit_id,
+        suit_id,
         enabled
     );
 
@@ -76,30 +83,47 @@ pub async fn add_server_to_config_suit(
     };
 
     // Check if the server already exists in the suit and get its current enabled status
-    let existing_enabled = sqlx::query_scalar::<_, bool>(
+    let existing_enabled = sqlx::query_scalar::<_, bool>(&format!(
         r#"
-        SELECT enabled FROM config_suit_server
-        WHERE config_suit_id = ? AND server_id = ?
+        SELECT {} FROM {}
+        WHERE {} = ? AND {} = ?
         "#,
-    )
-    .bind(config_suit_id)
+        columns::ENABLED,
+        tables::CONFIG_SUIT_SERVER,
+        columns::SUIT_ID,
+        columns::SERVER_ID
+    ))
+    .bind(suit_id)
     .bind(server_id)
     .fetch_optional(pool)
     .await
     .context("Failed to get existing server enabled status")?;
 
-    let result = sqlx::query(
+    let result = sqlx::query(&format!(
         r#"
-        INSERT INTO config_suit_server (id, config_suit_id, server_id, server_name, enabled)
+        INSERT INTO {} ({}, {}, {}, {}, {})
         VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(config_suit_id, server_id) DO UPDATE SET
-            server_name = excluded.server_name,
-            enabled = excluded.enabled,
-            updated_at = CURRENT_TIMESTAMP
+        ON CONFLICT({}, {}) DO UPDATE SET
+            {} = excluded.{},
+            {} = excluded.{},
+            {} = CURRENT_TIMESTAMP
         "#,
-    )
+        tables::CONFIG_SUIT_SERVER,
+        columns::ID,
+        columns::SUIT_ID,
+        columns::SERVER_ID,
+        columns::SERVER_NAME,
+        columns::ENABLED,
+        columns::SUIT_ID,
+        columns::SERVER_ID,
+        columns::SERVER_NAME,
+        columns::SERVER_NAME,
+        columns::ENABLED,
+        columns::ENABLED,
+        columns::UPDATED_AT
+    ))
     .bind(&association_id)
-    .bind(config_suit_id)
+    .bind(suit_id)
     .bind(server_id)
     .bind(&server_name)
     .bind(enabled)
@@ -115,10 +139,10 @@ pub async fn add_server_to_config_suit(
         sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM config_suit_server
-            WHERE config_suit_id = ? AND server_id = ?
+            WHERE suit_id = ? AND server_id = ?
             "#,
         )
-        .bind(config_suit_id)
+        .bind(suit_id)
         .bind(server_id)
         .fetch_one(pool)
         .await
@@ -144,14 +168,14 @@ pub async fn add_server_to_config_suit(
         crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerEnabledInSuitChanged {
             server_id: server_id.to_string(),
             server_name: original_server_name,
-            suit_id: config_suit_id.to_string(),
+            suit_id: suit_id.to_string(),
             enabled,
         });
 
         // tracing::info!(
         //     "Published ServerEnabledInSuitChanged event for server ID {} in suit ID {} ({})",
         //     server_id,
-        //     config_suit_id,
+        //     suit_id,
         //     enabled
         // );
     }
@@ -162,22 +186,25 @@ pub async fn add_server_to_config_suit(
 /// Remove a server from a configuration suit in the database
 pub async fn remove_server_from_config_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
     server_id: &str,
 ) -> Result<bool> {
     tracing::debug!(
         "Removing server ID {} from configuration suit ID {}",
         server_id,
-        config_suit_id
+        suit_id
     );
 
-    let result = sqlx::query(
+    let result = sqlx::query(&format!(
         r#"
-        DELETE FROM config_suit_server
-        WHERE config_suit_id = ? AND server_id = ?
+        DELETE FROM {}
+        WHERE {} = ? AND {} = ?
         "#,
-    )
-    .bind(config_suit_id)
+        tables::CONFIG_SUIT_SERVER,
+        columns::SUIT_ID,
+        columns::SERVER_ID
+    ))
+    .bind(suit_id)
     .bind(server_id)
     .execute(pool)
     .await
@@ -193,22 +220,22 @@ pub async fn remove_server_from_config_suit(
 /// This ensures that capabilities are available for viewing even when the server is not enabled.
 pub async fn sync_server_capabilities_to_suit(
     pool: &Pool<Sqlite>,
-    config_suit_id: &str,
+    suit_id: &str,
     server_id: &str,
 ) -> Result<()> {
     tracing::debug!(
         "Starting capability sync for server ID {} to configuration suit ID {}",
         server_id,
-        config_suit_id
+        suit_id
     );
 
     // Check if capabilities already exist to avoid duplicate work
     let existing_tools_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM config_suit_tool cst
          JOIN server_tools st ON cst.server_tool_id = st.id
-         WHERE cst.config_suit_id = ? AND st.server_id = ?",
+         WHERE cst.suit_id = ? AND st.server_id = ?",
     )
-    .bind(config_suit_id)
+    .bind(suit_id)
     .bind(server_id)
     .fetch_one(pool)
     .await
@@ -219,7 +246,7 @@ pub async fn sync_server_capabilities_to_suit(
             "Server {} already has {} tools in suit {}. Skipping capability sync.",
             server_id,
             existing_tools_count,
-            config_suit_id
+            suit_id
         );
         return Ok(());
     }

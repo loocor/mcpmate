@@ -10,68 +10,39 @@ use std::sync::Arc;
 use tracing;
 
 use super::UpstreamConnectionPool;
+use crate::common::sync::SyncHelper;
 
 // Simplified approach - extract common database operations
 
 impl UpstreamConnectionPool {
     /// Common helper to get server and suits for sync operations
-    /// This reduces duplication in the three sync methods
+    /// Now uses the unified SyncHelper framework
     async fn get_server_and_suits(
         db: &Arc<crate::config::database::Database>,
         server_id: &str,
     ) -> AnyhowResult<(String, Vec<(String, String)>)> {
-        // Verify the server exists
-        let server = crate::config::server::get_server_by_id(&db.pool, server_id)
-            .await
-            .context(format!("Failed to get server '{server_id}'"))?;
+        // Use the unified sync framework
+        let sync_context = SyncHelper::get_server_context(&db.pool, server_id).await?;
 
-        if let Some(_server) = server {
-            // Get all config suits that have this server enabled
-            let suits_with_server = Self::get_suits_with_server(&db.pool, server_id).await?;
+        // Convert to the format expected by existing code
+        let suit_data: Vec<(String, String)> = sync_context
+            .suit_ids
+            .into_iter()
+            .map(|suit_id| {
+                // Get suit name from metadata or use ID as fallback
+                let suit_name = sync_context
+                    .metadata
+                    .get(&format!("suit_name_{}", suit_id))
+                    .cloned()
+                    .unwrap_or_else(|| suit_id.clone());
+                (suit_id, suit_name)
+            })
+            .collect();
 
-            // Collect suit data for concurrent processing
-            let suit_data: Vec<(String, String)> = suits_with_server
-                .into_iter()
-                .filter_map(|suit| suit.id.map(|suit_id| (suit_id, suit.name)))
-                .collect();
-
-            return Ok((server_id.to_string(), suit_data));
-        }
-
-        Err(anyhow::anyhow!("Server '{}' not found", server_id))
+        Ok((sync_context.server_id, suit_data))
     }
 
-    /// Helper function to get config suits that have a specific server enabled
-    async fn get_suits_with_server(
-        pool: &sqlx::Pool<sqlx::Sqlite>,
-        server_id: &str,
-    ) -> AnyhowResult<Vec<crate::config::models::ConfigSuit>> {
-        // Get all config suits that have this server enabled
-        let all_suits = crate::config::suit::get_all_config_suits(pool)
-            .await
-            .context("Failed to get all config suits")?;
-
-        let mut suits_with_server = Vec::new();
-
-        for suit in all_suits {
-            if let Some(suit_id) = &suit.id {
-                // Get all servers in this suit
-                let suit_servers = crate::config::suit::get_config_suit_servers(pool, suit_id)
-                    .await
-                    .context(format!("Failed to get servers for suit '{suit_id}'"))?;
-
-                // Check if this server is in the suit
-                for suit_server in suit_servers {
-                    if suit_server.server_id == *server_id {
-                        suits_with_server.push(suit.clone());
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(suits_with_server)
-    }
+    // Note: get_suits_with_server function removed as it's now handled by SyncHelper::get_server_context
 
     // Generic sync method removed - using specific implementations for each type
 
@@ -151,23 +122,30 @@ impl UpstreamConnectionPool {
         // Use common helper to get server and suits
         let (server_id, suit_data) = Self::get_server_and_suits(db, server_id).await?;
 
-        // Sync tools to each suit concurrently
-        let sync_futures: Vec<_> =
-            suit_data
-                .into_iter()
-                .map(|(suit_id, suit_name)| {
-                    let pool = db.pool.clone();
-                    let server_id = server_id.clone();
-                    let server_name = server_name.clone();
-                    let tools = tools.to_vec();
+        // Use unified sync framework for concurrent operations
+        let sync_items: Vec<_> = suit_data
+            .into_iter()
+            .map(|(suit_id, suit_name)| {
+                (
+                    suit_id,
+                    suit_name,
+                    db.pool.clone(),
+                    server_id.clone(),
+                    server_name.clone(),
+                    tools.to_vec(),
+                )
+            })
+            .collect();
 
-                    async move {
-                        Self::sync_tools_to_suit(&pool, &suit_id, &server_id, &server_name, &tools, &suit_name).await
-                    }
-                })
-                .collect();
-
-        futures::future::try_join_all(sync_futures).await?;
+        let _sync_result = SyncHelper::execute_concurrent_sync(
+            sync_items,
+            "tools_to_suits",
+            4, // max concurrent operations
+            |(suit_id, suit_name, pool, server_id, server_name, tools)| async move {
+                Self::sync_tools_to_suit(&pool, &suit_id, &server_id, &server_name, &tools, &suit_name).await
+            },
+        )
+        .await;
         tracing::debug!(
             "Successfully synced {} tools from server '{}' (ID: {})",
             tools.len(),
@@ -269,31 +247,31 @@ impl UpstreamConnectionPool {
             server_id
         );
 
-        // Create concurrent futures for all suits
-        let sync_futures: Vec<_> = suit_data
+        // Use unified sync framework for concurrent operations
+        let sync_items: Vec<_> = suit_data
             .into_iter()
             .map(|(suit_id, suit_name)| {
-                let pool = db.pool.clone();
-                let server_id = server_id.clone();
-                let server_name = server_name.clone();
-                let server_resources = server_resources.clone();
-
-                async move {
-                    Self::sync_resources_to_suit(
-                        &pool,
-                        &suit_id,
-                        &server_id,
-                        &server_name,
-                        &server_resources,
-                        &suit_name,
-                    )
-                    .await
-                }
+                (
+                    suit_id,
+                    suit_name,
+                    db.pool.clone(),
+                    server_id.clone(),
+                    server_name.clone(),
+                    server_resources.clone(),
+                )
             })
             .collect();
 
-        // Execute all sync operations concurrently
-        futures::future::try_join_all(sync_futures).await?;
+        let _sync_result = SyncHelper::execute_concurrent_sync(
+            sync_items,
+            "resources_to_suits",
+            4, // max concurrent operations
+            |(suit_id, suit_name, pool, server_id, server_name, server_resources)| async move {
+                Self::sync_resources_to_suit(&pool, &suit_id, &server_id, &server_name, &server_resources, &suit_name)
+                    .await
+            },
+        )
+        .await;
 
         tracing::debug!(
             "Successfully synced {} resources from server '{}' (ID: {}, instance: {}) to database",
@@ -394,24 +372,30 @@ impl UpstreamConnectionPool {
             server_id
         );
 
-        // Create concurrent futures for all suits
-        let sync_futures: Vec<_> = suit_data
+        // Use unified sync framework for concurrent operations
+        let sync_items: Vec<_> = suit_data
             .into_iter()
             .map(|(suit_id, suit_name)| {
-                let pool = db.pool.clone();
-                let server_id = server_id.clone();
-                let server_name = server_name.clone();
-                let all_prompts = all_prompts.clone();
-
-                async move {
-                    Self::sync_prompts_to_suit(&pool, &suit_id, &server_id, &server_name, &all_prompts, &suit_name)
-                        .await
-                }
+                (
+                    suit_id,
+                    suit_name,
+                    db.pool.clone(),
+                    server_id.clone(),
+                    server_name.clone(),
+                    all_prompts.clone(),
+                )
             })
             .collect();
 
-        // Execute all sync operations concurrently
-        futures::future::try_join_all(sync_futures).await?;
+        let _sync_result = SyncHelper::execute_concurrent_sync(
+            sync_items,
+            "prompts_to_suits",
+            4, // max concurrent operations
+            |(suit_id, suit_name, pool, server_id, server_name, all_prompts)| async move {
+                Self::sync_prompts_to_suit(&pool, &suit_id, &server_id, &server_name, &all_prompts, &suit_name).await
+            },
+        )
+        .await;
 
         tracing::debug!(
             "Successfully synced {} prompts from server '{}' (ID: {}, instance: {}) to database",

@@ -316,14 +316,16 @@ async fn process_single_component_in_tx(
             .map_err(|e| ApiError::InternalError(format!("Failed to get resource: {e}")))?
             .ok_or_else(|| ApiError::NotFound("Resource not found".to_string()))?;
 
-            sqlx::query("UPDATE config_suit_resource SET enabled = ? WHERE config_suit_id = ? AND server_id = ? AND resource_uri = ?")
-                .bind(enabled)
-                .bind(suit_id)
-                .bind(&resource.0)
-                .bind(&resource.1)
-                .execute(&mut **tx)
-                .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
+            sqlx::query(
+                "UPDATE config_suit_resource SET enabled = ? WHERE suit_id = ? AND server_id = ? AND resource_uri = ?",
+            )
+            .bind(enabled)
+            .bind(suit_id)
+            .bind(&resource.0)
+            .bind(&resource.1)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
         }
         ComponentType::Prompt => {
             sqlx::query("UPDATE config_suit_prompt SET enabled = ? WHERE id = ?")

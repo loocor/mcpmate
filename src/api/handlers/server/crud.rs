@@ -11,7 +11,10 @@ use crate::api::models::server::{
     ServersImportReq,
 };
 use crate::{
-    api::handlers::ApiError,
+    api::handlers::{
+        ApiError,
+        common::{internal_error, map_anyhow_error, map_database_error},
+    },
     common::{config::ConfigSuitType, server::ServerType},
     config::server::capabilities::sync_via_connection_pool,
     config::{
@@ -22,18 +25,6 @@ use crate::{
     },
 };
 use axum::{Json, extract::State};
-
-/// Convert database error to ApiError
-#[inline]
-fn db_error(e: impl std::fmt::Display) -> ApiError {
-    ApiError::InternalError(format!("Database error: {e}"))
-}
-
-/// Create internal error
-#[inline]
-fn internal_error(msg: &str) -> ApiError {
-    ApiError::InternalError(msg.to_owned())
-}
 
 /// Validate server configuration
 #[inline]
@@ -73,13 +64,15 @@ fn create_server_from_config(
 async fn get_or_create_default_config_suit(db: &Database) -> Result<String, ApiError> {
     let default_suit = suit::get_config_suit_by_name(&db.pool, "default")
         .await
-        .map_err(db_error)?;
+        .map_err(map_anyhow_error)?;
 
     match default_suit {
         Some(suit) => suit.id.ok_or_else(|| internal_error("ConfigSuit id missing")),
         None => {
             let new_suit = ConfigSuit::new("default".to_owned(), ConfigSuitType::Shared);
-            suit::upsert_config_suit(&db.pool, &new_suit).await.map_err(db_error)
+            suit::upsert_config_suit(&db.pool, &new_suit)
+                .await
+                .map_err(map_anyhow_error)
         }
     }
 }
@@ -94,7 +87,7 @@ async fn add_server_to_suit(
 ) -> Result<(), ApiError> {
     suit::add_server_to_config_suit(&db.pool, suit_id, server_id, enabled)
         .await
-        .map_err(db_error)
+        .map_err(map_anyhow_error)
         .map(|_| ())
 }
 
@@ -109,7 +102,7 @@ async fn add_server_to_suit_with_sync(
     // Add server to suit
     suit::add_server_to_config_suit(&db.pool, suit_id, server_id, enabled)
         .await
-        .map_err(db_error)?;
+        .map_err(map_anyhow_error)?;
 
     // Sync server capabilities to the configuration suit (async, non-blocking)
     if false {
@@ -181,7 +174,7 @@ async fn create_server_metadata(
 
     server::upsert_server_meta(&db.pool, &meta)
         .await
-        .map_err(db_error)
+        .map_err(map_anyhow_error)
         .map(|_| ())
 }
 
@@ -219,7 +212,7 @@ pub async fn create_server(
     // Check if server already exists
     if crate::config::server::get_server(&db.pool, &payload.name)
         .await
-        .map_err(db_error)?
+        .map_err(map_anyhow_error)?
         .is_some()
     {
         return Err(ApiError::Conflict(format!(
@@ -254,20 +247,20 @@ pub async fn create_server(
     // Insert server into database
     let server_id = crate::config::server::upsert_server(&db.pool, &server)
         .await
-        .map_err(db_error)?;
+        .map_err(map_anyhow_error)?;
 
     // Insert server arguments if provided
     if let Some(args) = &payload.args {
         crate::config::server::upsert_server_args(&db.pool, &server_id, args)
             .await
-            .map_err(db_error)?;
+            .map_err(map_anyhow_error)?;
     }
 
     // Insert server environment variables if provided
     if let Some(env) = &payload.env {
         crate::config::server::upsert_server_env(&db.pool, &server_id, env)
             .await
-            .map_err(db_error)?;
+            .map_err(map_anyhow_error)?;
     }
 
     // Create server metadata
@@ -345,7 +338,7 @@ pub async fn update_server(
     // Get existing server by ID
     let existing_server = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
-        .map_err(db_error)?
+        .map_err(map_anyhow_error)?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
     let server_id = existing_server
         .id
@@ -397,20 +390,20 @@ pub async fn update_server(
     // Update server in database
     crate::config::server::upsert_server(&db.pool, &updated_server)
         .await
-        .map_err(db_error)?;
+        .map_err(map_anyhow_error)?;
 
     // Update server arguments if provided
     if let Some(args) = &payload.args {
         crate::config::server::upsert_server_args(&db.pool, &server_id, args)
             .await
-            .map_err(db_error)?;
+            .map_err(map_anyhow_error)?;
     }
 
     // Update server environment variables if provided
     if let Some(env) = &payload.env {
         crate::config::server::upsert_server_env(&db.pool, &server_id, env)
             .await
-            .map_err(db_error)?;
+            .map_err(map_anyhow_error)?;
     }
 
     // Update server enabled status if provided
@@ -581,7 +574,7 @@ async fn delete_server_records(
     db: &Database,
     server_id: &str,
 ) -> Result<(), ApiError> {
-    let mut tx = db.pool.begin().await.map_err(db_error)?;
+    let mut tx = db.pool.begin().await.map_err(map_database_error)?;
 
     // Option 1: Use CASCADE DELETE (recommended)
     // Since all tables have proper ON DELETE CASCADE constraints,
@@ -590,7 +583,7 @@ async fn delete_server_records(
         .bind(server_id)
         .execute(&mut *tx)
         .await
-        .map_err(db_error)?;
+        .map_err(map_database_error)?;
 
     // The following tables will be automatically cleaned up by CASCADE DELETE:
     // - server_tools (has FK to server_config.id)
@@ -602,7 +595,7 @@ async fn delete_server_records(
     // - config_suit_prompt (has FK to server_config.id)
     // - config_suit_tool (has FK to server_tools.id, which cascades from server_config)
 
-    tx.commit().await.map_err(db_error)?;
+    tx.commit().await.map_err(map_database_error)?;
     Ok(())
 }
 
@@ -620,7 +613,7 @@ pub async fn delete_server(
     // Get existing server by ID
     let existing_server = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
-        .map_err(db_error)?
+        .map_err(map_anyhow_error)?
         .ok_or_else(|| ApiError::NotFound(format!("Server with ID '{id}' not found")))?;
     let server_id = existing_server
         .id

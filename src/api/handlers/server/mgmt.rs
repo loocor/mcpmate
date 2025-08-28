@@ -29,10 +29,10 @@ async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> 
 #[inline]
 async fn sync_client_configurations(
     state: &Arc<AppState>,
-    config_suit_id: Option<String>,
+    suit_id: Option<String>,
 ) -> Result<(), ApiError> {
     // Use the helper function from suits::helpers
-    crate::api::handlers::suits::helpers::sync_client_configurations(state, config_suit_id).await
+    crate::api::handlers::suits::helpers::sync_client_configurations(state, suit_id).await
 }
 
 /// Create operation response
