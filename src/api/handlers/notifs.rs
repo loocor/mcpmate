@@ -60,7 +60,7 @@ async fn tools_changed_core(
     let pool = state.connection_pool.lock().await;
 
     tracing::info!(
-        "Would send tools/listChanged notification to {} clients",
+        "Would send tools/listChanged notification to {} client",
         pool.connections.len()
     );
 
@@ -72,8 +72,8 @@ async fn tools_changed_core(
         .count();
 
     Ok(ToolsChangedResp::success(ToolsChangedData {
-        notified_clients: notified_count,
-        message: format!("Notified {notified_count} clients about tools list change"),
+        notified_client: notified_count,
+        message: format!("Notified {notified_count} client about tools list change"),
         details: ToolsChangedDetails {
             operation: format!("{:?}", request.operation),
             scope: format!("{:?}", request.scope),

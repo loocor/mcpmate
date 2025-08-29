@@ -6,7 +6,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
-use crate::api::models::clients::ClientImportedServer;
+use crate::api::models::client::ClientImportedServer;
 use crate::config::models::server::Server;
 use crate::config::server::{args, crud, env};
 

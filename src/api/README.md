@@ -608,7 +608,7 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
 
 ## Usage
 
-The API server is started alongside the MCPMate Proxy server and provides a RESTful interface for controlling and monitoring the proxy server. This API is designed to be used by the MCPMate Desktop application and other client applications.
+The API server is started alongside the MCPMate Proxy server and provides a RESTful interface for controlling and monitoring the proxy server. This API is designed to be used by the MCPMate Desktop application and other clientlications.
 
 ## Example Usage
 

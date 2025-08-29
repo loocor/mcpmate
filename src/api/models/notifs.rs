@@ -76,8 +76,8 @@ pub struct ToolsChangedReq {
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Tools changed notification response")]
 pub struct ToolsChangedData {
-    #[schemars(description = "Number of clients notified")]
-    pub notified_clients: usize,
+    #[schemars(description = "Number of client notified")]
+    pub notified_client: usize,
     #[schemars(description = "Success message")]
     pub message: String,
     #[schemars(description = "Details about the operation")]
@@ -101,7 +101,7 @@ pub struct ToolsChangedDetails {
 // SPECIFIC API RESPONSE TYPES
 // ==========================================
 
-use crate::api::models::clients::ApiError;
+use crate::api::models::client::ApiError;
 
 /// Response for tools changed operations
 #[derive(Debug, Serialize, JsonSchema)]

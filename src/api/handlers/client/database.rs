@@ -1,20 +1,20 @@
 // Database operations for client handlers
 
-use crate::api::models::clients::{ClientAppRow, ClientDetectedApp, ClientInfo};
+use crate::api::models::client::{ClientDetectedApp, ClientInfo, ClientRow};
 use crate::common::{ConfigChecker, json::strip_comments};
 use crate::config::client::models::ClientConfigType;
 use crate::system::detection::detector::AppDetector;
 use anyhow::Result;
 use std::sync::Arc;
 
-/// Helper function to get all client apps from database
-pub async fn get_all_client_apps(db_pool: &sqlx::SqlitePool) -> Result<Vec<ClientAppRow>, sqlx::Error> {
-    sqlx::query_as::<_, ClientAppRow>(
+/// Helper function to get all client from database
+pub async fn get_all_client(db_pool: &sqlx::SqlitePool) -> Result<Vec<ClientRow>, sqlx::Error> {
+    sqlx::query_as::<_, ClientRow>(
         r#"
         SELECT id, identifier, display_name, description, logo_url, category, enabled, detected,
                last_detected_at, install_path, config_path, version, detection_method,
                config_mode, created_at, updated_at
-        FROM client_apps
+        FROM client
         ORDER BY display_name
         "#,
     )
@@ -31,8 +31,8 @@ pub async fn get_supported_transports(
     let query = "
         SELECT supported_transports
         FROM client_config_rules
-        WHERE client_app_id = (
-            SELECT id FROM client_apps WHERE identifier = ?
+        WHERE client_id = (
+            SELECT id FROM client WHERE identifier = ?
         )
         LIMIT 1
     ";
@@ -84,8 +84,8 @@ pub async fn get_supported_runtimes(
     let query = "
         SELECT supported_runtimes
         FROM client_config_rules
-        WHERE client_app_id = (
-            SELECT id FROM client_apps WHERE identifier = ?
+        WHERE client_id = (
+            SELECT id FROM client WHERE identifier = ?
         )
         LIMIT 1
     ";
@@ -141,8 +141,8 @@ pub async fn get_config_type(
     let query = "
         SELECT config_type
         FROM client_config_rules
-        WHERE client_app_id = (
-            SELECT id FROM client_apps WHERE identifier = ?
+        WHERE client_id = (
+            SELECT id FROM client WHERE identifier = ?
         )
         LIMIT 1
     ";
@@ -208,7 +208,7 @@ pub async fn update_client_detection_status(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
-        UPDATE client_apps
+        UPDATE client
         SET detected = ?,
             install_path = ?,
             last_detected_at = CURRENT_TIMESTAMP,
@@ -227,7 +227,7 @@ pub async fn update_client_detection_status(
 
 /// Build ClientInfo from database row and optional detected app data
 pub async fn build_client_info(
-    client: &ClientAppRow,
+    client: &ClientRow,
     detected_app: Option<&ClientDetectedApp>,
     db_pool: &sqlx::SqlitePool,
 ) -> ClientInfo {

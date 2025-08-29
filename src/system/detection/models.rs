@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-/// Represents a client application definition
+/// Represents a clientlication definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientApp {
+pub struct Client {
     pub id: String,
     pub identifier: String,
     pub display_name: String,
@@ -17,7 +17,7 @@ pub struct ClientApp {
 /// Represents a detected application with its installation details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectedApp {
-    pub client_app: ClientApp,
+    pub client: Client,
     pub version: Option<String>,
     pub install_path: PathBuf,
     pub config_path: PathBuf,
@@ -29,7 +29,7 @@ pub struct DetectedApp {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionRule {
     pub id: String,
-    pub client_app_id: String,
+    pub client_id: String,
     pub platform: String,
     pub detection_method: DetectionMethod,
     pub detection_value: String,

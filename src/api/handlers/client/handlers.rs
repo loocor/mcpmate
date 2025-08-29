@@ -2,15 +2,14 @@
 
 use super::config::{analyze_config_content, get_config_last_modified};
 use super::database::{
-    build_client_info, get_all_client_apps, get_client_config_path, get_config_type, parse_json_resilient,
+    build_client_info, get_all_client, get_client_config_path, get_config_type, parse_json_resilient,
     perform_client_detection, update_client_detection_status,
 };
 
 use super::import::import_servers_from_config;
-use crate::api::models::clients::{
-    ClientConfigData, ClientConfigMode, ClientConfigReq, ClientConfigResp, ClientConfigSelected,
-    ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientsCheckData, ClientsCheckReq,
-    ClientsCheckResp,
+use crate::api::models::client::{
+    ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData, ClientConfigMode, ClientConfigReq,
+    ClientConfigResp, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp,
 };
 use crate::api::routes::AppState;
 
@@ -33,20 +32,20 @@ macro_rules! get_db_pool {
     };
 }
 
-/// Handler for GET /api/clients
-/// Detects and returns all clients, with optional force refresh
+/// Handler for GET /api/client
+/// Detects and returns all client, with optional force refresh
 pub async fn list(
     State(app_state): State<Arc<AppState>>,
-    Query(request): Query<ClientsCheckReq>,
-) -> Result<Json<ClientsCheckResp>, StatusCode> {
+    Query(request): Query<ClientCheckReq>,
+) -> Result<Json<ClientCheckResp>, StatusCode> {
     let db_pool = get_db_pool!(app_state);
 
-    let result = clients_check_core(&request, &db_pool).await?;
+    let result = client_check_core(&request, &db_pool).await?;
 
     Ok(Json(result))
 }
 
-/// Handler for GET /api/clients/{identifier}
+/// Handler for GET /api/client/{identifier}
 /// Returns current configuration content
 pub async fn details(
     State(app_state): State<Arc<AppState>>,
@@ -59,7 +58,7 @@ pub async fn details(
     Ok(Json(result))
 }
 
-/// Handler for POST /api/clients/{identifier}
+/// Handler for POST /api/client/{identifier}
 /// Generates and optionally applies configuration
 pub async fn update(
     State(app_state): State<Arc<AppState>>,
@@ -74,19 +73,19 @@ pub async fn update(
 
 // ==================== Core Business Functions ====================
 
-/// Core business logic for clients check operation
-async fn clients_check_core(
-    request: &ClientsCheckReq,
+/// Core business logic for client check operation
+async fn client_check_core(
+    request: &ClientCheckReq,
     db_pool: &sqlx::SqlitePool,
-) -> Result<ClientsCheckResp, StatusCode> {
-    // Get all client apps from database (not just enabled ones)
-    let mut all_clients = match get_all_client_apps(db_pool).await {
-        Ok(clients) => clients,
+) -> Result<ClientCheckResp, StatusCode> {
+    // Get all client from database (not just enabled ones)
+    let mut all_client = match get_all_client(db_pool).await {
+        Ok(client) => client,
         Err(e) => {
-            tracing::error!("Failed to get client apps from database: {e}");
-            return Ok(ClientsCheckResp::error_simple(
+            tracing::error!("Failed to get client from database: {e}");
+            return Ok(ClientCheckResp::error_simple(
                 "DATABASE_ERROR",
-                &format!("Failed to get client apps: {e}"),
+                &format!("Failed to get client: {e}"),
             ));
         }
     };
@@ -95,12 +94,12 @@ async fn clients_check_core(
     let mut detected_apps_map = std::collections::HashMap::new();
     if request.refresh {
         tracing::info!(
-            "Force refresh requested, performing detection for {} clients",
-            all_clients.len()
+            "Force refresh requested, performing detection for {} client",
+            all_client.len()
         );
 
-        // Perform detection for all clients in the database
-        for client in &all_clients {
+        // Perform detection for all client in the database
+        for client in &all_client {
             tracing::debug!("Attempting to detect client: {}", client.identifier);
 
             match perform_client_detection(&client.identifier, db_pool).await {
@@ -153,17 +152,14 @@ async fn clients_check_core(
             }
         }
 
-        tracing::info!(
-            "Detection completed. Found {} detected clients",
-            detected_apps_map.len()
-        );
+        tracing::info!("Detection completed. Found {} detected client", detected_apps_map.len());
 
         // Re-fetch client data from database to get updated detection status
-        all_clients = match get_all_client_apps(db_pool).await {
-            Ok(clients) => clients,
+        all_client = match get_all_client(db_pool).await {
+            Ok(client) => client,
             Err(e) => {
-                tracing::error!("Failed to re-fetch client apps after detection: {e}");
-                return Ok(ClientsCheckResp::error_simple(
+                tracing::error!("Failed to re-fetch client after detection: {e}");
+                return Ok(ClientCheckResp::error_simple(
                     "DATABASE_ERROR",
                     "Failed to retrieve updated client information",
                 ));
@@ -171,21 +167,21 @@ async fn clients_check_core(
         };
     }
 
-    // Convert all client apps to ClientInfo using the shared function
+    // Convert all client to ClientInfo using the shared function
     let mut client_infos = Vec::new();
-    for client in all_clients {
+    for client in all_client {
         let detected_app = detected_apps_map.get(&client.identifier);
         let info = build_client_info(&client, detected_app, db_pool).await;
         client_infos.push(info);
     }
 
-    let response = ClientsCheckData {
+    let response = ClientCheckData {
         total: client_infos.len(),
-        clients: client_infos,
+        client: client_infos,
         last_updated: chrono::Utc::now().to_rfc3339(),
     };
 
-    Ok(ClientsCheckResp::success(response))
+    Ok(ClientCheckResp::success(response))
 }
 
 /// Core business logic for client config details operation
@@ -219,7 +215,7 @@ async fn client_config_details_core(
             let imported_servers = if request.import {
                 // Check if client is in transparent mode (or has no config_mode set)
                 let is_transparent = sqlx::query_scalar::<_, bool>(
-                    "SELECT (config_mode = 'transparent' OR config_mode IS NULL) FROM client_apps WHERE identifier = ?",
+                    "SELECT (config_mode = 'transparent' OR config_mode IS NULL) FROM client WHERE identifier = ?",
                 )
                 .bind(identifier)
                 .fetch_optional(db_pool)

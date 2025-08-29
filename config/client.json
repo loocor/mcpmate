@@ -1,6 +1,6 @@
 {
   "version": "2025.05.31.001",
-  "clients": [
+  "client": [
     {
       "identifier": "claude_desktop",
       "display_name": "Claude Desktop",

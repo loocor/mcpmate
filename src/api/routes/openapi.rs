@@ -32,7 +32,7 @@ pub fn api_docs(api: TransformOpenApi) -> TransformOpenApi {
             ..Default::default()
         })
         .tag(Tag {
-            name: "clients".into(),
+            name: "client".into(),
             description: Some("Client management endpoints".into()),
             ..Default::default()
         })
@@ -189,7 +189,7 @@ macro_rules! aide_wrapper_query {
 /// Usage:
 /// ```rust
 /// aide_wrapper_payload!(
-///     clients::update,                    // Handler function path
+///     client::update,                    // Handler function path
 ///     ClientConfigUpdateReq,              // Payload body type
 ///     ConfigResponse,                     // Response type
 ///     "Update client configuration"       // Description

@@ -1,8 +1,6 @@
 // Main application detector service
 
-use crate::system::detection::models::{
-    ClientApp, DetectedApp, DetectionMethod, DetectionResult, DetectionRule,
-};
+use crate::system::detection::models::{Client, DetectedApp, DetectionMethod, DetectionResult, DetectionRule};
 use crate::system::detection::platform::PlatformDetector;
 use crate::system::paths::PathMapper;
 use anyhow::Result;
@@ -45,12 +43,12 @@ impl AppDetector {
         return "unknown".to_string();
     }
 
-    /// Get all enabled client applications
-    pub async fn get_enabled_apps(&self) -> Result<Vec<ClientApp>> {
+    /// Get all enabled clientlications
+    pub async fn get_enabled_apps(&self) -> Result<Vec<Client>> {
         let rows = sqlx::query(
             r#"
             SELECT id, identifier, display_name, description, enabled
-            FROM client_apps
+            FROM client
             WHERE enabled = TRUE
             ORDER BY display_name
             "#,
@@ -60,7 +58,7 @@ impl AppDetector {
 
         let mut apps = Vec::new();
         for row in rows {
-            apps.push(ClientApp {
+            apps.push(Client {
                 id: row.get("id"),
                 identifier: row.get("identifier"),
                 display_name: row.get("display_name"),
@@ -72,12 +70,12 @@ impl AppDetector {
         Ok(apps)
     }
 
-    /// Get all known client applications (including disabled ones)
-    pub async fn get_all_known_apps(&self) -> Result<Vec<ClientApp>> {
+    /// Get all known clientlications (including disabled ones)
+    pub async fn get_all_known_apps(&self) -> Result<Vec<Client>> {
         let rows = sqlx::query(
             r#"
             SELECT id, identifier, display_name, description, enabled
-            FROM client_apps
+            FROM client
             ORDER BY display_name
             "#,
         )
@@ -86,7 +84,7 @@ impl AppDetector {
 
         let mut apps = Vec::new();
         for row in rows {
-            apps.push(ClientApp {
+            apps.push(Client {
                 id: row.get("id"),
                 identifier: row.get("identifier"),
                 display_name: row.get("display_name"),
@@ -98,21 +96,21 @@ impl AppDetector {
         Ok(apps)
     }
 
-    /// Get detection rules for a client application
+    /// Get detection rules for a clientlication
     async fn get_detection_rules_for_client(
         &self,
-        client_app_id: &str,
+        client_id: &str,
     ) -> Result<Vec<DetectionRule>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, client_app_id, platform, detection_method, detection_value,
+            SELECT id, client_id, platform, detection_method, detection_value,
                    config_path, priority, enabled
             FROM client_detection_rules
-            WHERE client_app_id = ? AND enabled = TRUE
+            WHERE client_id = ? AND enabled = TRUE
             ORDER BY priority ASC
             "#,
         )
-        .bind(client_app_id)
+        .bind(client_id)
         .fetch_all(self.db_pool.as_ref())
         .await?;
 
@@ -122,13 +120,11 @@ impl AppDetector {
             if let Ok(method) = DetectionMethod::from_str(&detection_method) {
                 detection_rules.push(DetectionRule {
                     id: row.get("id"),
-                    client_app_id: row.get("client_app_id"),
+                    client_id: row.get("client_id"),
                     platform: row.get("platform"),
                     detection_method: method,
                     detection_value: row.get("detection_value"),
-                    config_path: row
-                        .get::<Option<String>, _>("config_path")
-                        .unwrap_or_default(),
+                    config_path: row.get::<Option<String>, _>("config_path").unwrap_or_default(),
                     priority: row.get("priority"),
                     enabled: row.get("enabled"),
                 });
@@ -146,7 +142,7 @@ impl AppDetector {
         let row = sqlx::query(
             r#"
             SELECT id, identifier, display_name, description, enabled
-            FROM client_apps
+            FROM client
             WHERE identifier = ?
             "#,
         )
@@ -155,7 +151,7 @@ impl AppDetector {
         .await?;
 
         if let Some(row) = row {
-            let app = ClientApp {
+            let app = Client {
                 id: row.get("id"),
                 identifier: row.get("identifier"),
                 display_name: row.get("display_name"),
@@ -171,9 +167,9 @@ impl AppDetector {
     /// Detect an application using its client definition
     async fn detect_by_client(
         &self,
-        client_app: &ClientApp,
+        client: &Client,
     ) -> Result<Option<DetectedApp>> {
-        let detection_rules = self.get_detection_rules_for_client(&client_app.id).await?;
+        let detection_rules = self.get_detection_rules_for_client(&client.id).await?;
 
         if detection_rules.is_empty() {
             return Ok(None);
@@ -211,8 +207,7 @@ impl AppDetector {
         // Find the best application path result (prefer .app bundles over config files)
         let app_result = detection_results.iter().find(|result| {
             if let Some(path) = &result.install_path {
-                path.extension().is_some_and(|ext| ext == "app")
-                    || path.to_string_lossy().contains("/Applications/")
+                path.extension().is_some_and(|ext| ext == "app") || path.to_string_lossy().contains("/Applications/")
             } else {
                 false
             }
@@ -222,7 +217,10 @@ impl AppDetector {
         // Only accept real application paths, not config file paths
         let (install_path, version) = if let Some(app_result) = app_result {
             // Found a real application installation path
-            (app_result.install_path.as_ref().unwrap().clone(), app_result.version.clone())
+            (
+                app_result.install_path.as_ref().unwrap().clone(),
+                app_result.version.clone(),
+            )
         } else {
             // No real application path found, check if any result has a valid executable path
             let valid_app_result = detection_results.iter().find(|result| {
@@ -247,7 +245,10 @@ impl AppDetector {
             });
 
             if let Some(valid_result) = valid_app_result {
-                (valid_result.install_path.as_ref().unwrap().clone(), valid_result.version.clone())
+                (
+                    valid_result.install_path.as_ref().unwrap().clone(),
+                    valid_result.version.clone(),
+                )
             } else {
                 // No valid application path found - this is likely an extension
                 // Return None to indicate no real application was detected
@@ -260,7 +261,7 @@ impl AppDetector {
             self.path_mapper.resolve_template(&first_rule.config_path)?
         } else {
             // This should not happen if we have detection results, but provide a fallback
-            std::path::PathBuf::from(format!("~/.config/{}/config.json", client_app.identifier))
+            std::path::PathBuf::from(format!("~/.config/{}/config.json", client.identifier))
         };
 
         let verified_methods: Vec<String> = detection_results
@@ -269,7 +270,7 @@ impl AppDetector {
             .collect();
 
         let detected_app = DetectedApp {
-            client_app: client_app.clone(),
+            client: client.clone(),
             version,
             install_path,
             config_path,
@@ -294,14 +295,14 @@ impl AppDetector {
         Ok(detected_apps)
     }
 
-    /// Enable a client application
-    pub async fn enable_client_app(
+    /// Enable a clientlication
+    pub async fn enable_client(
         &self,
         identifier: &str,
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE client_apps
+            UPDATE client
             SET enabled = TRUE, updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
@@ -313,14 +314,14 @@ impl AppDetector {
         Ok(())
     }
 
-    /// Disable a client application
-    pub async fn disable_client_app(
+    /// Disable a clientlication
+    pub async fn disable_client(
         &self,
         identifier: &str,
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE client_apps
+            UPDATE client
             SET enabled = FALSE, updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
@@ -341,9 +342,7 @@ impl AppDetector {
             DetectionMethod::BundleId => {
                 #[cfg(target_os = "macos")]
                 {
-                    self.platform_detector
-                        .detect_by_bundle_id(&rule.detection_value)
-                        .await
+                    self.platform_detector.detect_by_bundle_id(&rule.detection_value).await
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
@@ -379,7 +378,7 @@ impl AppDetector {
 
                 // If the app was not enabled, enable it now
                 if !app.enabled {
-                    self.enable_client_app(&app.identifier).await?;
+                    self.enable_client(&app.identifier).await?;
                 }
             }
         }

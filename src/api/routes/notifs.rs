@@ -19,7 +19,7 @@ aide_wrapper_payload!(
     notifs::tools_changed,
     ToolsChangedReq,
     ToolsChangedResp,
-    "Notify clients that the tools list has changed"
+    "Notify client that the tools list has changed"
 );
 
 pub fn routes(state: Arc<AppState>) -> ApiRouter {

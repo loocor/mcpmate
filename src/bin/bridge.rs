@@ -60,7 +60,7 @@ impl ClientHandler for BridgeClient {
         let mut flag = self.tool_list_changed.lock().await;
         *flag = true;
 
-        // The notification will be forwarded to downstream clients
+        // The notification will be forwarded to downstream client
         // when they call list_tools or call_tool
     }
 

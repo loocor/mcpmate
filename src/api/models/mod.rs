@@ -2,7 +2,7 @@
 // Contains data models for API requests and responses
 
 pub mod cache;
-pub mod clients;
+pub mod client;
 pub mod notifs;
 pub mod profile;
 pub mod resp;

@@ -6,7 +6,7 @@ MCPMate is a comprehensive Model Context Protocol (MCP) management center design
 
 With the rapid development of the MCP ecosystem, more and more developers and creators are using MCP services in various tools (such as Claude Desktop, Cursor, Zed, Cherry Studio, etc.) to enhance the capabilities of AI assistants. However, this decentralized usage brings significant challenges:
 
-- **Complex and repetitive configuration**: The same MCP server needs to be configured repeatedly in multiple clients
+- **Complex and repetitive configuration**: The same MCP server needs to be configured repeatedly in multiple client
 - **High context-switching cost**: Different work scenarios require frequent switching of MCP server configurations
 - **Resource consumption and management difficulties**: Running multiple MCP servers simultaneously consumes a lot of system resources
 - **Security risks and lack of monitoring**: Configuration errors or security risks are difficult to detect in time
@@ -21,7 +21,7 @@ MCPMate aims to solve these problems through centralized configuration managemen
 One of the core components of the project is the `proxy`, a high-performance MCP proxy server that can:
 
 - Connect to multiple MCP servers and aggregate their tools
-- Provide a unified interface for AI clients
+- Provide a unified interface for AI client
 - Support multiple transport protocols (SSE, Streamable HTTP, or unified mode)
 - Monitor and audit MCP communication in real time
 - Detect potential security risks (such as tool poisoning)
@@ -31,12 +31,12 @@ One of the core components of the project is the `proxy`, a high-performance MCP
 
 ### Bridge
 
-`bridge` is a lightweight bridging component used to connect stdio-mode MCP clients (such as Claude Desktop) to the HTTP-mode MCPMate proxy server:
+`bridge` is a lightweight bridging component used to connect stdio-mode MCP client (such as Claude Desktop) to the HTTP-mode MCPMate proxy server:
 
 - Converts stdio protocol to HTTP protocol (supports SSE and Streamable HTTP) without modifying the client
 - Automatically inherits all functions and tools of the HTTP service
 - Minimalist design, only requires service address configuration
-- Suitable for clients that only support stdio mode (such as Claude Desktop)
+- Suitable for client that only support stdio mode (such as Claude Desktop)
 
 ### Runtime Manager
 

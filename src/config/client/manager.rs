@@ -1,13 +1,13 @@
 // Client management module for MCPMate
-// Provides client application detection, configuration generation, and management
+// Provides clientlication detection, configuration generation, and management
 // Integrates with existing system/detection module
 
 use super::utils::{get_nested_value, set_nested_value};
-use crate::api::handlers::clients::database::get_client_config_path;
+use crate::api::handlers::client::database::get_client_config_path;
 use crate::config::client::generator::ConfigGenerator;
 use crate::config::client::models::*;
 use crate::system::detection::detector::AppDetector;
-use crate::system::detection::models::{ClientApp, DetectedApp};
+use crate::system::detection::models::{Client, DetectedApp};
 use crate::system::paths::PathMapper;
 use anyhow::Result;
 use serde_json::{Value, json};
@@ -64,15 +64,15 @@ impl ClientManager {
         self.rule_manager = None;
     }
 
-    /// Detect installed client applications
-    pub async fn detect_clients(&mut self) -> Result<Vec<DetectedApp>> {
+    /// Detect installed clientlications
+    pub async fn detect_client(&mut self) -> Result<Vec<DetectedApp>> {
         self.ensure_loaded().await?;
         let detector = self.app_detector.as_ref().unwrap();
         detector.detect_enabled_apps().await
     }
 
     /// Scan all known applications and enable detected ones
-    pub async fn scan_all_clients(&mut self) -> Result<Vec<DetectedApp>> {
+    pub async fn scan_all_client(&mut self) -> Result<Vec<DetectedApp>> {
         self.ensure_loaded().await?;
         let detector = self.app_detector.as_ref().unwrap();
         detector.scan_all_known_apps().await
@@ -88,15 +88,15 @@ impl ClientManager {
         detector.detect_by_identifier(identifier).await
     }
 
-    /// Get all enabled client applications
-    pub async fn get_enabled_clients(&mut self) -> Result<Vec<ClientApp>> {
+    /// Get all enabled clientlications
+    pub async fn get_enabled_client(&mut self) -> Result<Vec<Client>> {
         self.ensure_loaded().await?;
         let detector = self.app_detector.as_ref().unwrap();
         detector.get_enabled_apps().await
     }
 
-    /// Get all known client applications (including disabled)
-    pub async fn get_all_known_clients(&mut self) -> Result<Vec<ClientApp>> {
+    /// Get all known clientlications (including disabled)
+    pub async fn get_all_known_client(&mut self) -> Result<Vec<Client>> {
         self.ensure_loaded().await?;
         let detector = self.app_detector.as_ref().unwrap();
         detector.get_all_known_apps().await
@@ -178,20 +178,20 @@ impl ClientManager {
         }
     }
 
-    /// Apply configuration to all enabled clients (batch operation)
+    /// Apply configuration to all enabled client (batch operation)
     pub async fn apply_config_batch(
         &mut self,
         profile_id: Option<String>,
     ) -> Result<BatchApplicationResult> {
         self.ensure_loaded().await?;
 
-        let mut successful_clients = Vec::new();
-        let mut failed_clients = std::collections::HashMap::new();
+        let mut successful_client = Vec::new();
+        let mut failed_client = std::collections::HashMap::new();
 
-        // Get all clients that are in transparent mode (or have no config_mode set)
-        let enabled_clients = self.get_transparent_clients().await?;
+        // Get all client that are in transparent mode (or have no config_mode set)
+        let enabled_client = self.get_transparent_client().await?;
 
-        for client in enabled_clients {
+        for client in enabled_client {
             // Generate configuration for this client
             let generation_request = GenerationRequest {
                 identifier: client.identifier.clone(),
@@ -204,7 +204,7 @@ impl ClientManager {
             let generated_config = match self.generate_config(&generation_request).await {
                 Ok(config) => config,
                 Err(e) => {
-                    failed_clients.insert(client.identifier.clone(), format!("Failed to generate config: {}", e));
+                    failed_client.insert(client.identifier.clone(), format!("Failed to generate config: {}", e));
                     continue;
                 }
             };
@@ -220,29 +220,29 @@ impl ClientManager {
             match self.apply_config(&application_request).await {
                 Ok(result) => {
                     if result.success {
-                        successful_clients.push(client.identifier.clone());
+                        successful_client.push(client.identifier.clone());
 
                         // Update the client's config_mode to transparent
                         if let Err(e) = self.update_client_config_mode(&client.identifier, "transparent").await {
                             tracing::warn!("Failed to update config_mode for client {}: {}", client.identifier, e);
                         }
                     } else {
-                        failed_clients.insert(
+                        failed_client.insert(
                             client.identifier,
                             result.error_message.unwrap_or_else(|| "Unknown error".to_string()),
                         );
                     }
                 }
                 Err(e) => {
-                    failed_clients.insert(client.identifier, format!("Failed to apply config: {}", e));
+                    failed_client.insert(client.identifier, format!("Failed to apply config: {}", e));
                 }
             }
         }
 
         Ok(BatchApplicationResult {
-            success_count: successful_clients.len(),
-            successful_clients,
-            failed_clients,
+            success_count: successful_client.len(),
+            successful_client,
+            failed_client,
         })
     }
 
@@ -418,12 +418,12 @@ impl ClientManager {
         }
     }
 
-    /// Get all clients that are in transparent mode (or have no config_mode set)
-    async fn get_transparent_clients(&self) -> Result<Vec<ClientApp>> {
+    /// Get all client that are in transparent mode (or have no config_mode set)
+    async fn get_transparent_client(&self) -> Result<Vec<Client>> {
         let rows = sqlx::query(
             r#"
             SELECT id, identifier, display_name, description, enabled
-            FROM client_apps
+            FROM client
             WHERE (config_mode = 'transparent' OR config_mode IS NULL)
             ORDER BY display_name
             "#,
@@ -433,7 +433,7 @@ impl ClientManager {
 
         let mut apps = Vec::new();
         for row in rows {
-            apps.push(ClientApp {
+            apps.push(Client {
                 id: row.get("id"),
                 identifier: row.get("identifier"),
                 display_name: row.get("display_name"),
@@ -453,7 +453,7 @@ impl ClientManager {
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE client_apps
+            UPDATE client
             SET config_mode = ?, updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,

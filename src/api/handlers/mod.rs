@@ -2,7 +2,7 @@
 // Contains handler functions for API endpoints
 
 pub mod ai;
-pub mod clients;
+pub mod client;
 pub mod common;
 pub mod notifs;
 pub mod profile;

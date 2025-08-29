@@ -99,17 +99,17 @@ pub async fn sync_client_configurations(
     // Create client manager
     let mut client_manager = crate::config::client::manager::ClientManager::new(std::sync::Arc::new(db.pool.clone()));
 
-    // Apply configuration to all enabled clients
+    // Apply configuration to all enabled client
     match client_manager.apply_config_batch(Some(profile_id)).await {
         Ok(result) => {
             tracing::info!(
-                "Synced configurations to {} clients, {} failed",
+                "Synced configurations to {} client, {} failed",
                 result.success_count,
-                result.failed_clients.len()
+                result.failed_client.len()
             );
 
-            if !result.failed_clients.is_empty() {
-                for (client, error) in result.failed_clients {
+            if !result.failed_client.is_empty() {
+                for (client, error) in result.failed_client {
                     tracing::warn!("Failed to sync config for client {}: {}", client, error);
                 }
             }

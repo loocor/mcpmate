@@ -65,7 +65,7 @@ impl TemplateEngine {
                                 }
                                 result = result.replace("{{command}}{{args}}", &cmd_string);
                             } else {
-                                // Normal command/args separation for other clients
+                                // Normal command/args separation for other client
                                 let (final_command, final_args) =
                                     self.apply_platform_wrapper(command, &server.args)?;
 

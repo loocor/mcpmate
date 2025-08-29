@@ -63,7 +63,7 @@ Through a systematic review of API endpoints, we've identified several potential
 
 ### 7. Undefined Response Formats
 
-- Response formats are not clearly defined for all endpoints, which can cause issues when clients process responses.
+- Response formats are not clearly defined for all endpoints, which can cause issues when client process responses.
 
 ## Recommended Improvements
 

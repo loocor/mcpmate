@@ -1,4 +1,4 @@
-// Configuration generator for client applications (Refactored)
+// Configuration generator for clientlications (Refactored)
 // Main coordinator that delegates to specialized modules
 
 use anyhow::Result;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::builder::ConfigBuilder;
 use super::models::{GeneratedConfig, GenerationRequest};
 
-/// Configuration generator for client applications
+/// Configuration generator for clientlications
 /// Now acts as a coordinator that delegates to specialized modules
 pub struct ConfigGenerator {
     config_builder: ConfigBuilder,

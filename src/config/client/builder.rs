@@ -1,4 +1,4 @@
-// Configuration builder for client applications
+// Configuration builder for clientlications
 // Handles the high-level configuration building logic
 
 use anyhow::Result;
@@ -74,7 +74,7 @@ impl ConfigBuilder {
     ) -> Result<ConfigRule> {
         let row = sqlx::query(
             r#"
-            SELECT id, client_app_id, identifier, top_level_key, config_type,
+            SELECT id, client_id, identifier, top_level_key, config_type,
                    supported_transports, supported_runtimes, format_rules, security_features
             FROM client_config_rules
             WHERE identifier = ?
@@ -104,7 +104,7 @@ impl ConfigBuilder {
 
         Ok(ConfigRule {
             id: row.get("id"),
-            client_app_id: row.get("client_app_id"),
+            client_id: row.get("client_id"),
             identifier: row.get("identifier"),
             top_level_key: row.get("top_level_key"),
             config_type,

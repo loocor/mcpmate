@@ -7,9 +7,9 @@ use sqlx;
 // Import the unified response macro
 use crate::macros::resp::api_resp;
 
-/// Database row structure for client_apps table
+/// Database row structure for client table
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct ClientAppRow {
+pub struct ClientRow {
     pub id: String,
     pub identifier: String,
     pub display_name: String,
@@ -28,7 +28,7 @@ pub struct ClientAppRow {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl ClientAppRow {
+impl ClientRow {
     /// Get the category as a ClientCategory enum
     pub fn get_category(&self) -> ClientCategory {
         self.category
@@ -39,21 +39,21 @@ impl ClientAppRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Detailed information about a client application")]
+#[schemars(description = "Detailed information about a clientlication")]
 pub struct ClientInfo {
     #[schemars(description = "Unique client identifier (e.g., 'cursor', 'windsurf')")]
     pub identifier: String,
-    #[schemars(description = "Display name of the client application")]
+    #[schemars(description = "Display name of the clientlication")]
     pub display_name: String,
     #[schemars(description = "URL to client logo image")]
     pub logo_url: Option<String>,
-    #[schemars(description = "Type of client application")]
+    #[schemars(description = "Type of clientlication")]
     pub category: ClientCategory,
     #[schemars(description = "Whether client is enabled in MCPMate")]
     pub enabled: bool,
     #[schemars(description = "Whether client is installed and detected")]
     pub detected: bool,
-    #[schemars(description = "Installation path of the client application")]
+    #[schemars(description = "Installation path of the clientlication")]
     pub install_path: Option<String>,
     #[schemars(description = "Path to client configuration file")]
     pub config_path: String,
@@ -108,11 +108,11 @@ pub enum ClientConfigSelected {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Response containing detected client applications")]
-pub struct ClientsCheckData {
-    #[schemars(description = "Array of client applications with their detection status")]
-    pub clients: Vec<ClientInfo>,
-    #[schemars(description = "Total count of client applications")]
+#[schemars(description = "Response containing detected clientlications")]
+pub struct ClientCheckData {
+    #[schemars(description = "Array of clientlications with their detection status")]
+    pub client: Vec<ClientInfo>,
+    #[schemars(description = "Total count of clientlications")]
     pub total: usize,
     #[schemars(description = "ISO 8601 timestamp of last update")]
     pub last_updated: String,
@@ -186,8 +186,8 @@ pub struct ApiError {
 
 // Generate response structures using macro
 api_resp!(
-    ClientsCheckResp,
-    ClientsCheckData,
+    ClientCheckResp,
+    ClientCheckData,
     "Client applications detection response"
 );
 api_resp!(
@@ -206,7 +206,7 @@ api_resp!(
 
 /// Request for client list/check operation
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ClientsCheckReq {
+pub struct ClientCheckReq {
     #[serde(default)]
     #[schemars(description = "Whether to refresh the client list")]
     pub refresh: bool,
@@ -239,9 +239,9 @@ pub struct ClientConfigUpdateReq {
 }
 
 #[derive(Debug, Clone, JsonSchema)]
-#[schemars(description = "Detection results for a client application")]
+#[schemars(description = "Detection results for a clientlication")]
 pub struct ClientDetectedApp {
-    #[schemars(description = "Installation path of the client application")]
+    #[schemars(description = "Installation path of the clientlication")]
     pub install_path: std::path::PathBuf,
     #[schemars(description = "Path to client configuration file")]
     pub config_path: std::path::PathBuf,

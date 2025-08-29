@@ -27,7 +27,7 @@ macro_rules! api_resp {
             #[schemars(description = "Response data when successful")]
             pub data: Option<$data_type>,
             #[schemars(description = "Error information when failed")]
-            pub error: Option<crate::api::models::clients::ApiError>,
+            pub error: Option<crate::api::models::client::ApiError>,
         }
 
         impl $name {
@@ -41,7 +41,7 @@ macro_rules! api_resp {
             }
 
             /// Create an error response from ApiError object
-            pub fn error(error: crate::api::models::clients::ApiError) -> Self {
+            pub fn error(error: crate::api::models::client::ApiError) -> Self {
                 Self {
                     success: false,
                     data: None,
@@ -54,7 +54,7 @@ macro_rules! api_resp {
                 code: &str,
                 message: &str,
             ) -> Self {
-                Self::error(crate::api::models::clients::ApiError {
+                Self::error(crate::api::models::client::ApiError {
                     code: code.to_string(),
                     message: message.to_string(),
                     details: None,
@@ -67,7 +67,7 @@ macro_rules! api_resp {
                 message: &str,
                 details: serde_json::Value,
             ) -> Self {
-                Self::error(crate::api::models::clients::ApiError {
+                Self::error(crate::api::models::client::ApiError {
                     code: code.to_string(),
                     message: message.to_string(),
                     details: Some(details),

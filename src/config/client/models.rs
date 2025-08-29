@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 // Re-export detection models to avoid duplication
-pub use crate::system::detection::models::{ClientApp, DetectedApp, DetectionMethod, DetectionResult, DetectionRule};
+pub use crate::system::detection::models::{Client, DetectedApp, DetectionMethod, DetectionResult, DetectionRule};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -25,7 +25,7 @@ pub enum ClientConfigType {
 }
 
 /// Client application definition (unified for both JSON and DB)
-/// Based on client_apps table structure
+/// Based on client table structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientDefinition {
     // Database primary fields
@@ -73,7 +73,7 @@ pub struct DetectionRuleDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_app_id: Option<String>,
+    pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,7 +106,7 @@ pub struct ConfigRulesDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_app_id: Option<String>,
+    pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
 
@@ -129,7 +129,7 @@ pub struct ConfigRulesDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfigFile {
     pub version: String,
-    pub clients: Vec<ClientDefinition>,
+    pub client: Vec<ClientDefinition>,
 }
 
 /// Helper function for default application category
@@ -198,11 +198,11 @@ impl ClientRuleManager {
         config: &ClientConfigFile,
     ) -> Result<()> {
         // Basic validation
-        if config.clients.is_empty() {
-            return Err(anyhow::anyhow!("No clients defined in configuration"));
+        if config.client.is_empty() {
+            return Err(anyhow::anyhow!("No client defined in configuration"));
         }
 
-        for client in &config.clients {
+        for client in &config.client {
             // Validate client identifier
             if client.identifier.is_empty() {
                 return Err(anyhow::anyhow!("Client identifier cannot be empty"));
@@ -264,12 +264,12 @@ impl DetectionRuleDefinition {
     /// Prepare for database insertion
     pub fn prepare_for_db_insert(
         &mut self,
-        client_app_id: String,
+        client_id: String,
         identifier: String,
         platform: String,
     ) {
         self.id = Some(crate::generate_id!("rule"));
-        self.client_app_id = Some(client_app_id);
+        self.client_id = Some(client_id);
         self.identifier = Some(identifier);
         self.platform = Some(platform);
         self.enabled = Some(true);
@@ -285,11 +285,11 @@ impl ConfigRulesDefinition {
     /// Prepare for database insertion
     pub fn prepare_for_db_insert(
         &mut self,
-        client_app_id: String,
+        client_id: String,
         identifier: String,
     ) {
         self.id = Some(crate::generate_id!("conf"));
-        self.client_app_id = Some(client_app_id);
+        self.client_id = Some(client_id);
         self.identifier = Some(identifier);
     }
 }
@@ -299,7 +299,7 @@ impl ConfigRulesDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigRule {
     pub id: String,
-    pub client_app_id: String,
+    pub client_id: String,
     pub identifier: String,
     pub top_level_key: String,
     pub config_type: ClientConfigType,
@@ -316,7 +316,7 @@ pub struct FormatRule {
     pub requires_type_field: bool,
 }
 
-/// Security features for clients
+/// Security features for client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityFeatures {
     pub supports_inputs: Option<bool>,
@@ -375,14 +375,14 @@ pub struct ApplicationResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchApplicationResult {
     pub success_count: usize,
-    pub successful_clients: Vec<String>,
-    pub failed_clients: std::collections::HashMap<String, String>,
+    pub successful_client: Vec<String>,
+    pub failed_client: std::collections::HashMap<String, String>,
 }
 
-/// Client runtime status (extends ClientApp with runtime info)
+/// Client runtime status (extends Client with runtime info)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientStatus {
-    pub client_app: ClientApp,
+    pub client: Client,
     pub detected: bool,
     pub last_detected_at: Option<chrono::DateTime<chrono::Utc>>,
     pub install_path: Option<String>,
@@ -391,10 +391,10 @@ pub struct ClientStatus {
     pub detection_method: Option<String>,
 }
 
-impl From<ClientApp> for ClientStatus {
-    fn from(client_app: ClientApp) -> Self {
+impl From<Client> for ClientStatus {
+    fn from(client: Client) -> Self {
         Self {
-            client_app,
+            client,
             detected: false,
             last_detected_at: None,
             install_path: None,
@@ -408,7 +408,7 @@ impl From<ClientApp> for ClientStatus {
 impl From<DetectedApp> for ClientStatus {
     fn from(detected_app: DetectedApp) -> Self {
         Self {
-            client_app: detected_app.client_app,
+            client: detected_app.client,
             detected: true,
             last_detected_at: Some(chrono::Utc::now()),
             install_path: Some(detected_app.install_path.to_string_lossy().to_string()),

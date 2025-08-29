@@ -34,8 +34,8 @@ impl PathService {
             r#"
             SELECT config_path
             FROM client_detection_rules
-            WHERE client_app_id = (
-                SELECT id FROM client_apps WHERE identifier = ?
+            WHERE client_id = (
+                SELECT id FROM client WHERE identifier = ?
             ) AND platform = ?
             ORDER BY priority ASC
             LIMIT 1
@@ -80,8 +80,7 @@ impl PathService {
         &self,
         relative_bin_path: &str,
     ) -> Result<PathBuf> {
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Unable to determine home directory"))?;
+        let home_dir = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Unable to determine home directory"))?;
 
         let bin_path = if relative_bin_path.starts_with('/') {
             // Absolute path (system runtime) - use as-is
@@ -105,10 +104,7 @@ impl PathService {
     ) -> Result<PathBuf> {
         self.path_mapper
             .resolve_template(detection_value)
-            .context(format!(
-                "Failed to resolve detection path: {}",
-                detection_value
-            ))
+            .context(format!("Failed to resolve detection path: {}", detection_value))
     }
 
     /// Get current platform string consistently
@@ -156,11 +152,7 @@ impl PathService {
         match tokio::fs::metadata(path).await {
             Ok(_) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(anyhow::anyhow!(
-                "Failed to check path {}: {}",
-                path.display(),
-                e
-            )),
+            Err(e) => Err(anyhow::anyhow!("Failed to check path {}: {}", path.display(), e)),
         }
     }
 
