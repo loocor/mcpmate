@@ -18,7 +18,7 @@ use crate::api::{
 use chrono::Utc;
 
 use super::capability::{
-    CapabilityKind, enrich_capability_items, prompt_json, prompt_json_from_cached, respond_with_enriched,
+    CapabilityType, enrich_capability_items, prompt_json, prompt_json_from_cached, respond_with_enriched,
 };
 use super::common::{create_inspect_response, create_runtime_cache_data, get_database_from_state};
 
@@ -140,7 +140,7 @@ async fn server_prompts_core(
                 if !processed.is_empty() {
                     if let Ok(db) = get_database_from_state(app_state) {
                         let enriched = enrich_capability_items(
-                            CapabilityKind::Prompts,
+                            CapabilityType::Prompts,
                             &db.pool,
                             &server_info.server_id,
                             processed,
@@ -225,7 +225,7 @@ async fn server_prompts_core(
 
                 if let Ok(db) = get_database_from_state(app_state) {
                     let enriched =
-                        enrich_capability_items(CapabilityKind::Prompts, &db.pool, &server_info.server_id, prompts)
+                        enrich_capability_items(CapabilityType::Prompts, &db.pool, &server_info.server_id, prompts)
                             .await;
                     let response_data = respond_with_enriched(
                         enriched,
@@ -272,7 +272,7 @@ async fn server_prompts_core(
             let processed: Vec<serde_json::Value> = cached.into_iter().map(prompt_json_from_cached).collect();
             if let Ok(db) = get_database_from_state(app_state) {
                 let enriched =
-                    enrich_capability_items(CapabilityKind::Prompts, &db.pool, &server_info.server_id, processed).await;
+                    enrich_capability_items(CapabilityType::Prompts, &db.pool, &server_info.server_id, processed).await;
                 let response_data = respond_with_enriched(
                     enriched,
                     true,

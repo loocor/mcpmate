@@ -523,7 +523,7 @@ pub fn create_inspect_response(
 #[inline]
 pub async fn try_enrich_or_fallback(
     state: &Arc<AppState>,
-    kind: super::capability::CapabilityKind,
+    capability_type: super::capability::CapabilityType,
     server_id: &str,
     processed: Vec<serde_json::Value>,
     cache_hit: bool,
@@ -531,7 +531,8 @@ pub async fn try_enrich_or_fallback(
     strategy: &str,
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
     if let Ok(db) = get_database_from_state(state) {
-        let enriched = super::capability::enrich_capability_items(kind, &db.pool, server_id, processed).await;
+        let enriched =
+            super::capability::enrich_capability_items(capability_type, &db.pool, server_id, processed).await;
         Ok(super::capability::respond_with_enriched(
             enriched, cache_hit, refresh, strategy,
         ))

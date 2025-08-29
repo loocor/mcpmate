@@ -466,7 +466,7 @@ pub struct ServerCreateReq {
     /// **Note**: The system will reject any variant formats, such as "http", "streamableHttp", etc.
     #[schemars(description = "Server type, must be stdio, sse, or streamable_http")]
     #[schemars(regex(pattern = r"^(stdio|sse|streamable_http)$"))]
-    pub kind: String,
+    pub server_type: String,
 
     /// Startup command (only used for stdio type)
     ///

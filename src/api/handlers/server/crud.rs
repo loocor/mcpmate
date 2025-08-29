@@ -225,19 +225,19 @@ pub async fn create_server(
     }
 
     // Strictly validate server type format
-    let server_type = ServerType::from_str(&payload.kind).map_err(|_| {
+    let server_type = ServerType::from_str(&payload.server_type).map_err(|_| {
         ApiError::BadRequest(format!(
             "Invalid server type '{}'.\n\nCorrect format requirements:\n\
                 - Use \"stdio\" (not \"Stdio\" or other variants)\n\
                 - Use \"sse\" (not \"SSE\" or other variants)\n\
                 - Use \"streamable_http\" (not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
                 Please check your input and use the correct standard format.",
-            payload.kind
+            payload.server_type
         ))
     })?;
 
     // Validate server configuration
-    validate_server_config(&payload.kind, &payload.command, &payload.url)?;
+    validate_server_config(&payload.server_type, &payload.command, &payload.url)?;
 
     // Create server model using validated ServerType
     let server = create_server_from_config(
@@ -296,7 +296,7 @@ pub async fn create_server(
         enabled,
         globally_enabled: true,
         enabled_in_profile: enabled,
-        server_type: payload.kind.parse().unwrap_or(ServerType::Stdio),
+        server_type: payload.server_type.parse().unwrap_or(ServerType::Stdio),
         command: payload.command.clone(),
         url: payload.url.clone(),
         args: payload.args.clone(),

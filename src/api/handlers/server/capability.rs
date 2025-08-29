@@ -20,7 +20,7 @@ use crate::api::handlers::server::common::{
 };
 use crate::api::routes::AppState;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum CapabilityType {
     Tools,
     Prompts,
@@ -41,14 +41,6 @@ impl ExtractedCapability {
     pub fn empty() -> Self {
         Self::default()
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum CapabilityKind {
-    Tools,
-    Prompts,
-    Resources,
-    ResourceTemplates,
 }
 
 /// Load tool name to (id, unique_name) mapping from database
@@ -217,7 +209,7 @@ fn enrich_resource_template_item(
 /// the corresponding records in the database.
 ///
 /// # Arguments
-/// * `kind` - Type of capability (Tools, Prompts, Resources, ResourceTemplates)
+/// * `capability_type` - Type of capability (Tools, Prompts, Resources, ResourceTemplates)
 /// * `pool` - SQLite connection pool
 /// * `server_id` - Server identifier to filter records
 /// * `items` - JSON objects representing capability items
@@ -225,34 +217,31 @@ fn enrich_resource_template_item(
 /// # Returns
 /// Enhanced JSON objects with `id` and `unique_name` fields added
 pub async fn enrich_capability_items(
-    kind: CapabilityKind,
+    capability_type: CapabilityType,
     pool: &Pool<Sqlite>,
     server_id: &str,
     items: Vec<serde_json::Value>,
 ) -> Vec<serde_json::Value> {
-    match kind {
-        CapabilityKind::Tools => {
+    match capability_type {
+        CapabilityType::Tools => {
             let mapping = load_tool_mapping(pool, server_id).await;
-            items
-                .into_iter()
-                .map(|item| enrich_tool_item(item, &mapping))
-                .collect()
+            items.into_iter().map(|item| enrich_tool_item(item, &mapping)).collect()
         }
-        CapabilityKind::Prompts => {
+        CapabilityType::Prompts => {
             let mapping = load_prompt_mapping(pool, server_id).await;
             items
                 .into_iter()
                 .map(|item| enrich_prompt_item(item, &mapping))
                 .collect()
         }
-        CapabilityKind::Resources => {
+        CapabilityType::Resources => {
             let mapping = load_resource_mapping(pool, server_id).await;
             items
                 .into_iter()
                 .map(|item| enrich_resource_item(item, &mapping))
                 .collect()
         }
-        CapabilityKind::ResourceTemplates => {
+        CapabilityType::ResourceTemplates => {
             let mapping = load_resource_template_mapping(pool, server_id).await;
             items
                 .into_iter()
@@ -639,9 +628,9 @@ pub async fn create_temporary_instance_for_capability(
                 }
             }
 
-            let kind = CapabilityKind::from(&capability_type);
             if let Ok(db) = get_database_from_state(state) {
-                let enriched = enrich_capability_items(kind, &db.pool, &server_info.server_id, extracted.data).await;
+                let enriched =
+                    enrich_capability_items(capability_type, &db.pool, &server_info.server_id, extracted.data).await;
                 return Ok(Some(respond_with_enriched(enriched, false, params.refresh, "runtime")));
             }
             return Ok(Some(respond_with_enriched(
@@ -682,27 +671,14 @@ pub async fn create_temporary_instance_for_capability(
                 }
             }
 
-            let kind = CapabilityKind::from(&capability_type);
             let data = extracted.data;
-
             let items = match get_database_from_state(state) {
-                Ok(db) => enrich_capability_items(kind, &db.pool, &server_info.server_id, data).await,
+                Ok(db) => enrich_capability_items(capability_type, &db.pool, &server_info.server_id, data).await,
                 Err(_) => Vec::new(),
             };
 
             Ok(Some(respond_with_enriched(items, false, params.refresh, "temporary")))
         }
         _ => Ok(None),
-    }
-}
-
-impl From<&CapabilityType> for CapabilityKind {
-    fn from(value: &CapabilityType) -> Self {
-        match value {
-            CapabilityType::Tools => CapabilityKind::Tools,
-            CapabilityType::Prompts => CapabilityKind::Prompts,
-            CapabilityType::Resources => CapabilityKind::Resources,
-            CapabilityType::ResourceTemplates => CapabilityKind::ResourceTemplates,
-        }
     }
 }

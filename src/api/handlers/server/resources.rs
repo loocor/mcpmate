@@ -18,7 +18,7 @@ use crate::api::{
 use chrono::Utc;
 
 use super::capability::{
-    CapabilityKind, enrich_capability_items, resource_json, resource_json_from_cached, resource_template_json,
+    CapabilityType, enrich_capability_items, resource_json, resource_json_from_cached, resource_template_json,
     resource_template_json_from_cached, respond_with_enriched,
 };
 use super::common::{create_inspect_response, create_runtime_cache_data, get_database_from_state};
@@ -148,7 +148,7 @@ async fn server_resources_core(
                 if !processed.is_empty() {
                     if let Ok(db) = get_database_from_state(app_state) {
                         let enriched = enrich_capability_items(
-                            CapabilityKind::Resources,
+                            CapabilityType::Resources,
                             &db.pool,
                             &server_info.server_id,
                             processed,
@@ -236,7 +236,7 @@ async fn server_resources_core(
                 // Enrich resources with id/unique_name from DB mapping
                 if let Ok(db) = get_database_from_state(app_state) {
                     let enriched =
-                        enrich_capability_items(CapabilityKind::Resources, &db.pool, &server_info.server_id, resources)
+                        enrich_capability_items(CapabilityType::Resources, &db.pool, &server_info.server_id, resources)
                             .await;
                     let response_data = respond_with_enriched(
                         enriched,
@@ -283,7 +283,7 @@ async fn server_resources_core(
             let processed: Vec<serde_json::Value> = cached.into_iter().map(resource_json_from_cached).collect();
             if let Ok(db) = get_database_from_state(app_state) {
                 let enriched =
-                    enrich_capability_items(CapabilityKind::Resources, &db.pool, &server_info.server_id, processed)
+                    enrich_capability_items(CapabilityType::Resources, &db.pool, &server_info.server_id, processed)
                         .await;
                 let response_data = respond_with_enriched(
                     enriched,
@@ -367,7 +367,7 @@ async fn server_resource_templates_core(
                 if !processed.is_empty() {
                     if let Ok(db) = get_database_from_state(app_state) {
                         let enriched = enrich_capability_items(
-                            CapabilityKind::ResourceTemplates,
+                            CapabilityType::ResourceTemplates,
                             &db.pool,
                             &server_info.server_id,
                             processed,
@@ -451,7 +451,7 @@ async fn server_resource_templates_core(
 
                 if let Ok(db) = get_database_from_state(app_state) {
                     let enriched = enrich_capability_items(
-                        CapabilityKind::ResourceTemplates,
+                        CapabilityType::ResourceTemplates,
                         &db.pool,
                         &server_info.server_id,
                         templates,
@@ -503,7 +503,7 @@ async fn server_resource_templates_core(
                 cached.into_iter().map(resource_template_json_from_cached).collect();
             if let Ok(db) = get_database_from_state(app_state) {
                 let enriched = enrich_capability_items(
-                    CapabilityKind::ResourceTemplates,
+                    CapabilityType::ResourceTemplates,
                     &db.pool,
                     &server_info.server_id,
                     processed,
