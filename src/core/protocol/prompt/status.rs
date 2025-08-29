@@ -1,12 +1,12 @@
 //! Prompt status checking functionality
 //!
-//! Contains functions for checking if prompts are enabled in configuration suits
+//! Contains functions for checking if prompts are enabled in profile
 
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use tracing;
 
-/// Check if a prompt is enabled in any active configuration suit
+/// Check if a prompt is enabled in any active profile
 pub async fn is_prompt_enabled(
     pool: &Pool<Sqlite>,
     server_name: &str,
@@ -18,13 +18,13 @@ pub async fn is_prompt_enabled(
         server_name
     );
 
-    // Get all active configuration suits
-    let active_suits = crate::config::suit::get_active_config_suits(pool)
+    // Get all active profile
+    let active_profile = crate::config::profile::get_active_profile(pool)
         .await
-        .context("Failed to get active configuration suits")?;
+        .context("Failed to get active profile")?;
 
-    if active_suits.is_empty() {
-        tracing::debug!("No active configuration suits found, prompt is disabled");
+    if active_profile.is_empty() {
+        tracing::debug!("No active profile found, prompt is disabled");
         return Ok(false);
     }
 
@@ -47,25 +47,22 @@ pub async fn is_prompt_enabled(
         }
     };
 
-    // Check each active configuration suit
-    for suit in active_suits {
-        if let Some(suit_id) = &suit.id {
-            // Get enabled prompts for this configuration suit
-            let enabled_prompts =
-                crate::config::suit::get_enabled_prompts_for_config_suit(pool, suit_id)
-                    .await
-                    .context(format!(
-                        "Failed to get enabled prompts for suit '{suit_id}'"
-                    ))?;
+    // Check each active profile
+    for profile in active_profile {
+        if let Some(profile_id) = &profile.id {
+            // Get enabled prompts for this profile
+            let enabled_prompts = crate::config::profile::get_enabled_prompts_for_profile(pool, profile_id)
+                .await
+                .context(format!("Failed to get enabled prompts for profile '{profile_id}'"))?;
 
             // Check if our prompt is in the enabled list
             for prompt in enabled_prompts {
                 if prompt.server_id == server_id && prompt.prompt_name == prompt_name {
                     tracing::debug!(
-                        "Prompt '{}' from server '{}' is enabled in configuration suit '{}'",
+                        "Prompt '{}' from server '{}' is enabled in profile '{}'",
                         prompt_name,
                         server_name,
-                        suit.name
+                        profile.name
                     );
                     return Ok(true);
                 }
@@ -74,7 +71,7 @@ pub async fn is_prompt_enabled(
     }
 
     tracing::debug!(
-        "Prompt '{}' from server '{}' is not enabled in any active configuration suit",
+        "Prompt '{}' from server '{}' is not enabled in any active profile",
         prompt_name,
         server_name
     );
@@ -96,10 +93,10 @@ pub async fn get_prompt_status(
     // Check if the prompt is enabled
     let enabled = is_prompt_enabled(pool, server_name, prompt_name).await?;
 
-    // Get the prompt ID from any active configuration suit
-    let active_suits = crate::config::suit::get_active_config_suits(pool)
+    // Get the prompt ID from any active profile
+    let active_profile = crate::config::profile::get_active_profile(pool)
         .await
-        .context("Failed to get active configuration suits")?;
+        .context("Failed to get active profile")?;
 
     // Get the server ID
     let server = crate::config::server::get_server(pool, server_name)
@@ -118,12 +115,12 @@ pub async fn get_prompt_status(
         }
     };
 
-    // Look for the prompt in any active configuration suit
-    for suit in active_suits {
-        if let Some(suit_id) = &suit.id {
-            let prompts = crate::config::suit::get_prompts_for_config_suit(pool, suit_id)
+    // Look for the prompt in any active profile
+    for profile in active_profile {
+        if let Some(profile_id) = &profile.id {
+            let prompts = crate::config::profile::get_prompts_for_profile(pool, profile_id)
                 .await
-                .context(format!("Failed to get prompts for suit '{suit_id}'"))?;
+                .context(format!("Failed to get prompts for profile '{profile_id}'"))?;
 
             for prompt in prompts {
                 if prompt.server_id == server_id && prompt.prompt_name == prompt_name {
@@ -136,7 +133,7 @@ pub async fn get_prompt_status(
     }
 
     Err(anyhow::anyhow!(
-        "Prompt '{}' from server '{}' not found in any active configuration suit",
+        "Prompt '{}' from server '{}' not found in any active profile",
         prompt_name,
         server_name
     ))

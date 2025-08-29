@@ -9,23 +9,25 @@ use anyhow::{Context, Result};
 use crate::{
     config::{
         database::Database,
-        server::{get_server_args, get_server_env, ServerEnabledService},
+        server::{ServerEnabledService, get_server_args, get_server_env},
     },
+    core::profile::merge::ProfileMerger,
     core::{
         models::{Config, MCPServerConfig},
         proxy::args::StartupMode,
     },
-    core::suit::merge::SuitMerger,
 };
 
-/// Unified function to load servers from active suits
+/// Unified function to load servers from active profile
 /// Returns both Server list and Config formats
-pub async fn load_servers_from_active_suits(
-    db: &Database,
+pub async fn load_servers_from_active_profile(
+    db: &Database
 ) -> anyhow::Result<(Vec<crate::config::models::Server>, Config)> {
-    // Use SuitMerger's merge logic
-    let merger = SuitMerger::new(Arc::new(db.clone()));
-    let merge_result = merger.merge_all_configs().await
+    // Use ProfileMerger's merge logic
+    let merger = ProfileMerger::new(Arc::new(db.clone()));
+    let merge_result = merger
+        .merge_all_configs()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to merge configurations: {}", e))?;
 
     // Convert to Server list
@@ -51,11 +53,7 @@ pub async fn load_servers_from_active_suits(
                     .await
                     .context("Failed to get server environment variables")?;
 
-                if env_map.is_empty() {
-                    None
-                } else {
-                    Some(env_map)
-                }
+                if env_map.is_empty() { None } else { Some(env_map) }
             } else {
                 None
             };
@@ -89,17 +87,14 @@ pub async fn load_servers_from_active_suits(
         pagination: None,
     };
 
-    tracing::info!(
-        "Loaded {} servers from active configuration suits (unified loader)",
-        servers.len()
-    );
+    tracing::info!("Loaded {} servers from active profile (unified loader)", servers.len());
 
     Ok((servers, config))
 }
 
-/// Get enabled servers from all active configuration suites using unified service
-async fn get_enabled_servers_from_active_suites(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
+/// Get enabled servers from all active profile using unified service
+async fn get_enabled_servers_from_active_profile(
+    pool: &sqlx::Pool<sqlx::Sqlite>
 ) -> anyhow::Result<Vec<crate::config::models::Server>> {
     // Use the unified server enabled service
     let service = ServerEnabledService::new(pool.clone());
@@ -119,26 +114,24 @@ pub async fn load_server_config_with_params(
 
     // Get enabled servers based on startup mode
     let servers = match startup_mode {
-        StartupMode::Minimal | StartupMode::NoSuites => {
-            tracing::info!("Minimal/NoSuites mode: not loading any servers");
+        StartupMode::Minimal | StartupMode::NoProfile => {
+            tracing::info!("Minimal/NoProfile mode: not loading any servers");
             Vec::new()
         }
         StartupMode::Default => {
-            tracing::info!("Default mode: loading servers from all active config suites");
-            get_enabled_servers_from_active_suites(&db.pool)
+            tracing::info!("Default mode: loading servers from all active profile");
+            get_enabled_servers_from_active_profile(&db.pool)
                 .await
-                .context("Failed to get enabled servers from active config suites")?
+                .context("Failed to get enabled servers from active profile")?
         }
-        StartupMode::SpecificSuites(suite_ids) => {
-            tracing::info!(
-                "Specific suites mode: loading servers from suites: {:?}",
-                suite_ids
-            );
-            // Use unified service for specific suites
+        StartupMode::SpecificProfile(profile_ids) => {
+            tracing::info!("Specific profile mode: loading servers from profile: {:?}", profile_ids);
+            // Use unified service for specific profile
             let service = ServerEnabledService::new(db.pool.clone());
-            service.get_enabled_servers_from_suites(suite_ids)
+            service
+                .get_enabled_servers_from_profile(profile_ids)
                 .await
-                .context("Failed to get enabled servers from specific suites")?
+                .context("Failed to get enabled servers from specific profile")?
         }
     };
 
@@ -174,11 +167,7 @@ pub async fn load_server_config_with_params(
                 .await
                 .context("Failed to get server environment variables")?;
 
-            if env_map.is_empty() {
-                None
-            } else {
-                Some(env_map)
-            }
+            if env_map.is_empty() { None } else { Some(env_map) }
         } else {
             None
         };

@@ -1,6 +1,6 @@
 //!
 //! This module provides a unified service for all prompt-related operations
-//! that are driven by database configuration suits.
+//! that are driven by database profile.
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -31,12 +31,12 @@ impl DatabasePromptService {
 
     /// Get all enabled prompts from the database.
     ///
-    /// This function retrieves all enabled prompts from active configuration suits,
+    /// This function retrieves all enabled prompts from active profile,
     /// ensuring that no duplicates are returned.
     pub async fn get_enabled_prompts(&self) -> Result<Vec<Prompt>> {
         tracing::debug!("Getting all enabled prompts from database");
 
-        let query = crate::config::suit::prompt::build_enabled_prompts_query(None);
+        let query = crate::config::profile::prompt::build_enabled_prompts_query(None);
         let enabled_prompts_tuples = sqlx::query_as::<_, (String, String)>(&query)
             .fetch_all(&self.db.pool)
             .await

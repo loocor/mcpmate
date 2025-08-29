@@ -2,7 +2,7 @@
 //!
 //! Handles synchronization of MCP capabilities (tools, resources, prompts) from
 //! connected servers to the database. This module provides a unified approach
-//! to syncing different types of capabilities across configuration suites.
+//! to syncing different types of capabilities across profile.
 
 use anyhow::{Context, Result as AnyhowResult};
 use rmcp::model::Tool;
@@ -15,9 +15,9 @@ use crate::common::sync::SyncHelper;
 // Simplified approach - extract common database operations
 
 impl UpstreamConnectionPool {
-    /// Common helper to get server and suits for sync operations
+    /// Common helper to get server and profile for sync operations
     /// Now uses the unified SyncHelper framework
-    async fn get_server_and_suits(
+    async fn get_server_and_profile(
         db: &Arc<crate::config::database::Database>,
         server_id: &str,
     ) -> AnyhowResult<(String, Vec<(String, String)>)> {
@@ -25,24 +25,24 @@ impl UpstreamConnectionPool {
         let sync_context = SyncHelper::get_server_context(&db.pool, server_id).await?;
 
         // Convert to the format expected by existing code
-        let suit_data: Vec<(String, String)> = sync_context
-            .suit_ids
+        let profile_data: Vec<(String, String)> = sync_context
+            .profile_ids
             .into_iter()
-            .map(|suit_id| {
-                // Get suit name from metadata or use ID as fallback
-                let suit_name = sync_context
+            .map(|profile_id| {
+                // Get profile name from metadata or use ID as fallback
+                let profile_name = sync_context
                     .metadata
-                    .get(&format!("suit_name_{}", suit_id))
+                    .get(&format!("profile_name_{}", profile_id))
                     .cloned()
-                    .unwrap_or_else(|| suit_id.clone());
-                (suit_id, suit_name)
+                    .unwrap_or_else(|| profile_id.clone());
+                (profile_id, profile_name)
             })
             .collect();
 
-        Ok((sync_context.server_id, suit_data))
+        Ok((sync_context.server_id, profile_data))
     }
 
-    // Note: get_suits_with_server function removed as it's now handled by SyncHelper::get_server_context
+    // Note: get_profile_with_server function removed as it's now handled by SyncHelper::get_server_context
 
     // Generic sync method removed - using specific implementations for each type
 
@@ -101,7 +101,7 @@ impl UpstreamConnectionPool {
     /// Sync tools to database
     ///
     /// This function syncs tools from a server to the database.
-    /// It adds tools to all config suits that have the server enabled.
+    /// It adds tools to all profile that have the server enabled.
     pub(super) async fn sync_tools_to_database(
         db: &Arc<crate::config::database::Database>,
         server_id: &str,
@@ -119,16 +119,16 @@ impl UpstreamConnectionPool {
             server_id
         );
 
-        // Use common helper to get server and suits
-        let (server_id, suit_data) = Self::get_server_and_suits(db, server_id).await?;
+        // Use common helper to get server and profile
+        let (server_id, profile_data) = Self::get_server_and_profile(db, server_id).await?;
 
         // Use unified sync framework for concurrent operations
-        let sync_items: Vec<_> = suit_data
+        let sync_items: Vec<_> = profile_data
             .into_iter()
-            .map(|(suit_id, suit_name)| {
+            .map(|(profile_id, profile_name)| {
                 (
-                    suit_id,
-                    suit_name,
+                    profile_id,
+                    profile_name,
                     db.pool.clone(),
                     server_id.clone(),
                     server_name.clone(),
@@ -139,10 +139,10 @@ impl UpstreamConnectionPool {
 
         let _sync_result = SyncHelper::execute_concurrent_sync(
             sync_items,
-            "tools_to_suits",
+            "tools_to_profile",
             4, // max concurrent operations
-            |(suit_id, suit_name, pool, server_id, server_name, tools)| async move {
-                Self::sync_tools_to_suit(&pool, &suit_id, &server_id, &server_name, &tools, &suit_name).await
+            |(profile_id, profile_name, pool, server_id, server_name, tools)| async move {
+                Self::sync_tools_to_profile(&pool, &profile_id, &server_id, &server_name, &tools, &profile_name).await
             },
         )
         .await;
@@ -155,19 +155,19 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
-    /// Helper function to sync tools to a specific suit
-    async fn sync_tools_to_suit(
+    /// Helper function to sync tools to a specific profile
+    async fn sync_tools_to_profile(
         pool: &sqlx::Pool<sqlx::Sqlite>,
-        suit_id: &str,
+        profile_id: &str,
         server_id: &str,
         server_name: &str,
         tools: &[Tool],
-        suit_name: &str,
+        profile_name: &str,
     ) -> AnyhowResult<()> {
-        // Get existing tools in this suit for this server
-        let existing_tools = crate::config::suit::get_config_suit_tools(pool, suit_id)
+        // Get existing tools in this profile for this server
+        let existing_tools = crate::config::profile::get_profile_tools(pool, profile_id)
             .await
-            .context(format!("Failed to get tools for suit '{suit_id}'"))?;
+            .context(format!("Failed to get tools for profile '{profile_id}'"))?;
 
         let existing_tool_names: std::collections::HashSet<String> = existing_tools
             .iter()
@@ -175,31 +175,31 @@ impl UpstreamConnectionPool {
             .map(|t| t.tool_name.clone())
             .collect();
 
-        // Add new tools to the suit
+        // Add new tools to the profile
         for tool in tools {
             let tool_name = tool.name.to_string();
 
-            // Skip if tool already exists in this suit
+            // Skip if tool already exists in this profile
             if existing_tool_names.contains(&tool_name) {
                 continue;
             }
 
-            // Add the tool to the suit (enabled by default)
-            match crate::config::suit::add_tool_to_config_suit(pool, suit_id, server_id, &tool_name, true).await {
+            // Add the tool to the profile (enabled by default)
+            match crate::config::profile::add_tool_to_profile(pool, profile_id, server_id, &tool_name, true).await {
                 Ok(_) => {
                     tracing::debug!(
-                        "Added tool '{}' from server '{}' to suit '{}'",
+                        "Added tool '{}' from server '{}' to profile '{}'",
                         tool_name,
                         server_name,
-                        suit_name
+                        profile_name
                     );
                 }
                 Err(e) => {
                     tracing::error!(
-                        "Failed to add tool '{}' from server '{}' to suit '{}': {}",
+                        "Failed to add tool '{}' from server '{}' to profile '{}': {}",
                         tool_name,
                         server_name,
-                        suit_name,
+                        profile_name,
                         e
                     );
                 }
@@ -214,7 +214,7 @@ impl UpstreamConnectionPool {
     /// Sync resources to database with service
     ///
     /// This function syncs resources from a server to the database.
-    /// It adds resources to all config suits that have the server enabled.
+    /// It adds resources to all profile that have the server enabled.
     pub(super) async fn sync_resources_to_database_with_service(
         db: &Arc<crate::config::database::Database>,
         server_id: &str,
@@ -237,23 +237,23 @@ impl UpstreamConnectionPool {
             instance_id
         );
 
-        // Use common helper to get server and suits
-        let (server_id, suit_data) = Self::get_server_and_suits(db, server_id).await?;
+        // Use common helper to get server and profile
+        let (server_id, profile_data) = Self::get_server_and_profile(db, server_id).await?;
 
         tracing::debug!(
-            "Found {} config suits with server '{}' (ID: {}) enabled",
-            suit_data.len(),
+            "Found {} profile with server '{}' (ID: {}) enabled",
+            profile_data.len(),
             server_name,
             server_id
         );
 
         // Use unified sync framework for concurrent operations
-        let sync_items: Vec<_> = suit_data
+        let sync_items: Vec<_> = profile_data
             .into_iter()
-            .map(|(suit_id, suit_name)| {
+            .map(|(profile_id, profile_name)| {
                 (
-                    suit_id,
-                    suit_name,
+                    profile_id,
+                    profile_name,
                     db.pool.clone(),
                     server_id.clone(),
                     server_name.clone(),
@@ -264,11 +264,18 @@ impl UpstreamConnectionPool {
 
         let _sync_result = SyncHelper::execute_concurrent_sync(
             sync_items,
-            "resources_to_suits",
+            "resources_to_profile",
             4, // max concurrent operations
-            |(suit_id, suit_name, pool, server_id, server_name, server_resources)| async move {
-                Self::sync_resources_to_suit(&pool, &suit_id, &server_id, &server_name, &server_resources, &suit_name)
-                    .await
+            |(profile_id, profile_name, pool, server_id, server_name, server_resources)| async move {
+                Self::sync_resources_to_profile(
+                    &pool,
+                    &profile_id,
+                    &server_id,
+                    &server_name,
+                    &server_resources,
+                    &profile_name,
+                )
+                .await
             },
         )
         .await;
@@ -284,19 +291,19 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
-    /// Helper function to sync resources to a specific suit
-    async fn sync_resources_to_suit(
+    /// Helper function to sync resources to a specific profile
+    async fn sync_resources_to_profile(
         pool: &sqlx::Pool<sqlx::Sqlite>,
-        suit_id: &str,
+        profile_id: &str,
         server_id: &str,
         server_name: &str,
         server_resources: &[String],
-        suit_name: &str,
+        profile_name: &str,
     ) -> AnyhowResult<()> {
-        // Get existing resources in this suit for this server
-        let existing_resources = crate::config::suit::get_resources_for_config_suit(pool, suit_id)
+        // Get existing resources in this profile for this server
+        let existing_resources = crate::config::profile::get_resources_for_profile(pool, profile_id)
             .await
-            .context(format!("Failed to get resources for suit '{suit_id}'"))?;
+            .context(format!("Failed to get resources for profile '{profile_id}'"))?;
 
         let existing_resource_uris: std::collections::HashSet<String> = existing_resources
             .iter()
@@ -304,29 +311,30 @@ impl UpstreamConnectionPool {
             .map(|r| r.resource_uri.clone())
             .collect();
 
-        // Add new resources to the suit
+        // Add new resources to the profile
         for resource_uri in server_resources {
-            // Skip if resource already exists in this suit
+            // Skip if resource already exists in this profile
             if existing_resource_uris.contains(resource_uri) {
                 continue;
             }
 
-            // Add the resource to the suit (enabled by default)
-            match crate::config::suit::add_resource_to_config_suit(pool, suit_id, server_id, resource_uri, true).await {
+            // Add the resource to the profile (enabled by default)
+            match crate::config::profile::add_resource_to_profile(pool, profile_id, server_id, resource_uri, true).await
+            {
                 Ok(_) => {
                     tracing::debug!(
-                        "Added resource '{}' from server '{}' to suit '{}'",
+                        "Added resource '{}' from server '{}' to profile '{}'",
                         resource_uri,
                         server_name,
-                        suit_name
+                        profile_name
                     );
                 }
                 Err(e) => {
                     tracing::error!(
-                        "Failed to add resource '{}' from server '{}' to suit '{}': {}",
+                        "Failed to add resource '{}' from server '{}' to profile '{}': {}",
                         resource_uri,
                         server_name,
-                        suit_name,
+                        profile_name,
                         e
                     );
                 }
@@ -339,7 +347,7 @@ impl UpstreamConnectionPool {
     /// Sync prompts to database with service
     ///
     /// This function syncs prompts from a server to the database.
-    /// It adds prompts to all config suits that have the server enabled.
+    /// It adds prompts to all profile that have the server enabled.
     pub(super) async fn sync_prompts_to_database_with_service(
         db: &Arc<crate::config::database::Database>,
         server_id: &str,
@@ -362,23 +370,23 @@ impl UpstreamConnectionPool {
             instance_id
         );
 
-        // Use common helper to get server and suits
-        let (server_id, suit_data) = Self::get_server_and_suits(db, server_id).await?;
+        // Use common helper to get server and profile
+        let (server_id, profile_data) = Self::get_server_and_profile(db, server_id).await?;
 
         tracing::debug!(
-            "Found {} config suits with server '{}' (ID: {}) enabled",
-            suit_data.len(),
+            "Found {} profile with server '{}' (ID: {}) enabled",
+            profile_data.len(),
             server_name,
             server_id
         );
 
         // Use unified sync framework for concurrent operations
-        let sync_items: Vec<_> = suit_data
+        let sync_items: Vec<_> = profile_data
             .into_iter()
-            .map(|(suit_id, suit_name)| {
+            .map(|(profile_id, profile_name)| {
                 (
-                    suit_id,
-                    suit_name,
+                    profile_id,
+                    profile_name,
                     db.pool.clone(),
                     server_id.clone(),
                     server_name.clone(),
@@ -389,10 +397,18 @@ impl UpstreamConnectionPool {
 
         let _sync_result = SyncHelper::execute_concurrent_sync(
             sync_items,
-            "prompts_to_suits",
+            "prompts_to_profile",
             4, // max concurrent operations
-            |(suit_id, suit_name, pool, server_id, server_name, all_prompts)| async move {
-                Self::sync_prompts_to_suit(&pool, &suit_id, &server_id, &server_name, &all_prompts, &suit_name).await
+            |(profile_id, profile_name, pool, server_id, server_name, all_prompts)| async move {
+                Self::sync_prompts_to_profile(
+                    &pool,
+                    &profile_id,
+                    &server_id,
+                    &server_name,
+                    &all_prompts,
+                    &profile_name,
+                )
+                .await
             },
         )
         .await;
@@ -408,19 +424,19 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
-    /// Helper function to sync prompts to a specific suit
-    async fn sync_prompts_to_suit(
+    /// Helper function to sync prompts to a specific profile
+    async fn sync_prompts_to_profile(
         pool: &sqlx::Pool<sqlx::Sqlite>,
-        suit_id: &str,
+        profile_id: &str,
         server_id: &str,
         server_name: &str,
         all_prompts: &[rmcp::model::Prompt],
-        suit_name: &str,
+        profile_name: &str,
     ) -> AnyhowResult<()> {
-        // Get existing prompts in this suit for this server
-        let existing_prompts = crate::config::suit::get_prompts_for_config_suit(pool, suit_id)
+        // Get existing prompts in this profile for this server
+        let existing_prompts = crate::config::profile::get_prompts_for_profile(pool, profile_id)
             .await
-            .context(format!("Failed to get prompts for suit '{suit_id}'"))?;
+            .context(format!("Failed to get prompts for profile '{profile_id}'"))?;
 
         let existing_prompt_names: std::collections::HashSet<String> = existing_prompts
             .iter()
@@ -428,31 +444,31 @@ impl UpstreamConnectionPool {
             .map(|p| p.prompt_name.clone())
             .collect();
 
-        // Add new prompts to the suit
+        // Add new prompts to the profile
         for prompt in all_prompts {
             let prompt_name = prompt.name.to_string();
 
-            // Skip if prompt already exists in this suit
+            // Skip if prompt already exists in this profile
             if existing_prompt_names.contains(&prompt_name) {
                 continue;
             }
 
-            // Add the prompt to the suit (enabled by default)
-            match crate::config::suit::add_prompt_to_config_suit(pool, suit_id, server_id, &prompt_name, true).await {
+            // Add the prompt to the profile (enabled by default)
+            match crate::config::profile::add_prompt_to_profile(pool, profile_id, server_id, &prompt_name, true).await {
                 Ok(_) => {
                     tracing::debug!(
-                        "Added prompt '{}' from server '{}' to suit '{}'",
+                        "Added prompt '{}' from server '{}' to profile '{}'",
                         prompt_name,
                         server_name,
-                        suit_name
+                        profile_name
                     );
                 }
                 Err(e) => {
                     tracing::error!(
-                        "Failed to add prompt '{}' from server '{}' to suit '{}': {}",
+                        "Failed to add prompt '{}' from server '{}' to profile '{}': {}",
                         prompt_name,
                         server_name,
-                        suit_name,
+                        profile_name,
                         e
                     );
                 }

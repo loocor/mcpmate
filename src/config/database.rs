@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use tracing;
 
 use crate::{
-    common::config::ConfigSuitType,
+    common::profile::ProfileType,
     common::paths::global_paths,
-    config::{import, initialization, models, server, suit},
+    config::{import, initialization, models, profile, server},
 };
 
 /// Get the database URL for SQLite
@@ -163,60 +163,60 @@ impl Database {
 
     /// Initialize the database with some default values
     pub async fn initialize_defaults(&self) -> Result<()> {
-        // Create default configuration suit if it doesn't exist
-        let default_suit = suit::get_config_suit_by_name(&self.pool, "default").await?;
+        // Create default profile if it doesn't exist
+        let default_profile = profile::get_profile_by_name(&self.pool, "default").await?;
 
-        let suit_id = if let Some(suit) = default_suit {
-            // Check if the default suit is active and default
-            let id = suit.id.clone().unwrap();
+        let profile_id = if let Some(profile) = default_profile {
+            // Check if the default profile is active and default
+            let id = profile.id.clone().unwrap();
 
-            if !suit.is_active || !suit.is_default {
-                tracing::info!("Updating default configuration suit to be active and default");
+            if !profile.is_active || !profile.is_default {
+                tracing::info!("Updating default profile to be active and default");
 
-                // Set the suit as active and default
-                if !suit.is_active {
-                    suit::set_config_suit_active(&self.pool, &id, true).await?;
+                // Set the profile as active and default
+                if !profile.is_active {
+                    profile::set_profile_active(&self.pool, &id, true).await?;
                 }
-                if !suit.is_default {
-                    suit::set_config_suit_default(&self.pool, &id).await?;
+                if !profile.is_default {
+                    profile::set_profile_default(&self.pool, &id).await?;
                 }
             }
             id
         } else {
-            tracing::info!("Creating default configuration suit");
+            tracing::info!("Creating default profile");
 
-            // Create a new default configuration suit
-            let mut new_suit = models::ConfigSuit::new_with_description(
+            // Create a new default profile
+            let mut new_profile = models::Profile::new_with_description(
                 "default".to_string(),
-                Some("Default configuration suit".to_string()),
-                ConfigSuitType::Shared,
+                Some("Default profile".to_string()),
+                ProfileType::Shared,
             );
 
             // Set active and default flags
-            new_suit.is_active = true;
-            new_suit.is_default = true;
-            new_suit.multi_select = true;
+            new_profile.is_active = true;
+            new_profile.is_default = true;
+            new_profile.multi_select = true;
 
-            // Insert the default suit
-            let id = suit::upsert_config_suit(&self.pool, &new_suit).await?;
-            tracing::info!("Created default configuration suit with ID {}", id);
+            // Insert the default profile
+            let id = profile::upsert_profile(&self.pool, &new_profile).await?;
+            tracing::info!("Created default profile with ID {}", id);
             id
         };
 
-        // Check if we need to add servers to the default configuration suit
-        let suit_servers = suit::get_config_suit_servers(&self.pool, &suit_id).await?;
+        // Check if we need to add servers to the default profile
+        let profile_servers = profile::get_profile_servers(&self.pool, &profile_id).await?;
 
-        if suit_servers.is_empty() {
+        if profile_servers.is_empty() {
             let all_servers = server::get_all_servers(&self.pool).await?;
 
             for server in &all_servers {
                 if let Some(server_id) = &server.id {
-                    suit::add_server_to_config_suit(&self.pool, &suit_id, server_id, true).await?;
+                    profile::add_server_to_profile(&self.pool, &profile_id, server_id, true).await?;
                 }
             }
 
             if !all_servers.is_empty() {
-                tracing::info!("Added {} servers to default configuration suit", all_servers.len());
+                tracing::info!("Added {} servers to default profile", all_servers.len());
             }
         }
 

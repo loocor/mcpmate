@@ -15,13 +15,13 @@ use crate::{
         ApiError,
         common::{internal_error, map_anyhow_error, map_database_error},
     },
-    common::{config::ConfigSuitType, server::ServerType},
+    common::{profile::ProfileType, server::ServerType},
     config::server::capabilities::sync_via_connection_pool,
     config::{
         database::Database,
-        models::{ConfigSuit, ServerMeta},
+        models::{Profile, ServerMeta},
+        profile,
         server::{self},
-        suit,
     },
 };
 use axum::{Json, extract::State};
@@ -60,54 +60,54 @@ fn create_server_from_config(
     }
 }
 
-/// Get or create default config suit
-async fn get_or_create_default_config_suit(db: &Database) -> Result<String, ApiError> {
-    let default_suit = suit::get_config_suit_by_name(&db.pool, "default")
+/// Get or create default profile
+async fn get_or_create_default_profile(db: &Database) -> Result<String, ApiError> {
+    let default_profile = profile::get_profile_by_name(&db.pool, "default")
         .await
         .map_err(map_anyhow_error)?;
 
-    match default_suit {
-        Some(suit) => suit.id.ok_or_else(|| internal_error("ConfigSuit id missing")),
+    match default_profile {
+        Some(profile) => profile.id.ok_or_else(|| internal_error("Profile id missing")),
         None => {
-            let new_suit = ConfigSuit::new("default".to_owned(), ConfigSuitType::Shared);
-            suit::upsert_config_suit(&db.pool, &new_suit)
+            let new_profile = Profile::new("default".to_owned(), ProfileType::Shared);
+            profile::upsert_profile(&db.pool, &new_profile)
                 .await
                 .map_err(map_anyhow_error)
         }
     }
 }
 
-/// Add server to config suit
+/// Add server to profile
 #[inline]
-async fn add_server_to_suit(
+async fn add_server_to_profile(
     db: &Database,
-    suit_id: &str,
+    profile_id: &str,
     server_id: &str,
     enabled: bool,
 ) -> Result<(), ApiError> {
-    suit::add_server_to_config_suit(&db.pool, suit_id, server_id, enabled)
+    profile::add_server_to_profile(&db.pool, profile_id, server_id, enabled)
         .await
         .map_err(map_anyhow_error)
         .map(|_| ())
 }
 
-/// Add server to config suit with capabilities sync
-async fn add_server_to_suit_with_sync(
+/// Add server to profile with capabilities sync
+async fn add_server_to_profile_with_sync(
     _state: &Arc<AppState>,
     db: &Database,
-    suit_id: &str,
+    profile_id: &str,
     server_id: &str,
     enabled: bool,
 ) -> Result<(), ApiError> {
-    // Add server to suit
-    suit::add_server_to_config_suit(&db.pool, suit_id, server_id, enabled)
+    // Add server to profile
+    profile::add_server_to_profile(&db.pool, profile_id, server_id, enabled)
         .await
         .map_err(map_anyhow_error)?;
 
-    // Sync server capabilities to the configuration suit (async, non-blocking)
+    // Sync server capabilities to the profile (async, non-blocking)
     if false {
         let pool_clone = db.pool.clone();
-        let suit_id_clone = suit_id.to_string();
+        let profile_id_clone = profile_id.to_string();
         let server_id_clone = server_id.to_string();
         let _noop = ();
 
@@ -121,29 +121,32 @@ async fn add_server_to_suit_with_sync(
                 Ok(permit) => permit,
                 Err(_) => {
                     tracing::warn!(
-                        "Too many concurrent capability sync operations. Skipping sync for server {} to suit {}",
+                        "Too many concurrent capability sync operations. Skipping sync for server {} to profile {}",
                         server_id_clone,
-                        suit_id_clone
+                        profile_id_clone
                     );
                     return;
                 }
             };
 
-            if let Err(e) =
-                crate::config::suit::sync_server_capabilities_to_suit(&pool_clone, &suit_id_clone, &server_id_clone)
-                    .await
+            if let Err(e) = crate::config::profile::sync_server_capabilities_to_profile(
+                &pool_clone,
+                &profile_id_clone,
+                &server_id_clone,
+            )
+            .await
             {
                 tracing::warn!(
-                    "Failed to sync capabilities for server {} to suit {}: {}",
+                    "Failed to sync capabilities for server {} to profile {}: {}",
                     server_id_clone,
-                    suit_id_clone,
+                    profile_id_clone,
                     e
                 );
             } else {
                 tracing::debug!(
-                    "Successfully synced capabilities for server {} to suit {}",
+                    "Successfully synced capabilities for server {} to profile {}",
                     server_id_clone,
-                    suit_id_clone
+                    profile_id_clone
                 );
             }
         });
@@ -266,12 +269,12 @@ pub async fn create_server(
     // Create server metadata
     create_server_metadata(&db, &server_id, "Created via API").await?;
 
-    // Add server to default config suit if enabled
+    // Add server to default profile if enabled
     let enabled = payload.enabled.unwrap_or(true);
     if enabled {
-        let suit_id = get_or_create_default_config_suit(&db).await?;
-        add_server_to_suit(&db, &suit_id, &server_id, true).await?;
-        tracing::info!("Enabled server '{}' in default config suit", payload.name);
+        let profile_id = get_or_create_default_profile(&db).await?;
+        add_server_to_profile(&db, &profile_id, &server_id, true).await?;
+        tracing::info!("Enabled server '{}' in default profile", payload.name);
     }
 
     // Initial capability discovery + dual write (SQLite shadow + REDB)
@@ -292,7 +295,7 @@ pub async fn create_server(
         name: payload.name.clone(),
         enabled,
         globally_enabled: true,
-        enabled_in_suits: enabled,
+        enabled_in_profile: enabled,
         server_type: payload.kind.parse().unwrap_or(ServerType::Stdio),
         command: payload.command.clone(),
         url: payload.url.clone(),
@@ -408,10 +411,10 @@ pub async fn update_server(
 
     // Update server enabled status if provided
     if let Some(enabled) = payload.enabled {
-        let suit_id = get_or_create_default_config_suit(&db).await?;
-        add_server_to_suit_with_sync(&state, &db, &suit_id, &server_id, enabled).await?;
+        let profile_id = get_or_create_default_profile(&db).await?;
+        add_server_to_profile_with_sync(&state, &db, &profile_id, &server_id, enabled).await?;
         tracing::info!(
-            "Updated server '{}' enabled status to {} in default config suit",
+            "Updated server '{}' enabled status to {} in default profile",
             existing_server.name,
             enabled
         );
@@ -424,9 +427,9 @@ pub async fn update_server(
     Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: existing_server.name,
-        enabled: details.globally_enabled && details.enabled_in_suits,
+        enabled: details.globally_enabled && details.enabled_in_profile,
         globally_enabled: details.globally_enabled,
-        enabled_in_suits: details.enabled_in_suits,
+        enabled_in_profile: details.enabled_in_profile,
         server_type: updated_server.server_type,
         command: updated_server.command.clone(),
         url: updated_server.url.clone(),
@@ -477,9 +480,9 @@ async fn import_single_server(
     }
     let _ = create_server_metadata(db, &server_id, "Imported via API").await;
 
-    // Add to default config suit
-    if let Ok(suit_id) = get_or_create_default_config_suit(db).await {
-        let _ = add_server_to_suit_with_sync(state, db, &suit_id, &server_id, true).await;
+    // Add to default profile
+    if let Ok(profile_id) = get_or_create_default_profile(db).await {
+        let _ = add_server_to_profile_with_sync(state, db, &profile_id, &server_id, true).await;
     }
 
     // Initial capability discovery + dual write (SQLite shadow + REDB)
@@ -590,10 +593,10 @@ async fn delete_server_records(
     // - server_args (has FK to server_config.id)
     // - server_env (has FK to server_config.id)
     // - server_meta (has FK to server_config.id)
-    // - config_suit_server (has FK to server_config.id)
-    // - config_suit_resource (has FK to server_config.id)
-    // - config_suit_prompt (has FK to server_config.id)
-    // - config_suit_tool (has FK to server_tools.id, which cascades from server_config)
+    // - profile_server (has FK to server_config.id)
+    // - profile_resource (has FK to server_config.id)
+    // - profile_prompt (has FK to server_config.id)
+    // - profile_tool (has FK to server_tools.id, which cascades from server_config)
 
     tx.commit().await.map_err(map_database_error)?;
     Ok(())

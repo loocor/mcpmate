@@ -25,12 +25,12 @@ pub struct ErrorDetails {
 }
 
 impl ResponseConverter {
-    /// Convert ConfigSuit to ConfigSuitResponse with consistent logic
-    pub fn suit_to_response(suit: &crate::config::models::ConfigSuit) -> crate::api::models::suits::SuitData {
+    /// Convert Profile to ProfileResponse with consistent logic
+    pub fn profile_to_response(profile: &crate::config::models::Profile) -> crate::api::models::profile::ProfileData {
         let mut allowed_operations = Vec::new();
 
         // Add allowed operations based on current state
-        if suit.is_active {
+        if profile.is_active {
             allowed_operations.push("deactivate".to_string());
         } else {
             allowed_operations.push("activate".to_string());
@@ -40,24 +40,24 @@ impl ResponseConverter {
         allowed_operations.push("update".to_string());
         allowed_operations.push("delete".to_string());
 
-        crate::api::models::suits::SuitData {
-            id: suit.id.clone().unwrap_or_default(),
-            name: suit.name.clone(),
-            description: suit.description.clone(),
-            suit_type: suit.suit_type_string(),
-            multi_select: suit.multi_select,
-            priority: suit.priority,
-            is_active: suit.is_active,
-            is_default: suit.is_default,
+        crate::api::models::profile::ProfileData {
+            id: profile.id.clone().unwrap_or_default(),
+            name: profile.name.clone(),
+            description: profile.description.clone(),
+            profile_type: profile.profile_type_string(),
+            multi_select: profile.multi_select,
+            priority: profile.priority,
+            is_active: profile.is_active,
+            is_default: profile.is_default,
             allowed_operations,
         }
     }
 
-    /// Convert Server to ConfigSuitServerResponse with consistent logic
-    pub fn server_to_suit_response(
+    /// Convert Server to ProfileServerResponse with consistent logic
+    pub fn server_to_profile_response(
         server: &crate::config::models::Server,
         enabled: bool,
-    ) -> crate::api::models::suits::SuitServerResp {
+    ) -> crate::api::models::profile::ProfileServerResp {
         let mut allowed_operations = Vec::new();
         if enabled {
             allowed_operations.push("disable".to_string());
@@ -65,7 +65,7 @@ impl ResponseConverter {
             allowed_operations.push("enable".to_string());
         }
 
-        crate::api::models::suits::SuitServerResp {
+        crate::api::models::profile::ProfileServerResp {
             id: server.id.clone().unwrap_or_default(),
             name: server.name.clone(),
             enabled,

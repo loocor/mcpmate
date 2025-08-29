@@ -72,13 +72,13 @@ For detailed documentation, see [Runtime Manager Guide](./docs/runtime-manager.m
 
 ## Configuration Management
 
-MCPMate now uses a database-driven configuration management system, centered around the concept of **Config Suits**. All server, tool, and configuration suit information is stored in a local SQLite database (`config/mcpmate.db`). This enables flexible, dynamic, and persistent management of MCP servers and tools, supporting advanced features such as multi-suit activation, scenario-based switching, and team collaboration.
+MCPMate now uses a database-driven configuration management system, centered around the concept of **Profile**. All server, tool, and profile information is stored in a local SQLite database (`config/mcpmate.db`). This enables flexible, dynamic, and persistent management of MCP servers and tools, supporting advanced features such as multi-profile activation, scenario-based switching, and team collaboration.
 
 ### Key Concepts
 
-- **Config Suit**: A configuration suit is a collection of MCP servers and tools tailored for specific scenarios or applications. Users can create, activate, and switch between multiple config suits to dynamically change the available services and tools without restarting MCPMate.
-- **Database Storage**: All configuration data is stored in structured tables (e.g., `server_config`, `server_args`, `config_suit`, etc.) within the SQLite database. Direct editing of the database is not recommended; use the provided APIs.
-- **API-Driven Management**: All configuration operations (create, update, enable/disable servers and tools, manage config suits, etc.) are performed via RESTful APIs. See [API Documentation](./src/api/README.md) for details and examples.
+- **Profile**: A profile is a collection of MCP servers and tools tailored for specific scenarios or applications. Users can create, activate, and switch between multiple profile to dynamically change the available services and tools without restarting MCPMate.
+- **Database Storage**: All configuration data is stored in structured tables (e.g., `server_config`, `server_args`, `profile`, etc.) within the SQLite database. Direct editing of the database is not recommended; use the provided APIs.
+- **API-Driven Management**: All configuration operations (create, update, enable/disable servers and tools, manage profile, etc.) are performed via RESTful APIs. See [API Documentation](./src/api/README.md) for details and examples.
 - **Legacy mcp.json**: The `mcp.json` file is now only used for initial migration or backward compatibility. On first startup, if the database is empty and `mcp.json` exists, MCPMate will automatically migrate its contents to the database. Ongoing configuration should be managed via the database and APIs.
 
 #### Example: Creating a New MCP Server via API
@@ -100,7 +100,7 @@ Content-Type: application/json
 }
 ```
 
-For more details on configuration suits and API usage, see [Configuration Management](./docs/features/configuration_management.md) and [API Documentation](./src/api/README.md).
+For more details on profile and API usage, see [Configuration Management](./docs/features/configuration_management.md) and [API Documentation](./src/api/README.md).
 
 ### MCPMate Desktop
 
@@ -109,7 +109,7 @@ MCPMate Desktop is a native desktop application that provides a comprehensive gr
 **Current Status**: ✅ **macOS version available** - Native SwiftUI application with full functionality
 
 **Key Features**:
-- Complete graphical interface for managing MCP servers, config suits, and tools
+- Complete graphical interface for managing MCP servers, profile, and tools
 - Real-time monitoring and status display with live updates
 - Intelligent client detection and configuration generation
 - Native system integration with MenuBar support and notifications

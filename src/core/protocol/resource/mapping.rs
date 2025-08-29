@@ -17,7 +17,7 @@ use crate::core::pool::UpstreamConnectionPool;
 /// This function builds a mapping of resource URIs to the server and instance
 /// that provides them. It is used to route resource read requests to the appropriate upstream server.
 /// Unlike tools, resources use URI as unique identifier, so conflicts are handled by logging warnings.
-/// Only enabled resources (based on configuration suits) are included in the mapping.
+/// Only enabled resources (based on profile) are included in the mapping.
 ///
 /// # Arguments
 /// * `connection_pool` - The connection pool to use
@@ -66,9 +66,7 @@ pub async fn build_resource_mapping(
 
                         // Filter disabled resources if database is available
                         if let Some(db) = database {
-                            match super::status::is_resource_enabled(&db.pool, server_name, uri)
-                                .await
-                            {
+                            match super::status::is_resource_enabled(&db.pool, server_name, uri).await {
                                 Ok(enabled) => {
                                     if !enabled {
                                         tracing::debug!(
@@ -110,8 +108,7 @@ pub async fn build_resource_mapping(
                 Err(e) => {
                     // Check if this is a "method not found" error (server doesn't support resources)
                     let error_msg = format!("{}", e);
-                    if error_msg.contains("Method not found") || error_msg.contains("not supported")
-                    {
+                    if error_msg.contains("Method not found") || error_msg.contains("not supported") {
                         tracing::debug!(
                             "Server '{}' (instance: {}) does not support resources: {}",
                             server_name,
@@ -132,10 +129,7 @@ pub async fn build_resource_mapping(
         }
     }
 
-    tracing::debug!(
-        "Built resource mapping with {} resources",
-        resource_mapping.len()
-    );
+    tracing::debug!("Built resource mapping with {} resources", resource_mapping.len());
     resource_mapping
 }
 
@@ -175,16 +169,14 @@ pub async fn build_resource_template_mapping(
             );
 
             // Collect all resource templates from this instance with pagination
-            match collect_all_resource_templates_from_instance(conn, instance_id, server_name).await
-            {
+            match collect_all_resource_templates_from_instance(conn, instance_id, server_name).await {
                 Ok(templates) => {
                     resource_template_mapping.extend(templates);
                 }
                 Err(e) => {
                     // Check if this is a "method not found" error (server doesn't support resource templates)
                     let error_msg = format!("{}", e);
-                    if error_msg.contains("Method not found") || error_msg.contains("not supported")
-                    {
+                    if error_msg.contains("Method not found") || error_msg.contains("not supported") {
                         tracing::debug!(
                             "Server '{}' (instance: {}) does not support resource templates: {}",
                             server_name,
@@ -310,9 +302,7 @@ async fn collect_all_resource_templates_from_instance(
 ///
 /// # Returns
 /// * `Vec<rmcp::model::Resource>` - A vector of all available resources
-pub async fn get_all_resources(
-    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> Vec<rmcp::model::Resource> {
+pub async fn get_all_resources(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>) -> Vec<rmcp::model::Resource> {
     let mut all_resources = Vec::new();
 
     // Lock the connection pool to access it
@@ -366,7 +356,7 @@ pub async fn get_all_resources(
 /// # Returns
 /// * `Vec<rmcp::model::ResourceTemplate>` - A vector of all available resource templates
 pub async fn get_all_resource_templates(
-    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
 ) -> Vec<rmcp::model::ResourceTemplate> {
     let mut all_resource_templates = Vec::new();
 
@@ -387,8 +377,7 @@ pub async fn get_all_resource_templates(
             }
 
             // Collect all resource templates from this instance
-            match collect_all_resource_templates_from_instance(conn, instance_id, server_name).await
-            {
+            match collect_all_resource_templates_from_instance(conn, instance_id, server_name).await {
                 Ok(template_mappings) => {
                     // Convert ResourceTemplateMapping to ResourceTemplate
                     for mapping in template_mappings {
@@ -408,14 +397,9 @@ pub async fn get_all_resource_templates(
     }
 
     // Use the helper function to deduplicate by template name
-    let deduplicated_templates = crate::core::foundation::utils::deduplicate_by_key(
-        all_resource_templates,
-        |template| template.name.clone(),
-    );
+    let deduplicated_templates =
+        crate::core::foundation::utils::deduplicate_by_key(all_resource_templates, |template| template.name.clone());
 
-    tracing::debug!(
-        "Collected {} unique resource templates",
-        deduplicated_templates.len()
-    );
+    tracing::debug!("Collected {} unique resource templates", deduplicated_templates.len());
     deduplicated_templates
 }

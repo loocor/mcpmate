@@ -1,15 +1,15 @@
 //! Resource status checking functionality
 //!
-//! Contains functions for checking if resources are enabled in configuration suits
+//! Contains functions for checking if resources are enabled in profile
 
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use tracing;
 
-/// Check if a resource is enabled in any active configuration suit
+/// Check if a resource is enabled in any active profile
 ///
-/// This function checks if a resource is enabled by looking at all active configuration suits.
-/// A resource is considered enabled if it's enabled in at least one active configuration suit.
+/// This function checks if a resource is enabled by looking at all active profile.
+/// A resource is considered enabled if it's enabled in at least one active profile.
 ///
 /// # Arguments
 /// * `pool` - Database connection pool
@@ -17,8 +17,8 @@ use tracing;
 /// * `resource_uri` - URI of the resource to check
 ///
 /// # Returns
-/// * `Ok(true)` if the resource is enabled in at least one active configuration suit
-/// * `Ok(false)` if the resource is not enabled in any active configuration suit
+/// * `Ok(true)` if the resource is enabled in at least one active profile
+/// * `Ok(false)` if the resource is not enabled in any active profile
 /// * `Err(_)` if there was a database error
 pub async fn is_resource_enabled(
     pool: &Pool<Sqlite>,
@@ -31,13 +31,13 @@ pub async fn is_resource_enabled(
         server_name
     );
 
-    // Get all active configuration suits
-    let active_suits = crate::config::suit::get_active_config_suits(pool)
+    // Get all active profile
+    let active_profile = crate::config::profile::get_active_profile(pool)
         .await
-        .context("Failed to get active configuration suits")?;
+        .context("Failed to get active profile")?;
 
-    if active_suits.is_empty() {
-        tracing::debug!("No active configuration suits found, resource is disabled");
+    if active_profile.is_empty() {
+        tracing::debug!("No active profile found, resource is disabled");
         return Ok(false);
     }
 
@@ -60,25 +60,22 @@ pub async fn is_resource_enabled(
         }
     };
 
-    // Check each active configuration suit
-    for suit in active_suits {
-        if let Some(suit_id) = &suit.id {
-            // Get enabled resources for this configuration suit
-            let enabled_resources =
-                crate::config::suit::get_enabled_resources_for_config_suit(pool, suit_id)
-                    .await
-                    .context(format!(
-                        "Failed to get enabled resources for suit '{suit_id}'"
-                    ))?;
+    // Check each active profile
+    for profile in active_profile {
+        if let Some(profile_id) = &profile.id {
+            // Get enabled resources for this profile
+            let enabled_resources = crate::config::profile::get_enabled_resources_for_profile(pool, profile_id)
+                .await
+                .context(format!("Failed to get enabled resources for profile '{profile_id}'"))?;
 
             // Check if our resource is in the enabled list
             for resource in enabled_resources {
                 if resource.server_id == server_id && resource.resource_uri == resource_uri {
                     tracing::debug!(
-                        "Resource '{}' from server '{}' is enabled in configuration suit '{}'",
+                        "Resource '{}' from server '{}' is enabled in profile '{}'",
                         resource_uri,
                         server_name,
-                        suit.name
+                        profile.name
                     );
                     return Ok(true);
                 }
@@ -87,7 +84,7 @@ pub async fn is_resource_enabled(
     }
 
     tracing::debug!(
-        "Resource '{}' from server '{}' is not enabled in any active configuration suit",
+        "Resource '{}' from server '{}' is not enabled in any active profile",
         resource_uri,
         server_name
     );
@@ -121,10 +118,10 @@ pub async fn get_resource_status(
     // Check if the resource is enabled
     let enabled = is_resource_enabled(pool, server_name, resource_uri).await?;
 
-    // Get the resource ID from any active configuration suit
-    let active_suits = crate::config::suit::get_active_config_suits(pool)
+    // Get the resource ID from any active profile
+    let active_profile = crate::config::profile::get_active_profile(pool)
         .await
-        .context("Failed to get active configuration suits")?;
+        .context("Failed to get active profile")?;
 
     // Get the server ID
     let server = crate::config::server::get_server(pool, server_name)
@@ -143,12 +140,12 @@ pub async fn get_resource_status(
         }
     };
 
-    // Look for the resource in any active configuration suit
-    for suit in active_suits {
-        if let Some(suit_id) = &suit.id {
-            let resources = crate::config::suit::get_resources_for_config_suit(pool, suit_id)
+    // Look for the resource in any active profile
+    for profile in active_profile {
+        if let Some(profile_id) = &profile.id {
+            let resources = crate::config::profile::get_resources_for_profile(pool, profile_id)
                 .await
-                .context(format!("Failed to get resources for suit '{suit_id}'"))?;
+                .context(format!("Failed to get resources for profile '{profile_id}'"))?;
 
             for resource in resources {
                 if resource.server_id == server_id && resource.resource_uri == resource_uri {
@@ -161,7 +158,7 @@ pub async fn get_resource_status(
     }
 
     Err(anyhow::anyhow!(
-        "Resource '{}' from server '{}' not found in any active configuration suit",
+        "Resource '{}' from server '{}' not found in any active profile",
         resource_uri,
         server_name
     ))

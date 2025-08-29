@@ -146,28 +146,28 @@ impl MCPMateEngine {
         self.start_with_startup_config(config)
     }
 
-    /// Start with specific config suites
-    pub fn start_with_suites(
+    /// Start with specific profile
+    pub fn start_with_profile(
         &mut self,
         api_port: u16,
         mcp_port: u16,
-        suites: Vec<String>,
+        profile: Vec<String>,
     ) -> bool {
-        let config = StartupConfig::with_suites(api_port, mcp_port, suites);
+        let config = StartupConfig::with_profile(api_port, mcp_port, profile);
         self.start_with_startup_config(config)
     }
 
-    /// Start with no config suites
-    pub fn start_no_suites(
+    /// Start with no profile
+    pub fn start_no_profile(
         &mut self,
         api_port: u16,
         mcp_port: u16,
     ) -> bool {
-        let config = StartupConfig::no_suites(api_port, mcp_port);
+        let config = StartupConfig::no_profile(api_port, mcp_port);
         self.start_with_startup_config(config)
     }
 
-    /// Start with default configuration (load default config suites)
+    /// Start with default configuration (load default profile)
     pub fn start_default(
         &mut self,
         api_port: u16,
@@ -199,7 +199,7 @@ impl MCPMateEngine {
             api_port: config.api_port(),
             log_level: "info".to_string(),
             transport: "uni".to_string(),
-            config_suites: config.config_suites.clone(),
+            profile: config.profile.clone(),
             minimal: config.minimal,
         };
 
@@ -209,11 +209,11 @@ impl MCPMateEngine {
 
         // Log configuration information
         tracing::info!(
-            "Interop startup with configuration - API port: {}, MCP port: {}, minimal: {}, suites: {:?}",
+            "Interop startup with configuration - API port: {}, MCP port: {}, minimal: {}, profile: {:?}",
             config.api_port(),
             config.mcp_port(),
             config.minimal,
-            config.config_suites
+            config.profile
         );
 
         // Step 2: Setup database (30%)

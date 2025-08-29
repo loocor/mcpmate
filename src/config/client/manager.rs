@@ -181,7 +181,7 @@ impl ClientManager {
     /// Apply configuration to all enabled clients (batch operation)
     pub async fn apply_config_batch(
         &mut self,
-        suit_id: Option<String>,
+        profile_id: Option<String>,
     ) -> Result<BatchApplicationResult> {
         self.ensure_loaded().await?;
 
@@ -196,18 +196,15 @@ impl ClientManager {
             let generation_request = GenerationRequest {
                 identifier: client.identifier.clone(),
                 mode: GenerationMode::Transparent,
-                suit_id: suit_id.clone(),
-                servers: None, // Use all servers from the suit
+                profile_id: profile_id.clone(),
+                servers: None, // Use all servers from the profile
             };
 
             // Generate config
             let generated_config = match self.generate_config(&generation_request).await {
                 Ok(config) => config,
                 Err(e) => {
-                    failed_clients.insert(
-                        client.identifier.clone(),
-                        format!("Failed to generate config: {}", e),
-                    );
+                    failed_clients.insert(client.identifier.clone(), format!("Failed to generate config: {}", e));
                     continue;
                 }
             };
@@ -226,28 +223,18 @@ impl ClientManager {
                         successful_clients.push(client.identifier.clone());
 
                         // Update the client's config_mode to transparent
-                        if let Err(e) = self
-                            .update_client_config_mode(&client.identifier, "transparent")
-                            .await
-                        {
-                            tracing::warn!(
-                                "Failed to update config_mode for client {}: {}",
-                                client.identifier,
-                                e
-                            );
+                        if let Err(e) = self.update_client_config_mode(&client.identifier, "transparent").await {
+                            tracing::warn!("Failed to update config_mode for client {}: {}", client.identifier, e);
                         }
                     } else {
                         failed_clients.insert(
                             client.identifier,
-                            result
-                                .error_message
-                                .unwrap_or_else(|| "Unknown error".to_string()),
+                            result.error_message.unwrap_or_else(|| "Unknown error".to_string()),
                         );
                     }
                 }
                 Err(e) => {
-                    failed_clients
-                        .insert(client.identifier, format!("Failed to apply config: {}", e));
+                    failed_clients.insert(client.identifier, format!("Failed to apply config: {}", e));
                 }
             }
         }
@@ -298,13 +285,7 @@ impl ClientManager {
         let resolved_path = self
             .path_mapper
             .resolve_template(&config.config_path)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to resolve config path '{}': {}",
-                    config.config_path,
-                    e
-                )
-            })?;
+            .map_err(|e| anyhow::anyhow!("Failed to resolve config path '{}': {}", config.config_path, e))?;
         let config_path = &resolved_path;
 
         // Create parent directories if they don't exist
@@ -329,18 +310,14 @@ impl ClientManager {
         config: &GeneratedConfig,
     ) -> Result<bool> {
         // Query database to check if this client uses mixed config type
-        let config_type: Option<String> = sqlx::query_scalar(
-            "SELECT config_type FROM client_config_rules WHERE identifier = ?",
-        )
-        .bind(&config.identifier)
-        .fetch_optional(&*self.db_pool)
-        .await?;
+        let config_type: Option<String> =
+            sqlx::query_scalar("SELECT config_type FROM client_config_rules WHERE identifier = ?")
+                .bind(&config.identifier)
+                .fetch_optional(&*self.db_pool)
+                .await?;
 
         // Check if config_type is 'mixed' (default to 'standard' if not found)
-        let is_mixed = config_type
-            .unwrap_or_else(|| "standard".to_string())
-            .as_str()
-            == "mixed";
+        let is_mixed = config_type.unwrap_or_else(|| "standard".to_string()).as_str() == "mixed";
 
         Ok(is_mixed)
     }
@@ -359,16 +336,13 @@ impl ClientManager {
         };
 
         // Parse existing configuration
-        let mut existing_config: Value =
-            serde_json::from_str(&existing_content).unwrap_or_else(|_| json!({}));
+        let mut existing_config: Value = serde_json::from_str(&existing_content).unwrap_or_else(|_| json!({}));
 
         // Parse new MCP configuration
         let new_mcp_config: Value = serde_json::from_str(&config.config_content)?;
 
         // Get the top-level key for this client (e.g., "mcpServers" or "context_servers")
-        let top_level_key = self
-            .get_client_top_level_key(&config.identifier)
-            .await?;
+        let top_level_key = self.get_client_top_level_key(&config.identifier).await?;
 
         // Update only the MCP-related section (supports nested paths like "mcp.servers")
         if let Some(mcp_section) = get_nested_value(&new_mcp_config, &top_level_key) {
@@ -387,12 +361,11 @@ impl ClientManager {
         &self,
         identifier: &str,
     ) -> Result<String> {
-        let top_level_key: String = sqlx::query_scalar(
-            "SELECT top_level_key FROM client_config_rules WHERE identifier = ?",
-        )
-        .bind(identifier)
-        .fetch_one(&*self.db_pool)
-        .await?;
+        let top_level_key: String =
+            sqlx::query_scalar("SELECT top_level_key FROM client_config_rules WHERE identifier = ?")
+                .bind(identifier)
+                .fetch_one(&*self.db_pool)
+                .await?;
 
         Ok(top_level_key)
     }

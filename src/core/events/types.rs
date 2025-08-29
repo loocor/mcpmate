@@ -29,58 +29,58 @@ pub enum Event {
         enabled: bool,
     },
 
-    /// Config suit enabled status changed
-    ConfigSuitStatusChanged {
-        /// Config suit ID
-        suit_id: String,
+    /// Config profile enabled status changed
+    ProfileStatusChanged {
+        /// Config profile ID
+        profile_id: String,
         /// New enabled status
         enabled: bool,
     },
 
-    /// Server enabled status changed in a config suit
-    ServerEnabledInSuitChanged {
+    /// Server enabled status changed in a profile
+    ServerEnabledInProfileChanged {
         /// Server ID
         server_id: String,
         /// Server name
         server_name: String,
-        /// Config suit ID
-        suit_id: String,
+        /// Config profile ID
+        profile_id: String,
         /// New enabled status
         enabled: bool,
     },
 
-    /// Tool enabled status changed in a config suit
-    ToolEnabledInSuitChanged {
+    /// Tool enabled status changed in a profile
+    ToolEnabledInProfileChanged {
         /// Tool ID
         tool_id: String,
         /// Tool name
         tool_name: String,
-        /// Config suit ID
-        suit_id: String,
+        /// Config profile ID
+        profile_id: String,
         /// New enabled status
         enabled: bool,
     },
 
-    /// Resource enabled status changed in a config suit
-    ResourceEnabledInSuitChanged {
+    /// Resource enabled status changed in a profile
+    ResourceEnabledInProfileChanged {
         /// Resource ID
         resource_id: String,
         /// Resource URI
         resource_uri: String,
-        /// Config suit ID
-        suit_id: String,
+        /// Config profile ID
+        profile_id: String,
         /// New enabled status
         enabled: bool,
     },
 
-    /// Prompt enabled status changed in a config suit
-    PromptEnabledInSuitChanged {
+    /// Prompt enabled status changed in a profile
+    PromptEnabledInProfileChanged {
         /// Prompt ID
         prompt_id: String,
         /// Prompt name
         prompt_name: String,
-        /// Config suit ID
-        suit_id: String,
+        /// Config profile ID
+        profile_id: String,
         /// New enabled status
         enabled: bool,
     },
@@ -184,8 +184,8 @@ pub enum Event {
 
     /// Configuration application started
     ConfigApplicationStarted {
-        /// Configuration suit ID that triggered the application
-        suit_id: String,
+        /// Profile ID that triggered the application
+        profile_id: String,
         /// List of servers that need to be started
         servers_to_start: Vec<String>,
         /// List of servers that need to be stopped
@@ -230,8 +230,8 @@ pub enum Event {
 
     /// Configuration application completed
     ConfigApplicationCompleted {
-        /// Configuration suit ID that triggered the application
-        suit_id: String,
+        /// Profile ID that triggered the application
+        profile_id: String,
         /// Total number of servers processed
         total_servers: usize,
         /// Successfully started servers
@@ -246,8 +246,8 @@ pub enum Event {
 
     /// Configuration application progress update
     ConfigApplicationProgress {
-        /// Configuration suit ID
-        suit_id: String,
+        /// Profile ID
+        profile_id: String,
         /// Current stage description
         stage: String,
         /// Progress percentage (0-100)

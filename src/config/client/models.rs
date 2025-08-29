@@ -337,7 +337,7 @@ pub enum GenerationMode {
 pub struct GenerationRequest {
     pub identifier: String,
     pub mode: GenerationMode,
-    pub suit_id: Option<String>,
+    pub profile_id: Option<String>,
     pub servers: Option<Vec<String>>, // Specific servers to include
 }
 

@@ -1,5 +1,5 @@
-use std::marker::PhantomData;
 use std::fmt;
+use std::marker::PhantomData;
 
 // Internal helper to create alphabet without underscore and hyphen
 pub fn create_safe_alphabet() -> Vec<char> {
@@ -36,13 +36,19 @@ impl<T> TypedId<T> {
 }
 
 impl<T> fmt::Debug for TypedId<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         write!(f, "TypedId({})", self.id)
     }
 }
 
 impl<T> fmt::Display for TypedId<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         write!(f, "{}", self.id)
     }
 }
@@ -61,7 +67,7 @@ impl<T> From<TypedId<T>> for String {
 
 // Type markers for different ID types
 pub struct Server;
-pub struct Suit;
+pub struct Profile;
 pub struct Session;
 pub struct Connection;
 pub struct Tool;
@@ -70,7 +76,7 @@ pub struct Prompt;
 
 // Type aliases for convenience
 pub type ServerId = TypedId<Server>;
-pub type SuitId = TypedId<Suit>;
+pub type ProfileId = TypedId<Profile>;
 pub type SessionId = TypedId<Session>;
 pub type ConnectionId = TypedId<Connection>;
 pub type ToolId = TypedId<Tool>;
@@ -96,7 +102,7 @@ pub type PromptId = TypedId<Prompt>;
 /// assert_eq!(id.len(), 3 + 10); // "SRV" + 10 random characters
 ///
 /// // With default length (12)
-/// let id = generate_id!("suit");
+/// let id = generate_id!("profile");
 /// assert!(id.starts_with("SUIT"));
 /// assert_eq!(id.len(), 4 + 12); // "SUIT" + 12 random characters
 /// ```
@@ -123,13 +129,13 @@ macro_rules! generate_id {
 ///
 /// # Examples
 /// ```rust,no_run
-/// use mcpmate::{generate_typed_id, macros::id::{Server, Suit}};
+/// use mcpmate::{generate_typed_id, macros::id::{Server, Profile}};
 ///
 /// let server_id = generate_typed_id!("srv", Server);
-/// let suit_id = generate_typed_id!("suit", Suit, 8);
+/// let profile_id = generate_typed_id!("profile", Profile, 8);
 ///
 /// // Compile-time error: cannot mix different ID types
-/// // let mixed = server_id == suit_id; // This won't compile!
+/// // let mixed = server_id == profile_id; // This won't compile!
 /// ```
 #[macro_export]
 macro_rules! generate_typed_id {

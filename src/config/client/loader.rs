@@ -6,7 +6,7 @@ use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::common::config::defaults;
+use crate::common::profile::defaults;
 
 use crate::config::client::models::GenerationRequest;
 
@@ -44,9 +44,9 @@ impl ServerLoader {
             return self.get_servers_by_ids(server_ids).await;
         }
 
-        // If suit_id is provided, get servers from that suit
-        if let Some(suit_id) = &request.suit_id {
-            return self.get_servers_by_config_suit(suit_id).await;
+        // If profile_id is provided, get servers from that profile
+        if let Some(profile_id) = &request.profile_id {
+            return self.get_servers_by_profile(profile_id).await;
         }
 
         // Default: get all enabled servers
@@ -67,22 +67,22 @@ impl ServerLoader {
         Ok(servers)
     }
 
-    /// Get servers by config suit ID
-    pub async fn get_servers_by_config_suit(
+    /// Get servers by profile ID
+    pub async fn get_servers_by_profile(
         &self,
-        suit_id: &str,
+        profile_id: &str,
     ) -> Result<Vec<ServerInfo>> {
         let rows = sqlx::query(
             r#"
             SELECT cs.server_id, cs.server_name, cs.enabled,
                    s.command, s.url, s.server_type, s.transport_type
-            FROM config_suit_server cs
+            FROM profile_server cs
             JOIN server_config s ON cs.server_id = s.id
-            WHERE cs.suit_id = ? AND cs.enabled = TRUE AND s.enabled = TRUE
+            WHERE cs.profile_id = ? AND cs.enabled = TRUE AND s.enabled = TRUE
             ORDER BY cs.server_name
             "#,
         )
-        .bind(suit_id)
+        .bind(profile_id)
         .fetch_all(self.db_pool.as_ref())
         .await?;
 

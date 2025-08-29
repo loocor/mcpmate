@@ -1,6 +1,6 @@
 //!
 //! This module provides a unified service for all resource-related operations
-//! that are driven by database configuration suits.
+//! that are driven by database profile.
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -31,12 +31,12 @@ impl DatabaseResourceService {
 
     /// Get all enabled resources from the database.
     ///
-    /// This function retrieves all enabled resources from active configuration suits,
+    /// This function retrieves all enabled resources from active profile,
     /// ensuring that no duplicates are returned.
     pub async fn get_enabled_resources(&self) -> Result<Vec<Resource>> {
         tracing::debug!("Getting all enabled resources from database");
 
-        let query = crate::config::suit::resource::build_enabled_resources_query(None);
+        let query = crate::config::profile::resource::build_enabled_resources_query(None);
         let enabled_resources_tuples = sqlx::query_as::<_, (String, String)>(&query)
             .fetch_all(&self.db.pool)
             .await

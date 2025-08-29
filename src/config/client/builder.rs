@@ -10,7 +10,7 @@ use super::loader::{ServerInfo, ServerLoader};
 use super::models::{ConfigRule, GeneratedConfig, GenerationMode, GenerationRequest};
 use super::strategy::TransportStrategy;
 use super::utils::set_nested_value;
-use crate::common::{config::config_keys, constants::transport};
+use crate::common::{constants::transport, profile::profile_keys};
 
 /// Configuration builder that orchestrates the generation process
 pub struct ConfigBuilder {
@@ -212,7 +212,7 @@ impl ConfigBuilder {
                     &mut config,
                     &config_rule.top_level_key,
                     json!({
-                        config_keys::MCPMATE: endpoint_config
+                        profile_keys::MCPMATE: endpoint_config
                     }),
                 );
             }
@@ -249,7 +249,7 @@ impl ConfigBuilder {
 
                 // Create a MCPMate config object and add to array
                 let mut mcpmate_config = endpoint_config.as_object().cloned().unwrap_or_default();
-                mcpmate_config.insert("name".to_string(), json!(config_keys::MCPMATE));
+                mcpmate_config.insert("name".to_string(), json!(profile_keys::MCPMATE));
 
                 // Return as an array with a single element
                 Ok(json!([mcpmate_config]))

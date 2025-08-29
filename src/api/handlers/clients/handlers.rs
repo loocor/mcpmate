@@ -16,7 +16,7 @@ use crate::api::routes::AppState;
 
 use crate::config::client::manager::ClientManager;
 use crate::config::client::models::{ApplicationRequest, GenerationMode, GenerationRequest};
-use crate::config::suit::basic::get_active_config_suits;
+use crate::config::profile::basic::get_active_profile;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -275,21 +275,21 @@ async fn client_config_update_core(
     let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
 
     // Convert API request to internal request format
-    let suit_id = match &request.selected_config {
-        ClientConfigSelected::Suit { suit_id } => Some(suit_id.clone()),
+    let profile_id = match &request.selected_config {
+        ClientConfigSelected::Profile { profile_id } => Some(profile_id.clone()),
         ClientConfigSelected::Default => {
-            // For Default mode, get the currently active config suit ID
-            match get_active_config_suits(db_pool).await {
-                Ok(active_suits) => {
-                    if let Some(suit) = active_suits.first() {
-                        suit.id.clone()
+            // For Default mode, get the currently active profile ID
+            match get_active_profile(db_pool).await {
+                Ok(active_profile) => {
+                    if let Some(profile) = active_profile.first() {
+                        profile.id.clone()
                     } else {
-                        tracing::warn!("No active config suits found for default mode");
+                        tracing::warn!("No active profile found for default mode");
                         None
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to get active config suits: {}", e);
+                    tracing::error!("Failed to get active  profile: {}", e);
                     None
                 }
             }
@@ -303,7 +303,7 @@ async fn client_config_update_core(
             ClientConfigMode::Hosted => GenerationMode::Hosted,
             ClientConfigMode::Transparent => GenerationMode::Transparent,
         },
-        suit_id,
+        profile_id,
         servers: match &request.selected_config {
             ClientConfigSelected::Servers { server_ids } => {
                 // For hosted mode, ignore servers parameter

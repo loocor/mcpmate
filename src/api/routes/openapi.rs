@@ -52,8 +52,8 @@ pub fn api_docs(api: TransformOpenApi) -> TransformOpenApi {
             ..Default::default()
         })
         .tag(Tag {
-            name: "suits".into(),
-            description: Some("Configuration suit management endpoints".into()),
+            name: "profile".into(),
+            description: Some("Profile management endpoints".into()),
             ..Default::default()
         })
         .tag(Tag {

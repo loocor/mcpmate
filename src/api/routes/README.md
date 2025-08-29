@@ -11,7 +11,7 @@ Routes define the URL structure and HTTP methods for the API endpoints. They map
 - `mod.rs` - Routes module entry point that combines all route modules
 - `mcp.rs` - Routes for MCP server management (`/api/mcp/servers/*`)
 - `tool.rs` - Routes for tool management (`/api/mcp/tools/*`)
-- `suit.rs` - Routes for config suit management (`/api/mcp/suits/*`)
+- `profile.rs` - Routes for profile management (`/api/mcp/profile/*`)
 - `specs.rs` - Routes for MCP specification-compliant endpoints (`/api/mcp/specs/*`)
 - `system.rs` - Routes for system operations (`/api/system/*`)
 - `notifs.rs` - Routes for notification management (`/api/notifications/*`)
@@ -47,7 +47,7 @@ Through a systematic review of API endpoints, we've identified several potential
 
 ### 3. Missing Delete Operations
 
-- Server management lacks a delete endpoint (DELETE method), while config suit management includes delete operations.
+- Server management lacks a delete endpoint (DELETE method), while profile management includes delete operations.
 
 ### 4. Inconsistent Parameter Naming
 
@@ -55,7 +55,7 @@ Through a systematic review of API endpoints, we've identified several potential
 
 ### 5. Inconsistent Batch Operations
 
-- Config suit management includes batch operation endpoints, but server and tool management lack corresponding batch operations.
+- Profile management includes batch operation endpoints, but server and tool management lack corresponding batch operations.
 
 ### 6. Documentation Mismatch with Actual Code
 
@@ -80,7 +80,7 @@ Through a systematic review of API endpoints, we've identified several potential
    - For operations that don't fit the CRUD model, use consistent verb naming (e.g., `/activate`, `/deactivate`)
 
 4. **Add Batch Operations**:
-   - Add batch operation endpoints for server and tool management, consistent with config suit management
+   - Add batch operation endpoints for server and tool management, consistent with profile management
 
 5. **Update Documentation**:
    - Ensure documentation matches the actual code

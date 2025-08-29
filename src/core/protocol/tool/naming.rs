@@ -65,7 +65,7 @@ pub async fn resolve_unique_name(
     let result = sqlx::query_as::<_, (String, String)>(
         r#"
         SELECT server_name, tool_name
-        FROM config_suit_tool
+        FROM profile_tool
         WHERE unique_name = ?
         "#,
     )

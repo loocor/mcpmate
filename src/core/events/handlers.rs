@@ -10,8 +10,8 @@ use crate::core::foundation::error::CoreResult;
 
 /// Simplified event handlers without complex callback system
 pub struct EventHandlers {
-    /// Optional suit service for cache invalidation
-    pub suit_service: Option<Arc<crate::core::suit::SuitService>>,
+    /// Optional profile service for cache invalidation
+    pub profile_service: Option<Arc<crate::core::profile::ProfileService>>,
     /// Optional connection pool for server management
     pub connection_pool: Option<Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>>,
     /// Optional event-driven capability manager for server capability sync
@@ -28,19 +28,19 @@ impl EventHandlers {
     /// Create new event handlers
     pub fn new() -> Self {
         Self {
-            suit_service: None,
+            profile_service: None,
             connection_pool: None,
             event_capability_manager: None,
         }
     }
 
-    /// Set suit service for cache invalidation
-    pub fn set_suit_service(
+    /// Set profile service for cache invalidation
+    pub fn set_profile_service(
         &mut self,
-        suit_service: Arc<crate::core::suit::SuitService>,
+        profile_service: Arc<crate::core::profile::ProfileService>,
     ) {
-        self.suit_service = Some(suit_service);
-        info!("Set suit service for event handlers");
+        self.profile_service = Some(profile_service);
+        info!("Set profile service for event handlers");
     }
 
     /// Set connection pool for server management
@@ -86,39 +86,39 @@ impl EventHandlers {
         event: Event,
     ) {
         match event {
-            // Config suit status changed - trigger server management
-            Event::ConfigSuitStatusChanged { suit_id, enabled } => {
-                debug!("Handling ConfigSuitStatusChanged: {} -> {}", suit_id, enabled);
+            // Config profile status changed - trigger server management
+            Event::ProfileStatusChanged { profile_id, enabled } => {
+                debug!("Handling ProfileStatusChanged: {} -> {}", profile_id, enabled);
 
                 // Invalidate cache first
-                if let Some(suit_service) = &self.suit_service {
-                    suit_service.invalidate_cache().await;
+                if let Some(profile_service) = &self.profile_service {
+                    profile_service.invalidate_cache().await;
                 }
 
-                // Sync servers from active suits using connection pool
+                // Sync servers from active profile using connection pool
                 if let Some(connection_pool) = &self.connection_pool {
                     let mut pool = connection_pool.lock().await;
-                    if let Err(e) = pool.sync_servers_from_active_suits().await {
-                        error!("Failed to sync servers after suit change: {}", e);
+                    if let Err(e) = pool.sync_servers_from_active_profile().await {
+                        error!("Failed to sync servers after profile change: {}", e);
                     }
                 }
             }
 
-            // Server enabled in suit changed - trigger immediate server management for active suits
-            Event::ServerEnabledInSuitChanged {
+            // Server enabled in profile changed - trigger immediate server management for active profile
+            Event::ServerEnabledInProfileChanged {
                 server_id: _,
                 server_name,
-                suit_id,
+                profile_id,
                 enabled,
             } => {
                 debug!(
-                    "Handling ServerEnabledInSuitChanged: server '{}' in suit '{}' -> {}",
-                    server_name, suit_id, enabled
+                    "Handling ServerEnabledInProfileChanged: server '{}' in profile '{}' -> {}",
+                    server_name, profile_id, enabled
                 );
 
                 // Invalidate cache
-                if let Some(suit_service) = &self.suit_service {
-                    suit_service.invalidate_cache().await;
+                if let Some(profile_service) = &self.profile_service {
+                    profile_service.invalidate_cache().await;
                 }
 
                 // Use connection pool to manage server status
@@ -135,15 +135,15 @@ impl EventHandlers {
                 debug!("Handling server sync event: {:?}", event);
 
                 // Invalidate cache
-                if let Some(suit_service) = &self.suit_service {
-                    suit_service.invalidate_cache().await;
+                if let Some(profile_service) = &self.profile_service {
+                    profile_service.invalidate_cache().await;
                 }
             }
 
             // Events that don't require server synchronization
-            Event::ToolEnabledInSuitChanged { .. }
-            | Event::ResourceEnabledInSuitChanged { .. }
-            | Event::PromptEnabledInSuitChanged { .. } => {
+            Event::ToolEnabledInProfileChanged { .. }
+            | Event::ResourceEnabledInProfileChanged { .. }
+            | Event::PromptEnabledInProfileChanged { .. } => {
                 debug!("Configuration changed, no server sync needed: {:?}", event);
             }
 
@@ -216,13 +216,13 @@ impl EventHandlers {
 
             // New server management events - log for debugging
             Event::ConfigApplicationStarted {
-                suit_id,
+                profile_id,
                 servers_to_start,
                 servers_to_stop,
             } => {
                 info!(
-                    "Config application started for suit {}: {} servers to start, {} to stop",
-                    suit_id,
+                    "Config application started for profile {}: {} servers to start, {} to stop",
+                    profile_id,
                     servers_to_start.len(),
                     servers_to_stop.len()
                 );
@@ -243,7 +243,10 @@ impl EventHandlers {
                 error,
             } => {
                 if success {
-                    info!("Server {} (ID: {}) startup completed successfully", server_name, server_id);
+                    info!(
+                        "Server {} (ID: {}) startup completed successfully",
+                        server_name, server_id
+                    );
 
                     // Trigger capability sync for newly connected server using lightweight manager
                     if let Some(event_capability_manager) = &self.event_capability_manager {
@@ -274,7 +277,10 @@ impl EventHandlers {
                     }
                 } else {
                     let error_message = error.unwrap_or_else(|| "Unknown error".to_string());
-                    warn!("Server {} (ID: {}) startup failed: {}", server_name, server_id, error_message);
+                    warn!(
+                        "Server {} (ID: {}) startup failed: {}",
+                        server_name, server_id, error_message
+                    );
                     debug!(
                         "Server '{}' (ID: {}) connection failed: {}, skipping capability sync",
                         server_name, server_id, error_message
@@ -295,7 +301,7 @@ impl EventHandlers {
             }
 
             Event::ConfigApplicationCompleted {
-                suit_id,
+                profile_id,
                 total_servers,
                 started_servers,
                 stopped_servers,
@@ -303,8 +309,8 @@ impl EventHandlers {
                 duration_ms,
             } => {
                 info!(
-                    "Config application completed for suit {}: {} total, {} started, {} stopped, {} failed in {}ms",
-                    suit_id,
+                    "Config application completed for profile {}: {} total, {} started, {} stopped, {} failed in {}ms",
+                    profile_id,
                     total_servers,
                     started_servers.len(),
                     stopped_servers.len(),
@@ -318,14 +324,14 @@ impl EventHandlers {
             }
 
             Event::ConfigApplicationProgress {
-                suit_id,
+                profile_id,
                 stage,
                 progress,
                 estimated_remaining_seconds,
             } => {
                 debug!(
-                    "Config application progress for suit {}: {} ({}%{})",
-                    suit_id,
+                    "Config application progress for profile {}: {} ({}%{})",
+                    profile_id,
                     stage,
                     progress,
                     estimated_remaining_seconds

@@ -32,8 +32,8 @@ pub mod protocol;
 // proxy core business logic - depends on protocol layer
 pub mod proxy;
 
-// suit configuration business logic - depends on foundation layer
-pub mod suit;
+// profile configuration business logic - depends on foundation layer
+pub mod profile;
 
 // cache system - high-performance Redb-based caching
 pub mod cache;
@@ -47,8 +47,7 @@ pub use proxy::{Args as ProxyArgs, ProxyServer};
 // re-export core interfaces, keeping compatibility with the original core module
 pub use events::{
     Event, EventBus, EventHandlers, EventReceiver, init as init_events,
-    init_with_handlers as init_events_with_handlers, needs_transport_ready_wait,
-    wait_for_transport_ready,
+    init_with_handlers as init_events_with_handlers, needs_transport_ready_wait, wait_for_transport_ready,
 };
 
 pub use protocol::{
@@ -90,4 +89,4 @@ pub use protocol::{
 };
 
 // AI module re-exports
-pub use ai::{AiConfig, TextMcpExtractor, extract_mcp_config, default_model_path};
+pub use ai::{AiConfig, TextMcpExtractor, default_model_path, extract_mcp_config};

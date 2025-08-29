@@ -210,12 +210,12 @@ pub struct ServerDetailsData {
     pub id: Option<String>,
     /// Server name
     pub name: String,
-    /// Is enabled in configuration (combined global and suit status)
+    /// Is enabled in configuration (combined global and profile status)
     pub enabled: bool,
     /// Is globally enabled (server_config.enabled)
     pub globally_enabled: bool,
-    /// Is enabled in any active config suit (config_suit_server.enabled)
-    pub enabled_in_suits: bool,
+    /// Is enabled in any active profile (profile_server.enabled)
+    pub enabled_in_profile: bool,
     /// Server type (stdio, sse, streamable_http)
     pub server_type: ServerType,
     /// Command to execute (for stdio servers)
@@ -488,8 +488,8 @@ pub struct ServerCreateReq {
     #[schemars(description = "Environment variables to set (optional for stdio type)")]
     pub env: Option<HashMap<String, String>>,
 
-    /// Whether to enable the server in the default configuration suit
-    #[schemars(description = "Whether to enable this server in the default configuration suit")]
+    /// Whether to enable the server in the default profile
+    #[schemars(description = "Whether to enable this server in the default profile")]
     pub enabled: Option<bool>,
 }
 

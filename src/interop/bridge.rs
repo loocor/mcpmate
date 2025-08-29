@@ -171,9 +171,7 @@ pub unsafe extern "C" fn mcpmate_engine_is_running(engine: *mut MCPMateEngine) -
 /// - The caller must free the returned string using `mcpmate_string_free`
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mcpmate_engine_get_startup_progress_json(
-    engine: *mut MCPMateEngine
-) -> *const c_char {
+pub unsafe extern "C" fn mcpmate_engine_get_startup_progress_json(engine: *mut MCPMateEngine) -> *const c_char {
     if engine.is_null() {
         return ptr::null();
     }
@@ -200,9 +198,7 @@ pub unsafe extern "C" fn mcpmate_engine_get_startup_progress_json(
 /// - The caller must free the returned string using `mcpmate_string_free`
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mcpmate_engine_get_service_info_json(
-    engine: *mut MCPMateEngine
-) -> *const c_char {
+pub unsafe extern "C" fn mcpmate_engine_get_service_info_json(engine: *mut MCPMateEngine) -> *const c_char {
     if engine.is_null() {
         return ptr::null();
     }
@@ -303,10 +299,7 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_startup_config(
     let config_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!(
-                "Failed to convert startup config JSON to UTF-8 string: {}",
-                e
-            );
+            tracing::error!("Failed to convert startup config JSON to UTF-8 string: {}", e);
             return false;
         }
     };
@@ -324,29 +317,26 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_startup_config(
     let engine = unsafe { &mut *engine };
     let result = engine.start_with_startup_config(config);
 
-    tracing::info!(
-        "MCPMate engine start_with_startup_config result: {}",
-        result
-    );
+    tracing::info!("MCPMate engine start_with_startup_config result: {}", result);
     result
 }
 
-/// Start MCPMate service with specific config suites
+/// Start MCPMate service with specific profile
 ///
 /// # Safety
 ///
 /// This function is unsafe because it:
 /// - Dereferences raw pointers that must be valid and properly aligned
 /// - The caller must ensure `engine` points to a valid MCPMateEngine instance
-/// - The caller must ensure `suites_json` points to a valid null-terminated C string
+/// - The caller must ensure `profile_json` points to a valid null-terminated C string
 /// - The caller must ensure `engine` is not accessed concurrently from other threads
 #[cfg(feature = "interop")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mcpmate_engine_start_with_suites(
+pub unsafe extern "C" fn mcpmate_engine_start_with_profile(
     engine: *mut MCPMateEngine,
     api_port: u16,
     mcp_port: u16,
-    suites_json: *const c_char,
+    profile_json: *const c_char,
 ) -> bool {
     // Validate engine pointer
     if engine.is_null() {
@@ -354,35 +344,35 @@ pub unsafe extern "C" fn mcpmate_engine_start_with_suites(
         return false;
     }
 
-    // Validate suites JSON pointer
-    if suites_json.is_null() {
-        tracing::error!("Suites JSON pointer is null");
+    // Validate profile JSON pointer
+    if profile_json.is_null() {
+        tracing::error!("Profile JSON pointer is null");
         return false;
     }
 
     // Convert C string to Rust string
-    let suites_str = match unsafe { CStr::from_ptr(suites_json) }.to_str() {
+    let profile_str = match unsafe { CStr::from_ptr(profile_json) }.to_str() {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!("Failed to convert suites JSON to UTF-8 string: {}", e);
+            tracing::error!("Failed to convert profile JSON to UTF-8 string: {}", e);
             return false;
         }
     };
 
     // Parse JSON to Vec<String>
-    let suites: Vec<String> = match serde_json::from_str(suites_str) {
-        Ok(suites) => suites,
+    let profile: Vec<String> = match serde_json::from_str(profile_str) {
+        Ok(profile) => profile,
         Err(e) => {
-            tracing::error!("Failed to parse suites JSON: {}", e);
+            tracing::error!("Failed to parse profile JSON: {}", e);
             return false;
         }
     };
 
-    // Get mutable reference to engine and start with suites
+    // Get mutable reference to engine and start with profile
     let engine = unsafe { &mut *engine };
-    let result = engine.start_with_suites(api_port, mcp_port, suites);
+    let result = engine.start_with_profile(api_port, mcp_port, profile);
 
-    tracing::info!("MCPMate engine start_with_suites result: {}", result);
+    tracing::info!("MCPMate engine start_with_profile result: {}", result);
     result
 }
 

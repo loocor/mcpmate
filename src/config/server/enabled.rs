@@ -18,7 +18,7 @@ use crate::config::models::Server;
 /// Unified service for determining server enabled status
 ///
 /// This service implements the canonical logic for checking if a server is enabled:
-/// 1. Server must be enabled in at least one active configuration suit
+/// 1. Server must be enabled in at least one active profile
 /// 2. Server must be globally enabled in the server_config table
 ///
 /// Both conditions must be true for a server to be considered enabled.
@@ -42,17 +42,17 @@ impl ServerEnabledService {
     /// - `server_id`: Server ID to check
     ///
     /// # Returns
-    /// - `Ok(true)`: Server is enabled (both in suits and globally)
-    /// - `Ok(false)`: Server is disabled (either in suits or globally)
+    /// - `Ok(true)`: Server is enabled (both in profile and globally)
+    /// - `Ok(false)`: Server is disabled (either in profile or globally)
     /// - `Err(...)`: Database or other error
     pub async fn is_server_enabled(
         &self,
         server_id: &str,
     ) -> Result<bool> {
-        // Check if server is enabled in any active suit
-        let enabled_in_suits = self.is_server_enabled_in_any_active_suit(server_id).await?;
+        // Check if server is enabled in any active profile
+        let enabled_in_profile = self.is_server_enabled_in_any_active_profile(server_id).await?;
 
-        if !enabled_in_suits {
+        if !enabled_in_profile {
             return Ok(false);
         }
 
@@ -65,7 +65,7 @@ impl ServerEnabledService {
     /// Get all enabled servers (canonical implementation)
     ///
     /// This method returns all servers that are both:
-    /// 1. Enabled in at least one active configuration suit
+    /// 1. Enabled in at least one active profile
     /// 2. Globally enabled in the server_config table
     pub async fn get_all_enabled_servers(&self) -> Result<Vec<Server>> {
         // Get all servers first
@@ -75,16 +75,16 @@ impl ServerEnabledService {
             return Ok(Vec::new());
         }
 
-        // Get enabled server IDs from active suits
-        let enabled_in_suits = self.get_server_ids_enabled_in_active_suits().await?;
+        // Get enabled server IDs from active profile
+        let enabled_in_profile = self.get_server_ids_enabled_in_active_profile().await?;
 
-        // Filter servers by both suit-level and global enabled status
+        // Filter servers by both profile-level and global enabled status
         let enabled_servers: Vec<Server> = all_servers
             .into_iter()
             .filter(|server| {
                 if let Some(id) = &server.id {
-                    // Check both conditions: enabled in suits AND globally enabled
-                    enabled_in_suits.contains(id) && server.enabled.as_bool()
+                    // Check both conditions: enabled in profile AND globally enabled
+                    enabled_in_profile.contains(id) && server.enabled.as_bool()
                 } else {
                     false // Server without ID is not enabled
                 }
@@ -96,12 +96,12 @@ impl ServerEnabledService {
         Ok(enabled_servers)
     }
 
-    /// Get enabled servers from specific configuration suites
-    pub async fn get_enabled_servers_from_suites(
+    /// Get enabled servers from specific profile
+    pub async fn get_enabled_servers_from_profile(
         &self,
-        suite_ids: &[String],
+        profile_ids: &[String],
     ) -> Result<Vec<Server>> {
-        if suite_ids.is_empty() {
+        if profile_ids.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -112,16 +112,16 @@ impl ServerEnabledService {
             return Ok(Vec::new());
         }
 
-        // Get enabled server IDs from specified suits
-        let enabled_in_suits = self.get_server_ids_enabled_in_suites(suite_ids).await?;
+        // Get enabled server IDs from specified profile
+        let enabled_in_profile = self.get_server_ids_enabled_in_profile(profile_ids).await?;
 
-        // Filter servers by both suit-level and global enabled status
+        // Filter servers by both profile-level and global enabled status
         let enabled_servers: Vec<Server> = all_servers
             .into_iter()
             .filter(|server| {
                 if let Some(id) = &server.id {
-                    // Check both conditions: enabled in suits AND globally enabled
-                    enabled_in_suits.contains(id) && server.enabled.as_bool()
+                    // Check both conditions: enabled in profile AND globally enabled
+                    enabled_in_profile.contains(id) && server.enabled.as_bool()
                 } else {
                     false // Server without ID is not enabled
                 }
@@ -129,30 +129,33 @@ impl ServerEnabledService {
             .collect();
 
         tracing::info!(
-            "Found {} enabled servers from specified suites using unified service",
+            "Found {} enabled servers from specified profile using unified service",
             enabled_servers.len()
         );
 
         Ok(enabled_servers)
     }
 
-    /// Check if a server is enabled in any active configuration suit
-    pub async fn is_server_enabled_in_any_active_suit(
+    /// Check if a server is enabled in any active profile
+    pub async fn is_server_enabled_in_any_active_profile(
         &self,
         server_id: &str,
     ) -> Result<bool> {
-        // Get all active config suits
-        let active_suits = crate::config::suit::get_active_config_suits(&self.pool).await?;
+        // Get all active profile
+        let active_profile = crate::config::profile::get_active_profile(&self.pool).await?;
 
-        // If no active suits, check default suit
-        if active_suits.is_empty() {
-            return self.is_server_enabled_in_default_suit(server_id).await;
+        // If no active profile, check default profile
+        if active_profile.is_empty() {
+            return self.is_server_enabled_in_default_profile(server_id).await;
         }
 
-        // Check each active suit
-        for suit in active_suits {
-            if let Some(suit_id) = &suit.id {
-                if self.is_server_enabled_in_specific_suit(server_id, suit_id).await? {
+        // Check each active profile
+        for profile in active_profile {
+            if let Some(profile_id) = &profile.id {
+                if self
+                    .is_server_enabled_in_specific_profile(server_id, profile_id)
+                    .await?
+                {
                     return Ok(true);
                 }
             }
@@ -161,13 +164,13 @@ impl ServerEnabledService {
         Ok(false)
     }
 
-    /// Check if a server is enabled in a specific configuration suit
-    async fn is_server_enabled_in_specific_suit(
+    /// Check if a server is enabled in a specific profile
+    async fn is_server_enabled_in_specific_profile(
         &self,
         server_id: &str,
-        suit_id: &str,
+        profile_id: &str,
     ) -> Result<bool> {
-        let server_configs = crate::config::suit::get_config_suit_servers(&self.pool, suit_id).await?;
+        let server_configs = crate::config::profile::get_profile_servers(&self.pool, profile_id).await?;
 
         for server_config in server_configs {
             if server_config.server_id == server_id {
@@ -175,25 +178,25 @@ impl ServerEnabledService {
             }
         }
 
-        Ok(false) // Server not in this suit
+        Ok(false) // Server not in this profile
     }
 
-    /// Check if a server is enabled in the default configuration suit
-    async fn is_server_enabled_in_default_suit(
+    /// Check if a server is enabled in the default profile
+    async fn is_server_enabled_in_default_profile(
         &self,
         server_id: &str,
     ) -> Result<bool> {
-        // Try to get the default suit
-        if let Some(suit_id) = self.try_get_default_suit().await? {
-            return self.is_server_enabled_in_specific_suit(server_id, &suit_id).await;
+        // Try to get the default profile
+        if let Some(profile_id) = self.try_get_default_profile().await? {
+            return self.is_server_enabled_in_specific_profile(server_id, &profile_id).await;
         }
 
-        // Try legacy "default" named suit
-        if let Some(suit_id) = self.try_get_legacy_default_suit().await? {
-            return self.is_server_enabled_in_specific_suit(server_id, &suit_id).await;
+        // Try legacy "default" named profile
+        if let Some(profile_id) = self.try_get_legacy_default_profile().await? {
+            return self.is_server_enabled_in_specific_profile(server_id, &profile_id).await;
         }
 
-        // No default suit found, early return
+        // No default profile found, early return
         Ok(false)
     }
 
@@ -211,47 +214,47 @@ impl ServerEnabledService {
         }
     }
 
-    /// Get all server IDs that are enabled in active configuration suits
-    async fn get_server_ids_enabled_in_active_suits(&self) -> Result<HashSet<String>> {
-        let active_suits = crate::config::suit::get_active_config_suits(&self.pool).await?;
+    /// Get all server IDs that are enabled in active profile
+    async fn get_server_ids_enabled_in_active_profile(&self) -> Result<HashSet<String>> {
+        let active_profile = crate::config::profile::get_active_profile(&self.pool).await?;
 
-        if active_suits.is_empty() {
-            return self.get_server_ids_enabled_in_default_suit().await;
+        if active_profile.is_empty() {
+            return self.get_server_ids_enabled_in_default_profile().await;
         }
 
         let mut enabled_server_ids = HashSet::new();
 
-        for suit in active_suits {
-            if let Some(suit_id) = &suit.id {
-                let suit_enabled_ids = self.get_server_ids_enabled_in_specific_suit(suit_id).await?;
-                enabled_server_ids.extend(suit_enabled_ids);
+        for profile in active_profile {
+            if let Some(profile_id) = &profile.id {
+                let profile_enabled_ids = self.get_server_ids_enabled_in_specific_profile(profile_id).await?;
+                enabled_server_ids.extend(profile_enabled_ids);
             }
         }
 
         Ok(enabled_server_ids)
     }
 
-    /// Get server IDs enabled in specific configuration suites
-    async fn get_server_ids_enabled_in_suites(
+    /// Get server IDs enabled in specific profile
+    async fn get_server_ids_enabled_in_profile(
         &self,
-        suite_ids: &[String],
+        profile_ids: &[String],
     ) -> Result<HashSet<String>> {
         let mut enabled_server_ids = HashSet::new();
 
-        for suite_id in suite_ids {
-            let suit_enabled_ids = self.get_server_ids_enabled_in_specific_suit(suite_id).await?;
-            enabled_server_ids.extend(suit_enabled_ids);
+        for profile_id in profile_ids {
+            let profile_enabled_ids = self.get_server_ids_enabled_in_specific_profile(profile_id).await?;
+            enabled_server_ids.extend(profile_enabled_ids);
         }
 
         Ok(enabled_server_ids)
     }
 
-    /// Get server IDs enabled in a specific configuration suit
-    async fn get_server_ids_enabled_in_specific_suit(
+    /// Get server IDs enabled in a specific profile
+    async fn get_server_ids_enabled_in_specific_profile(
         &self,
-        suit_id: &str,
+        profile_id: &str,
     ) -> Result<HashSet<String>> {
-        let server_configs = crate::config::suit::get_config_suit_servers(&self.pool, suit_id).await?;
+        let server_configs = crate::config::profile::get_profile_servers(&self.pool, profile_id).await?;
 
         let enabled_server_ids: HashSet<String> = server_configs
             .into_iter()
@@ -262,32 +265,32 @@ impl ServerEnabledService {
         Ok(enabled_server_ids)
     }
 
-    /// Get server IDs enabled in the default configuration suit
-    async fn get_server_ids_enabled_in_default_suit(&self) -> Result<HashSet<String>> {
-        // Try to get the default suit
-        if let Some(suit_id) = self.try_get_default_suit().await? {
-            return self.get_server_ids_enabled_in_specific_suit(&suit_id).await;
+    /// Get server IDs enabled in the default profile
+    async fn get_server_ids_enabled_in_default_profile(&self) -> Result<HashSet<String>> {
+        // Try to get the default profile
+        if let Some(profile_id) = self.try_get_default_profile().await? {
+            return self.get_server_ids_enabled_in_specific_profile(&profile_id).await;
         }
 
-        // Try legacy "default" named suit
-        if let Some(suit_id) = self.try_get_legacy_default_suit().await? {
-            return self.get_server_ids_enabled_in_specific_suit(&suit_id).await;
+        // Try legacy "default" named profile
+        if let Some(profile_id) = self.try_get_legacy_default_profile().await? {
+            return self.get_server_ids_enabled_in_specific_profile(&profile_id).await;
         }
 
-        // No default suit found, early return
+        // No default profile found, early return
         Ok(HashSet::new())
     }
 
-    /// Helper method to try getting the default suit ID
-    async fn try_get_default_suit(&self) -> Result<Option<String>> {
-        let default_suit = crate::config::suit::get_default_config_suit(&self.pool).await?;
-        Ok(default_suit.and_then(|suit| suit.id))
+    /// Helper method to try getting the default profile ID
+    async fn try_get_default_profile(&self) -> Result<Option<String>> {
+        let default_profile = crate::config::profile::get_default_profile(&self.pool).await?;
+        Ok(default_profile.and_then(|profile| profile.id))
     }
 
-    /// Helper method to try getting the legacy default suit ID
-    async fn try_get_legacy_default_suit(&self) -> Result<Option<String>> {
-        let legacy_default = crate::config::suit::get_config_suit_by_name(&self.pool, "default").await?;
-        Ok(legacy_default.and_then(|suit| suit.id))
+    /// Helper method to try getting the legacy default profile ID
+    async fn try_get_legacy_default_profile(&self) -> Result<Option<String>> {
+        let legacy_default = crate::config::profile::get_profile_by_name(&self.pool, "default").await?;
+        Ok(legacy_default.and_then(|profile| profile.id))
     }
 }
 
@@ -295,7 +298,7 @@ impl ServerEnabledService {
 // BACKWARD-COMPATIBLE PUBLIC FUNCTIONS
 // ============================================================================
 
-/// Get all enabled servers from the database based on config suits
+/// Get all enabled servers from the database based on profile
 ///
 /// DEPRECATED: Use ServerEnabledService::get_all_enabled_servers() instead
 pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
@@ -303,21 +306,21 @@ pub async fn get_enabled_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
     service.get_all_enabled_servers().await
 }
 
-/// Get enabled servers from specific configuration suites
+/// Get enabled servers from specific profile
 ///
-/// DEPRECATED: Use ServerEnabledService::get_enabled_servers_from_suites() instead
-pub async fn get_enabled_servers_by_suites(
+/// DEPRECATED: Use ServerEnabledService::get_enabled_servers_from_profile() instead
+pub async fn get_enabled_servers_by_profile(
     pool: &Pool<Sqlite>,
-    suite_ids: &[String],
+    profile_ids: &[String],
 ) -> Result<Vec<Server>> {
     let service = ServerEnabledService::new(pool.clone());
-    service.get_enabled_servers_from_suites(suite_ids).await
+    service.get_enabled_servers_from_profile(profile_ids).await
 }
 
-/// Check if a server is enabled in any active config suit
+/// Check if a server is enabled in any active profile
 ///
 /// DEPRECATED: Use ServerEnabledService::is_server_enabled() instead
-pub async fn is_server_enabled_in_any_suit(
+pub async fn is_server_enabled_in_any_profile(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> Result<bool> {
@@ -325,39 +328,39 @@ pub async fn is_server_enabled_in_any_suit(
     service.is_server_enabled(server_id).await
 }
 
-/// Check if a server is enabled in any active config suit (ignoring global status)
-pub async fn is_server_enabled_in_any_active_suit(
+/// Check if a server is enabled in any active profile (ignoring global status)
+pub async fn is_server_enabled_in_any_active_profile(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> Result<bool> {
     let service = ServerEnabledService::new(pool.clone());
-    service.is_server_enabled_in_any_active_suit(server_id).await
+    service.is_server_enabled_in_any_active_profile(server_id).await
 }
 
 // ============================================================================
 // UTILITY FUNCTIONS (unique functionality not in ServerEnabledService)
 // ============================================================================
 
-/// Check if a server is in a specific config suit
+/// Check if a server is in a specific profile
 ///
-/// This function checks if a server is in a specific config suit, regardless of enabled status.
-/// Returns true if the server is in the suit, false otherwise.
-pub async fn is_server_in_suit(
+/// This function checks if a server is in a specific profile, regardless of enabled status.
+/// Returns true if the server is in the profile, false otherwise.
+pub async fn is_server_in_profile(
     pool: &Pool<Sqlite>,
     server_id: &str,
-    suit_id: &str,
+    profile_id: &str,
 ) -> Result<bool> {
-    // Get all server configs in this suit
-    let server_configs = crate::config::suit::get_config_suit_servers(pool, suit_id).await?;
+    // Get all server configs in this profile
+    let server_configs = crate::config::profile::get_profile_servers(pool, profile_id).await?;
 
-    // Check if the server is in this suit
+    // Check if the server is in this profile
     for server_config in server_configs {
         if server_config.server_id == server_id {
             return Ok(true);
         }
     }
 
-    // Server is not in this suit
+    // Server is not in this profile
     Ok(false)
 }
 

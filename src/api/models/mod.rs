@@ -4,10 +4,10 @@
 pub mod cache;
 pub mod clients;
 pub mod notifs;
+pub mod profile;
 pub mod resp;
 pub mod runtime;
 pub mod server;
-pub mod suits;
 pub mod system;
 
 // Re-export commonly used types for convenience

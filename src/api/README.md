@@ -213,44 +213,44 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
 
 
 
-### 2. Config Suit Management
+### 2. Profile Management
 
-> **Note**: Tool enabling/disabling should be managed through Config Suits. This is the primary interface for managing tool availability.
+> **Note**: Tool enabling/disabling should be managed through Profile. This is the primary interface for managing tool availability.
 
-#### Basic Config Suit Operations
-- **GET /api/mcp/suits/**
-  - **Function**: List all config suits
-  - **Response**: List of config suits
+#### Basic Profile Operations
+- **GET /api/mcp/profile/**
+  - **Function**: List all profile
+  - **Response**: List of profile
   - **Response Body**:
     ```json
     {
-      "suits": [
+      "profile": [
         {
           "id": "string",
           "name": "string",
           "description": "string (optional)",
-          "suit_type": "string (host_app, scenario, shared)",
+          "profile_type": "string (host_app, scenario, shared)",
           "multi_select": boolean,
           "priority": number,
           "is_active": boolean,
           "is_default": boolean,
           "allowed_operations": ["string", "..."]
         },
-        // ... more suits
+        // ... more profile
       ]
     }
     ```
 
-- **POST /api/mcp/suits/**
-  - **Function**: Create a new config suit
-  - **Request**: Config suit information
-  - **Response**: Created config suit
+- **POST /api/mcp/profile/**
+  - **Function**: Create a new profile
+  - **Request**: Profile information
+  - **Response**: Created profile
   - **Request Body**:
     ```json
     {
       "name": "string (required)",
       "description": "string (optional)",
-      "suit_type": "string (required, one of: host_app, scenario, shared)",
+      "profile_type": "string (required, one of: host_app, scenario, shared)",
       "multi_select": boolean (optional),
       "priority": number (optional),
       "is_active": boolean (optional),
@@ -258,35 +258,35 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
       "clone_from_id": "string (optional)"
     }
     ```
-  - **Response**: The created Config Suit object
+  - **Response**: The created Profile object
 
-- **GET /api/mcp/suits/{id}**
-  - **Function**: Get detailed information about a specific config suit
-  - **Parameters**: Config suit ID
-  - **Response**: Detailed config suit information
+- **GET /api/mcp/profile/{id}**
+  - **Function**: Get detailed information about a specific profile
+  - **Parameters**: Profile ID
+  - **Response**: Detailed profile information
 
-- **PUT /api/mcp/suits/{id}**
-  - **Function**: Update a config suit
-  - **Parameters**: Config suit ID
-  - **Request**: Updated config suit information
-  - **Response**: Updated config suit
+- **PUT /api/mcp/profile/{id}**
+  - **Function**: Update a profile
+  - **Parameters**: Profile ID
+  - **Request**: Updated profile information
+  - **Response**: Updated profile
   - **Request Body**:
     ```json
     {
       "name": "string (optional)",
       "description": "string (optional)",
-      "suit_type": "string (optional)",
+      "profile_type": "string (optional)",
       "multi_select": boolean (optional),
       "priority": number (optional),
       "is_active": boolean (optional),
       "is_default": boolean (optional)
     }
     ```
-  - **Response**: The updated Config Suit object
+  - **Response**: The updated Profile object
 
-- **DELETE /api/mcp/suits/{id}**
-  - **Function**: Delete a config suit
-  - **Parameters**: Config suit ID
+- **DELETE /api/mcp/profile/{id}**
+  - **Function**: Delete a profile
+  - **Parameters**: Profile ID
   - **Response**: Operation result
   - **Response Body**:
     ```json
@@ -299,9 +299,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/activate**
-  - **Function**: Activate a config suit
-  - **Parameters**: Config suit ID
+- **POST /api/mcp/profile/{id}/activate**
+  - **Function**: Activate a profile
+  - **Parameters**: Profile ID
   - **Response**: Operation result
   - **Response Body**:
     ```json
@@ -314,9 +314,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/deactivate**
-  - **Function**: Deactivate a config suit
-  - **Parameters**: Config suit ID
+- **POST /api/mcp/profile/{id}/deactivate**
+  - **Function**: Deactivate a profile
+  - **Parameters**: Profile ID
   - **Response**: Operation result
   - **Response Body**:
     ```json
@@ -329,9 +329,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/batch/activate**
-  - **Function**: Batch activate config suits
-  - **Request**: List of config suit IDs
+- **POST /api/mcp/profile/batch/activate**
+  - **Function**: Batch activate profile
+  - **Request**: List of profile IDs
   - **Response**: Operation result
   - **Request Body**:
     ```json
@@ -351,9 +351,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/batch/deactivate**
-  - **Function**: Batch deactivate config suits
-  - **Request**: List of config suit IDs
+- **POST /api/mcp/profile/batch/deactivate**
+  - **Function**: Batch deactivate profile
+  - **Request**: List of profile IDs
   - **Response**: Operation result
   - **Request Body**:
     ```json
@@ -373,16 +373,16 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-#### Config Suit Server Management
-- **GET /api/mcp/suits/{id}/servers/**
-  - **Function**: List servers in a config suit
-  - **Parameters**: Config suit ID
+#### Profile Server Management
+- **GET /api/mcp/profile/{id}/servers/**
+  - **Function**: List servers in a profile
+  - **Parameters**: Profile ID
   - **Response**: List of servers
   - **Response Body**:
     ```json
     {
-      "suit_id": "string",
-      "suit_name": "string",
+      "profile_id": "string",
+      "profile_name": "string",
       "servers": [
         {
           "id": "string",
@@ -395,9 +395,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/servers/{server_id}/enable**
-  - **Function**: Enable a server in a config suit
-  - **Parameters**: Config suit ID, server ID
+- **POST /api/mcp/profile/{id}/servers/{server_id}/enable**
+  - **Function**: Enable a server in a profile
+  - **Parameters**: Profile ID, server ID
   - **Response**: Operation result
   - **Response Body**:
     ```json
@@ -410,9 +410,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/servers/{server_id}/disable**
-  - **Function**: Disable a server in a config suit
-  - **Parameters**: Config suit ID, server ID
+- **POST /api/mcp/profile/{id}/servers/{server_id}/disable**
+  - **Function**: Disable a server in a profile
+  - **Parameters**: Profile ID, server ID
   - **Response**: Operation result
   - **Response Body**:
     ```json
@@ -425,9 +425,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/servers/batch/enable**
-  - **Function**: Batch enable servers in a config suit
-  - **Parameters**: Config suit ID
+- **POST /api/mcp/profile/{id}/servers/batch/enable**
+  - **Function**: Batch enable servers in a profile
+  - **Parameters**: Profile ID
   - **Request**: List of server IDs
   - **Response**: Operation result
   - **Request Body**:
@@ -448,9 +448,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/servers/batch/disable**
-  - **Function**: Batch disable servers in a config suit
-  - **Parameters**: Config suit ID
+- **POST /api/mcp/profile/{id}/servers/batch/disable**
+  - **Function**: Batch disable servers in a profile
+  - **Parameters**: Profile ID
   - **Request**: List of server IDs
   - **Response**: Operation result
   - **Request Body**:
@@ -471,16 +471,16 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-#### Config Suit Tool Management
-- **GET /api/mcp/suits/{id}/tools/**
-  - **Function**: List tools in a config suit
-  - **Parameters**: Config suit ID
+#### Profile Tool Management
+- **GET /api/mcp/profile/{id}/tools/**
+  - **Function**: List tools in a profile
+  - **Parameters**: Profile ID
   - **Response**: List of tools
   - **Response Body**:
     ```json
     {
-      "suit_id": "string",
-      "suit_name": "string",
+      "profile_id": "string",
+      "profile_name": "string",
       "tools": [
         {
           "id": "string",
@@ -495,9 +495,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/tools/{tool_id}/enable**
-  - **Function**: Enable a tool in a config suit
-  - **Parameters**: Config suit ID, tool ID
+- **POST /api/mcp/profile/{id}/tools/{tool_id}/enable**
+  - **Function**: Enable a tool in a profile
+  - **Parameters**: Profile ID, tool ID
   - **Response**: Operation result
   - **Response Body**:
     ```json
@@ -510,9 +510,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/tools/{tool_id}/disable**
-  - **Function**: Disable a tool in a config suit
-  - **Parameters**: Config suit ID, tool ID
+- **POST /api/mcp/profile/{id}/tools/{tool_id}/disable**
+  - **Function**: Disable a tool in a profile
+  - **Parameters**: Profile ID, tool ID
   - **Response**: Operation result
   - **Response Body**:
     ```json
@@ -525,9 +525,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/tools/batch/enable**
-  - **Function**: Batch enable tools in a config suit
-  - **Parameters**: Config suit ID
+- **POST /api/mcp/profile/{id}/tools/batch/enable**
+  - **Function**: Batch enable tools in a profile
+  - **Parameters**: Profile ID
   - **Request**: List of tool IDs
   - **Response**: Operation result
   - **Request Body**:
@@ -548,9 +548,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
     }
     ```
 
-- **POST /api/mcp/suits/{id}/tools/batch/disable**
-  - **Function**: Batch disable tools in a config suit
-  - **Parameters**: Config suit ID
+- **POST /api/mcp/profile/{id}/tools/batch/disable**
+  - **Function**: Batch disable tools in a profile
+  - **Parameters**: Profile ID
   - **Request**: List of tool IDs
   - **Response**: Operation result
   - **Request Body**:
@@ -667,7 +667,7 @@ src/
 │   │   ├── mod.rs        # Routes module entry point
 │   │   ├── mcp.rs        # MCP server related routes
 │   │   ├── tool.rs       # Tool management related routes
-│   │   ├── suit.rs       # Config suit management related routes
+│   │   ├── profile.rs       # Profile management related routes
 │   │   ├── specs.rs      # MCP specification-compliant routes
 │   │   ├── notifs.rs     # Notification related routes
 │   │   └── system.rs     # System related routes
@@ -675,7 +675,7 @@ src/
 │   │   ├── mod.rs        # Handlers module entry point
 │   │   ├── mcp.rs        # MCP server related handlers
 │   │   ├── tool.rs       # Tool management related handlers
-│   │   ├── suit.rs       # Config suit management related handlers
+│   │   ├── profile.rs       # Profile management related handlers
 │   │   ├── specs.rs      # MCP specification-compliant handlers
 │   │   ├── notification.rs # Notification related handlers
 │   │   └── system.rs     # System related handlers
@@ -683,7 +683,7 @@ src/
 │       ├── mod.rs        # Models module entry point
 │       ├── mcp.rs        # MCP server related models
 │       ├── tool.rs       # Tool management related models
-│       ├── suit.rs       # Config suit management related models
+│       ├── profile.rs       # Profile management related models
 │       ├── specs.rs      # MCP specification-compliant models
 │       ├── notifications.rs # Notification related models
 │       └── system.rs     # System related models

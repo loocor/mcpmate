@@ -38,8 +38,8 @@ pub struct ProxyServer {
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     /// Database connection for configuration persistence
     pub database: Option<Arc<Database>>,
-    /// Suit service for configuration management and tool enablement check
-    pub suit_service: Option<Arc<crate::core::suit::SuitService>>,
+    /// Profile service for configuration management and tool enablement check
+    pub profile_service: Option<Arc<crate::core::profile::ProfileService>>,
     /// Runtime cache for fast runtime queries (temporary core dependency)
     pub runtime_cache: Arc<crate::runtime::RuntimeCache>,
     /// Paginator for aggregated results
@@ -69,7 +69,7 @@ pub struct UnifiedHttpServerConfig {
 
 impl Default for UnifiedHttpServerConfig {
     fn default() -> Self {
-        use crate::common::config::ports;
+        use crate::common::profile::ports;
         Self {
             bind_address: format!("127.0.0.1:{}", ports::MCP_PORT).parse().unwrap(),
             streamable_http_path: "/mcp".to_string(),
@@ -232,8 +232,8 @@ impl ProxyServer {
 
         Self {
             connection_pool,
-            database: None,     // Database will be initialized separately
-            suit_service: None, // Will be initialized when database is set
+            database: None,        // Database will be initialized separately
+            profile_service: None, // Will be initialized when database is set
             runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
             paginator,
             builtin_services,
@@ -252,8 +252,8 @@ impl ProxyServer {
         // Store the database connection
         self.database = Some(db_arc.clone());
 
-        // Initialize Suit service
-        self.suit_service = Some(Arc::new(crate::core::suit::SuitService::new(db_arc.clone())));
+        // Initialize Profile service
+        self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
 
         // Initialize builtin services registry with MCPMate services
         self.builtin_services =
@@ -279,9 +279,9 @@ impl ProxyServer {
     async fn setup_event_handlers(&self) -> Result<()> {
         let mut handlers = crate::core::events::EventHandlers::new();
 
-        // Set suit service for cache invalidation
-        if let Some(suit_service) = &self.suit_service {
-            handlers.set_suit_service(suit_service.clone());
+        // Set profile service for cache invalidation
+        if let Some(profile_service) = &self.profile_service {
+            handlers.set_profile_service(profile_service.clone());
         }
 
         // Set connection pool for server management

@@ -73,8 +73,8 @@ impl Default for SyncResult {
 pub struct SyncContext {
     /// Server ID being synced
     pub server_id: String,
-    /// Configuration suit IDs that include this server
-    pub suit_ids: Vec<String>,
+    /// Profile IDs that include this server
+    pub profile_ids: Vec<String>,
     /// Additional metadata
     pub metadata: std::collections::HashMap<String, String>,
 }
@@ -84,17 +84,17 @@ impl SyncContext {
     pub fn new(server_id: String) -> Self {
         Self {
             server_id,
-            suit_ids: Vec::new(),
+            profile_ids: Vec::new(),
             metadata: std::collections::HashMap::new(),
         }
     }
 
-    /// Add a suit ID to the context
-    pub fn add_suit(
+    /// Add a profile ID to the context
+    pub fn add_profile(
         &mut self,
-        suit_id: String,
+        profile_id: String,
     ) {
-        self.suit_ids.push(suit_id);
+        self.profile_ids.push(profile_id);
     }
 
     /// Add metadata to the context
@@ -111,7 +111,7 @@ impl SyncContext {
 pub struct SyncHelper;
 
 impl SyncHelper {
-    /// Get server and associated configuration suits for sync operations
+    /// Get server and associated profile for sync operations
     ///
     /// This is a common pattern used across different sync operations
     pub async fn get_server_context(
@@ -129,65 +129,65 @@ impl SyncHelper {
             return Err(anyhow::anyhow!("Server '{}' not found", server_id));
         }
 
-        // Get all config suits that have this server enabled
-        let suits_with_server = Self::get_suits_with_server(db_pool, server_id).await?;
+        // Get all profile that have this server enabled
+        let profile_with_server = Self::get_profile_with_server(db_pool, server_id).await?;
 
         let mut context = SyncContext::new(server_id.to_string());
 
-        // Add suit IDs to context
-        for suit in suits_with_server {
-            if let Some(suit_id) = suit.id {
-                context.add_suit(suit_id);
+        // Add profile IDs to context
+        for profile in profile_with_server {
+            if let Some(profile_id) = profile.id {
+                context.add_profile(profile_id);
             }
         }
 
         tracing::debug!(
-            "Found {} configuration suits for server '{}'",
-            context.suit_ids.len(),
+            "Found {} profile for server '{}'",
+            context.profile_ids.len(),
             server_id
         );
 
         Ok(context)
     }
 
-    /// Helper function to get config suits that have a specific server enabled
-    async fn get_suits_with_server(
+    /// Helper function to get profile that have a specific server enabled
+    async fn get_profile_with_server(
         pool: &sqlx::Pool<sqlx::Sqlite>,
         server_id: &str,
-    ) -> Result<Vec<crate::config::models::ConfigSuit>> {
+    ) -> Result<Vec<crate::config::models::Profile>> {
         use crate::common::database::fetch_where;
 
-        tracing::debug!("Getting config suits that include server '{}'", server_id);
+        tracing::debug!("Getting profile that include server '{}'", server_id);
 
-        // Get all config suits
-        let all_suits = crate::config::suit::get_all_config_suits(pool)
+        // Get all profile
+        let all_profile = crate::config::profile::get_all_profile(pool)
             .await
-            .context("Failed to get all config suits")?;
+            .context("Failed to get all profile")?;
 
-        // Filter suits that have this server enabled
-        let mut suits_with_server = Vec::new();
+        // Filter profile that have this server enabled
+        let mut profile_with_server = Vec::new();
 
-        for suit in all_suits {
-            if let Some(suit_id) = &suit.id {
-                // Check if this suit has the server enabled
-                let server_enabled: Vec<crate::config::models::ConfigSuitServer> =
-                    fetch_where(pool, "config_suit_server", "suit_id", suit_id, None)
+        for profile in all_profile {
+            if let Some(profile_id) = &profile.id {
+                // Check if this profile has the server enabled
+                let server_enabled: Vec<crate::config::models::ProfileServer> =
+                    fetch_where(pool, "profile_server", "profile_id", profile_id, None)
                         .await
-                        .context("Failed to check suit server associations")?;
+                        .context("Failed to check profile server associations")?;
 
                 if server_enabled.iter().any(|s| s.server_id == server_id && s.enabled) {
-                    suits_with_server.push(suit);
+                    profile_with_server.push(profile);
                 }
             }
         }
 
         tracing::debug!(
-            "Found {} suits with server '{}' enabled",
-            suits_with_server.len(),
+            "Found {} profile with server '{}' enabled",
+            profile_with_server.len(),
             server_id
         );
 
-        Ok(suits_with_server)
+        Ok(profile_with_server)
     }
 
     /// Execute a batch sync operation with consistent error handling and logging
@@ -379,13 +379,13 @@ mod tests {
     fn test_sync_context() {
         let mut context = SyncContext::new("server1".to_string());
         assert_eq!(context.server_id, "server1");
-        assert!(context.suit_ids.is_empty());
+        assert!(context.profile_ids.is_empty());
         assert!(context.metadata.is_empty());
 
-        context.add_suit("suit1".to_string());
+        context.add_profile("profile1".to_string());
         context.add_metadata("key1".to_string(), "value1".to_string());
 
-        assert_eq!(context.suit_ids.len(), 1);
+        assert_eq!(context.profile_ids.len(), 1);
         assert_eq!(context.metadata.len(), 1);
         assert_eq!(context.metadata.get("key1"), Some(&"value1".to_string()));
     }

@@ -98,18 +98,14 @@ impl UpstreamConnectionPool {
     ///
     /// This method delegates to PoolConfigManager for the actual configuration logic.
     /// It maintains the public API while separating business logic concerns.
-    /// 
+    ///
     /// Returns Ok(()) on success, or Err(CoreError) if configuration update fails.
     pub fn set_config(
         &mut self,
         config: Arc<Config>,
     ) -> Result<(), crate::core::foundation::error::CoreError> {
         // Use the configuration manager to handle the complex logic
-        PoolConfigManager::update_configuration(
-            &mut self.connections,
-            &mut self.cancellation_tokens,
-            config.clone(),
-        )?;
+        PoolConfigManager::update_configuration(&mut self.connections, &mut self.cancellation_tokens, config.clone())?;
 
         // Update the stored configuration reference
         self.config = config;
@@ -144,22 +140,26 @@ impl UpstreamConnectionPool {
 
     // Instance helper methods are now in instance_helpers.rs
 
-    /// Sync all servers based on active configuration suites
+    /// Sync all servers based on active profile
     ///
     /// This method delegates to ServerSyncManager for the complex synchronization logic.
     /// It maintains the public API while separating business logic concerns.
-    pub async fn sync_servers_from_active_suits(&mut self) -> Result<()> {
+    pub async fn sync_servers_from_active_profile(&mut self) -> Result<()> {
         let db = self
             .database
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Database not available for server sync"))?;
 
         let sync_manager = ServerSyncManager::new(db.clone());
-        sync_manager.sync_servers_from_active_suites(self).await
+        sync_manager.sync_servers_from_active_profile(self).await
     }
 
     /// Create or refresh an exploration session with TTL
-    pub fn upsert_exploration_session(&mut self, session_id: &str, ttl: Duration) {
+    pub fn upsert_exploration_session(
+        &mut self,
+        session_id: &str,
+        ttl: Duration,
+    ) {
         use std::time::Instant;
         self.exploration_sessions.entry(session_id.to_string()).or_default();
         self.exploration_expirations
@@ -167,7 +167,11 @@ impl UpstreamConnectionPool {
     }
 
     /// Create or refresh a validation session with TTL
-    pub fn upsert_validation_session(&mut self, session_id: &str, ttl: Duration) {
+    pub fn upsert_validation_session(
+        &mut self,
+        session_id: &str,
+        ttl: Duration,
+    ) {
         use std::time::Instant;
         self.validation_sessions.entry(session_id.to_string()).or_default();
         self.validation_expirations
@@ -201,11 +205,7 @@ impl UpstreamConnectionPool {
 
     /// Get active instance counts for runtime status
     pub fn active_instance_counts(&self) -> (usize, usize, usize) {
-        let production = self
-            .connections
-            .iter()
-            .filter(|(_, m)| !m.is_empty())
-            .count();
+        let production = self.connections.iter().filter(|(_, m)| !m.is_empty()).count();
         let exploration = self.exploration_sessions.len();
         let validation = self.validation_sessions.len();
         (production, exploration, validation)
@@ -235,8 +235,11 @@ impl UpstreamConnectionPool {
         // 3. Initialize connection to server
         // 4. Store in exploration_sessions
 
-        tracing::debug!("Exploration instance for server '{}' in session '{}' not implemented yet",
-                       server_name, session_id);
+        tracing::debug!(
+            "Exploration instance for server '{}' in session '{}' not implemented yet",
+            server_name,
+            session_id
+        );
         Ok(None)
     }
 
@@ -255,21 +258,25 @@ impl UpstreamConnectionPool {
         // Check if server connection already exists in this session
         if let Some(session_servers) = self.validation_sessions.get(session_id) {
             if session_servers.contains_key(server_name) {
-                return Ok(self.validation_sessions
+                return Ok(self
+                    .validation_sessions
                     .get(session_id)
                     .and_then(|session| session.get(server_name)));
             }
         }
 
         // Create temporary validation instance
-        let connection = self.create_temporary_validation_instance(server_name, session_id).await?;
+        let connection = self
+            .create_temporary_validation_instance(server_name, session_id)
+            .await?;
 
         // Store in validation_sessions
         let session_servers = self.validation_sessions.entry(session_id.to_string()).or_default();
         session_servers.insert(server_name.to_string(), connection);
 
         // Return reference to the stored connection
-        Ok(self.validation_sessions
+        Ok(self
+            .validation_sessions
             .get(session_id)
             .and_then(|session| session.get(server_name)))
     }
@@ -286,7 +293,9 @@ impl UpstreamConnectionPool {
         tracing::info!("Creating temporary validation instance for server: {}", server_name);
 
         // Get database connection
-        let db = self.database.as_ref()
+        let db = self
+            .database
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
         // Get server configuration from database
@@ -305,16 +314,16 @@ impl UpstreamConnectionPool {
         connection.status = ConnectionStatus::Validating;
 
         // Connect to server using unified transport interface
-        let (service, tools, capabilities, _process_id) =
-            crate::core::transport::unified::connect_server(
-                server_name,
-                &server_config,
-                server.server_type,
-                server_config.transport_type.unwrap_or_default(),
-                None, // No cancellation token needed for short-lived validation
-                Some(&db.pool),
-                self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
-            ).await?;
+        let (service, tools, capabilities, _process_id) = crate::core::transport::unified::connect_server(
+            server_name,
+            &server_config,
+            server.server_type,
+            server_config.transport_type.unwrap_or_default(),
+            None, // No cancellation token needed for short-lived validation
+            Some(&db.pool),
+            self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
+        )
+        .await?;
 
         // Update connection with service and capabilities
         connection.update_connected(service, tools, capabilities);
@@ -348,11 +357,7 @@ impl UpstreamConnectionPool {
         // Get server environment variables (reusing existing logic)
         let env = if let Some(id) = &server.id {
             let env_map = crate::config::server::get_server_env(pool, id).await?;
-            if env_map.is_empty() {
-                None
-            } else {
-                Some(env_map)
-            }
+            if env_map.is_empty() { None } else { Some(env_map) }
         } else {
             None
         };

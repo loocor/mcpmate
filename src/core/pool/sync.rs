@@ -17,7 +17,7 @@ use crate::core::models::Config;
 /// Manager for synchronizing server configurations and states
 ///
 /// This manager handles the business logic of:
-/// - Loading server configurations from active configuration suites
+/// - Loading server configurations from active profile
 /// - Comparing required vs current server states
 /// - Managing server lifecycle (start/stop/connect)
 /// - Ensuring proper server state transitions
@@ -33,7 +33,7 @@ impl ServerSyncManager {
         Self { database }
     }
 
-    /// Sync all servers in the connection pool based on active configuration suites
+    /// Sync all servers in the connection pool based on active profile
     ///
     /// This is the main entry point for server synchronization. It:
     /// 1. Loads the current active configuration from database
@@ -47,11 +47,11 @@ impl ServerSyncManager {
     /// # Returns
     /// * `Ok(())` - If synchronization completed successfully
     /// * `Err(...)` - If any step of synchronization failed
-    pub async fn sync_servers_from_active_suites(
+    pub async fn sync_servers_from_active_profile(
         &self,
         pool: &mut UpstreamConnectionPool,
     ) -> Result<()> {
-        tracing::debug!("Starting server synchronization from active configuration suites");
+        tracing::debug!("Starting server synchronization from active profile");
 
         // Step 1: Load current active configuration
         let config = self.load_active_configuration().await?;
@@ -71,17 +71,13 @@ impl ServerSyncManager {
 
     /// Load the current active configuration from database
     async fn load_active_configuration(&self) -> Result<Config> {
-        tracing::debug!("Loading server configuration from active configuration suites");
+        tracing::debug!("Loading server configuration from active profile");
 
-        let (_, config) =
-            crate::core::foundation::loader::load_servers_from_active_suits(&self.database)
-                .await
-                .context("Failed to load servers from active configuration suites")?;
+        let (_, config) = crate::core::foundation::loader::load_servers_from_active_profile(&self.database)
+            .await
+            .context("Failed to load servers from active profile")?;
 
-        tracing::debug!(
-            "Loaded configuration with {} servers",
-            config.mcp_servers.len()
-        );
+        tracing::debug!("Loaded configuration with {} servers", config.mcp_servers.len());
         Ok(config)
     }
 
@@ -93,18 +89,9 @@ impl ServerSyncManager {
         let required_servers: HashSet<String> = pool.config.mcp_servers.keys().cloned().collect();
         let current_servers: HashSet<String> = pool.connections.keys().cloned().collect();
 
-        let servers_to_start: HashSet<String> = required_servers
-            .difference(&current_servers)
-            .cloned()
-            .collect();
-        let servers_to_stop: HashSet<String> = current_servers
-            .difference(&required_servers)
-            .cloned()
-            .collect();
-        let servers_to_check: HashSet<String> = required_servers
-            .intersection(&current_servers)
-            .cloned()
-            .collect();
+        let servers_to_start: HashSet<String> = required_servers.difference(&current_servers).cloned().collect();
+        let servers_to_stop: HashSet<String> = current_servers.difference(&required_servers).cloned().collect();
+        let servers_to_check: HashSet<String> = required_servers.intersection(&current_servers).cloned().collect();
 
         // Filter servers that need connection (existing but not connected)
         let mut servers_to_connect = HashSet::new();
@@ -160,10 +147,7 @@ impl ServerSyncManager {
 
         // Connect existing servers that are in shutdown state
         for server_name in plan.servers_to_connect {
-            tracing::info!(
-                "Connecting existing server in shutdown state: {}",
-                server_name
-            );
+            tracing::info!("Connecting existing server in shutdown state: {}", server_name);
             if let Err(e) = self.ensure_server_connected(pool, &server_name).await {
                 tracing::warn!("Failed to connect existing server '{}': {}", server_name, e);
             }
@@ -185,8 +169,7 @@ impl ServerSyncManager {
     ) -> Result<()> {
         // Create instance if it doesn't exist
         if !pool.connections.contains_key(server_name) {
-            let connection =
-                crate::core::connection::UpstreamConnection::new(server_name.to_string());
+            let connection = crate::core::connection::UpstreamConnection::new(server_name.to_string());
             let instance_id = connection.id.clone();
             let instances = pool.connections.entry(server_name.to_string()).or_default();
             instances.insert(instance_id, connection);

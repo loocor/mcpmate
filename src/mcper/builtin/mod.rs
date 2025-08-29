@@ -3,8 +3,8 @@
 //! This module provides MCP services that act as protocol converters,
 //! transforming existing API capabilities into MCP tool interfaces.
 
+mod profile;
 mod registry;
-mod suits;
 
+pub use profile::ProfileService;
 pub use registry::BuiltinServiceRegistry;
-pub use suits::SuitsService;

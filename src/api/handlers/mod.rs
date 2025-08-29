@@ -5,9 +5,9 @@ pub mod ai;
 pub mod clients;
 pub mod common;
 pub mod notifs;
+pub mod profile;
 pub mod runtime;
 pub mod server;
-pub mod suits;
 pub mod system;
 pub mod cache {
     pub mod capabilities;

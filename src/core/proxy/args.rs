@@ -1,4 +1,4 @@
-use crate::common::config::ports;
+use crate::common::profile::ports;
 use clap::Parser;
 
 /// Command line arguments for the MCP proxy server
@@ -21,14 +21,14 @@ pub struct Args {
     #[arg(long, alias = "trans", default_value = "uni")]
     pub transport: String,
 
-    /// Configuration suites to load (comma-separated list of IDs)
-    /// Use empty string or no value to load no suites
-    /// If not specified, loads the active default configuration suite
+    /// Profile to load (comma-separated list of IDs)
+    /// Use empty string or no value to load no profile
+    /// If not specified, loads the active default profile
     #[arg(long, value_delimiter = ',')]
-    pub config_suites: Option<Vec<String>>,
+    pub profile: Option<Vec<String>>,
 
-    /// Start in minimal mode (API only, no config suites loaded)
-    /// This flag has highest priority and overrides config-suites
+    /// Start in minimal mode (API only, no profile loaded)
+    /// This flag has highest priority and overrides profile
     #[arg(long)]
     pub minimal: bool,
 }
@@ -47,12 +47,12 @@ impl Args {
             return Err("MCP port and API port cannot be the same".to_string());
         }
 
-        // Validate config suites if provided
-        if let Some(ref suites) = self.config_suites {
-            for suite in suites {
-                if !suite.trim().is_empty() {
-                    // Only validate non-empty suite IDs
-                    // Empty strings are allowed to represent "no suites"
+        // Validate profile if provided
+        if let Some(ref profile) = self.profile {
+            for profile in profile {
+                if !profile.trim().is_empty() {
+                    // Only validate non-empty profile IDs
+                    // Empty strings are allowed to represent "no profile"
                     continue;
                 }
             }
@@ -65,35 +65,35 @@ impl Args {
     pub fn get_startup_mode(&self) -> StartupMode {
         if self.minimal {
             StartupMode::Minimal
-        } else if let Some(ref suites) = self.config_suites {
-            // Filter out empty strings and check if we have any valid suite IDs
-            let valid_suites: Vec<String> = suites.iter().filter(|s| !s.trim().is_empty()).cloned().collect();
+        } else if let Some(ref profile) = self.profile {
+            // Filter out empty strings and check if we have any valid profile IDs
+            let valid_profile: Vec<String> = profile.iter().filter(|s| !s.trim().is_empty()).cloned().collect();
 
-            if valid_suites.is_empty() {
-                StartupMode::NoSuites
+            if valid_profile.is_empty() {
+                StartupMode::NoProfile
             } else {
-                StartupMode::SpecificSuites(valid_suites)
+                StartupMode::SpecificProfile(valid_profile)
             }
         } else {
             StartupMode::Default
         }
     }
 
-    /// Check if any configuration suites should be loaded
-    pub fn should_load_suites(&self) -> bool {
-        !self.minimal && !matches!(self.config_suites, Some(ref suites) if suites.is_empty())
+    /// Check if any profile should be loaded
+    pub fn should_load_profile(&self) -> bool {
+        !self.minimal && !matches!(self.profile, Some(ref profile) if profile.is_empty())
     }
 }
 
 /// Startup mode enumeration
 #[derive(Debug, Clone, PartialEq)]
 pub enum StartupMode {
-    /// Load active default configuration suite
+    /// Load active default profile
     Default,
-    /// Load specific configuration suites by ID
-    SpecificSuites(Vec<String>),
-    /// Don't load any configuration suites (empty list provided)
-    NoSuites,
-    /// Minimal mode - API only, no suites (--minimal flag)
+    /// Load specific profile by ID
+    SpecificProfile(Vec<String>),
+    /// Don't load any profile (empty list provided)
+    NoProfile,
+    /// Minimal mode - API only, no profile (--minimal flag)
     Minimal,
 }

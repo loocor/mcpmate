@@ -5,7 +5,7 @@
 
 pub mod capability;
 pub mod checker;
-pub mod config;
+pub mod profile;
 pub mod connection;
 pub mod constants;
 pub mod database;

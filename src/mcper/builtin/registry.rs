@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::config::database::Database;
 use crate::core::pool::UpstreamConnectionPool;
 
-use super::SuitsService;
+use super::ProfileService;
 
 /// Trait for built-in MCP services that convert API capabilities
 #[async_trait::async_trait]
@@ -72,8 +72,8 @@ impl BuiltinServiceRegistry {
         database: Arc<Database>,
         connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     ) -> Self {
-        let suits_service = Arc::new(SuitsService::new(database, connection_pool));
-        self.add_service(suits_service);
+        let profile_service = Arc::new(ProfileService::new(database, connection_pool));
+        self.add_service(profile_service);
         self
     }
 }

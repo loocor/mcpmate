@@ -152,9 +152,9 @@ pub struct StartupConfig {
     /// Port configuration (API and MCP ports)
     #[serde(flatten)]
     pub ports: PortConfig,
-    /// Configuration suites to load (None = default, Some(empty) = none, Some(list) = specific)
-    pub config_suites: Option<Vec<String>>,
-    /// Start in minimal mode (API only, no config suites loaded)
+    /// Profile to load (None = default, Some(empty) = none, Some(list) = specific)
+    pub profile: Option<Vec<String>>,
+    /// Start in minimal mode (API only, no profile loaded)
     pub minimal: bool,
 }
 
@@ -163,12 +163,12 @@ impl StartupConfig {
     pub fn new(
         api_port: u16,
         mcp_port: u16,
-        config_suites: Option<Vec<String>>,
+        profile: Option<Vec<String>>,
         minimal: bool,
     ) -> Self {
         Self {
             ports: PortConfig::new(api_port, mcp_port),
-            config_suites,
+            profile,
             minimal,
         }
     }
@@ -177,32 +177,32 @@ impl StartupConfig {
     pub fn minimal(api_port: u16) -> Self {
         Self {
             ports: PortConfig::new(api_port, 0), // MCP port not used in minimal mode
-            config_suites: None,
+            profile: None,
             minimal: true,
         }
     }
 
-    /// Create a configuration with specific suites
-    pub fn with_suites(
+    /// Create a configuration with specific profile
+    pub fn with_profile(
         api_port: u16,
         mcp_port: u16,
-        suites: Vec<String>,
+        profile: Vec<String>,
     ) -> Self {
         Self {
             ports: PortConfig::new(api_port, mcp_port),
-            config_suites: Some(suites),
+            profile: Some(profile),
             minimal: false,
         }
     }
 
-    /// Create a configuration with no suites
-    pub fn no_suites(
+    /// Create a configuration with no profile
+    pub fn no_profile(
         api_port: u16,
         mcp_port: u16,
     ) -> Self {
         Self {
             ports: PortConfig::new(api_port, mcp_port),
-            config_suites: Some(Vec::new()),
+            profile: Some(Vec::new()),
             minimal: false,
         }
     }
@@ -220,11 +220,11 @@ impl StartupConfig {
             self.ports.validate()?;
         }
 
-        // Validate config suites if provided
-        if let Some(ref suites) = self.config_suites {
-            for suite in suites {
-                if suite.trim().is_empty() {
-                    return Err("Configuration suite ID cannot be empty".to_string());
+        // Validate profile if provided
+        if let Some(ref profile) = self.profile {
+            for profile in profile {
+                if profile.trim().is_empty() {
+                    return Err("Profile ID cannot be empty".to_string());
                 }
             }
         }
@@ -238,11 +238,11 @@ impl StartupConfig {
 
         if self.minimal {
             StartupMode::Minimal
-        } else if let Some(ref suites) = self.config_suites {
-            if suites.is_empty() {
-                StartupMode::NoSuites
+        } else if let Some(ref profile) = self.profile {
+            if profile.is_empty() {
+                StartupMode::NoProfile
             } else {
-                StartupMode::SpecificSuites(suites.clone())
+                StartupMode::SpecificProfile(profile.clone())
             }
         } else {
             StartupMode::Default

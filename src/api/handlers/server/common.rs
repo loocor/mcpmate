@@ -45,7 +45,7 @@ pub struct ServerDetails {
     pub env: Option<HashMap<String, String>>,
     pub meta: Option<ServerMetaInfo>,
     pub globally_enabled: bool,
-    pub enabled_in_suits: bool,
+    pub enabled_in_profile: bool,
     pub instances: Vec<InstanceSummary>,
 }
 
@@ -151,8 +151,8 @@ pub async fn get_complete_server_details(
         .flatten()
         .unwrap_or(true);
 
-    // Get server enabled status in config suits
-    details.enabled_in_suits = server::is_server_enabled_in_any_suit(pool, server_id)
+    // Get server enabled status in profile
+    details.enabled_in_profile = server::is_server_enabled_in_any_profile(pool, server_id)
         .await
         .unwrap_or(false);
 
@@ -242,7 +242,7 @@ pub async fn get_server_by_identifier(
 
 /// Get server by ID or return error (unified interface)
 ///
-/// Replaces suits/helpers.rs::get_server_or_error with standardized interface.
+/// Replaces profile/helpers.rs::get_server_or_error with standardized interface.
 /// This function provides a clean, consistent way to get a server by ID.
 pub async fn get_server_or_error(
     pool: &Pool<Sqlite>,

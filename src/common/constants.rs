@@ -74,11 +74,11 @@ pub mod database {
     /// Database table name constants
     pub mod tables {
         pub const CLIENT_CONFIG_RULES: &str = "client_config_rules";
-        pub const CONFIG_SUIT_PROMPT: &str = "config_suit_prompt";
-        pub const CONFIG_SUIT_RESOURCE: &str = "config_suit_resource";
-        pub const CONFIG_SUIT_SERVER: &str = "config_suit_server";
-        pub const CONFIG_SUIT_TOOL: &str = "config_suit_tool";
-        pub const CONFIG_SUIT: &str = "config_suit";
+        pub const PROFILE_PROMPT: &str = "profile_prompt";
+        pub const PROFILE_RESOURCE: &str = "profile_resource";
+        pub const PROFILE_SERVER: &str = "profile_server";
+        pub const PROFILE_TOOL: &str = "profile_tool";
+        pub const PROFILE: &str = "profile";
         pub const SERVER_ARGS: &str = "server_args";
         pub const SERVER_CONFIG: &str = "server_config";
         pub const SERVER_ENV: &str = "server_env";
@@ -109,7 +109,7 @@ pub mod database {
         pub const ARGS: &str = "args";
         pub const ENV: &str = "env";
         pub const VALUE: &str = "value";
-        pub const SUIT_ID: &str = "suit_id";
+        pub const PROFILE_ID: &str = "profile_id";
     }
 }
 

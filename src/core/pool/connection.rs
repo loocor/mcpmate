@@ -589,7 +589,7 @@ impl UpstreamConnectionPool {
     ///
     /// This is a unified interface for managing server status:
     /// - If enabled=true:
-    ///   1. Loads latest config from active suits
+    ///   1. Loads latest config from active profile
     ///   2. Updates pool configuration
     ///   3. Creates new connection if needed
     ///   4. Connects to the server
@@ -623,14 +623,11 @@ impl UpstreamConnectionPool {
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
         // Load latest config for this server
-        let (_, config) = crate::core::foundation::loader::load_servers_from_active_suits(db).await?;
+        let (_, config) = crate::core::foundation::loader::load_servers_from_active_profile(db).await?;
 
         // Early return if server not found in config
         let Some(_server_config) = config.mcp_servers.get(server_id) else {
-            return Err(anyhow::anyhow!(
-                "Server '{}' not found in active configuration suits",
-                server_id
-            ));
+            return Err(anyhow::anyhow!("Server '{}' not found in active profile", server_id));
         };
 
         // Update config and start server
@@ -663,15 +660,16 @@ impl UpstreamConnectionPool {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
-        // Check if server should remain enabled in any active suit
-        let still_enabled_in_suits = crate::config::server::is_server_enabled_in_any_active_suit(&db.pool, server_id)
-            .await
-            .unwrap_or(false);
+        // Check if server should remain enabled in any active profile
+        let still_enabled_in_profile =
+            crate::config::server::is_server_enabled_in_any_active_profile(&db.pool, server_id)
+                .await
+                .unwrap_or(false);
 
-        // Early return if still enabled in other suits
-        if still_enabled_in_suits {
+        // Early return if still enabled in other profile
+        if still_enabled_in_profile {
             tracing::info!(
-                "Server '{}' disabled in one suit but still enabled in other active suits, keeping instance running",
+                "Server '{}' disabled in one profile but still enabled in other active profile, keeping instance running",
                 server_id
             );
             return Ok(());
@@ -684,7 +682,7 @@ impl UpstreamConnectionPool {
         self.connections.remove(server_id);
         self.cancellation_tokens.remove(server_id);
 
-        tracing::info!("Server '{}' disabled in all active suits and stopped", server_id);
+        tracing::info!("Server '{}' disabled in all active profile and stopped", server_id);
         Ok(())
     }
 

@@ -62,8 +62,8 @@ pub struct SystemMetricsResp {
 pub struct ConfigApplicationStatus {
     #[schemars(description = "Whether a configuration application is currently in progress")]
     pub in_progress: bool,
-    #[schemars(description = "Configuration suit ID being applied")]
-    pub suit_id: Option<String>,
+    #[schemars(description = "Profile ID being applied")]
+    pub profile_id: Option<String>,
     #[schemars(description = "Current stage description")]
     pub current_stage: Option<String>,
     #[schemars(description = "Progress percentage (0-100)")]
@@ -95,6 +95,6 @@ pub struct ServerConnectionStatus {
     pub error_message: Option<String>,
     #[schemars(description = "Number of tools available from this server")]
     pub tools_count: usize,
-    #[schemars(description = "Whether this server is enabled in active configuration suits")]
-    pub enabled_in_suits: bool,
+    #[schemars(description = "Whether this server is enabled in active profile")]
+    pub enabled_in_profile: bool,
 }

@@ -90,12 +90,12 @@ pub enum ClientConfigMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
-#[schemars(description = "Selected configuration source - suit, servers, or default")]
+#[schemars(description = "Selected configuration source - profile, servers, or default")]
 pub enum ClientConfigSelected {
-    #[schemars(description = "Use a configuration suit by ID")]
-    Suit {
-        #[schemars(description = "Configuration suit identifier")]
-        suit_id: String,
+    #[schemars(description = "Use a profile by ID")]
+    Profile {
+        #[schemars(description = "Profile identifier")]
+        profile_id: String,
     },
     #[schemars(description = "Use specific servers by their IDs")]
     Servers {

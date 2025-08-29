@@ -33,7 +33,7 @@
 //! use crate::core::events::{EventHandlers, init_with_handlers};
 //!
 //! let mut handlers = EventHandlers::new();
-//! handlers.set_suit_service(suit_service);
+//! handlers.set_profile_service(profile_service);
 //!     Box::pin(async {
 //!         // Your server sync logic here
 //!         Ok(())

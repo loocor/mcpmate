@@ -2,10 +2,10 @@
 // Contains handler functions for enabling and disabling servers
 //
 // Server Status Synchronization Policy:
-// 1. API operations have priority over config suit settings
-// 2. When a server is disabled via API, it is disabled in all config suits
-// 3. When a server is enabled via API, it is only enabled in the default config suit
-// 4. Changes to server status in config suits trigger connection/disconnection operations
+// 1. API operations have priority over profile settings
+// 2. When a server is disabled via API, it is disabled in all profile
+// 3. When a server is enabled via API, it is only enabled in the default profile
+// 4. Changes to server status in profile trigger connection/disconnection operations
 // 5. This creates a one-way synchronization where API operations take priority
 
 use super::{common, shared::*};
@@ -13,13 +13,13 @@ use crate::api::models::server::{ServerManageAction, ServerManageReq, ServerOper
 
 // Helper functions for server management operations
 
-/// Sync server connections by invalidating suit service cache
+/// Sync server connections by invalidating profile service cache
 #[inline]
 async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> {
-    if let Some(merge_service) = &state.suit_merge_service {
+    if let Some(merge_service) = &state.profile_merge_service {
         // Invalidate cache to force re-merging of configurations
         merge_service.invalidate_cache().await;
-        tracing::debug!("Invalidated suit service cache to sync server connections");
+        tracing::debug!("Invalidated profile service cache to sync server connections");
     }
 
     Ok(())
@@ -29,10 +29,10 @@ async fn sync_server_connections(state: &Arc<AppState>) -> Result<(), ApiError> 
 #[inline]
 async fn sync_client_configurations(
     state: &Arc<AppState>,
-    suit_id: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<(), ApiError> {
-    // Use the helper function from suits::helpers
-    crate::api::handlers::suits::helpers::sync_client_configurations(state, suit_id).await
+    // Use the helper function from profile::helpers
+    crate::api::handlers::profile::helpers::sync_client_configurations(state, profile_id).await
 }
 
 /// Create operation response
@@ -120,16 +120,17 @@ async fn enable_server_core(
     // Sync connections and client configurations
     handle_server_sync(&state, &query).await?;
 
-    // Check if server is needed by active suits (early return if idle)
-    let enabled_in_active_suits = crate::config::server::is_server_enabled_in_any_active_suit(&db.pool, &server_id)
-        .await
-        .unwrap_or(false);
+    // Check if server is needed by active profile (early return if idle)
+    let enabled_in_active_profile =
+        crate::config::server::is_server_enabled_in_any_active_profile(&db.pool, &server_id)
+            .await
+            .unwrap_or(false);
 
-    if !enabled_in_active_suits {
+    if !enabled_in_active_profile {
         return create_operation_response(
             "idle".to_string(),
             server_name,
-            "Server globally enabled but not used by any active config suit".to_string(),
+            "Server globally enabled but not used by any active profile".to_string(),
             "Idle".to_string(),
             true,
         );

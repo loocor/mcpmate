@@ -7,9 +7,9 @@ pub mod cache;
 pub mod clients;
 pub mod notifs;
 pub mod openapi;
+pub mod profile;
 pub mod runtime;
 pub mod server;
-pub mod suits;
 pub mod system;
 
 use std::sync::Arc;
@@ -32,12 +32,12 @@ pub struct AppState {
     pub metrics_collector: Arc<MetricsCollector>,
     /// HTTP proxy server reference
     pub http_proxy: Option<Arc<ProxyServer>>,
-    /// Config Suit merge service
-    pub suit_merge_service: Option<Arc<crate::core::suit::SuitService>>,
+    /// Profile merge service
+    pub profile_merge_service: Option<Arc<crate::core::profile::ProfileService>>,
     /// Database reference for API operations
     pub database: Option<Arc<crate::config::database::Database>>,
     /// Configuration application state manager
-    pub config_application_state: Arc<crate::core::suit::ConfigApplicationStateManager>,
+    pub config_application_state: Arc<crate::core::profile::ConfigApplicationStateManager>,
     /// Redb cache manager (unified capabilities cache)
     pub redb_cache: Arc<crate::core::cache::RedbCacheManager>,
 }
@@ -66,13 +66,13 @@ fn create_router_internal(
     // Start background refresh task
     MetricsCollector::start_background_refresh(metrics_collector.clone());
 
-    // Create Config Suit merge service if HTTP proxy and database are available
-    let config_suit_merge_service = if let Some(ref proxy) = http_proxy {
+    // Create Profile merge service if HTTP proxy and database are available
+    let profile_merge_service = if let Some(ref proxy) = http_proxy {
         if let Some(db) = proxy.database.clone() {
-            let merge_service = Arc::new(crate::core::suit::SuitService::new(db));
+            let merge_service = Arc::new(crate::core::profile::ProfileService::new(db));
             Some(merge_service)
         } else {
-            tracing::warn!("Database not available, Config Suit merge service will not be initialized");
+            tracing::warn!("Database not available, Profile merge service will not be initialized");
             None
         }
     } else {
@@ -87,7 +87,7 @@ fn create_router_internal(
     };
 
     // Create and initialize configuration application state manager
-    let config_application_state = Arc::new(crate::core::suit::ConfigApplicationStateManager::new());
+    let config_application_state = Arc::new(crate::core::profile::ConfigApplicationStateManager::new());
 
     // Initialize the state manager in the background
     let state_manager_clone = config_application_state.clone();
@@ -105,7 +105,7 @@ fn create_router_internal(
         connection_pool,
         metrics_collector,
         http_proxy,
-        suit_merge_service: config_suit_merge_service,
+        profile_merge_service: profile_merge_service,
         database,
         config_application_state,
         redb_cache,
@@ -121,7 +121,7 @@ fn create_router_internal(
         .merge(system::routes(state.clone()))
         .merge(cache::routes(state.clone()))
         .merge(notifs::routes(state.clone()))
-        .merge(suits::routes(state.clone()))
+        .merge(profile::routes(state.clone()))
         .merge(runtime::routes(state.clone()))
         .merge(clients::routes(state.clone()))
         .finish_api_with(&mut api, openapi::api_docs);

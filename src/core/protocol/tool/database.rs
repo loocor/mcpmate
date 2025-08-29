@@ -1,7 +1,7 @@
 //! Database-driven tool service
 //!
 //! This module provides a unified service for all tool-related operations
-//! that are driven by database configuration suits. It replaces the dual
+//! that are driven by database profile. It replaces the dual
 //! mapping system with a single, authoritative database-driven approach.
 
 use std::{collections::HashMap, sync::Arc};
@@ -48,7 +48,7 @@ impl DatabaseToolService {
 
     /// Get all enabled tools from database with standardized names
     ///
-    /// This function retrieves all enabled tools from active configuration suits
+    /// This function retrieves all enabled tools from active profile
     /// and applies the pre-stored unique names from the database. This is the
     /// authoritative method for getting tools - no fallback to runtime calculation.
     ///
@@ -59,10 +59,10 @@ impl DatabaseToolService {
     pub async fn get_enabled_tools(&self) -> Result<Vec<Tool>> {
         tracing::debug!("Getting all enabled tools from database (authoritative method)");
 
-        // Query enabled tools from active configuration suits (new architecture)
+        // Query enabled tools from active profile (new architecture)
         let query = format!(
             "{} ORDER BY st.unique_name",
-            crate::config::suit::tool::build_enabled_tools_query(None)
+            crate::config::profile::tool::build_enabled_tools_query(None)
         );
         let enabled_tools = sqlx::query_as::<_, (String, String, String, String)>(&query)
             .fetch_all(&self.db.pool)
@@ -219,7 +219,7 @@ impl DatabaseToolService {
         // Query the database for the tool mapping (new architecture)
         let query = format!(
             "{} AND st.unique_name = ? LIMIT 1",
-            crate::config::suit::tool::build_enabled_tools_query(None)
+            crate::config::profile::tool::build_enabled_tools_query(None)
         );
         let result = sqlx::query_as::<_, (String, String, String, String)>(&query)
             .bind(tool_name)
@@ -238,7 +238,7 @@ impl DatabaseToolService {
                 Ok((server_name, original_tool_name))
             }
             None => Err(anyhow::anyhow!(
-                "Tool '{}' not found in active configuration suits or is disabled",
+                "Tool '{}' not found in active profile or is disabled",
                 tool_name
             )),
         }
@@ -254,8 +254,8 @@ impl DatabaseToolService {
     pub async fn build_tool_mapping(&self) -> Result<HashMap<String, ToolMapping>> {
         tracing::debug!("Building tool mapping from database (authoritative method)");
 
-        // Query enabled tools from active configuration suits (new architecture)
-        let query = crate::config::suit::tool::build_enabled_tools_query(None);
+        // Query enabled tools from active profile (new architecture)
+        let query = crate::config::profile::tool::build_enabled_tools_query(None);
         let enabled_tools = sqlx::query_as::<_, (String, String, String, String)>(&query)
             .fetch_all(&self.db.pool)
             .await
@@ -350,7 +350,7 @@ impl DatabaseToolService {
     ) -> Result<bool> {
         let query = format!(
             "SELECT COUNT(*) FROM ({}) AS enabled_tools WHERE unique_name = ?",
-            crate::config::suit::tool::build_enabled_tools_query(None)
+            crate::config::profile::tool::build_enabled_tools_query(None)
         );
         let count = sqlx::query_scalar::<_, i64>(&query)
             .bind(tool_name)
