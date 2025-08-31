@@ -48,7 +48,7 @@ impl Default for MCPMateEngine {
 impl MCPMateEngine {
     /// Create a new MCPMate engine instance
     pub fn new() -> Self {
-        use crate::common::config::ports;
+        use crate::common::profile::ports;
         Self {
             runtime: Some(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime")),
             proxy_handle: None,
