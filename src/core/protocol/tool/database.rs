@@ -87,19 +87,15 @@ impl DatabaseToolService {
         };
 
         // Build tool list for each enabled tool with fault isolation
-        for (unique_name, server_name, tool_name, _server_id) in &enabled_tools {
-            // Find the server instance in the connection pool
-            if let Some(instances) = pool.connections.get(server_name) {
+        for (unique_name, server_name, tool_name, server_id) in &enabled_tools {
+            // Find the server instance in the connection pool using server_id (not server_name)
+            if let Some(instances) = pool.connections.get(server_id) {
                 // Find a connected instance for this server
                 let mut found = false;
                 for conn in instances.values() {
                     // Skip disabled servers completely (they should not appear in tool lists)
                     if conn.is_disabled() {
-                        tracing::debug!(
-                            "Skipping tool '{}' from disabled server '{}'",
-                            tool_name,
-                            server_name
-                        );
+                        tracing::debug!("Skipping tool '{}' from disabled server '{}'", tool_name, server_name);
                         continue;
                     }
 
@@ -109,13 +105,8 @@ impl DatabaseToolService {
                     }
 
                     // Additional check: skip servers with permanent errors
-                    if let crate::core::foundation::types::ConnectionStatus::Error(
-                        ref error_details,
-                    ) = conn.status
-                    {
-                        if error_details.error_type
-                            == crate::core::foundation::types::ErrorType::Permanent
-                        {
+                    if let crate::core::foundation::types::ConnectionStatus::Error(ref error_details) = conn.status {
+                        if error_details.error_type == crate::core::foundation::types::ErrorType::Permanent {
                             tracing::debug!(
                                 "Skipping tool '{}' from server '{}' due to permanent error: {}",
                                 tool_name,
@@ -170,8 +161,8 @@ impl DatabaseToolService {
             );
 
             // Log connection states for each server
-            for (unique_name, server_name, _tool_name, _server_id) in &enabled_tools {
-                if let Some(instances) = pool.connections.get(server_name) {
+            for (unique_name, server_name, _tool_name, server_id) in &enabled_tools {
+                if let Some(instances) = pool.connections.get(server_id) {
                     for (inst_id, conn) in instances {
                         tracing::warn!(
                             "Tool '{}' from server '{}' instance '{}' - Status: {:?}, Connected: {}, Disabled: {}",
@@ -265,9 +256,9 @@ impl DatabaseToolService {
         let pool = self.connection_pool.lock().await;
 
         // Build mapping for each enabled tool
-        for (unique_name, server_name, tool_name, _server_id) in enabled_tools {
-            // Find the server instance in the connection pool
-            if let Some(instances) = pool.connections.get(&server_name) {
+        for (unique_name, server_name, tool_name, server_id) in enabled_tools {
+            // Find the server instance in the connection pool using server_id (not server_name)
+            if let Some(instances) = pool.connections.get(&server_id) {
                 // Find a connected instance for this server
                 let mut found = false;
                 #[allow(clippy::for_kv_map)] // We need both instance_id and conn

@@ -259,6 +259,13 @@ impl ProxyServer {
         self.builtin_services =
             Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(db_arc.clone(), self.connection_pool.clone()));
 
+        // Initialize global resolver with database
+        if let Err(e) = crate::core::protocol::resolver::init(db_arc.clone()) {
+            tracing::warn!("Failed to initialize global resolver: {}", e);
+        } else {
+            tracing::info!("Global server resolver initialized");
+        }
+
         // Update connection pool with database reference and runtime cache
         {
             let mut pool = self.connection_pool.lock().await;

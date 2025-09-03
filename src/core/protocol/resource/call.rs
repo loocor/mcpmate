@@ -36,22 +36,16 @@ pub async fn read_upstream_resource(
     );
 
     // Get the connection from the pool
+    // Note: mapping.server_name actually contains server_id for connection pool compatibility
     let pool = connection_pool.lock().await;
-    let instances = pool.connections.get(&mapping.server_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Server {} not found for resource {}",
-            mapping.server_name,
-            uri
-        )
-    })?;
+    let instances = pool
+        .connections
+        .get(&mapping.server_name)
+        .ok_or_else(|| anyhow::anyhow!("Server {} not found for resource {}", mapping.server_name, uri))?;
 
-    let conn = instances.get(&mapping.instance_id).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Instance {} not found for resource {}",
-            mapping.instance_id,
-            uri
-        )
-    })?;
+    let conn = instances
+        .get(&mapping.instance_id)
+        .ok_or_else(|| anyhow::anyhow!("Instance {} not found for resource {}", mapping.instance_id, uri))?;
 
     // Check if the connection has a service
     let service = match &conn.service {
@@ -83,9 +77,7 @@ pub async fn read_upstream_resource(
     // Log content types for debugging
     for (i, content) in result.contents.iter().enumerate() {
         match content {
-            rmcp::model::ResourceContents::TextResourceContents {
-                mime_type, text, ..
-            } => {
+            rmcp::model::ResourceContents::TextResourceContents { mime_type, text, .. } => {
                 tracing::debug!(
                     "Content {}: text (mime_type: {:?}, length: {} chars)",
                     i,
@@ -93,9 +85,7 @@ pub async fn read_upstream_resource(
                     text.len()
                 );
             }
-            rmcp::model::ResourceContents::BlobResourceContents {
-                mime_type, blob, ..
-            } => {
+            rmcp::model::ResourceContents::BlobResourceContents { mime_type, blob, .. } => {
                 tracing::debug!(
                     "Content {}: blob (mime_type: {:?}, length: {} bytes base64)",
                     i,

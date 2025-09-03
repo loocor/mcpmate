@@ -24,16 +24,27 @@ use crate::core::pool::UpstreamConnectionPool;
 ///
 /// # Returns
 /// * `HashMap<String, ToolMapping>` - A mapping of tool names to server/instance information
-pub async fn build_tool_mapping(
-    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> HashMap<String, ToolMapping> {
+pub async fn build_tool_mapping(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>) -> HashMap<String, ToolMapping> {
     let mut tool_mapping = HashMap::new();
 
     // Lock the connection pool to access it
     let pool = connection_pool.lock().await;
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for (server_id, instances) in &pool.connections {
+        // Get server_name for MCP protocol layer operations using resolver
+        let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+            Ok(Some(name)) => name,
+            Ok(None) => {
+                tracing::warn!("Server ID '{}' not found, skipping", server_id);
+                continue;
+            }
+            Err(e) => {
+                tracing::error!("Failed to resolve server ID '{}': {}, skipping", server_id, e);
+                continue;
+            }
+        };
+
         for (instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -43,7 +54,7 @@ pub async fn build_tool_mapping(
             // Add all tools from this instance to the mapping
             for tool in &conn.tools {
                 // Generate a unique name for this tool (with server prefix)
-                let unique_name = generate_unique_name(server_name, &tool.name);
+                let unique_name = generate_unique_name(&server_name, &tool.name);
 
                 // Skip tools that are already in the mapping (first one wins)
                 if tool_mapping.contains_key(&unique_name) {
@@ -102,7 +113,20 @@ pub async fn get_all_tools(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>)
     let mut all_tools = Vec::new();
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for (server_id, instances) in &pool.connections {
+        // Get server_name for MCP protocol layer operations using resolver
+        let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+            Ok(Some(name)) => name,
+            Ok(None) => {
+                tracing::warn!("Server ID '{}' not found, skipping", server_id);
+                continue;
+            }
+            Err(e) => {
+                tracing::error!("Failed to resolve server ID '{}': {}, skipping", server_id, e);
+                continue;
+            }
+        };
+
         for conn in instances.values() {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -112,7 +136,7 @@ pub async fn get_all_tools(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>)
             // Add all tools from this instance with standardized names
             for tool in &conn.tools {
                 // Generate a unique name for this tool
-                let unique_name = generate_unique_name(server_name, &tool.name);
+                let unique_name = generate_unique_name(&server_name, &tool.name);
 
                 // Create a modified tool with the unique name
                 let mut unique_tool = tool.clone();
@@ -151,9 +175,21 @@ pub async fn find_tool_in_server(
 ) -> Result<ToolMapping> {
     let pool = connection_pool.lock().await;
 
-    // Check if the server exists
-    let instances = pool.connections.get(server_name).context(format!(
-        "Server '{server_name}' not found in connection pool"
+    // Convert server_name to server_id for connection pool lookup using resolver
+    let server_id = match crate::core::protocol::resolver::to_id(server_name).await {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return Err(anyhow::anyhow!("Server '{}' not found in database", server_name));
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!("Failed to resolve server '{}': {}", server_name, e));
+        }
+    };
+
+    // Check if the server exists in connection pool
+    let instances = pool.connections.get(&server_id).context(format!(
+        "Server '{}' (ID: {}) not found in connection pool",
+        server_name, server_id
     ))?;
 
     // Look for the tool in all instances of this server

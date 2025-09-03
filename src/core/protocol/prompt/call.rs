@@ -31,19 +31,15 @@ pub async fn get_upstream_prompt(
     prompt_name: &str,
     arguments: Option<serde_json::Map<String, JsonValue>>,
 ) -> Result<GetPromptResult> {
-    tracing::debug!(
-        "Getting prompt '{}' with arguments: {:?}",
-        prompt_name,
-        arguments
-    );
+    tracing::debug!("Getting prompt '{}' with arguments: {:?}", prompt_name, arguments);
 
     // Validate the prompt name format
     validate_prompt_name(prompt_name)?;
 
     // Find the mapping for this prompt
-    let mapping = prompt_mapping.get(prompt_name).ok_or_else(|| {
-        anyhow::anyhow!("Prompt '{}' not found in any connected server", prompt_name)
-    })?;
+    let mapping = prompt_mapping
+        .get(prompt_name)
+        .ok_or_else(|| anyhow::anyhow!("Prompt '{}' not found in any connected server", prompt_name))?;
 
     tracing::debug!(
         "Routing prompt request for '{}' to instance {} (server: {})",
@@ -53,22 +49,16 @@ pub async fn get_upstream_prompt(
     );
 
     // Get the connection from the pool
+    // Note: mapping.server_name actually contains server_id for connection pool compatibility
     let pool = connection_pool.lock().await;
-    let instances = pool.connections.get(&mapping.server_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Server {} not found for prompt {}",
-            mapping.server_name,
-            prompt_name
-        )
-    })?;
+    let instances = pool
+        .connections
+        .get(&mapping.server_name)
+        .ok_or_else(|| anyhow::anyhow!("Instance {} not found for prompt {}", mapping.instance_id, prompt_name))?;
 
-    let conn = instances.get(&mapping.instance_id).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Instance {} not found for prompt {}",
-            mapping.instance_id,
-            prompt_name
-        )
-    })?;
+    let conn = instances
+        .get(&mapping.instance_id)
+        .ok_or_else(|| anyhow::anyhow!("Instance {} not found for prompt {}", mapping.instance_id, prompt_name))?;
 
     // Check if the connection has a service
     let service = match &conn.service {
@@ -94,7 +84,7 @@ pub async fn get_upstream_prompt(
 
     // Prepare the request parameters
     let request_params = GetPromptRequestParam {
-            name: mapping.upstream_prompt_name.clone(),
+        name: mapping.upstream_prompt_name.clone(),
         arguments,
     };
 
@@ -165,10 +155,13 @@ pub async fn get_upstream_prompt_direct(
     };
 
     // Call the upstream server
-    let result = service.get_prompt(request_params).await.context(format!(
-        "Failed to get prompt '{}' from upstream server",
-        prompt_name
-    ))?;
+    let result = service
+        .get_prompt(request_params)
+        .await
+        .context(format!(
+            "Failed to get prompt '{}' from upstream server",
+            prompt_name
+        ))?;
 
     tracing::debug!(
         "Successfully got prompt '{}' from upstream server with {} messages",

@@ -47,7 +47,20 @@ impl DatabasePromptService {
         let mut all_prompts = Vec::new();
         let pool = self.connection_pool.lock().await;
 
-        for (server_name, instances) in pool.connections.iter() {
+        for (server_id, instances) in pool.connections.iter() {
+            // Get server_name for database operations using resolver
+            let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+                Ok(Some(name)) => name,
+                Ok(None) => {
+                    tracing::warn!("Server ID '{}' not found, skipping", server_id);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to resolve server ID '{}': {}, skipping", server_id, e);
+                    continue;
+                }
+            };
+
             for conn in instances.values() {
                 if conn.is_connected() && !conn.is_disabled() && conn.supports_prompts() {
                     // Get prompts from the service connection dynamically
@@ -55,13 +68,19 @@ impl DatabasePromptService {
                         match service.list_prompts(None).await {
                             Ok(result) => {
                                 for prompt in result.prompts {
+                                    // Note: enabled_set uses server_name from database query
                                     if enabled_set.contains(&(server_name.clone(), prompt.name.clone())) {
                                         all_prompts.push(prompt);
                                     }
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!("Failed to list prompts from server '{}': {}", server_name, e);
+                                tracing::warn!(
+                                    "Failed to list prompts from server '{}' (ID: {}): {}",
+                                    server_name,
+                                    server_id,
+                                    e
+                                );
                             }
                         }
                     }

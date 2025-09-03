@@ -47,7 +47,20 @@ impl DatabaseResourceService {
         let mut all_resources = Vec::new();
         let pool = self.connection_pool.lock().await;
 
-        for (server_name, instances) in pool.connections.iter() {
+        for (server_id, instances) in pool.connections.iter() {
+            // Get server_name for database operations using resolver
+            let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+                Ok(Some(name)) => name,
+                Ok(None) => {
+                    tracing::warn!("Server ID '{}' not found, skipping", server_id);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to resolve server ID '{}': {}, skipping", server_id, e);
+                    continue;
+                }
+            };
+
             for conn in instances.values() {
                 if conn.is_connected() && !conn.is_disabled() && conn.supports_resources() {
                     // Get resources from the service connection dynamically
@@ -55,13 +68,19 @@ impl DatabaseResourceService {
                         match service.list_resources(None).await {
                             Ok(result) => {
                                 for resource in result.resources {
+                                    // Note: enabled_set uses server_name from database query
                                     if enabled_set.contains(&(server_name.clone(), resource.uri.clone())) {
                                         all_resources.push(resource);
                                     }
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!("Failed to list resources from server '{}': {}", server_name, e);
+                                tracing::warn!(
+                                    "Failed to list resources from server '{}' (ID: {}): {}",
+                                    server_name,
+                                    server_id,
+                                    e
+                                );
                             }
                         }
                     }
@@ -97,8 +116,21 @@ impl DatabaseResourceService {
         let pool = self.connection_pool.lock().await;
 
         // Only get templates from enabled servers
-        for (server_name, instances) in pool.connections.iter() {
-            if !enabled_server_names.contains(server_name) {
+        for (server_id, instances) in pool.connections.iter() {
+            // Get server_name for database operations using resolver
+            let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+                Ok(Some(name)) => name,
+                Ok(None) => {
+                    tracing::warn!("Server ID '{}' not found, skipping", server_id);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to resolve server ID '{}': {}, skipping", server_id, e);
+                    continue;
+                }
+            };
+
+            if !enabled_server_names.contains(&server_name) {
                 continue; // Skip disabled servers
             }
 
@@ -113,7 +145,7 @@ impl DatabaseResourceService {
                             all_templates.extend(result.resource_templates);
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to list resource templates from server '{}': {}", server_name, e);
+                            tracing::warn!("Failed to list resource templates from server '{}': {}", server_id, e);
                         }
                     }
                 }

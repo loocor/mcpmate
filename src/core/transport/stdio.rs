@@ -128,7 +128,8 @@ async fn connect_with_timeout(
                         let output = String::from_utf8_lossy(&buffer[..n]);
                         for line in output.lines() {
                             if !line.trim().is_empty() {
-                                tracing::info!("Log from {}: {}", server_name, line.trim());
+                                // Note: server_name here is actually server_id from the connection pool
+                                tracing::info!("Log from {} (ID): {}", server_name, line.trim());
                             }
                         }
                     }

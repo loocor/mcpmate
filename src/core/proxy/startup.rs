@@ -8,13 +8,10 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use super::{Args, ProxyServer};
 
 // Import required types and modules from core and other modules
-use crate::{
-    config::server,
-    core::{
-        foundation::types::ConnectionStatus, // connection status
-        pool::UpstreamConnectionPool,        // connection pool
-        transport::TransportType,            // transport type
-    },
+use crate::core::{
+    foundation::types::ConnectionStatus, // connection status
+    pool::UpstreamConnectionPool,        // connection pool
+    transport::TransportType,            // transport type
 };
 
 /// Start background connections to all configured servers using core connection pool
@@ -24,7 +21,7 @@ pub async fn start_background_connections(
 ) -> Result<()> {
     // Get a reference to the core connection pool
     let connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>> = Arc::clone(&proxy.connection_pool);
-    let proxy_arc_clone = Arc::clone(&proxy_arc);
+    let _proxy_arc_clone = Arc::clone(&proxy_arc);
 
     // Connect to all servers in the background
     tokio::spawn(async move {
@@ -36,21 +33,12 @@ pub async fn start_background_connections(
             tracing::error!("Error in parallel connection process: {}", e);
         }
 
+        // Wait a short time for async event processing to complete
+        // This ensures connection status updates are processed before counting
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         // Get pool reference for status reporting
         let pool = connection_pool.lock().await;
-
-        // Get the total number of servers in the database
-        let total_server_count_in_db = if let Some(db) = proxy_arc_clone.database.as_ref() {
-            match server::get_all_servers(&db.pool).await {
-                Ok(servers) => servers.len(),
-                Err(e) => {
-                    tracing::error!("Failed to get servers from database: {}", e);
-                    0 // If failed, use 0 and we'll fall back to connections.len() below
-                }
-            }
-        } else {
-            0 // If database not available, use 0
-        };
 
         // Record the connection status
         let connected_count = pool
@@ -63,16 +51,16 @@ pub async fn start_background_connections(
             })
             .count();
 
-        // Use database count if available, otherwise fall back to connections length
-        let total_count = if total_server_count_in_db > 0 {
-            total_server_count_in_db
-        } else {
-            pool.connections.len()
-        };
+        // Use the number of enabled servers in connection pool as the total
+        // This gives a more accurate representation of enabled vs connected servers
+        let enabled_servers_count = pool.connections.len();
 
-        // Display system-wide server count, showing ratio of connected vs all configured servers
-        // This is consistent with the /api/system/status endpoint which shows total_servers as all servers in the system
-        tracing::info!("Connected to {}/{} upstream servers", connected_count, total_count);
+        // Display enabled server connection status
+        tracing::info!(
+            "Connected to {}/{} enabled upstream servers",
+            connected_count,
+            enabled_servers_count
+        );
     });
 
     Ok(())
@@ -86,8 +74,8 @@ pub async fn start_proxy_server(
 ) -> Result<Option<tokio::task::JoinHandle<Result<(), anyhow::Error>>>> {
     // Start proxy server with specified transport
     let mcp_bind_address = format!("127.0.0.1:{}", args.mcp_port).parse()?;
-    tracing::info!("🚀 MCP Proxy Server binding to address: {}", mcp_bind_address);
-    tracing::info!("🔧 Using port from args.port: {}", args.mcp_port);
+    tracing::info!("MCP Proxy Server binding to address: {}", mcp_bind_address);
+    tracing::info!("Using port from args.port: {}", args.mcp_port);
 
     // Start server based on transport mode using early return pattern
     match args.transport.as_str() {

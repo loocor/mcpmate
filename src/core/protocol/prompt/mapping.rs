@@ -19,7 +19,7 @@ pub async fn build_prompt_mapping(
     let pool = connection_pool.lock().await;
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for (server_id, instances) in &pool.connections {
         for (instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -30,7 +30,7 @@ pub async fn build_prompt_mapping(
             if !conn.supports_prompts() {
                 tracing::debug!(
                     "Server '{}' (instance: {}) does not support prompts, skipping",
-                    server_name,
+                    server_id,
                     instance_id
                 );
                 continue;
@@ -38,11 +38,7 @@ pub async fn build_prompt_mapping(
 
             // Get prompts from this instance
             if let Some(service) = &conn.service {
-                tracing::debug!(
-                    "Fetching prompts from instance {} (server: {})",
-                    instance_id,
-                    server_name
-                );
+                tracing::debug!("Fetching prompts from instance {} (server: {})", instance_id, server_id);
 
                 match service.list_prompts(None).await {
                     Ok(result) => {
@@ -57,23 +53,24 @@ pub async fn build_prompt_mapping(
                             }
 
                             // Add the prompt to the mapping
+                            // Note: We store server_id in server_name field for connection pool compatibility
                             prompt_mapping.insert(
                                 prompt.name.to_string(),
                                 PromptMapping {
-                                    server_name: server_name.clone(),
+                                    server_name: server_id.clone(), // Actually storing server_id here
                                     instance_id: instance_id.clone(),
                                     prompt: prompt.clone(),
                                     upstream_prompt_name: prompt.name.to_string(),
                                 },
                             );
 
-                            tracing::debug!("Added prompt '{}' from server '{}'", prompt.name, server_name);
+                            tracing::debug!("Added prompt '{}' from server '{}'", prompt.name, server_id);
                         }
                     }
                     Err(e) => {
                         tracing::warn!(
                             "Failed to list prompts from server '{}' (instance: {}): {}",
-                            server_name,
+                            server_id,
                             instance_id,
                             e
                         );
@@ -83,7 +80,7 @@ pub async fn build_prompt_mapping(
                 tracing::debug!(
                     "No service available for instance {} (server: {})",
                     instance_id,
-                    server_name
+                    server_id
                 );
             }
         }
@@ -103,7 +100,7 @@ pub async fn build_prompt_template_mapping(
     let pool = connection_pool.lock().await;
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for (server_id, instances) in &pool.connections {
         for (instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -121,7 +118,7 @@ pub async fn build_prompt_template_mapping(
             tracing::debug!(
                 "Prompt template mapping for instance {} (server: {}) - using on-demand fetching",
                 instance_id,
-                server_name
+                server_id
             );
         }
     }

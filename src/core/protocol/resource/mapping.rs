@@ -35,7 +35,20 @@ pub async fn build_resource_mapping(
     let pool = connection_pool.lock().await;
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for (server_id, instances) in &pool.connections {
+        // Get server_name for MCP protocol layer operations using resolver
+        let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+            Ok(Some(name)) => name,
+            Ok(None) => {
+                tracing::warn!("Server ID '{}' not found, skipping", server_id);
+                continue;
+            }
+            Err(e) => {
+                tracing::error!("Failed to resolve server ID '{}': {}, skipping", server_id, e);
+                continue;
+            }
+        };
+
         for (instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -46,33 +59,35 @@ pub async fn build_resource_mapping(
             if !conn.supports_resources() {
                 tracing::debug!(
                     "Server '{}' (instance: {}) does not support resources, skipping",
-                    server_name,
+                    server_id,
                     instance_id
                 );
                 continue;
             }
 
             tracing::debug!(
-                "Collecting resources from instance {} (server: {})",
+                "Collecting resources from instance {} (server: {} / ID: {})",
                 instance_id,
-                server_name
+                server_name,
+                server_id
             );
 
             // Collect all resources from this instance with pagination
-            match collect_all_resources_from_instance(conn, instance_id, server_name).await {
+            // Note: Pass server_id for connection pool compatibility, not server_name
+            match collect_all_resources_from_instance(conn, instance_id, server_id).await {
                 Ok(resources) => {
                     for resource_mapping_item in resources {
                         let uri = &resource_mapping_item.upstream_resource_uri;
 
                         // Filter disabled resources if database is available
                         if let Some(db) = database {
-                            match super::status::is_resource_enabled(&db.pool, server_name, uri).await {
+                            match super::status::is_resource_enabled(&db.pool, &server_name, uri).await {
                                 Ok(enabled) => {
                                     if !enabled {
                                         tracing::debug!(
                                             "Filtering out disabled resource '{}' from server '{}'",
                                             uri,
-                                            server_name
+                                            &server_name
                                         );
                                         continue;
                                     }
@@ -82,7 +97,7 @@ pub async fn build_resource_mapping(
                                     tracing::warn!(
                                         "Error checking if resource '{}' from server '{}' is enabled: {}. Including by default.",
                                         uri,
-                                        server_name,
+                                        &server_name,
                                         e
                                     );
                                 }
@@ -145,7 +160,7 @@ pub async fn build_resource_template_mapping(
     let pool = connection_pool.lock().await;
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for (server_id, instances) in &pool.connections {
         for (instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -156,7 +171,7 @@ pub async fn build_resource_template_mapping(
             if !conn.supports_resources() {
                 tracing::debug!(
                     "Server '{}' (instance: {}) does not support resources, skipping resource templates",
-                    server_name,
+                    server_id,
                     instance_id
                 );
                 continue;
@@ -165,11 +180,11 @@ pub async fn build_resource_template_mapping(
             tracing::debug!(
                 "Collecting resource templates from instance {} (server: {})",
                 instance_id,
-                server_name
+                server_id
             );
 
             // Collect all resource templates from this instance with pagination
-            match collect_all_resource_templates_from_instance(conn, instance_id, server_name).await {
+            match collect_all_resource_templates_from_instance(conn, instance_id, server_id).await {
                 Ok(templates) => {
                     resource_template_mapping.extend(templates);
                 }
@@ -179,14 +194,13 @@ pub async fn build_resource_template_mapping(
                     if error_msg.contains("Method not found") || error_msg.contains("not supported") {
                         tracing::debug!(
                             "Server '{}' (instance: {}) does not support resource templates: {}",
-                            server_name,
+                            server_id,
                             instance_id,
                             e
                         );
                     } else {
-                        tracing::warn!("{instance_id} (server: {server_name}): {e}");
+                        tracing::warn!("{instance_id} (server: {}): {e}", server_id);
                     }
-                    // Continue with other instances even if one fails
                 }
             }
         }
@@ -203,7 +217,7 @@ pub async fn build_resource_template_mapping(
 async fn collect_all_resources_from_instance(
     conn: &crate::core::connection::UpstreamConnection,
     instance_id: &str,
-    server_name: &str,
+    server_id: &str,
 ) -> Result<Vec<ResourceMapping>> {
     let mut all_resources = Vec::new();
 
@@ -214,7 +228,7 @@ async fn collect_all_resources_from_instance(
             return Err(anyhow::anyhow!(
                 "No service available for instance {} (server: {})",
                 instance_id,
-                server_name
+                server_id
             ));
         }
     };
@@ -229,7 +243,7 @@ async fn collect_all_resources_from_instance(
 
         for resource in result.resources {
             let resource_mapping = ResourceMapping {
-                server_name: server_name.to_string(),
+                server_name: server_id.to_string(),
                 instance_id: instance_id.to_string(),
                 upstream_resource_uri: resource.uri.clone(),
                 resource,
@@ -250,7 +264,7 @@ async fn collect_all_resources_from_instance(
 async fn collect_all_resource_templates_from_instance(
     conn: &crate::core::connection::UpstreamConnection,
     instance_id: &str,
-    server_name: &str,
+    server_id: &str,
 ) -> Result<Vec<ResourceTemplateMapping>> {
     let mut all_templates = Vec::new();
 
@@ -261,7 +275,7 @@ async fn collect_all_resource_templates_from_instance(
             return Err(anyhow::anyhow!(
                 "No service available for instance {} (server: {})",
                 instance_id,
-                server_name
+                server_id
             ));
         }
     };
@@ -276,7 +290,7 @@ async fn collect_all_resource_templates_from_instance(
 
         for template in result.resource_templates {
             let template_mapping = ResourceTemplateMapping {
-                server_name: server_name.to_string(),
+                server_name: server_id.to_string(),
                 instance_id: instance_id.to_string(),
                 resource_template: template,
             };
@@ -309,7 +323,7 @@ pub async fn get_all_resources(connection_pool: &Arc<Mutex<UpstreamConnectionPoo
     let pool = connection_pool.lock().await;
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for (server_id, instances) in &pool.connections {
         for (instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -322,9 +336,8 @@ pub async fn get_all_resources(connection_pool: &Arc<Mutex<UpstreamConnectionPoo
             }
 
             // Collect all resources from this instance
-            match collect_all_resources_from_instance(conn, instance_id, server_name).await {
+            match collect_all_resources_from_instance(conn, instance_id, server_id).await {
                 Ok(resource_mappings) => {
-                    // Convert ResourceMapping to Resource
                     for mapping in resource_mappings {
                         all_resources.push(mapping.resource);
                     }
@@ -333,7 +346,7 @@ pub async fn get_all_resources(connection_pool: &Arc<Mutex<UpstreamConnectionPoo
                     tracing::warn!(
                         "Failed to collect resources from instance {} (server: {}): {}",
                         instance_id,
-                        server_name,
+                        server_id,
                         e
                     );
                 }
@@ -364,7 +377,7 @@ pub async fn get_all_resource_templates(
     let pool = connection_pool.lock().await;
 
     // Iterate through all servers and instances
-    for (server_name, instances) in &pool.connections {
+    for (server_id, instances) in &pool.connections {
         for (instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -377,9 +390,8 @@ pub async fn get_all_resource_templates(
             }
 
             // Collect all resource templates from this instance
-            match collect_all_resource_templates_from_instance(conn, instance_id, server_name).await {
+            match collect_all_resource_templates_from_instance(conn, instance_id, server_id).await {
                 Ok(template_mappings) => {
-                    // Convert ResourceTemplateMapping to ResourceTemplate
                     for mapping in template_mappings {
                         all_resource_templates.push(mapping.resource_template);
                     }
@@ -388,7 +400,7 @@ pub async fn get_all_resource_templates(
                     tracing::warn!(
                         "Failed to collect resource templates from instance {} (server: {}): {}",
                         instance_id,
-                        server_name,
+                        server_id,
                         e
                     );
                 }

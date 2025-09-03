@@ -5,6 +5,7 @@
 pub mod prompt;
 pub mod resource;
 pub mod tool;
+pub mod resolver;
 
 // Re-export commonly used types and functions from each protocol
 pub use tool::{
