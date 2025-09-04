@@ -1,16 +1,15 @@
 // Configuration builder for clientlications
 // Handles the high-level configuration building logic
 
-use anyhow::Result;
-use serde_json::{Value, json};
-use sqlx::{Row, SqlitePool};
-use std::sync::Arc;
-
 use super::loader::{ServerInfo, ServerLoader};
 use super::models::{ConfigRule, GeneratedConfig, GenerationMode, GenerationRequest};
 use super::strategy::TransportStrategy;
 use super::utils::set_nested_value;
-use crate::common::{constants::transport, profile::profile_keys};
+use crate::common::constants::{profile_keys, transport};
+use anyhow::Result;
+use serde_json::{Value, json};
+use sqlx::{Row, SqlitePool};
+use std::sync::Arc;
 
 /// Configuration builder that orchestrates the generation process
 pub struct ConfigBuilder {

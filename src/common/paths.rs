@@ -6,15 +6,8 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-/// MCPMate directory structure constants
-pub mod constants {
-    pub const MCPMATE_DIR_NAME: &str = ".mcpmate";
-    pub const RUNTIMES_DIR_NAME: &str = "runtimes";
-    pub const CACHE_DIR_NAME: &str = "cache";
-    pub const DOWNLOADS_DIR_NAME: &str = "downloads";
-    pub const BIN_DIR_NAME: &str = "bin";
-    pub const DATABASE_FILE_NAME: &str = "mcpmate.db";
-}
+use super::constants;
+use super::types::RuntimeType;
 
 /// Centralized path manager for MCPMate
 #[derive(Debug, Clone)]
@@ -26,7 +19,7 @@ impl MCPMatePaths {
     /// Create a new path manager instance
     pub fn new() -> Result<Self> {
         let home_dir = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot get user home directory"))?;
-        let base_dir = home_dir.join(constants::MCPMATE_DIR_NAME);
+        let base_dir = home_dir.join(constants::paths::MCPMATE_DIR_NAME);
 
         Ok(Self { base_dir })
     }
@@ -38,12 +31,12 @@ impl MCPMatePaths {
 
     /// Get the runtimes directory (~/.mcpmate/runtimes)
     pub fn runtimes_dir(&self) -> PathBuf {
-        self.base_dir.join(constants::RUNTIMES_DIR_NAME)
+        self.base_dir.join(constants::paths::RUNTIMES_DIR_NAME)
     }
 
     /// Get the cache directory (~/.mcpmate/cache)
     pub fn cache_dir(&self) -> PathBuf {
-        self.base_dir.join(constants::CACHE_DIR_NAME)
+        self.base_dir.join(constants::paths::CACHE_DIR_NAME)
     }
 
     /// Get the downloads directory (system temp dir)
@@ -53,7 +46,7 @@ impl MCPMatePaths {
 
     /// Get the database file path (~/.mcpmate/mcpmate.db)
     pub fn database_path(&self) -> PathBuf {
-        self.base_dir.join(constants::DATABASE_FILE_NAME)
+        self.base_dir.join(constants::paths::DATABASE_FILE_NAME)
     }
 
     /// Get the database URL for SQLite
@@ -85,7 +78,7 @@ impl MCPMatePaths {
         version: &str,
     ) -> PathBuf {
         self.runtime_version_dir(runtime_type, version)
-            .join(constants::BIN_DIR_NAME)
+            .join(constants::paths::BIN_DIR_NAME)
     }
 
     /// Get runtime cache directory (~/.mcpmate/cache/{runtime_type})
@@ -199,7 +192,6 @@ pub fn get_bridge_path() -> Result<String> {
         }
     }
 
-    use super::types::RuntimeType;
     let bridge_name = format!("bridge{}", RuntimeType::executable_extension());
 
     // Try to find bridge executable in the same directory as current executable

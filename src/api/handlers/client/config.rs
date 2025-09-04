@@ -1,6 +1,7 @@
 // Configuration file processing for client handlers
 
 use crate::common::ConfigChecker;
+use crate::common::constants::config_keys;
 use crate::config::client::utils::get_nested_value;
 use sqlx::Row;
 
@@ -131,9 +132,9 @@ fn analyze_with_fallback_keys(content: &str) -> (bool, u32) {
         }
         Err(_) => {
             // If not valid JSON, do simple text search with fallback keys
-            let has_mcp = content.contains("mcpServers")
-                || content.contains("mcp_servers")
-                || content.contains("context_servers")
+            let has_mcp = content.contains(config_keys::MCP_SERVERS)
+                || content.contains(config_keys::MCP_SERVERS_SNAKE)
+                || content.contains(config_keys::CONTEXT_SERVERS)
                 || content.contains("\"mcp\"") && content.contains("\"servers\"");
             (has_mcp, 0)
         }

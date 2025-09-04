@@ -15,46 +15,6 @@ use sqlx::{
     sqlite::{SqliteArgumentValue, SqliteTypeInfo, SqliteValueRef},
 };
 
-/// Profile keys used in client configs
-pub mod profile_keys {
-    /// Key for MCP tool key in config files
-    pub const MCP_TOOL_KEY: &str = "MCPTool";
-    /// Key for name in config files
-    pub const NAME_KEY: &str = "name";
-    /// Key for type in config files
-    pub const TYPE_KEY: &str = "type";
-    /// Key for transports in config files
-    pub const TRANSPORTS_KEY: &str = "transports";
-    /// Key for parameters in config files
-    pub const PARAMETERS_KEY: &str = "parameters";
-    /// Key for tool settings in config files
-    pub const TOOL_SETTINGS_KEY: &str = "toolSettings";
-    /// Key for tools in config files
-    pub const TOOLS_KEY: &str = "tools";
-    /// Key for MCPMate in config files
-    pub const MCPMATE: &str = "MCPMate";
-}
-
-/// Port configuration constants
-pub mod ports {
-    /// API server port (standard)
-    pub const API_PORT: u16 = 8080;
-    /// MCP proxy server port (standard)
-    pub const MCP_PORT: u16 = 8000;
-}
-
-/// Default values used in configuration
-pub mod defaults {
-    /// Default server host
-    pub const DEFAULT_HOST: &str = "127.0.0.1";
-    /// Default cache TTL in seconds
-    pub const DEFAULT_CACHE_TTL: u32 = 86400; // 24 hours
-    /// Default requests limit
-    pub const DEFAULT_REQUESTS_LIMIT: u32 = 100;
-    /// Default runtime value
-    pub const RUNTIME: &str = "node";
-}
-
 /// Profile type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProfileType {

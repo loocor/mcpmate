@@ -4,6 +4,8 @@
 
 use std::path::Path;
 
+use crate::common::constants::config_keys;
+
 /// Configuration checker
 ///
 /// Provides unified configuration file existence and content checking functionality
@@ -16,7 +18,10 @@ impl ConfigChecker {
     /// Create a new configuration checker, using the default MCP configuration pattern
     pub fn new() -> Self {
         Self {
-            patterns: vec!["mcpServers".to_string(), "mcp_servers".to_string()],
+            patterns: vec![
+                config_keys::MCP_SERVERS.to_string(),
+                config_keys::MCP_SERVERS_SNAKE.to_string(),
+            ],
         }
     }
 

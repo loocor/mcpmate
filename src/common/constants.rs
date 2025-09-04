@@ -53,6 +53,14 @@ pub mod separators {
     }
 }
 
+/// Port configuration constants
+pub mod ports {
+    /// API server port (standard)
+    pub const API_PORT: u16 = 8080;
+    /// MCP proxy server port (standard)
+    pub const MCP_PORT: u16 = 8000;
+}
+
 /// Common timeout constants
 pub mod timeouts {
     /// Timeout for acquiring async locks in milliseconds (e.g., connection pool locks)
@@ -60,6 +68,12 @@ pub mod timeouts {
 
     /// Timeout for connection pool operations when disabling in seconds
     pub const POOL_DISABLE_SEC: u64 = 1;
+
+    /// Database connection timeout in milliseconds
+    pub const DB_CONNECTION_TIMEOUT_MS: u64 = 5000;
+
+    /// Server startup timeout in seconds
+    pub const SERVER_STARTUP_TIMEOUT_SEC: u64 = 30;
 }
 
 /// Transport type constants for unified transport handling
@@ -134,6 +148,54 @@ pub mod config_keys {
     pub const CONTEXT_SERVERS: &str = "context_servers";
     pub const TOP_LEVEL_KEY: &str = "top_level_key";
     pub const IDENTIFIER: &str = "identifier";
+}
+
+/// Profile keys used in client configs
+pub mod profile_keys {
+    /// Key for MCP tool key in config files
+    pub const MCP_TOOL_KEY: &str = "MCPTool";
+    /// Key for name in config files
+    pub const NAME_KEY: &str = "name";
+    /// Key for type in config files
+    pub const TYPE_KEY: &str = "type";
+    /// Key for transports in config files
+    pub const TRANSPORTS_KEY: &str = "transports";
+    /// Key for parameters in config files
+    pub const PARAMETERS_KEY: &str = "parameters";
+    /// Key for tool settings in config files
+    pub const TOOL_SETTINGS_KEY: &str = "toolSettings";
+    /// Key for tools in config files
+    pub const TOOLS_KEY: &str = "tools";
+    /// Key for MCPMate in config files
+    pub const MCPMATE: &str = "MCPMate";
+}
+
+/// Path constants for unified path management
+pub mod paths {
+    /// Default MCPMate directory name
+    pub const MCPMATE_DIR_NAME: &str = ".mcpmate";
+    /// Database file name
+    pub const DATABASE_FILE_NAME: &str = "mcpmate.db";
+    /// Runtimes directory name
+    pub const RUNTIMES_DIR_NAME: &str = "runtimes";
+    /// Cache directory name
+    pub const CACHE_DIR_NAME: &str = "cache";
+    /// Downloads directory name
+    pub const DOWNLOADS_DIR_NAME: &str = "downloads";
+    /// Binary directory name
+    pub const BIN_DIR_NAME: &str = "bin";
+}
+
+/// Default values used in configuration
+pub mod defaults {
+    /// Default server host
+    pub const DEFAULT_HOST: &str = "127.0.0.1";
+    /// Default cache TTL in seconds
+    pub const DEFAULT_CACHE_TTL: u32 = 86400; // 24 hours
+    /// Default requests limit
+    pub const DEFAULT_REQUESTS_LIMIT: u32 = 100;
+    /// Default runtime value
+    pub const RUNTIME: &str = "node";
 }
 
 /// Common strategy labels for inspect responses

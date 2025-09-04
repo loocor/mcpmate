@@ -3,7 +3,7 @@
 //! This module provides global runtime configuration that can be set from
 //! command line arguments and accessed throughout the application.
 
-use crate::common::profile::ports;
+use crate::common::constants::ports;
 use std::sync::OnceLock;
 
 /// Global runtime port configuration

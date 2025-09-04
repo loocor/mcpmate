@@ -1,4 +1,4 @@
-use crate::common::profile::ports;
+use crate::common::constants::ports;
 use clap::Parser;
 
 /// Command line arguments for the MCP proxy server

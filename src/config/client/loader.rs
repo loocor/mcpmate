@@ -1,14 +1,12 @@
 // Server information loader for configuration generation
 // Handles loading server data from database
 
+use crate::common::constants::defaults;
+use crate::config::client::models::GenerationRequest;
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::sync::Arc;
-
-use crate::common::profile::defaults;
-
-use crate::config::client::models::GenerationRequest;
 
 /// Server information for configuration generation
 #[derive(Debug, Clone)]

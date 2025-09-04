@@ -69,7 +69,7 @@ pub struct UnifiedHttpServerConfig {
 
 impl Default for UnifiedHttpServerConfig {
     fn default() -> Self {
-        use crate::common::profile::ports;
+        use crate::common::constants::ports;
         Self {
             bind_address: format!("127.0.0.1:{}", ports::MCP_PORT).parse().unwrap(),
             streamable_http_path: "/mcp".to_string(),

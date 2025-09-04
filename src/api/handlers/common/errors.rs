@@ -46,16 +46,16 @@ pub fn map_anyhow_error(e: anyhow::Error) -> ApiError {
 pub fn map_database_error_ref(e: &SqlxError) -> ApiError {
     match e {
         SqlxError::Database(db_err) if db_err.is_unique_violation() => {
-            ApiError::Conflict("Resource already exists".to_string())
+            ApiError::Conflict(errors::RESOURCE_EXISTS.to_string())
         }
         SqlxError::Database(db_err) if db_err.is_foreign_key_violation() => {
-            ApiError::BadRequest("Foreign key constraint violation".to_string())
+            ApiError::BadRequest(errors::FK_VIOLATION.to_string())
         }
         SqlxError::Database(db_err) if db_err.is_check_violation() => {
-            ApiError::BadRequest("Check constraint violation".to_string())
+            ApiError::BadRequest(errors::CHECK_VIOLATION.to_string())
         }
-        SqlxError::RowNotFound => ApiError::NotFound("Resource not found".to_string()),
-        SqlxError::PoolTimedOut => ApiError::InternalError("Database connection timeout".to_string()),
+        SqlxError::RowNotFound => ApiError::NotFound(errors::RESOURCE_NOT_FOUND.to_string()),
+        SqlxError::PoolTimedOut => ApiError::InternalError(errors::DB_TIMEOUT.to_string()),
         SqlxError::Io(io_err) => ApiError::InternalError(format!("Database I/O error: {io_err}")),
         _ => ApiError::InternalError(format!("Database error: {e}")),
     }

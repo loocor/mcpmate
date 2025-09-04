@@ -2,7 +2,7 @@
 //!
 //! Defines data structures that can be safely passed between different languages
 
-use crate::common::profile::ports;
+use crate::common::constants::ports;
 use serde::{Deserialize, Serialize};
 
 /// Port configuration for MCPMate services

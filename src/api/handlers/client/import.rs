@@ -7,6 +7,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 use crate::api::models::client::ClientImportedServer;
+use crate::common::constants::config_keys;
 use crate::config::models::server::Server;
 use crate::config::server::{args, crud, env};
 
@@ -50,7 +51,7 @@ fn extract_servers(config: &Value) -> Result<HashMap<String, ServerConfig>> {
     let mut servers = HashMap::new();
 
     // Standard object format (Claude Desktop, etc.)
-    if let Some(mcp_servers) = config.get("mcpServers").and_then(|v| v.as_object()) {
+    if let Some(mcp_servers) = config.get(config_keys::MCP_SERVERS).and_then(|v| v.as_object()) {
         for (name, server_config) in mcp_servers {
             if let Some(config) = parse_server_config(server_config) {
                 servers.insert(name.clone(), config);
