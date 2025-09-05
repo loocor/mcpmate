@@ -55,6 +55,7 @@ rmcp = { path = "../sdk/crates/rmcp", features = [
   "transport-sse-client-reqwest",
   "transport-sse-server",
   "transport-streamable-http-client",
+  "transport-streamable-http-client-reqwest",
   "transport-streamable-http-server",
   "transport-worker",
 ] }

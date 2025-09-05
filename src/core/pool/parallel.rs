@@ -6,24 +6,20 @@
 //! - stateless connection logic for better parallelization
 //! - centralized connection event handling
 
-use anyhow::Result;
-use rmcp::{RoleClient, model::Tool, service::RunningService};
-use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
-use tokio_util::sync::CancellationToken;
-use tracing;
-
 use super::UpstreamConnectionPool;
 use crate::{
     common::{
         server::{ServerType, TransportType},
         sync::SyncHelper,
     },
-    core::transport::{
-        connect_http_server, // connect to an HTTP server
-        connect_sse_server,  // connect to an SSE server
-    },
+    core::transport::{connect_http_server, connect_sse_server},
 };
+use anyhow::Result;
+use rmcp::{RoleClient, model::Tool, service::RunningService};
+use std::sync::Arc;
+use tokio::sync::{Mutex, mpsc};
+use tokio_util::sync::CancellationToken;
+use tracing;
 
 /// Configuration bundle for connection operations
 struct ConnectionConfig {
@@ -222,14 +218,6 @@ impl ParallelConnectionManager {
         })
     }
 
-    /// Helper to send events with error handling
-    fn send_event(
-        event_tx: &mpsc::UnboundedSender<ConnectionEvent>,
-        event: ConnectionEvent,
-    ) {
-        let _ = event_tx.send(event);
-    }
-
     /// Pure connection logic extracted from existing methods
     /// This function is stateless and can be called in parallel
     async fn perform_connection(
@@ -250,73 +238,47 @@ impl ParallelConnectionManager {
 
         match server_type {
             ServerType::Stdio => {
-                Self::perform_stdio_connection(server_id, instance_id, server_config, database, runtime_cache, event_tx)
-                    .await
+                // Create cancellation token and store it, preserving original capability
+                let ct = CancellationToken::new();
+                let _ = event_tx.send(ConnectionEvent::TokenStore {
+                    server_id: server_id.to_string(),
+                    instance_id: instance_id.to_string(),
+                    token: ct.clone(),
+                });
+
+                // Pass database pool reference when available (keep original logic)
+                let database_pool = database.as_ref().map(|db| &db.pool);
+
+                // Call unified transport interface directly to reduce wrapping
+                crate::core::transport::unified::connect_server(
+                    server_id,
+                    server_config,
+                    ServerType::Stdio,
+                    TransportType::Stdio,
+                    Some(ct),
+                    database_pool,
+                    runtime_cache.as_ref().map(|rc| rc.as_ref()),
+                )
+                .await
             }
             ServerType::Sse => {
                 let (service, tools, capabilities) = connect_sse_server(server_id, server_config).await?;
                 Ok((service, tools, capabilities, None))
             }
             ServerType::StreamableHttp => {
-                Self::perform_http_connection(server_id, server_config, TransportType::StreamableHttp).await
+                let (service, tools, capabilities) =
+                    connect_http_server(server_id, server_config, TransportType::StreamableHttp).await?;
+                Ok((service, tools, capabilities, None))
             }
         }
     }
 
-    /// Perform stdio connection with proper token management
-    async fn perform_stdio_connection(
-        server_id: &str,
-        instance_id: &str,
-        server_config: &crate::core::models::MCPServerConfig,
-        database: Option<Arc<crate::config::database::Database>>,
-        runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
-        event_tx: mpsc::UnboundedSender<ConnectionEvent>,
-    ) -> Result<(
-        RunningService<RoleClient, ()>,
-        Vec<Tool>,
-        Option<rmcp::model::ServerCapabilities>,
-        Option<u32>,
-    )> {
-        // Create cancellation token
-        let ct = CancellationToken::new();
-
-        // Store the token for later use
-        let _ = event_tx.send(ConnectionEvent::TokenStore {
-            server_id: server_id.to_string(),
-            instance_id: instance_id.to_string(),
-            token: ct.clone(),
-        });
-
-        // Get database pool if available
-        let database_pool = database.as_ref().map(|db| &db.pool);
-
-        // Use the unified transport interface to reduce code duplication
-        crate::core::transport::unified::connect_server(
-            server_id,
-            server_config,
-            ServerType::Stdio,
-            TransportType::Stdio,
-            Some(ct),
-            database_pool,
-            runtime_cache.as_ref().map(|rc| rc.as_ref()),
-        )
-        .await
-    }
-
-    /// Perform HTTP connection
-    async fn perform_http_connection(
-        server_id: &str,
-        server_config: &crate::core::models::MCPServerConfig,
-        transport_type: TransportType,
-    ) -> Result<(
-        RunningService<RoleClient, ()>,
-        Vec<Tool>,
-        Option<rmcp::model::ServerCapabilities>,
-        Option<u32>,
-    )> {
-        let (service, tools, capabilities) = connect_http_server(server_id, server_config, transport_type).await?;
-
-        Ok((service, tools, capabilities, None))
+    /// Helper to send events with error handling
+    fn send_event(
+        event_tx: &mpsc::UnboundedSender<ConnectionEvent>,
+        event: ConnectionEvent,
+    ) {
+        let _ = event_tx.send(event);
     }
 
     /// Centralized event handler for connection state updates

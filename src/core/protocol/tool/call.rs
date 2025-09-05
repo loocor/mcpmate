@@ -2,15 +2,13 @@
 //!
 //! Contains functions for calling tools on upstream servers
 
-use std::sync::Arc;
-
-use anyhow::{Context, Result};
-use rmcp::model::{CallToolRequestParam, CallToolResult};
-use tokio::sync::Mutex;
-use tracing;
-
 use super::database::DatabaseToolService;
 use crate::core::pool::UpstreamConnectionPool;
+use anyhow::{Context, Result};
+use rmcp::model::{CallToolRequestParam, CallToolResult};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing;
 
 /// Call a tool on the appropriate upstream server
 ///
@@ -31,19 +29,15 @@ pub async fn call_upstream_tool(
     let unique_name = request.name.to_string();
 
     // Resolve tool name using database service (authoritative method)
-    let (server_name, original_tool_name) =
-        db_service
-            .resolve_tool(&unique_name)
-            .await
-            .context(format!(
-                "Failed to resolve tool '{}' using database service",
-                unique_name
-            ))?;
+    let (server_id, original_tool_name) = db_service.resolve_tool(&unique_name).await.context(format!(
+        "Failed to resolve tool '{}' using database service",
+        unique_name
+    ))?;
 
     // Call the tool using the resolved information
     call_tool_on_server(
         &db_service.connection_pool,
-        &server_name,
+        &server_id,
         &original_tool_name,
         &unique_name,
         request,
@@ -60,7 +54,7 @@ pub async fn call_upstream_tool(
 ///
 /// # Arguments
 /// * `connection_pool` - The connection pool to use
-/// * `server_name` - The name of the server to call
+/// * `server_id` - The ID of the server to call
 /// * `original_tool_name` - The original tool name on the server
 /// * `unique_name` - The unique tool name for logging
 /// * `request` - The tool call request
@@ -69,7 +63,7 @@ pub async fn call_upstream_tool(
 /// * `Result<CallToolResult>` - The result of the tool call
 async fn call_tool_on_server(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
-    server_name: &str,
+    server_id: &str,
     original_tool_name: &str,
     unique_name: &str,
     request: CallToolRequestParam,
@@ -95,11 +89,8 @@ async fn call_tool_on_server(
     // Find the server in the connection pool
     let instances = connection_pool_guard
         .connections
-        .get_mut(server_name)
-        .context(format!(
-            "Server '{}' not found in connection pool",
-            server_name
-        ))?;
+        .get_mut(server_id)
+        .context(format!("Server with ID '{}' not found in connection pool", server_id))?;
 
     // Find a connected instance for this server with fault isolation
     let (instance_id, conn) = instances
@@ -111,14 +102,11 @@ async fn call_tool_on_server(
             }
 
             // Skip servers with permanent errors
-            if let crate::core::foundation::types::ConnectionStatus::Error(ref error_details) =
-                conn.status
-            {
-                if error_details.error_type == crate::core::foundation::types::ErrorType::Permanent
-                {
+            if let crate::core::foundation::types::ConnectionStatus::Error(ref error_details) = conn.status {
+                if error_details.error_type == crate::core::foundation::types::ErrorType::Permanent {
                     tracing::debug!(
                         "Skipping server '{}' for tool call due to permanent error: {}",
-                        server_name,
+                        server_id,
                         error_details.message
                     );
                     return false;
@@ -129,7 +117,7 @@ async fn call_tool_on_server(
         })
         .context(format!(
             "No healthy connected instances found for server '{}'",
-            server_name
+            server_id
         ))?;
 
     let instance_id = instance_id.clone();
@@ -138,7 +126,7 @@ async fn call_tool_on_server(
     if conn.status == crate::core::foundation::types::ConnectionStatus::Busy {
         return Err(anyhow::anyhow!(
             "Server '{}' instance '{}' is currently busy",
-            server_name,
+            server_id,
             instance_id
         ));
     }
@@ -155,7 +143,7 @@ async fn call_tool_on_server(
     tracing::info!(
         "Routing tool call '{}' to server '{}' instance '{}' (upstream tool name: '{}')",
         unique_name,
-        server_name,
+        server_id,
         instance_id,
         original_tool_name
     );
@@ -178,7 +166,7 @@ async fn call_tool_on_server(
             tracing::info!(
                 "Tool call '{}' completed successfully on server '{}' instance '{}'",
                 unique_name,
-                server_name,
+                server_id,
                 instance_id
             );
             Ok(tool_result)
@@ -187,26 +175,22 @@ async fn call_tool_on_server(
             tracing::error!(
                 "Tool call '{}' failed on server '{}' instance '{}': {}",
                 unique_name,
-                server_name,
+                server_id,
                 instance_id,
                 e
             );
-            Err(anyhow::anyhow!(
-                "Tool call failed on server '{}': {}",
-                server_name,
-                e
-            ))
+            Err(anyhow::anyhow!("Tool call failed on server '{}': {}", server_id, e))
         }
         Err(_) => {
             tracing::error!(
                 "Tool call '{}' timed out on server '{}' instance '{}' after 30 seconds",
                 unique_name,
-                server_name,
+                server_id,
                 instance_id
             );
             Err(anyhow::anyhow!(
                 "Tool call timed out on server '{}' after 30 seconds",
-                server_name
+                server_id
             ))
         }
     }

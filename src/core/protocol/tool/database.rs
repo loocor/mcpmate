@@ -4,15 +4,13 @@
 //! that are driven by database profile. It replaces the dual
 //! mapping system with a single, authoritative database-driven approach.
 
-use std::{collections::HashMap, sync::Arc};
-
-use anyhow::{Context, Result};
-use rmcp::model::Tool;
-use tokio::sync::Mutex;
-use tracing;
-
 use super::types::ToolMapping;
 use crate::{config::database::Database, core::pool::UpstreamConnectionPool};
+use anyhow::{Context, Result};
+use rmcp::model::Tool;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
+use tracing;
 
 /// Database-driven tool service
 ///
@@ -40,10 +38,7 @@ impl DatabaseToolService {
         db: Arc<Database>,
         connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     ) -> Self {
-        Self {
-            db,
-            connection_pool,
-        }
+        Self { db, connection_pool }
     }
 
     /// Get all enabled tools from database with standardized names
@@ -219,14 +214,15 @@ impl DatabaseToolService {
             .context("Failed to query tool mapping from database")?;
 
         match result {
-            Some((_unique_name, server_name, original_tool_name, _server_id)) => {
+            Some((_unique_name, server_name, original_tool_name, server_id)) => {
                 tracing::debug!(
-                    "Resolved tool '{}' -> server: '{}', original tool: '{}'",
+                    "Resolved tool '{}' -> server: '{}' (ID: {}), original tool: '{}'",
                     tool_name,
                     server_name,
+                    server_id,
                     original_tool_name
                 );
-                Ok((server_name, original_tool_name))
+                Ok((server_id, original_tool_name))
             }
             None => Err(anyhow::anyhow!(
                 "Tool '{}' not found in active profile or is disabled",

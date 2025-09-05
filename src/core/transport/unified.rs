@@ -9,7 +9,7 @@ use rmcp::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::{TransportType, http, sse, stdio};
+use super::{TransportType, http, stdio};
 use crate::common::server::ServerType;
 use crate::core::models::MCPServerConfig;
 
@@ -38,7 +38,7 @@ pub async fn connect_server(
             Ok(result)
         }
         ServerType::Sse => {
-            let (service, tools, capabilities) = sse::connect_sse_server(server_name, server_config).await?;
+            let (service, tools, capabilities) = http::connect_sse_server(server_name, server_config).await?;
             Ok((service, tools, capabilities, None))
         }
         ServerType::StreamableHttp => {

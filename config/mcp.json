@@ -1,66 +1,48 @@
 {
-  "mcpServers": {
-    "21Magic": {
-      "args": [
-        "-y",
-        "@21st-dev/magic@latest",
-        "API_KEY=\"c5dc57e6cec36564e6d056af192bb264551ba5911168eb25f1a7f08b9b2ca1d7\""
-      ],
-      "command": "npx",
-      "type": "stdio"
-    },
-    "Context7": {
-      "args": [
-        "-y",
-        "@upstash/context7-mcp@latest"
-      ],
-      "command": "npx",
-      "type": "stdio"
-    },
-    "Deepwiki": {
-      "args": [
-        "-y",
-        "mcp-deepwiki@latest"
-      ],
-      "command": "npx",
-      "type": "stdio"
-    },
-    "Everything": {
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-everything"
-      ],
-      "command": "npx",
-      "type": "stdio"
-    },
-    "Fetch": {
-      "args": [
-        "mcp-server-fetch"
-      ],
-      "command": "uvx",
-      "type": "stdio"
-    },
-    "Gitmcp": {
-      "url": "https://gitmcp.io/modelcontextprotocol/rust-sdk",
-      "type": "streamable_http"
-    },
-    "Playwright": {
-      "args": [
-        "-y",
-        "@playwright/mcp@latest",
-        "--extension"
-      ],
-      "command": "npx",
-      "type": "stdio"
-    },
-    "Thinking": {
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-sequential-thinking"
-      ],
-      "command": "bunx",
-      "env": {},
-      "type": "stdio"
-    }
-  }
+	"mcpServers": {
+		"21Magic": {
+			"args": [
+				"-y",
+				"@21st-dev/magic@latest",
+				"API_KEY=\"c5dc57e6cec36564e6d056af192bb264551ba5911168eb25f1a7f08b9b2ca1d7\""
+			],
+			"command": "npx",
+			"type": "stdio"
+		},
+		"Context7": {
+			"args": ["-y", "@upstash/context7-mcp@latest"],
+			"command": "npx",
+			"type": "stdio"
+		},
+		"Deepwiki": {
+			"args": ["-y", "mcp-deepwiki@latest"],
+			"command": "npx",
+			"type": "stdio"
+		},
+		"Everything": {
+			"args": ["-y", "@modelcontextprotocol/server-everything"],
+			"command": "npx",
+			"type": "stdio"
+		},
+		"Fetch": {
+			"args": ["mcp-server-fetch"],
+			"command": "uvx",
+			"type": "stdio"
+		},
+		"Gitmcp": {
+			"url": "https://gitmcp.io/modelcontextprotocol/rust-sdk",
+			"type": "sse"
+		},
+		"Playwright": {
+			"args": ["-y", "@playwright/mcp@latest", "--extension"],
+			"command": "npx",
+			"type": "stdio"
+		},
+		"Thinking": {
+			"args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+			"command": "bunx",
+			"env": {},
+			"type": "stdio"
+		}
+	}
 }
