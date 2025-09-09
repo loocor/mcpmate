@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use clap::Parser;
 use once_cell::sync::OnceCell;
@@ -13,6 +11,7 @@ use rmcp::{
     service::{NotificationContext, RequestContext, ServiceExt},
     transport::{SseClientTransport, io},
 };
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing_subscriber::{self, EnvFilter};
 
@@ -45,6 +44,7 @@ impl ClientHandler for BridgeClient {
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
                 name: format!("mcpmate-bridge::{appid}"),
+                title: Some("MCPMate Bridge".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
         }
@@ -250,6 +250,7 @@ impl ServerHandler for BridgeServer {
                 .build(),
             server_info: Implementation {
                 name: "mcpmate-bridge".to_string(),
+                title: Some("MCPMate Bridge".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
             instructions: Some("This is a bridge server that forwards requests to an SSE server.".to_string()),

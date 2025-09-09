@@ -2,15 +2,14 @@
 //!
 //! Contains functions for calling upstream prompts using core architecture
 
+use super::types::PromptMapping;
+use crate::core::{connection::UpstreamConnection, pool::UpstreamConnectionPool};
 use anyhow::{Context, Result};
 use rmcp::model::{GetPromptRequestParam, GetPromptResult};
 use serde_json::Value as JsonValue;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tracing;
-
-use super::types::PromptMapping;
-use crate::core::{connection::UpstreamConnection, pool::UpstreamConnectionPool};
 
 /// Get a prompt from an upstream server using prompt mapping
 ///
@@ -134,9 +133,7 @@ pub async fn get_upstream_prompt_direct(
     let service = match &connection.service {
         Some(service) => service,
         None => {
-            return Err(anyhow::anyhow!(
-                "No service available for upstream connection"
-            ));
+            return Err(anyhow::anyhow!("No service available for upstream connection"));
         }
     };
 
@@ -158,10 +155,7 @@ pub async fn get_upstream_prompt_direct(
     let result = service
         .get_prompt(request_params)
         .await
-        .context(format!(
-            "Failed to get prompt '{}' from upstream server",
-            prompt_name
-        ))?;
+        .context(format!("Failed to get prompt '{}' from upstream server", prompt_name))?;
 
     tracing::debug!(
         "Successfully got prompt '{}' from upstream server with {} messages",
@@ -189,23 +183,17 @@ pub fn validate_prompt_name(prompt_name: &str) -> Result<()> {
 
     // Check for invalid characters (similar to tool name validation)
     if prompt_name.contains('\n') || prompt_name.contains('\r') {
-        return Err(anyhow::anyhow!(
-            "Prompt name cannot contain newline characters"
-        ));
+        return Err(anyhow::anyhow!("Prompt name cannot contain newline characters"));
     }
 
     // Check for extremely long names
     if prompt_name.len() > 1000 {
-        return Err(anyhow::anyhow!(
-            "Prompt name is too long (maximum 1000 characters)"
-        ));
+        return Err(anyhow::anyhow!("Prompt name is too long (maximum 1000 characters)"));
     }
 
     // Check for invalid characters that might cause issues
     if prompt_name.contains('\0') {
-        return Err(anyhow::anyhow!(
-            "Prompt name cannot contain null characters"
-        ));
+        return Err(anyhow::anyhow!("Prompt name cannot contain null characters"));
     }
 
     Ok(())
@@ -275,6 +263,7 @@ mod tests {
                 instance_id: "test_instance".to_string(),
                 prompt: rmcp::model::Prompt {
                     name: "test_prompt".to_string(),
+                    title: Some("Test prompt".to_string()),
                     description: Some("Test prompt".to_string()),
                     arguments: None,
                 },
@@ -296,6 +285,7 @@ mod tests {
                 instance_id: "test_instance".to_string(),
                 prompt: rmcp::model::Prompt {
                     name: "prompt1".to_string(),
+                    title: Some("Test prompt 1".to_string()),
                     description: Some("Test prompt 1".to_string()),
                     arguments: None,
                 },
@@ -309,6 +299,7 @@ mod tests {
                 instance_id: "test_instance".to_string(),
                 prompt: rmcp::model::Prompt {
                     name: "prompt2".to_string(),
+                    title: Some("Test prompt 2".to_string()),
                     description: Some("Test prompt 2".to_string()),
                     arguments: None,
                 },

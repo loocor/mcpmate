@@ -3,8 +3,11 @@
 //! This module provides a complete reimplementation of the proxy server functionality
 //! using only core modules, with zero dependencies on core modules.
 
-use std::{net::SocketAddr, sync::Arc};
-
+use crate::{
+    config::database::Database,
+    core::{pool::UpstreamConnectionPool, transport::TransportType},
+    mcper::builtin::BuiltinServiceRegistry,
+};
 use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
 use rmcp::{
@@ -16,14 +19,9 @@ use rmcp::{
     },
     service::RequestContext,
 };
+use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 use tracing;
-
-use crate::{
-    config::database::Database,
-    core::{pool::UpstreamConnectionPool, transport::TransportType},
-    mcper::builtin::BuiltinServiceRegistry,
-};
 
 /// Global instance of the proxy server
 static GLOBAL_PROXY_SERVER: OnceCell<Arc<Mutex<ProxyServer>>> = OnceCell::new();
@@ -495,6 +493,7 @@ impl ServerHandler for ProxyServer {
                 .build(),
             server_info: rmcp::model::Implementation {
                 name: "mcpmate".to_string(),
+                title: Some("MCPMate".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
             instructions: Some(
