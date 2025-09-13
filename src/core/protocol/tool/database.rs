@@ -284,6 +284,7 @@ impl DatabaseToolService {
                             unique_name.clone(),
                             ToolMapping {
                                 server_name: server_name.clone(),
+                                server_id: Some(server_id.clone()),
                                 instance_id: instance_id.clone(),
                                 tool: unique_tool,
                                 upstream_tool_name: tool_name.clone(),

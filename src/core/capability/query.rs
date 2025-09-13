@@ -312,7 +312,7 @@ impl UnifiedQueryService {
         let pool = self.pool.lock().await;
 
         // Find connection instances - reuse existing logic
-        if let Some(instances) = pool.connections.get(&server_info.server_name) {
+        if let Some(instances) = pool.connections.get(&server_info.server_id) {
             let connected_instances: Vec<_> = instances.values().filter(|conn| conn.is_connected()).collect();
 
             if !connected_instances.is_empty() {

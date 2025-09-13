@@ -46,10 +46,7 @@ impl PoolConfigManager {
     /// * `Err(...)` - If configuration validation or update failed
     pub fn update_configuration(
         connections: &mut HashMap<String, HashMap<String, UpstreamConnection>>,
-        cancellation_tokens: &mut HashMap<
-            String,
-            HashMap<String, tokio_util::sync::CancellationToken>,
-        >,
+        cancellation_tokens: &mut HashMap<String, HashMap<String, tokio_util::sync::CancellationToken>>,
         new_config: Arc<Config>,
     ) -> Result<()> {
         tracing::debug!("Updating connection pool configuration");
@@ -83,12 +80,13 @@ impl PoolConfigManager {
         connections: &mut HashMap<String, HashMap<String, UpstreamConnection>>,
         config: &Config,
     ) {
-        tracing::debug!(
-            "Initializing connections for {} servers",
-            config.mcp_servers.len()
-        );
+        tracing::debug!("Initializing connections for {} servers", config.mcp_servers.len());
 
         for server_id in config.mcp_servers.keys() {
+            // Skip proxy server entries to align with calculate_configuration_changes and tests
+            if server_id == "proxy" {
+                continue;
+            }
             // Create a new connection instance
             Self::create_server_instance(connections, server_id);
         }
@@ -110,9 +108,7 @@ impl PoolConfigManager {
         let unique_names: HashSet<&String> = server_names.iter().cloned().collect();
 
         if server_names.len() != unique_names.len() {
-            return Err(anyhow::anyhow!(
-                "Configuration contains duplicate server names"
-            ));
+            return Err(anyhow::anyhow!("Configuration contains duplicate server names"));
         }
 
         // Additional validation can be added here
@@ -140,14 +136,9 @@ impl PoolConfigManager {
             .cloned()
             .collect();
 
-        let servers_to_add: HashSet<String> =
-            new_servers.difference(&current_servers).cloned().collect();
-        let servers_to_remove: HashSet<String> =
-            current_servers.difference(&new_servers).cloned().collect();
-        let servers_to_keep: HashSet<String> = current_servers
-            .intersection(&new_servers)
-            .cloned()
-            .collect();
+        let servers_to_add: HashSet<String> = new_servers.difference(&current_servers).cloned().collect();
+        let servers_to_keep: HashSet<String> = current_servers.intersection(&new_servers).cloned().collect();
+        let servers_to_remove: HashSet<String> = current_servers.difference(&new_servers).cloned().collect();
 
         ConfigurationChanges {
             servers_to_add,
@@ -159,10 +150,7 @@ impl PoolConfigManager {
     /// Apply the calculated configuration changes
     fn apply_configuration_changes(
         connections: &mut HashMap<String, HashMap<String, UpstreamConnection>>,
-        cancellation_tokens: &mut HashMap<
-            String,
-            HashMap<String, tokio_util::sync::CancellationToken>,
-        >,
+        cancellation_tokens: &mut HashMap<String, HashMap<String, tokio_util::sync::CancellationToken>>,
         changes: ConfigurationChanges,
     ) -> Result<()> {
         // Remove servers that are no longer in the configuration

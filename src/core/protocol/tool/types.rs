@@ -12,6 +12,8 @@ use rmcp::model::Tool;
 pub struct ToolMapping {
     /// Name of the server that provides this tool
     pub server_name: String,
+    /// ID of the server that provides this tool (authoritative key in pool)
+    pub server_id: Option<String>,
     /// ID of the instance that provides this tool
     pub instance_id: String,
     /// Original tool definition
@@ -31,6 +33,8 @@ pub struct ToolNameMapping {
     pub client_tool_name: String,
     /// Server name
     pub server_name: String,
+    /// Server id (authoritative key)
+    pub server_id: Option<String>,
     /// Instance ID
     pub instance_id: String,
     /// Original upstream tool name (without any modifications)

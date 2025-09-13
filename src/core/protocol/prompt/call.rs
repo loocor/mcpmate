@@ -47,12 +47,12 @@ pub async fn get_upstream_prompt(
         mapping.server_name
     );
 
-    // Get the connection from the pool
-    // Note: mapping.server_name actually contains server_id for connection pool compatibility
+    // Get the connection from the pool: use server_id as authoritative key (fallback to server_name if absent)
     let pool = connection_pool.lock().await;
+    let server_key = mapping.server_id.as_ref().unwrap_or(&mapping.server_name);
     let instances = pool
         .connections
-        .get(&mapping.server_name)
+        .get(server_key)
         .ok_or_else(|| anyhow::anyhow!("Instance {} not found for prompt {}", mapping.instance_id, prompt_name))?;
 
     let conn = instances
@@ -260,6 +260,7 @@ mod tests {
             "test_prompt".to_string(),
             PromptMapping {
                 server_name: "test_server".to_string(),
+                server_id: Some("test_server".to_string()),
                 instance_id: "test_instance".to_string(),
                 prompt: rmcp::model::Prompt {
                     name: "test_prompt".to_string(),
@@ -283,6 +284,7 @@ mod tests {
             "prompt1".to_string(),
             PromptMapping {
                 server_name: "test_server".to_string(),
+                server_id: Some("test_server".to_string()),
                 instance_id: "test_instance".to_string(),
                 prompt: rmcp::model::Prompt {
                     name: "prompt1".to_string(),
@@ -298,6 +300,7 @@ mod tests {
             "prompt2".to_string(),
             PromptMapping {
                 server_name: "test_server".to_string(),
+                server_id: Some("test_server".to_string()),
                 instance_id: "test_instance".to_string(),
                 prompt: rmcp::model::Prompt {
                     name: "prompt2".to_string(),

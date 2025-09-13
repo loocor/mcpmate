@@ -5,13 +5,13 @@
 
 pub mod capability;
 pub mod checker;
-pub mod profile;
 pub mod connection;
 pub mod constants;
 pub mod database;
 pub mod env;
 pub mod json;
 pub mod paths;
+pub mod profile;
 pub mod server;
 pub mod status;
 pub mod sync;

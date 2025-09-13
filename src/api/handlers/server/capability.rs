@@ -597,12 +597,13 @@ pub async fn create_temporary_instance_for_capability(
     }
 
     // Try to reuse an existing connected instance first
-    let mut pool = match crate::api::handlers::server::common::ConnectionPoolManager::get_pool_for_capability(&state).await {
+    use crate::api::handlers::server::common::ConnectionPoolManager;
+    let mut pool = match ConnectionPoolManager::get_pool_for_capability(state).await {
         Ok(pool) => pool,
         Err(_) => return Ok(None),
     };
 
-    if let Some(instances) = pool.connections.get(&server_info.server_name) {
+    if let Some(instances) = pool.connections.get(&server_info.server_id) {
         if let Some(conn) = instances.values().find(|c| c.is_connected()) {
             let extracted = match capability_type {
                 CapabilityType::Tools => extract_tools_capability(conn).await?,

@@ -75,6 +75,7 @@ pub async fn build_tool_mapping(connection_pool: &Arc<Mutex<UpstreamConnectionPo
                     unique_name.clone(),
                     ToolMapping {
                         server_name: server_name.clone(),
+                        server_id: Some(server_id.clone()),
                         instance_id: instance_id.clone(),
                         tool: unique_tool,
                         upstream_tool_name: tool.name.to_string(),
@@ -203,6 +204,7 @@ pub async fn find_tool_in_server(
             if tool.name == tool_name {
                 return Ok(ToolMapping {
                     server_name: server_name.to_string(),
+                    server_id: Some(server_id.clone()),
                     instance_id: instance_id.clone(),
                     tool: tool.clone(),
                     upstream_tool_name: tool.name.to_string(),

@@ -3,6 +3,8 @@
 //! This module provides AI-powered text analysis to extract MCP server configurations
 //! from natural language descriptions or technical documentation.
 
+#![allow(clippy::module_inception)]
+
 pub mod ai;
 
 // Re-export main types and functions

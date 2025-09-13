@@ -272,12 +272,18 @@ pub async fn count_records(
 mod tests {
     use super::*;
     use sqlx::SqlitePool;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
     use tempfile::tempdir;
 
     async fn setup_test_db() -> SqlitePool {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+        let url = format!("sqlite://{}", db_path.display());
+        let connect_opts = SqliteConnectOptions::from_str(&url).unwrap().create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(connect_opts)
             .await
             .unwrap();
 

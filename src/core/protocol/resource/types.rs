@@ -13,6 +13,8 @@ use rmcp::model::{Resource, ResourceTemplate};
 pub struct ResourceMapping {
     /// Name of the server that provides this resource
     pub server_name: String,
+    /// ID of the server that provides this resource (authoritative key in pool)
+    pub server_id: Option<String>,
     /// ID of the instance that provides this resource
     pub instance_id: String,
     /// Original resource definition
@@ -29,6 +31,8 @@ pub struct ResourceMapping {
 pub struct ResourceTemplateMapping {
     /// Name of the server that provides this resource template
     pub server_name: String,
+    /// ID of the server that provides this resource template
+    pub server_id: Option<String>,
     /// ID of the instance that provides this resource template
     pub instance_id: String,
     /// Original resource template definition

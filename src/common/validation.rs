@@ -225,7 +225,7 @@ impl ValidationBuilder {
     }
 
     /// Add a validation result
-    pub fn add(mut self, validation: FieldValidation) -> Self {
+    pub fn push(mut self, validation: FieldValidation) -> Self {
         self.result.add_field(validation);
         self
     }
@@ -340,9 +340,9 @@ mod tests {
     #[test]
     fn test_validation_builder() {
         let result = ValidationBuilder::new()
-            .add(Validator::not_empty("name", "test"))
-            .add(Validator::valid_port("port", 8080))
-            .add(Validator::length_range("description", "short", 1, 100))
+            .push(Validator::not_empty("name", "test"))
+            .push(Validator::valid_port("port", 8080))
+            .push(Validator::length_range("description", "short", 1, 100))
             .build();
 
         assert!(result.is_valid);
@@ -352,8 +352,8 @@ mod tests {
     #[test]
     fn test_validation_builder_with_errors() {
         let result = ValidationBuilder::new()
-            .add(Validator::not_empty("name", ""))
-            .add(Validator::valid_port("port", 0))
+            .push(Validator::not_empty("name", ""))
+            .push(Validator::valid_port("port", 0))
             .build();
 
         assert!(!result.is_valid);

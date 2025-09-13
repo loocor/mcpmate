@@ -22,6 +22,24 @@ use crate::common::constants::transport;
 /// Transport priority order for hosted mode selection
 pub const TRANSPORT_PRIORITY: &[&str] = &[transport::STREAMABLE_HTTP, transport::SSE, transport::STDIO];
 
+/// Server identity (id + name)
+///
+/// Pool/DB with `id` as the authority key; protocol layer/external display with `name`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ServerIdentity {
+    pub id: String,
+    pub name: String,
+}
+
+impl ServerIdentity {
+    pub fn new(
+        id: String,
+        name: String,
+    ) -> Self {
+        Self { id, name }
+    }
+}
+
 /// Server type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
 #[schemars(description = "Server type enum")]

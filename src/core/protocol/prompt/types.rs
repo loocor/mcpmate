@@ -13,6 +13,8 @@ use rmcp::model::Prompt;
 pub struct PromptMapping {
     /// Name of the server that provides this prompt
     pub server_name: String,
+    /// ID of the server that provides this prompt (authoritative key in pool)
+    pub server_id: Option<String>,
     /// ID of the instance that provides this prompt
     pub instance_id: String,
     /// Original prompt definition
@@ -29,6 +31,8 @@ pub struct PromptMapping {
 pub struct PromptTemplateMapping {
     /// Name of the server that provides this prompt template
     pub server_name: String,
+    /// ID of the server that provides this prompt template (authoritative key in pool)
+    pub server_id: Option<String>,
     /// ID of the instance that provides this prompt template
     pub instance_id: String,
     /// The prompt template definition (using Prompt instead of PromptTemplate)

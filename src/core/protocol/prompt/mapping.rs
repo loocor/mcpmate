@@ -20,6 +20,18 @@ pub async fn build_prompt_mapping(
 
     // Iterate through all servers and instances
     for (server_id, instances) in &pool.connections {
+        // Resolve server_name for protocol-facing mapping
+        let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+            Ok(Some(name)) => name,
+            Ok(None) => {
+                tracing::warn!("Server ID '{}' not found, skipping", server_id);
+                continue;
+            }
+            Err(e) => {
+                tracing::error!("Failed to resolve server ID '{}': {}, skipping", server_id, e);
+                continue;
+            }
+        };
         for (instance_id, conn) in instances {
             // Skip instances that are not connected
             if !conn.is_connected() {
@@ -53,11 +65,11 @@ pub async fn build_prompt_mapping(
                             }
 
                             // Add the prompt to the mapping
-                            // Note: We store server_id in server_name field for connection pool compatibility
                             prompt_mapping.insert(
                                 prompt.name.to_string(),
                                 PromptMapping {
-                                    server_name: server_id.clone(), // Actually storing server_id here
+                                    server_name: server_name.clone(),
+                                    server_id: Some(server_id.clone()),
                                     instance_id: instance_id.clone(),
                                     prompt: prompt.clone(),
                                     upstream_prompt_name: prompt.name.to_string(),

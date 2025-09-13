@@ -87,7 +87,7 @@ async fn server_tools_core(
     )
     .await
     {
-        if let Some(instances) = pool.connections.get(&server_info.server_name) {
+        if let Some(instances) = pool.connections.get(&server_info.server_id) {
             let connected_instances: Vec<_> = instances.values().filter(|conn| conn.is_connected()).collect();
 
             let mut tools = Vec::new();

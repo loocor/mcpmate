@@ -77,7 +77,11 @@ pub async fn build_resource_mapping(
             match collect_all_resources_from_instance(conn, instance_id, server_id).await {
                 Ok(resources) => {
                     for resource_mapping_item in resources {
-                        let uri = &resource_mapping_item.upstream_resource_uri;
+                        // patch in server_id for authoritative lookup and normalize server_name for display
+                        let mut item = resource_mapping_item;
+                        item.server_id = Some(server_id.clone());
+                        item.server_name = server_name.clone();
+                        let uri = &item.upstream_resource_uri;
 
                         // Filter disabled resources if database is available
                         if let Some(db) = database {
@@ -117,7 +121,7 @@ pub async fn build_resource_mapping(
                             continue; // Keep the first one, skip the conflicting one
                         }
 
-                        resource_mapping.insert(uri.clone(), resource_mapping_item);
+                        resource_mapping.insert(uri.clone(), item);
                     }
                 }
                 Err(e) => {
@@ -235,6 +239,12 @@ async fn collect_all_resources_from_instance(
 
     let mut cursor = None;
 
+    // Resolve server_name for protocol-facing mapping (display/use), keep server_id for authoritative key
+    let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+        Ok(Some(name)) => name,
+        _ => server_id.to_string(),
+    };
+
     loop {
         let result = service
             .list_resources(Some(PaginatedRequestParam { cursor }))
@@ -243,7 +253,8 @@ async fn collect_all_resources_from_instance(
 
         for resource in result.resources {
             let resource_mapping = ResourceMapping {
-                server_name: server_id.to_string(),
+                server_name: server_name.clone(),
+                server_id: Some(server_id.to_string()),
                 instance_id: instance_id.to_string(),
                 upstream_resource_uri: resource.uri.clone(),
                 resource,
@@ -282,6 +293,12 @@ async fn collect_all_resource_templates_from_instance(
 
     let mut cursor = None;
 
+    // Resolve server_name for protocol-facing mapping (display/use), keep server_id for authoritative key
+    let server_name = match crate::core::protocol::resolver::to_name(server_id).await {
+        Ok(Some(name)) => name,
+        _ => server_id.to_string(),
+    };
+
     loop {
         let result = service
             .list_resource_templates(Some(PaginatedRequestParam { cursor }))
@@ -290,7 +307,8 @@ async fn collect_all_resource_templates_from_instance(
 
         for template in result.resource_templates {
             let template_mapping = ResourceTemplateMapping {
-                server_name: server_id.to_string(),
+                server_name: server_name.clone(),
+                server_id: Some(server_id.to_string()),
                 instance_id: instance_id.to_string(),
                 resource_template: template,
             };

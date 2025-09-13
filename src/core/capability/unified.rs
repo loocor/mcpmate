@@ -263,7 +263,7 @@ impl UnifiedConnectionManager {
 
         // Step 2: Look for Shutdown instance - early return pattern
         if let Some(instance_id) = self.find_shutdown_instance(&routing_key).await? {
-            if let Ok(_) = self.revive_instance(&routing_key, server_id).await {
+            if (self.revive_instance(&routing_key, server_id).await).is_ok() {
                 return self.handle_revived_instance(&routing_key, server_id, instance_id).await;
             }
         }
@@ -918,7 +918,7 @@ impl UnifiedConnectionManager {
             if should_revive {
                 // Extract server_id from routing key
                 if let Some(server_id) = key.split(':').next() {
-                    if let Ok(_) = self.revive_instance(&key, server_id).await {
+                    if (self.revive_instance(&key, server_id).await).is_ok() {
                         revived_count += 1;
                         self.increment_revived_instances().await;
                     }
