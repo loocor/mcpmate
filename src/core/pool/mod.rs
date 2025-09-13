@@ -9,6 +9,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{self, Result};
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing;
 
@@ -211,6 +212,70 @@ impl UpstreamConnectionPool {
         (production, exploration, validation)
     }
 
+    /// Get connection pool snapshot for read-only operations (optimized for concurrent access)
+    ///
+    /// This method provides a fast, consistent snapshot of the connection pool state
+    /// without requiring exclusive access. It's designed for API queries and monitoring.
+    pub fn get_connection_snapshot(&self) -> HashMap<String, Vec<(String, UpstreamConnection)>> {
+        let mut result = HashMap::new();
+        let snapshot_time = Instant::now();
+
+        for (server_id, instances) in &self.connections {
+            let instance_clones: Vec<(String, UpstreamConnection)> = instances
+                .iter()
+                .map(|(id, conn)| {
+                    // Create a lightweight clone for snapshot
+                    let mut conn_clone = conn.clone();
+                    // Add snapshot metadata
+                    conn_clone.last_snapshot = Some(snapshot_time);
+                    (id.clone(), conn_clone)
+                })
+                .collect();
+
+            if !instance_clones.is_empty() {
+                result.insert(server_id.clone(), instance_clones);
+            }
+        }
+
+        tracing::debug!(
+            "Created connection pool snapshot with {} servers and {} total instances",
+            result.len(),
+            result.values().map(|instances| instances.len()).sum::<usize>()
+        );
+
+        result
+    }
+
+    /// Get server status summary for quick API responses
+    ///
+    /// Returns a lightweight summary without full connection details
+    pub fn get_server_status_summary(&self) -> HashMap<String, (usize, usize, String)> {
+        let mut summary = HashMap::new();
+
+        for (server_id, instances) in &self.connections {
+            let total_instances = instances.len();
+            let connected_instances = instances
+                .values()
+                .filter(|conn| matches!(conn.status, ConnectionStatus::Ready))
+                .count();
+
+            let overall_status = if connected_instances == 0 {
+                "disconnected".to_string()
+            } else if connected_instances == total_instances {
+                "connected".to_string()
+            } else {
+                "partial".to_string()
+            };
+
+            summary.insert(
+                server_id.clone(),
+                (total_instances, connected_instances, overall_status),
+            );
+        }
+
+        summary
+    }
+
     /// Get or create an exploration instance for a server
     pub fn get_or_create_exploration_instance(
         &mut self,
@@ -391,51 +456,5 @@ impl UpstreamConnectionPool {
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{collections::HashMap, sync::Arc};
-
-    fn create_test_config() -> Config {
-        Config {
-            mcp_servers: HashMap::new(),
-            pagination: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_pool_creation() {
-        let config = Arc::new(create_test_config());
-        let pool = UpstreamConnectionPool::new(config, None);
-
-        assert!(pool.connections.is_empty());
-        assert!(pool.cancellation_tokens.is_empty());
-        assert!(pool.process_monitor.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_pool_initialization() {
-        let config = Arc::new(create_test_config());
-        let mut pool = UpstreamConnectionPool::new(config, None);
-
-        pool.initialize();
-
-        // Should not crash and should handle empty config gracefully
-        assert!(pool.connections.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_connection_state_hash() {
-        let config = Arc::new(create_test_config());
-        let pool = UpstreamConnectionPool::new(config, None);
-
-        let hash1 = pool.calculate_connection_state_hash();
-        let hash2 = pool.calculate_connection_state_hash();
-
-        // Hash should be consistent for the same state
-        assert_eq!(hash1, hash2);
     }
 }

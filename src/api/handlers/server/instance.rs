@@ -48,17 +48,8 @@ async fn get_instance_core(
     name: String,
     id: String,
 ) -> Result<Json<InstanceDetailsResp>, ApiError> {
-    // Use a timeout to avoid blocking indefinitely
-    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
-
-    let pool = match pool_result {
-        Ok(pool) => pool,
-        Err(_) => {
-            return Err(ApiError::InternalError(
-                "Timed out waiting for connection pool lock".to_string(),
-            ));
-        }
-    };
+    // Use the standardized connection pool manager for health checks
+    let pool = crate::api::handlers::server::common::ConnectionPoolManager::get_pool_for_health_check(&state).await?;
 
     // Get the instance
     let conn = pool.get_instance(&name, &id)?;
@@ -112,17 +103,8 @@ async fn check_health_core(
     name: String,
     id: String,
 ) -> Result<Json<InstanceHealthResp>, ApiError> {
-    // Use a timeout to avoid blocking indefinitely
-    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
-
-    let pool = match pool_result {
-        Ok(pool) => pool,
-        Err(_) => {
-            return Err(ApiError::InternalError(
-                "Timed out waiting for connection pool lock".to_string(),
-            ));
-        }
-    };
+    // Use the standardized connection pool manager for health checks
+    let pool = crate::api::handlers::server::common::ConnectionPoolManager::get_pool_for_health_check(&state).await?;
 
     // Get the instance
     let conn = pool.get_instance(&name, &id)?;

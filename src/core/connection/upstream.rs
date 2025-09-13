@@ -48,6 +48,8 @@ pub struct UpstreamConnection {
     pub cpu_usage: Option<f32>,
     /// Memory usage of the process (bytes)
     pub memory_usage: Option<u64>,
+    /// Last time a snapshot was taken (for API performance tracking)
+    pub last_snapshot: Option<Instant>,
 }
 
 // Manual implementation of Clone for UpstreamConnection
@@ -68,6 +70,7 @@ impl Clone for UpstreamConnection {
             process_id: self.process_id,
             cpu_usage: self.cpu_usage,
             memory_usage: self.memory_usage,
+            last_snapshot: self.last_snapshot,
         }
     }
 }
@@ -90,6 +93,7 @@ impl UpstreamConnection {
             process_id: None,
             cpu_usage: None,
             memory_usage: None,
+            last_snapshot: None,
         }
     }
 
@@ -138,9 +142,7 @@ impl UpstreamConnection {
     ) {
         // Check if we're already in an error state
         let (failure_count, first_failure_time) = match &self.status {
-            ConnectionStatus::Error(details) => {
-                (details.failure_count + 1, details.first_failure_time)
-            }
+            ConnectionStatus::Error(details) => (details.failure_count + 1, details.first_failure_time),
             _ => (1, chrono::Local::now().timestamp() as u64),
         };
 
@@ -203,9 +205,7 @@ impl UpstreamConnection {
     ) {
         // Check if we're already in an error state
         let (failure_count, first_failure_time) = match &self.status {
-            ConnectionStatus::Error(details) => {
-                (details.failure_count + 1, details.first_failure_time)
-            }
+            ConnectionStatus::Error(details) => (details.failure_count + 1, details.first_failure_time),
             _ => (1, chrono::Local::now().timestamp() as u64),
         };
 
@@ -241,10 +241,7 @@ impl UpstreamConnection {
         total_failures: u32,
     ) {
         let disabled_details = DisabledDetails {
-            reason: format!(
-                "Auto-disabled after {} consecutive failures",
-                total_failures
-            ),
+            reason: format!("Auto-disabled after {} consecutive failures", total_failures),
             total_failures,
             disabled_time: chrono::Local::now().timestamp() as u64,
             last_error,
@@ -301,16 +298,12 @@ impl UpstreamConnection {
 
     /// Check if the connection can be established
     pub fn can_connect(&self) -> bool {
-        self.status
-            .can_perform_operation(ConnectionOperation::Connect)
+        self.status.can_perform_operation(ConnectionOperation::Connect)
     }
 
     /// Check if the connection should be monitored
     pub fn should_monitor(&self) -> bool {
-        matches!(
-            self.status,
-            ConnectionStatus::Ready | ConnectionStatus::Busy
-        )
+        matches!(self.status, ConnectionStatus::Ready | ConnectionStatus::Busy)
     }
 
     /// Check if the connection can perform a specific typed operation

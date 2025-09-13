@@ -199,7 +199,7 @@ async fn instance_list_core(
         }))
     } else {
         // List all instances for all servers
-        let pool = match tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await {
+        let pool = match crate::api::handlers::server::common::ConnectionPoolManager::get_pool_for_health_check(&state).await {
             Ok(pool) => pool,
             Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
         };

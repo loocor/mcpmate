@@ -597,8 +597,7 @@ pub async fn create_temporary_instance_for_capability(
     }
 
     // Try to reuse an existing connected instance first
-    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(10), state.connection_pool.lock()).await;
-    let mut pool = match pool_result {
+    let mut pool = match crate::api::handlers::server::common::ConnectionPoolManager::get_pool_for_capability(&state).await {
         Ok(pool) => pool,
         Err(_) => return Ok(None),
     };

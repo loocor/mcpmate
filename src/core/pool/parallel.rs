@@ -306,41 +306,60 @@ impl ParallelConnectionManager {
                     capabilities,
                     process_id,
                 } => {
-                    let mut pool = pool.lock().await;
+                    // Use timeout to avoid indefinite blocking
+                    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(2), pool.lock()).await;
 
-                    // Update connection with service
-                    pool.update_connection(&server_id, &instance_id, service, tools, capabilities);
+                    match pool_result {
+                        Ok(mut pool_guard) => {
+                            // Update connection with service
+                            pool_guard.update_connection(&server_id, &instance_id, service, tools, capabilities);
 
-                    // Update process ID if available
-                    if let Some(pid) = process_id {
-                        if let Ok(conn) = pool.get_instance_mut(&server_id, &instance_id) {
-                            conn.process_id = Some(pid);
+                            // Update process ID if available
+                            if let Some(pid) = process_id {
+                                if let Ok(conn) = pool_guard.get_instance_mut(&server_id, &instance_id) {
+                                    conn.process_id = Some(pid);
+                                }
+                            }
+
+                            tracing::debug!("Successfully connected to '{}' instance '{}'", server_id, instance_id);
+
+                            // Get the actual server name for the event (with timeout protection)
+                            let actual_server_name = if let Some(db) = &pool_guard.database {
+                                // Use a quick timeout for database query
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_millis(500),
+                                    crate::config::operations::utils::get_server_name(&db.pool, &server_id),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(name)) => name,
+                                    _ => server_id.clone(),
+                                }
+                            } else {
+                                server_id.clone()
+                            };
+
+                            // Release the pool lock before publishing the event
+                            drop(pool_guard);
+
+                            // Publish connection success event for capability sync
+                            crate::core::events::EventBus::global().publish(
+                                crate::core::events::Event::ServerConnectionStartupCompleted {
+                                    server_id: server_id.clone(),
+                                    server_name: actual_server_name,
+                                    success: true,
+                                    error: None,
+                                },
+                            );
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "Timeout acquiring pool lock for connection update '{}' instance '{}', connection may be incomplete",
+                                server_id,
+                                instance_id
+                            );
                         }
                     }
-
-                    tracing::debug!("Successfully connected to '{}' instance '{}'", server_id, instance_id);
-
-                    // Get the actual server name for the event
-                    let actual_server_name = if let Some(db) = &pool.database {
-                        crate::config::operations::utils::get_server_name(&db.pool, &server_id)
-                            .await
-                            .unwrap_or_else(|_| server_id.clone())
-                    } else {
-                        server_id.clone()
-                    };
-
-                    // Release the pool lock before publishing the event
-                    drop(pool);
-
-                    // Publish connection success event for capability sync
-                    crate::core::events::EventBus::global().publish(
-                        crate::core::events::Event::ServerConnectionStartupCompleted {
-                            server_id: server_id.clone(),
-                            server_name: actual_server_name,
-                            success: true,
-                            error: None,
-                        },
-                    );
                 }
 
                 // Handle connection failure

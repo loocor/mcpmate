@@ -12,9 +12,90 @@ use crate::{
     },
     config::{database::Database, server},
     core::cache::{CacheQuery, FreshnessLevel},
-    core::pool::UpstreamConnectionPool,
 };
 use axum::http::StatusCode;
+
+/// Connection pool access manager
+///
+/// Provides standardized access to the connection pool with timeout handling,
+/// following the project's Manager pattern and error handling conventions.
+pub struct ConnectionPoolManager;
+
+impl ConnectionPoolManager {
+    /// Get connection pool with timeout and proper error handling
+    ///
+    /// This method provides a standardized way to access the connection pool with:
+    /// - Configurable timeout based on operation type
+    /// - Consistent error messages using the unified error handling system
+    /// - Proper logging and monitoring
+    /// - Integration with the project's error handling patterns
+    pub async fn get_pool_with_timeout<'a>(
+        state: &'a Arc<AppState>,
+        timeout_secs: u64,
+        operation_context: &str,
+    ) -> Result<tokio::sync::MutexGuard<'a, crate::core::pool::UpstreamConnectionPool>, ApiError> {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            state.connection_pool.lock(),
+        )
+        .await
+        {
+            Ok(pool) => {
+                tracing::debug!("Successfully acquired connection pool lock for {}", operation_context);
+                Ok(pool)
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "Connection pool lock timeout for {} ({}s timeout)",
+                    operation_context,
+                    timeout_secs
+                );
+                Err(crate::api::handlers::common::errors::internal_error(&format!(
+                    "Connection pool access timeout for {} ({}s)",
+                    operation_context, timeout_secs
+                )))
+            }
+        }
+    }
+
+    /// Get connection pool for API operations (5s timeout)
+    pub async fn get_pool_for_api<'a>(
+        state: &'a Arc<AppState>
+    ) -> Result<tokio::sync::MutexGuard<'a, crate::core::pool::UpstreamConnectionPool>, ApiError> {
+        Self::get_pool_with_timeout(state, 5, "API operation").await
+    }
+
+    /// Get connection pool for health checks (1s timeout)
+    pub async fn get_pool_for_health_check<'a>(
+        state: &'a Arc<AppState>
+    ) -> Result<tokio::sync::MutexGuard<'a, crate::core::pool::UpstreamConnectionPool>, ApiError> {
+        Self::get_pool_with_timeout(state, 1, "health check").await
+    }
+
+    /// Get connection pool for capability operations (10s timeout)
+    pub async fn get_pool_for_capability<'a>(
+        state: &'a Arc<AppState>
+    ) -> Result<tokio::sync::MutexGuard<'a, crate::core::pool::UpstreamConnectionPool>, ApiError> {
+        Self::get_pool_with_timeout(state, 10, "capability operation").await
+    }
+
+    /// Get connection pool snapshot for system status (500ms timeout)
+    pub async fn get_pool_snapshot(
+        state: &Arc<AppState>
+    ) -> Result<std::collections::HashMap<String, Vec<(String, crate::core::connection::UpstreamConnection)>>, ApiError>
+    {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
+            Ok(pool) => {
+                tracing::debug!("Successfully acquired connection pool for snapshot");
+                Ok(pool.get_connection_snapshot())
+            }
+            Err(_) => {
+                tracing::warn!("Connection pool snapshot timeout (500ms), returning empty snapshot");
+                Ok(std::collections::HashMap::new())
+            }
+        }
+    }
+}
 
 /// Server identification result
 #[derive(Debug, Clone)]
@@ -170,10 +251,10 @@ pub async fn get_server_instances(
     state: &Arc<AppState>,
     server_id: &str,
 ) -> Vec<InstanceSummary> {
-    let pool = match get_connection_pool_with_timeout(state).await {
+    let pool = match ConnectionPoolManager::get_pool_for_api(state).await {
         Ok(pool) => pool,
         Err(_) => {
-            tracing::warn!("Timed out waiting for connection pool lock for server '{}'", server_id);
+            tracing::warn!("Failed to get connection pool for server '{}'", server_id);
             return Vec::new();
         }
     };
@@ -203,20 +284,6 @@ pub async fn get_server_instances(
             }
         })
         .collect()
-}
-
-/// Get connection pool with timeout protection
-///
-/// Provides a standardized way to access the connection pool with timeout handling.
-pub async fn get_connection_pool_with_timeout(
-    state: &Arc<AppState>
-) -> Result<tokio::sync::MutexGuard<'_, UpstreamConnectionPool>, ApiError> {
-    match tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await {
-        Ok(pool) => Ok(pool),
-        Err(_) => Err(ApiError::InternalError(
-            "Timed out waiting for connection pool lock".to_string(),
-        )),
-    }
 }
 
 /// Get server by name or ID with validation
@@ -329,20 +396,6 @@ pub async fn check_capability_or_error(
         }
     }
     None
-}
-
-/// Note: Validate server access permissions (placeholder for future authorization)
-///
-/// This function can be extended to include authorization checks,
-/// rate limiting, or other access control mechanisms.
-#[inline]
-pub async fn validate_server_access(
-    _pool: &Pool<Sqlite>,
-    _server_id: &str,
-) -> Result<(), ApiError> {
-    // For now, all servers are accessible
-    // Add authorization logic here if needed
-    Ok(())
 }
 
 /// Get database from application state

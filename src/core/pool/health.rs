@@ -28,154 +28,52 @@ impl UpstreamConnectionPool {
                 // Wait for health check interval (1 minute)
                 sleep(std::time::Duration::from_secs(60)).await;
 
-                // Check connection status for all instances
+                // Step 1: Collect reconnection candidates with minimal lock time
+                let reconnects = {
+                    // Use timeout to avoid indefinite blocking
+                    let pool_guard = match tokio::time::timeout(
+                        std::time::Duration::from_millis(500), // 500ms timeout
+                        health_check_pool.lock(),
+                    )
+                    .await
+                    {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            tracing::warn!("Health check: Timeout acquiring pool lock, skipping this cycle");
+                            continue;
+                        }
+                    };
+
+                    Self::collect_reconnection_candidates(&pool_guard)
+                };
+
+                // Step 2: Check connection status (separate from reconnection logic)
                 {
-                    let mut pool = health_check_pool.lock().await;
+                    let mut pool =
+                        match tokio::time::timeout(std::time::Duration::from_millis(500), health_check_pool.lock())
+                            .await
+                        {
+                            Ok(guard) => guard,
+                            Err(_) => {
+                                tracing::warn!("Health check: Timeout acquiring pool lock for status check, skipping");
+                                continue;
+                            }
+                        };
+
                     if let Err(e) = pool.check_connection_status().await {
                         tracing::error!("Error checking connection status: {}", e);
                     }
                 }
 
-                // Check all connections for periodic reconnects
-                let mut reconnects = Vec::new();
-                {
-                    let pool_guard = health_check_pool.lock().await;
-                    for (server_name, instances) in &pool_guard.connections {
-                        for (instance_id, conn) in instances {
-                            // Update last health check time
-                            let now = std::time::Instant::now();
-
-                            // Only monitor instances that should be monitored
-                            if !matches!(conn.status, ConnectionStatus::Ready | ConnectionStatus::Error(_)) {
-                                continue;
-                            }
-
-                            match &conn.status {
-                                ConnectionStatus::Ready => {
-                                    // Check if the service is still alive
-                                    if let Some(_service) = &conn.service {
-                                        // Periodic reconnect to ensure health
-                                        if now > conn.last_connected
-                                            && now.duration_since(conn.last_connected)
-                                                > std::time::Duration::from_secs(3600)
-                                        // Every 60 minutes
-                                        {
-                                            tracing::info!(
-                                                "Health check triggering periodic reconnect for '{}' instance '{}' - Last connected: {:?} ago, threshold: 3600s",
-                                                server_name,
-                                                instance_id,
-                                                now.duration_since(conn.last_connected)
-                                            );
-                                            reconnects.push((server_name.clone(), instance_id.clone()));
-                                        } else {
-                                            tracing::debug!(
-                                                "Health check - '{}' instance '{}' still healthy, connected {:?} ago",
-                                                server_name,
-                                                instance_id,
-                                                now.duration_since(conn.last_connected)
-                                            );
-                                        }
-                                    } else {
-                                        // If service is None but status is Ready, something is wrong
-                                        tracing::warn!(
-                                            "Health check: Server '{}' instance '{}' has Ready status but no service, will reconnect",
-                                            server_name,
-                                            instance_id
-                                        );
-                                        reconnects.push((server_name.clone(), instance_id.clone()));
-                                    }
-                                }
-                                ConnectionStatus::Disabled(_) => {
-                                    // Skip disabled servers completely - no health checks, no reconnections
-                                    tracing::debug!(
-                                        "Health check: Skipping disabled server '{}' instance '{}'",
-                                        server_name,
-                                        instance_id
-                                    );
-                                    continue;
-                                }
-                                ConnectionStatus::Error(error_details) => {
-                                    tracing::debug!(
-                                        "Health check found error state for '{}' instance '{}': {} (type: {:?}, failures: {})",
-                                        server_name,
-                                        instance_id,
-                                        error_details.message,
-                                        error_details.error_type,
-                                        error_details.failure_count
-                                    );
-                                    // Skip permanent errors to avoid unnecessary reconnection attempts
-                                    if error_details.error_type == crate::core::foundation::types::ErrorType::Permanent
-                                    {
-                                        tracing::debug!(
-                                            "Health check: Skipping permanent error for '{}' instance '{}'",
-                                            server_name,
-                                            instance_id
-                                        );
-                                        continue;
-                                    }
-
-                                    // Use progressive backoff based on failure count
-                                    let min_delay = match error_details.failure_count {
-                                        1 => 60,  // 1 minute for first failure
-                                        2 => 120, // 2 minutes for second failure
-                                        3 => 360, // 6 minutes for third failure
-                                        _ => {
-                                            // 4+ failures should be auto-disabled, but handle edge case
-                                            tracing::warn!(
-                                                "Health check: Server '{}' instance '{}' has {} failures but not disabled",
-                                                server_name,
-                                                instance_id,
-                                                error_details.failure_count
-                                            );
-                                            600 // 10 minutes fallback
-                                        }
-                                    };
-
-                                    if now > conn.last_connected
-                                        && now.duration_since(conn.last_connected)
-                                            > std::time::Duration::from_secs(min_delay)
-                                    {
-                                        tracing::debug!(
-                                            "Health check: Scheduling reconnect for '{}' instance '{}' after {}s delay (failure count: {})",
-                                            server_name,
-                                            instance_id,
-                                            min_delay,
-                                            error_details.failure_count
-                                        );
-                                        reconnects.push((server_name.clone(), instance_id.clone()));
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-
-                // Reconnect instances that need it (non-blocking)
+                // Step 3: Process reconnections asynchronously outside the lock
                 if !reconnects.is_empty() {
                     tracing::info!(
-                        "Health check: Scheduling {} reconnection(s) (non-blocking)",
+                        "Health check: Processing {} reconnection(s) asynchronously",
                         reconnects.len()
                     );
 
-                    // Use minimal lock time for scheduling reconnections
-                    let mut pool_guard = health_check_pool.lock().await;
-                    for (server_name, instance_id) in reconnects {
-                        tracing::debug!(
-                            "Health check: Scheduling reconnection to '{}' instance '{}'",
-                            server_name,
-                            instance_id
-                        );
-                        if let Err(e) = pool_guard.reconnect(&server_name, &instance_id).await {
-                            tracing::warn!(
-                                "Health check: Failed to schedule reconnection to '{}' instance '{}': {}",
-                                server_name,
-                                instance_id,
-                                e
-                            );
-                        }
-                    }
-                    // Lock is released here, allowing other operations to proceed
+                    // Process reconnections in parallel without holding the main lock
+                    Self::process_reconnections_async(health_check_pool.clone(), reconnects).await;
                 }
             }
         });
@@ -209,9 +107,10 @@ impl UpstreamConnectionPool {
 
             for (server_name, instances) in &self.connections {
                 for (instance_id, conn) in instances {
-                    // Check both Ready and Error states
+                    // Check Ready, Error, and persistent Busy states
                     if (matches!(conn.status, ConnectionStatus::Ready) && conn.service.is_some())
                         || matches!(conn.status, ConnectionStatus::Error(_))
+                        || matches!(conn.status, ConnectionStatus::Busy)
                     {
                         result.push((server_name.clone(), instance_id.clone()));
                     }
@@ -230,6 +129,26 @@ impl UpstreamConnectionPool {
             };
 
             match &conn.status {
+                // Busy state - check for persistent busy connections
+                ConnectionStatus::Busy => {
+                    let now = std::time::Instant::now();
+                    let busy_timeout = std::time::Duration::from_secs(120); // 2 minutes
+
+                    if now.duration_since(conn.last_health_check) > busy_timeout {
+                        tracing::warn!(
+                            "Connection check: Resetting persistent Busy connection to Ready: '{}' instance '{}'",
+                            server_name,
+                            instance_id
+                        );
+
+                        // Reset the connection status to Ready
+                        if let Ok(mut_conn) = self.get_instance_mut(&server_name, &instance_id) {
+                            mut_conn.status = ConnectionStatus::Ready;
+                            mut_conn.last_health_check = now;
+                        }
+                    }
+                }
+
                 // Ready state
                 ConnectionStatus::Ready => {
                     // Check if the service is still connected
@@ -352,5 +271,165 @@ impl UpstreamConnectionPool {
         }
 
         Ok(())
+    }
+
+    /// Collect reconnection candidates without holding lock for long time
+    fn collect_reconnection_candidates(
+        pool_guard: &tokio::sync::MutexGuard<'_, UpstreamConnectionPool>
+    ) -> Vec<(String, String)> {
+        let mut reconnects = Vec::new();
+        let now = std::time::Instant::now();
+
+        for (server_name, instances) in &pool_guard.connections {
+            for (instance_id, conn) in instances {
+                // Monitor Ready, Error, and persistent Busy connections
+                match &conn.status {
+                    ConnectionStatus::Ready => {
+                        // Check if the service is still alive
+                        if let Some(_service) = &conn.service {
+                            // Periodic reconnect to ensure health (every 60 minutes)
+                            if now > conn.last_connected
+                                && now.duration_since(conn.last_connected) > std::time::Duration::from_secs(3600)
+                            {
+                                tracing::info!(
+                                    "Health check triggering periodic reconnect for '{}' instance '{}' - Last connected: {:?} ago",
+                                    server_name,
+                                    instance_id,
+                                    now.duration_since(conn.last_connected)
+                                );
+                                reconnects.push((server_name.clone(), instance_id.clone()));
+                            }
+                        } else {
+                            // If service is None but status is Ready, something is wrong
+                            tracing::warn!(
+                                "Health check: Server '{}' instance '{}' has Ready status but no service, will reconnect",
+                                server_name,
+                                instance_id
+                            );
+                            reconnects.push((server_name.clone(), instance_id.clone()));
+                        }
+                    }
+                    ConnectionStatus::Disabled(_) => {
+                        // Skip disabled servers completely
+                        continue;
+                    }
+                    ConnectionStatus::Error(error_details) => {
+                        // Skip permanent errors
+                        if error_details.error_type == ErrorType::Permanent {
+                            continue;
+                        }
+
+                        // Use progressive backoff based on failure count
+                        let min_delay = match error_details.failure_count {
+                            1 => 60,  // 1 minute for first failure
+                            2 => 120, // 2 minutes for second failure
+                            3 => 360, // 6 minutes for third failure
+                            _ => 600, // 10 minutes for 4+ failures
+                        };
+
+                        if now > conn.last_connected
+                            && now.duration_since(conn.last_connected) > std::time::Duration::from_secs(min_delay)
+                        {
+                            tracing::debug!(
+                                "Health check: Scheduling reconnect for '{}' instance '{}' after {}s delay (failure count: {})",
+                                server_name,
+                                instance_id,
+                                min_delay,
+                                error_details.failure_count
+                            );
+                            reconnects.push((server_name.clone(), instance_id.clone()));
+                        }
+                    }
+                    ConnectionStatus::Busy => {
+                        // Check for persistent Busy connections (stuck for more than 2 minutes)
+                        let busy_timeout = std::time::Duration::from_secs(120); // 2 minutes
+
+                        if now.duration_since(conn.last_health_check) > busy_timeout {
+                            tracing::warn!(
+                                "Health check: Found persistent Busy connection: '{}' instance '{}', will reset to Ready",
+                                server_name,
+                                instance_id
+                            );
+                            // Don't add to reconnects, we'll reset the status in check_connection_status
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        reconnects
+    }
+
+    /// Process reconnections asynchronously without blocking the main pool
+    async fn process_reconnections_async(
+        connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
+        reconnects: Vec<(String, String)>,
+    ) {
+        // Use SyncHelper for concurrent reconnection processing
+        let _sync_result = crate::common::sync::SyncHelper::execute_concurrent_sync(
+            reconnects,
+            "health_check_reconnections",
+            2, // Limit concurrent reconnections to avoid overwhelming
+            move |(server_name, instance_id)| {
+                let pool_clone = connection_pool.clone();
+                async move {
+                    // Use short timeout for individual reconnection attempts
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(10), // 10 second timeout per reconnection
+                        Self::reconnect_single_instance(pool_clone, server_name.clone(), instance_id.clone()),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {
+                            tracing::info!(
+                                "Health check: Successfully reconnected '{}' instance '{}'",
+                                server_name,
+                                instance_id
+                            );
+                            Ok(())
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(
+                                "Health check: Failed to reconnect '{}' instance '{}': {}",
+                                server_name,
+                                instance_id,
+                                e
+                            );
+                            Err(anyhow::anyhow!("Reconnection failed: {}", e))
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "Health check: Timeout reconnecting '{}' instance '{}'",
+                                server_name,
+                                instance_id
+                            );
+                            Err(anyhow::anyhow!("Reconnection timeout"))
+                        }
+                    }
+                }
+            },
+        )
+        .await;
+    }
+
+    /// Reconnect a single instance with proper error handling
+    async fn reconnect_single_instance(
+        connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
+        server_name: String,
+        instance_id: String,
+    ) -> Result<()> {
+        // Use timeout to avoid indefinite blocking on pool lock
+        let mut pool = tokio::time::timeout(
+            std::time::Duration::from_secs(2), // 2 second timeout for lock acquisition
+            connection_pool.lock(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Timeout acquiring pool lock for reconnection"))?;
+
+        // Use the non-blocking reconnect method
+        pool.trigger_connect(&server_name, &instance_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to trigger reconnect: {}", e))
     }
 }

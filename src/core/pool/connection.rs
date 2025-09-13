@@ -37,8 +37,8 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        // First disconnect
-        self.disconnect(server_id, instance_id).await?;
+        // First perform a non-blocking disconnect
+        self.disconnect_non_blocking(server_id, instance_id).await?;
 
         // Get connection for backoff calculation
         let conn = self.get_instance(server_id, instance_id)?;
@@ -54,16 +54,8 @@ impl UpstreamConnectionPool {
             backoff
         );
 
-        // For now, use immediate reconnect to avoid the Weak reference bug
-        // TODO: Implement proper Arc-based async scheduling
-        tracing::warn!(
-            "Using immediate reconnect to bypass Weak reference bug for '{}' instance '{}'",
-            server_id,
-            instance_id
-        );
-
-        // Immediate reconnect instead of async scheduling
-        self.trigger_connect(server_id, instance_id).await
+        // Use immediate reconnect for now, but with improved non-blocking approach
+        self.connect_internal(server_id, instance_id).await
     }
 
     /// Disconnect from a specific instance of a server with improved resource cleanup
@@ -106,6 +98,40 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
+    /// Non-blocking disconnect that avoids long service cancellation timeouts
+    pub async fn disconnect_non_blocking(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        tracing::debug!("Non-blocking disconnect for '{}' instance '{}'", server_id, instance_id);
+
+        // Step 1: Cancel the token first to stop new operations
+        self.cancel_connection_token(server_id, instance_id);
+
+        // Step 2: Take the service from the connection
+        let service = {
+            let conn = self.get_instance_mut(server_id, instance_id)?;
+            conn.service.take()
+        };
+
+        // Step 3: Update connection status immediately (don't wait for service cancellation)
+        let conn = self.get_instance_mut(server_id, instance_id)?;
+        conn.update_disconnected();
+
+        // Step 4: Cancel service asynchronously without blocking
+        if let Some(service_arc) = service {
+            self.cancel_service_async(server_id, instance_id, service_arc);
+        }
+
+        tracing::info!(
+            "Non-blocking disconnect completed for '{}' instance '{}'",
+            server_id,
+            instance_id
+        );
+        Ok(())
+    }
+
     /// Disconnect from all servers
     pub async fn disconnect_all(&mut self) -> Result<()> {
         for server_id in self.connections.keys().cloned().collect::<Vec<_>>() {
@@ -128,30 +154,29 @@ impl UpstreamConnectionPool {
 
     // Removed redundant implementations in favor of update_server_status
 
-    /// Trigger connection to a specific instance of a server
-    pub async fn trigger_connect(
-        &mut self,
-        server_id: &str,
-        instance_id: &str,
-    ) -> Result<()> {
-        self.connect_core(server_id, instance_id, false).await
-    }
-
-    /// Connect to a specific instance of a server and wait for result
+    /// Connect to a specific instance of a server
     pub async fn connect(
         &mut self,
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        self.connect_core(server_id, instance_id, true).await
+        self.connect_internal(server_id, instance_id).await
     }
 
-    /// Core connection logic
-    async fn connect_core(
+    /// Trigger connection to a specific instance of a server (alias for connect)
+    pub async fn trigger_connect(
         &mut self,
         server_id: &str,
         instance_id: &str,
-        _wait_for_result: bool,
+    ) -> Result<()> {
+        self.connect_internal(server_id, instance_id).await
+    }
+
+    /// Internal connection logic
+    async fn connect_internal(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
     ) -> Result<()> {
         // Get server configuration (clone to avoid borrowing issues)
         let server_config = self
@@ -329,7 +354,7 @@ impl UpstreamConnectionPool {
                     server_name,
                     instance_id
                 );
-                return; // Early return if multiple references exist
+                return;
             }
         };
 
@@ -337,31 +362,93 @@ impl UpstreamConnectionPool {
         match tokio::time::timeout(cancel_timeout, service.cancel()).await {
             Ok(Ok(quit_reason)) => {
                 tracing::info!(
-                    "Service for server '{}' instance '{}' cancelled gracefully with reason: {:?} - Timestamp: {}",
+                    "Service for server '{}' instance '{}' cancelled gracefully with reason: {:?}",
                     server_name,
                     instance_id,
-                    quit_reason,
-                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                    quit_reason
                 );
             }
             Ok(Err(e)) => {
                 tracing::warn!(
-                    "Error during graceful cancellation for '{}' instance '{}': {} - Timestamp: {}",
+                    "Error during graceful cancellation for '{}' instance '{}': {}",
                     server_name,
                     instance_id,
-                    e,
-                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                    e
                 );
             }
             Err(_) => {
                 tracing::warn!(
-                    "Service cancellation timeout for '{}' instance '{}', resources may be leaked - Timestamp: {}",
+                    "Service cancellation timeout for '{}' instance '{}' ({}s)",
                     server_name,
                     instance_id,
-                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f")
+                    cancel_timeout.as_secs()
                 );
             }
         }
+    }
+
+    /// Cancel service asynchronously without blocking the caller
+    fn cancel_service_async(
+        &self,
+        server_name: &str,
+        instance_id: &str,
+        service_arc: Arc<RunningService<RoleClient, ()>>,
+    ) {
+        let server_name = server_name.to_string();
+        let instance_id = instance_id.to_string();
+
+        // Spawn background task for service cancellation
+        tokio::spawn(async move {
+            let cancel_timeout = Duration::from_secs(3); // Reduced timeout for faster response
+
+            tracing::debug!(
+                "Async service cancellation started for '{}' instance '{}' with {}s timeout",
+                server_name,
+                instance_id,
+                cancel_timeout.as_secs()
+            );
+
+            // Try to extract the service from Arc for cancellation
+            let service = match Arc::try_unwrap(service_arc) {
+                Ok(service) => service,
+                Err(_arc) => {
+                    tracing::debug!(
+                        "Service for '{}' instance '{}' has multiple references, skipping cancellation",
+                        server_name,
+                        instance_id
+                    );
+                    return;
+                }
+            };
+
+            // Handle service cancellation with timeout
+            match tokio::time::timeout(cancel_timeout, service.cancel()).await {
+                Ok(Ok(quit_reason)) => {
+                    tracing::debug!(
+                        "Service for '{}' instance '{}' cancelled gracefully: {:?}",
+                        server_name,
+                        instance_id,
+                        quit_reason
+                    );
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        "Error during async cancellation for '{}' instance '{}': {}",
+                        server_name,
+                        instance_id,
+                        e
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Async service cancellation timeout for '{}' instance '{}' ({}s)",
+                        server_name,
+                        instance_id,
+                        cancel_timeout.as_secs()
+                    );
+                }
+            }
+        });
     }
 
     /// Update connection with service and metadata
@@ -523,7 +610,7 @@ impl UpstreamConnectionPool {
                 self.disconnect(server_name, instance_id).await
             }
             ConnectionOperation::Reconnect => self.reconnect(server_name, instance_id).await,
-            ConnectionOperation::Connect => self.trigger_connect(server_name, instance_id).await,
+            ConnectionOperation::Connect => self.connect(server_name, instance_id).await,
             ConnectionOperation::ResetReconnect => self.handle_reset_reconnect(server_name, instance_id).await,
             ConnectionOperation::Recover => Err(anyhow::anyhow!(
                 "Recover operation should be handled directly via manual_re_enable method"
@@ -568,7 +655,7 @@ impl UpstreamConnectionPool {
         self.reset_connection_attempts(server_name, instance_id)?;
 
         // Then reconnect
-        self.trigger_connect(server_name, instance_id).await
+        self.connect_internal(server_name, instance_id).await
     }
 
     /// Check if instance is in shutdown state
@@ -621,31 +708,22 @@ impl UpstreamConnectionPool {
     /// Update server status in the connection pool
     ///
     /// This is a unified interface for managing server status:
-    /// - If enabled=true:
-    ///   1. Loads latest config from active profile
-    ///   2. Updates pool configuration
-    ///   3. Creates new connection if needed
-    ///   4. Connects to the server
-    /// - If enabled=false:
-    ///   1. Disconnects all instances
-    ///   2. Removes server from pool
-    ///
-    /// This implementation replaces the previous separate start_server, stop_server,
-    /// and load_server_config_dynamic functions with a single, more consistent interface.
+    /// - If enabled=true: Loads latest config, creates connection, and connects
+    /// - If enabled=false: Disconnects all instances and removes from pool
     pub async fn update_server_status(
         &mut self,
         server_id: &str,
         enabled: bool,
     ) -> Result<()> {
         if enabled {
-            self.enable_server_internal(server_id).await
+            self.enable_server(server_id).await
         } else {
-            self.disable_server_internal(server_id).await
+            self.disable_server(server_id).await
         }
     }
 
-    /// Internal method to enable and start a server
-    async fn enable_server_internal(
+    /// Enable and start a server
+    pub async fn enable_server(
         &mut self,
         server_id: &str,
     ) -> Result<()> {
@@ -676,14 +754,14 @@ impl UpstreamConnectionPool {
 
         // Get default instance ID and connect
         let instance_id = self.get_default_instance_id(server_id)?;
-        self.trigger_connect(server_id, &instance_id).await?;
+        self.connect_internal(server_id, &instance_id).await?;
 
         tracing::info!("Server '{}' enabled and started", server_id);
         Ok(())
     }
 
-    /// Internal method to disable and stop a server
-    async fn disable_server_internal(
+    /// Disable and stop a server
+    pub async fn disable_server(
         &mut self,
         server_id: &str,
     ) -> Result<()> {

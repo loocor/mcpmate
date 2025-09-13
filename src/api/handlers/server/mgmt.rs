@@ -229,7 +229,7 @@ async fn handle_server_connection_setup(
     state: &Arc<AppState>,
     server_id: &str,
 ) -> Result<Json<ServerOperationData>, ApiError> {
-    let mut pool = common::get_connection_pool_with_timeout(state).await?;
+    let mut pool = common::ConnectionPoolManager::get_pool_for_api(state).await?;
 
     match pool.update_server_status(server_id, true).await {
         Ok(()) => {

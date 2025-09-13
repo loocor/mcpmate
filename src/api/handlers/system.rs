@@ -1,7 +1,7 @@
 // MCP Proxy API handlers for system management
 // Contains handler functions for system endpoints
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{Json, extract::State};
 
@@ -30,22 +30,23 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Syste
         }
     }
 
-    // Use timeout to avoid blocking indefinitely
-    let pool_result = tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await;
+    // Get connection pool snapshot using the standardized manager
+    let instances_map = crate::api::handlers::server::common::ConnectionPoolManager::get_pool_snapshot(&state)
+        .await
+        .unwrap_or_else(|_| {
+            tracing::warn!("Failed to get connection pool snapshot for system status");
+            HashMap::new()
+        });
 
-    let instances_map = match pool_result {
-        Ok(pool) => pool.get_all_server_instances(),
-        Err(_) => {
-            // If we can't get the lock within the timeout, return a partial response
-            tracing::warn!("Timed out waiting for connection pool lock in get_status");
-            return Ok(Json(SystemStatusResp {
-                status: "running".to_string(),
-                uptime: get_uptime_seconds(),
-                total_servers,
-                connected_servers: 0,
-            }));
-        }
-    };
+    // Remove the early return and continue with normal processing
+    if instances_map.is_empty() {
+        return Ok(Json(SystemStatusResp {
+            status: "running".to_string(),
+            uptime: get_uptime_seconds(),
+            total_servers,
+            connected_servers: 0,
+        }));
+    }
 
     // If we can't get the server count from the database, use the number of instances
     // in the connection pool as a fallback

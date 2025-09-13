@@ -547,13 +547,14 @@ async fn disconnect_server_instances(
     state: &Arc<AppState>,
     name: &str,
 ) {
-    let mut pool = match tokio::time::timeout(std::time::Duration::from_secs(1), state.connection_pool.lock()).await {
-        Ok(pool) => pool,
-        Err(_) => {
-            tracing::warn!("Timed out waiting for connection pool lock, proceeding with server deletion anyway");
-            return;
-        }
-    };
+    let mut pool =
+        match crate::api::handlers::server::common::ConnectionPoolManager::get_pool_for_health_check(state).await {
+            Ok(pool) => pool,
+            Err(_) => {
+                tracing::warn!("Failed to get connection pool, proceeding with server deletion anyway");
+                return;
+            }
+        };
 
     let Some(instances) = pool.connections.get(name) else {
         return;

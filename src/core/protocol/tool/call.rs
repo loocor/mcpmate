@@ -69,13 +69,12 @@ async fn call_tool_on_server(
     request: CallToolRequestParam,
 ) -> Result<CallToolResult> {
     // Use timeout to prevent indefinite blocking on connection pool lock
-    let pool_result = tokio::time::timeout(
+    let mut connection_pool_guard = match tokio::time::timeout(
         std::time::Duration::from_millis(500), // 500ms timeout for connection pool access
         connection_pool.lock(),
     )
-    .await;
-
-    let mut connection_pool_guard = match pool_result {
+    .await
+    {
         Ok(guard) => guard,
         Err(_) => {
             tracing::error!(
@@ -131,8 +130,11 @@ async fn call_tool_on_server(
         ));
     }
 
-    // Mark the connection as busy
+    // Mark the connection as busy and get service reference
     conn.update_busy();
+
+    // Get a clone of the service Arc for use outside the lock
+    let service_arc = conn.service.as_ref().unwrap().clone();
 
     // Prepare the request with the upstream tool name
     let upstream_request = CallToolRequestParam {
@@ -148,18 +150,20 @@ async fn call_tool_on_server(
         original_tool_name
     );
 
-    // Get the service and call the tool with timeout
+    // Release the connection pool guard BEFORE making the tool call
+    drop(connection_pool_guard);
+
+    // Call the tool with timeout (outside the connection pool lock)
     let tool_call_result = tokio::time::timeout(
         std::time::Duration::from_secs(30), // 30 second timeout for tool calls
-        conn.service.as_mut().unwrap().call_tool(upstream_request),
+        service_arc.call_tool(upstream_request),
     )
     .await;
 
-    // Mark the connection as ready again (regardless of result)
-    conn.status = crate::core::foundation::types::ConnectionStatus::Ready;
-
-    // Release the connection pool guard early
-    drop(connection_pool_guard);
+    // Update connection status after tool call completion
+    // Use a separate function to handle status update with timeout protection
+    update_connection_status_after_tool_call(connection_pool, server_id, &instance_id, &tool_call_result, unique_name)
+        .await;
 
     match tool_call_result {
         Ok(Ok(tool_result)) => {
@@ -192,6 +196,66 @@ async fn call_tool_on_server(
                 "Tool call timed out on server '{}' after 30 seconds",
                 server_id
             ))
+        }
+    }
+}
+
+/// Update connection status after tool call completion with timeout protection
+///
+/// This function safely updates the connection status after a tool call completes,
+/// with timeout protection to avoid blocking the connection pool.
+async fn update_connection_status_after_tool_call(
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    server_id: &str,
+    instance_id: &str,
+    tool_call_result: &Result<Result<CallToolResult, rmcp::service::ServiceError>, tokio::time::error::Elapsed>,
+    unique_name: &str,
+) {
+    // Use timeout to prevent blocking on connection pool lock
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(500), // 500ms timeout for status update
+        connection_pool.lock(),
+    )
+    .await
+    {
+        Ok(mut pool_guard) => {
+            // Find the connection and update its status
+            if let Ok(conn) = pool_guard.get_instance_mut(server_id, instance_id) {
+                // Always mark as ready regardless of tool call result
+                // The connection is still valid even if the tool call failed or timed out
+                conn.status = crate::core::foundation::types::ConnectionStatus::Ready;
+
+                let status_msg = match tool_call_result {
+                    Ok(Ok(_)) => "after successful tool call",
+                    Ok(Err(_)) => "after tool error (connection still valid)",
+                    Err(_) => "after tool timeout (connection still valid)",
+                };
+
+                tracing::debug!(
+                    "Updated connection status to Ready {} for tool '{}' on server '{}' instance '{}'",
+                    status_msg,
+                    unique_name,
+                    server_id,
+                    instance_id
+                );
+            } else {
+                tracing::warn!(
+                    "Failed to find connection for status update after tool call '{}' on server '{}' instance '{}'",
+                    unique_name,
+                    server_id,
+                    instance_id
+                );
+            }
+        }
+        Err(_) => {
+            tracing::warn!(
+                "Timeout acquiring connection pool lock for status update after tool call '{}' on server '{}' instance '{}'",
+                unique_name,
+                server_id,
+                instance_id
+            );
+            // Connection will remain in Busy state, but this is better than blocking the entire pool
+            // The health check system will eventually reset connections in persistent Busy state
         }
     }
 }
