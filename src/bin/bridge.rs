@@ -1,11 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
+use mcpmate::common::constants::branding;
 use once_cell::sync::OnceCell;
 use rmcp::{
     ClientHandler, ErrorData as McpError, RoleClient, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, Implementation, ProtocolVersion,
-        ServerCapabilities, ServerInfo,
+        CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, ProtocolVersion, ServerCapabilities,
+        ServerInfo,
     },
     serve_server,
     service::{NotificationContext, RequestContext, ServiceExt},
@@ -42,11 +43,7 @@ impl ClientHandler for BridgeClient {
         ClientInfo {
             protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: format!("mcpmate-bridge::{appid}"),
-                title: Some("MCPMate Bridge".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
+            client_info: branding::bridge::create_client_implementation(&appid),
         }
     }
 
@@ -248,12 +245,8 @@ impl ServerHandler for BridgeServer {
                 .enable_tools()
                 .enable_tool_list_changed() // Enable tool list changed notifications
                 .build(),
-            server_info: Implementation {
-                name: "mcpmate-bridge".to_string(),
-                title: Some("MCPMate Bridge".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
-            instructions: Some("This is a bridge server that forwards requests to an SSE server.".to_string()),
+            server_info: branding::bridge::create_server_implementation(),
+            instructions: Some(branding::bridge::DESCRIPTION.to_string()),
         }
     }
 

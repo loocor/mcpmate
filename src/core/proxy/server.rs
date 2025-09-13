@@ -4,6 +4,7 @@
 //! using only core modules, with zero dependencies on core modules.
 
 use crate::{
+    common::constants::branding,
     config::database::Database,
     core::{pool::UpstreamConnectionPool, transport::TransportType},
     mcper::builtin::BuiltinServiceRegistry,
@@ -491,14 +492,8 @@ impl ServerHandler for ProxyServer {
                 .enable_resources()
                 .enable_prompts()
                 .build(),
-            server_info: rmcp::model::Implementation {
-                name: "mcpmate".to_string(),
-                title: Some("MCPMate".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
-            instructions: Some(
-                "MCPMate - Aggregates tools, resources, and prompts from multiple upstream MCP servers. Connect to access all configured MCP services through a single endpoint.".to_string()
-            ),
+            server_info: branding::create_implementation(),
+            instructions: Some(branding::DESCRIPTION.to_string()),
         }
     }
 

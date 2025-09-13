@@ -52,7 +52,8 @@ pub async fn upsert_profile(
 
     let final_profile_id = if result.rows_affected() == 0 {
         // If no rows were affected, get the existing ID
-        let existing_id = sqlx::query_scalar::<_, String>(
+
+        sqlx::query_scalar::<_, String>(
             r#"
             SELECT id FROM profile
             WHERE name = ?
@@ -61,9 +62,7 @@ pub async fn upsert_profile(
         .bind(&profile.name)
         .fetch_one(&mut *tx)
         .await
-        .context("Failed to get profile ID")?;
-
-        existing_id
+        .context("Failed to get profile ID")?
     } else {
         profile_id
     };

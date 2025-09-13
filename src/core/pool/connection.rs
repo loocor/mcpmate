@@ -224,7 +224,7 @@ impl UpstreamConnectionPool {
         // Note: connect_server still needs server_name for logging, so we use server_id as name for now
         let (service, tools, capabilities, process_id) = crate::core::transport::unified::connect_server(
             server_id,
-            &server_config,
+            server_config,
             crate::common::server::ServerType::Stdio,
             crate::common::server::TransportType::Stdio,
             Some(ct),
@@ -514,13 +514,33 @@ impl UpstreamConnectionPool {
         instance_id: &str,
         operation: ConnectionOperation,
     ) -> Result<()> {
-        // Get the instance
-        let conn = self.get_instance_mut(server_name, instance_id)?;
+        // Validate operation before proceeding
+        self.validate_operation(server_name, instance_id, operation).await?;
 
-        // Check if the operation is allowed using the new type-safe API
-        let is_allowed = conn.status.can_perform_operation(operation);
+        // Route to appropriate operation handler
+        match operation {
+            ConnectionOperation::Disconnect | ConnectionOperation::ForceDisconnect | ConnectionOperation::Cancel => {
+                self.disconnect(server_name, instance_id).await
+            }
+            ConnectionOperation::Reconnect => self.reconnect(server_name, instance_id).await,
+            ConnectionOperation::Connect => self.trigger_connect(server_name, instance_id).await,
+            ConnectionOperation::ResetReconnect => self.handle_reset_reconnect(server_name, instance_id).await,
+            ConnectionOperation::Recover => Err(anyhow::anyhow!(
+                "Recover operation should be handled directly via manual_re_enable method"
+            )),
+        }
+    }
 
-        if !is_allowed {
+    /// Validate if operation is allowed in current state
+    async fn validate_operation(
+        &self,
+        server_name: &str,
+        instance_id: &str,
+        operation: ConnectionOperation,
+    ) -> Result<()> {
+        let conn = self.get_instance(server_name, instance_id)?;
+
+        if !conn.status.can_perform_operation(operation) {
             return Err(anyhow::anyhow!(
                 "Operation '{}' is not allowed in the current state: {}",
                 operation,
@@ -528,36 +548,49 @@ impl UpstreamConnectionPool {
             ));
         }
 
-        // Perform the operation using enum matching
-        match operation {
-            ConnectionOperation::Disconnect => self.disconnect(server_name, instance_id).await,
-            ConnectionOperation::ForceDisconnect => self.disconnect(server_name, instance_id).await,
-            ConnectionOperation::Reconnect => self.reconnect(server_name, instance_id).await,
-            ConnectionOperation::Cancel => self.disconnect(server_name, instance_id).await,
-            ConnectionOperation::Connect => self.trigger_connect(server_name, instance_id).await,
-            ConnectionOperation::ResetReconnect => {
-                // First disconnect if needed
-                if !matches!(conn.status, ConnectionStatus::Shutdown) {
-                    if let Err(e) = self.disconnect(server_name, instance_id).await {
-                        tracing::warn!("Error during reset_reconnect disconnect phase: {}", e);
-                    }
-                }
+        Ok(())
+    }
 
-                // Reset connection attempts counter
-                let conn = self.get_instance_mut(server_name, instance_id)?;
-                conn.reset_connection_attempts();
-
-                // Then reconnect
-                self.trigger_connect(server_name, instance_id).await
-            }
-            ConnectionOperation::Recover => {
-                // Recover operation should be handled at the API level, not here
-                // This is a manual operation that requires direct connection manipulation
-                Err(anyhow::anyhow!(
-                    "Recover operation should be handled directly via manual_re_enable method"
-                ))
+    /// Handle reset reconnect operation
+    async fn handle_reset_reconnect(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        // First disconnect if needed
+        if !self.is_instance_shutdown(server_name, instance_id) {
+            if let Err(e) = self.disconnect(server_name, instance_id).await {
+                tracing::warn!("Error during reset_reconnect disconnect phase: {}", e);
             }
         }
+
+        // Reset connection attempts counter
+        self.reset_connection_attempts(server_name, instance_id)?;
+
+        // Then reconnect
+        self.trigger_connect(server_name, instance_id).await
+    }
+
+    /// Check if instance is in shutdown state
+    fn is_instance_shutdown(
+        &self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> bool {
+        self.get_instance(server_name, instance_id)
+            .map(|conn| matches!(conn.status, ConnectionStatus::Shutdown))
+            .unwrap_or(true) // Treat missing as shutdown
+    }
+
+    /// Reset connection attempts counter for instance
+    fn reset_connection_attempts(
+        &mut self,
+        server_name: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        let conn = self.get_instance_mut(server_name, instance_id)?;
+        conn.reset_connection_attempts();
+        Ok(())
     }
 
     // get_default_instance_id method is now in instance_helpers.rs

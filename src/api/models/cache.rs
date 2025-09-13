@@ -28,9 +28,11 @@ pub struct CacheDetailsReq {
     pub server_id: Option<String>,
     #[schemars(description = "Maximum number of items to return (max 1000)")]
     pub limit: Option<usize>,
+    // TODO: Implement cache result sorting functionality for better data organization
     #[allow(dead_code)]
     #[schemars(description = "Sort field - size, age, or key (reserved)")]
     pub sort_by: Option<String>,
+    // TODO: Implement cache result ordering functionality (ascending/descending)
     #[allow(dead_code)]
     #[schemars(description = "Sort order - asc or desc (reserved)")]
     pub order: Option<String>,

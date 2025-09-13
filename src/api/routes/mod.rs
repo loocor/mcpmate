@@ -40,6 +40,8 @@ pub struct AppState {
     pub config_application_state: Arc<crate::core::profile::ConfigApplicationStateManager>,
     /// Redb cache manager (unified capabilities cache)
     pub redb_cache: Arc<crate::core::cache::RedbCacheManager>,
+    /// Unified query adapter (optional, for gradual migration)
+    pub unified_query: Option<Arc<crate::core::capability::UnifiedQueryAdapter>>,
 }
 
 /// Create the API router with all routes
@@ -101,14 +103,31 @@ fn create_router_internal(
     let redb_cache = crate::core::cache::RedbCacheManager::global()
         .expect("Failed to initialize standard Redb cache manager for API operations");
 
+    // 创建统一查询适配器（可选，用于渐进式迁移）
+    let unified_query = if database.is_some() {
+        crate::core::capability::UnifiedQueryIntegration::create_adapter(&AppState {
+            connection_pool: connection_pool.clone(),
+            metrics_collector: metrics_collector.clone(),
+            http_proxy: http_proxy.clone(),
+            profile_merge_service: profile_merge_service.clone(),
+            database: database.clone(),
+            config_application_state: config_application_state.clone(),
+            redb_cache: redb_cache.clone(),
+            unified_query: None, // 避免递归
+        })
+    } else {
+        None
+    };
+
     let state = Arc::new(AppState {
         connection_pool,
         metrics_collector,
         http_proxy,
-        profile_merge_service: profile_merge_service,
+        profile_merge_service,
         database,
         config_application_state,
         redb_cache,
+        unified_query,
     });
 
     // Create OpenAPI specification

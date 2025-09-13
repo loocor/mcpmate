@@ -41,6 +41,9 @@ pub mod cache;
 // AI system - for MCP configuration extraction
 pub mod ai;
 
+// Unified capability query system - for tools, resources, prompts queries
+pub mod capability;
+
 // proxy core business logic - depends on protocol layer
 pub use proxy::{Args as ProxyArgs, ProxyServer};
 

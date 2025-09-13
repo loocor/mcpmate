@@ -121,7 +121,7 @@ macro_rules! aide_wrapper {
         paste::paste! {
             /// Aide-compatible wrapper function
             pub async fn [<$handler _aide>](
-                axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::api::routes::AppState>>
+                axum::extract::State(state): axum::extract::State<std::sync::Arc<$crate::api::routes::AppState>>
             ) -> impl aide::axum::IntoApiResponse {
                 use axum::response::IntoResponse;
                 match $module::$handler(axum::extract::State(state)).await {
@@ -161,7 +161,7 @@ macro_rules! aide_wrapper_query {
             /// Aide-compatible wrapper function for GET with query parameters
             pub async fn [<$handler _aide>](
                 axum::extract::Query(query): axum::extract::Query<$query_type>,
-                axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::api::routes::AppState>>
+                axum::extract::State(state): axum::extract::State<std::sync::Arc<$crate::api::routes::AppState>>
             ) -> impl aide::axum::IntoApiResponse {
                 use axum::response::IntoResponse;
                 match $module::$handler(axum::extract::State(state), axum::extract::Query(query)).await {
@@ -201,7 +201,7 @@ macro_rules! aide_wrapper_payload {
         paste::paste! {
             /// Aide-compatible wrapper function for POST with payload body
             pub async fn [<$handler _aide>](
-                axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::api::routes::AppState>>,
+                axum::extract::State(state): axum::extract::State<std::sync::Arc<$crate::api::routes::AppState>>,
                 axum::extract::Json(json): axum::extract::Json<$json_type>
             ) -> impl aide::axum::IntoApiResponse {
                 use axum::response::IntoResponse;

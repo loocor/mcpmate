@@ -205,7 +205,7 @@ async fn instance_list_core(
         };
 
         let mut all_instances = Vec::new();
-        for (_server_name, instances) in &pool.connections {
+        for instances in pool.connections.values() {
             for (instance_id, conn) in instances {
                 // Convert Instant to DateTime for serialization
                 let now = std::time::SystemTime::now();

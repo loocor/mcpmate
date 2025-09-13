@@ -95,6 +95,7 @@ pub enum ServerManageAction {
 /// Request for server capability inspection
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Request for server capability inspection")]
+#[derive(Default)]
 pub struct ServerCapabilityReq {
     #[schemars(description = "Server ID")]
     pub id: String,

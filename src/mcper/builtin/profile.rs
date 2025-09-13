@@ -294,7 +294,7 @@ struct ProfileInfo {
 }
 
 /// Detailed version (currently unused to save tokens)
-/// TODO: Implement as optional detailed mode or separate tool
+// TODO: Implement detailed profile information structure for enhanced profile management
 #[allow(dead_code)]
 #[derive(Debug, Serialize)]
 struct DetailedProfileInfo {

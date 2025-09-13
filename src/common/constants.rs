@@ -209,3 +209,88 @@ pub mod strategies {
     /// No data available from any strategy
     pub const NONE: &str = "none";
 }
+
+/// MCPMate branding constants for unified brand management
+pub mod branding {
+    /// MCPMate product name
+    pub const PRODUCT_NAME: &str = "mcpmate";
+
+    /// MCPMate display title
+    pub const DISPLAY_TITLE: &str = "MCPMate";
+
+    /// MCPMate official website URL
+    pub const WEBSITE_URL: &str = "https://mcpmate.io";
+
+    /// MCPMate logo URL (SVG format)
+    pub const LOGO_URL: &str = "https://mcpmate.io/logo.svg";
+
+    /// MCPMate logo MIME type
+    pub const LOGO_MIME_TYPE: &str = "image/svg+xml";
+
+    /// MCPMate logo sizes (SVG is scalable)
+    pub const LOGO_SIZES: &str = "any";
+
+    /// MCPMate description for MCP server info
+    pub const DESCRIPTION: &str = "MCPMate - Aggregates tools, resources, and prompts from multiple upstream MCP servers. Connect to access all configured MCP services through a single endpoint.";
+
+    /// Create MCPMate icon for RMCP Implementation
+    pub fn create_logo_icon() -> rmcp::model::Icon {
+        rmcp::model::Icon {
+            src: LOGO_URL.to_string(),
+            mime_type: Some(LOGO_MIME_TYPE.to_string()),
+            sizes: Some(LOGO_SIZES.to_string()),
+        }
+    }
+
+    /// Create MCPMate Implementation for RMCP server info
+    pub fn create_implementation() -> rmcp::model::Implementation {
+        rmcp::model::Implementation {
+            name: PRODUCT_NAME.to_string(),
+            title: Some(DISPLAY_TITLE.to_string()),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            icons: Some(vec![create_logo_icon()]),
+            website_url: Some(WEBSITE_URL.to_string()),
+        }
+    }
+
+    /// Bridge-specific constants
+    pub mod bridge {
+        /// Bridge client name prefix
+        pub const CLIENT_NAME_PREFIX: &str = "mcpmate-bridge";
+
+        /// Bridge server name
+        pub const SERVER_NAME: &str = "mcpmate-bridge";
+
+        /// Bridge display title
+        pub const DISPLAY_TITLE: &str = "MCPMate Bridge";
+
+        /// Bridge description
+        pub const DESCRIPTION: &str = "This is a bridge server that forwards requests to an SSE server.";
+
+        /// Create bridge Implementation with specified name
+        fn create_implementation(name: String) -> rmcp::model::Implementation {
+            rmcp::model::Implementation {
+                name,
+                title: Some(DISPLAY_TITLE.to_string()),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                icons: Some(vec![super::create_logo_icon()]),
+                website_url: Some(super::WEBSITE_URL.to_string()),
+            }
+        }
+
+        /// Create bridge client Implementation with dynamic appid
+        pub fn create_client_implementation(appid: &str) -> rmcp::model::Implementation {
+            let name = if appid.is_empty() {
+                CLIENT_NAME_PREFIX.to_string()
+            } else {
+                format!("{}::{}", CLIENT_NAME_PREFIX, appid)
+            };
+            create_implementation(name)
+        }
+
+        /// Create bridge server Implementation
+        pub fn create_server_implementation() -> rmcp::model::Implementation {
+            create_implementation(SERVER_NAME.to_string())
+        }
+    }
+}
