@@ -24,6 +24,7 @@ use super::{
 static GLOBAL_CACHE_INSTANCE: OnceLock<Arc<RedbCacheManager>> = OnceLock::new();
 
 /// High-performance cache manager using Redb
+#[derive(Debug)]
 pub struct RedbCacheManager {
     /// Shared database instance
     db: Arc<Database>,

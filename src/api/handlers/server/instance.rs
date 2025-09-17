@@ -19,7 +19,7 @@ use crate::{
     },
     common::server::ServerType,
     core::{
-        connection::UpstreamConnection,
+        pool::UpstreamConnection,
         foundation::types::{ConnectionStatus, ErrorType},
     },
 };

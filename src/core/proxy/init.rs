@@ -9,7 +9,11 @@ use tracing_subscriber::{self, EnvFilter};
 use super::{Args, ProxyServer, args::StartupMode};
 
 // Import required types and modules from core and other modules
-use crate::{api::handlers::system, config::database::Database, core::foundation::loader};
+use crate::{
+    api::handlers::system,
+    config::database::Database,
+    core::{capability::naming, foundation::loader},
+};
 
 /// Setup logging based on command line arguments
 /// This function is safe to call multiple times - it will only initialize once
@@ -79,6 +83,9 @@ pub async fn setup_database() -> Result<Database> {
         }
     };
 
+    // Initialize naming store once the database is ready
+    naming::initialize(db.pool.clone());
+
     // Runtime migration removed - simplified runtime management
     tracing::debug!("Runtime management simplified - no migration needed");
 
@@ -89,7 +96,7 @@ pub async fn setup_database() -> Result<Database> {
 pub async fn setup_proxy_server_with_params(
     db: Database,
     startup_mode: &StartupMode,
-) -> Result<(ProxyServer, Arc<ProxyServer>)> {
+) -> Result<(Arc<ProxyServer>, Arc<ProxyServer>)> {
     // Load configuration from database using core loader with startup parameters
     let config = loader::load_server_config_with_params(&db, startup_mode).await?;
 
@@ -109,17 +116,17 @@ pub async fn setup_proxy_server_with_params(
     proxy.set_database(db).await?;
     tracing::info!("Using database connection for tool-level configuration.");
 
-    // Create an Arc for the proxy server and set the global instance
+    // Create Arc wrappers for the proxy server
     let proxy_arc = Arc::new(proxy.clone());
-    ProxyServer::set_global(Arc::new(tokio::sync::Mutex::new(proxy.clone())));
+    ProxyServer::set_global(Arc::new(tokio::sync::Mutex::new(proxy)));
 
     // Event system will be initialized in proxy.set_database() with proper handlers
     tracing::info!("Proxy server created, event system will be initialized with handlers");
 
-    Ok((proxy, proxy_arc))
+    Ok((proxy_arc.clone(), proxy_arc))
 }
 
 /// Setup proxy server with database and configuration using core modules (legacy function for backward compatibility)
-pub async fn setup_proxy_server(db: Database) -> Result<(ProxyServer, Arc<ProxyServer>)> {
+pub async fn setup_proxy_server(db: Database) -> Result<(Arc<ProxyServer>, Arc<ProxyServer>)> {
     setup_proxy_server_with_params(db, &StartupMode::Default).await
 }

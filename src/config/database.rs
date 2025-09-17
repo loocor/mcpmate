@@ -10,6 +10,7 @@ use crate::{
     common::profile::ProfileType,
     common::paths::global_paths,
     config::{import, initialization, models, profile, server},
+    core::capability::naming,
 };
 
 /// Get the database URL for SQLite
@@ -89,6 +90,9 @@ impl Database {
                 return Err(anyhow::anyhow!("Failed to connect to SQLite database: {}", e));
             }
         };
+
+        // Initialize naming store as early as possible so other components can rely on it
+        naming::initialize(pool.clone());
 
         // Enable foreign keys
         sqlx::query("PRAGMA foreign_keys = ON")

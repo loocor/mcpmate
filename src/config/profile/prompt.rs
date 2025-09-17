@@ -262,7 +262,10 @@ pub fn build_enabled_prompts_query(additional_where: Option<&str>) -> String {
         SELECT DISTINCT csp.server_name, csp.prompt_name
         FROM profile_prompt csp
         JOIN profile cs ON csp.profile_id = cs.id
-        WHERE cs.is_active = true AND csp.enabled = true
+        JOIN server_config sc ON csp.server_id = sc.id
+        WHERE cs.is_active = true
+          AND csp.enabled = true
+          AND sc.enabled = 1
     "#;
 
     match additional_where {

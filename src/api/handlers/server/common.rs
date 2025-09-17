@@ -79,22 +79,7 @@ impl ConnectionPoolManager {
         Self::get_pool_with_timeout(state, 10, "capability operation").await
     }
 
-    /// Get connection pool snapshot for system status (500ms timeout)
-    pub async fn get_pool_snapshot(
-        state: &Arc<AppState>
-    ) -> Result<std::collections::HashMap<String, Vec<(String, crate::core::connection::UpstreamConnection)>>, ApiError>
-    {
-        match tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await {
-            Ok(pool) => {
-                tracing::debug!("Successfully acquired connection pool for snapshot");
-                Ok(pool.get_connection_snapshot())
-            }
-            Err(_) => {
-                tracing::warn!("Connection pool snapshot timeout (500ms), returning empty snapshot");
-                Ok(std::collections::HashMap::new())
-            }
-        }
-    }
+    // Removed heavy snapshot getter; prefer pool.get_server_status_summary() or get_snapshot() in read paths
 }
 
 /// Server identification result

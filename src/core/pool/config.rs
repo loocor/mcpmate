@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing;
 
-use crate::core::{connection::UpstreamConnection, models::Config};
+use crate::core::{pool::types::UpstreamConnection, models::Config};
 
 /// Manager for handling connection pool configuration updates
 ///

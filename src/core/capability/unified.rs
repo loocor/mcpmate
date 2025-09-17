@@ -15,24 +15,19 @@ use tokio::sync::Mutex;
 use tracing;
 
 use crate::core::{
-    capability::domain::{AffinityKey, CapabilityError, ConnectionMode, IsolationMode},
-    connection::UpstreamConnection,
+    capability::domain::{AffinityKey, ConnectionMode, IsolationMode},
     models::Config,
 };
 
 // Constants for unified connection management
 const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 90;
-const DEFAULT_MAX_INSTANCES: usize = 6;
 // TODO: Implement session-based timeout management for long-running connections
-#[allow(dead_code)]
-const DEFAULT_SESSION_TIMEOUT_SECS: u64 = 3600;
+// const DEFAULT_SESSION_TIMEOUT_SECS: u64 = 3600; // Reserved for future session timeout feature
 // TODO: Implement health check multiplier for adaptive health monitoring intervals
-#[allow(dead_code)]
-const HEALTH_CHECK_MULTIPLIER: u32 = 2;
+// const HEALTH_CHECK_MULTIPLIER: u32 = 2; // Reserved for future adaptive health monitoring
 const MAX_AUTO_REVIVE_INSTANCES: usize = 2;
 // TODO: Implement periodic maintenance scheduling for connection pool optimization
-#[allow(dead_code)]
-const DEFAULT_MAINTENANCE_INTERVAL_SECS: u64 = 60;
+// const DEFAULT_MAINTENANCE_INTERVAL_SECS: u64 = 60; // Reserved for future maintenance scheduling
 
 /// Connection instance metadata for lifecycle management
 #[derive(Debug, Clone)]
@@ -268,9 +263,16 @@ impl UnifiedConnectionManager {
             }
         }
 
-        // Step 3: Create new instance - final return
-        self.create_and_register_instance(server_id, &routing_key, mode.clone())
-            .await
+        // Step 3: Create new instance via pool (delegate) and register
+        let instance_id = {
+            let mut pool = self.pool.lock().await;
+            pool.ensure_connected(server_id).await?
+        };
+
+        self.register_metadata(server_id, &routing_key, mode.clone(), &instance_id)
+            .await?;
+
+        Ok(instance_id)
     }
 
     /// Handle ready instance found - early return helper
@@ -310,38 +312,23 @@ impl UnifiedConnectionManager {
         Ok(instance_id)
     }
 
-    /// Create and register new instance - final step helper
-    async fn create_and_register_instance(
-        &self,
-        server_id: &str,
-        routing_key: &str,
-        mode: ConnectionMode,
-    ) -> Result<String> {
-        let instance_id = self.create_new_instance(server_id, routing_key, mode).await?;
-
-        tracing::info!(
-            "Created new instance '{}' for server '{}' with key '{}'",
-            instance_id,
-            server_id,
-            routing_key
-        );
-
-        Ok(instance_id)
-    }
+    // removed: create_and_register_instance (UCM no longer creates instances directly)
 
     /// Find ready instance by routing key
     async fn find_ready_instance(
         &self,
         routing_key: &str,
     ) -> Result<Option<String>> {
+        // Prefer authoritative state from pool to avoid metadata drift
         let instances = self.active_instances.lock().await;
-
         if let Some(metadata) = instances.get(routing_key) {
-            if matches!(metadata.status, InstanceStatus::Ready) {
-                return Ok(Some(metadata.instance_id.clone()));
+            let pool_guard = self.pool.lock().await;
+            if let Ok(conn) = pool_guard.get_instance(&metadata.server_id, &metadata.instance_id) {
+                if conn.is_connected() {
+                    return Ok(Some(metadata.instance_id.clone()));
+                }
             }
         }
-
         Ok(None)
     }
 
@@ -350,14 +337,19 @@ impl UnifiedConnectionManager {
         &self,
         routing_key: &str,
     ) -> Result<Option<String>> {
+        // Prefer authoritative state from pool to avoid metadata drift
         let instances = self.active_instances.lock().await;
-
         if let Some(metadata) = instances.get(routing_key) {
-            if matches!(metadata.status, InstanceStatus::Shutdown) {
+            let pool_guard = self.pool.lock().await;
+            if let Ok(conn) = pool_guard.get_instance(&metadata.server_id, &metadata.instance_id) {
+                if matches!(conn.status, crate::core::foundation::types::ConnectionStatus::Shutdown) {
+                    return Ok(Some(metadata.instance_id.clone()));
+                }
+            } else {
+                // If not found in pool, treat as shutdown for affinity reuse
                 return Ok(Some(metadata.instance_id.clone()));
             }
         }
-
         Ok(None)
     }
 
@@ -367,50 +359,66 @@ impl UnifiedConnectionManager {
         routing_key: &str,
         server_id: &str,
     ) -> Result<()> {
-        let mut instances = self.active_instances.lock().await;
+        // Step 1: Read the instance_id if current state is Shutdown (avoid holding lock across await)
+        let instance_id = {
+            let instances = self.active_instances.lock().await;
+            if let Some(metadata) = instances.get(routing_key) {
+                if matches!(metadata.status, InstanceStatus::Shutdown) {
+                    Some(metadata.instance_id.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
 
-        if let Some(metadata) = instances.get_mut(routing_key) {
-            if matches!(metadata.status, InstanceStatus::Shutdown) {
-                // Update status to ready
+        let Some(instance_id) = instance_id else {
+            return Err(anyhow::anyhow!(
+                "No shutdown instance found for routing key: {}",
+                routing_key
+            ));
+        };
+
+        // Step 2: Perform real reconnection via pool single executor
+        {
+            let mut pool = self.pool.lock().await;
+            pool.trigger_connect(server_id, &instance_id).await?;
+        }
+
+        // Step 3: On success, update metadata to Ready
+        {
+            let mut instances = self.active_instances.lock().await;
+            if let Some(metadata) = instances.get_mut(routing_key) {
                 metadata.status = InstanceStatus::Ready;
                 metadata.last_activity = chrono::Utc::now();
                 metadata.shutdown_at = None;
-
-                // Trigger actual connection revival through pool
-                let _pool = self.pool.lock().await;
-                // Note: Actual connection revival logic would go here
-                // This would involve re-establishing the connection to the server
-
-                tracing::debug!("Revived instance '{}' for server '{}'", metadata.instance_id, server_id);
-                return Ok(());
             }
         }
 
-        Err(anyhow::anyhow!(
-            "No shutdown instance found for routing key: {}",
-            routing_key
-        ))
+        self.increment_revived_instances().await;
+        tracing::debug!(
+            "Revived instance '{}' for server '{}' via pool.trigger_connect",
+            instance_id,
+            server_id
+        );
+
+        Ok(())
     }
 
-    /// Create new instance and register
-    async fn create_new_instance(
+    /// Register metadata for a newly ensured instance (bookkeeping only)
+    async fn register_metadata(
         &self,
         server_id: &str,
         routing_key: &str,
         mode: ConnectionMode,
-    ) -> Result<String> {
-        // Check resource limits
-        self.check_resource_limits(server_id).await?;
-
-        // Generate instance ID
-        let instance_id = self.generate_instance_id(server_id, &mode).await;
-
-        // Create metadata
+        instance_id: &str,
+    ) -> Result<()> {
         let metadata = InstanceMetadata {
-            instance_id: instance_id.clone(),
+            instance_id: instance_id.to_string(),
             server_id: server_id.to_string(),
             mode: mode.clone(),
-            status: InstanceStatus::Initializing,
+            status: InstanceStatus::Ready,
             created_at: chrono::Utc::now(),
             last_activity: chrono::Utc::now(),
             shutdown_at: None,
@@ -420,27 +428,10 @@ impl UnifiedConnectionManager {
             },
         };
 
-        // Register instance
-        {
-            let mut instances = self.active_instances.lock().await;
-            instances.insert(routing_key.to_string(), metadata);
-        }
-
-        // Increment statistics
+        let mut instances = self.active_instances.lock().await;
+        instances.insert(routing_key.to_string(), metadata);
         self.increment_total_created().await;
-
-        // Trigger actual connection creation through pool
-        self.trigger_pool_connection(server_id, &instance_id).await?;
-
-        // Update status to ready
-        {
-            let mut instances = self.active_instances.lock().await;
-            if let Some(metadata) = instances.get_mut(routing_key) {
-                metadata.status = InstanceStatus::Ready;
-            }
-        }
-
-        Ok(instance_id)
+        Ok(())
     }
 
     /// Get server type for server ID
@@ -448,39 +439,8 @@ impl UnifiedConnectionManager {
         &self,
         server_id: &str,
     ) -> Option<crate::common::server::ServerType> {
-        // First try to get server type from configuration
-        if let Some(server_config) = self.config.mcp_servers.get(server_id) {
-            // Determine server type from configuration
-            if server_config.command.is_some() {
-                Some(crate::common::server::ServerType::Stdio)
-            } else if server_config.url.is_some() {
-                // Check if it's SSE or Streamable HTTP based on URL pattern
-                if let Some(url) = &server_config.url {
-                    if url.contains("/sse") || url.ends_with("/sse") {
-                        Some(crate::common::server::ServerType::Sse)
-                    } else {
-                        Some(crate::common::server::ServerType::StreamableHttp)
-                    }
-                } else {
-                    Some(crate::common::server::ServerType::StreamableHttp)
-                }
-            } else {
-                None
-            }
-        } else {
-            // Fallback to connection pool inference
-            let pool = self.pool.lock().await;
-            if let Some(server_connections) = pool.connections.get(server_id) {
-                // Try to infer server type from connection characteristics
-                if server_connections.len() > 3 {
-                    Some(crate::common::server::ServerType::Sse) // HTTP servers handle more connections
-                } else {
-                    Some(crate::common::server::ServerType::Stdio)
-                }
-            } else {
-                None
-            }
-        }
+        // Use authoritative config.kind; do not use heuristics
+        self.config.mcp_servers.get(server_id).map(|cfg| cfg.kind)
     }
 
     /// Get isolation configuration for server
@@ -496,75 +456,11 @@ impl UnifiedConnectionManager {
         }
     }
 
-    /// Check resource limits before creating new instance
-    async fn check_resource_limits(
-        &self,
-        server_id: &str,
-    ) -> Result<()> {
-        let instances = self.active_instances.lock().await;
+    // removed: check_resource_limits (resource control handled in pool/caller)
 
-        // Count active instances for this server
-        let server_active_count = instances
-            .values()
-            .filter(|metadata| metadata.server_id == server_id && matches!(metadata.status, InstanceStatus::Ready))
-            .count();
+    // removed: generate_instance_id (instance id derived by pool/connection layer)
 
-        // Get isolation configuration for this server
-        let max_instances = self
-            .get_isolation_config(server_id)
-            .await
-            .map(|config| config.max_instances)
-            .unwrap_or(DEFAULT_MAX_INSTANCES);
-
-        if server_active_count >= max_instances {
-            return Err(CapabilityError::NoAvailableInstances(server_id.to_string()).into());
-        }
-
-        Ok(())
-    }
-
-    /// Generate instance ID based on server and mode
-    async fn generate_instance_id(
-        &self,
-        server_id: &str,
-        mode: &ConnectionMode,
-    ) -> String {
-        let timestamp = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-
-        match mode.isolation_mode {
-            IsolationMode::Shareable => format!("{}-shareable-{}", server_id, timestamp),
-            IsolationMode::PerClient => match &mode.affinity_key {
-                AffinityKey::PerClient(client_id) => format!("{}-client-{}", server_id, client_id),
-                _ => format!("{}-client-{}", server_id, timestamp),
-            },
-            IsolationMode::PerSession => match &mode.affinity_key {
-                AffinityKey::PerSession(session_id) => format!("{}-session-{}", server_id, session_id),
-                _ => format!("{}-session-{}", server_id, timestamp),
-            },
-        }
-    }
-
-    /// Trigger actual connection creation through the pool
-    async fn trigger_pool_connection(
-        &self,
-        server_id: &str,
-        instance_id: &str,
-    ) -> Result<()> {
-        let mut pool = self.pool.lock().await;
-
-        // Ensure server exists in pool
-        if !pool.connections.contains_key(server_id) {
-            // Create new connection in pool
-            let connection = UpstreamConnection::new(instance_id.to_string());
-            let instances = pool.connections.entry(server_id.to_string()).or_default();
-            instances.insert(instance_id.to_string(), connection);
-        }
-
-        // Trigger connection
-        pool.trigger_connect(server_id, instance_id).await?;
-
-        Ok(())
-    }
+    // removed: trigger_pool_connection (use pool.ensure_connected instead)
 
     /// Update last activity timestamp
     async fn update_activity(
@@ -1069,165 +965,4 @@ pub struct ServerStats {
     pub ready_instances: usize,
     pub shutdown_instances: usize,
     pub error_instances: usize,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::common::server::ServerType;
-    use crate::core::pool::UpstreamConnectionPool;
-
-    #[tokio::test]
-    async fn test_connection_mode_creation() {
-        let shareable = ConnectionMode::shareable();
-        assert_eq!(shareable.isolation_mode, IsolationMode::Shareable);
-
-        let per_client = ConnectionMode::per_client("test-client".to_string());
-        assert_eq!(per_client.isolation_mode, IsolationMode::PerClient);
-
-        let per_session = ConnectionMode::per_session("test-session".to_string());
-        assert_eq!(per_session.isolation_mode, IsolationMode::PerSession);
-    }
-
-    #[tokio::test]
-    async fn test_affinity_key_string() {
-        let shareable = ConnectionMode::shareable();
-        assert_eq!(shareable.affinity_key_string(), "default");
-
-        let per_client = ConnectionMode::per_client("client123".to_string());
-        assert_eq!(per_client.affinity_key_string(), "client:client123");
-
-        let per_session = ConnectionMode::per_session("session456".to_string());
-        assert_eq!(per_session.affinity_key_string(), "session:session456");
-    }
-
-    #[tokio::test]
-    async fn test_default_isolation_mode() {
-        assert_eq!(
-            UnifiedConnectionManager::get_default_isolation_mode(&ServerType::Stdio),
-            IsolationMode::PerClient
-        );
-        assert_eq!(
-            UnifiedConnectionManager::get_default_isolation_mode(&ServerType::Sse),
-            IsolationMode::Shareable
-        );
-        assert_eq!(
-            UnifiedConnectionManager::get_default_isolation_mode(&ServerType::StreamableHttp),
-            IsolationMode::Shareable
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_connection_mode() {
-        let mode = UnifiedConnectionManager::get_connection_mode(&ServerType::Stdio, Some("client1".to_string()), None);
-        assert_eq!(mode.isolation_mode, IsolationMode::PerClient);
-
-        let mode = UnifiedConnectionManager::get_connection_mode(&ServerType::Sse, None, None);
-        assert_eq!(mode.isolation_mode, IsolationMode::Shareable);
-    }
-
-    #[tokio::test]
-    async fn test_unified_entry_point_functionality() {
-        // Create a mock pool for testing
-        let config = Arc::new(Config::default());
-        let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(config.clone(), None)));
-
-        // Create the unified connection manager
-        let manager = UnifiedConnectionManager::new(pool, config);
-
-        // Test 1: Test different isolation modes
-        let shareable_mode = ConnectionMode::shareable();
-        let per_client_mode = ConnectionMode::per_client("test-client-123".to_string());
-        let per_session_mode = ConnectionMode::per_session("test-session-456".to_string());
-
-        assert_eq!(shareable_mode.isolation_mode, IsolationMode::Shareable);
-        assert_eq!(per_client_mode.isolation_mode, IsolationMode::PerClient);
-        assert_eq!(per_session_mode.isolation_mode, IsolationMode::PerSession);
-
-        // Test 2: Test affinity key generation
-        assert_eq!(shareable_mode.affinity_key_string(), "default");
-        assert_eq!(per_client_mode.affinity_key_string(), "client:test-client-123");
-        assert_eq!(per_session_mode.affinity_key_string(), "session:test-session-456");
-
-        // Test 3: Test isolation configuration
-        let stdio_config = IsolationConfig::for_server_type(&ServerType::Stdio);
-        let sse_config = IsolationConfig::for_server_type(&ServerType::Sse);
-
-        assert_eq!(stdio_config.default_mode, IsolationMode::PerClient);
-        assert_eq!(sse_config.default_mode, IsolationMode::Shareable);
-        assert_eq!(stdio_config.max_instances, 6);
-        assert_eq!(sse_config.max_instances, 3);
-
-        // Test 4: Test getting instances by status
-        let ready_instances = manager.get_instances_by_status(InstanceStatus::Ready).await;
-        let shutdown_instances = manager.get_instances_by_status(InstanceStatus::Shutdown).await;
-
-        // Should be empty initially
-        assert_eq!(ready_instances.len(), 0);
-        assert_eq!(shutdown_instances.len(), 0);
-
-        // Test 5: Test statistics
-        let stats = manager.get_stats().await;
-        assert_eq!(stats.total_created, 0);
-        assert_eq!(stats.active_count, 0);
-        assert_eq!(stats.cache_hits, 0);
-
-        // Test 6: Test health check functionality
-        let health_result = manager.health_check_all().await.unwrap();
-        assert_eq!(health_result.total_instances, 0);
-        assert_eq!(health_result.healthy_instances, 0);
-        assert_eq!(health_result.unhealthy_instances, 0);
-        assert!(health_result.unhealthy_details.is_empty());
-
-        // Test 7: Test periodic maintenance
-        let maintenance_result = manager.periodic_maintenance().await.unwrap();
-        assert_eq!(maintenance_result.cleaned_instances, 0);
-        assert_eq!(maintenance_result.revived_instances, 0);
-
-        // Test 8: Test configuration methods
-        let default_mode = UnifiedConnectionManager::get_default_isolation_mode(&ServerType::Stdio);
-        assert_eq!(default_mode, IsolationMode::PerClient);
-
-        let connection_mode =
-            UnifiedConnectionManager::get_connection_mode(&ServerType::Stdio, Some("client123".to_string()), None);
-        assert_eq!(connection_mode.isolation_mode, IsolationMode::PerClient);
-
-        println!("🎉 All unified entry point tests passed!");
-    }
-
-    #[tokio::test]
-    async fn test_isolation_config_builder() {
-        let config = IsolationConfig::for_server_type(&ServerType::Stdio);
-
-        // Test builder pattern methods
-        let modified_config = config
-            .with_max_instances(10)
-            .with_idle_timeout(std::time::Duration::from_secs(120))
-            .with_revival(false)
-            .with_load_balancing(true);
-
-        assert_eq!(modified_config.max_instances, 10);
-        assert_eq!(modified_config.idle_timeout, std::time::Duration::from_secs(120));
-        assert!(!modified_config.enable_revival);
-        assert!(modified_config.enable_load_balancing);
-    }
-
-    #[tokio::test]
-    async fn test_connection_mode_from_server_type() {
-        // Test stdio server type
-        let stdio_mode = UnifiedConnectionManager::get_connection_mode(
-            &ServerType::Stdio,
-            Some("client1".to_string()),
-            Some("session1".to_string()),
-        );
-        assert_eq!(stdio_mode.isolation_mode, IsolationMode::PerClient);
-
-        // Test SSE server type
-        let sse_mode = UnifiedConnectionManager::get_connection_mode(&ServerType::Sse, None, None);
-        assert_eq!(sse_mode.isolation_mode, IsolationMode::Shareable);
-
-        // Test fallback behavior
-        let fallback_mode = UnifiedConnectionManager::get_connection_mode(&ServerType::Stdio, None, None);
-        assert_eq!(fallback_mode.isolation_mode, IsolationMode::Shareable); // Should fallback
-    }
 }

@@ -169,7 +169,7 @@ impl ServerSyncManager {
     ) -> Result<()> {
         // Create instance if it doesn't exist
         if !pool.connections.contains_key(server_name) {
-            let connection = crate::core::connection::UpstreamConnection::new(server_name.to_string());
+            let connection = crate::core::pool::UpstreamConnection::new(server_name.to_string());
             let instance_id = connection.id.clone();
             let instances = pool.connections.entry(server_name.to_string()).or_default();
             instances.insert(instance_id, connection);

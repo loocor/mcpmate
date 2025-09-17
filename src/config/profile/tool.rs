@@ -116,7 +116,10 @@ pub fn build_enabled_tools_query(additional_where: Option<&str>) -> String {
         FROM profile_tool cst
         JOIN profile cs ON cst.profile_id = cs.id
         JOIN server_tools st ON cst.server_tool_id = st.id
-        WHERE cs.is_active = true AND cst.enabled = true"#;
+        JOIN server_config sc ON st.server_id = sc.id
+        WHERE cs.is_active = true
+          AND cst.enabled = true
+          AND sc.enabled = 1"#;
 
     match additional_where {
         Some(condition) => format!("{} AND {}", base_query, condition),

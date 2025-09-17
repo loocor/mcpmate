@@ -30,34 +30,26 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Syste
         }
     }
 
-    // Get connection pool snapshot using the standardized manager
-    let instances_map = crate::api::handlers::server::common::ConnectionPoolManager::get_pool_snapshot(&state)
-        .await
-        .unwrap_or_else(|_| {
-            tracing::warn!("Failed to get connection pool snapshot for system status");
+    // Use lightweight server status summary to avoid heavy cloning
+    let summary = match tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        state.connection_pool.lock(),
+    )
+    .await
+    {
+        Ok(pool) => pool.get_server_status_summary(),
+        Err(_) => {
+            tracing::warn!("Connection pool status summary timeout (500ms), returning empty summary");
             HashMap::new()
-        });
+        }
+    };
 
-    // Remove the early return and continue with normal processing
-    if instances_map.is_empty() {
-        return Ok(Json(SystemStatusResp {
-            status: "running".to_string(),
-            uptime: get_uptime_seconds(),
-            total_servers,
-            connected_servers: 0,
-        }));
-    }
-
-    // If we can't get the server count from the database, use the number of instances
-    // in the connection pool as a fallback
+    // If we can't get the server count from the database, use the number of servers in summary
     if total_servers == 0 {
-        total_servers = instances_map.len();
+        total_servers = summary.len();
     }
 
-    let connected_servers = instances_map
-        .values()
-        .filter(|instances| instances.iter().any(|(_, conn)| conn.is_connected()))
-        .count();
+    let connected_servers = summary.values().filter(|(_, ready, _)| *ready > 0).count();
 
     Ok(Json(SystemStatusResp {
         status: "running".to_string(),

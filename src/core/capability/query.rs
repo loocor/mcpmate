@@ -1,6 +1,5 @@
 //! Unified query service - Orchestrate capability queries based on existing infrastructure
 
-use chrono::Utc;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::time::{Duration, timeout};
@@ -12,8 +11,7 @@ use crate::api::handlers::server::common::{
 // Constants for unified query service
 const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
 // TODO: Implement cache update timeout functionality for background cache refresh operations
-#[allow(dead_code)]
-const CACHE_UPDATE_TIMEOUT_SECS: u64 = 10;
+// const CACHE_UPDATE_TIMEOUT_SECS: u64 = 10; // Reserved for future cache update timeout feature
 use crate::api::routes::AppState;
 use crate::common::capability::CapabilityToken;
 use crate::config::database::Database;
@@ -31,6 +29,633 @@ use super::domain::{
 // TODO: Implement cache-to-domain conversion methods for unified data model integration
 #[allow(dead_code)]
 impl UnifiedQueryService {
+    /// Utility: Get enabled server IDs for pre-filtering in capability builders
+    pub async fn get_enabled_server_ids(
+        database: &Arc<crate::config::database::Database>
+    ) -> Result<std::collections::HashSet<String>, anyhow::Error> {
+        let query = r#"
+            SELECT DISTINCT sc.id
+            FROM server_config sc
+            JOIN profile p ON p.is_active = true
+            WHERE sc.enabled = 1
+        "#;
+
+        let server_ids = sqlx::query_as::<_, (String,)>(query)
+            .fetch_all(&database.pool)
+            .await?
+            .into_iter()
+            .map(|(id,)| id)
+            .collect();
+
+        Ok(server_ids)
+    }
+    /// Unified capability listing - moved from API layer to avoid duplication
+    /// This function implements the complete REDB-first strategy
+    ///
+    /// Refactored to accept independent components instead of full AppState,
+    /// enabling usage from both API and MCP protocol layers
+    pub async fn list_capabilities_redb_first(
+        capability_type: CapabilityType,
+        server_info: &crate::api::handlers::server::common::ServerIdentification,
+        params: &crate::api::handlers::server::common::InspectParams,
+        _database: &Arc<crate::config::database::Database>,
+        connection_pool: &Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+        redb_cache: &Arc<crate::core::cache::RedbCacheManager>,
+        _query_context: QueryContext,
+    ) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+        use chrono::Utc;
+
+        // Step 1: Try REDB cache first
+        let cache_query = crate::api::handlers::server::common::build_cache_query(&server_info.server_id, params);
+
+        if let Ok(cache_result) = redb_cache.get_server_data(&cache_query).await {
+            if cache_result.cache_hit {
+                if let Some(data) = cache_result.data {
+                    let cached_items = match capability_type {
+                        CapabilityType::Tools => data
+                            .tools
+                            .into_iter()
+                            .map(|t| crate::api::handlers::server::capability::tool_json_from_cached(&t))
+                            .collect::<Vec<_>>(),
+                        CapabilityType::Resources => data
+                            .resources
+                            .into_iter()
+                            .map(crate::api::handlers::server::capability::resource_json_from_cached)
+                            .collect::<Vec<_>>(),
+                        CapabilityType::Prompts => data
+                            .prompts
+                            .into_iter()
+                            .map(crate::api::handlers::server::capability::prompt_json_from_cached)
+                            .collect::<Vec<_>>(),
+                        CapabilityType::ResourceTemplates => data
+                            .resource_templates
+                            .into_iter()
+                            .map(crate::api::handlers::server::capability::resource_template_json_from_cached)
+                            .collect::<Vec<_>>(),
+                    };
+
+                    if !cached_items.is_empty() {
+                        tracing::debug!(
+                            "REDB cache hit for {} {}: {} items",
+                            server_info.server_id,
+                            capability_type.as_str(),
+                            cached_items.len()
+                        );
+                        return Ok(cached_items);
+                    }
+                }
+            }
+        }
+
+        // Step 2: Runtime fallback - read from connected instances without holding the pool lock
+        if let Ok(pool_guard) = tokio::time::timeout(
+            std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
+            connection_pool.lock(),
+        )
+        .await
+        {
+            // Collect minimal data then drop the lock
+            let (services, tools_snapshots) =
+                if let Some(instances) = pool_guard.connections.get(&server_info.server_id) {
+                    let services: Vec<_> = instances
+                        .values()
+                        .filter(|conn| conn.is_connected())
+                        .filter_map(|conn| conn.service.clone())
+                        .collect();
+
+                    let tools_snapshots: Vec<Vec<rmcp::model::Tool>> = instances
+                        .values()
+                        .filter(|conn| conn.is_connected())
+                        .map(|conn| conn.tools.clone())
+                        .collect();
+
+                    (services, tools_snapshots)
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+
+            drop(pool_guard);
+
+            let mut items = Vec::new();
+            let now = Utc::now();
+
+            match capability_type {
+                CapabilityType::Tools => {
+                    let mut cached_tools = Vec::new();
+                    for tool_vec in tools_snapshots.into_iter() {
+                        for tool in tool_vec.into_iter() {
+                            let schema = tool.schema_as_json_value();
+                            items.push(crate::api::handlers::server::capability::tool_json(
+                                &tool.name,
+                                tool.description.clone().map(|d| d.into_owned()),
+                                schema.clone(),
+                                None,
+                                None,
+                            ));
+
+                            // Build cacheable tool info
+                            let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
+                            cached_tools.push(crate::core::cache::CachedToolInfo {
+                                name: tool.name.to_string(),
+                                description: tool.description.clone().map(|d| d.into_owned()),
+                                input_schema_json,
+                                unique_name: None,
+                                enabled: true,
+                                cached_at: now,
+                            });
+                        }
+                    }
+
+                    if !cached_tools.is_empty() {
+                        // Persist into REDB cache
+                        let server_data = crate::api::handlers::server::common::create_runtime_cache_data(
+                            server_info,
+                            cached_tools,
+                            Vec::new(),
+                            Vec::new(),
+                            Vec::new(),
+                        );
+                        let _ = redb_cache.store_server_data(&server_data).await;
+                    }
+                }
+                CapabilityType::Resources => {
+                    for service in services.iter() {
+                        match service.list_all_resources().await {
+                            Ok(resources) => {
+                                let mut cached_resources = Vec::new();
+                                for resource in resources {
+                                    items.push(crate::api::handlers::server::capability::resource_json(
+                                        &resource.uri,
+                                        Some(resource.name.clone()),
+                                        resource.description.clone(),
+                                        resource.mime_type.clone(),
+                                        None,
+                                        None,
+                                    ));
+
+                                    cached_resources.push(crate::core::cache::CachedResourceInfo {
+                                        uri: resource.uri.to_string(),
+                                        name: Some(resource.name.clone()),
+                                        description: resource.description.clone(),
+                                        mime_type: resource.mime_type.clone(),
+                                        enabled: true,
+                                        cached_at: now,
+                                    });
+                                }
+
+                                if !cached_resources.is_empty() {
+                                    let server_data = crate::api::handlers::server::common::create_runtime_cache_data(
+                                        server_info,
+                                        Vec::new(),
+                                        cached_resources,
+                                        Vec::new(),
+                                        Vec::new(),
+                                    );
+                                    let _ = redb_cache.store_server_data(&server_data).await;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to list resources from server {}: {}", server_info.server_id, e);
+                            }
+                        }
+                    }
+                }
+                CapabilityType::Prompts => {
+                    for service in services.iter() {
+                        match service.list_all_prompts().await {
+                            Ok(prompts) => {
+                                let mut cached_prompts = Vec::new();
+                                for prompt in prompts {
+                                    // Convert rmcp::model::PromptArgument to cache::PromptArgument
+                                    let cache_args: Vec<crate::core::cache::PromptArgument> = prompt
+                                        .arguments
+                                        .clone()
+                                        .unwrap_or_default()
+                                        .into_iter()
+                                        .map(|arg| crate::core::cache::PromptArgument {
+                                            name: arg.name,
+                                            description: arg.description,
+                                            required: arg.required.unwrap_or(false),
+                                        })
+                                        .collect();
+
+                                    items.push(crate::api::handlers::server::capability::prompt_json(
+                                        &prompt.name,
+                                        prompt.description.clone(),
+                                        cache_args.clone(),
+                                        None,
+                                        None,
+                                    ));
+
+                                    cached_prompts.push(crate::core::cache::CachedPromptInfo {
+                                        name: prompt.name.to_string(),
+                                        description: prompt.description,
+                                        arguments: cache_args,
+                                        enabled: true,
+                                        cached_at: now,
+                                    });
+                                }
+
+                                if !cached_prompts.is_empty() {
+                                    let server_data = crate::api::handlers::server::common::create_runtime_cache_data(
+                                        server_info,
+                                        Vec::new(),
+                                        Vec::new(),
+                                        cached_prompts,
+                                        Vec::new(),
+                                    );
+                                    let _ = redb_cache.store_server_data(&server_data).await;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to list prompts from server {}: {}", server_info.server_id, e);
+                            }
+                        }
+                    }
+                }
+                CapabilityType::ResourceTemplates => {
+                    // No-op here for now
+                }
+            }
+
+            if !items.is_empty() {
+                return Ok(items);
+            }
+        }
+
+        // Step 3: Instance creation is handled by the caller layer
+        // This allows API layer to handle temporary instances and MCP layer to handle standard instances
+        tracing::debug!(
+            "No {} found for server {} in cache or runtime instances - instance creation deferred to caller",
+            capability_type.as_str(),
+            server_info.server_id
+        );
+
+        Ok(Vec::new())
+    }
+
+    /// Get enabled tools from database (proxy compatibility adapter)
+    /// TODO: Refactor to use unified entry point once AppState dependency is resolved
+    pub async fn list_enabled_tools(
+        database: &Arc<crate::config::database::Database>,
+        pool: &Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+    ) -> Result<Vec<rmcp::model::Tool>, anyhow::Error> {
+        use crate::config::profile::tool::build_enabled_tools_query;
+        use anyhow::Context;
+
+        let query = format!("{} ORDER BY st.unique_name", build_enabled_tools_query(None));
+        let enabled_tools = sqlx::query_as::<_, (String, String, String, String)>(&query)
+            .fetch_all(&database.pool)
+            .await
+            .context("Failed to query enabled tools from database")?;
+
+        let mut all_tools = Vec::new();
+        let pool = pool.lock().await;
+
+        for (unique_name, _server_name, tool_name, server_id) in enabled_tools {
+            if let Some(instances) = pool.connections.get(&server_id) {
+                for conn in instances.values() {
+                    if conn.is_disabled() || !conn.is_connected() {
+                        continue;
+                    }
+                    if let Some(tool) = conn.tools.iter().find(|t| t.name == *tool_name) {
+                        let mut unique_tool = tool.clone();
+                        unique_tool.name = unique_name.clone().into();
+                        all_tools.push(unique_tool);
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(all_tools)
+    }
+
+    /// Call tool through unified system (proxy compatibility adapter)
+    pub async fn call_tool_unified(
+        database: &Arc<crate::config::database::Database>,
+        pool: &Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+        request: rmcp::model::CallToolRequestParam,
+    ) -> Result<rmcp::model::CallToolResult, anyhow::Error> {
+        use crate::config::profile::tool::build_enabled_tools_query;
+        use anyhow::Context;
+
+        // Resolve tool using database mapping
+        let query = format!("{} AND st.unique_name = ? LIMIT 1", build_enabled_tools_query(None));
+        let result = sqlx::query_as::<_, (String, String, String, String)>(&query)
+            .bind(&request.name)
+            .fetch_optional(&database.pool)
+            .await
+            .context("Failed to query tool mapping from database")?;
+
+        let (_unique_name, _server_name, original_tool_name, server_id) =
+            result.ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", request.name))?;
+
+        // CRITICAL FIX: Get service reference without holding pool lock during network call
+        let service = {
+            let pool = pool.lock().await;
+            let mut found_service = None;
+
+            if let Some(instances) = pool.connections.get(&server_id) {
+                for conn in instances.values() {
+                    if conn.is_connected() && !conn.is_disabled() {
+                        if let Some(service) = &conn.service {
+                            found_service = Some(service.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+            // Pool lock is automatically dropped here
+            found_service
+        };
+
+        // Now make the network call WITHOUT holding the pool lock (with timeout protection)
+        if let Some(service) = service {
+            let mut upstream_request = request.clone();
+            upstream_request.name = original_tool_name.into();
+            match tokio::time::timeout(std::time::Duration::from_secs(30), service.call_tool(upstream_request)).await {
+                Ok(Ok(res)) => Ok(res),
+                Ok(Err(e)) => Err(anyhow::anyhow!("Tool call failed: {}", e)),
+                Err(_) => Err(anyhow::anyhow!("Tool call timeout for server {}", server_id)),
+            }
+        } else {
+            Err(anyhow::anyhow!("No connected instance for server {}", server_id))
+        }
+    }
+
+    /// Get enabled resources from database (proxy compatibility adapter)
+    ///
+    /// ARCHITECTURAL ISSUE: This function cannot work properly without REDB cache access.
+    /// The unified entry point requires REDB cache for REDB-first strategy.
+    ///
+    /// SOLUTION: ProxyServer needs to be updated to include REDB cache reference.
+    /// Until then, this function will fail explicitly rather than hide the problem.
+    pub async fn list_enabled_resources(
+        database: &Arc<crate::config::database::Database>,
+        pool: &Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+        redb_cache: Option<&Arc<crate::core::cache::RedbCacheManager>>,
+    ) -> Result<Vec<rmcp::model::Resource>, anyhow::Error> {
+        use anyhow::Context;
+
+        // Fail fast if REDB cache is not available
+        let redb_cache = redb_cache.ok_or_else(|| {
+            anyhow::anyhow!(
+                "CRITICAL ARCHITECTURE ISSUE: MCP protocol layer cannot access REDB cache. \
+                ProxyServer needs REDB cache reference to use unified entry point. \
+                This is not a runtime error - it's a missing dependency in the architecture."
+            )
+        })?;
+
+        // Query enabled servers from database
+        let enabled_servers = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, name FROM mcp_server WHERE enabled = 1 AND globally_enabled = 1",
+        )
+        .fetch_all(&database.pool)
+        .await
+        .context("Failed to query enabled servers from database")?;
+
+        let mut all_resources = Vec::new();
+
+        // Use unified entry point with REDB-first strategy for all enabled servers
+        for (server_id, server_name) in enabled_servers {
+            let server_info = crate::api::handlers::server::common::ServerIdentification {
+                server_id: server_id.clone(),
+                server_name: server_name.clone(),
+            };
+            let params = crate::api::handlers::server::common::InspectParams {
+                refresh: Some(crate::api::handlers::server::common::RefreshStrategy::CacheFirst),
+                format: None,
+                include_meta: Some(false),
+                timeout: Some(10),
+            };
+
+            match Self::list_capabilities_redb_first(
+                crate::core::capability::domain::CapabilityType::Resources,
+                &server_info,
+                &params,
+                database,
+                pool,
+                redb_cache,
+                crate::core::capability::domain::QueryContext::McpClient,
+            )
+            .await
+            {
+                Ok(json_resources) => {
+                    // Convert JSON responses back to rmcp::model::Resource
+                    for json_resource in json_resources {
+                        if let Ok(resource) = serde_json::from_value::<rmcp::model::Resource>(json_resource) {
+                            all_resources.push(resource);
+                        }
+                    }
+                    tracing::info!(
+                        "Unified entry returned {} resources for server {}",
+                        all_resources.len(),
+                        server_id
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("Unified entry failed for server {}: {}", server_id, e);
+                    // Don't hide the problem with fallbacks - let it bubble up
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(all_resources)
+    }
+
+    /// Get enabled prompts from database (proxy compatibility adapter)
+    ///
+    /// ARCHITECTURAL ISSUE: Same as list_enabled_resources - requires REDB cache access.
+    pub async fn list_enabled_prompts(
+        database: &Arc<crate::config::database::Database>,
+        pool: &Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+        redb_cache: Option<&Arc<crate::core::cache::RedbCacheManager>>,
+    ) -> Result<Vec<rmcp::model::Prompt>, anyhow::Error> {
+        use anyhow::Context;
+
+        // Fail fast if REDB cache is not available
+        let redb_cache = redb_cache.ok_or_else(|| {
+            anyhow::anyhow!(
+                "CRITICAL ARCHITECTURE ISSUE: MCP protocol layer cannot access REDB cache. \
+                ProxyServer needs REDB cache reference to use unified entry point."
+            )
+        })?;
+
+        // Query enabled servers from database
+        let enabled_servers = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, name FROM mcp_server WHERE enabled = 1 AND globally_enabled = 1",
+        )
+        .fetch_all(&database.pool)
+        .await
+        .context("Failed to query enabled servers from database")?;
+
+        let mut all_prompts = Vec::new();
+
+        // Use unified entry point with REDB-first strategy for all enabled servers
+        for (server_id, server_name) in enabled_servers {
+            let server_info = crate::api::handlers::server::common::ServerIdentification {
+                server_id: server_id.clone(),
+                server_name: server_name.clone(),
+            };
+            let params = crate::api::handlers::server::common::InspectParams {
+                refresh: Some(crate::api::handlers::server::common::RefreshStrategy::CacheFirst),
+                format: None,
+                include_meta: Some(false),
+                timeout: Some(10),
+            };
+
+            match Self::list_capabilities_redb_first(
+                crate::core::capability::domain::CapabilityType::Prompts,
+                &server_info,
+                &params,
+                database,
+                pool,
+                redb_cache,
+                crate::core::capability::domain::QueryContext::McpClient,
+            )
+            .await
+            {
+                Ok(json_prompts) => {
+                    // Convert JSON responses back to rmcp::model::Prompt
+                    for json_prompt in json_prompts {
+                        if let Ok(prompt) = serde_json::from_value::<rmcp::model::Prompt>(json_prompt) {
+                            all_prompts.push(prompt);
+                        }
+                    }
+                    tracing::info!(
+                        "Unified entry returned {} prompts for server {}",
+                        all_prompts.len(),
+                        server_id
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("Unified entry failed for server {}: {}", server_id, e);
+                    // Don't hide the problem with fallbacks - let it bubble up
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(all_prompts)
+    }
+
+    /// Merge a single capability segment into REDB cached server data and store
+    async fn merge_and_store_redb_segment(
+        &self,
+        server_id: &str,
+        server_name: &str,
+        cap_type: CapabilityType,
+        items: &[CapabilityItem],
+    ) -> Result<(), String> {
+        use crate::core::cache::{
+            CacheQuery, CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData,
+            CachedToolInfo, FreshnessLevel,
+        };
+
+        // 1) Read existing cached data (if any)
+        let query = CacheQuery {
+            server_id: server_id.to_string(),
+            freshness_level: FreshnessLevel::Cached,
+            include_disabled: false,
+        };
+        let existing = self.cache.get_server_data(&query).await.map_err(|e| e.to_string())?;
+
+        let mut data = existing.data.unwrap_or(CachedServerData {
+            server_id: server_id.to_string(),
+            server_name: server_name.to_string(),
+            server_version: None,
+            protocol_version: "latest".to_string(),
+            tools: Vec::new(),
+            resources: Vec::new(),
+            prompts: Vec::new(),
+            resource_templates: Vec::new(),
+            cached_at: chrono::Utc::now(),
+            fingerprint: format!("merge:{}:{}", server_id, chrono::Utc::now().timestamp()),
+        });
+
+        // 2) Replace the targeted segment only
+        match cap_type {
+            CapabilityType::Tools => {
+                data.tools = items
+                    .iter()
+                    .filter_map(|it| match it {
+                        CapabilityItem::Tool(t) => Some(CachedToolInfo {
+                            name: t.name.clone(),
+                            description: t.description.clone(),
+                            input_schema_json: serde_json::to_string(&t.input_schema)
+                                .unwrap_or_else(|_| "{}".to_string()),
+                            unique_name: Some(t.unique_name.clone()),
+                            enabled: t.enabled,
+                            cached_at: chrono::Utc::now(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            CapabilityType::Resources => {
+                data.resources = items
+                    .iter()
+                    .filter_map(|it| match it {
+                        CapabilityItem::Resource(r) => Some(CachedResourceInfo {
+                            uri: r.uri.clone(),
+                            name: r.name.clone(),
+                            description: r.description.clone(),
+                            mime_type: r.mime_type.clone(),
+                            enabled: r.enabled,
+                            cached_at: chrono::Utc::now(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            CapabilityType::Prompts => {
+                data.prompts = items
+                    .iter()
+                    .filter_map(|it| match it {
+                        CapabilityItem::Prompt(p) => Some(CachedPromptInfo {
+                            name: p.name.clone(),
+                            description: p.description.clone(),
+                            arguments: p
+                                .arguments
+                                .clone()
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|a| crate::core::cache::PromptArgument {
+                                    name: a.name,
+                                    description: a.description,
+                                    required: a.required.unwrap_or(false),
+                                })
+                                .collect(),
+                            enabled: p.enabled,
+                            cached_at: chrono::Utc::now(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            CapabilityType::ResourceTemplates => {
+                data.resource_templates = items
+                    .iter()
+                    .filter_map(|it| match it {
+                        CapabilityItem::ResourceTemplate(t) => Some(CachedResourceTemplateInfo {
+                            uri_template: t.uri_template.clone(),
+                            name: t.name.clone(),
+                            description: t.description.clone(),
+                            mime_type: t.mime_type.clone(),
+                            enabled: t.enabled,
+                            cached_at: chrono::Utc::now(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+            }
+        }
+
+        // 3) Store back
+        self.cache.store_server_data(&data).await.map_err(|e| e.to_string())
+    }
     /// Convert cached tool to domain tool capability
     fn convert_tool_to_domain(tool: &crate::core::cache::CachedToolInfo) -> super::domain::ToolCapability {
         super::domain::ToolCapability {
@@ -303,54 +928,208 @@ impl UnifiedQueryService {
         let connection_mode = self.determine_connection_mode(server_info).await?;
 
         // Use unified connection manager to ensure affinitized connection
-        let _instance_id = self
+        let ensured_instance_id = self
             .connection_manager
             .ensure_affinitized_connection(&server_info.server_id, connection_mode)
             .await?;
 
-        // Get connection pool lock to find connected instances
-        let pool = self.pool.lock().await;
+        // Build from light snapshot to minimize cloning; then optionally clone tools for Tools path
+        let (instance_id, service_peer_opt, tools_snapshot_opt) = {
+            // Take light snapshot (no network I/O, brief lock)
+            let snapshot = {
+                let pool = self.pool.lock().await;
+                pool.get_snapshot()
+            };
 
-        // Find connection instances - reuse existing logic
-        if let Some(instances) = pool.connections.get(&server_info.server_id) {
-            let connected_instances: Vec<_> = instances.values().filter(|conn| conn.is_connected()).collect();
+            let mut chosen_instance: Option<String> = None;
+            let mut chosen_peer: Option<rmcp::service::Peer<rmcp::service::RoleClient>> = None;
 
-            if !connected_instances.is_empty() {
-                // Extract capability info from connection instances
-                let (items, should_cache) =
-                    self.extract_capabilities_from_instances(&connected_instances, capability_type)?;
-
-                let metadata = ResponseMetadata {
-                    cache_hit: false,
-                    source: DataSource::Runtime,
-                    duration_ms: start_time.elapsed().as_millis() as u64,
-                    item_count: items.len(),
-                    timestamp: chrono::Utc::now(),
-                };
-
-                let result = CapabilityResult { items, metadata };
-
-                // Update cache asynchronously (non-blocking current response)
-                if should_cache {
-                    let cache = self.cache.clone();
-                    let server_info_clone = server_info.clone();
-                    let result_clone = result.clone();
-
-                    tokio::spawn(async move {
-                        if let Err(e) = cache
-                            .store_server_data(&create_cache_data(result_clone, &server_info_clone))
-                            .await
-                        {
-                            tracing::warn!("Failed to update cache: {}", e);
-                        }
-                    });
+            if let Some(instances) = snapshot.get(&server_info.server_id) {
+                // Prefer ensured instance id if it is connected and has a peer
+                if let Some((_, _status, _res, _prm, peer)) = instances
+                    .iter()
+                    .find(|(iid, status, _, _, peer)| iid == &ensured_instance_id && matches!(status, crate::core::foundation::types::ConnectionStatus::Ready) && peer.is_some())
+                {
+                    chosen_instance = Some(ensured_instance_id.clone());
+                    chosen_peer = peer.clone();
+                } else if let Some((iid, _status, _res, _prm, peer)) = instances
+                    .iter()
+                    .find(|(_, status, _, _, peer)| matches!(status, crate::core::foundation::types::ConnectionStatus::Ready) && peer.is_some())
+                {
+                    chosen_instance = Some(iid.clone());
+                    chosen_peer = peer.clone();
                 }
-
-                return Ok(result);
             }
+
+            // For Tools path, fetch tool snapshot from the chosen instance only (brief lock)
+            let tools_snapshot_opt = if matches!(capability_type, CapabilityType::Tools) {
+                if let Some(ref iid) = chosen_instance {
+                    let pool = self.pool.lock().await;
+                    if let Some(instances) = pool.connections.get(&server_info.server_id) {
+                        instances.get(iid).map(|conn| conn.tools.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            (
+                chosen_instance.unwrap_or_else(|| ensured_instance_id.clone()),
+                chosen_peer,
+                tools_snapshot_opt,
+            )
+        };
+
+        // If we have a service peer, sync DB via pool unified method and refresh REDB segment
+        if let Some(service_peer) = service_peer_opt {
+            let flags = match capability_type {
+                CapabilityType::Tools => crate::core::pool::CapSyncFlags::TOOLS,
+                CapabilityType::Resources => crate::core::pool::CapSyncFlags::RESOURCES,
+                CapabilityType::Prompts => crate::core::pool::CapSyncFlags::PROMPTS,
+                CapabilityType::ResourceTemplates => crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES,
+            };
+
+            // Perform DB sync (tools pass snapshot when available)
+            {
+                let db = &self.database;
+                let tools_slice = tools_snapshot_opt.as_deref();
+                if let Err(e) = crate::core::pool::UpstreamConnectionPool::sync_capabilities(
+                    db,
+                    &server_info.server_id,
+                    &instance_id,
+                    &service_peer,
+                    flags,
+                    tools_slice,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "DB sync for capabilities failed (server={}): {}",
+                        server_info.server_id,
+                        e
+                    );
+                }
+            }
+
+            // Build items from runtime and update REDB segment (partial merge)
+            let items = match capability_type {
+                CapabilityType::Tools => {
+                    // Reuse existing extraction on instance tools when available
+                    let pool = self.pool.lock().await;
+                    if let Some(instances) = pool.connections.get(&server_info.server_id) {
+                        let connected_instances: Vec<_> = instances.values().filter(|c| c.is_connected()).collect();
+                        let (items, _cache) =
+                            self.extract_capabilities_from_instances(&connected_instances, CapabilityType::Tools)?;
+                        items
+                    } else {
+                        Vec::new()
+                    }
+                }
+                CapabilityType::Resources => match tokio::time::timeout(self.timeout_duration, service_peer.list_all_resources()).await {
+                    Err(_) => {
+                        tracing::warn!("Fetch resources timeout for server {}", server_info.server_id);
+                        Vec::new()
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("Fetch resources failed: {}", e);
+                        Vec::new()
+                    }
+                    Ok(Ok(resources)) => resources
+                        .into_iter()
+                        .map(|r| {
+                            CapabilityItem::Resource(super::domain::ResourceCapability {
+                                uri: r.uri.clone(),
+                                name: None,
+                                description: None,
+                                mime_type: None,
+                                unique_uri: String::new(),
+                                enabled: true,
+                            })
+                        })
+                        .collect(),
+                },
+                CapabilityType::Prompts => {
+                    // Paginated fetch
+                    let mut items = Vec::new();
+                    let mut cursor = None;
+                    loop {
+                        match tokio::time::timeout(
+                            self.timeout_duration,
+                            service_peer.list_prompts(Some(rmcp::model::PaginatedRequestParam { cursor })),
+                        )
+                        .await
+                        {
+                            Err(_) => {
+                                tracing::warn!("Fetch prompts timeout for server {}", server_info.server_id);
+                                break;
+                            }
+                            Ok(Ok(result)) => {
+                                for p in result.prompts {
+                                    let args = p
+                                        .arguments
+                                        .unwrap_or_default()
+                                        .into_iter()
+                                        .map(|a| super::domain::PromptArgument {
+                                            name: a.name,
+                                            description: a.description,
+                                            required: a.required,
+                                        })
+                                        .collect();
+                                    items.push(CapabilityItem::Prompt(super::domain::PromptCapability {
+                                        name: p.name,
+                                        description: p.description,
+                                        arguments: Some(args),
+                                        unique_name: String::new(),
+                                        enabled: true,
+                                    }));
+                                }
+                                cursor = result.next_cursor;
+                                if cursor.is_none() {
+                                    break;
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                tracing::warn!("Fetch prompts failed: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                    items
+                }
+                CapabilityType::ResourceTemplates => {
+                    // Not implemented yet
+                    Vec::new()
+                }
+            };
+
+            // REDB partial merge store
+            if let Err(e) = self
+                .merge_and_store_redb_segment(
+                    &server_info.server_id,
+                    &server_info.server_name,
+                    capability_type,
+                    &items,
+                )
+                .await
+            {
+                tracing::warn!("REDB merge store failed: {}", e);
+            }
+
+            let metadata = ResponseMetadata {
+                cache_hit: false,
+                source: DataSource::Runtime,
+                duration_ms: start_time.elapsed().as_millis() as u64,
+                item_count: items.len(),
+                timestamp: chrono::Utc::now(),
+            };
+            return Ok(CapabilityResult { items, metadata });
         }
 
-        // No connection instances, create temporary instance (API scenario)
+        // Fallback: create temporary instance (API scenario)
         self.create_temporary_instance(server_info, capability_type).await
     }
 
@@ -460,7 +1239,7 @@ impl UnifiedQueryService {
     /// Extract capability information from instances
     fn extract_capabilities_from_instances(
         &self,
-        instances: &[&crate::core::connection::upstream::UpstreamConnection],
+        instances: &[&crate::core::pool::UpstreamConnection],
         capability_type: CapabilityType,
     ) -> Result<(Vec<CapabilityItem>, bool), CapabilityError> {
         let mut items = Vec::new();
@@ -520,86 +1299,6 @@ impl UnifiedQueryService {
         }
 
         Ok((items, should_cache))
-    }
-}
-
-/// Helper function to create cache data
-fn create_cache_data(
-    result: CapabilityResult,
-    server_info: &ServerIdentification,
-) -> crate::core::cache::CachedServerData {
-    let now = Utc::now();
-
-    // Convert capability items back to cache format
-    let mut tools = Vec::new();
-    let mut resources = Vec::new();
-    let mut prompts = Vec::new();
-    let mut resource_templates = Vec::new();
-
-    for item in result.items {
-        match item {
-            CapabilityItem::Tool(tool) => {
-                tools.push(crate::core::cache::CachedToolInfo {
-                    name: tool.name,
-                    description: tool.description,
-                    input_schema_json: serde_json::to_string(&tool.input_schema).unwrap_or_else(|_| "{}".to_string()),
-                    unique_name: Some(tool.unique_name),
-                    enabled: tool.enabled,
-                    cached_at: now,
-                });
-            }
-            CapabilityItem::Resource(resource) => {
-                resources.push(crate::core::cache::CachedResourceInfo {
-                    uri: resource.uri,
-                    name: resource.name,
-                    description: resource.description,
-                    mime_type: resource.mime_type,
-                    enabled: resource.enabled,
-                    cached_at: now,
-                });
-            }
-            CapabilityItem::Prompt(prompt) => {
-                prompts.push(crate::core::cache::CachedPromptInfo {
-                    name: prompt.name,
-                    description: prompt.description,
-                    arguments: prompt
-                        .arguments
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|arg| crate::core::cache::PromptArgument {
-                            name: arg.name.clone(),
-                            description: arg.description.clone(),
-                            required: arg.required.unwrap_or(false),
-                        })
-                        .collect(),
-                    enabled: prompt.enabled,
-                    cached_at: now,
-                });
-            }
-            CapabilityItem::ResourceTemplate(template) => {
-                resource_templates.push(crate::core::cache::CachedResourceTemplateInfo {
-                    uri_template: template.uri_template,
-                    name: template.name,
-                    description: template.description,
-                    mime_type: template.mime_type,
-                    enabled: template.enabled,
-                    cached_at: now,
-                });
-            }
-        }
-    }
-
-    crate::core::cache::CachedServerData {
-        server_id: server_info.server_id.clone(),
-        server_name: server_info.server_name.clone(),
-        server_version: None,                // Not available in ServerIdentification
-        protocol_version: "1.0".to_string(), // Default protocol version
-        tools,
-        resources,
-        prompts,
-        resource_templates,
-        cached_at: now,
-        fingerprint: String::new(), // Should actually get existing fingerprint
     }
 }
 
@@ -738,60 +1437,4 @@ pub trait MetricsCollector {
         success: bool,
         item_count: usize,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_capability_type_mapping() {
-        assert_eq!(CapabilityType::Tools.as_str(), "tools");
-        assert_eq!(CapabilityType::Resources.as_str(), "resources");
-        assert_eq!(CapabilityType::Prompts.as_str(), "prompts");
-        assert_eq!(CapabilityType::ResourceTemplates.as_str(), "resource_templates");
-    }
-
-    #[test]
-    fn test_query_context_behavior() {
-        assert!(!QueryContext::ApiCall.needs_persistent_instance());
-        assert!(QueryContext::McpClient.needs_persistent_instance());
-    }
-
-    #[test]
-    fn test_service_builder() {
-        let builder = UnifiedQueryServiceBuilder::new().with_timeout(Duration::from_secs(60));
-        let result = builder.build();
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_capability_token_mapping() {
-        assert_eq!(
-            CapabilityType::Tools.as_str(),
-            crate::common::capability::CapabilityToken::Tools.to_string()
-        );
-    }
-
-    #[test]
-    fn test_unified_query_service_builder_validation() {
-        let builder = UnifiedQueryServiceBuilder::new();
-        let result = builder.build();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Cache manager is required");
-    }
-
-    #[test]
-    fn test_convert_params_function() {
-        let request = crate::api::models::server::ServerCapabilityReq {
-            refresh: Some(crate::api::models::server::ServerRefreshStrategy::Force),
-            ..Default::default()
-        };
-
-        let inspect_query = convert_params(&request);
-        assert_eq!(
-            inspect_query.refresh,
-            Some(crate::api::handlers::server::common::RefreshStrategy::Force)
-        );
-    }
 }

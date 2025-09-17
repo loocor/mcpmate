@@ -29,20 +29,24 @@ async fn main() -> Result<()> {
     // Setup logging
     setup_logging(&args)?;
 
+    // Initialize metrics reporting
+    mcpmate::core::instrumentation::initialize_metrics_reporting();
+
     // Setup database
     let db = setup_database().await?;
 
     // Setup proxy server with startup parameters
-    let (mut proxy, proxy_arc) = setup_proxy_server_with_params(db, &startup_mode).await?;
+    let (proxy_arc1, proxy_arc2) = setup_proxy_server_with_params(db, &startup_mode).await?;
 
     // Start background connections
-    start_background_connections(&proxy, proxy_arc.clone()).await?;
+    start_background_connections(&proxy_arc1, proxy_arc2.clone()).await?;
 
-    // Start proxy server
-    let mcp_server_handle = start_proxy_server(&mut proxy, &args).await?;
+    // Start proxy server - we need to get a mutable reference from Arc
+    let mut proxy_clone = (*proxy_arc1).clone();
+    let mcp_server_handle = start_proxy_server(&mut proxy_clone, &args).await?;
 
     // Start API server
-    let (api_task, api_cancellation_token) = start_api_server(proxy_arc.clone(), &args).await?;
+    let (api_task, api_cancellation_token) = start_api_server(proxy_arc2.clone(), &args).await?;
 
     tracing::info!("Servers started. Press Ctrl+C to stop.");
 
@@ -52,7 +56,7 @@ async fn main() -> Result<()> {
 
     // Step 1: Initiate MCP server shutdown first
     tracing::info!("Step 1: Initiating MCP server shutdown...");
-    proxy.initiate_shutdown().await?;
+    proxy_clone.initiate_shutdown().await?;
 
     // Step 2: Wait for MCP server to complete gracefully (if handle is available)
     if let Some(mcp_handle) = mcp_server_handle {
@@ -92,7 +96,7 @@ async fn main() -> Result<()> {
 
     // Step 4: Complete proxy server cleanup (connections, etc.)
     tracing::info!("Step 3: Completing proxy server cleanup...");
-    proxy.complete_shutdown().await?;
+    proxy_clone.complete_shutdown().await?;
 
     Ok(())
 }

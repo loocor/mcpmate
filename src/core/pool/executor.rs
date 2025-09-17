@@ -1,4 +1,4 @@
-//! Pool connection management functionality
+//! Pool connection execution and management functionality
 //!
 //! Provides connection lifecycle management for UpstreamConnectionPool including:
 //! - connection establishment and teardown
@@ -14,8 +14,12 @@ use tracing;
 
 use super::UpstreamConnectionPool;
 use crate::{
-    common::server::{ServerType, TransportType},
+    common::{
+        server::{ServerType, TransportType},
+        sync::SyncHelper,
+    },
     core::{
+        events,
         foundation::types::{
             ConnectionOperation, // action to perform on the connection
             ConnectionStatus,    // status of the connection
@@ -27,7 +31,97 @@ use crate::{
     },
 };
 
+/// Parallel connection manager (scheduler only)
+pub struct ParallelConnectionManager {
+    pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
+}
+
+impl ParallelConnectionManager {
+    /// Create a new parallel connection manager
+    pub fn new(pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>) -> Self {
+        Self { pool }
+    }
+
+    /// High-performance parallel connection to all servers (scheduler only)
+    pub async fn trigger_connect_all_parallel(&self) -> Result<()> {
+        // Get server instances (read-only operation)
+        let server_instances = {
+            let pool = self.pool.lock().await;
+            pool.connections
+                .keys()
+                .filter_map(|server_id| {
+                    pool.get_default_instance_id(server_id)
+                        .ok()
+                        .map(|instance_id| (server_id.clone(), instance_id))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        if server_instances.is_empty() {
+            tracing::debug!("No servers to connect to");
+            return Ok(());
+        }
+
+        tracing::info!("Starting parallel connection to {} servers", server_instances.len());
+
+        let pool = self.pool.clone();
+
+        // Use unified sync framework for concurrent connections (scheduler only)
+        let sync_result = SyncHelper::execute_concurrent_sync(
+            server_instances,
+            "server_connections",
+            4, // max concurrent connections
+            move |(server_id, instance_id)| {
+                let pool = pool.clone();
+                async move { Self::connect_single_server(server_id, instance_id, pool).await }
+            },
+        )
+        .await;
+
+        tracing::info!(
+            "Parallel connection completed: {}/{} tasks successful ({:.1}% success rate)",
+            sync_result.synced,
+            sync_result.processed,
+            sync_result.success_rate()
+        );
+
+        Ok(())
+    }
+
+    /// Single server connection task (stateless, parallelizable)
+    async fn connect_single_server(
+        server_id: String,
+        instance_id: String,
+        pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
+    ) -> Result<()> {
+        // Delegate to pool's single executor; events/tokens handled inside connect_internal
+        let mut pool = pool.lock().await;
+        let _ = pool.connect_via_scheduler(&server_id, &instance_id).await;
+        Ok(())
+    }
+}
+
 impl UpstreamConnectionPool {
+    /// Build a human-readable server label: "<name> (<id>)" if DB is available, else just id
+    async fn server_label(&self, server_id: &str) -> String {
+        if let Some(db) = &self.database {
+            if let Ok(name) = crate::config::operations::utils::get_server_name(&db.pool, server_id).await {
+                return format!("{} ({})", name, server_id);
+            }
+        }
+        server_id.to_string()
+    }
+    /// Create a parallel connection manager for this pool
+    pub fn create_parallel_manager(pool: Arc<tokio::sync::Mutex<Self>>) -> ParallelConnectionManager {
+        ParallelConnectionManager::new(pool)
+    }
+
+    /// Trigger parallel connection to all servers using the new manager
+    pub async fn trigger_connect_all_parallel_new(pool: Arc<tokio::sync::Mutex<Self>>) -> Result<()> {
+        let manager = Self::create_parallel_manager(pool);
+        manager.trigger_connect_all_parallel().await
+    }
+
     /// Reconnect to a specific instance of a server (non-blocking)
     ///
     /// This method schedules a reconnection without blocking the connection pool.
@@ -58,21 +152,26 @@ impl UpstreamConnectionPool {
         self.connect_internal(server_id, instance_id).await
     }
 
-    /// Disconnect from a specific instance of a server with improved resource cleanup
-    pub async fn disconnect(
+    /// Internal implementation for disconnect with a non_blocking option
+    async fn disconnect_inner(
         &mut self,
         server_id: &str,
         instance_id: &str,
+        non_blocking: bool,
     ) -> Result<()> {
-        tracing::info!(
-            "disconnect() called for '{}' instance '{}' - Stack trace requested",
-            server_id,
-            instance_id
-        );
-
-        // Add stack trace logging to identify caller
-        let backtrace = std::backtrace::Backtrace::capture();
-        tracing::info!("Disconnect initiated from: {}", backtrace);
+        if non_blocking {
+            let label = self.server_label(server_id).await;
+            tracing::debug!("Non-blocking disconnect for '{}' instance '{}'", label, instance_id);
+        } else {
+            let label = self.server_label(server_id).await;
+            tracing::info!(
+                "disconnect() called for '{}' instance '{}' - Stack trace requested",
+                label,
+                instance_id
+            );
+            let backtrace = std::backtrace::Backtrace::capture();
+            tracing::info!("Disconnect initiated from: {}", backtrace);
+        }
 
         // Step 1: Cancel the token first to stop new operations
         self.cancel_connection_token(server_id, instance_id);
@@ -83,19 +182,47 @@ impl UpstreamConnectionPool {
             conn.service.take()
         };
 
-        // Step 3: Cancel active service if exists (early return if no service)
-        if let Some(service_arc) = service {
-            self.cancel_service_with_timeout(server_id, instance_id, service_arc)
-                .await;
+        // Step 3: Update connection status (immediately for non-blocking; after cancel for blocking)
+        if non_blocking {
+            let conn = self.get_instance_mut(server_id, instance_id)?;
+            conn.update_disconnected();
+
+            // Cancel service asynchronously without blocking
+            if let Some(service_arc) = service {
+                self.cancel_service_async(server_id, instance_id, service_arc);
+            }
+
+            let label = self.server_label(server_id).await;
+            tracing::info!(
+                "Non-blocking disconnect completed for '{}' instance '{}'",
+                label,
+                instance_id
+            );
+        } else {
+            // Cancel active service if exists (early return if no service)
+            if let Some(service_arc) = service {
+                self.cancel_service_with_timeout(server_id, instance_id, service_arc)
+                    .await;
+            }
+
+            // Update connection status after cancellation
+            let conn = self.get_instance_mut(server_id, instance_id)?;
+            conn.update_disconnected();
+
+            let label = self.server_label(server_id).await;
+            tracing::info!("Disconnected from server '{}' instance '{}'", label, instance_id);
         }
 
-        // Step 4: Update connection status
-        let conn = self.get_instance_mut(server_id, instance_id)?;
-        conn.update_disconnected();
-
-        tracing::info!("Disconnected from server '{}' instance '{}'", server_id, instance_id);
-
         Ok(())
+    }
+
+    /// Disconnect from a specific instance of a server with improved resource cleanup
+    pub async fn disconnect(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        self.disconnect_inner(server_id, instance_id, false).await
     }
 
     /// Non-blocking disconnect that avoids long service cancellation timeouts
@@ -104,32 +231,7 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        tracing::debug!("Non-blocking disconnect for '{}' instance '{}'", server_id, instance_id);
-
-        // Step 1: Cancel the token first to stop new operations
-        self.cancel_connection_token(server_id, instance_id);
-
-        // Step 2: Take the service from the connection
-        let service = {
-            let conn = self.get_instance_mut(server_id, instance_id)?;
-            conn.service.take()
-        };
-
-        // Step 3: Update connection status immediately (don't wait for service cancellation)
-        let conn = self.get_instance_mut(server_id, instance_id)?;
-        conn.update_disconnected();
-
-        // Step 4: Cancel service asynchronously without blocking
-        if let Some(service_arc) = service {
-            self.cancel_service_async(server_id, instance_id, service_arc);
-        }
-
-        tracing::info!(
-            "Non-blocking disconnect completed for '{}' instance '{}'",
-            server_id,
-            instance_id
-        );
-        Ok(())
+        self.disconnect_inner(server_id, instance_id, true).await
     }
 
     /// Disconnect from all servers
@@ -172,6 +274,25 @@ impl UpstreamConnectionPool {
         self.connect_internal(server_id, instance_id).await
     }
 
+    /// Ensure a server has at least one connected instance and return its instance_id
+    pub async fn ensure_connected(
+        &mut self,
+        server_id: &str,
+    ) -> Result<String> {
+        // Create a new connection entry if this is the first time we see the server
+        if !self.connections.contains_key(server_id) {
+            let connection = crate::core::pool::UpstreamConnection::new(server_id.to_string());
+            let instance_id = connection.id.clone();
+            let instances = self.connections.entry(server_id.to_string()).or_default();
+            instances.insert(instance_id.clone(), connection);
+        }
+
+        // Get default instance id and connect via single executor
+        let instance_id = self.get_default_instance_id(server_id)?;
+        self.connect_internal(server_id, &instance_id).await?;
+        Ok(instance_id)
+    }
+
     /// Internal connection logic
     async fn connect_internal(
         &mut self,
@@ -207,6 +328,8 @@ impl UpstreamConnectionPool {
                     server_id,
                     instance_id
                 );
+                // Publish success event via unified outlet
+                self.publish_startup_event(server_id, true, None).await;
                 Ok(())
             }
             Err(e) => {
@@ -220,6 +343,9 @@ impl UpstreamConnectionPool {
                     instance_id,
                     e
                 );
+                // Publish failure event via unified outlet
+                self.publish_startup_event(server_id, false, Some(format!("{}", e)))
+                    .await;
                 Err(e)
             }
         }
@@ -288,6 +414,40 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
+    /// Wrapper for scheduler to trigger connection using the single executor
+    pub(crate) async fn connect_via_scheduler(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        self.connect_internal(server_id, instance_id).await
+    }
+
+    /// Publish connection startup result (success/failure) as a single unified event outlet
+    async fn publish_startup_event(
+        &self,
+        server_id: &str,
+        success: bool,
+        error: Option<String>,
+    ) {
+        // Resolve server_name for event payload when database is available
+        let server_name = if let Some(db) = &self.database {
+            match crate::config::operations::utils::get_server_name(&db.pool, server_id).await {
+                Ok(name) => name,
+                Err(_) => server_id.to_string(),
+            }
+        } else {
+            server_id.to_string()
+        };
+
+        events::EventBus::global().publish(events::Event::ServerConnectionStartupCompleted {
+            server_id: server_id.to_string(),
+            server_name,
+            success,
+            error,
+        });
+    }
+
     /// Connect to HTTP server
     async fn connect_http(
         &mut self,
@@ -309,12 +469,12 @@ impl UpstreamConnectionPool {
     /// Cancel connection token for a specific instance
     fn cancel_connection_token(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
     ) {
         let token_opt = self
             .cancellation_tokens
-            .get_mut(server_name)
+            .get_mut(server_id)
             .and_then(|tokens| tokens.remove(instance_id));
 
         let Some(token) = token_opt else {
@@ -324,7 +484,7 @@ impl UpstreamConnectionPool {
         token.cancel();
         tracing::debug!(
             "Cancelled token for server '{}' instance '{}' to stop new operations",
-            server_name,
+            server_id,
             instance_id
         );
     }
@@ -332,15 +492,15 @@ impl UpstreamConnectionPool {
     /// Cancel service with timeout handling
     async fn cancel_service_with_timeout(
         &self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
         service_arc: Arc<RunningService<RoleClient, ()>>,
     ) {
         let cancel_timeout = Duration::from_secs(5);
-
+        let label = self.server_label(server_id).await;
         tracing::info!(
             "About to cancel service for '{}' instance '{}' with {}s timeout",
-            server_name,
+            label,
             instance_id,
             cancel_timeout.as_secs()
         );
@@ -351,7 +511,7 @@ impl UpstreamConnectionPool {
             Err(_arc) => {
                 tracing::warn!(
                     "Cannot cancel service for '{}' instance '{}' - multiple references exist",
-                    server_name,
+                    label,
                     instance_id
                 );
                 return;
@@ -363,7 +523,7 @@ impl UpstreamConnectionPool {
             Ok(Ok(quit_reason)) => {
                 tracing::info!(
                     "Service for server '{}' instance '{}' cancelled gracefully with reason: {:?}",
-                    server_name,
+                    label,
                     instance_id,
                     quit_reason
                 );
@@ -371,7 +531,7 @@ impl UpstreamConnectionPool {
             Ok(Err(e)) => {
                 tracing::warn!(
                     "Error during graceful cancellation for '{}' instance '{}': {}",
-                    server_name,
+                    label,
                     instance_id,
                     e
                 );
@@ -379,7 +539,7 @@ impl UpstreamConnectionPool {
             Err(_) => {
                 tracing::warn!(
                     "Service cancellation timeout for '{}' instance '{}' ({}s)",
-                    server_name,
+                    label,
                     instance_id,
                     cancel_timeout.as_secs()
                 );
@@ -390,12 +550,15 @@ impl UpstreamConnectionPool {
     /// Cancel service asynchronously without blocking the caller
     fn cancel_service_async(
         &self,
-        server_name: &str,
+        server_id: &str,
         instance_id: &str,
         service_arc: Arc<RunningService<RoleClient, ()>>,
     ) {
-        let server_name = server_name.to_string();
         let instance_id = instance_id.to_string();
+
+        // Resolve label synchronously by best-effort using cached id; we cannot await here.
+        // For better readability, include id in logs.
+        let label = format!("{}", server_id);
 
         // Spawn background task for service cancellation
         tokio::spawn(async move {
@@ -403,7 +566,7 @@ impl UpstreamConnectionPool {
 
             tracing::debug!(
                 "Async service cancellation started for '{}' instance '{}' with {}s timeout",
-                server_name,
+                label,
                 instance_id,
                 cancel_timeout.as_secs()
             );
@@ -414,7 +577,7 @@ impl UpstreamConnectionPool {
                 Err(_arc) => {
                     tracing::debug!(
                         "Service for '{}' instance '{}' has multiple references, skipping cancellation",
-                        server_name,
+                        label,
                         instance_id
                     );
                     return;
@@ -426,7 +589,7 @@ impl UpstreamConnectionPool {
                 Ok(Ok(quit_reason)) => {
                     tracing::debug!(
                         "Service for '{}' instance '{}' cancelled gracefully: {:?}",
-                        server_name,
+                        label,
                         instance_id,
                         quit_reason
                     );
@@ -434,7 +597,7 @@ impl UpstreamConnectionPool {
                 Ok(Err(e)) => {
                     tracing::warn!(
                         "Error during async cancellation for '{}' instance '{}': {}",
-                        server_name,
+                        label,
                         instance_id,
                         e
                     );
@@ -442,7 +605,7 @@ impl UpstreamConnectionPool {
                 Err(_) => {
                     tracing::warn!(
                         "Async service cancellation timeout for '{}' instance '{}' ({}s)",
-                        server_name,
+                        label,
                         instance_id,
                         cancel_timeout.as_secs()
                     );
@@ -518,63 +681,30 @@ impl UpstreamConnectionPool {
         supports_prompts: bool,
     ) {
         tokio::spawn(async move {
-            // Always sync tools
-            if let Err(e) =
-                UpstreamConnectionPool::sync_tools_to_database(&db_clone, &server_id_clone, &tools_clone).await
-            {
-                tracing::error!(
-                    "Failed to sync tools to database for server '{}': {}",
-                    server_id_clone,
-                    e
-                );
-            }
-
-            // Early return if no additional sync needed
-            if !supports_resources && !supports_prompts {
-                tracing::debug!(
-                    "Database sync operations completed for server '{}' (tools only)",
-                    server_id_clone
-                );
-                return;
-            }
-
-            // Conditionally sync resources if server supports them
+            // Build flags: always TOOLS; include RESOURCES/PROMPTS when supported
+            let mut flags = crate::core::pool::CapSyncFlags::TOOLS;
             if supports_resources {
-                if let Err(e) = UpstreamConnectionPool::sync_resources_to_database_with_service(
-                    &db_clone,
-                    &server_id_clone,
-                    &instance_id_clone,
-                    &service_for_sync,
-                )
-                .await
-                {
-                    tracing::error!(
-                        "Failed to sync resources to database for server '{}': {}",
-                        server_id_clone,
-                        e
-                    );
-                }
+                flags = crate::core::pool::CapSyncFlags(flags.0 | crate::core::pool::CapSyncFlags::RESOURCES.0);
             }
-
-            // Conditionally sync prompts if server supports them
             if supports_prompts {
-                if let Err(e) = UpstreamConnectionPool::sync_prompts_to_database_with_service(
-                    &db_clone,
-                    &server_id_clone,
-                    &instance_id_clone,
-                    &service_for_sync,
-                )
-                .await
-                {
-                    tracing::error!(
-                        "Failed to sync prompts to database for server '{}': {}",
-                        server_id_clone,
-                        e
-                    );
-                }
+                flags = crate::core::pool::CapSyncFlags(flags.0 | crate::core::pool::CapSyncFlags::PROMPTS.0);
             }
 
-            tracing::debug!("Database sync operations completed for server '{}'", server_id_clone);
+            // Unified capabilities sync (single entry point)
+            if let Err(e) = UpstreamConnectionPool::sync_capabilities(
+                &db_clone,
+                &server_id_clone,
+                &instance_id_clone,
+                &service_for_sync,
+                flags,
+                Some(&tools_clone),
+            )
+            .await
+            {
+                tracing::error!("Unified capability sync failed for server '{}': {}", server_id_clone, e);
+            } else {
+                tracing::debug!("Unified capability sync completed for server '{}'", server_id_clone);
+            }
         });
     }
 
@@ -746,7 +876,7 @@ impl UpstreamConnectionPool {
 
         // Create new connection if needed
         if !self.connections.contains_key(server_id) {
-            let connection = crate::core::connection::UpstreamConnection::new(server_id.to_string());
+            let connection = crate::core::pool::UpstreamConnection::new(server_id.to_string());
             let instance_id = connection.id.clone();
             let instances = self.connections.entry(server_id.to_string()).or_default();
             instances.insert(instance_id.clone(), connection);

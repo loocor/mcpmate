@@ -358,7 +358,7 @@ pub fn prompt_json_from_cached(p: crate::core::cache::CachedPromptInfo) -> serde
 }
 
 pub async fn extract_tools_capability(
-    conn: &crate::core::connection::UpstreamConnection
+    conn: &crate::core::pool::UpstreamConnection
 ) -> Result<ExtractedCapability, ApiError> {
     let now = chrono::Utc::now();
 
@@ -398,7 +398,7 @@ pub async fn extract_tools_capability(
 }
 
 pub async fn extract_prompts_capability(
-    conn: &crate::core::connection::UpstreamConnection
+    conn: &crate::core::pool::UpstreamConnection
 ) -> Result<ExtractedCapability, ApiError> {
     if !conn.supports_prompts() {
         return Ok(ExtractedCapability::empty());
@@ -457,7 +457,7 @@ pub async fn extract_prompts_capability(
 }
 
 pub async fn extract_resources_capability(
-    conn: &crate::core::connection::UpstreamConnection
+    conn: &crate::core::pool::UpstreamConnection
 ) -> Result<ExtractedCapability, ApiError> {
     if !conn.supports_resources() {
         return Ok(ExtractedCapability::empty());
@@ -509,7 +509,7 @@ pub async fn extract_resources_capability(
 }
 
 pub async fn extract_resource_templates_capability(
-    conn: &crate::core::connection::UpstreamConnection
+    conn: &crate::core::pool::UpstreamConnection
 ) -> Result<ExtractedCapability, ApiError> {
     if !conn.supports_resources() {
         return Ok(ExtractedCapability::empty());
@@ -591,8 +591,9 @@ pub async fn create_temporary_instance_for_capability(
     server_info: &ServerIdentification,
     params: &InspectParams,
     capability_type: CapabilityType,
+    allow_without_force: bool,
 ) -> Result<Option<Json<serde_json::Value>>, ApiError> {
-    if params.refresh != Some(RefreshStrategy::Force) {
+    if params.refresh != Some(RefreshStrategy::Force) && !allow_without_force {
         return Ok(None);
     }
 

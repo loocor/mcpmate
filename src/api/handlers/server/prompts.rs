@@ -15,12 +15,9 @@ use crate::api::{
     },
     routes::AppState,
 };
-use chrono::Utc;
 
-use super::capability::{
-    CapabilityType, enrich_capability_items, prompt_json, prompt_json_from_cached, respond_with_enriched,
-};
-use super::common::{create_inspect_response, create_runtime_cache_data, get_database_from_state};
+use super::capability::{CapabilityType, enrich_capability_items, respond_with_enriched};
+use super::common::{create_inspect_response, get_database_from_state};
 
 /// Helper function to convert Json response to ServerPromptsResp
 fn json_to_server_prompts_resp(json_response: axum::Json<serde_json::Value>) -> ServerPromptsData {
@@ -131,169 +128,64 @@ async fn server_prompts_core(
         return Ok(ServerPromptsResp::success(prompts_resp));
     }
 
-    // Try Redb cache with freshness on full snapshot
-    let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
-    if let Ok(cache_result) = app_state.redb_cache.get_server_data(&cache_query).await {
-        if cache_result.cache_hit {
-            if let Some(data) = cache_result.data {
-                let processed: Vec<serde_json::Value> = data.prompts.into_iter().map(prompt_json_from_cached).collect();
-                if !processed.is_empty() {
-                    if let Ok(db) = get_database_from_state(app_state) {
-                        let enriched = enrich_capability_items(
-                            CapabilityType::Prompts,
-                            &db.pool,
-                            &server_info.server_id,
-                            processed,
-                        )
-                        .await;
-                        let response_data = respond_with_enriched(
-                            enriched,
-                            true,
-                            params.refresh,
-                            crate::common::constants::strategies::CACHE,
-                        );
-                        let prompts_resp = json_to_server_prompts_resp(response_data);
-                        return Ok(ServerPromptsResp::success(prompts_resp));
-                    }
-                    let response_data = create_inspect_response(
-                        processed,
-                        true,
-                        params.refresh,
-                        crate::common::constants::strategies::CACHE,
-                    );
-                    let prompts_resp = json_to_server_prompts_resp(response_data);
-                    return Ok(ServerPromptsResp::success(prompts_resp));
-                }
-            }
-        }
-    }
-
-    // Runtime fallback: aggregate prompts via protocol helper
-    if let Ok(pool) = tokio::time::timeout(
-        std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
-        app_state.connection_pool.lock(),
-    )
-    .await
-    {
-        if let Some(instances) = pool.connections.get(&server_info.server_id) {
-            let connected_instances: Vec<_> = instances
-                .values()
-                .filter(|conn| conn.is_connected() && conn.supports_prompts())
-                .collect();
-
-            let mut prompts = Vec::new();
-            let mut cached_prompts = Vec::new();
-
-            for conn in connected_instances {
-                if let Some(service) = &conn.service {
-                    if let Ok(result) = service.list_prompts(None).await {
-                        let now = Utc::now();
-                        for p in result.prompts {
-                            let prompt_args = p.arguments.unwrap_or_default();
-                            let converted_args: Vec<crate::core::cache::PromptArgument> = prompt_args
-                                .into_iter()
-                                .map(|arg| crate::core::cache::PromptArgument {
-                                    name: arg.name,
-                                    description: arg.description,
-                                    required: arg.required.unwrap_or(false),
-                                })
-                                .collect();
-
-                            prompts.push(prompt_json(
-                                &p.name,
-                                p.description.clone(),
-                                converted_args.clone(),
-                                None,
-                                None,
-                            ));
-                            cached_prompts.push(crate::core::cache::CachedPromptInfo {
-                                name: p.name,
-                                description: p.description,
-                                arguments: converted_args,
-                                enabled: true,
-                                cached_at: now,
-                            });
-                        }
-                    }
-                }
-            }
-
-            if !prompts.is_empty() {
-                let server_data =
-                    create_runtime_cache_data(&server_info, Vec::new(), Vec::new(), cached_prompts, Vec::new());
-                let _ = app_state.redb_cache.store_server_data(&server_data).await;
-
+    // Use CapabilityService (REDB-first → runtime → optional temporary via pool)
+    let refresh = match params.refresh {
+        Some(super::common::RefreshStrategy::Force) => Some(crate::core::sandwich::RefreshStrategy::Force),
+        _ => Some(crate::core::sandwich::RefreshStrategy::CacheFirst),
+    };
+    let service = crate::core::capability::CapabilityService::new(
+        app_state.redb_cache.clone(),
+        app_state.connection_pool.clone(),
+        db.clone(),
+    );
+    let list_result = service
+        .list(&crate::core::sandwich::ListCtx {
+            route: crate::core::sandwich::RouteKind::Api,
+            capability: crate::core::sandwich::CapabilityKind::Prompts,
+            server_id: server_info.server_id.clone(),
+            refresh,
+            timeout: Some(std::time::Duration::from_secs(10)),
+            validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
+        })
+        .await;
+    // TODO: introduce unified naming module for prompts to avoid potential name collisions (similar to tools)
+    match list_result {
+        Ok(list_result) => {
+            let crate::core::sandwich::ListResult { items, meta } = list_result;
+            if !items.is_empty() {
                 if let Ok(db) = get_database_from_state(app_state) {
                     let enriched =
-                        enrich_capability_items(CapabilityType::Prompts, &db.pool, &server_info.server_id, prompts)
+                        enrich_capability_items(CapabilityType::Prompts, &db.pool, &server_info.server_id, items.clone())
                             .await;
                     let response_data = respond_with_enriched(
                         enriched,
-                        false,
+                        meta.cache_hit,
                         params.refresh,
-                        crate::common::constants::strategies::RUNTIME,
+                        meta.source.as_str(),
                     );
                     let prompts_resp = json_to_server_prompts_resp(response_data);
                     return Ok(ServerPromptsResp::success(prompts_resp));
                 }
+
                 let response_data = create_inspect_response(
-                    prompts,
-                    false,
+                    items,
+                    meta.cache_hit,
                     params.refresh,
-                    crate::common::constants::strategies::RUNTIME,
+                    meta.source.as_str(),
                 );
                 let prompts_resp = json_to_server_prompts_resp(response_data);
                 return Ok(ServerPromptsResp::success(prompts_resp));
             }
+
+            // Temporary instance fallback is handled by CapabilityService; handler remains unaware of pool
+        }
+        Err(e) => {
+            tracing::error!("Failed to list prompts via unified entry: {}", e);
         }
     }
 
-    // Force refresh: create temporary instance if refresh=force and no runtime data found
-    if let Some(response) = super::capability::create_temporary_instance_for_capability(
-        app_state,
-        &server_info,
-        &params,
-        super::capability::CapabilityType::Prompts,
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        let prompts_resp = json_to_server_prompts_resp(response);
-        return Ok(ServerPromptsResp::success(prompts_resp));
-    }
-
-    // Last resort: offline cache
-    if let Ok(cached) = app_state
-        .redb_cache
-        .get_server_prompts(&server_info.server_id, false)
-        .await
-    {
-        if !cached.is_empty() {
-            let processed: Vec<serde_json::Value> = cached.into_iter().map(prompt_json_from_cached).collect();
-            if let Ok(db) = get_database_from_state(app_state) {
-                let enriched =
-                    enrich_capability_items(CapabilityType::Prompts, &db.pool, &server_info.server_id, processed).await;
-                let response_data = respond_with_enriched(
-                    enriched,
-                    true,
-                    params.refresh,
-                    crate::common::constants::strategies::CACHE,
-                );
-                let prompts_resp = json_to_server_prompts_resp(response_data);
-                return Ok(ServerPromptsResp::success(prompts_resp));
-            }
-            let response_data = create_inspect_response(
-                processed,
-                true,
-                params.refresh,
-                crate::common::constants::strategies::CACHE,
-            );
-            let prompts_resp = json_to_server_prompts_resp(response_data);
-            return Ok(ServerPromptsResp::success(prompts_resp));
-        }
-    }
-
-    // Return empty result if no data available from cache or runtime
+    // No handler-side temporary creation
+    // No offline fallback to avoid stale uncertainty; return empty if still not available
     let response_data = create_inspect_response(
         Vec::new(),
         false,

@@ -358,9 +358,9 @@ impl DefaultFingerprintGenerator {
         }
     }
 
-    /// Generate configuration fingerprint from server config
     // TODO: Implement configuration fingerprint generation for server config change detection
-    #[allow(dead_code)]
+    // Reserved for future config fingerprint feature
+    /*
     async fn generate_config_fingerprint(
         &self,
         server_config: &serde_json::Value,
@@ -389,6 +389,7 @@ impl DefaultFingerprintGenerator {
             arguments_hash,
         })
     }
+    */
 
     /// Generate combined hash from all fingerprints
     fn generate_combined_hash(

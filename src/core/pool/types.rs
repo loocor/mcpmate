@@ -1,4 +1,4 @@
-// Upstream MCP server connection management
+// Pool types - connection and related data structures
 // Contains the UpstreamConnection struct and related functionality
 
 use std::sync::Arc;

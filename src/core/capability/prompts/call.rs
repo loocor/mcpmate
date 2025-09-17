@@ -3,7 +3,7 @@
 //! Contains functions for calling upstream prompts using core architecture
 
 use super::types::PromptMapping;
-use crate::core::{connection::UpstreamConnection, pool::UpstreamConnectionPool};
+use crate::core::{pool::{UpstreamConnection, UpstreamConnectionPool}};
 use anyhow::{Context, Result};
 use rmcp::model::{GetPromptRequestParam, GetPromptResult};
 use serde_json::Value as JsonValue;
@@ -47,47 +47,52 @@ pub async fn get_upstream_prompt(
         mapping.server_name
     );
 
-    // Get the connection from the pool: use server_id as authoritative key (fallback to server_name if absent)
-    let pool = connection_pool.lock().await;
-    let server_key = mapping.server_id.as_ref().unwrap_or(&mapping.server_name);
-    let instances = pool
-        .connections
-        .get(server_key)
-        .ok_or_else(|| anyhow::anyhow!("Instance {} not found for prompt {}", mapping.instance_id, prompt_name))?;
+    // CRITICAL FIX: Get service reference without holding pool lock during network call
+    let (service, upstream_prompt_name) = {
+        let pool = connection_pool.lock().await;
+        let server_key = mapping.server_id.as_ref().unwrap_or(&mapping.server_name);
+        let instances = pool
+            .connections
+            .get(server_key)
+            .ok_or_else(|| anyhow::anyhow!("Instance {} not found for prompt {}", mapping.instance_id, prompt_name))?;
 
-    let conn = instances
-        .get(&mapping.instance_id)
-        .ok_or_else(|| anyhow::anyhow!("Instance {} not found for prompt {}", mapping.instance_id, prompt_name))?;
+        let conn = instances
+            .get(&mapping.instance_id)
+            .ok_or_else(|| anyhow::anyhow!("Instance {} not found for prompt {}", mapping.instance_id, prompt_name))?;
 
-    // Check if the connection has a service
-    let service = match &conn.service {
-        Some(service) => service,
-        None => {
+        // Check if the connection is ready
+        if !conn.is_connected() {
             return Err(anyhow::anyhow!(
-                "No service available for instance {} (server: {})",
+                "Server '{}' instance '{}' is not connected (status: {})",
+                mapping.server_name,
                 mapping.instance_id,
-                mapping.server_name
+                conn.status
             ));
         }
-    };
 
-    // Check if the connection is ready
-    if !conn.is_connected() {
-        return Err(anyhow::anyhow!(
-            "Server '{}' instance '{}' is not connected (status: {})",
-            mapping.server_name,
-            mapping.instance_id,
-            conn.status
-        ));
-    }
+        // Check if the connection has a service
+        let service = match &conn.service {
+            Some(service) => service.clone(),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "No service available for instance {} (server: {})",
+                    mapping.instance_id,
+                    mapping.server_name
+                ));
+            }
+        };
+
+        (service, mapping.upstream_prompt_name.clone())
+        // Pool lock is automatically dropped here
+    };
 
     // Prepare the request parameters
     let request_params = GetPromptRequestParam {
-        name: mapping.upstream_prompt_name.clone(),
+        name: upstream_prompt_name,
         arguments,
     };
 
-    // Call the upstream server
+    // Now make the network call WITHOUT holding the pool lock
     let result = service.get_prompt(request_params).await.context(format!(
         "Failed to get prompt '{}' from upstream server '{}'",
         prompt_name, mapping.server_name

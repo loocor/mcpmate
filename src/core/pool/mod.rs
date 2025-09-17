@@ -9,31 +9,33 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{self, Result};
+use rmcp::service::{Peer, RoleClient};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing;
 
 use crate::core::{
-    connection::UpstreamConnection,
     foundation::{monitor::ProcessMonitor, types::ConnectionStatus},
     models::Config,
 };
 
 // Core pool functionality modules
-mod connection;
+mod executor;
 mod health;
 mod monitoring;
-mod parallel;
 
 // Business logic managers (separated from core pool logic)
 mod config;
 mod database;
 mod helpers;
 mod sync;
+mod types;
 
 // Re-export managers for external use
 pub use config::PoolConfigManager;
+pub use database::CapSyncFlags;
 pub use sync::ServerSyncManager;
+pub use types::UpstreamConnection;
 
 /// Pool of connections to upstream MCP servers
 ///
@@ -44,11 +46,11 @@ pub use sync::ServerSyncManager;
 #[derive(Debug, Clone)]
 pub struct UpstreamConnectionPool {
     /// Map of server ID to map of instance ID to connection
-    pub connections: HashMap<String, HashMap<String, UpstreamConnection>>,
+    pub connections: HashMap<String, HashMap<String, types::UpstreamConnection>>,
     /// Exploration sessions: session_id -> map of server_id to connection (minimal skeleton)
-    pub exploration_sessions: HashMap<String, HashMap<String, UpstreamConnection>>,
+    pub exploration_sessions: HashMap<String, HashMap<String, types::UpstreamConnection>>,
     /// Validation sessions: session_id -> map of server_id to connection (minimal skeleton)
-    pub validation_sessions: HashMap<String, HashMap<String, UpstreamConnection>>,
+    pub validation_sessions: HashMap<String, HashMap<String, types::UpstreamConnection>>,
     /// Exploration session expirations
     pub exploration_expirations: HashMap<String, std::time::Instant>,
     /// Validation session expirations
@@ -216,12 +218,12 @@ impl UpstreamConnectionPool {
     ///
     /// This method provides a fast, consistent snapshot of the connection pool state
     /// without requiring exclusive access. It's designed for API queries and monitoring.
-    pub fn get_connection_snapshot(&self) -> HashMap<String, Vec<(String, UpstreamConnection)>> {
+    pub fn get_connection_snapshot(&self) -> HashMap<String, Vec<(String, types::UpstreamConnection)>> {
         let mut result = HashMap::new();
         let snapshot_time = Instant::now();
 
         for (server_id, instances) in &self.connections {
-            let instance_clones: Vec<(String, UpstreamConnection)> = instances
+            let instance_clones: Vec<(String, types::UpstreamConnection)> = instances
                 .iter()
                 .map(|(id, conn)| {
                     // Create a lightweight clone for snapshot
@@ -242,6 +244,53 @@ impl UpstreamConnectionPool {
             result.len(),
             result.values().map(|instances| instances.len()).sum::<usize>()
         );
+
+        result
+    }
+
+    /// Get a lightweight snapshot for read-only operations (minimal cloning, no tool vectors)
+    /// Returns: server_id -> Vec of (instance_id, status, supports_resources, supports_prompts, service_peer)
+    pub fn get_snapshot(
+        &self
+    ) -> HashMap<
+        String,
+        Vec<(
+            String,
+            crate::core::foundation::types::ConnectionStatus,
+            bool,
+            bool,
+            Option<Peer<RoleClient>>,
+        )>,
+    > {
+        let mut result: HashMap<
+            String,
+            Vec<(
+                String,
+                crate::core::foundation::types::ConnectionStatus,
+                bool,
+                bool,
+                Option<Peer<RoleClient>>,
+            )>,
+        > = HashMap::new();
+
+        for (server_id, instances) in &self.connections {
+            let mut vec = Vec::with_capacity(instances.len());
+            for (id, conn) in instances.iter() {
+                let supports_resources = conn.supports_resources();
+                let supports_prompts = conn.supports_prompts();
+                let peer = conn.service.as_ref().map(|svc| svc.peer().clone());
+                vec.push((
+                    id.clone(),
+                    conn.status.clone(),
+                    supports_resources,
+                    supports_prompts,
+                    peer,
+                ));
+            }
+            if !vec.is_empty() {
+                result.insert(server_id.clone(), vec);
+            }
+        }
 
         result
     }
@@ -282,7 +331,7 @@ impl UpstreamConnectionPool {
         server_name: &str,
         session_id: &str,
         ttl: Duration,
-    ) -> Result<Option<&UpstreamConnection>, anyhow::Error> {
+    ) -> Result<Option<&types::UpstreamConnection>, anyhow::Error> {
         // Ensure session exists
         self.upsert_exploration_session(session_id, ttl);
 
@@ -319,7 +368,7 @@ impl UpstreamConnectionPool {
         server_name: &str,
         session_id: &str,
         _ttl: Duration, // TTL not used for validation instances per requirements
-    ) -> Result<Option<&UpstreamConnection>, anyhow::Error> {
+    ) -> Result<Option<&types::UpstreamConnection>, anyhow::Error> {
         // Check if server connection already exists in this session
         if let Some(session_servers) = self.validation_sessions.get(session_id) {
             if session_servers.contains_key(server_name) {
@@ -354,7 +403,7 @@ impl UpstreamConnectionPool {
         &mut self,
         server_name: &str,
         session_id: &str,
-    ) -> Result<UpstreamConnection, anyhow::Error> {
+    ) -> Result<types::UpstreamConnection, anyhow::Error> {
         tracing::info!("Creating temporary validation instance for server: {}", server_name);
 
         // Get database connection
@@ -371,9 +420,10 @@ impl UpstreamConnectionPool {
         // Convert database Server to MCPServerConfig (reusing existing conversion logic)
         let server_config = self.convert_server_to_config(&server, &db.pool).await?;
 
-        // Create temporary connection instance with validation prefix
-        let instance_id = format!("validation-{}-{}", server_name, session_id);
-        let mut connection = crate::core::connection::UpstreamConnection::new(instance_id);
+        // Create temporary connection instance with validation prefix (unified helper)
+        let instance_id = crate::core::pool::helpers::format_validation_instance_id(server_name, session_id);
+        let mut connection = types::UpstreamConnection::new(server_name.to_string());
+        connection.id = instance_id;
 
         // Set validation status to distinguish from production instances
         connection.status = ConnectionStatus::Validating;

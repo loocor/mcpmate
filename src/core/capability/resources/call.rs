@@ -8,8 +8,8 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tracing;
 
+use crate::core::capability::resources::types::ResourceMapping;
 use crate::core::pool::UpstreamConnectionPool;
-use crate::core::protocol::resource::types::ResourceMapping;
 
 /// Read a resource from the appropriate upstream server
 ///
@@ -35,34 +35,42 @@ pub async fn read_upstream_resource(
         mapping.server_name
     );
 
-    // Get the connection from the pool
-    // Note: mapping.server_name actually contains server_id for connection pool compatibility
-    let pool = connection_pool.lock().await;
-    let instances = pool
-        .connections
-        .get(&mapping.server_name)
-        .ok_or_else(|| anyhow::anyhow!("Server {} not found for resource {}", mapping.server_name, uri))?;
+    // CRITICAL FIX: Get service reference without holding pool lock during network call
+    let (service, upstream_resource_uri) = {
+        let pool = connection_pool.lock().await;
+        let server_id = mapping
+            .server_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Server ID not available for resource {}", uri))?;
+        let instances = pool
+            .connections
+            .get(server_id)
+            .ok_or_else(|| anyhow::anyhow!("Server {} not found for resource {}", server_id, uri))?;
 
-    let conn = instances
-        .get(&mapping.instance_id)
-        .ok_or_else(|| anyhow::anyhow!("Instance {} not found for resource {}", mapping.instance_id, uri))?;
+        let conn = instances
+            .get(&mapping.instance_id)
+            .ok_or_else(|| anyhow::anyhow!("Instance {} not found for resource {}", mapping.instance_id, uri))?;
 
-    // Check if the connection has a service
-    let service = match &conn.service {
-        Some(service) => service,
-        None => {
-            return Err(anyhow::anyhow!(
-                "No service available for instance {} (server: {})",
-                mapping.instance_id,
-                mapping.server_name
-            ));
-        }
+        // Check if the connection has a service
+        let service = match &conn.service {
+            Some(service) => service.clone(),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "No service available for instance {} (server: {})",
+                    mapping.instance_id,
+                    mapping.server_name
+                ));
+            }
+        };
+
+        (service, mapping.upstream_resource_uri.clone())
+        // Pool lock is automatically dropped here
     };
 
-    // Forward the read request to the upstream server
+    // Now make the network call WITHOUT holding the pool lock
     let result = service
         .read_resource(ReadResourceRequestParam {
-            uri: mapping.upstream_resource_uri.clone(),
+            uri: upstream_resource_uri,
         })
         .await
         .context("Failed to read resource from upstream server")?;

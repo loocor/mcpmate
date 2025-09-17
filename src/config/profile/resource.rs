@@ -249,7 +249,10 @@ pub fn build_enabled_resources_query(additional_where: Option<&str>) -> String {
         SELECT DISTINCT csr.server_name, csr.resource_uri
         FROM profile_resource csr
         JOIN profile cs ON csr.profile_id = cs.id
-        WHERE cs.is_active = true AND csr.enabled = true
+        JOIN server_config sc ON csr.server_id = sc.id
+        WHERE cs.is_active = true
+          AND csr.enabled = true
+          AND sc.enabled = 1
     "#;
 
     match additional_where {

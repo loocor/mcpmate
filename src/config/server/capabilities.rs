@@ -3,6 +3,8 @@
 
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
+
+use crate::core::capability::naming::{generate_unique_name, NamingKind};
 use std::sync::Arc;
 
 use crate::common::{capability::CapabilityToken, server::ServerType};
@@ -38,7 +40,7 @@ pub struct CapabilitySnapshot {
 
 /// Discover capabilities from an existing upstream connection (API temporary instance)
 pub async fn discover_from_connection(
-    conn: &crate::core::connection::UpstreamConnection
+    conn: &crate::core::pool::UpstreamConnection
 ) -> Result<CapabilitySnapshot> {
     let mut snap = CapabilitySnapshot::default();
 
@@ -237,7 +239,7 @@ pub async fn upsert_shadow_prompt(
     description: Option<&str>,
 ) -> Result<()> {
     let id = crate::generate_id!("sprm");
-    let unique_name = prompt_name.to_string();
+    let unique_name = generate_unique_name(NamingKind::Prompt, server_name, prompt_name);
     sqlx::query(
         r#"
         INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name, description)
@@ -272,7 +274,7 @@ pub async fn upsert_shadow_resource(
     mime_type: Option<&str>,
 ) -> Result<()> {
     let id = crate::generate_id!("sres");
-    let unique_name = uri.to_string();
+    let unique_name = generate_unique_name(NamingKind::Resource, server_name, uri);
     sqlx::query(
         r#"
         INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri, name, description, mime_type)
@@ -310,7 +312,7 @@ pub async fn upsert_shadow_resource_template(
     description: Option<&str>,
 ) -> Result<()> {
     let id = crate::generate_id!("srst");
-    let unique_name = uri_template.to_string();
+    let unique_name = generate_unique_name(NamingKind::ResourceTemplate, server_name, uri_template);
     sqlx::query(
         r#"
         INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name, description)

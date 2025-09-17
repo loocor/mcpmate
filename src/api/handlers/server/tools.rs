@@ -10,11 +10,9 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use chrono::Utc;
 use std::sync::Arc;
 
-use super::capability::{tool_json, tool_json_from_cached};
-use super::common::{InspectQuery, create_inspect_response, create_runtime_cache_data};
+use super::common::{InspectQuery, create_inspect_response};
 
 /// List all tools for a specific server
 pub async fn server_tools(
@@ -58,112 +56,47 @@ async fn server_tools_core(
         return Ok(ServerToolsResp::success(tools_resp));
     }
 
-    // Try Redb cache first with freshness policy
-    let cache_query = super::common::build_cache_query(&server_info.server_id, &params);
-
-    if let Ok(cache_result) = state.redb_cache.get_server_data(&cache_query).await {
-        if cache_result.cache_hit {
-            if let Some(data) = cache_result.data {
-                let processed: Vec<serde_json::Value> =
-                    data.tools.into_iter().map(|t| tool_json_from_cached(&t)).collect();
-                if !processed.is_empty() {
-                    let result = create_inspect_response(
-                        processed,
-                        true,
-                        params.refresh,
-                        crate::common::constants::strategies::CACHE,
-                    );
-                    let tools_resp = json_to_server_tools_resp(result);
-                    return Ok(ServerToolsResp::success(tools_resp));
-                }
-            }
-        }
-    }
-
-    // Runtime fallback: read tools from connected instances in the pool
-    if let Ok(pool) = tokio::time::timeout(
-        std::time::Duration::from_millis(crate::common::constants::timeouts::LOCK_MS),
-        state.connection_pool.lock(),
-    )
-    .await
-    {
-        if let Some(instances) = pool.connections.get(&server_info.server_id) {
-            let connected_instances: Vec<_> = instances.values().filter(|conn| conn.is_connected()).collect();
-
-            let mut tools = Vec::new();
-            let mut cached_tools = Vec::new();
-            let now = Utc::now();
-
-            for conn in connected_instances {
-                for t in &conn.tools {
-                    let schema = t.schema_as_json_value();
-                    tools.push(tool_json(
-                        &t.name,
-                        t.description.clone().map(|d| d.into_owned()),
-                        schema.clone(),
-                        None,
-                        None,
-                    ));
-
-                    // Build cacheable tool info
-                    let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
-                    cached_tools.push(crate::core::cache::CachedToolInfo {
-                        name: t.name.to_string(),
-                        description: t.description.clone().map(|d| d.into_owned()),
-                        input_schema_json,
-                        unique_name: None,
-                        enabled: true,
-                        cached_at: now,
-                    });
-                }
-            }
-            if !tools.is_empty() {
-                // Persist into Redb cache for future requests
-                let server_data =
-                    create_runtime_cache_data(&server_info, cached_tools, Vec::new(), Vec::new(), Vec::new());
-                let _ = state.redb_cache.store_server_data(&server_data).await;
-
-                let result = create_inspect_response(
-                    tools,
-                    false,
-                    params.refresh,
-                    crate::common::constants::strategies::RUNTIME,
-                );
-                let tools_resp = json_to_server_tools_resp(result);
+    // Through CapabilityService: handler only requests result; service orchestrates cache/runtime/temp
+    let refresh = match params.refresh {
+        Some(super::common::RefreshStrategy::Force) => Some(crate::core::sandwich::RefreshStrategy::Force),
+        _ => Some(crate::core::sandwich::RefreshStrategy::CacheFirst),
+    };
+    let service = crate::core::capability::CapabilityService::new(
+        state.redb_cache.clone(),
+        state.connection_pool.clone(),
+        db.clone(),
+    );
+    let list_result = service
+        .list(&crate::core::sandwich::ListCtx {
+            route: crate::core::sandwich::RouteKind::Api,
+            capability: crate::core::sandwich::CapabilityKind::Tools,
+            server_id: server_info.server_id.clone(),
+            refresh,
+            timeout: Some(std::time::Duration::from_secs(10)),
+            validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
+        })
+        .await;
+    match list_result {
+        Ok(list_result) => {
+            if !list_result.items.is_empty() {
+                let crate::core::sandwich::ListResult { items, meta } = list_result;
+                let cache_hit = meta.cache_hit;
+                let source = meta.source;
+                let response = create_inspect_response(items, cache_hit, params.refresh, source.as_str());
+                let tools_resp = json_to_server_tools_resp(response);
                 return Ok(ServerToolsResp::success(tools_resp));
             }
+
+            // Temporary instance is handled inside CapabilityService; handler does not touch pool
+        }
+        Err(e) => {
+            tracing::error!("Failed to list tools via unified entry: {}", e);
         }
     }
 
-    // Force refresh: create temporary instance if refresh=force and no runtime data found
-    if let Some(response) = super::capability::create_temporary_instance_for_capability(
-        state,
-        &server_info,
-        &params,
-        super::capability::CapabilityType::Tools,
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        let tools_resp = json_to_server_tools_resp(response);
-        return Ok(ServerToolsResp::success(tools_resp));
-    }
+    // No handler-side temporary creation
 
-    // Last resort: return any cached tools ignoring freshness if available (support offline access)
-    if let Ok(cached_tools) = state.redb_cache.get_server_tools(&server_info.server_id, false).await {
-        if !cached_tools.is_empty() {
-            let processed: Vec<serde_json::Value> =
-                cached_tools.into_iter().map(|t| tool_json_from_cached(&t)).collect();
-            let result = create_inspect_response(
-                processed,
-                true,
-                params.refresh,
-                crate::common::constants::strategies::CACHE,
-            );
-            let tools_resp = json_to_server_tools_resp(result);
-            return Ok(ServerToolsResp::success(tools_resp));
-        }
-    }
+    // No offline fallback to avoid stale uncertainty; return empty
 
     // No data available
     let result = create_inspect_response(

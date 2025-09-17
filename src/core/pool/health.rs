@@ -19,14 +19,19 @@ use crate::core::foundation::types::{
 };
 
 impl UpstreamConnectionPool {
-    /// Start health check task
+    /// Start health check task with adaptive scheduling
     pub fn start_health_check(connection_pool: Arc<Mutex<Self>>) {
         // Start the main health check task
         let health_check_pool = connection_pool.clone();
         tokio::spawn(async move {
+            let mut consecutive_failures = 0u32;
+            let mut last_reconnection_count = 0usize;
+            let mut quiet_cycles = 0u32;
+
             loop {
-                // Wait for health check interval (1 minute)
-                sleep(std::time::Duration::from_secs(60)).await;
+                // Adaptive interval based on system health
+                let interval = Self::calculate_health_check_interval(consecutive_failures, last_reconnection_count > 0);
+                sleep(interval).await;
 
                 // Step 1: Collect reconnection candidates with minimal lock time
                 let reconnects = {
@@ -39,7 +44,12 @@ impl UpstreamConnectionPool {
                     {
                         Ok(guard) => guard,
                         Err(_) => {
-                            tracing::warn!("Health check: Timeout acquiring pool lock, skipping this cycle");
+                            consecutive_failures += 1;
+                            Self::log_with_backoff(
+                                &mut quiet_cycles,
+                                "Health check: Timeout acquiring pool lock, skipping this cycle",
+                                tracing::Level::WARN,
+                            );
                             continue;
                         }
                     };
@@ -55,25 +65,50 @@ impl UpstreamConnectionPool {
                         {
                             Ok(guard) => guard,
                             Err(_) => {
-                                tracing::warn!("Health check: Timeout acquiring pool lock for status check, skipping");
+                                consecutive_failures += 1;
+                                Self::log_with_backoff(
+                                    &mut quiet_cycles,
+                                    "Health check: Timeout acquiring pool lock for status check, skipping",
+                                    tracing::Level::WARN,
+                                );
                                 continue;
                             }
                         };
 
                     if let Err(e) = pool.check_connection_status().await {
-                        tracing::error!("Error checking connection status: {}", e);
+                        consecutive_failures += 1;
+                        Self::log_with_backoff(
+                            &mut quiet_cycles,
+                            &format!("Error checking connection status: {}", e),
+                            tracing::Level::ERROR,
+                        );
+                    } else {
+                        consecutive_failures = 0; // Reset on success
                     }
                 }
 
                 // Step 3: Process reconnections asynchronously outside the lock
                 if !reconnects.is_empty() {
-                    tracing::info!(
-                        "Health check: Processing {} reconnection(s) asynchronously",
-                        reconnects.len()
-                    );
+                    last_reconnection_count = reconnects.len();
+
+                    // Use adaptive logging for reconnection info
+                    if quiet_cycles < 5 || reconnects.len() > 3 {
+                        tracing::info!(
+                            "Health check: Processing {} reconnection(s) asynchronously",
+                            reconnects.len()
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Health check: Processing {} reconnection(s) asynchronously",
+                            reconnects.len()
+                        );
+                    }
 
                     // Process reconnections in parallel without holding the main lock
                     Self::process_reconnections_async(health_check_pool.clone(), reconnects).await;
+                } else {
+                    last_reconnection_count = 0;
+                    quiet_cycles += 1;
                 }
             }
         });
@@ -431,5 +466,54 @@ impl UpstreamConnectionPool {
         pool.trigger_connect(&server_name, &instance_id)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to trigger reconnect: {}", e))
+    }
+
+    /// Calculate adaptive health check interval based on system health
+    fn calculate_health_check_interval(
+        consecutive_failures: u32,
+        has_recent_reconnections: bool,
+    ) -> std::time::Duration {
+        let base_interval = std::time::Duration::from_secs(60); // 1 minute base
+
+        // Reduce interval when there are issues
+        if consecutive_failures > 0 {
+            let backoff_factor = std::cmp::min(consecutive_failures, 4); // Cap at 4x
+            let reduced_interval = base_interval / (backoff_factor + 1);
+            return std::cmp::max(reduced_interval, std::time::Duration::from_secs(15)); // Minimum 15 seconds
+        }
+
+        // Slightly reduce interval if there were recent reconnections
+        if has_recent_reconnections {
+            return std::time::Duration::from_secs(45); // 45 seconds
+        }
+
+        // Normal interval when all is well
+        base_interval
+    }
+
+    /// Log with exponential backoff to reduce noise
+    fn log_with_backoff(
+        quiet_cycles: &mut u32,
+        message: &str,
+        level: tracing::Level,
+    ) {
+        let should_log = match *quiet_cycles {
+            0..=2 => true,                      // Log first 3 occurrences
+            3..=10 => *quiet_cycles % 3 == 0,   // Every 3rd occurrence
+            11..=50 => *quiet_cycles % 10 == 0, // Every 10th occurrence
+            _ => *quiet_cycles % 50 == 0,       // Every 50th occurrence
+        };
+
+        if should_log {
+            match level {
+                tracing::Level::ERROR => tracing::error!("{} (suppressed {} times)", message, *quiet_cycles),
+                tracing::Level::WARN => tracing::warn!("{} (suppressed {} times)", message, *quiet_cycles),
+                tracing::Level::INFO => tracing::info!("{} (suppressed {} times)", message, *quiet_cycles),
+                tracing::Level::DEBUG => tracing::debug!("{} (suppressed {} times)", message, *quiet_cycles),
+                tracing::Level::TRACE => tracing::trace!("{} (suppressed {} times)", message, *quiet_cycles),
+            }
+        }
+
+        *quiet_cycles += 1;
     }
 }

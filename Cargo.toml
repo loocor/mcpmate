@@ -113,6 +113,7 @@ candle-transformers = { version = "0.8", features = ["metal"] }
 candle-nn = { version = "0.8", features = ["metal"] }
 tokenizers = "0.15"
 hf-hub = "0.3"
+arc-swap = "1.7.1"
 
 # Build Targets
 [[bin]]

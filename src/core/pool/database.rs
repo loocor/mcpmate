@@ -12,6 +12,29 @@ use tracing;
 use super::UpstreamConnectionPool;
 use crate::common::sync::SyncHelper;
 
+/// Capability sync selection flags (bitmask style without external deps)
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CapSyncFlags(pub u32);
+
+impl CapSyncFlags {
+    pub const NONE: Self = Self(0);
+    pub const TOOLS: Self = Self(1 << 0);
+    pub const RESOURCES: Self = Self(1 << 1);
+    pub const PROMPTS: Self = Self(1 << 2);
+    pub const RESOURCE_TEMPLATES: Self = Self(1 << 3);
+
+    #[inline]
+    pub fn contains(
+        self,
+        other: Self,
+    ) -> bool {
+        (self.0 & other.0) != 0
+    }
+
+    /// Convenience presets
+    pub const ALL: Self = Self(Self::TOOLS.0 | Self::RESOURCES.0 | Self::PROMPTS.0 | Self::RESOURCE_TEMPLATES.0);
+}
+
 // Simplified approach - extract common database operations
 
 impl UpstreamConnectionPool {
@@ -43,8 +66,260 @@ impl UpstreamConnectionPool {
     }
 
     // Note: get_profile_with_server function removed as it's now handled by SyncHelper::get_server_context
+    /// Fetch tools from service (with pagination when available)
+    async fn fetch_tools_from_service(
+        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
+        server_name: &str,
+        instance_id: &str,
+    ) -> AnyhowResult<Vec<Tool>> {
+        use anyhow::Context;
 
-    // Generic sync method removed - using specific implementations for each type
+        // Try paginated requests if supported; fallback to single call
+        let mut all_tools = Vec::new();
+        let mut cursor = None;
+
+        loop {
+            match service
+                .list_tools(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                .await
+            {
+                Ok(result) => {
+                    all_tools.extend(result.tools);
+                    cursor = result.next_cursor;
+                    if cursor.is_none() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(e)).with_context(|| {
+                        format!(
+                            "Failed to list tools from upstream server '{}' instance '{}'",
+                            server_name, instance_id
+                        )
+                    });
+                }
+            }
+        }
+
+        Ok(all_tools)
+    }
+
+    /// Unified capability sync: tools/resources/prompts (with resource templates as resources sub-item)
+    ///
+    /// This is the main entry point that consolidates database writes for all capabilities.
+    /// Extracts common patterns: server/profile resolution, concurrent sync, logging, and error handling.
+    pub(crate) async fn sync_capabilities(
+        db: &Arc<crate::config::database::Database>,
+        server_id: &str,
+        instance_id: &str,
+        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
+        flags: CapSyncFlags,
+        tools_opt: Option<&[Tool]>,
+    ) -> AnyhowResult<()> {
+        // Common setup: resolve server_name for logging
+        let server_name = crate::config::operations::utils::get_server_name(&db.pool, server_id)
+            .await
+            .unwrap_or_else(|_| server_id.to_string());
+
+        // Common setup: get server and profile data once
+        let (resolved_server_id, profile_data) = Self::get_server_and_profile(db, server_id).await?;
+
+        tracing::debug!(
+            "Syncing capabilities (flags: {:?}) from server '{}' (ID: {}, instance: {}) to {} profiles",
+            flags,
+            server_name,
+            server_id,
+            instance_id,
+            profile_data.len()
+        );
+
+        // TOOLS - unified pattern
+        if flags.contains(CapSyncFlags::TOOLS) {
+            let tools: Vec<Tool> = if let Some(slice) = tools_opt {
+                slice.to_vec()
+            } else {
+                Self::fetch_tools_from_service(service, &server_name, instance_id).await?
+            };
+
+            if !tools.is_empty() {
+                Self::sync_tools_to_database_internal(db, &resolved_server_id, &server_name, &tools, &profile_data)
+                    .await?;
+            } else {
+                tracing::debug!(
+                    "No tools fetched for server '{}' (ID: {}), skipping tools sync",
+                    server_name,
+                    server_id
+                );
+            }
+        }
+
+        // RESOURCES - unified pattern
+        if flags.contains(CapSyncFlags::RESOURCES) {
+            let resources = Self::fetch_resources_from_service(service, &server_name, instance_id).await?;
+
+            if !resources.is_empty() {
+                Self::sync_resources_to_database_internal(
+                    db,
+                    &resolved_server_id,
+                    &server_name,
+                    &resources,
+                    &profile_data,
+                )
+                .await?;
+            } else {
+                tracing::debug!(
+                    "No resources fetched for server '{}' (ID: {}), skipping resources sync",
+                    server_name,
+                    server_id
+                );
+            }
+        }
+
+        // PROMPTS - unified pattern
+        if flags.contains(CapSyncFlags::PROMPTS) {
+            let prompts = Self::fetch_prompts_from_service(service, &server_name, instance_id).await?;
+
+            if !prompts.is_empty() {
+                Self::sync_prompts_to_database_internal(db, &resolved_server_id, &server_name, &prompts, &profile_data)
+                    .await?;
+            } else {
+                tracing::debug!(
+                    "No prompts fetched for server '{}' (ID: {}), skipping prompts sync",
+                    server_name,
+                    server_id
+                );
+            }
+        }
+
+        // RESOURCE_TEMPLATES - treat as resources sub-item (per MCP spec)
+        if flags.contains(CapSyncFlags::RESOURCE_TEMPLATES) {
+            tracing::debug!(
+                "Resource templates sync integrated into resources for server '{}' (ID: {})",
+                server_name,
+                server_id
+            );
+            // Note: Resource templates are handled as part of resources according to MCP specification
+            // If separate handling is needed for UI compatibility, implement here
+        }
+
+        tracing::debug!(
+            "Successfully synced capabilities (flags: {:?}) from server '{}' (ID: {})",
+            flags,
+            server_name,
+            server_id
+        );
+
+        Ok(())
+    }
+
+    // Removed unused compatibility wrapper: sync_capabilities_to_database_with_service
+
+    /// Internal method to sync tools to database using unified pattern
+    async fn sync_tools_to_database_internal(
+        db: &Arc<crate::config::database::Database>,
+        server_id: &str,
+        server_name: &str,
+        tools: &[Tool],
+        profile_data: &[(String, String)],
+    ) -> AnyhowResult<()> {
+        let sync_items: Vec<_> = profile_data
+            .iter()
+            .map(|(profile_id, profile_name)| {
+                (
+                    profile_id.clone(),
+                    profile_name.clone(),
+                    db.pool.clone(),
+                    server_id.to_string(),
+                    server_name.to_string(),
+                    tools.to_vec(),
+                )
+            })
+            .collect();
+
+        let _sync_result = SyncHelper::execute_concurrent_sync(
+            sync_items,
+            "tools_to_profile",
+            4, // max concurrent operations
+            |(profile_id, profile_name, pool, server_id, server_name, tools)| async move {
+                Self::sync_tools_to_profile(&pool, &profile_id, &server_id, &server_name, &tools, &profile_name).await
+            },
+        )
+        .await;
+
+        Ok(())
+    }
+
+    /// Internal method to sync resources to database using unified pattern
+    async fn sync_resources_to_database_internal(
+        db: &Arc<crate::config::database::Database>,
+        server_id: &str,
+        server_name: &str,
+        resources: &[String],
+        profile_data: &[(String, String)],
+    ) -> AnyhowResult<()> {
+        let sync_items: Vec<_> = profile_data
+            .iter()
+            .map(|(profile_id, profile_name)| {
+                (
+                    profile_id.clone(),
+                    profile_name.clone(),
+                    db.pool.clone(),
+                    server_id.to_string(),
+                    server_name.to_string(),
+                    resources.to_vec(),
+                )
+            })
+            .collect();
+
+        let _sync_result = SyncHelper::execute_concurrent_sync(
+            sync_items,
+            "resources_to_profile",
+            4, // max concurrent operations
+            |(profile_id, profile_name, pool, server_id, server_name, resources)| async move {
+                Self::sync_resources_to_profile(&pool, &profile_id, &server_id, &server_name, &resources, &profile_name)
+                    .await
+            },
+        )
+        .await;
+
+        Ok(())
+    }
+
+    /// Internal method to sync prompts to database using unified pattern
+    async fn sync_prompts_to_database_internal(
+        db: &Arc<crate::config::database::Database>,
+        server_id: &str,
+        server_name: &str,
+        prompts: &[rmcp::model::Prompt],
+        profile_data: &[(String, String)],
+    ) -> AnyhowResult<()> {
+        let sync_items: Vec<_> = profile_data
+            .iter()
+            .map(|(profile_id, profile_name)| {
+                (
+                    profile_id.clone(),
+                    profile_name.clone(),
+                    db.pool.clone(),
+                    server_id.to_string(),
+                    server_name.to_string(),
+                    prompts.to_vec(),
+                )
+            })
+            .collect();
+
+        let _sync_result = SyncHelper::execute_concurrent_sync(
+            sync_items,
+            "prompts_to_profile",
+            4, // max concurrent operations
+            |(profile_id, profile_name, pool, server_id, server_name, prompts)| async move {
+                Self::sync_prompts_to_profile(&pool, &profile_id, &server_id, &server_name, &prompts, &profile_name)
+                    .await
+            },
+        )
+        .await;
+
+        Ok(())
+    }
 
     /// Helper function to fetch prompts from service
     async fn fetch_prompts_from_service(
@@ -83,77 +358,20 @@ impl UpstreamConnectionPool {
         service: &rmcp::service::Peer<rmcp::service::RoleClient>,
         server_name: &str,
         instance_id: &str,
-    ) -> Vec<String> {
-        match service.list_all_resources().await {
-            Ok(resources) => resources.into_iter().map(|r| r.uri.clone()).collect::<Vec<String>>(),
-            Err(e) => {
-                tracing::error!(
-                    "Failed to list resources from server '{}' (instance: {}): {}",
-                    server_name,
-                    instance_id,
-                    e
-                );
-                Vec::new()
-            }
-        }
+    ) -> AnyhowResult<Vec<String>> {
+        use anyhow::Context;
+
+        let resources = service.list_all_resources().await.with_context(|| {
+            format!(
+                "Failed to list resources from upstream server '{}' instance '{}'",
+                server_name, instance_id
+            )
+        })?;
+
+        Ok(resources.into_iter().map(|r| r.uri.clone()).collect::<Vec<String>>())
     }
 
-    /// Sync tools to database
-    ///
-    /// This function syncs tools from a server to the database.
-    /// It adds tools to all profile that have the server enabled.
-    pub(super) async fn sync_tools_to_database(
-        db: &Arc<crate::config::database::Database>,
-        server_id: &str,
-        tools: &[Tool],
-    ) -> AnyhowResult<()> {
-        // Get server name for logging purposes
-        let server_name = crate::config::operations::utils::get_server_name(&db.pool, server_id)
-            .await
-            .unwrap_or_else(|_| server_id.to_string());
-
-        tracing::debug!(
-            "Syncing {} tools from server '{}' (ID: {}) to database",
-            tools.len(),
-            server_name,
-            server_id
-        );
-
-        // Use common helper to get server and profile
-        let (server_id, profile_data) = Self::get_server_and_profile(db, server_id).await?;
-
-        // Use unified sync framework for concurrent operations
-        let sync_items: Vec<_> = profile_data
-            .into_iter()
-            .map(|(profile_id, profile_name)| {
-                (
-                    profile_id,
-                    profile_name,
-                    db.pool.clone(),
-                    server_id.clone(),
-                    server_name.clone(),
-                    tools.to_vec(),
-                )
-            })
-            .collect();
-
-        let _sync_result = SyncHelper::execute_concurrent_sync(
-            sync_items,
-            "tools_to_profile",
-            4, // max concurrent operations
-            |(profile_id, profile_name, pool, server_id, server_name, tools)| async move {
-                Self::sync_tools_to_profile(&pool, &profile_id, &server_id, &server_name, &tools, &profile_name).await
-            },
-        )
-        .await;
-        tracing::debug!(
-            "Successfully synced {} tools from server '{}' (ID: {})",
-            tools.len(),
-            server_name,
-            server_id
-        );
-        Ok(())
-    }
+    // Removed unused public adapter: sync_tools_to_database (use sync_capabilities instead)
 
     /// Helper function to sync tools to a specific profile
     async fn sync_tools_to_profile(
@@ -211,85 +429,7 @@ impl UpstreamConnectionPool {
 
     // Duplicate method removed - keeping only the first one
 
-    /// Sync resources to database with service
-    ///
-    /// This function syncs resources from a server to the database.
-    /// It adds resources to all profile that have the server enabled.
-    pub(super) async fn sync_resources_to_database_with_service(
-        db: &Arc<crate::config::database::Database>,
-        server_id: &str,
-        instance_id: &str,
-        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
-    ) -> AnyhowResult<()> {
-        // Get server name for logging purposes
-        let server_name = crate::config::operations::utils::get_server_name(&db.pool, server_id)
-            .await
-            .unwrap_or_else(|_| server_id.to_string());
-
-        // Fetch resources from the service
-        let server_resources = Self::fetch_resources_from_service(service, &server_name, instance_id).await;
-
-        tracing::debug!(
-            "Syncing {} resources from server '{}' (ID: {}, instance: {}) to database",
-            server_resources.len(),
-            server_name,
-            server_id,
-            instance_id
-        );
-
-        // Use common helper to get server and profile
-        let (server_id, profile_data) = Self::get_server_and_profile(db, server_id).await?;
-
-        tracing::debug!(
-            "Found {} profile with server '{}' (ID: {}) enabled",
-            profile_data.len(),
-            server_name,
-            server_id
-        );
-
-        // Use unified sync framework for concurrent operations
-        let sync_items: Vec<_> = profile_data
-            .into_iter()
-            .map(|(profile_id, profile_name)| {
-                (
-                    profile_id,
-                    profile_name,
-                    db.pool.clone(),
-                    server_id.clone(),
-                    server_name.clone(),
-                    server_resources.clone(),
-                )
-            })
-            .collect();
-
-        let _sync_result = SyncHelper::execute_concurrent_sync(
-            sync_items,
-            "resources_to_profile",
-            4, // max concurrent operations
-            |(profile_id, profile_name, pool, server_id, server_name, server_resources)| async move {
-                Self::sync_resources_to_profile(
-                    &pool,
-                    &profile_id,
-                    &server_id,
-                    &server_name,
-                    &server_resources,
-                    &profile_name,
-                )
-                .await
-            },
-        )
-        .await;
-
-        tracing::debug!(
-            "Successfully synced {} resources from server '{}' (ID: {}, instance: {}) to database",
-            server_resources.len(),
-            server_name,
-            server_id,
-            instance_id
-        );
-
-        Ok(())
-    }
+    // Removed unused public adapter: sync_resources_to_database_with_service (use sync_capabilities instead)
 
     /// Helper function to sync resources to a specific profile
     async fn sync_resources_to_profile(
@@ -344,85 +484,7 @@ impl UpstreamConnectionPool {
         Ok(())
     }
 
-    /// Sync prompts to database with service
-    ///
-    /// This function syncs prompts from a server to the database.
-    /// It adds prompts to all profile that have the server enabled.
-    pub(super) async fn sync_prompts_to_database_with_service(
-        db: &Arc<crate::config::database::Database>,
-        server_id: &str,
-        instance_id: &str,
-        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
-    ) -> AnyhowResult<()> {
-        // Get server name for logging purposes
-        let server_name = crate::config::operations::utils::get_server_name(&db.pool, server_id)
-            .await
-            .unwrap_or_else(|_| server_id.to_string());
-
-        // Fetch prompts from the service
-        let all_prompts = Self::fetch_prompts_from_service(service, &server_name, instance_id).await?;
-
-        tracing::debug!(
-            "Syncing {} prompts from server '{}' (ID: {}, instance: {}) to database",
-            all_prompts.len(),
-            server_name,
-            server_id,
-            instance_id
-        );
-
-        // Use common helper to get server and profile
-        let (server_id, profile_data) = Self::get_server_and_profile(db, server_id).await?;
-
-        tracing::debug!(
-            "Found {} profile with server '{}' (ID: {}) enabled",
-            profile_data.len(),
-            server_name,
-            server_id
-        );
-
-        // Use unified sync framework for concurrent operations
-        let sync_items: Vec<_> = profile_data
-            .into_iter()
-            .map(|(profile_id, profile_name)| {
-                (
-                    profile_id,
-                    profile_name,
-                    db.pool.clone(),
-                    server_id.clone(),
-                    server_name.clone(),
-                    all_prompts.clone(),
-                )
-            })
-            .collect();
-
-        let _sync_result = SyncHelper::execute_concurrent_sync(
-            sync_items,
-            "prompts_to_profile",
-            4, // max concurrent operations
-            |(profile_id, profile_name, pool, server_id, server_name, all_prompts)| async move {
-                Self::sync_prompts_to_profile(
-                    &pool,
-                    &profile_id,
-                    &server_id,
-                    &server_name,
-                    &all_prompts,
-                    &profile_name,
-                )
-                .await
-            },
-        )
-        .await;
-
-        tracing::debug!(
-            "Successfully synced {} prompts from server '{}' (ID: {}, instance: {}) to database",
-            all_prompts.len(),
-            server_name,
-            server_id,
-            instance_id
-        );
-
-        Ok(())
-    }
+    // Removed unused public adapter: sync_prompts_to_database_with_service (use sync_capabilities instead)
 
     /// Helper function to sync prompts to a specific profile
     async fn sync_prompts_to_profile(
