@@ -20,9 +20,7 @@ pub struct RuntimeDownloader {
 impl RuntimeDownloader {
     /// Create a new downloader
     pub fn new() -> Self {
-        Self {
-            client: Client::new(),
-        }
+        Self { client: Client::new() }
     }
 
     /// Download a runtime to the specified directory
@@ -39,11 +37,7 @@ impl RuntimeDownloader {
         // Get download URL
         let download_url = self.get_download_url(runtime_type)?;
 
-        tracing::info!(
-            "Downloading {} from {}",
-            runtime_type.as_str(),
-            download_url
-        );
+        tracing::info!("Downloading {} from {}", runtime_type.as_str(), download_url);
 
         // Download the file
         let response = self
@@ -54,10 +48,7 @@ impl RuntimeDownloader {
             .context("Failed to start download")?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Download failed with status: {}",
-                response.status()
-            ));
+            return Err(anyhow::anyhow!("Download failed with status: {}", response.status()));
         }
 
         // Determine file name and path
@@ -69,20 +60,13 @@ impl RuntimeDownloader {
             .await
             .context("Failed to create download file")?;
 
-        let content = response
-            .bytes()
-            .await
-            .context("Failed to read download content")?;
+        let content = response.bytes().await.context("Failed to read download content")?;
 
         file.write_all(&content)
             .await
             .context("Failed to write download file")?;
 
-        tracing::info!(
-            "Downloaded {} to {}",
-            runtime_type.as_str(),
-            file_path.display()
-        );
+        tracing::info!("Downloaded {} to {}", runtime_type.as_str(), file_path.display());
         Ok(file_path)
     }
 

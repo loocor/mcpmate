@@ -58,8 +58,8 @@ async fn server_tools_core(
 
     // Through CapabilityService: handler only requests result; service orchestrates cache/runtime/temp
     let refresh = match params.refresh {
-        Some(super::common::RefreshStrategy::Force) => Some(crate::core::sandwich::RefreshStrategy::Force),
-        _ => Some(crate::core::sandwich::RefreshStrategy::CacheFirst),
+        Some(super::common::RefreshStrategy::Force) => Some(crate::core::capability::runtime::RefreshStrategy::Force),
+        _ => Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
     };
     let service = crate::core::capability::CapabilityService::new(
         state.redb_cache.clone(),
@@ -67,9 +67,8 @@ async fn server_tools_core(
         db.clone(),
     );
     let list_result = service
-        .list(&crate::core::sandwich::ListCtx {
-            route: crate::core::sandwich::RouteKind::Api,
-            capability: crate::core::sandwich::CapabilityKind::Tools,
+        .list(&crate::core::capability::runtime::ListCtx {
+            capability: crate::core::capability::CapabilityType::Tools,
             server_id: server_info.server_id.clone(),
             refresh,
             timeout: Some(std::time::Duration::from_secs(10)),
@@ -78,13 +77,20 @@ async fn server_tools_core(
         .await;
     match list_result {
         Ok(list_result) => {
-            if !list_result.items.is_empty() {
-                let crate::core::sandwich::ListResult { items, meta } = list_result;
-                let cache_hit = meta.cache_hit;
-                let source = meta.source;
-                let response = create_inspect_response(items, cache_hit, params.refresh, source.as_str());
-                let tools_resp = json_to_server_tools_resp(response);
-                return Ok(ServerToolsResp::success(tools_resp));
+            let crate::core::capability::runtime::ListResult { items, meta } = list_result;
+            if let Some(tool_items) = items.into_tools() {
+                if !tool_items.is_empty() {
+                    let json_items: Vec<serde_json::Value> = tool_items
+                        .into_iter()
+                        .map(|tool| serde_json::to_value(tool).unwrap_or(serde_json::Value::Null))
+                        .collect();
+                    let response =
+                        create_inspect_response(json_items, meta.cache_hit, params.refresh, meta.source.as_str());
+                    let tools_resp = json_to_server_tools_resp(response);
+                    return Ok(ServerToolsResp::success(tools_resp));
+                }
+            } else {
+                tracing::warn!("Capability runtime returned non-tool items for tool capability");
             }
 
             // Temporary instance is handled inside CapabilityService; handler does not touch pool

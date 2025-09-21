@@ -13,7 +13,7 @@ use crate::api::handlers::server;
 use crate::api::models::server::{
     InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq, InstanceListResp,
     InstanceManageReq, ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp,
-    ServerListReq, ServerListResp, ServerManageReq, ServerOperationResp, ServerPromptArgumentsResp, ServerPromptsResp,
+    ServerListReq, ServerListResp, ServerManageReq, ServerOperationResp, ServerPromptsResp,
     ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp, ServerUpdateReq, ServersImportReq,
     ServersImportResp,
 };
@@ -54,10 +54,6 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/servers/prompts",
             get_with(server_prompts_aide, server_prompts_docs),
-        )
-        .api_route(
-            "/mcp/servers/prompts/arguments",
-            get_with(server_prompt_arguments_aide, server_prompt_arguments_docs),
         )
         // Instance management - Query parameters
         .api_route(
@@ -144,13 +140,6 @@ aide_wrapper_query!(
     ServerCapabilityReq,
     ServerPromptsResp,
     "List all prompts for a specific server"
-);
-
-aide_wrapper_query!(
-    server::server_prompt_arguments,
-    ServerCapabilityReq,
-    ServerPromptArgumentsResp,
-    "List all prompt arguments for a specific server"
 );
 
 // Generate aide-compatible wrappers for management handlers

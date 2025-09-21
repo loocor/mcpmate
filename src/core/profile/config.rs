@@ -38,11 +38,17 @@ impl ConfigApplicationStateManager {
     }
 
     /// Set configuration application status (simplified interface)
-    pub async fn set_status(&self, status: Option<ConfigApplicationStatus>) {
+    pub async fn set_status(
+        &self,
+        status: Option<ConfigApplicationStatus>,
+    ) {
         let mut status_guard = self.current_status.write().await;
 
         if let Some(ref status) = status {
-            debug!("Configuration application status updated: in_progress={}", status.in_progress);
+            debug!(
+                "Configuration application status updated: in_progress={}",
+                status.in_progress
+            );
         } else {
             debug!("Configuration application status cleared");
         }
@@ -51,7 +57,11 @@ impl ConfigApplicationStateManager {
     }
 
     /// Start configuration application (simplified)
-    pub async fn start_application(&self, profile_id: String, total_servers: usize) {
+    pub async fn start_application(
+        &self,
+        profile_id: String,
+        total_servers: usize,
+    ) {
         let status = ConfigApplicationStatus {
             in_progress: true,
             profile_id: Some(profile_id.clone()),
@@ -90,8 +100,6 @@ impl ConfigApplicationStateManager {
             debug!("Cleared completed configuration application status");
         });
     }
-
-
 }
 
 impl Clone for ConfigApplicationStateManager {

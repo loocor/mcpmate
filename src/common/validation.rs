@@ -27,7 +27,10 @@ impl FieldValidation {
     }
 
     /// Create a failed validation result
-    pub fn failure(field: &str, error: &str) -> Self {
+    pub fn failure(
+        field: &str,
+        error: &str,
+    ) -> Self {
         Self {
             field: field.to_string(),
             is_valid: false,
@@ -55,7 +58,10 @@ impl ValidationResult {
     }
 
     /// Add a field validation result
-    pub fn add_field(&mut self, field_validation: FieldValidation) {
+    pub fn add_field(
+        &mut self,
+        field_validation: FieldValidation,
+    ) {
         if !field_validation.is_valid {
             self.is_valid = false;
         }
@@ -64,11 +70,7 @@ impl ValidationResult {
 
     /// Get all error messages
     pub fn get_errors(&self) -> Vec<String> {
-        self.fields
-            .iter()
-            .filter_map(|f| f.error.as_ref())
-            .cloned()
-            .collect()
+        self.fields.iter().filter_map(|f| f.error.as_ref()).cloned().collect()
     }
 
     /// Get errors as a formatted string
@@ -85,9 +87,7 @@ impl ValidationResult {
     pub fn get_field_errors(&self) -> HashMap<String, String> {
         self.fields
             .iter()
-            .filter_map(|f| {
-                f.error.as_ref().map(|err| (f.field.clone(), err.clone()))
-            })
+            .filter_map(|f| f.error.as_ref().map(|err| (f.field.clone(), err.clone())))
             .collect()
     }
 }
@@ -103,7 +103,10 @@ pub struct Validator;
 
 impl Validator {
     /// Validate that a string is not empty
-    pub fn not_empty(field: &str, value: &str) -> FieldValidation {
+    pub fn not_empty(
+        field: &str,
+        value: &str,
+    ) -> FieldValidation {
         if value.trim().is_empty() {
             FieldValidation::failure(field, "Field cannot be empty")
         } else {
@@ -112,7 +115,12 @@ impl Validator {
     }
 
     /// Validate string length constraints
-    pub fn length_range(field: &str, value: &str, min: usize, max: usize) -> FieldValidation {
+    pub fn length_range(
+        field: &str,
+        value: &str,
+        min: usize,
+        max: usize,
+    ) -> FieldValidation {
         let len = value.len();
         if len < min {
             FieldValidation::failure(field, &format!("Field must be at least {} characters", min))
@@ -124,7 +132,10 @@ impl Validator {
     }
 
     /// Validate that a string contains only alphanumeric characters and underscores
-    pub fn alphanumeric_underscore(field: &str, value: &str) -> FieldValidation {
+    pub fn alphanumeric_underscore(
+        field: &str,
+        value: &str,
+    ) -> FieldValidation {
         if value.chars().all(|c| c.is_alphanumeric() || c == '_') {
             FieldValidation::success(field)
         } else {
@@ -133,7 +144,10 @@ impl Validator {
     }
 
     /// Validate that a string is a valid identifier (starts with letter/underscore, then alphanumeric/underscore)
-    pub fn valid_identifier(field: &str, value: &str) -> FieldValidation {
+    pub fn valid_identifier(
+        field: &str,
+        value: &str,
+    ) -> FieldValidation {
         if value.is_empty() {
             return FieldValidation::failure(field, "Identifier cannot be empty");
         }
@@ -151,7 +165,12 @@ impl Validator {
     }
 
     /// Validate that a number is within a range
-    pub fn number_range<T>(field: &str, value: T, min: T, max: T) -> FieldValidation
+    pub fn number_range<T>(
+        field: &str,
+        value: T,
+        min: T,
+        max: T,
+    ) -> FieldValidation
     where
         T: PartialOrd + std::fmt::Display,
     {
@@ -165,7 +184,10 @@ impl Validator {
     }
 
     /// Validate that a port number is valid
-    pub fn valid_port(field: &str, port: u16) -> FieldValidation {
+    pub fn valid_port(
+        field: &str,
+        port: u16,
+    ) -> FieldValidation {
         if port == 0 {
             FieldValidation::failure(field, "Port cannot be 0")
         } else if port < 1024 {
@@ -176,7 +198,10 @@ impl Validator {
     }
 
     /// Validate that a URL is well-formed
-    pub fn valid_url(field: &str, url: &str) -> FieldValidation {
+    pub fn valid_url(
+        field: &str,
+        url: &str,
+    ) -> FieldValidation {
         if url.is_empty() {
             return FieldValidation::failure(field, "URL cannot be empty");
         }
@@ -190,7 +215,10 @@ impl Validator {
     }
 
     /// Validate that a file path exists
-    pub fn path_exists(field: &str, path: &str) -> FieldValidation {
+    pub fn path_exists(
+        field: &str,
+        path: &str,
+    ) -> FieldValidation {
         if std::path::Path::new(path).exists() {
             FieldValidation::success(field)
         } else {
@@ -199,14 +227,15 @@ impl Validator {
     }
 
     /// Validate that a value is one of the allowed options
-    pub fn one_of(field: &str, value: &str, allowed: &[&str]) -> FieldValidation {
+    pub fn one_of(
+        field: &str,
+        value: &str,
+        allowed: &[&str],
+    ) -> FieldValidation {
         if allowed.contains(&value) {
             FieldValidation::success(field)
         } else {
-            FieldValidation::failure(
-                field,
-                &format!("Value must be one of: {}", allowed.join(", "))
-            )
+            FieldValidation::failure(field, &format!("Value must be one of: {}", allowed.join(", ")))
         }
     }
 }
@@ -225,13 +254,19 @@ impl ValidationBuilder {
     }
 
     /// Add a validation result
-    pub fn push(mut self, validation: FieldValidation) -> Self {
+    pub fn push(
+        mut self,
+        validation: FieldValidation,
+    ) -> Self {
         self.result.add_field(validation);
         self
     }
 
     /// Add multiple validation results
-    pub fn add_all(mut self, validations: Vec<FieldValidation>) -> Self {
+    pub fn add_all(
+        mut self,
+        validations: Vec<FieldValidation>,
+    ) -> Self {
         for validation in validations {
             self.result.add_field(validation);
         }

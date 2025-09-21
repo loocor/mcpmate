@@ -19,8 +19,8 @@ use crate::{
     },
     common::server::ServerType,
     core::{
-        pool::UpstreamConnection,
         foundation::types::{ConnectionStatus, ErrorType},
+        pool::UpstreamConnection,
     },
 };
 
@@ -114,6 +114,7 @@ async fn check_health_core(
 
     // Create message based on health status
     let message = match conn.status {
+        ConnectionStatus::Idle => "Instance is idle (placeholder, not connected)".to_string(),
         ConnectionStatus::Ready => "Instance is ready and healthy".to_string(),
         ConnectionStatus::Busy => "Instance is busy processing a request".to_string(),
         ConnectionStatus::Initializing => "Instance is initializing".to_string(),

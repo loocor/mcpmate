@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing;
 
-use crate::core::{pool::types::UpstreamConnection, models::Config};
+use crate::core::{models::Config, pool::types::UpstreamConnection};
 
 /// Manager for handling connection pool configuration updates
 ///
@@ -22,11 +22,6 @@ use crate::core::{pool::types::UpstreamConnection, models::Config};
 pub struct PoolConfigManager;
 
 impl PoolConfigManager {
-    /// Create a new pool configuration manager
-    pub fn new() -> Self {
-        Self
-    }
-
     /// Update the connection pool configuration
     ///
     /// This method handles the complex logic of updating a connection pool's configuration:

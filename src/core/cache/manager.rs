@@ -138,8 +138,12 @@ impl RedbCacheManager {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Create database
-        let db = Arc::new(Database::create(&db_path)?);
+        // Create or open database (Redb::create fails when file exists, so fall back to open)
+        let db = if db_path.exists() {
+            Arc::new(Database::open(&db_path)?)
+        } else {
+            Arc::new(Database::create(&db_path)?)
+        };
 
         // Initialize database schema
         Self::initialize_schema(&db)?;

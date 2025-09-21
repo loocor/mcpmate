@@ -1,8 +1,8 @@
 //! Domain model - Pure business logic without external dependencies
-//! 
+//!
 //! Defines core domain concepts for unified capability queries, including query parameters, results, error types, etc.
 //! Follows domain-driven design principles to ensure business logic purity and testability.
-//! 
+//!
 //! NOTE: This module defines its own domain types as specified in the refactoring guide.
 //! Integration with existing code is done through adapter pattern, not through type re-export.
 
@@ -30,30 +30,37 @@ impl CapabilityType {
             CapabilityType::ResourceTemplates => "resource_templates",
         }
     }
-    
+
     /// Convert to existing capability type
     pub fn to_existing(&self) -> crate::api::handlers::server::capability::CapabilityType {
         match self {
             CapabilityType::Tools => crate::api::handlers::server::capability::CapabilityType::Tools,
             CapabilityType::Resources => crate::api::handlers::server::capability::CapabilityType::Resources,
             CapabilityType::Prompts => crate::api::handlers::server::capability::CapabilityType::Prompts,
-            CapabilityType::ResourceTemplates => crate::api::handlers::server::capability::CapabilityType::ResourceTemplates,
+            CapabilityType::ResourceTemplates => {
+                crate::api::handlers::server::capability::CapabilityType::ResourceTemplates
+            }
         }
     }
-    
+
     /// Convert from existing capability type
     pub fn from_existing(existing: crate::api::handlers::server::capability::CapabilityType) -> Self {
         match existing {
             crate::api::handlers::server::capability::CapabilityType::Tools => CapabilityType::Tools,
             crate::api::handlers::server::capability::CapabilityType::Resources => CapabilityType::Resources,
             crate::api::handlers::server::capability::CapabilityType::Prompts => CapabilityType::Prompts,
-            crate::api::handlers::server::capability::CapabilityType::ResourceTemplates => CapabilityType::ResourceTemplates,
+            crate::api::handlers::server::capability::CapabilityType::ResourceTemplates => {
+                CapabilityType::ResourceTemplates
+            }
         }
     }
 }
 
 impl fmt::Display for CapabilityType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
 }
@@ -78,8 +85,7 @@ impl QueryContext {
 }
 
 /// Data freshness requirements - mapped to existing FreshnessLevel
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FreshnessRequirement {
     /// Prefer cache, query runtime when cache misses
     #[default]
@@ -90,7 +96,6 @@ pub enum FreshnessRequirement {
     CacheOnly,
 }
 
-
 impl FreshnessRequirement {
     /// Convert to existing cache FreshnessLevel
     pub fn to_cache_level(&self) -> crate::core::cache::FreshnessLevel {
@@ -100,12 +105,14 @@ impl FreshnessRequirement {
             FreshnessRequirement::CacheOnly => crate::core::cache::FreshnessLevel::Cached,
         }
     }
-    
+
     /// Convert from existing RefreshStrategy
     pub fn from_refresh_strategy(strategy: crate::api::handlers::server::common::RefreshStrategy) -> Self {
         match strategy {
             crate::api::handlers::server::common::RefreshStrategy::CacheFirst => FreshnessRequirement::CachePreferred,
-            crate::api::handlers::server::common::RefreshStrategy::RefreshIfStale => FreshnessRequirement::CachePreferred,
+            crate::api::handlers::server::common::RefreshStrategy::RefreshIfStale => {
+                FreshnessRequirement::CachePreferred
+            }
             crate::api::handlers::server::common::RefreshStrategy::Force => FreshnessRequirement::ForceRefresh,
         }
     }
@@ -116,22 +123,29 @@ pub struct Adapter;
 
 impl Adapter {
     /// Convert from existing InspectParams to domain types
-    pub fn domain_freshness_from_params(params: &crate::api::handlers::server::common::InspectParams) -> FreshnessRequirement {
-        params.refresh
+    pub fn domain_freshness_from_params(
+        params: &crate::api::handlers::server::common::InspectParams
+    ) -> FreshnessRequirement {
+        params
+            .refresh
             .map(FreshnessRequirement::from_refresh_strategy)
             .unwrap_or(FreshnessRequirement::CachePreferred)
     }
-    
+
     /// Convert domain capability type to existing
-    pub fn existing_capability_type(domain_type: CapabilityType) -> crate::api::handlers::server::capability::CapabilityType {
+    pub fn existing_capability_type(
+        domain_type: CapabilityType
+    ) -> crate::api::handlers::server::capability::CapabilityType {
         domain_type.to_existing()
     }
-    
+
     /// Convert existing capability type to domain
-    pub fn domain_capability_type(existing_type: crate::api::handlers::server::capability::CapabilityType) -> CapabilityType {
+    pub fn domain_capability_type(
+        existing_type: crate::api::handlers::server::capability::CapabilityType
+    ) -> CapabilityType {
         CapabilityType::from_existing(existing_type)
     }
-    
+
     /// Convert cached tool to domain tool capability
     pub fn convert_tool_to_domain(tool: &crate::core::cache::CachedToolInfo) -> ToolCapability {
         ToolCapability {
@@ -142,7 +156,7 @@ impl Adapter {
             enabled: tool.enabled,
         }
     }
-    
+
     /// Convert cached resource to domain resource capability
     pub fn convert_resource_to_domain(resource: &crate::core::cache::CachedResourceInfo) -> ResourceCapability {
         ResourceCapability {
@@ -154,16 +168,22 @@ impl Adapter {
             enabled: resource.enabled,
         }
     }
-    
+
     /// Convert cached prompt to domain prompt capability
     pub fn convert_prompt_to_domain(prompt: &crate::core::cache::CachedPromptInfo) -> PromptCapability {
         // Convert cache PromptArgument to domain PromptArgument
-        let domain_arguments = Some(prompt.arguments.iter().map(|arg| PromptArgument {
-            name: arg.name.clone(),
-            description: arg.description.clone(),
-            required: Some(arg.required),
-        }).collect::<Vec<PromptArgument>>());
-        
+        let domain_arguments = Some(
+            prompt
+                .arguments
+                .iter()
+                .map(|arg| PromptArgument {
+                    name: arg.name.clone(),
+                    description: arg.description.clone(),
+                    required: Some(arg.required),
+                })
+                .collect::<Vec<PromptArgument>>(),
+        );
+
         PromptCapability {
             name: prompt.name.clone(),
             description: prompt.description.clone(),
@@ -172,9 +192,11 @@ impl Adapter {
             enabled: prompt.enabled,
         }
     }
-    
+
     /// Convert cached resource template to domain resource template capability
-    pub fn convert_template_to_domain(template: &crate::core::cache::CachedResourceTemplateInfo) -> ResourceTemplateCapability {
+    pub fn convert_template_to_domain(
+        template: &crate::core::cache::CachedResourceTemplateInfo
+    ) -> ResourceTemplateCapability {
         ResourceTemplateCapability {
             uri_template: template.uri_template.clone(),
             name: template.name.clone(),
@@ -222,13 +244,19 @@ impl CapabilityQuery {
     }
 
     /// Set freshness requirements
-    pub fn with_freshness(mut self, freshness: FreshnessRequirement) -> Self {
+    pub fn with_freshness(
+        mut self,
+        freshness: FreshnessRequirement,
+    ) -> Self {
         self.freshness = freshness;
         self
     }
 
     /// Set timeout duration
-    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+    pub fn with_timeout(
+        mut self,
+        timeout: std::time::Duration,
+    ) -> Self {
         self.timeout = timeout;
         self
     }
@@ -287,7 +315,11 @@ pub struct ResponseMetadata {
 
 impl ResponseMetadata {
     /// 创建缓存命中的元数据
-    pub fn cache_hit(source: DataSource, duration: std::time::Duration, count: usize) -> Self {
+    pub fn cache_hit(
+        source: DataSource,
+        duration: std::time::Duration,
+        count: usize,
+    ) -> Self {
         Self {
             cache_hit: true,
             source,
@@ -298,7 +330,10 @@ impl ResponseMetadata {
     }
 
     /// 创建运行时查询的元数据
-    pub fn runtime(duration: std::time::Duration, count: usize) -> Self {
+    pub fn runtime(
+        duration: std::time::Duration,
+        count: usize,
+    ) -> Self {
         Self {
             cache_hit: false,
             source: DataSource::Runtime,
@@ -440,9 +475,7 @@ impl CapabilityError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            CapabilityError::CacheError(_) | 
-            CapabilityError::RuntimeError(_) |
-            CapabilityError::Timeout(_)
+            CapabilityError::CacheError(_) | CapabilityError::RuntimeError(_) | CapabilityError::Timeout(_)
         )
     }
 
@@ -504,7 +537,7 @@ impl ConnectionMode {
             affinity_key: AffinityKey::Default,
         }
     }
-    
+
     /// Create per-client mode (default for stdio)
     pub fn per_client(client_id: String) -> Self {
         Self {
@@ -512,7 +545,7 @@ impl ConnectionMode {
             affinity_key: AffinityKey::PerClient(client_id),
         }
     }
-    
+
     /// Create per-session mode
     pub fn per_session(session_id: String) -> Self {
         Self {
@@ -520,7 +553,7 @@ impl ConnectionMode {
             affinity_key: AffinityKey::PerSession(session_id),
         }
     }
-    
+
     /// Get string representation of affinity key for indexing
     pub fn affinity_key_string(&self) -> String {
         match &self.affinity_key {
@@ -541,7 +574,11 @@ pub struct CacheKey {
 
 impl CacheKey {
     /// Create from query parameters
-    pub fn from_query(server_id: &str, capability_type: CapabilityType, freshness: FreshnessRequirement) -> Self {
+    pub fn from_query(
+        server_id: &str,
+        capability_type: CapabilityType,
+        freshness: FreshnessRequirement,
+    ) -> Self {
         Self {
             server_id: server_id.to_string(),
             capability_type,
@@ -579,4 +616,3 @@ impl CacheEntry {
         }
     }
 }
-

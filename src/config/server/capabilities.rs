@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::core::capability::naming::{generate_unique_name, NamingKind};
+use crate::core::capability::naming::{NamingKind, generate_unique_name};
 use std::sync::Arc;
 
 use crate::common::{capability::CapabilityToken, server::ServerType};
@@ -39,9 +39,7 @@ pub struct CapabilitySnapshot {
 }
 
 /// Discover capabilities from an existing upstream connection (API temporary instance)
-pub async fn discover_from_connection(
-    conn: &crate::core::pool::UpstreamConnection
-) -> Result<CapabilitySnapshot> {
+pub async fn discover_from_connection(conn: &crate::core::pool::UpstreamConnection) -> Result<CapabilitySnapshot> {
     let mut snap = CapabilitySnapshot::default();
 
     // Tools
@@ -371,11 +369,16 @@ pub async fn store_dual_write(
     redb: &RedbCacheManager,
     server_id: &str,
     server_name: &str,
-    tools: Vec<CachedToolInfo>,
+    mut tools: Vec<CachedToolInfo>,
     resources: Vec<CachedResourceInfo>,
     prompts: Vec<CachedPromptInfo>,
     templates: Vec<CachedResourceTemplateInfo>,
 ) -> Result<()> {
+    if !tools.is_empty() {
+        crate::config::server::tools::assign_unique_names_to_cached_tools(pool, server_id, server_name, &mut tools)
+            .await?;
+    }
+
     // REDB
     store_redb_snapshot(
         redb,

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use tracing;
 
 use crate::{
-    common::profile::ProfileType,
     common::paths::global_paths,
+    common::profile::ProfileType,
     config::{import, initialization, models, profile, server},
     core::capability::naming,
 };

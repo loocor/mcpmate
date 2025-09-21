@@ -2,17 +2,10 @@
 //!
 //! This module handles the startup and background connection management using core modules.
 
+use super::{Args, ProxyServer};
+use crate::core::{pool::UpstreamConnectionPool, transport::TransportType};
 use anyhow::Result;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-
-use super::{Args, ProxyServer};
-
-// Import required types and modules from core and other modules
-use crate::core::{
-    foundation::types::ConnectionStatus, // connection status
-    pool::UpstreamConnectionPool,        // connection pool
-    transport::TransportType,            // transport type
-};
 
 /// Start background connections to all configured servers using core connection pool
 pub async fn start_background_connections(
@@ -23,44 +16,33 @@ pub async fn start_background_connections(
     let connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>> = Arc::clone(&proxy.connection_pool);
     let _proxy_arc_clone = Arc::clone(&proxy_arc);
 
-    // Connect to all servers in the background
+    // No eager connections at startup; keep instances registered as Idle placeholders.
+    // Background task: delegate prewarm to capability service
     tokio::spawn(async move {
-        // Wait for a short time to ensure the transport servers are started
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // Connect to all servers using high-performance parallel method
-        if let Err(e) = UpstreamConnectionPool::trigger_connect_all_parallel_new(connection_pool.clone()).await {
-            tracing::error!("Error in parallel connection process: {}", e);
+        // Log current registered servers as placeholders
+        {
+            let pool = connection_pool.lock().await;
+            let enabled_servers_count = pool.connections.len();
+            tracing::info!(
+                "Startup: {} enabled servers registered as placeholders (Idle). Will connect on demand.",
+                enabled_servers_count
+            );
         }
 
-        // Wait a short time for async event processing to complete
-        // This ensures connection status updates are processed before counting
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Get pool reference for status reporting
-        let pool = connection_pool.lock().await;
-
-        // Record the connection status
-        let connected_count = pool
-            .connections
-            .values()
-            .filter(|instances| {
-                instances
-                    .values()
-                    .any(|conn| matches!(conn.status, ConnectionStatus::Ready))
-            })
-            .count();
-
-        // Use the number of enabled servers in connection pool as the total
-        // This gives a more accurate representation of enabled vs connected servers
-        let enabled_servers_count = pool.connections.len();
-
-        // Display enabled server connection status
-        tracing::info!(
-            "Connected to {}/{} enabled upstream servers",
-            connected_count,
-            enabled_servers_count
-        );
+        if let Some(db) = proxy_arc.database.clone() {
+            let service = crate::core::capability::CapabilityService::new(
+                proxy_arc.redb_cache.clone(),
+                connection_pool.clone(),
+                db.clone(),
+            );
+            if let Err(e) = service.prewarm_enabled_servers_if_cache_miss().await {
+                tracing::warn!(error = %e, "Capability prewarm task failed");
+            }
+        } else {
+            tracing::debug!("Database not set on proxy; skipping cache prewarm");
+        }
     });
 
     Ok(())

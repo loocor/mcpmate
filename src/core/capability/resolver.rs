@@ -27,7 +27,7 @@
 
 use anyhow::{Result, anyhow};
 use once_cell::sync::Lazy;
-// removed direct sqlx usage after delegating to ServerMappingManager
+use sqlx::Row;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
@@ -41,11 +41,12 @@ use crate::config::database::Database;
 /// Global database instance for server resolution
 static GLOBAL_DB: OnceLock<Arc<Database>> = OnceLock::new();
 
-/// Initialize global resolver (called once during startup)
-pub fn init(database: Arc<Database>) -> Result<()> {
+/// Initialize resolver and build in-memory mappings (id<->name)
+pub async fn init(database: Arc<Database>) -> Result<()> {
     GLOBAL_DB
-        .set(database)
-        .map_err(|_| anyhow!("Resolver already initialized"))
+        .set(database.clone())
+        .map_err(|_| anyhow!("Resolver already initialized"))?;
+    refresh_from_database(&database).await
 }
 
 // Removed db_pool; resolver now delegates to in-memory mapping manager
@@ -71,26 +72,14 @@ struct ResolverCache {
 // Public API - Strict Mode Only
 // ================================
 
-/// Convert server_name to server_id
-///
-/// Returns Ok(Some(server_id)) if found, Ok(None) if not found, Err(_) if database error.
-/// Now delegates to ServerMappingManager for better performance.
+/// Convert server_name to server_id (from in-memory cache)
 pub async fn to_id(server_name: &str) -> Result<Option<String>> {
-    // Delegate to the global server mapping manager for zero-I/O lookup
-    Ok(crate::core::capability::global_server_mapping_manager()
-        .get_id_by_name(server_name)
-        .await)
+    Ok(id_by_name(server_name).await)
 }
 
-/// Convert server_id to server_name
-///
-/// Returns Ok(Some(server_name)) if found, Ok(None) if not found, Err(_) if database error.
-/// Now delegates to ServerMappingManager for better performance.
+/// Convert server_id to server_name (from in-memory cache)
 pub async fn to_name(server_id: &str) -> Result<Option<String>> {
-    // Delegate to the global server mapping manager for zero-I/O lookup
-    Ok(crate::core::capability::global_server_mapping_manager()
-        .get_name_by_id(server_id)
-        .await)
+    Ok(name_by_id(server_id).await)
 }
 
 /// Clear cache (for testing or configuration changes)
@@ -98,4 +87,56 @@ pub async fn clear_cache() {
     let mut cache = CACHE.write().await;
     cache.name_to_id.clear();
     cache.id_to_name.clear();
+}
+
+/// Get server_id by server_name (pure cache, non-fallible)
+pub async fn id_by_name(server_name: &str) -> Option<String> {
+    let cache = CACHE.read().await;
+    cache.name_to_id.get(server_name).cloned()
+}
+
+/// Get server_name by server_id (pure cache, non-fallible)
+pub async fn name_by_id(server_id: &str) -> Option<String> {
+    let cache = CACHE.read().await;
+    cache.id_to_name.get(server_id).cloned()
+}
+
+/// Refresh mappings from database; rebuilds both directions atomically
+pub async fn refresh_from_database(database: &Database) -> Result<()> {
+    let rows = sqlx::query("SELECT id, name FROM server_config WHERE id IS NOT NULL AND name IS NOT NULL")
+        .fetch_all(&database.pool)
+        .await?;
+
+    let mut name_to_id: HashMap<String, String> = HashMap::new();
+    let mut id_to_name: HashMap<String, String> = HashMap::new();
+
+    for row in rows {
+        let id: String = row.try_get(0)?;
+        let name: String = row.try_get(1)?;
+        id_to_name.insert(id.clone(), name.clone());
+        name_to_id.insert(name, id);
+    }
+
+    let mut cache = CACHE.write().await;
+    cache.name_to_id = name_to_id;
+    cache.id_to_name = id_to_name;
+    Ok(())
+}
+
+/// Upsert a mapping entry into cache
+pub async fn upsert(
+    server_id: &str,
+    server_name: &str,
+) {
+    let mut cache = CACHE.write().await;
+    cache.id_to_name.insert(server_id.to_string(), server_name.to_string());
+    cache.name_to_id.insert(server_name.to_string(), server_id.to_string());
+}
+
+/// Remove a mapping by server_id
+pub async fn remove_by_id(server_id: &str) {
+    let mut cache = CACHE.write().await;
+    if let Some(name) = cache.id_to_name.remove(server_id) {
+        cache.name_to_id.remove(&name);
+    }
 }

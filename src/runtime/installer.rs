@@ -270,9 +270,7 @@ impl RuntimeInstaller {
             }
         }
 
-        Err(anyhow::anyhow!(
-            "Bun executable not found in extracted files"
-        ))
+        Err(anyhow::anyhow!("Bun executable not found in extracted files"))
     }
 
     /// Find uv executable in extracted directory
@@ -290,9 +288,7 @@ impl RuntimeInstaller {
             }
         }
 
-        Err(anyhow::anyhow!(
-            "UV executable not found in extracted files"
-        ))
+        Err(anyhow::anyhow!("UV executable not found in extracted files"))
     }
 
     /// Find uvx executable in extracted directory
@@ -310,9 +306,7 @@ impl RuntimeInstaller {
             }
         }
 
-        Err(anyhow::anyhow!(
-            "UVX executable not found in extracted files"
-        ))
+        Err(anyhow::anyhow!("UVX executable not found in extracted files"))
     }
 }
 

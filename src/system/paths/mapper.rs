@@ -16,10 +16,7 @@ impl PathMapper {
 
         // Add user home directory
         if let Some(home_dir) = dirs::home_dir() {
-            variables.insert(
-                "user_home".to_string(),
-                home_dir.to_string_lossy().to_string(),
-            );
+            variables.insert("user_home".to_string(), home_dir.to_string_lossy().to_string());
         }
 
         // Add other common paths based on platform
@@ -35,10 +32,7 @@ impl PathMapper {
                 );
                 variables.insert(
                     "preferences".to_string(),
-                    home_dir
-                        .join("Library/Preferences")
-                        .to_string_lossy()
-                        .to_string(),
+                    home_dir.join("Library/Preferences").to_string_lossy().to_string(),
                 );
             }
         }
@@ -46,10 +40,7 @@ impl PathMapper {
         #[cfg(target_os = "windows")]
         {
             if let Some(app_data) = dirs::config_dir() {
-                variables.insert(
-                    "app_data".to_string(),
-                    app_data.to_string_lossy().to_string(),
-                );
+                variables.insert("app_data".to_string(), app_data.to_string_lossy().to_string());
             }
             if let Some(local_app_data) = dirs::data_local_dir() {
                 variables.insert(
@@ -62,16 +53,10 @@ impl PathMapper {
         #[cfg(target_os = "linux")]
         {
             if let Some(config_dir) = dirs::config_dir() {
-                variables.insert(
-                    "config_dir".to_string(),
-                    config_dir.to_string_lossy().to_string(),
-                );
+                variables.insert("config_dir".to_string(), config_dir.to_string_lossy().to_string());
             }
             if let Some(data_dir) = dirs::data_dir() {
-                variables.insert(
-                    "data_dir".to_string(),
-                    data_dir.to_string_lossy().to_string(),
-                );
+                variables.insert("data_dir".to_string(), data_dir.to_string_lossy().to_string());
             }
         }
 
@@ -121,10 +106,7 @@ impl PathMapper {
 
         // Check if there are any unresolved variables
         if resolved.contains("{{") && resolved.contains("}}") {
-            return Err(anyhow::anyhow!(
-                "Unresolved variables in path template: {}",
-                template
-            ));
+            return Err(anyhow::anyhow!("Unresolved variables in path template: {}", template));
         }
 
         // After template variable replacement, also handle tilde expansion

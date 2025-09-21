@@ -2,18 +2,15 @@
 //!
 //! This module handles the setup and initialization of the proxy server using core modules.
 
-use anyhow::Result;
-use std::sync::Arc;
-use tracing_subscriber::{self, EnvFilter};
-
 use super::{Args, ProxyServer, args::StartupMode};
-
-// Import required types and modules from core and other modules
 use crate::{
     api::handlers::system,
     config::database::Database,
     core::{capability::naming, foundation::loader},
 };
+use anyhow::Result;
+use std::sync::Arc;
+use tracing_subscriber::{self, EnvFilter};
 
 /// Setup logging based on command line arguments
 /// This function is safe to call multiple times - it will only initialize once

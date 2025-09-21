@@ -2,28 +2,62 @@
 // Manages global tool name mappings for servers
 
 use anyhow::{Context, Result};
+use rmcp::model::Tool;
 use sqlx::{Pool, Sqlite};
 
-use crate::{config::models::ServerTool, core::capability::naming::{ensure_unique_name, NamingKind}, generate_id};
+use crate::{
+    config::models::ServerTool,
+    core::cache::CachedToolInfo,
+    core::capability::naming::{NamingKind, ensure_unique_name, strip_server_prefix},
+    generate_id,
+};
+
+fn normalize_tool_name(
+    server_name: &str,
+    name: String,
+) -> String {
+    strip_server_prefix(NamingKind::Tool, server_name, &name).unwrap_or(name)
+}
 
 /// Add or update a server tool mapping
+#[derive(Debug, Clone)]
+pub struct ServerToolUpsertResult {
+    pub tool_id: String,
+    pub unique_name: String,
+}
+
 pub async fn upsert_server_tool(
     pool: &Pool<Sqlite>,
     server_id: &str,
     server_name: &str,
     tool_name: &str,
     description: Option<&str>,
-) -> Result<String> {
+) -> Result<ServerToolUpsertResult> {
     tracing::debug!(
         "Upserting server tool mapping: server_id={}, tool_name={}",
         server_id,
         tool_name
     );
 
-    // Compute collision-free unique name via naming module
     let unique_name = ensure_unique_name(NamingKind::Tool, server_id, server_name, tool_name)
         .await
         .context("Failed to ensure unique name for tool")?;
+
+    // Remove any stale duplicates that may have been created by legacy naming logic
+    sqlx::query(
+        r#"
+        DELETE FROM server_tools
+        WHERE server_id = ?
+          AND tool_name = ?
+          AND unique_name != ?
+        "#,
+    )
+    .bind(server_id)
+    .bind(&unique_name)
+    .bind(&unique_name)
+    .execute(pool)
+    .await
+    .context("Failed to remove duplicate server tool entries")?;
 
     // Check if the tool already exists
     let existing_id =
@@ -52,7 +86,10 @@ pub async fn upsert_server_tool(
         .context("Failed to update server tool")?;
 
         tracing::debug!("Updated server tool mapping: id={}, unique_name={}", id, unique_name);
-        Ok(id)
+        Ok(ServerToolUpsertResult {
+            tool_id: id,
+            unique_name,
+        })
     } else {
         // Insert new tool
         let tool_id = generate_id!("stool");
@@ -78,7 +115,7 @@ pub async fn upsert_server_tool(
             tool_id,
             unique_name
         );
-        Ok(tool_id)
+        Ok(ServerToolUpsertResult { tool_id, unique_name })
     }
 }
 
@@ -165,8 +202,10 @@ pub async fn batch_upsert_server_tools(
     let mut tool_ids = Vec::new();
 
     for (tool_name, description) in tools {
-        let tool_id = upsert_server_tool(pool, server_id, server_name, tool_name, description.as_deref()).await?;
-        tool_ids.push(tool_id);
+        let normalized_name = normalize_tool_name(server_name, tool_name.to_string());
+        let outcome =
+            upsert_server_tool(pool, server_id, server_name, &normalized_name, description.as_deref()).await?;
+        tool_ids.push(outcome.tool_id);
     }
 
     tracing::debug!(
@@ -176,4 +215,81 @@ pub async fn batch_upsert_server_tools(
     );
 
     Ok(tool_ids)
+}
+
+/// Assign collision-free unique names to the provided tools, updating the server_tools mapping as needed.
+pub async fn assign_unique_names_to_tools(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    tools: &mut [Tool],
+) -> Result<()> {
+    for tool in tools.iter_mut() {
+        let mut original_name = normalize_tool_name(server_name, tool.name.to_string());
+
+        if let Some(existing) = get_server_tool_by_unique_name(pool, &tool.name).await? {
+            if existing.server_id == server_id {
+                original_name = normalize_tool_name(server_name, existing.tool_name.clone());
+            }
+        }
+        let description = tool.description.as_ref().map(|d| d.as_ref());
+        let outcome = upsert_server_tool(pool, server_id, server_name, &original_name, description).await?;
+        tool.name = std::borrow::Cow::Owned(outcome.unique_name);
+    }
+
+    Ok(())
+}
+
+/// Assign collision-free unique names to cached tool snapshots and update their stored metadata.
+pub async fn assign_unique_names_to_cached_tools(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    tools: &mut [CachedToolInfo],
+) -> Result<()> {
+    for tool in tools.iter_mut() {
+        let mut original_name = normalize_tool_name(server_name, tool.name.clone());
+
+        if let Some(unique_name) = tool.unique_name.as_ref() {
+            if let Some(existing) = get_server_tool_by_unique_name(pool, unique_name).await? {
+                if existing.server_id == server_id {
+                    original_name = normalize_tool_name(server_name, existing.tool_name.clone());
+                }
+            }
+        } else if let Some(existing) = get_server_tool_by_unique_name(pool, &tool.name).await? {
+            if existing.server_id == server_id {
+                original_name = normalize_tool_name(server_name, existing.tool_name.clone());
+            }
+        }
+
+        let outcome = upsert_server_tool(
+            pool,
+            server_id,
+            server_name,
+            &original_name,
+            tool.description.as_deref(),
+        )
+        .await?;
+        tool.name = original_name;
+        tool.unique_name = Some(outcome.unique_name);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_tool_name;
+
+    #[test]
+    fn normalize_tool_name_strips_prefix() {
+        let result = normalize_tool_name("Gitmcp", "gitmcp_fetch".to_string());
+        assert_eq!(result, "fetch");
+    }
+
+    #[test]
+    fn normalize_tool_name_leaves_unprefixed() {
+        let result = normalize_tool_name("Playwright", "browser_click".to_string());
+        assert_eq!(result, "browser_click");
+    }
 }

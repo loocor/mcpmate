@@ -317,7 +317,7 @@ impl UpstreamConnectionPool {
 
         for (server_name, instances) in &pool_guard.connections {
             for (instance_id, conn) in instances {
-                // Monitor Ready, Error, and persistent Busy connections
+                // Monitor Ready, Error, Shutdown, and persistent Busy connections
                 match &conn.status {
                     ConnectionStatus::Ready => {
                         // Check if the service is still alive
@@ -343,6 +343,29 @@ impl UpstreamConnectionPool {
                             );
                             reconnects.push((server_name.clone(), instance_id.clone()));
                         }
+                    }
+                    ConnectionStatus::Shutdown => {
+                        // Skip if server is not part of active configuration (e.g., recently removed)
+                        if !pool_guard.config.mcp_servers.contains_key(server_name) {
+                            continue;
+                        }
+
+                        // Respect active backoff window to avoid spamming reconnect attempts
+                        if let Some(remaining) = pool_guard.remaining_backoff(server_name) {
+                            tracing::debug!(
+                                "Health check: '{}' currently backing off for {:.1}s, skipping reconnect",
+                                server_name,
+                                remaining.as_secs_f32()
+                            );
+                            continue;
+                        }
+
+                        tracing::debug!(
+                            "Health check: Scheduling reconnect for '{}' instance '{}' in Shutdown state",
+                            server_name,
+                            instance_id
+                        );
+                        reconnects.push((server_name.clone(), instance_id.clone()));
                     }
                     ConnectionStatus::Disabled(_) => {
                         // Skip disabled servers completely

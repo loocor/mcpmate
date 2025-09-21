@@ -31,11 +31,7 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Syste
     }
 
     // Use lightweight server status summary to avoid heavy cloning
-    let summary = match tokio::time::timeout(
-        std::time::Duration::from_millis(500),
-        state.connection_pool.lock(),
-    )
-    .await
+    let summary = match tokio::time::timeout(std::time::Duration::from_millis(500), state.connection_pool.lock()).await
     {
         Ok(pool) => pool.get_server_status_summary(),
         Err(_) => {

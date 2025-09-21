@@ -5,7 +5,11 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::{config::models::ProfileToolWithDetails, generate_id};
+use crate::{
+    config::models::ProfileToolWithDetails,
+    core::capability::naming::{NamingKind, strip_server_prefix},
+    generate_id,
+};
 
 /// Tool status information for API responses
 #[derive(Debug, Clone)]
@@ -204,15 +208,40 @@ pub async fn add_tool_to_profile(
         .await
         .context("Failed to get server name")?;
 
-    let server_tool_id = crate::config::server::tools::upsert_server_tool(
-        pool,
-        server_id,
-        &server_name,
-        tool_name,
-        None, // description will be updated during tool sync
-    )
-    .await
-    .context("Failed to upsert server tool")?;
+    let original_tool_name = if let Some(existing) =
+        crate::config::server::tools::get_server_tool_by_unique_name(pool, tool_name)
+            .await
+            .context("Failed to lookup tool by unique name")?
+    {
+        if existing.server_id == server_id {
+            existing.tool_name
+        } else {
+            tool_name.to_string()
+        }
+    } else if let Some(stripped) = strip_server_prefix(NamingKind::Tool, &server_name, tool_name) {
+        stripped
+    } else {
+        tool_name.to_string()
+    };
+
+    let server_tool_id = if let Some(existing_tool) =
+        crate::config::server::tools::get_server_tool(pool, server_id, &original_tool_name)
+            .await
+            .context("Failed to check existing server tool")?
+    {
+        existing_tool.id
+    } else {
+        crate::config::server::tools::upsert_server_tool(
+            pool,
+            server_id,
+            &server_name,
+            &original_tool_name,
+            None, // description will be updated during tool sync
+        )
+        .await
+        .context("Failed to upsert server tool")?
+        .tool_id
+    };
 
     // Check if the tool already exists in the profile
     let existing_enabled = sqlx::query_scalar::<_, bool>(

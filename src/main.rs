@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     setup_logging(&args)?;
 
     // Initialize metrics reporting
-    mcpmate::core::instrumentation::initialize_metrics_reporting();
+    mcpmate::core::foundation::monitor::initialize_metrics_reporting();
 
     // Setup database
     let db = setup_database().await?;

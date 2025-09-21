@@ -141,11 +141,7 @@ impl SyncHelper {
             }
         }
 
-        tracing::debug!(
-            "Found {} profile for server '{}'",
-            context.profile_ids.len(),
-            server_id
-        );
+        tracing::debug!("Found {} profile for server '{}'", context.profile_ids.len(), server_id);
 
         Ok(context)
     }

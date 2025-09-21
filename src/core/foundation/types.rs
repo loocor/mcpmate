@@ -7,6 +7,8 @@ use std::fmt;
 /// connection status of an upstream server
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionStatus {
+    /// server is registered but not yet connected (lazy placeholder)
+    Idle,
     /// server is initializing or in the process of connecting
     Initializing,
     /// server is connected and ready to receive requests
@@ -118,6 +120,7 @@ impl fmt::Display for ConnectionStatus {
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
         match self {
+            ConnectionStatus::Idle => write!(f, "Idle"),
             ConnectionStatus::Initializing => write!(f, "Initializing"),
             ConnectionStatus::Ready => write!(f, "Ready"),
             ConnectionStatus::Busy => write!(f, "Busy"),
@@ -134,13 +137,16 @@ impl ConnectionStatus {
     pub fn can_connect(&self) -> bool {
         matches!(
             self,
-            ConnectionStatus::Shutdown | ConnectionStatus::Error(_)
+            ConnectionStatus::Idle | ConnectionStatus::Shutdown | ConnectionStatus::Error(_)
         )
     }
 
     /// check if the connection should be monitored by health check
     pub fn should_monitor(&self) -> bool {
-        matches!(self, ConnectionStatus::Ready | ConnectionStatus::Error(_))
+        matches!(
+            self,
+            ConnectionStatus::Ready | ConnectionStatus::Error(_) | ConnectionStatus::Idle
+        )
     }
 
     /// check if the connection is disabled
@@ -156,20 +162,17 @@ impl ConnectionStatus {
     /// get the list of allowed operations in this state
     pub fn allowed_operations(&self) -> Vec<ConnectionOperation> {
         match self {
+            Self::Idle => {
+                vec![ConnectionOperation::Connect]
+            }
             Self::Initializing => {
                 vec![ConnectionOperation::Cancel, ConnectionOperation::Disconnect]
             }
             Self::Ready => {
-                vec![
-                    ConnectionOperation::Disconnect,
-                    ConnectionOperation::Reconnect,
-                ]
+                vec![ConnectionOperation::Disconnect, ConnectionOperation::Reconnect]
             }
             Self::Busy => {
-                vec![
-                    ConnectionOperation::Disconnect,
-                    ConnectionOperation::Reconnect,
-                ]
+                vec![ConnectionOperation::Disconnect, ConnectionOperation::Reconnect]
             }
             Self::Error(_) => {
                 vec![

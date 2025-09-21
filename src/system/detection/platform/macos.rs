@@ -1,9 +1,7 @@
 // macOS-specific application detection
 
 use crate::system::detection::models::{DetectionMethod, DetectionResult};
-use crate::system::paths::platform::macos::{
-    get_applications_directories, get_user_applications_directories,
-};
+use crate::system::paths::platform::macos::{get_applications_directories, get_user_applications_directories};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;

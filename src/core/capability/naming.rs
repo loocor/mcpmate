@@ -24,8 +24,34 @@ fn pool() -> &'static Pool<Sqlite> {
         .expect("Naming store not initialized; call naming::initialize first")
 }
 
-fn normalize_server_name(server_name: &str) -> String {
+pub(crate) fn normalize_server_name(server_name: &str) -> String {
     server_name.to_lowercase().replace(' ', "_")
+}
+
+pub(crate) fn strip_server_prefix(
+    kind: NamingKind,
+    server_name: &str,
+    value: &str,
+) -> Option<String> {
+    let normalized = normalize_server_name(server_name);
+    match kind {
+        NamingKind::Tool | NamingKind::Prompt | NamingKind::ResourceTemplate => {
+            let prefix = format!("{normalized}_");
+            if value.len() > prefix.len() && value.to_ascii_lowercase().starts_with(&prefix) {
+                Some(value[prefix.len()..].to_string())
+            } else {
+                None
+            }
+        }
+        NamingKind::Resource => {
+            let prefix = format!("{normalized}:");
+            if value.len() > prefix.len() && value.to_ascii_lowercase().starts_with(&prefix) {
+                Some(value[prefix.len()..].to_string())
+            } else {
+                None
+            }
+        }
+    }
 }
 
 /// Capability kinds supported by the naming module.
@@ -112,7 +138,13 @@ pub async fn resolve_unique_name(
         .await
         .context(format!("Failed to resolve unique {:?}: {}", kind, unique))?;
 
-    row.ok_or_else(|| anyhow::anyhow!("Unique {:?} '{}' not found", kind, unique))
+    let (server_name, mut value) = row.ok_or_else(|| anyhow::anyhow!("Unique {:?} '{}' not found", kind, unique))?;
+
+    if let Some(stripped) = strip_server_prefix(kind, &server_name, &value) {
+        value = stripped;
+    }
+
+    Ok((server_name, value))
 }
 
 /// Ensure a unique identifier is collision-free. Non-tool kinds return generated names directly.

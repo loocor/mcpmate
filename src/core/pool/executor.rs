@@ -6,13 +6,17 @@
 //! - parallel connection capabilities
 //! - service lifecycle management
 
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use rmcp::{RoleClient, model::Tool, service::RunningService};
+use rmcp::{
+    RoleClient,
+    model::{ServerCapabilities, Tool},
+    service::RunningService,
+};
 use tracing;
 
-use super::UpstreamConnectionPool;
+use super::{FailureKind, UpstreamConnectionPool};
 use crate::{
     common::{
         server::{ServerType, TransportType},
@@ -103,7 +107,10 @@ impl ParallelConnectionManager {
 
 impl UpstreamConnectionPool {
     /// Build a human-readable server label: "<name> (<id>)" if DB is available, else just id
-    async fn server_label(&self, server_id: &str) -> String {
+    async fn server_label(
+        &self,
+        server_id: &str,
+    ) -> String {
         if let Some(db) = &self.database {
             if let Ok(name) = crate::config::operations::utils::get_server_name(&db.pool, server_id).await {
                 return format!("{} ({})", name, server_id);
@@ -299,6 +306,19 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
+        if let Some(remaining) = self.remaining_backoff(server_id) {
+            tracing::warn!(
+                server_id = server_id,
+                wait_secs = remaining.as_secs_f32(),
+                "Connection attempt blocked due to active backoff"
+            );
+            return Err(anyhow::anyhow!(
+                "Server '{}' is backing off for {:.1}s",
+                server_id,
+                remaining.as_secs_f32()
+            ));
+        }
+
         // Get server configuration (clone to avoid borrowing issues)
         let server_config = self
             .config
@@ -328,6 +348,10 @@ impl UpstreamConnectionPool {
                     server_id,
                     instance_id
                 );
+                self.clear_failure_state(server_id);
+                if let Ok(conn) = self.get_instance_mut(server_id, instance_id) {
+                    conn.reset_connection_attempts();
+                }
                 // Publish success event via unified outlet
                 self.publish_startup_event(server_id, true, None).await;
                 Ok(())
@@ -343,6 +367,8 @@ impl UpstreamConnectionPool {
                     instance_id,
                     e
                 );
+                let failure_reason = format!("{}", e);
+                self.register_failure(server_id, FailureKind::Connect, Some(failure_reason));
                 // Publish failure event via unified outlet
                 self.publish_startup_event(server_id, false, Some(format!("{}", e)))
                     .await;
@@ -403,15 +429,10 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        let server_config = self.config.mcp_servers.get(server_id).unwrap();
-
-        // Use the core transport module
-        let (service, tools, capabilities) = connect_sse_server(server_id, server_config).await?;
-
-        // Update connection with service
-        self.update_connection(server_id, instance_id, service, tools, capabilities);
-
-        Ok(())
+        self.connect_with_transport(server_id, instance_id, |id, config| async move {
+            connect_sse_server(&id, &config).await
+        })
+        .await
     }
 
     /// Wrapper for scheduler to trigger connection using the single executor
@@ -454,15 +475,26 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        let server_config = self.config.mcp_servers.get(server_id).unwrap();
+        self.connect_with_transport(server_id, instance_id, |id, config| async move {
+            connect_http_server(&id, &config, TransportType::StreamableHttp).await
+        })
+        .await
+    }
 
-        // Use the core transport module - default to StreamableHttp transport type
-        let (service, tools, capabilities) =
-            connect_http_server(server_id, server_config, TransportType::StreamableHttp).await?;
-
-        // Update connection with service
+    async fn connect_with_transport<F, Fut>(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+        connect_fn: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(String, crate::core::models::MCPServerConfig) -> Fut,
+        Fut: Future<Output = Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)>>,
+    {
+        let server_config = self.config.mcp_servers.get(server_id).unwrap().clone();
+        let server_id_owned = server_id.to_string();
+        let (service, tools, capabilities) = connect_fn(server_id_owned, server_config).await?;
         self.update_connection(server_id, instance_id, service, tools, capabilities);
-
         Ok(())
     }
 
@@ -681,10 +713,14 @@ impl UpstreamConnectionPool {
         supports_prompts: bool,
     ) {
         tokio::spawn(async move {
-            // Build flags: always TOOLS; include RESOURCES/PROMPTS when supported
+            // Build flags: always include tools; resources imply resource templates as well
             let mut flags = crate::core::pool::CapSyncFlags::TOOLS;
             if supports_resources {
-                flags = crate::core::pool::CapSyncFlags(flags.0 | crate::core::pool::CapSyncFlags::RESOURCES.0);
+                flags = crate::core::pool::CapSyncFlags(
+                    flags.0
+                        | crate::core::pool::CapSyncFlags::RESOURCES.0
+                        | crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES.0,
+                );
             }
             if supports_prompts {
                 flags = crate::core::pool::CapSyncFlags(flags.0 | crate::core::pool::CapSyncFlags::PROMPTS.0);

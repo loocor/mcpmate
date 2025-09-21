@@ -2,8 +2,8 @@
 //!
 //! unified error handling module, providing error type definitions for the entire core system
 
-use thiserror::Error;
 use anyhow;
+use thiserror::Error;
 
 /// unified error type for the core system
 #[derive(Error, Debug)]

@@ -1,6 +1,6 @@
 //! Redb schema definitions for the cache system
 
-use redb::{TableDefinition, MultimapTableDefinition};
+use redb::{MultimapTableDefinition, TableDefinition};
 
 /// Server data table: server_id -> serialized CachedServerData
 pub const SERVERS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("servers");
@@ -30,13 +30,16 @@ pub const CACHE_STATS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new
 pub const SERVER_TOOLS_INDEX: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("server_tools_index");
 
 /// Server-to-resources mapping (multimap): server_id -> [resource_uri, ...]
-pub const SERVER_RESOURCES_INDEX: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("server_resources_index");
+pub const SERVER_RESOURCES_INDEX: MultimapTableDefinition<&str, &str> =
+    MultimapTableDefinition::new("server_resources_index");
 
 /// Server-to-prompts mapping (multimap): server_id -> [prompt_name, ...]
-pub const SERVER_PROMPTS_INDEX: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("server_prompts_index");
+pub const SERVER_PROMPTS_INDEX: MultimapTableDefinition<&str, &str> =
+    MultimapTableDefinition::new("server_prompts_index");
 
 /// Server-to-resource-templates mapping (multimap): server_id -> [template_uri, ...]
-pub const SERVER_RESOURCE_TEMPLATES_INDEX: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("server_resource_templates_index");
+pub const SERVER_RESOURCE_TEMPLATES_INDEX: MultimapTableDefinition<&str, &str> =
+    MultimapTableDefinition::new("server_resource_templates_index");
 
 /// Instance metadata for connection pool integration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -54,7 +57,7 @@ pub struct InstanceMetadata {
 /// All table definitions for easy iteration during database initialization
 pub const ALL_TABLES: &[&str] = &[
     "servers",
-    "tools", 
+    "tools",
     "resources",
     "prompts",
     "resource_templates",
@@ -66,7 +69,7 @@ pub const ALL_TABLES: &[&str] = &[
 /// All multimap table definitions
 pub const ALL_MULTIMAPS: &[&str] = &[
     "server_tools_index",
-    "server_resources_index", 
+    "server_resources_index",
     "server_prompts_index",
     "server_resource_templates_index",
 ];

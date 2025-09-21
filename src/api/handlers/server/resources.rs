@@ -15,7 +15,6 @@ use crate::api::{
     },
     routes::AppState,
 };
-// chrono::Utc no longer used after Sandwich replacement
 
 use super::capability::{CapabilityType, enrich_capability_items, respond_with_enriched};
 use super::common::{create_inspect_response, get_database_from_state};
@@ -137,8 +136,8 @@ async fn server_resources_core(
 
     // Use CapabilityService (REDB-first → runtime → optional temporary via pool)
     let refresh = match params.refresh {
-        Some(super::common::RefreshStrategy::Force) => Some(crate::core::sandwich::RefreshStrategy::Force),
-        _ => Some(crate::core::sandwich::RefreshStrategy::CacheFirst),
+        Some(super::common::RefreshStrategy::Force) => Some(crate::core::capability::runtime::RefreshStrategy::Force),
+        _ => Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
     };
     let service = crate::core::capability::CapabilityService::new(
         app_state.redb_cache.clone(),
@@ -146,9 +145,8 @@ async fn server_resources_core(
         db.clone(),
     );
     let list_result = service
-        .list(&crate::core::sandwich::ListCtx {
-            route: crate::core::sandwich::RouteKind::Api,
-            capability: crate::core::sandwich::CapabilityKind::Resources,
+        .list(&crate::core::capability::runtime::ListCtx {
+            capability: crate::core::capability::CapabilityType::Resources,
             server_id: server_info.server_id.clone(),
             refresh,
             timeout: Some(std::time::Duration::from_secs(10)),
@@ -159,34 +157,35 @@ async fn server_resources_core(
     // TODO: unify resource naming/unique URI strategy to prevent collisions (parity with tools naming module)
     match list_result {
         Ok(list_result) => {
-            let crate::core::sandwich::ListResult { items, meta } = list_result;
-            if !items.is_empty() {
-                if let Ok(db) = get_database_from_state(app_state) {
-                    let enriched = enrich_capability_items(
-                        CapabilityType::Resources,
-                        &db.pool,
-                        &server_info.server_id,
-                        items.clone(),
-                    )
-                    .await;
-                    let response_data = respond_with_enriched(
-                        enriched,
-                        meta.cache_hit,
-                        params.refresh,
-                        meta.source.as_str(),
-                    );
+            let crate::core::capability::runtime::ListResult { items, meta } = list_result;
+            if let Some(resource_items) = items.into_resources() {
+                if !resource_items.is_empty() {
+                    let json_items: Vec<serde_json::Value> = resource_items
+                        .into_iter()
+                        .map(|resource| serde_json::to_value(resource).unwrap_or(serde_json::Value::Null))
+                        .collect();
+
+                    if let Ok(db) = get_database_from_state(app_state) {
+                        let enriched = enrich_capability_items(
+                            CapabilityType::Resources,
+                            &db.pool,
+                            &server_info.server_id,
+                            json_items.clone(),
+                        )
+                        .await;
+                        let response_data =
+                            respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
+                        let resources_resp = json_to_server_resources_resp(response_data);
+                        return Ok(ServerResourcesResp::success(resources_resp));
+                    }
+
+                    let response_data =
+                        create_inspect_response(json_items, meta.cache_hit, params.refresh, meta.source.as_str());
                     let resources_resp = json_to_server_resources_resp(response_data);
                     return Ok(ServerResourcesResp::success(resources_resp));
                 }
-
-                let response_data = create_inspect_response(
-                    items,
-                    meta.cache_hit,
-                    params.refresh,
-                    meta.source.as_str(),
-                );
-                let resources_resp = json_to_server_resources_resp(response_data);
-                return Ok(ServerResourcesResp::success(resources_resp));
+            } else {
+                tracing::warn!("Capability runtime returned non-resource items for resource capability");
             }
 
             // Temporary instance fallback is handled by CapabilityService; handler remains unaware of pool
@@ -196,7 +195,7 @@ async fn server_resources_core(
         }
     }
 
-    // Runtime fallback已由 Sandwich::list 统一处理，此处不再重复抓取
+    // Runtime fallback 已由 capability runtime 管线统一处理，此处不再重复抓取
 
     // No offline fallback; return empty if still not available
     let response_data = create_inspect_response(Vec::new(), false, params.refresh, "none");
@@ -247,15 +246,14 @@ async fn server_resource_templates_core(
         return Ok(ServerResourceTemplatesResp::success(templates_resp));
     }
 
-    // Use Sandwich pipeline (REDB-first)
+    // Use capability runtime pipeline (REDB-first)
     let refresh = match params.refresh {
-        Some(super::common::RefreshStrategy::Force) => Some(crate::core::sandwich::RefreshStrategy::Force),
-        _ => Some(crate::core::sandwich::RefreshStrategy::CacheFirst),
+        Some(super::common::RefreshStrategy::Force) => Some(crate::core::capability::runtime::RefreshStrategy::Force),
+        _ => Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
     };
-    let list_result = crate::core::sandwich::Sandwich::list(
-        &crate::core::sandwich::ListCtx {
-            route: crate::core::sandwich::RouteKind::Api,
-            capability: crate::core::sandwich::CapabilityKind::ResourceTemplates,
+    let list_result = crate::core::capability::runtime::list(
+        &crate::core::capability::runtime::ListCtx {
+            capability: crate::core::capability::CapabilityType::ResourceTemplates,
             server_id: server_info.server_id.clone(),
             refresh,
             timeout: Some(std::time::Duration::from_secs(10)),
@@ -269,35 +267,35 @@ async fn server_resource_templates_core(
     match list_result {
         // TODO: align resource template naming with generalized naming module when extended beyond tools
         Ok(list_result) => {
-            let crate::core::sandwich::ListResult { items, meta } = list_result;
-            if !items.is_empty() {
-                // Enrich with database information if possible
-                if let Ok(db) = get_database_from_state(app_state) {
-                    let enriched = enrich_capability_items(
-                        CapabilityType::ResourceTemplates,
-                        &db.pool,
-                        &server_info.server_id,
-                        items.clone(),
-                    )
-                    .await;
-                    let response_data = respond_with_enriched(
-                        enriched,
-                        meta.cache_hit,
-                        params.refresh,
-                        meta.source.as_str(),
-                    );
+            let crate::core::capability::runtime::ListResult { items, meta } = list_result;
+            if let Some(template_items) = items.into_resource_templates() {
+                if !template_items.is_empty() {
+                    let json_items: Vec<serde_json::Value> = template_items
+                        .into_iter()
+                        .map(|template| serde_json::to_value(template).unwrap_or(serde_json::Value::Null))
+                        .collect();
+
+                    if let Ok(db) = get_database_from_state(app_state) {
+                        let enriched = enrich_capability_items(
+                            CapabilityType::ResourceTemplates,
+                            &db.pool,
+                            &server_info.server_id,
+                            json_items.clone(),
+                        )
+                        .await;
+                        let response_data =
+                            respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
+                        let templates_resp = json_to_server_resource_templates_resp(response_data);
+                        return Ok(ServerResourceTemplatesResp::success(templates_resp));
+                    }
+
+                    let response_data =
+                        create_inspect_response(json_items, meta.cache_hit, params.refresh, meta.source.as_str());
                     let templates_resp = json_to_server_resource_templates_resp(response_data);
                     return Ok(ServerResourceTemplatesResp::success(templates_resp));
                 }
-
-                let response_data = create_inspect_response(
-                    items,
-                    meta.cache_hit,
-                    params.refresh,
-                    meta.source.as_str(),
-                );
-                let templates_resp = json_to_server_resource_templates_resp(response_data);
-                return Ok(ServerResourceTemplatesResp::success(templates_resp));
+            } else {
+                tracing::warn!("Capability runtime returned non-template items for resource template capability");
             }
 
             let should_try_temp = !meta.had_peer;

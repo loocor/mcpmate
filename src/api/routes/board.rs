@@ -66,8 +66,7 @@ pub fn routes(_state: Arc<AppState>) -> Router {
     tracing::info!("Serving frontend from: {}", board_dist.display());
 
     // Create the serve directory service with SPA fallback
-    let serve_dir =
-        ServeDir::new(&board_dist).not_found_service(tower::service_fn(spa_fallback_service));
+    let serve_dir = ServeDir::new(&board_dist).not_found_service(tower::service_fn(spa_fallback_service));
 
     // Serve static files at root using fallback_service
     Router::new()
@@ -119,9 +118,7 @@ async fn serve_index_html() -> impl IntoResponse {
 }
 
 /// SPA fallback service - serves index.html for client-side routing
-async fn spa_fallback_service(
-    req: Request
-) -> Result<Response<axum::body::Body>, std::convert::Infallible> {
+async fn spa_fallback_service(req: Request) -> Result<Response<axum::body::Body>, std::convert::Infallible> {
     let path = req.uri().path();
 
     // Don't handle API routes - let them return 404

@@ -10,22 +10,33 @@
 			"type": "stdio"
 		},
 		"Context7": {
-			"args": ["-y", "@upstash/context7-mcp@latest"],
+			"args": [
+				"-y",
+				"@upstash/context7-mcp@latest"
+			],
 			"command": "npx",
 			"type": "stdio"
 		},
 		"Deepwiki": {
-			"args": ["-y", "mcp-deepwiki@latest"],
+			"args": [
+				"-y",
+				"mcp-deepwiki@latest"
+			],
 			"command": "npx",
 			"type": "stdio"
 		},
 		"Everything": {
-			"args": ["-y", "@modelcontextprotocol/server-everything"],
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-everything"
+			],
 			"command": "npx",
 			"type": "stdio"
 		},
 		"Fetch": {
-			"args": ["mcp-server-fetch"],
+			"args": [
+				"mcp-server-fetch"
+			],
 			"command": "uvx",
 			"type": "stdio"
 		},
@@ -33,13 +44,24 @@
 			"url": "https://gitmcp.io/modelcontextprotocol/rust-sdk",
 			"type": "sse"
 		},
+		"MCPMate": {
+			"url": "http://localhost:8888/sse",
+			"type": "sse"
+		},
 		"Playwright": {
-			"args": ["-y", "@playwright/mcp@latest", "--extension"],
+			"args": [
+				"-y",
+				"@playwright/mcp@latest",
+				"--extension"
+			],
 			"command": "npx",
 			"type": "stdio"
 		},
 		"Thinking": {
-			"args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-sequential-thinking"
+			],
 			"command": "bunx",
 			"env": {},
 			"type": "stdio"

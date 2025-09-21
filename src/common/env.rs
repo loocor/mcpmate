@@ -96,10 +96,7 @@ fn detect_arch() -> Result<Architecture> {
     match env::consts::ARCH {
         "x86_64" => Ok(Architecture::X86_64),
         "aarch64" => Ok(Architecture::Aarch64),
-        other => Err(anyhow::anyhow!(
-            "Unsupported system architecture: {}",
-            other
-        )),
+        other => Err(anyhow::anyhow!("Unsupported system architecture: {}", other)),
     }
 }
 
@@ -243,10 +240,7 @@ pub fn create_bun_environment(
     // Ensure cache directory exists
     std::fs::create_dir_all(&cache_dir)?;
 
-    env.set_var(
-        constants::BUN_INSTALL_CACHE_DIR,
-        cache_dir.to_string_lossy(),
-    );
+    env.set_var(constants::BUN_INSTALL_CACHE_DIR, cache_dir.to_string_lossy());
 
     // Set runtime bin path for reference
     env.set_var(constants::MCP_RUNTIME_BIN, bin_path.to_string_lossy());
@@ -275,7 +269,7 @@ pub fn create_runtime_environment(
 ) -> Result<EnvironmentManager> {
     use super::types::RuntimeType;
     use std::str::FromStr;
-    
+
     if let Ok(rt) = RuntimeType::from_str(runtime_type) {
         match rt {
             RuntimeType::Uv => create_uv_environment(bin_path, version),

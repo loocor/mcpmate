@@ -129,8 +129,7 @@ impl<'de> Visitor<'de> for EnabledStatusVisitor {
     where
         E: de::Error,
     {
-        EnabledStatus::from_str(value)
-            .map_err(|_| E::custom(format!("invalid enabled status: {value}")))
+        EnabledStatus::from_str(value).map_err(|_| E::custom(format!("invalid enabled status: {value}")))
     }
 }
 

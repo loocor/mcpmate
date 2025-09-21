@@ -120,8 +120,7 @@ impl<'de> Visitor<'de> for ConnectionOperationVisitor {
     where
         E: de::Error,
     {
-        ConnectionOperation::from_str(value)
-            .map_err(|_| E::custom(format!("invalid connection operation: {value}")))
+        ConnectionOperation::from_str(value).map_err(|_| E::custom(format!("invalid connection operation: {value}")))
     }
 }
 

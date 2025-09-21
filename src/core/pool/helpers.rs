@@ -318,6 +318,7 @@ impl super::UpstreamConnectionPool {
                 // Hash connection status - use discriminant instead of debug format
                 // This is more efficient and still captures the essential state
                 let status_discriminant = match &conn.status {
+                    ConnectionStatus::Idle => 0,
                     ConnectionStatus::Initializing => 1,
                     ConnectionStatus::Ready => 2,
                     ConnectionStatus::Busy => 3,

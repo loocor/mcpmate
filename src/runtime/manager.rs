@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::{common::{paths::global_paths, RuntimeType, constants::commands}};
+use crate::common::{RuntimeType, constants::commands, paths::global_paths};
 
 /// Unified runtime management service
 ///
@@ -134,10 +134,7 @@ impl RuntimeManager {
     pub fn ensure_runtimes_dir(&self) -> Result<()> {
         if !self.runtimes_dir.exists() {
             std::fs::create_dir_all(&self.runtimes_dir)?;
-            tracing::info!(
-                "Created runtimes directory: {}",
-                self.runtimes_dir.display()
-            );
+            tracing::info!("Created runtimes directory: {}", self.runtimes_dir.display());
         }
         Ok(())
     }

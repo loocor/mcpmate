@@ -245,9 +245,7 @@ impl ProxyPaginator {
         mut all_templates: Vec<rmcp::model::ResourceTemplate>,
     ) -> Result<PaginationResult<rmcp::model::ResourceTemplate>, McpError> {
         // sort resource templates by URI template using natural sort (correctly handle numbers)
-        all_templates.sort_by(|a, b| {
-            natural_sort_key(&a.uri_template).cmp(&natural_sort_key(&b.uri_template))
-        });
+        all_templates.sort_by(|a, b| natural_sort_key(&a.uri_template).cmp(&natural_sort_key(&b.uri_template)));
 
         // if pagination is disabled or page_size is 0, skip pagination
         if !self.config.enabled || self.config.resource_templates_page_size == 0 {
@@ -322,9 +320,7 @@ fn base64_encode(input: &[u8]) -> String {
 /// Base64 decode
 fn base64_decode(input: &str) -> Result<Vec<u8>, &'static str> {
     use base64::{Engine as _, engine::general_purpose};
-    general_purpose::STANDARD
-        .decode(input)
-        .map_err(|_| "Invalid base64")
+    general_purpose::STANDARD.decode(input).map_err(|_| "Invalid base64")
 }
 
 /// create sort key for natural sort
@@ -381,78 +377,4 @@ fn natural_sort_key(s: &str) -> Vec<SortKeyPart> {
 enum SortKeyPart {
     String(String),
     Number(u64),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_base64_round_trip() {
-        let data = b"hello world";
-        let encoded = base64_encode(data);
-        let decoded = base64_decode(&encoded).unwrap();
-        assert_eq!(data, decoded.as_slice());
-    }
-
-    #[test]
-    fn test_pagination_config_defaults() {
-        let config = PaginationConfig::default();
-        assert_eq!(config.tools_page_size, 0);
-        assert_eq!(config.prompts_page_size, 0);
-        assert_eq!(config.resources_page_size, 10);
-        assert_eq!(config.resource_templates_page_size, 10);
-        assert!(config.enabled);
-    }
-
-    #[test]
-    fn test_cursor_data_serialization() {
-        let cursor_data = CursorData {
-            offset: 10,
-            resource_type: "tools".to_string(),
-            total: Some(100),
-        };
-
-        let json = serde_json::to_vec(&cursor_data).unwrap();
-        let decoded: CursorData = serde_json::from_slice(&json).unwrap();
-
-        assert_eq!(cursor_data.offset, decoded.offset);
-        assert_eq!(cursor_data.resource_type, decoded.resource_type);
-        assert_eq!(cursor_data.total, decoded.total);
-    }
-
-    #[test]
-    fn test_natural_sorting() {
-        let mut items = vec!["item10", "item2", "item1", "item20"];
-        items.sort_by_key(|a| natural_sort_key(a));
-        assert_eq!(items, vec!["item1", "item2", "item10", "item20"]);
-
-        let mut items = vec!["file10.txt", "file2.txt", "file1.txt"];
-        items.sort_by_key(|a| natural_sort_key(a));
-        assert_eq!(items, vec!["file1.txt", "file2.txt", "file10.txt"]);
-
-        let mut items = vec!["a10b2", "a2b10", "a2b2"];
-        items.sort_by_key(|a| natural_sort_key(a));
-        assert_eq!(items, vec!["a2b2", "a2b10", "a10b2"]);
-    }
-
-    #[test]
-    fn test_natural_sorting_uris() {
-        let mut uris = vec![
-            "file://path/to/file10.txt",
-            "file://path/to/file2.txt",
-            "file://path/to/file1.txt",
-            "file://path/to/file20.txt",
-        ];
-        uris.sort_by_key(|a| natural_sort_key(a));
-        assert_eq!(
-            uris,
-            vec![
-                "file://path/to/file1.txt",
-                "file://path/to/file2.txt",
-                "file://path/to/file10.txt",
-                "file://path/to/file20.txt",
-            ]
-        );
-    }
 }

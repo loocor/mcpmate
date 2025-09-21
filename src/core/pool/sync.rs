@@ -129,11 +129,26 @@ impl ServerSyncManager {
         pool: &mut UpstreamConnectionPool,
         plan: ServerSyncPlan,
     ) -> Result<()> {
-        // Start new servers
+        // Start new servers (lazy: create placeholder instances without connecting)
         for server_name in plan.servers_to_start {
-            tracing::info!("Starting new server: {}", server_name);
-            if let Err(e) = pool.update_server_status(&server_name, true).await {
-                tracing::warn!("Failed to start new server '{}': {}", server_name, e);
+            tracing::info!(
+                "Registering server '{}' for lazy startup (connection deferred)",
+                server_name
+            );
+
+            let instances = pool.connections.entry(server_name.clone()).or_default();
+            if instances.is_empty() {
+                let connection = crate::core::pool::UpstreamConnection::new(server_name.clone());
+                instances.insert(connection.id.clone(), connection);
+            }
+
+            if let Some(instance) = instances.values_mut().next() {
+                if matches!(
+                    instance.status,
+                    crate::core::foundation::types::ConnectionStatus::Shutdown
+                ) {
+                    instance.status = crate::core::foundation::types::ConnectionStatus::Idle;
+                }
             }
         }
 
@@ -145,41 +160,30 @@ impl ServerSyncManager {
             }
         }
 
-        // Connect existing servers that are in shutdown state
+        // Existing servers keep placeholder, wait for first demand to trigger connection
         for server_name in plan.servers_to_connect {
-            tracing::info!("Connecting existing server in shutdown state: {}", server_name);
-            if let Err(e) = self.ensure_server_connected(pool, &server_name).await {
-                tracing::warn!("Failed to connect existing server '{}': {}", server_name, e);
+            let instances = pool.connections.entry(server_name.clone()).or_default();
+            if instances.is_empty() {
+                let connection = crate::core::pool::UpstreamConnection::new(server_name.clone());
+                instances.insert(connection.id.clone(), connection);
             }
+
+            if let Some(instance) = instances.values_mut().next() {
+                if matches!(
+                    instance.status,
+                    crate::core::foundation::types::ConnectionStatus::Shutdown
+                        | crate::core::foundation::types::ConnectionStatus::Initializing
+                ) {
+                    instance.status = crate::core::foundation::types::ConnectionStatus::Idle;
+                }
+            }
+
+            tracing::info!(
+                "Server '{}' kept idle; connection will be established on first demand",
+                server_name
+            );
         }
 
-        Ok(())
-    }
-
-    /// Ensure a server is connected (create instance if needed and connect)
-    ///
-    /// This method handles the detailed logic of ensuring a server has a connected instance:
-    /// 1. Create instance if it doesn't exist
-    /// 2. Get the default instance ID
-    /// 3. Trigger connection for that instance
-    async fn ensure_server_connected(
-        &self,
-        pool: &mut UpstreamConnectionPool,
-        server_name: &str,
-    ) -> Result<()> {
-        // Create instance if it doesn't exist
-        if !pool.connections.contains_key(server_name) {
-            let connection = crate::core::pool::UpstreamConnection::new(server_name.to_string());
-            let instance_id = connection.id.clone();
-            let instances = pool.connections.entry(server_name.to_string()).or_default();
-            instances.insert(instance_id, connection);
-        }
-
-        // Get default instance ID and trigger connection
-        let instance_id = pool.get_default_instance_id(server_name)?;
-        pool.trigger_connect(server_name, &instance_id).await?;
-
-        tracing::info!("Successfully ensured server '{}' is connected", server_name);
         Ok(())
     }
 }
@@ -194,6 +198,6 @@ struct ServerSyncPlan {
     servers_to_start: HashSet<String>,
     /// Servers that need to be stopped (removed servers)
     servers_to_stop: HashSet<String>,
-    /// Servers that exist but need to be connected (shutdown servers)
+    /// Servers exist but are not connected (keep placeholder, trigger connection on demand)
     servers_to_connect: HashSet<String>,
 }

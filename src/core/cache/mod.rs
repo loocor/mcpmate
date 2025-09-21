@@ -10,7 +10,6 @@
 //! - Instance type classification for connection pool integration
 //! - Unified fingerprinting for change detection
 
-pub mod benchmarks;
 pub mod fingerprint;
 pub mod manager;
 pub mod operations;

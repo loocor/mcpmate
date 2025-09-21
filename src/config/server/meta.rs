@@ -12,10 +12,7 @@ pub async fn get_server_meta(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> Result<Option<ServerMeta>> {
-    tracing::debug!(
-        "Executing SQL query to get metadata for server ID {}",
-        server_id
-    );
+    tracing::debug!("Executing SQL query to get metadata for server ID {}", server_id);
 
     let meta = sqlx::query_as::<_, ServerMeta>(
         r#"

@@ -5,12 +5,18 @@
 //! to syncing different types of capabilities across profile.
 
 use anyhow::{Context, Result as AnyhowResult};
-use rmcp::model::Tool;
+use chrono::Utc;
+use rmcp::model::{PaginatedRequestParam, ResourceTemplate, Tool};
 use std::sync::Arc;
 use tracing;
 
 use super::UpstreamConnectionPool;
 use crate::common::sync::SyncHelper;
+use crate::config::server::capabilities::store_dual_write;
+use crate::core::cache::{
+    CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo, PromptArgument, RedbCacheManager,
+};
+use crate::core::capability::facade::is_method_not_supported;
 
 /// Capability sync selection flags (bitmask style without external deps)
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -133,6 +139,11 @@ impl UpstreamConnectionPool {
             profile_data.len()
         );
 
+        let mut cached_tools: Vec<CachedToolInfo> = Vec::new();
+        let mut cached_resources: Vec<CachedResourceInfo> = Vec::new();
+        let mut cached_prompts: Vec<CachedPromptInfo> = Vec::new();
+        let mut cached_templates: Vec<CachedResourceTemplateInfo> = Vec::new();
+
         // TOOLS - unified pattern
         if flags.contains(CapSyncFlags::TOOLS) {
             let tools: Vec<Tool> = if let Some(slice) = tools_opt {
@@ -142,8 +153,31 @@ impl UpstreamConnectionPool {
             };
 
             if !tools.is_empty() {
+                let mut tools = tools;
+                crate::config::server::tools::assign_unique_names_to_tools(
+                    &db.pool,
+                    &resolved_server_id,
+                    &server_name,
+                    &mut tools,
+                )
+                .await?;
+
                 Self::sync_tools_to_database_internal(db, &resolved_server_id, &server_name, &tools, &profile_data)
                     .await?;
+
+                let now = Utc::now();
+                cached_tools.extend(tools.iter().map(|tool| {
+                    let schema = tool.schema_as_json_value();
+                    let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
+                    CachedToolInfo {
+                        name: tool.name.to_string(),
+                        description: tool.description.clone().map(|d| d.into_owned()),
+                        input_schema_json,
+                        unique_name: None,
+                        enabled: true,
+                        cached_at: now,
+                    }
+                }));
             } else {
                 tracing::debug!(
                     "No tools fetched for server '{}' (ID: {}), skipping tools sync",
@@ -166,6 +200,16 @@ impl UpstreamConnectionPool {
                     &profile_data,
                 )
                 .await?;
+
+                let now = Utc::now();
+                cached_resources.extend(resources.iter().map(|uri| CachedResourceInfo {
+                    uri: uri.clone(),
+                    name: None,
+                    description: None,
+                    mime_type: None,
+                    enabled: true,
+                    cached_at: now,
+                }));
             } else {
                 tracing::debug!(
                     "No resources fetched for server '{}' (ID: {}), skipping resources sync",
@@ -182,6 +226,27 @@ impl UpstreamConnectionPool {
             if !prompts.is_empty() {
                 Self::sync_prompts_to_database_internal(db, &resolved_server_id, &server_name, &prompts, &profile_data)
                     .await?;
+
+                let now = Utc::now();
+                cached_prompts.extend(prompts.iter().map(|prompt| {
+                    CachedPromptInfo {
+                        name: prompt.name.to_string(),
+                        description: prompt.description.clone(),
+                        arguments: prompt
+                            .arguments
+                            .clone()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|arg| PromptArgument {
+                                name: arg.name,
+                                description: arg.description,
+                                required: arg.required.unwrap_or(false),
+                            })
+                            .collect(),
+                        enabled: true,
+                        cached_at: now,
+                    }
+                }));
             } else {
                 tracing::debug!(
                     "No prompts fetched for server '{}' (ID: {}), skipping prompts sync",
@@ -191,15 +256,44 @@ impl UpstreamConnectionPool {
             }
         }
 
-        // RESOURCE_TEMPLATES - treat as resources sub-item (per MCP spec)
         if flags.contains(CapSyncFlags::RESOURCE_TEMPLATES) {
-            tracing::debug!(
-                "Resource templates sync integrated into resources for server '{}' (ID: {})",
-                server_name,
-                server_id
-            );
-            // Note: Resource templates are handled as part of resources according to MCP specification
-            // If separate handling is needed for UI compatibility, implement here
+            let templates = match Self::fetch_resource_templates_from_service(service, &server_name, instance_id).await
+            {
+                Ok(items) => items,
+                Err(err) => {
+                    let msg = err.to_string();
+                    if is_method_not_supported(&msg) {
+                        tracing::debug!(
+                            server_id = %server_id,
+                            server_name = %server_name,
+                            instance_id = %instance_id,
+                            error = %msg,
+                            "Resource templates not supported upstream; skipping sync"
+                        );
+                        Vec::new()
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
+
+            if !templates.is_empty() {
+                let now = Utc::now();
+                cached_templates.extend(templates.iter().map(|template| CachedResourceTemplateInfo {
+                    uri_template: template.uri_template.clone(),
+                    name: Some(template.name.clone()),
+                    description: template.description.clone(),
+                    mime_type: template.mime_type.clone(),
+                    enabled: true,
+                    cached_at: now,
+                }));
+            } else {
+                tracing::debug!(
+                    "No resource templates fetched for server '{}' (ID: {}), skipping templates sync",
+                    server_name,
+                    server_id
+                );
+            }
         }
 
         tracing::debug!(
@@ -208,6 +302,33 @@ impl UpstreamConnectionPool {
             server_name,
             server_id
         );
+
+        if !(cached_tools.is_empty()
+            && cached_resources.is_empty()
+            && cached_prompts.is_empty()
+            && cached_templates.is_empty())
+        {
+            if let Ok(cache_manager) = RedbCacheManager::global() {
+                if let Err(e) = store_dual_write(
+                    &db.pool,
+                    cache_manager.as_ref(),
+                    &resolved_server_id,
+                    &server_name,
+                    cached_tools,
+                    cached_resources,
+                    cached_prompts,
+                    cached_templates,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        server_id = %server_id,
+                        error = %e,
+                        "Failed to store capability snapshot to REDB"
+                    );
+                }
+            }
+        }
 
         Ok(())
     }
@@ -369,6 +490,38 @@ impl UpstreamConnectionPool {
         })?;
 
         Ok(resources.into_iter().map(|r| r.uri.clone()).collect::<Vec<String>>())
+    }
+
+    /// Helper function to fetch resource templates from service with pagination
+    async fn fetch_resource_templates_from_service(
+        service: &rmcp::service::Peer<rmcp::service::RoleClient>,
+        server_name: &str,
+        instance_id: &str,
+    ) -> AnyhowResult<Vec<ResourceTemplate>> {
+        use anyhow::Context;
+
+        let mut templates = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let response = service
+                .list_resource_templates(cursor.clone().map(|c| PaginatedRequestParam { cursor: Some(c) }))
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to list resource templates from upstream server '{}' instance '{}'",
+                        server_name, instance_id
+                    )
+                })?;
+
+            templates.extend(response.resource_templates);
+            cursor = response.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        Ok(templates)
     }
 
     // Removed unused public adapter: sync_tools_to_database (use sync_capabilities instead)

@@ -12,10 +12,7 @@ pub async fn get_server_args(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> Result<Vec<ServerArg>> {
-    tracing::debug!(
-        "Executing SQL query to get arguments for server ID {}",
-        server_id
-    );
+    tracing::debug!("Executing SQL query to get arguments for server ID {}", server_id);
 
     let args = sqlx::query_as::<_, ServerArg>(
         r#"
@@ -43,11 +40,7 @@ pub async fn upsert_server_args(
     server_id: &str,
     args: &[String],
 ) -> Result<()> {
-    tracing::debug!(
-        "Upserting {} arguments for server ID {}",
-        args.len(),
-        server_id
-    );
+    tracing::debug!("Upserting {} arguments for server ID {}", args.len(), server_id);
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
     upsert_server_args_inner(&mut tx, server_id, args).await?;

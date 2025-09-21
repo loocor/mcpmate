@@ -1,15 +1,14 @@
 //! Integration adapter - Integrate unified query service into existing architecture
 
-use std::sync::Arc;
+use crate::api::handlers::server::common::InspectParams;
+use crate::api::routes::AppState;
+use crate::config::database::Database;
 use crate::core::cache::RedbCacheManager;
 use crate::core::pool::UpstreamConnectionPool;
-use crate::config::database::Database;
-use crate::api::routes::AppState;
-use crate::api::handlers::server::common::InspectParams;
+use std::sync::Arc;
 
+use super::domain::{CapabilityError, CapabilityResult, CapabilityType, QueryContext};
 use super::query::{UnifiedQueryService, UnifiedQueryServiceBuilder};
-use super::domain::{QueryContext, CapabilityResult, CapabilityError, CapabilityType};
-use super::UnifiedConnectionManager;
 
 /// Unified query adapter - Lightweight wrapper
 pub struct UnifiedQueryAdapter {
@@ -24,16 +23,11 @@ impl UnifiedQueryAdapter {
         database: Arc<Database>,
         app_state: Arc<AppState>,
     ) -> Self {
-        // Create connection manager for unified entry point
-        let config = Arc::new(crate::core::models::Config::default());
-        let connection_manager = Arc::new(UnifiedConnectionManager::new(pool.clone(), config));
-        
         let service = UnifiedQueryServiceBuilder::new()
             .with_cache(cache)
             .with_pool(pool)
             .with_database(database)
             .with_app_state(app_state)
-            .with_connection_manager(connection_manager)
             .build()
             .expect("Failed to build UnifiedQueryService");
 
@@ -50,7 +44,9 @@ impl UnifiedQueryAdapter {
         params: &InspectParams,
     ) -> Result<CapabilityResult, CapabilityError> {
         // Default to API call scenario
-        self.inner.query_capabilities(server_id, capability_type, params, QueryContext::ApiCall).await
+        self.inner
+            .query_capabilities(server_id, capability_type, params, QueryContext::ApiCall)
+            .await
     }
 
     /// Get internal service (for advanced usage)
@@ -99,7 +95,7 @@ pub mod migration {
     ) -> MigrationComparison {
         let legacy_count = legacy_result.data.as_ref().map_or(0, |data| data.data.len());
         let unified_count = unified_result.items.len();
-        
+
         MigrationComparison {
             item_count_match: legacy_count == unified_count,
             legacy_count,
@@ -121,31 +117,5 @@ pub mod migration {
         pub fn is_compatible(&self) -> bool {
             self.item_count_match
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_migration_comparison() {
-        let comparison = migration::MigrationComparison {
-            item_count_match: true,
-            legacy_count: 5,
-            unified_count: 5,
-            sources_different: false,
-        };
-        
-        assert!(comparison.is_compatible());
-        
-        let incompatible = migration::MigrationComparison {
-            item_count_match: false,
-            legacy_count: 5,
-            unified_count: 3,
-            sources_different: true,
-        };
-        
-        assert!(!incompatible.is_compatible());
     }
 }

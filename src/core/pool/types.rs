@@ -19,6 +19,97 @@ use crate::core::foundation::types::{
 };
 use crate::generate_id;
 
+const FAILURE_DECAY_WINDOW_SECS: u64 = 120;
+const FAILURE_BACKOFF_SCHEDULE_SECS: [u64; 3] = [5, 15, 60];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    Connect,
+    RuntimeGone,
+    RuntimeTimeout,
+    RuntimeOther,
+}
+
+impl FailureKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FailureKind::Connect => "connect",
+            FailureKind::RuntimeGone => "runtime_gone",
+            FailureKind::RuntimeTimeout => "runtime_timeout",
+            FailureKind::RuntimeOther => "runtime_other",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FailureState {
+    pub consecutive_failures: u32,
+    pub last_failure_at: Option<Instant>,
+    pub next_retry_at: Option<Instant>,
+    pub last_error: Option<String>,
+    pub last_kind: Option<FailureKind>,
+}
+
+impl FailureState {
+    pub fn new() -> Self {
+        Self {
+            consecutive_failures: 0,
+            last_failure_at: None,
+            next_retry_at: None,
+            last_error: None,
+            last_kind: None,
+        }
+    }
+
+    pub fn register_failure(
+        &mut self,
+        now: Instant,
+        kind: FailureKind,
+        reason: Option<String>,
+    ) -> Duration {
+        if let Some(last) = self.last_failure_at {
+            if now.duration_since(last) > Duration::from_secs(FAILURE_DECAY_WINDOW_SECS) {
+                self.consecutive_failures = 0;
+            }
+        }
+
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.last_failure_at = Some(now);
+        self.last_kind = Some(kind);
+        self.last_error = reason;
+
+        let index = self
+            .consecutive_failures
+            .saturating_sub(1)
+            .try_into()
+            .unwrap_or(usize::MAX);
+        let backoff_secs = FAILURE_BACKOFF_SCHEDULE_SECS
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| *FAILURE_BACKOFF_SCHEDULE_SECS.last().unwrap_or(&60));
+        let backoff = Duration::from_secs(backoff_secs);
+        self.next_retry_at = Some(now + backoff);
+
+        backoff
+    }
+
+    pub fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.last_failure_at = None;
+        self.next_retry_at = None;
+        self.last_error = None;
+        self.last_kind = None;
+    }
+
+    pub fn remaining_backoff(
+        &self,
+        now: Instant,
+    ) -> Option<Duration> {
+        self.next_retry_at
+            .and_then(|deadline| deadline.checked_duration_since(now))
+    }
+}
+
 /// Connection to an upstream MCP server
 #[derive(Debug)]
 pub struct UpstreamConnection {
@@ -88,7 +179,7 @@ impl UpstreamConnection {
             created_at: now,
             last_connected: now,
             connection_attempts: 0,
-            status: ConnectionStatus::Shutdown,
+            status: ConnectionStatus::Idle,
             last_health_check: now,
             process_id: None,
             cpu_usage: None,
@@ -186,6 +277,7 @@ impl UpstreamConnection {
         self.update_connecting();
     }
 
+    /// Transition from idle placeholder to shutdown when explicitly disconnected
     /// Update connection status to ready
     pub fn update_ready(&mut self) {
         self.status = ConnectionStatus::Ready;

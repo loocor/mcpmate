@@ -1,6 +1,6 @@
 use crate::api::handlers::client;
 use crate::api::models::client::{
-    ClientConfigReq, ClientConfigResp, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientCheckReq, ClientCheckResp,
+    ClientCheckReq, ClientCheckResp, ClientConfigReq, ClientConfigResp, ClientConfigUpdateReq, ClientConfigUpdateResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};

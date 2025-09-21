@@ -6,8 +6,8 @@ use sqlx::{Pool, Sqlite};
 
 use crate::{
     common::{
-        profile::ProfileType,
         database::{fetch_all_ordered, fetch_optional},
+        profile::ProfileType,
     },
     config::models::Profile,
 };
@@ -32,10 +32,7 @@ pub async fn get_active_profile(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
     .await
     .context("Failed to fetch active profile")?;
 
-    tracing::debug!(
-        "Successfully fetched {} active profile from database",
-        profile.len()
-    );
+    tracing::debug!("Successfully fetched {} active profile from database", profile.len());
     Ok(profile)
 }
 
@@ -72,10 +69,7 @@ pub async fn get_profile_by_type(
     pool: &Pool<Sqlite>,
     profile_type: ProfileType,
 ) -> Result<Vec<Profile>> {
-    tracing::debug!(
-        "Executing SQL query to get profile of type '{}'",
-        profile_type.as_str()
-    );
+    tracing::debug!("Executing SQL query to get profile of type '{}'", profile_type.as_str());
 
     let profile = sqlx::query_as::<_, Profile>(
         r#"
@@ -105,12 +99,7 @@ pub async fn get_profile(
     let profile: Option<Profile> = fetch_optional(pool, "profile", "id", id).await?;
 
     if let Some(ref p) = profile {
-        tracing::debug!(
-            "Found profile '{}' with ID {}, type: {}",
-            p.name,
-            id,
-            p.profile_type
-        );
+        tracing::debug!("Found profile '{}' with ID {}, type: {}", p.name, id, p.profile_type);
     } else {
         tracing::debug!("No profile found with ID {}", id);
     }

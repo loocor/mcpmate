@@ -59,9 +59,12 @@ impl CachedToolInfo {
     pub fn input_schema(&self) -> Result<serde_json::Value, serde_json::Error> {
         serde_json::from_str(&self.input_schema_json)
     }
-    
+
     /// Set the input schema from a serde_json::Value
-    pub fn set_input_schema(&mut self, schema: &serde_json::Value) -> Result<(), serde_json::Error> {
+    pub fn set_input_schema(
+        &mut self,
+        schema: &serde_json::Value,
+    ) -> Result<(), serde_json::Error> {
         self.input_schema_json = serde_json::to_string(schema)?;
         Ok(())
     }
@@ -166,40 +169,40 @@ pub struct CacheStats {
 pub enum CacheError {
     #[error("Database error: {0}")]
     Database(#[from] Box<redb::Error>),
-    
+
     #[error("Serialization error: {0}")]
     Serialization(#[from] bincode::Error),
-    
+
     #[error("Server not found: {0}")]
     ServerNotFound(String),
-    
+
     #[error("Tool not found: {server_id}/{tool_name}")]
     ToolNotFound { server_id: String, tool_name: String },
-    
+
     #[error("Resource not found: {server_id}/{resource_uri}")]
     ResourceNotFound { server_id: String, resource_uri: String },
-    
+
     #[error("Prompt not found: {server_id}/{prompt_name}")]
     PromptNotFound { server_id: String, prompt_name: String },
-    
+
     #[error("Cache corruption detected: {0}")]
     Corruption(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Invalid data format: {0}")]
     InvalidFormat(String),
-    
+
     #[error("Cache operation timeout")]
     Timeout,
-    
+
     #[error("Concurrent access conflict")]
     ConcurrentAccess,
-    
+
     #[error("Cache size limit exceeded")]
     SizeLimitExceeded,
-    
+
     #[error("Migration error: {0}")]
     Migration(String),
 }

@@ -10,9 +10,9 @@ use sqlx::{Pool, Sqlite};
 
 use tokio::process::Command;
 
+use crate::common::constants::commands;
 use crate::common::env::prepare_command_environment;
 use crate::common::paths::global_paths;
-use crate::common::constants::commands;
 use crate::runtime::RuntimeType;
 
 /// Prepare command environment variables based on runtime configurations in the database
@@ -60,9 +60,7 @@ pub async fn prepare_command_env_with_db(
                 RuntimeType::Bun => "bun",
             };
 
-            if let Err(e) =
-                prepare_command_environment(command, runtime_type_str, &runtime_path, "latest")
-            {
+            if let Err(e) = prepare_command_environment(command, runtime_type_str, &runtime_path, "latest") {
                 tracing::warn!("Failed to prepare runtime environment: {}, falling back", e);
                 prepare_command_env_fallback(command, command_str);
             } else {
@@ -90,10 +88,7 @@ fn prepare_command_env_fallback(
     command: &mut Command,
     command_str: &str,
 ) {
-    tracing::debug!(
-        "Using fallback environment preparation for: {}",
-        command_str
-    );
+    tracing::debug!("Using fallback environment preparation for: {}", command_str);
 
     let paths = global_paths();
 
@@ -114,10 +109,7 @@ fn prepare_command_env_fallback(
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
                 tracing::warn!("Failed to create bun cache directory: {}", e);
             } else {
-                command.env(
-                    "BUN_INSTALL_CACHE_DIR",
-                    cache_dir.to_string_lossy().as_ref(),
-                );
+                command.env("BUN_INSTALL_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
                 tracing::debug!("Set BUN_INSTALL_CACHE_DIR to: {}", cache_dir.display());
             }
         }

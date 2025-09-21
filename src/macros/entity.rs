@@ -6,9 +6,7 @@ use sqlx::{FromRow, Pool, Sqlite};
 /// database entity trait
 /// defines common CRUD operations
 #[async_trait]
-pub trait DatabaseEntity:
-    Sized + Send + Unpin + for<'r> FromRow<'r, sqlx::sqlite::SqliteRow>
-{
+pub trait DatabaseEntity: Sized + Send + Unpin + for<'r> FromRow<'r, sqlx::sqlite::SqliteRow> {
     /// table name of the entity
     fn table_name() -> &'static str;
 
@@ -83,9 +81,7 @@ pub trait DatabaseEntity:
         pool: &Pool<Sqlite>,
     ) -> Result<()> {
         // check if id exists
-        let id = self
-            .get_id()
-            .ok_or_else(|| anyhow::anyhow!("Entity ID not set"))?;
+        let id = self.get_id().ok_or_else(|| anyhow::anyhow!("Entity ID not set"))?;
 
         // set updated time
         self.set_updated_at(Utc::now());
@@ -116,9 +112,7 @@ pub trait DatabaseEntity:
         use sqlx::query;
 
         // check if id exists
-        let id = self
-            .get_id()
-            .ok_or_else(|| anyhow::anyhow!("Entity ID not set"))?;
+        let id = self.get_id().ok_or_else(|| anyhow::anyhow!("Entity ID not set"))?;
 
         // execute delete
         query(&format!(

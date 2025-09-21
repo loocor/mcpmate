@@ -5,10 +5,7 @@ use std::path::{Path, PathBuf};
 
 /// Get standard macOS application directories
 pub fn get_applications_directories() -> Vec<PathBuf> {
-    vec![
-        PathBuf::from("/Applications"),
-        PathBuf::from("/System/Applications"),
-    ]
+    vec![PathBuf::from("/Applications"), PathBuf::from("/System/Applications")]
 }
 
 /// Get user-specific application directories
