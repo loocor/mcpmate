@@ -122,6 +122,12 @@ impl UpstreamConnectionPool {
         flags: CapSyncFlags,
         tools_opt: Option<&[Tool]>,
     ) -> AnyhowResult<()> {
+        // Mark REDB as refreshing for this server to inform consumers
+        if let Ok(cache_manager) = RedbCacheManager::global() {
+            let _ = cache_manager
+                .set_refreshing(server_id, std::time::Duration::from_secs(60))
+                .await;
+        }
         // Common setup: resolve server_name for logging
         let server_name = crate::config::operations::utils::get_server_name(&db.pool, server_id)
             .await
@@ -330,6 +336,10 @@ impl UpstreamConnectionPool {
             }
         }
 
+        // Ensure refreshing marker is cleared even if nothing was written
+        if let Ok(cache_manager) = RedbCacheManager::global() {
+            let _ = cache_manager.clear_refreshing(server_id).await;
+        }
         Ok(())
     }
 

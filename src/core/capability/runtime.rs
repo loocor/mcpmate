@@ -219,7 +219,10 @@ pub async fn handle_runtime_failure(
     };
     let mut pool_guard = pool.lock().await;
     let _ = pool_guard.register_failure(server_id, failure_kind, message);
-    let _ = pool_guard.disconnect_non_blocking(server_id, instance_id).await;
+    // Only tear down the connection for session-gone errors to avoid penalizing transient timeouts
+    if matches!(failure.kind, RuntimeFailureKind::SessionGone) {
+        let _ = pool_guard.disconnect_non_blocking(server_id, instance_id).await;
+    }
 }
 
 fn runtime_failure_from_capability(failure: Option<CapabilityFetchFailure>) -> Option<RuntimeFailure> {
@@ -572,7 +575,8 @@ async fn call_tool_impl(
     ctx: &CallCtx,
     pool: &Arc<Mutex<UpstreamConnectionPool>>,
 ) -> Result<rmcp::model::CallToolResult> {
-    let timeout = ctx.timeout.unwrap_or_else(|| Duration::from_secs(30));
+    let timeout = ctx.timeout.unwrap_or_else(|| Duration::from_secs(60));
+    let t0 = std::time::Instant::now();
 
     let fetch_peer = || async {
         let pool_guard = pool.lock().await;
@@ -587,12 +591,29 @@ async fn call_tool_impl(
         (None, None, None)
     };
 
+    let t_fetch_begin = std::time::Instant::now();
     let mut peer_info = fetch_peer().await;
+    let t_fetch_ms = t_fetch_begin.elapsed().as_millis();
     if peer_info.0.is_none() {
+        let t_connect_begin = std::time::Instant::now();
         let mut pool_guard = pool.lock().await;
         pool_guard.ensure_connected(&ctx.server_id).await?;
         drop(pool_guard);
         peer_info = fetch_peer().await;
+        tracing::debug!(
+            server_id = %ctx.server_id,
+            tool = %ctx.tool_name,
+            fetch_ms = %t_fetch_ms,
+            ensure_connected_ms = %t_connect_begin.elapsed().as_millis(),
+            "[CALL] ensured connection before tool call"
+        );
+    } else {
+        tracing::debug!(
+            server_id = %ctx.server_id,
+            tool = %ctx.tool_name,
+            fetch_ms = %t_fetch_ms,
+            "[CALL] found ready peer in snapshot"
+        );
     }
 
     let (peer_opt, selected_instance, _selected_status) = peer_info;
@@ -603,6 +624,7 @@ async fn call_tool_impl(
     let tool_name = ctx.tool_name.clone();
     let arguments = ctx.arguments.clone();
     let fut = async move {
+        tracing::debug!(server_id = %ctx.server_id, tool = %ctx.tool_name, timeout_secs = %timeout.as_secs(), "[CALL] sending to upstream");
         peer.call_tool(rmcp::model::CallToolRequestParam {
             name: tool_name.into(),
             arguments,
@@ -615,6 +637,12 @@ async fn call_tool_impl(
                 let mut pool = pool.lock().await;
                 pool.clear_failure_state(&ctx.server_id);
             }
+            tracing::info!(
+                server_id = %ctx.server_id,
+                tool = %ctx.tool_name,
+                elapsed_ms = %t0.elapsed().as_millis(),
+                "[CALL] upstream call succeeded"
+            );
             Ok(res)
         }
         Ok(Err(e)) => {
@@ -637,9 +665,17 @@ async fn call_tool_impl(
                 )
                 .await;
             }
+            tracing::error!(
+                server_id = %ctx.server_id,
+                tool = %ctx.tool_name,
+                elapsed_ms = %t0.elapsed().as_millis(),
+                error = %error_msg,
+                "[CALL] upstream call failed"
+            );
             Err(anyhow::anyhow!("Tool call failed: {}", error_msg))
         }
         Err(_) => {
+            // TODO(mcpmate): revisit after RMCP fixes SSE stream recovery (see GitMCP long-tail investigation).
             if let Some(instance_id) = selected_instance_id.as_deref() {
                 handle_runtime_failure(
                     pool,
@@ -652,6 +688,13 @@ async fn call_tool_impl(
                 )
                 .await;
             }
+            tracing::error!(
+                server_id = %ctx.server_id,
+                tool = %ctx.tool_name,
+                elapsed_ms = %t0.elapsed().as_millis(),
+                timeout_secs = %timeout.as_secs(),
+                "[CALL] upstream call timeout"
+            );
             Err(anyhow::anyhow!("Tool call timeout for server {}", ctx.server_id))
         }
     }

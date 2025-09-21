@@ -101,6 +101,24 @@ pub async fn name_by_id(server_id: &str) -> Option<String> {
     cache.id_to_name.get(server_id).cloned()
 }
 
+/// Build a human-friendly label from server_id: "<name> (<id>)" if name is known, else just id
+pub async fn label_by_id(server_id: &str) -> String {
+    if let Some(name) = name_by_id(server_id).await {
+        format!("{} ({})", name, server_id)
+    } else {
+        server_id.to_string()
+    }
+}
+
+/// Build a human-friendly label from server_name: "<name> (<id>)" if id is known, else just name
+pub async fn label_by_name(server_name: &str) -> String {
+    if let Some(id) = id_by_name(server_name).await {
+        format!("{} ({})", server_name, id)
+    } else {
+        server_name.to_string()
+    }
+}
+
 /// Refresh mappings from database; rebuilds both directions atomically
 pub async fn refresh_from_database(database: &Database) -> Result<()> {
     let rows = sqlx::query("SELECT id, name FROM server_config WHERE id IS NOT NULL AND name IS NOT NULL")

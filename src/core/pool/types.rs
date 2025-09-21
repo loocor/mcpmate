@@ -110,6 +110,12 @@ impl FailureState {
     }
 }
 
+impl Default for FailureState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Connection to an upstream MCP server
 #[derive(Debug)]
 pub struct UpstreamConnection {

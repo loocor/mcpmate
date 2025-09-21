@@ -131,8 +131,7 @@ impl UpstreamConnectionPool {
 
     /// Reconnect to a specific instance of a server (non-blocking)
     ///
-    /// This method schedules a reconnection without blocking the connection pool.
-    /// The actual reconnection happens asynchronously after the backoff period.
+    /// Simplified: rely on pool-level FailureState backoff; attempt immediate reconnect.
     pub async fn reconnect(
         &mut self,
         server_id: &str,
@@ -140,22 +139,11 @@ impl UpstreamConnectionPool {
     ) -> Result<()> {
         // First perform a non-blocking disconnect
         self.disconnect_non_blocking(server_id, instance_id).await?;
-
-        // Get connection for backoff calculation
-        let conn = self.get_instance(server_id, instance_id)?;
-
-        // Calculate backoff time using exponential backoff with longer delays for better fault isolation
-        // MAX 300 seconds (5 minutes), exponential up to 2^8=256 seconds
-        let backoff = std::cmp::min(300, 2u64.pow(std::cmp::min(8, conn.connection_attempts)));
-
         tracing::info!(
-            "Scheduling reconnection to '{}' instance '{}' in {}s (non-blocking)",
+            "Scheduling immediate reconnection to server_id '{}' instance '{}' (pool-level backoff applies)",
             server_id,
-            instance_id,
-            backoff
+            instance_id
         );
-
-        // Use immediate reconnect for now, but with improved non-blocking approach
         self.connect_internal(server_id, instance_id).await
     }
 
@@ -344,7 +332,7 @@ impl UpstreamConnectionPool {
         match result {
             Ok(()) => {
                 tracing::info!(
-                    "Successfully initiated connection to '{}' instance '{}'",
+                    "Successfully initiated connection to server_id '{}' instance '{}'",
                     server_id,
                     instance_id
                 );
@@ -357,12 +345,13 @@ impl UpstreamConnectionPool {
                 Ok(())
             }
             Err(e) => {
-                // Update connection with progressive failure escalation
-                let conn = self.get_instance_mut(server_id, instance_id)?;
-                conn.update_error_with_escalation(format!("Connection failed: {}", e));
+                // Set simple error status; pool-level backoff governs throttling
+                if let Ok(conn) = self.get_instance_mut(server_id, instance_id) {
+                    conn.update_failed(format!("Connection failed: {}", e));
+                }
 
                 tracing::error!(
-                    "Failed to connect to '{}' instance '{}': {} (progressive escalation applied)",
+                    "Failed to connect to server_id '{}' instance '{}': {}",
                     server_id,
                     instance_id,
                     e
@@ -429,8 +418,51 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        self.connect_with_transport(server_id, instance_id, |id, config| async move {
-            connect_sse_server(&id, &config).await
+        // Prepare optional shared client
+        let client_opt = if let Some(reg) = &self.http_clients {
+            if let Some(url) = self.config.mcp_servers.get(server_id).and_then(|c| c.url.as_ref()) {
+                if let Some(origin) = crate::core::pool::connection::HttpClientRegistry::origin_key(url) {
+                    Some(reg.get_or_create(&origin).await)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(client) = &client_opt {
+            if let Some(url) = self.config.mcp_servers.get(server_id).and_then(|c| c.url.as_ref()) {
+                if let Some(origin) = crate::core::pool::connection::HttpClientRegistry::origin_key(url) {
+                    tracing::debug!(
+                        "[HTTP CLIENT][reuse] server_id={} origin={} client={:p}",
+                        server_id,
+                        origin,
+                        client
+                    );
+                }
+            }
+        } else {
+            tracing::debug!("[HTTP CLIENT][no-reuse] server_id={} (SSE)", server_id);
+        }
+
+        self.connect_with_transport(server_id, instance_id, move |label, config| {
+            let client_opt = client_opt.clone();
+            async move {
+                if let Some(client) = client_opt {
+                    crate::core::transport::http::connect_http_server_with_client(
+                        &label,
+                        &config,
+                        client,
+                        crate::common::server::TransportType::Sse,
+                    )
+                    .await
+                } else {
+                    connect_sse_server(&label, &config).await
+                }
+            }
         })
         .await
     }
@@ -475,8 +507,51 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        self.connect_with_transport(server_id, instance_id, |id, config| async move {
-            connect_http_server(&id, &config, TransportType::StreamableHttp).await
+        // Prepare optional shared client
+        let client_opt = if let Some(reg) = &self.http_clients {
+            if let Some(url) = self.config.mcp_servers.get(server_id).and_then(|c| c.url.as_ref()) {
+                if let Some(origin) = crate::core::pool::connection::HttpClientRegistry::origin_key(url) {
+                    Some(reg.get_or_create(&origin).await)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(client) = &client_opt {
+            if let Some(url) = self.config.mcp_servers.get(server_id).and_then(|c| c.url.as_ref()) {
+                if let Some(origin) = crate::core::pool::connection::HttpClientRegistry::origin_key(url) {
+                    tracing::debug!(
+                        "[HTTP CLIENT][reuse] server_id={} origin={} client={:p}",
+                        server_id,
+                        origin,
+                        client
+                    );
+                }
+            }
+        } else {
+            tracing::debug!("[HTTP CLIENT][no-reuse] server_id={} (HTTP)", server_id);
+        }
+
+        self.connect_with_transport(server_id, instance_id, move |label, config| {
+            let client_opt = client_opt.clone();
+            async move {
+                if let Some(client) = client_opt {
+                    crate::core::transport::http::connect_http_server_with_client(
+                        &label,
+                        &config,
+                        client,
+                        TransportType::StreamableHttp,
+                    )
+                    .await
+                } else {
+                    connect_http_server(&label, &config, TransportType::StreamableHttp).await
+                }
+            }
         })
         .await
     }
@@ -492,8 +567,9 @@ impl UpstreamConnectionPool {
         Fut: Future<Output = Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)>>,
     {
         let server_config = self.config.mcp_servers.get(server_id).unwrap().clone();
-        let server_id_owned = server_id.to_string();
-        let (service, tools, capabilities) = connect_fn(server_id_owned, server_config).await?;
+        // Build a friendly label for transport-layer logging: "name (id)" or just id
+        let label = crate::core::capability::resolver::label_by_id(server_id).await;
+        let (service, tools, capabilities) = connect_fn(label, server_config).await?;
         self.update_connection(server_id, instance_id, service, tools, capabilities);
         Ok(())
     }
@@ -590,7 +666,7 @@ impl UpstreamConnectionPool {
 
         // Resolve label synchronously by best-effort using cached id; we cannot await here.
         // For better readability, include id in logs.
-        let label = format!("{}", server_id);
+        let label = server_id.to_string();
 
         // Spawn background task for service cancellation
         tokio::spawn(async move {

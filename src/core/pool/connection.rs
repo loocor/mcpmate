@@ -17,6 +17,75 @@ use super::config::PoolConfigManager;
 use super::sync::ServerSyncManager;
 use super::types::{self, FailureKind};
 
+type InstanceSnapshot = (
+    String,
+    ConnectionStatus,
+    bool,
+    bool,
+    Option<Peer<RoleClient>>,
+);
+type SnapshotMap = HashMap<String, Vec<InstanceSnapshot>>;
+
+/// Build-in lightweight HTTP client registry kept at pool layer.
+///
+/// The registry maps an origin (scheme://host[:port]) to a shared reqwest::Client
+/// enabling TCP/TLS/HTTP2 reuse across requests to the same upstream.
+/// It's intentionally located in the pool to keep strategy/state close to
+/// connection/backoff logic while keeping transport layer stateless.
+#[derive(Clone, Debug)]
+pub(crate) struct HttpClientRegistry {
+    inner: Arc<tokio::sync::RwLock<std::collections::HashMap<String, reqwest::Client>>>,
+}
+
+impl HttpClientRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Derive a reuse key from URL string (scheme://host[:port])
+    pub(crate) fn origin_key(url: &str) -> Option<String> {
+        if let Ok(parsed) = url::Url::parse(url) {
+            let scheme = parsed.scheme();
+            if let Some(host) = parsed.host_str() {
+                let port = parsed.port().map(|p| format!(":{}", p)).unwrap_or_default();
+                return Some(format!("{}://{}{}", scheme, host, port));
+            }
+        }
+        None
+    }
+
+    /// Get or create a reqwest Client for the given origin key
+    pub(crate) async fn get_or_create(
+        &self,
+        origin: &str,
+    ) -> reqwest::Client {
+        {
+            let map = self.inner.read().await;
+            if let Some(c) = map.get(origin) {
+                return c.clone();
+            }
+        }
+
+        let client = Self::build_client();
+        let mut map = self.inner.write().await;
+        let entry = map.entry(origin.to_string()).or_insert_with(|| client.clone());
+        entry.clone()
+    }
+
+    fn build_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .pool_idle_timeout(std::time::Duration::from_secs(45))
+            .pool_max_idle_per_host(8)
+            .tcp_keepalive(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .danger_accept_invalid_certs(false)
+            .build()
+            .expect("Failed to build shared reqwest Client")
+    }
+}
+
 /// Pool of connections to upstream MCP servers
 ///
 /// This is the core connection pool that manages active connections to upstream MCP servers.
@@ -47,6 +116,8 @@ pub struct UpstreamConnectionPool {
     pub runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
     /// Failure tracking for circuit breaking/backoff
     pub failure_states: HashMap<String, types::FailureState>,
+    /// Optional shared HTTP client registry for transport reuse
+    pub(crate) http_clients: Option<Arc<crate::core::pool::connection::HttpClientRegistry>>,
 }
 
 impl UpstreamConnectionPool {
@@ -77,8 +148,22 @@ impl UpstreamConnectionPool {
             database,
             runtime_cache: None, // Will be set by the proxy server
             failure_states: HashMap::new(),
+            http_clients: {
+                let reuse = std::env::var("MCMP_MATE_HTTP_CLIENT_REUSE").ok();
+                let enabled = match reuse.as_deref() {
+                    Some("0") | Some("false") | Some("off") => false,
+                    _ => true, // default ON unless explicitly disabled
+                };
+                if enabled {
+                    Some(Arc::new(crate::core::pool::connection::HttpClientRegistry::new()))
+                } else {
+                    None
+                }
+            },
         }
     }
+
+    // (moved to module scope) HttpClientRegistry definition
 
     /// Update the configuration using the configuration manager
     ///
@@ -123,7 +208,7 @@ impl UpstreamConnectionPool {
     ) -> &mut types::FailureState {
         self.failure_states
             .entry(server_id.to_string())
-            .or_insert_with(types::FailureState::new)
+            .or_default()
     }
 
     pub fn register_failure(
@@ -288,28 +373,8 @@ impl UpstreamConnectionPool {
 
     /// Get a lightweight snapshot for read-only operations (minimal cloning, no tool vectors)
     /// Returns: server_id -> Vec of (instance_id, status, supports_resources, supports_prompts, service_peer)
-    pub fn get_snapshot(
-        &self
-    ) -> HashMap<
-        String,
-        Vec<(
-            String,
-            crate::core::foundation::types::ConnectionStatus,
-            bool,
-            bool,
-            Option<Peer<RoleClient>>,
-        )>,
-    > {
-        let mut result: HashMap<
-            String,
-            Vec<(
-                String,
-                crate::core::foundation::types::ConnectionStatus,
-                bool,
-                bool,
-                Option<Peer<RoleClient>>,
-            )>,
-        > = HashMap::new();
+    pub fn get_snapshot(&self) -> SnapshotMap {
+        let mut result: SnapshotMap = HashMap::new();
 
         for (server_id, instances) in &self.connections {
             let mut vec = Vec::with_capacity(instances.len());

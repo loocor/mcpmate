@@ -14,7 +14,6 @@ pub const CAPABILITY_VALIDATION_SESSION: &str = "capability-service";
 /// - Runtime pipeline (directly via capability runtime helpers)
 /// - Temporary instance fallback (delegated to pool validation instance)
 /// - Async write-back to REDB (on success)
-
 pub struct CapabilityService {
     pub redb: Arc<RedbCacheManager>,
     pub pool: Arc<Mutex<UpstreamConnectionPool>>,
@@ -59,6 +58,8 @@ impl CapabilityService {
             }
 
             tracing::info!(server = %server.name, "Prewarming capability cache via temporary validation instance");
+            // Mark refreshing to help UI/consumers avoid treating empty cache as final
+            let _ = self.redb.set_refreshing(server_id, std::time::Duration::from_secs(60)).await;
             if let Err(e) = crate::config::server::capabilities::sync_via_connection_pool(
                 &self.pool,
                 &self.redb,
@@ -70,8 +71,11 @@ impl CapabilityService {
             .await
             {
                 tracing::warn!(server = %server.name, error = %e, "Cache prewarm failed");
+                // Clear marker on failure to avoid sticky state; TTL would clear eventually but explicit is better
+                let _ = self.redb.clear_refreshing(server_id).await;
             } else {
                 tracing::debug!(server = %server.name, "Cache prewarm completed");
+                let _ = self.redb.clear_refreshing(server_id).await;
             }
         }
 

@@ -213,73 +213,15 @@ impl UpstreamConnectionPool {
                 }
 
                 // Error state
-                ConnectionStatus::Error(error_details) => {
-                    // Check if we should retry based on error type and failure count
-                    let should_retry = match error_details.error_type {
-                        ErrorType::Temporary => {
-                            // Check if we should auto-disable (4+ failures)
-                            if error_details.failure_count >= 4 {
-                                tracing::warn!(
-                                    "Connection check: Server '{}' instance '{}' has {} failures, should be auto-disabled",
-                                    server_name,
-                                    instance_id,
-                                    error_details.failure_count
-                                );
-                                false // Don't retry, should be disabled
-                            } else {
-                                // Use progressive backoff based on failure count
-                                let backoff_seconds = match error_details.failure_count {
-                                    1 => 60,  // 1 minute for first failure
-                                    2 => 120, // 2 minutes for second failure
-                                    3 => 360, // 6 minutes for third failure
-                                    _ => 600, // Fallback (shouldn't reach here due to check above)
-                                };
-
-                                // Calculate time since last failure
-                                let now = chrono::Local::now().timestamp() as u64;
-                                let seconds_since_last_failure = now.saturating_sub(error_details.last_failure_time);
-
-                                // Only retry if enough time has passed based on progressive backoff
-                                if seconds_since_last_failure >= backoff_seconds {
-                                    tracing::info!(
-                                        "Connection check: Retrying temporary error for '{}' instance '{}' after {}s (failure #{}, progressive backoff)",
-                                        server_name,
-                                        instance_id,
-                                        seconds_since_last_failure,
-                                        error_details.failure_count
-                                    );
-                                    true
-                                } else {
-                                    tracing::debug!(
-                                        "Connection check: Waiting {}s before retrying '{}' instance '{}' (failure #{}, progressive backoff)",
-                                        backoff_seconds - seconds_since_last_failure,
-                                        server_name,
-                                        instance_id,
-                                        error_details.failure_count
-                                    );
-                                    false
-                                }
-                            }
-                        }
-                        ErrorType::Permanent => {
-                            // Don't retry permanent errors
-                            false
-                        }
-                        ErrorType::Unknown => {
-                            // For unknown errors, retry with a fixed backoff
-                            let backoff_seconds = 60; // 1 minute
-
-                            // Calculate time since last failure
-                            let now = chrono::Local::now().timestamp() as u64;
-                            let seconds_since_last_failure = now.saturating_sub(error_details.last_failure_time);
-
-                            // Only retry if enough time has passed
-                            seconds_since_last_failure >= backoff_seconds
-                        }
-                    };
-
-                    // If we should retry, attempt to reconnect
-                    if should_retry {
+                ConnectionStatus::Error(_error_details) => {
+                    // Pool-level backoff governs retry. If active, skip; otherwise schedule reconnect.
+                    if let Some(remaining) = self.remaining_backoff(&server_name) {
+                        tracing::debug!(
+                            "Connection check: '{}' backing off for {:.1}s, skip reconnect (Error state)",
+                            server_name,
+                            remaining.as_secs_f32()
+                        );
+                    } else {
                         // Schedule reconnection (non-blocking)
                         if let Err(e) = self.reconnect(&server_name, &instance_id).await {
                             tracing::error!(
@@ -290,7 +232,7 @@ impl UpstreamConnectionPool {
                             );
                         } else {
                             tracing::info!(
-                                "Connection check: Scheduled reconnection for '{}' instance '{}' after progressive backoff",
+                                "Connection check: Scheduled reconnection for '{}' instance '{}' (pool-level backoff)",
                                 server_name,
                                 instance_id
                             );
@@ -377,23 +319,18 @@ impl UpstreamConnectionPool {
                             continue;
                         }
 
-                        // Use progressive backoff based on failure count
-                        let min_delay = match error_details.failure_count {
-                            1 => 60,  // 1 minute for first failure
-                            2 => 120, // 2 minutes for second failure
-                            3 => 360, // 6 minutes for third failure
-                            _ => 600, // 10 minutes for 4+ failures
-                        };
-
-                        if now > conn.last_connected
-                            && now.duration_since(conn.last_connected) > std::time::Duration::from_secs(min_delay)
-                        {
+                        // Respect pool-level backoff window
+                        if let Some(remaining) = pool_guard.remaining_backoff(server_name) {
                             tracing::debug!(
-                                "Health check: Scheduling reconnect for '{}' instance '{}' after {}s delay (failure count: {})",
+                                "Health check: '{}' backing off for {:.1}s (Error state), skip reconnect",
                                 server_name,
-                                instance_id,
-                                min_delay,
-                                error_details.failure_count
+                                remaining.as_secs_f32()
+                            );
+                        } else {
+                            tracing::debug!(
+                                "Health check: Scheduling reconnect for '{}' instance '{}' (Error state, no backoff)",
+                                server_name,
+                                instance_id
                             );
                             reconnects.push((server_name.clone(), instance_id.clone()));
                         }

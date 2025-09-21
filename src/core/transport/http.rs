@@ -9,6 +9,8 @@ use rmcp::{
     RoleClient,
     model::{ServerCapabilities, Tool},
     service::{RunningService, ServiceExt},
+    transport::sse_client::SseClientConfig,
+    transport::streamable_http_client::StreamableHttpClientTransportConfig,
     transport::{SseClientTransport, StreamableHttpClientTransport},
 };
 use tokio::time::timeout;
@@ -32,7 +34,7 @@ async fn connect_http_internal(
     let tools_timeout = get_sse_tools_timeout();
 
     tracing::debug!(
-        "Using timeouts for '{}': connection={}s, service={}s, tools={}s",
+        "Using timeouts for server '{}': connection={}s, service={}s, tools={}s",
         server_name,
         connection_timeout.as_secs(),
         service_timeout.as_secs(),
@@ -73,6 +75,7 @@ where
     T: rmcp::transport::Transport<RoleClient> + Send + 'static,
 {
     // Serve transport with timeout
+    // server_name is a display label (e.g., "Gitmcp (SERVxxxx)") provided by the caller
     let service = timeout(service_timeout, async { ().serve(transport).await })
         .await
         .map_err(|_| anyhow::anyhow!(format!("Connection timeout for server '{server_name}'")))??;
@@ -102,7 +105,76 @@ pub async fn connect_http_server(
     server_config: &MCPServerConfig,
     transport_type: TransportType,
 ) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)> {
-    connect_http_internal(server_name, server_config, transport_type).await
+    let began = std::time::Instant::now();
+    let res = connect_http_internal(server_name, server_config, transport_type).await;
+    if let Ok((_, ref tools, _)) = res {
+        tracing::debug!(
+            "[HTTP CONNECT][no-reuse] server={} tools={} elapsed_ms={}",
+            server_name,
+            tools.len(),
+            began.elapsed().as_millis()
+        );
+    }
+    res
+}
+
+/// Connect to an HTTP-based server (SSE or Streamable HTTP) with provided reqwest client
+pub async fn connect_http_server_with_client(
+    server_name: &str,
+    server_config: &MCPServerConfig,
+    client: reqwest::Client,
+    transport_type: TransportType,
+) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)> {
+    let began = std::time::Instant::now();
+    let url = server_config
+        .url
+        .as_ref()
+        .context("URL not specified for HTTP server")?;
+
+    let connection_timeout = get_sse_connection_timeout();
+    let service_timeout = get_sse_service_timeout();
+    let tools_timeout = get_sse_tools_timeout();
+
+    let (service, tools, capabilities) = match transport_type {
+        TransportType::Sse => {
+            // Start SSE with injected client
+            let transport = tokio::time::timeout(connection_timeout, async move {
+                SseClientTransport::start_with_client(
+                    client,
+                    SseClientConfig {
+                        sse_endpoint: url.clone().into(),
+                        ..Default::default()
+                    },
+                )
+                .await
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!(format!("Timeout creating SSE transport for server '{server_name}'")))??;
+            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
+        }
+        TransportType::StreamableHttp => {
+            // Create Streamable HTTP transport with injected client
+            let config = StreamableHttpClientTransportConfig {
+                uri: url.clone().into(),
+                ..Default::default()
+            };
+            let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
+            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
+        }
+        TransportType::Stdio => {
+            return Err(anyhow::anyhow!("Stdio transport not supported by this function"));
+        }
+    };
+
+    let elapsed = began.elapsed().as_millis();
+    tracing::debug!(
+        "[HTTP CONNECT][reuse] server={} transport={:?} tools={} elapsed_ms={}",
+        server_name,
+        transport_type,
+        tools.len(),
+        elapsed
+    );
+    Ok((service, tools, capabilities))
 }
 
 /// Connect specifically to an SSE server – maintained for backward compatibility

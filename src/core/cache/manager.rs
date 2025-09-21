@@ -11,6 +11,7 @@ use lru::LruCache;
 use redb::{Database, ReadableTable};
 use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
+use std::collections::HashMap;
 use tracing::{debug, info};
 
 use super::{
@@ -36,6 +37,8 @@ pub struct RedbCacheManager {
     config: CacheConfig,
     /// Runtime cache metrics (L1/L2 hits, misses, ops)
     metrics: Arc<RwLock<CacheMetrics>>,
+    /// Ephemeral in-memory marker: server_id -> refreshing_until (Instant)
+    refreshing: Arc<RwLock<HashMap<String, std::time::Instant>>>,
 }
 
 impl Clone for RedbCacheManager {
@@ -46,6 +49,7 @@ impl Clone for RedbCacheManager {
             memory_cache: self.memory_cache.clone(),
             config: self.config.clone(),
             metrics: self.metrics.clone(),
+            refreshing: self.refreshing.clone(),
         }
     }
 }
@@ -159,6 +163,7 @@ impl RedbCacheManager {
             memory_cache,
             config,
             metrics: Arc::new(RwLock::new(CacheMetrics::default())),
+            refreshing: Arc::new(RwLock::new(HashMap::new())),
         };
 
         info!("Cache manager initialized at: {:?}", db_path);
@@ -295,6 +300,32 @@ impl RedbCacheManager {
             cache_hit,
             cached_at,
         })
+    }
+
+    /// Mark a server as "refreshing" for a given TTL
+    pub async fn set_refreshing(&self, server_id: &str, ttl: std::time::Duration) {
+        let mut map = self.refreshing.write().await;
+        map.insert(server_id.to_string(), std::time::Instant::now() + ttl);
+    }
+
+    /// Clear the "refreshing" marker for a server
+    pub async fn clear_refreshing(&self, server_id: &str) {
+        let mut map = self.refreshing.write().await;
+        map.remove(server_id);
+    }
+
+    /// Check whether a server is currently marked as "refreshing"
+    pub async fn is_refreshing(&self, server_id: &str) -> bool {
+        let now = std::time::Instant::now();
+        let mut map = self.refreshing.write().await;
+        if let Some(deadline) = map.get(server_id).cloned() {
+            if deadline > now {
+                return true;
+            }
+            // expired
+            map.remove(server_id);
+        }
+        false
     }
 
     /// Get server tools

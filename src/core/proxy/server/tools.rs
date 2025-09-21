@@ -151,11 +151,17 @@ pub(super) async fn call_tool(
         "ProxyServer::call_tool resolved mapping"
     );
 
+    // Resolve tool call timeout from env (fallback 30s)
+    let call_timeout_secs: u64 = std::env::var("MCPMATE_TOOL_CALL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(60);
+
     let ctx = crate::core::capability::runtime::CallCtx {
         call_id: call_id.clone(),
         server_id,
         tool_name: original_tool_name,
-        timeout: Some(std::time::Duration::from_secs(30)),
+        timeout: Some(std::time::Duration::from_secs(call_timeout_secs)),
         arguments: request.arguments.clone(),
     };
 

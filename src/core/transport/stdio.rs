@@ -118,7 +118,7 @@ async fn connect_with_timeout(
 
     // Spawn stderr monitoring task if stderr is available
     if let Some(mut stderr) = stderr_handle {
-        let server_name = server_name.to_string();
+        let server_label = server_name.to_string();
         tokio::spawn(async move {
             let mut buffer = [0u8; 1024];
             loop {
@@ -128,13 +128,13 @@ async fn connect_with_timeout(
                         let output = String::from_utf8_lossy(&buffer[..n]);
                         for line in output.lines() {
                             if !line.trim().is_empty() {
-                                // Note: server_name here is actually server_id from the connection pool
-                                tracing::info!("Log from {} (ID): {}", server_name, line.trim());
+                                // Transport layer maintains neutral phrasing to avoid mismatch between name and argument
+                                tracing::info!("Log from server {}: {}", server_label, line.trim());
                             }
                         }
                     }
                     Err(e) => {
-                        tracing::debug!("Stderr read error for server '{}': {}", server_name, e);
+                        tracing::debug!("Stderr read error for server '{}': {}", server_label, e);
                         break;
                     }
                 }
@@ -223,6 +223,7 @@ async fn connect_stdio_server_core(
     );
 
     // Connect to server with timeout handling
+    // server_name here is a display label (e.g., "Gitmcp (SERVxxxx)") provided by the caller
     let service = connect_with_timeout(cmd, ct.clone(), server_name, connection_timeout).await?;
 
     // Get tools with timeout handling

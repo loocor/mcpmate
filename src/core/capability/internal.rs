@@ -61,7 +61,7 @@ pub fn capability_declared(
                     return true;
                 }
             }
-            if saw_any { false } else { true }
+            !saw_any
         }
     }
 }

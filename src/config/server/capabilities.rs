@@ -390,6 +390,8 @@ pub async fn store_dual_write(
         templates.clone(),
     )
     .await?;
+    // Clear any refreshing marker now that we have a fresh snapshot
+    redb.clear_refreshing(server_id).await;
 
     // SQLite: tools via existing helper
     if !tools.is_empty() {
