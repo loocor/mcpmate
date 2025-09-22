@@ -68,8 +68,6 @@ runtime list
 runtime check node
 ```
 
-For detailed documentation, see [Runtime Manager Guide](./docs/runtime-manager.md).
-
 ## Configuration Management
 
 MCPMate now uses a database-driven configuration management system, centered around the concept of **Profile**. All server, tool, and profile information is stored in a local SQLite database (`config/mcpmate.db`). This enables flexible, dynamic, and persistent management of MCP servers and tools, supporting advanced features such as multi-profile activation, scenario-based switching, and team collaboration.
@@ -159,6 +157,4 @@ Our development roadmap includes:
 
 Contributions, issue reports, and suggestions are welcome. Please submit your contributions via GitHub Issues or Pull Requests.
 
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+Before opening a PR, review the [Repository Guidelines](AGENTS.md) for development workflows, testing expectations, and documentation requirements.
