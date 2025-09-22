@@ -1,0 +1,59 @@
+// Zed client template definition,
+// Zed currently only supports stdio
+{
+  identifier: "zed",
+  display_name: "Zed",
+  format: "json",
+  protocol_revision: "2025-06-18",
+  metadata: {
+    logo_url: "https://zed.dev/icon.png",
+    category: "application",
+    supported_runtimes: {
+      macos: ["npx", "uvx"],
+      linux: ["npx"],
+      windows: ["npx"],
+    },
+  },
+  storage: {
+    kind: "file",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "file_path",
+        value: "/Applications/Zed.app",
+        config_path: "~/.config/zed/settings.json",
+      },
+      {
+        method: "config_path",
+        value: "~/.config/zed/settings.json",
+      },
+    ],
+    linux: [
+      {
+        method: "config_path",
+        value: "~/.config/zed/settings.json",
+      },
+    ],
+  },
+  config_mapping: {
+    container_key: "context_servers",
+    container_type: "object_map",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    managed_source: "profile",
+    format_rules: {
+      stdio: {
+        template: {
+          source: "custom",
+          enabled: true,
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          env: "{{{json env}}}"
+        },
+        requires_type_field: false,
+      },
+    },
+  },
+}

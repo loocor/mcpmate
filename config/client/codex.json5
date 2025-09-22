@@ -1,0 +1,65 @@
+// Codex client template definition
+{
+  identifier: "codex",
+  display_name: "Codex",
+  // output format for the rendered file
+  format: "toml",
+  protocol_revision: "2025-06-18",
+  metadata: {
+    logo_url: "https://codex.example/assets/icon.png",
+    category: "application",
+    supported_runtimes: ["npx", "uvx", "docker"],
+  },
+  storage: {
+    kind: "file",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "file_path",
+        value: "/Applications/Codex.app",
+        config_path: "~/.codex/config.toml",
+      },
+      {
+        method: "config_path",
+        value: "~/.codex/config.toml",
+      },
+    ],
+    windows: [
+      {
+        method: "config_path",
+        value: "~/AppData/Roaming/Codex/config.toml",
+      },
+    ],
+  },
+  config_mapping: {
+    container_key: "mcp_servers",
+    container_type: "object_map",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    managed_source: "profile",
+    format_rules: {
+      stdio: {
+        template: {
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          timeout: 60,
+          env: "{{{json env}}}",
+        },
+        requires_type_field: false,
+      },
+      streamable_http: {
+        template: {
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          timeout: 60,
+          env: "{{{json env}}}",
+          url: "{{url}}",
+          headers: "{{{json headers}}}",
+        },
+        requires_type_field: false,
+      },
+    },
+  },
+}

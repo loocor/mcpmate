@@ -1,6 +1,9 @@
 use crate::api::handlers::client;
 use crate::api::models::client::{
-    ClientCheckReq, ClientCheckResp, ClientConfigReq, ClientConfigResp, ClientConfigUpdateReq, ClientConfigUpdateResp,
+    ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq,
+    ClientBackupPolicyResp, ClientBackupPolicySetReq, ClientCheckReq, ClientCheckResp, ClientConfigReq,
+    ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientManageReq,
+    ClientManageResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -19,27 +22,88 @@ aide_wrapper_query!(
     "Get all client with optional force refresh."
 );
 
-// Generate aide-compatible wrapper for client details (with query parameters)
+// Configuration endpoints
 aide_wrapper_query!(
-    client::details,
+    client::config_details,
     ClientConfigReq,
     ClientConfigResp,
     "Get client configuration details with optional server import"
 );
 
-// Generate aide-compatible wrapper for client update (with payload body)
 aide_wrapper_payload!(
-    client::update,
+    client::config_apply,
     ClientConfigUpdateReq,
     ClientConfigUpdateResp,
-    "Update client configuration with specified settings"
+    "Apply client configuration with specified settings"
+);
+
+aide_wrapper_payload!(
+    client::config_restore,
+    ClientConfigRestoreReq,
+    ClientBackupActionResp,
+    "Restore a client configuration from backup"
+);
+
+// Management toggle
+aide_wrapper_payload!(
+    client::manage,
+    ClientManageReq,
+    ClientManageResp,
+    "Enable or disable MCPMate management for a client"
+);
+
+// Backup administration
+aide_wrapper_query!(
+    client::list_backups,
+    ClientBackupListReq,
+    ClientBackupListResp,
+    "List stored configuration backups"
+);
+
+aide_wrapper_payload!(
+    client::delete_backup,
+    ClientBackupOperateReq,
+    ClientBackupActionResp,
+    "Delete a configuration backup"
+);
+
+aide_wrapper_query!(
+    client::get_backup_policy,
+    ClientBackupPolicyReq,
+    ClientBackupPolicyResp,
+    "Get backup retention policy for a client"
+);
+
+aide_wrapper_payload!(
+    client::set_backup_policy,
+    ClientBackupPolicySetReq,
+    ClientBackupPolicyResp,
+    "Set backup retention policy for a client"
 );
 
 /// Create client management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/client/list", get_with(list_aide, list_docs))
-        .api_route("/client/details", get_with(details_aide, details_docs))
-        .api_route("/client/update", post_with(update_aide, update_docs))
+        .api_route(
+            "/client/config/details",
+            get_with(config_details_aide, config_details_docs),
+        )
+        .api_route("/client/config/apply", post_with(config_apply_aide, config_apply_docs))
+        .api_route(
+            "/client/config/restore",
+            post_with(config_restore_aide, config_restore_docs),
+        )
+        .api_route("/client/manage", post_with(manage_aide, manage_docs))
+        .api_route("/client/backups/list", get_with(list_backups_aide, list_backups_docs))
+        .api_route(
+            "/client/backups/delete",
+            post_with(delete_backup_aide, delete_backup_docs),
+        )
+        .api_route(
+            "/client/backups/policy",
+            get_with(get_backup_policy_aide, get_backup_policy_docs)
+                .post_with(set_backup_policy_aide, set_backup_policy_docs),
+        )
         .with_state(state)
 }

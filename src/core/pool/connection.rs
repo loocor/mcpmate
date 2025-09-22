@@ -17,13 +17,7 @@ use super::config::PoolConfigManager;
 use super::sync::ServerSyncManager;
 use super::types::{self, FailureKind};
 
-type InstanceSnapshot = (
-    String,
-    ConnectionStatus,
-    bool,
-    bool,
-    Option<Peer<RoleClient>>,
-);
+type InstanceSnapshot = (String, ConnectionStatus, bool, bool, Option<Peer<RoleClient>>);
 type SnapshotMap = HashMap<String, Vec<InstanceSnapshot>>;
 
 /// Build-in lightweight HTTP client registry kept at pool layer.
@@ -206,9 +200,7 @@ impl UpstreamConnectionPool {
         &mut self,
         server_id: &str,
     ) -> &mut types::FailureState {
-        self.failure_states
-            .entry(server_id.to_string())
-            .or_default()
+        self.failure_states.entry(server_id.to_string()).or_default()
     }
 
     pub fn register_failure(

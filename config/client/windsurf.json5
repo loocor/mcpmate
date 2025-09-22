@@ -1,0 +1,65 @@
+// Windsurf client template definition
+{
+  identifier: "windsurf",
+  display_name: "Windsurf",
+  format: "json",
+  protocol_revision: "2025-06-18",
+  metadata: {
+    logo_url: "https://windsurf.com/favicon_270.png",
+    category: "application",
+    supported_runtimes: {
+      macos: ["npx", "uvx", "docker", "binary"],
+      linux: ["npx", "uvx", "docker", "binary"],
+      windows: ["npx", "uvx", "binary"],
+    },
+  },
+  storage: {
+    kind: "file",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "file_path",
+        value: "/Applications/Windsurf.app",
+        config_path: "~/.codeium/windsurf/mcp_config.json",
+      },
+      {
+        method: "config_path",
+        value: "~/.codeium/windsurf/mcp_config.json",
+      },
+    ],
+    windows: [
+      {
+        method: "config_path",
+        value: "~/AppData/Roaming/Codeium/windsurf/mcp_config.json",
+      },
+    ],
+  },
+  config_mapping: {
+    container_key: "mcpServers",
+    container_type: "object_map",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    managed_source: "profile",
+    format_rules: {
+      stdio: {
+        template: {
+          type: "stdio",
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          env: "{{{json env}}}",
+        },
+        requires_type_field: true,
+      },
+      sse: {
+        template: {
+          type: "sse",
+          serverUrl: "{{url}}",
+          headers: "{{{json headers}}}",
+        },
+        requires_type_field: false,
+      },
+    },
+  },
+}

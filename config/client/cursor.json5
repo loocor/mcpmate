@@ -1,0 +1,68 @@
+// Cursor client template definition
+{
+  identifier: "cursor",
+  display_name: "Cursor",
+  format: "json",
+  protocol_revision: "2025-06-18",
+  metadata: {
+    logo_url: "https://cursor.sh/icon.png",
+    category: "application",
+    supported_runtimes: ["npx", "uvx", "docker", "binary"],
+  },
+  storage: {
+    kind: "file",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "file_path",
+        value: "/Applications/Cursor.app",
+        config_path: "~/.cursor/mcp.json",
+      },
+      {
+        method: "config_path",
+        value: "~/.cursor/mcp.json",
+      },
+    ],
+    windows: [
+      {
+        method: "config_path",
+        value: "~/AppData/Roaming/Cursor/mcp.json",
+      },
+    ],
+  },
+  config_mapping: {
+    container_key: "mcpServers",
+    container_type: "object_map",
+    merge_strategy: "replace",
+    keep_original_config: false,
+    managed_source: "profile",
+    format_rules: {
+      stdio: {
+        template: {
+          type: "stdio",
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          env: "{{{json env}}}",
+        },
+        requires_type_field: false,
+      },
+      streamable_http: {
+        template: {
+          type: "streamable_http",
+          url: "{{url}}",
+        },
+        requires_type_field: false,
+      },
+      sse: {
+        template: {
+          type: "sse",
+          url: "{{url}}",
+          headers: "{{{json headers}}}",
+        },
+        requires_type_field: false,
+      },
+    },
+  },
+}

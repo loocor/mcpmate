@@ -30,9 +30,9 @@ impl ApiServer {
     ) -> Result<(), anyhow::Error> {
         // Create the router with connection pool and HTTP proxy reference if available
         let router = if let Some(proxy) = http_proxy {
-            create_router_with_proxy(connection_pool.clone(), proxy)
+            create_router_with_proxy(connection_pool.clone(), proxy).await
         } else {
-            create_router(connection_pool.clone())
+            create_router(connection_pool.clone()).await
         };
 
         tracing::info!("Starting API server on {}", self.address);
@@ -52,9 +52,9 @@ impl ApiServer {
     ) -> Result<(), anyhow::Error> {
         // Create the router with connection pool and HTTP proxy reference if available
         let router = if let Some(proxy) = http_proxy {
-            create_router_with_proxy(connection_pool.clone(), proxy)
+            create_router_with_proxy(connection_pool.clone(), proxy).await
         } else {
-            create_router(connection_pool.clone())
+            create_router(connection_pool.clone()).await
         };
 
         tracing::info!("Starting API server on {} with graceful shutdown support", self.address);

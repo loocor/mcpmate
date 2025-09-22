@@ -1,0 +1,61 @@
+// Qoder desktop client template definition
+{
+  identifier: "qoder",
+  display_name: "Qoder",
+  format: "json",
+  metadata: {
+    logo_url: "https://qoder.io/favicon.ico",
+    category: "application",
+    supported_runtimes: {
+      macos: ["npx", "uvx", "bunx", "docker", "binary"],
+      windows: ["npx", "uvx", "bunx", "binary"],
+    },
+  },
+  storage: {
+    kind: "file",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "config_path",
+        value: "~/Library/Application Support/Qoder/SharedClientCache/mcp.json",
+      },
+    ],
+  },
+  config_mapping: {
+    container_key: "mcpServers",
+    container_type: "object_map",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    managed_source: "profile",
+    format_rules: {
+      stdio: {
+        template: {
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          env: "{{{json env}}}",
+          timeout: 60,
+        },
+        requires_type_field: false,
+      },
+      sse: {
+        template: {
+          type: "sse",
+          url: "{{url}}",
+          headers: "{{{json headers}}}",
+          timeout: 60,
+        },
+        requires_type_field: false,
+      },
+      streamable_http: {
+        template: {
+          type: "streamable_http",
+          url: "{{url}}",
+          timeout: 60,
+        },
+        requires_type_field: false,
+      },
+    },
+  },
+}

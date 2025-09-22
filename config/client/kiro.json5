@@ -1,0 +1,46 @@
+// Kiro desktop client template definition
+{
+  identifier: "kiro",
+  display_name: "Kiro",
+  format: "json",
+  metadata: {
+    logo_url: "https://kiro.ai/favicon.ico",
+    category: "application",
+    supported_runtimes: {
+      macos: ["npx", "uvx", "docker", "binary"],
+      linux: ["npx", "uvx", "docker", "binary"],
+      windows: ["npx", "uvx", "binary"],
+    },
+  },
+  storage: {
+    kind: "file",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "config_path",
+        value: "~/.kiro/settings/mcp.json",
+      },
+    ],
+  },
+  config_mapping: {
+    container_key: "mcpServers",
+    container_type: "object_map",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    managed_source: "profile",
+    format_rules: {
+      stdio: {
+        template: {
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          env: "{{{json env}}}",
+          disabled: false,
+          autoApprove: [],
+        },
+        requires_type_field: false,
+      },
+    },
+  },
+}

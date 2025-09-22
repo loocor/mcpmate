@@ -1,0 +1,295 @@
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+/// Supported template output formats
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateFormat {
+    #[default]
+    Json,
+    Json5,
+    Toml,
+    Yaml,
+}
+
+impl TemplateFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TemplateFormat::Json => "json",
+            TemplateFormat::Json5 => "json5",
+            TemplateFormat::Toml => "toml",
+            TemplateFormat::Yaml => "yaml",
+        }
+    }
+}
+
+/// Storage type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageKind {
+    #[serde(alias = "file_system")]
+    File,
+    Kv,
+    Custom,
+}
+
+/// Backup retention policy for client configuration
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupPolicy {
+    KeepLast,
+    KeepN,
+    Off,
+}
+
+impl BackupPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BackupPolicy::KeepLast => "keep_last",
+            BackupPolicy::KeepN => "keep_n",
+            BackupPolicy::Off => "off",
+        }
+    }
+}
+
+/// Backup policy with optional limit parameter (for keep_n)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackupPolicySetting {
+    pub policy: BackupPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+impl Default for BackupPolicySetting {
+    fn default() -> Self {
+        Self {
+            policy: BackupPolicy::KeepLast,
+            limit: None,
+        }
+    }
+}
+
+impl BackupPolicySetting {
+    pub fn from_pair(
+        policy: Option<&str>,
+        limit: Option<u32>,
+    ) -> Self {
+        match policy {
+            Some("off") => Self {
+                policy: BackupPolicy::Off,
+                limit: None,
+            },
+            Some("keep_n") => {
+                let normalized = limit.unwrap_or(5).max(1);
+                Self {
+                    policy: BackupPolicy::KeepN,
+                    limit: Some(normalized),
+                }
+            }
+            _ => Self::default(),
+        }
+    }
+
+    pub fn as_db_pair(&self) -> (&'static str, Option<u32>) {
+        match self.policy {
+            BackupPolicy::Off => (self.policy.as_str(), None),
+            BackupPolicy::KeepLast => (self.policy.as_str(), None),
+            BackupPolicy::KeepN => (self.policy.as_str(), Some(self.limit.unwrap_or(5).max(1))),
+        }
+    }
+
+    pub fn should_backup(&self) -> bool {
+        !matches!(self.policy, BackupPolicy::Off)
+    }
+
+    pub fn retention_limit(&self) -> Option<usize> {
+        match self.policy {
+            BackupPolicy::Off => None,
+            BackupPolicy::KeepLast => Some(1),
+            BackupPolicy::KeepN => Some(self.limit.unwrap_or(5).max(1) as usize),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_policy_from_pair() {
+        let keep_last = BackupPolicySetting::from_pair(None, None);
+        assert_eq!(keep_last.policy, BackupPolicy::KeepLast);
+
+        let off = BackupPolicySetting::from_pair(Some("off"), Some(3));
+        assert_eq!(off.policy, BackupPolicy::Off);
+        assert_eq!(off.limit, None);
+
+        let keep_n = BackupPolicySetting::from_pair(Some("keep_n"), Some(2));
+        assert_eq!(keep_n.policy, BackupPolicy::KeepN);
+        assert_eq!(keep_n.limit, Some(2));
+
+        let keep_n_default = BackupPolicySetting::from_pair(Some("keep_n"), None);
+        assert_eq!(keep_n_default.limit, Some(5));
+    }
+}
+
+impl Default for StorageKind {
+    fn default() -> Self {
+        StorageKind::File
+    }
+}
+
+/// Client configuration container type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerType {
+    #[default]
+    ObjectMap,
+    Array,
+    Mixed,
+}
+
+/// Merge strategy
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeStrategy {
+    #[default]
+    Replace,
+    DeepMerge,
+}
+
+/// Detection method
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectionMethod {
+    FilePath,
+    BundleId,
+    ConfigPath,
+}
+
+/// Template storage configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct StorageConfig {
+    pub kind: StorageKind,
+    pub path_strategy: Option<String>,
+    pub adapter: Option<String>,
+}
+
+/// Managed mode endpoint configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ManagedEndpointConfig {
+    pub source: Option<String>,
+}
+
+/// Single transport format rule
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct FormatRule {
+    pub template: serde_json::Value,
+    pub requires_type_field: bool,
+}
+
+/// Template configuration mapping
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ConfigMapping {
+    pub container_key: String,
+    pub container_type: ContainerType,
+    pub merge_strategy: MergeStrategy,
+    pub keep_original_config: bool,
+    pub managed_endpoint: Option<ManagedEndpointConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub managed_source: Option<String>,
+    pub format_rules: HashMap<String, FormatRule>,
+}
+
+impl Default for ConfigMapping {
+    fn default() -> Self {
+        Self {
+            container_key: String::new(),
+            container_type: ContainerType::ObjectMap,
+            merge_strategy: MergeStrategy::Replace,
+            keep_original_config: false,
+            managed_endpoint: None,
+            managed_source: None,
+            format_rules: HashMap::new(),
+        }
+    }
+}
+
+/// Detection rule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DetectionRule {
+    pub method: DetectionMethod,
+    pub value: String,
+    pub config_path: Option<String>,
+    pub priority: Option<u32>,
+}
+
+impl Default for DetectionRule {
+    fn default() -> Self {
+        Self {
+            method: DetectionMethod::FilePath,
+            value: String::new(),
+            config_path: None,
+            priority: None,
+        }
+    }
+}
+
+/// Client template definition
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ClientTemplate {
+    pub identifier: String,
+    pub display_name: Option<String>,
+    pub version: Option<String>,
+    pub format: TemplateFormat,
+    pub protocol_revision: Option<String>,
+    pub storage: StorageConfig,
+    pub detection: HashMap<String, Vec<DetectionRule>>,
+    pub config_mapping: ConfigMapping,
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+impl ClientTemplate {
+    pub fn platform_rules(
+        &self,
+        platform: &str,
+    ) -> Option<&[DetectionRule]> {
+        self.detection.get(platform).map(Vec::as_slice)
+    }
+}
+
+/// MCP configuration mode
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigMode {
+    Native,
+    Managed,
+}
+
+impl Default for ConfigMode {
+    fn default() -> Self {
+        Self::Managed
+    }
+}
+
+/// Server context input to template rendering
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(default)]
+pub struct ServerTemplateInput {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub transport: String,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+    pub url: Option<String>,
+    pub headers: HashMap<String, String>,
+    pub metadata: HashMap<String, serde_json::Value>,
+}

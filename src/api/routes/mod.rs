@@ -18,6 +18,7 @@ use aide::{axum::ApiRouter, openapi::OpenApi};
 use axum::Router;
 use tokio::sync::Mutex;
 
+use crate::clients::ClientConfigService;
 use crate::{
     core::{pool::UpstreamConnectionPool, proxy::ProxyServer},
     system::metrics::MetricsCollector,
@@ -42,23 +43,25 @@ pub struct AppState {
     pub redb_cache: Arc<crate::core::cache::RedbCacheManager>,
     /// Unified query adapter (optional, for gradual migration)
     pub unified_query: Option<Arc<crate::core::capability::UnifiedQueryAdapter>>,
+    /// Client configuration service (template-driven)
+    pub client_service: Option<Arc<ClientConfigService>>,
 }
 
 /// Create the API router with all routes
-pub fn create_router(connection_pool: Arc<Mutex<UpstreamConnectionPool>>) -> Router {
-    create_router_internal(connection_pool, None)
+pub async fn create_router(connection_pool: Arc<Mutex<UpstreamConnectionPool>>) -> Router {
+    create_router_internal(connection_pool, None).await
 }
 
 /// Create the API router with all routes and HTTP proxy server reference
-pub fn create_router_with_proxy(
+pub async fn create_router_with_proxy(
     connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     http_proxy: Arc<ProxyServer>,
 ) -> Router {
-    create_router_internal(connection_pool, Some(http_proxy))
+    create_router_internal(connection_pool, Some(http_proxy)).await
 }
 
 /// Internal function to create router with optional HTTP proxy
-fn create_router_internal(
+async fn create_router_internal(
     connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     http_proxy: Option<Arc<ProxyServer>>,
 ) -> Router {
@@ -114,8 +117,24 @@ fn create_router_internal(
             config_application_state: config_application_state.clone(),
             redb_cache: redb_cache.clone(),
             unified_query: None, // 避免递归
+            client_service: None,
         })
     } else {
+        None
+    };
+
+    // Initialize client configuration service when database is available
+    let client_service = if let Some(db) = database.clone() {
+        let pool = Arc::new(db.pool.clone());
+        match ClientConfigService::bootstrap(pool).await {
+            Ok(service) => Some(Arc::new(service)),
+            Err(err) => {
+                tracing::error!("Failed to bootstrap client configuration service: {}", err);
+                None
+            }
+        }
+    } else {
+        tracing::warn!("Database not available, client configuration service disabled");
         None
     };
 
@@ -128,6 +147,7 @@ fn create_router_internal(
         config_application_state,
         redb_cache,
         unified_query,
+        client_service,
     });
 
     // Create OpenAPI specification

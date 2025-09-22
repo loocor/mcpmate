@@ -1,0 +1,56 @@
+// Claude Code client template definition
+{
+  identifier: "claude_code",
+  display_name: "Claude Code",
+  format: "json",
+  metadata: {
+    logo_url: "https://claude.ai/favicon.ico",
+    category: "application",
+    supported_runtimes: ["npx", "bunx", "uvx"],
+  },
+  storage: {
+    kind: "file",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "config_path",
+        value: "~/.claude.json",
+      }
+    ],
+    windows: [
+      {
+        method: "config_path",
+        value: "~/AppData/Roaming/Claude/.claude.json",
+      }
+    ],
+  },
+  config_mapping: {
+    container_key: "mcpServers",
+    container_type: "object_map",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    managed_source: "profile",
+    format_rules: {
+      stdio: {
+        template: {
+          type: "stdio",
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          env: "{{{json env}}}",
+          timeout: 60,
+        },
+        requires_type_field: false,
+      },
+      streamable_http: {
+        template: {
+          type: "http",
+          url: "{{url}}",
+          headers: "{{{json headers}}}",
+        },
+        requires_type_field: false,
+      },
+    },
+  },
+}

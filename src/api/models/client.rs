@@ -1,11 +1,22 @@
 use crate::common::ClientCategory;
-use crate::config::client::models::ClientConfigType;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx;
 
 // Import the unified response macro
 use crate::macros::resp::api_resp;
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[schemars(description = "Configuration file container type")]
+pub enum ClientConfigType {
+    #[schemars(description = "Object map container (default)")]
+    Standard,
+    #[schemars(description = "Mixed container retaining existing config")]
+    Mixed,
+    #[schemars(description = "Array container")]
+    Array,
+}
 
 /// Database row structure for client table
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -18,7 +29,7 @@ pub struct ClientRow {
     pub category: Option<String>,
     pub enabled: bool,
     pub detected: bool,
-    pub last_detected_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_detected: Option<chrono::DateTime<chrono::Utc>>,
     pub install_path: Option<String>,
     pub config_path: Option<String>,
     pub version: Option<String>,
@@ -51,6 +62,8 @@ pub struct ClientInfo {
     pub category: ClientCategory,
     #[schemars(description = "Whether client is enabled in MCPMate")]
     pub enabled: bool,
+    #[schemars(description = "Whether MCPMate manages this client")]
+    pub managed: bool,
     #[schemars(description = "Whether client is installed and detected")]
     pub detected: bool,
     #[schemars(description = "Installation path of the clientlication")]
@@ -70,11 +83,13 @@ pub struct ClientInfo {
     #[schemars(description = "Format type of configuration file")]
     pub config_type: Option<ClientConfigType>,
     #[schemars(description = "ISO 8601 timestamp of last detection")]
-    pub last_detected_at: Option<String>,
+    pub last_detected: Option<String>,
     #[schemars(description = "ISO 8601 timestamp of last config modification")]
     pub last_modified: Option<String>,
     #[schemars(description = "Count of configured MCP servers")]
     pub mcp_servers_count: Option<u32>,
+    #[schemars(description = "Template metadata summary for this client")]
+    pub template: ClientTemplateMetadata,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -134,6 +149,59 @@ pub struct ClientConfigUpdateData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client management state response")]
+pub struct ClientManageData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Whether MCPMate manages this client")]
+    pub managed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Single backup entry for a client configuration")]
+pub struct ClientBackupEntry {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Backup file name")]
+    pub backup: String,
+    #[schemars(description = "Full backup file path")]
+    pub path: String,
+    #[schemars(description = "Backup file size in bytes")]
+    pub size: u64,
+    #[schemars(description = "ISO 8601 timestamp of backup creation")]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Backup list payload")]
+pub struct ClientBackupListData {
+    #[schemars(description = "Collection of backups across clients")]
+    pub backups: Vec<ClientBackupEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Backup mutation response (restore/delete)")]
+pub struct ClientBackupActionData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Backup file name")]
+    pub backup: String,
+    #[schemars(description = "Result message")]
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Backup policy response body")]
+pub struct ClientBackupPolicyData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Backup policy label")]
+    pub policy: String,
+    #[schemars(description = "Optional limit for keep_n policy")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Configuration view response")]
 pub struct ClientConfigData {
     #[schemars(description = "Path to configuration file")]
@@ -152,7 +220,45 @@ pub struct ClientConfigData {
     pub config_type: Option<ClientConfigType>,
     #[schemars(description = "List of imported server configurations")]
     pub imported_servers: Option<Vec<ClientImportedServer>>,
+    #[schemars(description = "Template metadata summary for this client")]
+    pub template: ClientTemplateMetadata,
+    #[schemars(description = "Supported transports derived from the template")]
+    pub supported_transports: Vec<String>,
+    #[schemars(description = "Supported runtimes for current platform or fallback")]
+    pub supported_runtimes: Vec<String>,
+    #[schemars(description = "Whether MCPMate manages this client")]
+    pub managed: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Summary of the client template metadata")]
+pub struct ClientTemplateMetadata {
+    #[schemars(description = "Template output format (json/json5/toml/yaml)")]
+    pub format: String,
+    #[schemars(description = "Declared MCP protocol revision for the template")]
+    pub protocol_revision: Option<String>,
+    #[schemars(description = "Storage backend metadata")]
+    pub storage: ClientTemplateStorageMetadata,
+    #[schemars(description = "Container type resolved from the template")]
+    pub container_type: ClientConfigType,
+    #[schemars(description = "Merge strategy applied when writing configuration")]
+    pub merge_strategy: String,
+    #[schemars(description = "Whether original configuration segments are preserved")]
+    pub keep_original_config: bool,
+    #[schemars(description = "Managed config source (e.g., 'profile') if declared")]
+    pub managed_source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Storage metadata for a client template")]
+pub struct ClientTemplateStorageMetadata {
+    #[schemars(description = "Storage adapter kind (e.g. file/kv/custom)")]
+    pub kind: String,
+    #[schemars(description = "Optional path resolution strategy")]
+    pub path_strategy: Option<String>,
+}
+
+// Note: former `ClientManagedEndpointMetadata` was removed; use `ClientTemplateMetadata.managed_source` instead.
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Information about an imported server")]
@@ -200,6 +306,22 @@ api_resp!(
     ClientConfigUpdateData,
     "Client configuration update response"
 );
+api_resp!(ClientManageResp, ClientManageData, "Client management toggle response");
+api_resp!(
+    ClientBackupListResp,
+    ClientBackupListData,
+    "Client configuration backup list response"
+);
+api_resp!(
+    ClientBackupActionResp,
+    ClientBackupActionData,
+    "Client configuration backup mutation response"
+);
+api_resp!(
+    ClientBackupPolicyResp,
+    ClientBackupPolicyData,
+    "Client configuration backup policy response"
+);
 
 // REQUEST STRUCTURES
 // ==========================================
@@ -236,6 +358,73 @@ pub struct ClientConfigUpdateReq {
     #[serde(default)]
     #[schemars(description = "Selected configuration source (default: default)")]
     pub selected_config: ClientConfigSelected,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Client management request payload")]
+pub struct ClientManageReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Management action: enable or disable")]
+    pub action: ClientManageAction,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(description = "Management action enum")]
+pub enum ClientManageAction {
+    Enable,
+    Disable,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[schemars(description = "Backup listing query")]
+pub struct ClientBackupListReq {
+    #[schemars(description = "Optional client identifier filter")]
+    pub identifier: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Backup restore/delete request payload")]
+pub struct ClientBackupOperateReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Backup file name")]
+    pub backup: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Configuration restore request payload")]
+pub struct ClientConfigRestoreReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Backup file name")]
+    pub backup: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Backup policy query payload")]
+pub struct ClientBackupPolicyReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Backup policy update payload")]
+pub struct ClientBackupPolicySetReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Backup policy descriptor")]
+    pub policy: ClientBackupPolicyPayload,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
+#[schemars(description = "Backup policy descriptor for API payload")]
+pub struct ClientBackupPolicyPayload {
+    #[schemars(description = "Policy name: keep_last, keep_n, off")]
+    pub policy: String,
+    #[schemars(description = "Optional limit for keep_n policy")]
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, JsonSchema)]

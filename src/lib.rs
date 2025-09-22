@@ -1,4 +1,5 @@
 pub mod api;
+pub mod clients;
 pub mod common;
 pub mod config;
 pub mod core;

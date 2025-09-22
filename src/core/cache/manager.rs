@@ -9,9 +9,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use lru::LruCache;
 use redb::{Database, ReadableTable};
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
 use tracing::{debug, info};
 
 use super::{
@@ -303,19 +303,29 @@ impl RedbCacheManager {
     }
 
     /// Mark a server as "refreshing" for a given TTL
-    pub async fn set_refreshing(&self, server_id: &str, ttl: std::time::Duration) {
+    pub async fn set_refreshing(
+        &self,
+        server_id: &str,
+        ttl: std::time::Duration,
+    ) {
         let mut map = self.refreshing.write().await;
         map.insert(server_id.to_string(), std::time::Instant::now() + ttl);
     }
 
     /// Clear the "refreshing" marker for a server
-    pub async fn clear_refreshing(&self, server_id: &str) {
+    pub async fn clear_refreshing(
+        &self,
+        server_id: &str,
+    ) {
         let mut map = self.refreshing.write().await;
         map.remove(server_id);
     }
 
     /// Check whether a server is currently marked as "refreshing"
-    pub async fn is_refreshing(&self, server_id: &str) -> bool {
+    pub async fn is_refreshing(
+        &self,
+        server_id: &str,
+    ) -> bool {
         let now = std::time::Instant::now();
         let mut map = self.refreshing.write().await;
         if let Some(deadline) = map.get(server_id).cloned() {

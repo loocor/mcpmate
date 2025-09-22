@@ -59,7 +59,10 @@ impl CapabilityService {
 
             tracing::info!(server = %server.name, "Prewarming capability cache via temporary validation instance");
             // Mark refreshing to help UI/consumers avoid treating empty cache as final
-            let _ = self.redb.set_refreshing(server_id, std::time::Duration::from_secs(60)).await;
+            let _ = self
+                .redb
+                .set_refreshing(server_id, std::time::Duration::from_secs(60))
+                .await;
             if let Err(e) = crate::config::server::capabilities::sync_via_connection_pool(
                 &self.pool,
                 &self.redb,

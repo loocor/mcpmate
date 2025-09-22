@@ -1,381 +1,453 @@
-// HTTP handlers for client management API
+// HTTP handlers for client management API (template-driven)
 
 use super::config::{analyze_config_content, get_config_last_modified};
-use super::database::{
-    build_client_info, get_all_client, get_client_config_path, get_config_type, parse_json_resilient,
-    perform_client_detection, update_client_detection_status,
-};
-
 use super::import::import_servers_from_config;
 use crate::api::models::client::{
-    ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData, ClientConfigMode, ClientConfigReq,
-    ClientConfigResp, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp,
+    ClientBackupActionData, ClientBackupActionResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
+    ClientConfigMode, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected,
+    ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientImportedServer, ClientInfo,
+    ClientTemplateMetadata, ClientTemplateStorageMetadata,
 };
 use crate::api::routes::AppState;
-
-use crate::config::client::manager::ClientManager;
-use crate::config::client::models::{ApplicationRequest, GenerationMode, GenerationRequest};
-use crate::config::profile::basic::get_active_profile;
+use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat};
+use crate::clients::{
+    ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
+};
+use crate::common::ClientCategory;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
 };
+use chrono::Utc;
+use json5;
+use serde_json::Value;
+use serde_yaml;
 use std::sync::Arc;
+use toml;
 
-/// Macro to extract database pool from app state with early return on error
-macro_rules! get_db_pool {
-    ($app_state:expr) => {
-        match &$app_state.database {
-            Some(db) => db.pool.clone(),
-            None => return Err(StatusCode::SERVICE_UNAVAILABLE),
-        }
-    };
-}
+const DEFAULT_RUNTIMES: &[&str] = &["npx", "uvx", "docker", "binary"];
 
 /// Handler for GET /api/client
-/// Detects and returns all client, with optional force refresh
+/// Detects and returns all clients, with optional template reload
 pub async fn list(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ClientCheckReq>,
 ) -> Result<Json<ClientCheckResp>, StatusCode> {
-    let db_pool = get_db_pool!(app_state);
+    let service = get_client_service(&app_state)?;
 
-    let result = client_check_core(&request, &db_pool).await?;
-
-    Ok(Json(result))
-}
-
-/// Handler for GET /api/client/{identifier}
-/// Returns current configuration content
-pub async fn details(
-    State(app_state): State<Arc<AppState>>,
-    Query(request): Query<ClientConfigReq>,
-) -> Result<Json<ClientConfigResp>, StatusCode> {
-    let db_pool = get_db_pool!(app_state);
-
-    let result = client_config_details_core(&request, &db_pool).await?;
-
-    Ok(Json(result))
-}
-
-/// Handler for POST /api/client/{identifier}
-/// Generates and optionally applies configuration
-pub async fn update(
-    State(app_state): State<Arc<AppState>>,
-    Json(request): Json<ClientConfigUpdateReq>,
-) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
-    let db_pool = get_db_pool!(app_state);
-
-    let result = client_config_update_core(&request, &db_pool).await?;
-
-    Ok(Json(result))
-}
-
-// ==================== Core Business Functions ====================
-
-/// Core business logic for client check operation
-async fn client_check_core(
-    request: &ClientCheckReq,
-    db_pool: &sqlx::SqlitePool,
-) -> Result<ClientCheckResp, StatusCode> {
-    // Get all client from database (not just enabled ones)
-    let mut all_client = match get_all_client(db_pool).await {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::error!("Failed to get client from database: {e}");
-            return Ok(ClientCheckResp::error_simple(
-                "DATABASE_ERROR",
-                &format!("Failed to get client: {e}"),
-            ));
-        }
-    };
-
-    // If refresh is requested, perform actual detection
-    let mut detected_apps_map = std::collections::HashMap::new();
     if request.refresh {
-        tracing::info!(
-            "Force refresh requested, performing detection for {} client",
-            all_client.len()
-        );
-
-        // Perform detection for all client in the database
-        for client in &all_client {
-            tracing::debug!("Attempting to detect client: {}", client.identifier);
-
-            match perform_client_detection(&client.identifier, db_pool).await {
-                Ok(Some(detected_app)) => {
-                    tracing::info!(
-                        "Successfully detected client: {} at {}",
-                        client.identifier,
-                        detected_app.install_path.display()
-                    );
-
-                    // Determine if this is a real application installation path or just a config file
-                    let install_path_str = detected_app.install_path.to_string_lossy();
-                    let is_real_app_path = install_path_str.contains("/Applications/")
-                        || install_path_str.ends_with(".app")
-                        || install_path_str.ends_with(".exe")
-                        || (!install_path_str.contains(".json")
-                            && !install_path_str.contains(".config")
-                            && !install_path_str.contains("settings")
-                            && !install_path_str.contains("globalStorage")
-                            && !install_path_str.contains("Application Support")
-                            && !install_path_str.contains("AppData"));
-
-                    // Only update install_path if it's a real application path
-                    let install_path_to_store = if is_real_app_path {
-                        Some(install_path_str.as_ref())
-                    } else {
-                        None
-                    };
-
-                    // Update database with detection results
-                    if let Err(e) =
-                        update_client_detection_status(&client.identifier, true, install_path_to_store, db_pool).await
-                    {
-                        tracing::warn!("Failed to update detection status for {}: {}", client.identifier, e);
-                    }
-
-                    detected_apps_map.insert(client.identifier.clone(), detected_app);
-                }
-                Ok(None) => {
-                    tracing::debug!("Client not detected: {}", client.identifier);
-
-                    // Update database to mark as not detected
-                    if let Err(e) = update_client_detection_status(&client.identifier, false, None, db_pool).await {
-                        tracing::warn!("Failed to update detection status for {}: {}", client.identifier, e);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to detect client {}: {}", client.identifier, e);
-                }
-            }
+        if let Err(err) = service.reload_templates().await {
+            tracing::warn!("Failed to reload client templates: {}", err);
         }
-
-        tracing::info!("Detection completed. Found {} detected client", detected_apps_map.len());
-
-        // Re-fetch client data from database to get updated detection status
-        all_client = match get_all_client(db_pool).await {
-            Ok(client) => client,
-            Err(e) => {
-                tracing::error!("Failed to re-fetch client after detection: {e}");
-                return Ok(ClientCheckResp::error_simple(
-                    "DATABASE_ERROR",
-                    "Failed to retrieve updated client information",
-                ));
-            }
-        };
     }
 
-    // Convert all client to ClientInfo using the shared function
-    let mut client_infos = Vec::new();
-    for client in all_client {
-        let detected_app = detected_apps_map.get(&client.identifier);
-        let info = build_client_info(&client, detected_app, db_pool).await;
-        client_infos.push(info);
+    let descriptors = service.list_clients(request.refresh).await.map_err(|err| {
+        tracing::error!("Failed to list clients: {}", err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let mut client_infos = Vec::with_capacity(descriptors.len());
+    for descriptor in descriptors {
+        match descriptor_to_client_info(service.as_ref(), descriptor).await {
+            Ok(info) => client_infos.push(info),
+            Err(status) => return Err(status),
+        }
     }
 
     let response = ClientCheckData {
         total: client_infos.len(),
         client: client_infos,
-        last_updated: chrono::Utc::now().to_rfc3339(),
+        last_updated: Utc::now().to_rfc3339(),
     };
 
-    Ok(ClientCheckResp::success(response))
+    Ok(Json(ClientCheckResp::success(response)))
 }
 
-/// Core business logic for client config details operation
-async fn client_config_details_core(
-    request: &ClientConfigReq,
-    db_pool: &sqlx::SqlitePool,
-) -> Result<ClientConfigResp, StatusCode> {
-    let identifier = &request.identifier;
-    let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
+/// Handler for GET /api/client/config/details
+/// Returns current configuration content
+pub async fn config_details(
+    State(app_state): State<Arc<AppState>>,
+    Query(request): Query<ClientConfigReq>,
+) -> Result<Json<ClientConfigResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+    let template = service.get_client_template(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to load client template {}: {}", request.identifier, err);
+        StatusCode::NOT_FOUND
+    })?;
 
-    // Get current configuration
-    match client_manager.get_current_config(identifier).await {
-        Ok(content) => {
-            // Get actual config path from client manager
-            let config_path = get_client_config_path(identifier, db_pool).await;
-            let config_exists = !content.is_empty();
+    let config_path = service.config_path(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to resolve config path for {}: {}", request.identifier, err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
-            // Parse and analyze the configuration first (while we still have content)
-            let (has_mcp_config, mcp_servers_count) = analyze_config_content(&content, identifier, db_pool).await;
+    let content = service.read_current_config(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to read config for {}: {}", request.identifier, err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
-            // Parse configuration content to JSON object using resilient parser
-            let json_content = parse_json_resilient(&content);
+    let config_exists = content.is_some();
+    let parsed_content = content
+        .as_deref()
+        .map(|raw| parse_config_value(raw, &template))
+        .unwrap_or(Value::Null);
 
-            // Get file modification time
-            let last_modified = get_config_last_modified(&config_path);
+    let (has_mcp_config, mcp_servers_count) = content
+        .as_deref()
+        .map(|raw| analyze_config_content(raw, &request.identifier, &template))
+        .unwrap_or((false, 0));
 
-            // Get config type for this client
-            let config_type = get_config_type(identifier, db_pool).await;
+    let last_modified = config_path.as_deref().and_then(get_config_last_modified);
 
-            // Check if import is requested and client is in transparent mode
-            let imported_servers = if request.import {
-                // Check if client is in transparent mode (or has no config_mode set)
-                let is_transparent = sqlx::query_scalar::<_, bool>(
-                    "SELECT (config_mode = 'transparent' OR config_mode IS NULL) FROM client WHERE identifier = ?",
-                )
-                .bind(identifier)
-                .fetch_optional(db_pool)
-                .await
-                .unwrap_or(Some(true)) // Default to true if client not found
-                .unwrap_or(true);
+    let config_type = convert_container_type(template.config_mapping.container_type);
 
-                if is_transparent {
-                    match import_servers_from_config(&json_content, db_pool).await {
-                        Ok(servers) => Some(servers),
-                        Err(e) => {
-                            tracing::warn!("Failed to import servers from config: {}", e);
-                            None
-                        }
-                    }
-                } else {
-                    tracing::info!("Skipping import for client {} in hosted mode", identifier);
-                    None
-                }
-            } else {
-                None
-            };
+    let managed = service.is_client_managed(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to fetch managed state for {}: {}", request.identifier, err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
-            let response = ClientConfigData {
-                config_path,
-                config_exists,
-                content: json_content,
-                has_mcp_config,
-                mcp_servers_count,
-                last_modified,
-                config_type,
-                imported_servers,
-            };
+    let imported_servers = if request.import && config_exists {
+        import_configured_servers(&app_state, &parsed_content).await?
+    } else {
+        None
+    };
 
-            Ok(ClientConfigResp::success(response))
+    let data = ClientConfigData {
+        config_path: config_path.unwrap_or_default(),
+        config_exists,
+        content: parsed_content,
+        has_mcp_config,
+        mcp_servers_count,
+        last_modified,
+        config_type,
+        imported_servers,
+        template: build_template_metadata(&template),
+        supported_transports: extract_supported_transports(&template),
+        supported_runtimes: extract_supported_runtimes(&template),
+        managed,
+    };
+
+    Ok(Json(ClientConfigResp::success(data)))
+}
+
+/// Handler for POST /api/client/config/apply
+/// Generates and optionally applies configuration
+pub async fn config_apply(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientConfigUpdateReq>,
+) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+    let template = service.get_client_template(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to load client template {}: {}", request.identifier, err);
+        StatusCode::NOT_FOUND
+    })?;
+
+    let options = build_render_options(&request);
+    let result = service.execute_render(options).await.map_err(|err| match err {
+        ConfigError::ClientDisabled { identifier } => {
+            tracing::warn!("Client {} is disabled; skipping configuration update", identifier);
+            StatusCode::FORBIDDEN
         }
-        Err(e) => {
-            tracing::error!("Failed to get config for {}: {}", identifier, e);
-            Ok(ClientConfigResp::error_simple(
-                "CONFIG_READ_FAILED",
-                &format!("Failed to read configuration: {e}"),
-            ))
+        other => {
+            tracing::error!("Failed to execute render for {}: {}", request.identifier, other);
+            StatusCode::INTERNAL_SERVER_ERROR
         }
+    })?;
+
+    let preview = build_update_preview(&template, &result.execution);
+    let mut warnings = Vec::new();
+    if let Some(summary) = diff_summary(&result.execution) {
+        warnings.push(summary);
+    }
+
+    let (applied, backup_path) = match &result.execution {
+        TemplateExecutionResult::Applied { backup_path, .. } => (true, backup_path.clone()),
+        _ => (false, None),
+    };
+
+    let data = ClientConfigUpdateData {
+        success: true,
+        preview,
+        applied: !request.preview && applied,
+        backup_path,
+        warnings,
+    };
+
+    Ok(Json(ClientConfigUpdateResp::success(data)))
+}
+
+/// Handler for POST /api/client/config/restore
+/// Restores configuration from a named backup snapshot
+pub async fn config_restore(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientConfigRestoreReq>,
+) -> Result<Json<ClientBackupActionResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+    let result = service
+        .restore_backup(&request.identifier, &request.backup)
+        .await
+        .map_err(|err| match err {
+            ConfigError::TemplateIndexError(_) | ConfigError::FileOperationError(_) => {
+                tracing::warn!(
+                    "Backup {} for client {} not found or unreadable",
+                    request.backup,
+                    request.identifier
+                );
+                StatusCode::NOT_FOUND
+            }
+            other => {
+                tracing::error!(
+                    "Failed to restore backup {} for {}: {}",
+                    request.backup,
+                    request.identifier,
+                    other
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
+
+    let message = match result {
+        Some(path) => format!("Restored configuration; previous version saved to {}", path),
+        None => "Restored configuration without creating a new backup".to_string(),
+    };
+
+    let data = ClientBackupActionData {
+        identifier: request.identifier,
+        backup: request.backup,
+        message,
+    };
+
+    Ok(Json(ClientBackupActionResp::success(data)))
+}
+
+pub(crate) fn get_client_service(state: &AppState) -> Result<Arc<ClientConfigService>, StatusCode> {
+    state
+        .client_service
+        .as_ref()
+        .cloned()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)
+}
+
+async fn descriptor_to_client_info(
+    service: &ClientConfigService,
+    descriptor: ClientDescriptor,
+) -> Result<ClientInfo, StatusCode> {
+    let template = descriptor.template.clone();
+    let display_name = template_display_name(&template);
+    let logo_url = extract_logo_url(&template);
+    let category = extract_category(&template);
+    let supported_transports = extract_supported_transports(&template);
+    let supported_runtimes = extract_supported_runtimes(&template);
+    let config_type = convert_container_type(template.config_mapping.container_type);
+
+    let content = if descriptor.config_exists {
+        service.read_current_config(&template.identifier).await.map_err(|err| {
+            tracing::error!(
+                "Failed to read config for {} while building list: {}",
+                template.identifier,
+                err
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    } else {
+        None
+    };
+
+    let (has_mcp_config, mcp_servers_count) = content
+        .as_deref()
+        .map(|raw| analyze_config_content(raw, &template.identifier, &template))
+        .unwrap_or((false, 0));
+
+    let last_modified = descriptor.config_path.as_deref().and_then(get_config_last_modified);
+
+    Ok(ClientInfo {
+        identifier: template.identifier.clone(),
+        display_name,
+        logo_url,
+        category,
+        enabled: descriptor.managed,
+        managed: descriptor.managed,
+        detected: descriptor.detection.is_some(),
+        install_path: None,
+        config_path: descriptor.config_path.unwrap_or_default(),
+        config_exists: descriptor.config_exists,
+        has_mcp_config,
+        supported_transports,
+        supported_runtimes,
+        config_mode: None,
+        config_type,
+        last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
+        last_modified,
+        mcp_servers_count: Some(mcp_servers_count),
+        template: build_template_metadata(&template),
+    })
+}
+
+async fn import_configured_servers(
+    state: &AppState,
+    content: &Value,
+) -> Result<Option<Vec<ClientImportedServer>>, StatusCode> {
+    let db = state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    import_servers_from_config(content, &db.pool)
+        .await
+        .map(Some)
+        .map_err(|err| {
+            tracing::error!("Failed to import servers: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+}
+
+fn template_display_name(template: &ClientTemplate) -> String {
+    template
+        .display_name
+        .clone()
+        .unwrap_or_else(|| template.identifier.clone())
+}
+
+fn extract_logo_url(template: &ClientTemplate) -> Option<String> {
+    metadata_string(template, "logo_url")
+}
+
+fn extract_category(template: &ClientTemplate) -> ClientCategory {
+    metadata_string(template, "category")
+        .as_deref()
+        .and_then(ClientCategory::parse)
+        .unwrap_or_default()
+}
+
+fn extract_supported_transports(template: &ClientTemplate) -> Vec<String> {
+    template.config_mapping.format_rules.keys().cloned().collect()
+}
+
+fn extract_supported_runtimes(template: &ClientTemplate) -> Vec<String> {
+    match template.metadata.get("supported_runtimes") {
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        Some(Value::Object(map)) => map
+            .values()
+            .find_map(|value| value.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_else(|| DEFAULT_RUNTIMES.iter().map(|s| s.to_string()).collect()),
+        _ => DEFAULT_RUNTIMES.iter().map(|s| s.to_string()).collect(),
     }
 }
 
-/// Core business logic for client config update operation
-async fn client_config_update_core(
-    request: &ClientConfigUpdateReq,
-    db_pool: &sqlx::SqlitePool,
-) -> Result<ClientConfigUpdateResp, StatusCode> {
-    let identifier = &request.identifier;
-    let mut client_manager = ClientManager::new(Arc::new(db_pool.clone()));
+fn build_template_metadata(template: &ClientTemplate) -> ClientTemplateMetadata {
+    ClientTemplateMetadata {
+        format: template.format.as_str().to_string(),
+        protocol_revision: template.protocol_revision.clone(),
+        storage: ClientTemplateStorageMetadata {
+            kind: storage_kind_to_str(template.storage.kind).to_string(),
+            path_strategy: template.storage.path_strategy.clone(),
+        },
+        container_type: convert_container_type(template.config_mapping.container_type)
+            .unwrap_or(crate::api::models::client::ClientConfigType::Standard),
+        merge_strategy: merge_strategy_to_str(template.config_mapping.merge_strategy).to_string(),
+        keep_original_config: template.config_mapping.keep_original_config,
+        managed_source: template
+            .config_mapping
+            .managed_source
+            .clone()
+            .or_else(|| template.config_mapping.managed_endpoint.as_ref().and_then(|e| e.source.clone())),
+    }
+}
 
-    // Convert API request to internal request format
+fn storage_kind_to_str(kind: StorageKind) -> &'static str {
+    match kind {
+        StorageKind::File => "file",
+        StorageKind::Kv => "kv",
+        StorageKind::Custom => "custom",
+    }
+}
+
+fn merge_strategy_to_str(strategy: MergeStrategy) -> &'static str {
+    match strategy {
+        MergeStrategy::Replace => "replace",
+        MergeStrategy::DeepMerge => "deep_merge",
+    }
+}
+
+fn convert_container_type(container: ContainerType) -> Option<crate::api::models::client::ClientConfigType> {
+    use crate::api::models::client::ClientConfigType;
+    match container {
+        ContainerType::ObjectMap => Some(ClientConfigType::Standard),
+        ContainerType::Mixed => Some(ClientConfigType::Mixed),
+        ContainerType::Array => Some(ClientConfigType::Array),
+    }
+}
+
+fn parse_config_value(
+    content: &str,
+    template: &ClientTemplate,
+) -> Value {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Value::Null;
+    }
+
+    match template.format {
+        TemplateFormat::Json => serde_json::from_str(trimmed).unwrap_or(Value::Null),
+        TemplateFormat::Json5 => json5::from_str(trimmed).unwrap_or(Value::Null),
+        TemplateFormat::Toml => toml::from_str::<toml::Value>(trimmed)
+            .ok()
+            .and_then(|value| serde_json::to_value(value).ok())
+            .unwrap_or(Value::Null),
+        TemplateFormat::Yaml => serde_yaml::from_str(trimmed).unwrap_or(Value::Null),
+    }
+}
+
+fn metadata_string(
+    template: &ClientTemplate,
+    key: &str,
+) -> Option<String> {
+    template
+        .metadata
+        .get(key)
+        .and_then(|value| value.as_str().map(|s| s.to_string()))
+}
+
+fn build_render_options(request: &ClientConfigUpdateReq) -> ClientRenderOptions {
+    let mode = map_mode(request.mode.clone());
     let profile_id = match &request.selected_config {
         ClientConfigSelected::Profile { profile_id } => Some(profile_id.clone()),
-        ClientConfigSelected::Default => {
-            // For Default mode, get the currently active profile ID
-            match get_active_profile(db_pool).await {
-                Ok(active_profile) => {
-                    if let Some(profile) = active_profile.first() {
-                        profile.id.clone()
-                    } else {
-                        tracing::warn!("No active profile found for default mode");
-                        None
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to get active  profile: {}", e);
-                    None
-                }
-            }
-        }
+        ClientConfigSelected::Default => None,
+        ClientConfigSelected::Servers { .. } => None,
+    };
+    let server_ids = match (&request.selected_config, mode.clone()) {
+        (ClientConfigSelected::Servers { server_ids }, ConfigMode::Native) => Some(server_ids.clone()),
         _ => None,
     };
 
-    let generation_request = GenerationRequest {
-        identifier: identifier.to_string(),
-        mode: match request.mode {
-            ClientConfigMode::Hosted => GenerationMode::Hosted,
-            ClientConfigMode::Transparent => GenerationMode::Transparent,
-        },
+    ClientRenderOptions {
+        client_id: request.identifier.clone(),
+        mode,
         profile_id,
-        servers: match &request.selected_config {
-            ClientConfigSelected::Servers { server_ids } => {
-                // For hosted mode, ignore servers parameter
-                if matches!(request.mode, ClientConfigMode::Hosted) {
-                    None
-                } else {
-                    Some(server_ids.clone())
-                }
-            }
-            _ => None,
-        },
-    };
-
-    // Generate configuration
-    let generated_config = match client_manager.generate_config(&generation_request).await {
-        Ok(config) => config,
-        Err(e) => {
-            tracing::error!("Failed to generate config for {}: {}", identifier, e);
-            return Ok(ClientConfigUpdateResp::error_simple(
-                "GENERATION_FAILED",
-                &format!("Failed to generate configuration: {}", e),
-            ));
-        }
-    };
-
-    // Parse the generated config content to JSON using resilient parser
-    let preview_json = parse_json_resilient(&generated_config.config_content);
-
-    let mut response = ClientConfigUpdateData {
-        success: true,
-        preview: preview_json,
-        applied: false,
-        backup_path: None,
-        warnings: vec![],
-    };
-
-    // Apply configuration if not preview only
-    if !request.preview {
-        let application_request = ApplicationRequest {
-            identifier: identifier.to_string(),
-            config: generated_config,
-            create_backup: true,
-            dry_run: false,
-        };
-
-        match client_manager.apply_config(&application_request).await {
-            Ok(result) => {
-                response.applied = result.success;
-                response.backup_path = result.backup_path;
-
-                // If application succeeded, update the client's config_mode
-                if result.success {
-                    let config_mode = match request.mode {
-                        ClientConfigMode::Transparent => "transparent",
-                        ClientConfigMode::Hosted => "hosted",
-                    };
-
-                    if let Err(e) = client_manager.update_client_config_mode(identifier, config_mode).await {
-                        tracing::warn!("Failed to update config_mode for client {}: {}", identifier, e);
-                    }
-                }
-
-                // If application failed, add error message to warnings
-                if !result.success {
-                    response.warnings.push(result.error_message.unwrap_or_default());
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to apply config for {}: {}", identifier, e);
-                return Ok(ClientConfigUpdateResp::error_simple(
-                    "APPLICATION_FAILED",
-                    &format!("Failed to apply configuration: {}", e),
-                ));
-            }
-        }
+        server_ids,
+        dry_run: request.preview,
     }
+}
 
-    Ok(ClientConfigUpdateResp::success(response))
+fn map_mode(mode: ClientConfigMode) -> ConfigMode {
+    match mode {
+        ClientConfigMode::Hosted => ConfigMode::Managed,
+        ClientConfigMode::Transparent => ConfigMode::Native,
+    }
+}
+
+fn build_update_preview(
+    template: &ClientTemplate,
+    execution: &TemplateExecutionResult,
+) -> Value {
+    match execution {
+        TemplateExecutionResult::Applied { content, .. } => parse_config_value(content, template),
+        TemplateExecutionResult::DryRun { content, .. } => parse_config_value(content, template),
+    }
+}
+
+fn diff_summary(execution: &TemplateExecutionResult) -> Option<String> {
+    match execution {
+        TemplateExecutionResult::DryRun { diff, .. } => diff.summary.clone(),
+        _ => None,
+    }
 }

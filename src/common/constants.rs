@@ -87,12 +87,12 @@ pub mod transport {
 pub mod database {
     /// Database table name constants
     pub mod tables {
-        pub const CLIENT_CONFIG_RULES: &str = "client_config_rules";
         pub const PROFILE_PROMPT: &str = "profile_prompt";
         pub const PROFILE_RESOURCE: &str = "profile_resource";
         pub const PROFILE_SERVER: &str = "profile_server";
         pub const PROFILE_TOOL: &str = "profile_tool";
         pub const PROFILE: &str = "profile";
+        pub const CLIENT: &str = "client";
         pub const SERVER_ARGS: &str = "server_args";
         pub const SERVER_CONFIG: &str = "server_config";
         pub const SERVER_ENV: &str = "server_env";

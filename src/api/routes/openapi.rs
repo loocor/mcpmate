@@ -189,10 +189,10 @@ macro_rules! aide_wrapper_query {
 /// Usage:
 /// ```rust
 /// aide_wrapper_payload!(
-///     client::update,                    // Handler function path
-///     ClientConfigUpdateReq,              // Payload body type
-///     ConfigResponse,                     // Response type
-///     "Update client configuration"       // Description
+///     runtime::install,                                                   // Handler function path
+///     RuntimeInstallReq,                                                  // Payload body type
+///     RuntimeInstallResp,                                                 // Response type
+///     "Install runtime package (UV or Bun) with optional configuration"   // Description
 /// );
 /// ```
 #[macro_export]

@@ -3,6 +3,7 @@
 
 use crate::{
     api::handlers::ApiError,
+    clients::{ClientRenderOptions, ConfigMode},
     config::{
         database::Database,
         models::{Profile, ProfileTool},
@@ -96,30 +97,57 @@ pub async fn sync_client_configurations(
     // Get the profile ID to use
     let profile_id = get_profile_id(profile_id, &db.pool).await?;
 
-    // Create client manager
-    let mut client_manager = crate::config::client::manager::ClientManager::new(std::sync::Arc::new(db.pool.clone()));
+    // Acquire template-driven client configuration service
+    let client_service = state
+        .client_service
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| ApiError::InternalError("Client configuration service unavailable".to_string()))?;
 
-    // Apply configuration to all enabled client
-    match client_manager.apply_config_batch(Some(profile_id)).await {
-        Ok(result) => {
-            tracing::info!(
-                "Synced configurations to {} client, {} failed",
-                result.success_count,
-                result.failed_client.len()
-            );
+    let descriptors = client_service
+        .list_clients(false)
+        .await
+        .map_err(|err| ApiError::InternalError(format!("Failed to enumerate clients: {}", err)))?;
 
-            if !result.failed_client.is_empty() {
-                for (client, error) in result.failed_client {
-                    tracing::warn!("Failed to sync config for client {}: {}", client, error);
+    let mut successes = Vec::new();
+    let mut failures = std::collections::HashMap::new();
+
+    for descriptor in descriptors {
+        let client_id = descriptor.template.identifier.clone();
+        let options = ClientRenderOptions {
+            client_id: client_id.clone(),
+            mode: ConfigMode::Native,
+            profile_id: Some(profile_id.clone()),
+            server_ids: None,
+            dry_run: false,
+        };
+
+        match client_service.execute_render(options).await {
+            Ok(result) => {
+                tracing::debug!("Applied configuration for client {}", client_id);
+                if let crate::clients::TemplateExecutionResult::Applied { backup_path, .. } = result.execution {
+                    if let Some(path) = backup_path {
+                        tracing::debug!("Created backup for {} at {}", client_id, path);
+                    }
                 }
+                successes.push(client_id);
+            }
+            Err(err) => {
+                tracing::warn!("Failed to apply configuration for client {}: {}", client_id, err);
+                failures.insert(client_id, err.to_string());
             }
         }
-        Err(e) => {
-            tracing::error!("Failed to sync client configurations: {}", e);
-            return Err(ApiError::InternalError(format!(
-                "Failed to sync client configurations: {}",
-                e
-            )));
+    }
+
+    tracing::info!(
+        "Synced configurations to {} clients, {} failed",
+        successes.len(),
+        failures.len()
+    );
+
+    if !failures.is_empty() {
+        for (client, error) in failures.iter() {
+            tracing::warn!("Client sync failure: {} => {}", client, error);
         }
     }
 

@@ -1,16 +1,16 @@
 // Configuration file processing for client handlers
 
+use crate::clients::models::{ClientTemplate, ContainerType};
+use crate::clients::utils::get_nested_value;
 use crate::common::ConfigChecker;
 use crate::common::constants::config_keys;
-use crate::config::client::utils::get_nested_value;
-use sqlx::Row;
 
 /// Helper function to check if a config file contains MCP configuration
 /// Now supports client-specific top-level keys
 pub async fn check_mcp_config_exists(
     config_path: &std::path::Path,
     client_identifier: &str,
-    db_pool: &sqlx::SqlitePool,
+    template: &ClientTemplate,
 ) -> bool {
     // Use the unified configuration checker for basic checks
     let checker = ConfigChecker::new();
@@ -20,33 +20,33 @@ pub async fn check_mcp_config_exists(
 
     // If basic checks pass, perform more detailed client-specific checks
     match std::fs::read_to_string(config_path) {
-        Ok(content) => {
-            let (has_mcp, _) = analyze_config_content(&content, client_identifier, db_pool).await;
-            has_mcp
-        }
+        Ok(content) => analyze_config_content(&content, client_identifier, template).0,
         Err(_) => false,
     }
 }
 
 /// Helper function to analyze config content for MCP information
-pub async fn analyze_config_content(
+pub fn analyze_config_content(
     content: &str,
-    client_identifier: &str,
-    db_pool: &sqlx::SqlitePool,
+    _client_identifier: &str,
+    template: &ClientTemplate,
 ) -> (bool, u32) {
     if content.is_empty() {
         return (false, 0);
     }
 
     // Get the client configuration details
-    let client_config = match get_client_config_details(client_identifier, db_pool).await {
-        Ok((top_level_key, is_array_config)) => (top_level_key, is_array_config),
-        Err(_) => {
-            return analyze_with_fallback_keys(content);
-        }
+    let mapping = &template.config_mapping;
+    let top_level_key = if mapping.container_key.trim().is_empty() {
+        String::new()
+    } else {
+        mapping.container_key.clone()
     };
+    let is_array_config = matches!(mapping.container_type, ContainerType::Array);
 
-    let (top_level_key, is_array_config) = client_config;
+    if top_level_key.is_empty() && !mapping.keep_original_config {
+        return analyze_with_fallback_keys(content);
+    }
 
     // Try to parse as JSON
     match serde_json::from_str::<serde_json::Value>(content) {
@@ -139,30 +139,6 @@ fn analyze_with_fallback_keys(content: &str) -> (bool, u32) {
             (has_mcp, 0)
         }
     }
-}
-
-/// Get the configuration details for a specific client from database
-async fn get_client_config_details(
-    client_identifier: &str,
-    db_pool: &sqlx::SqlitePool,
-) -> Result<(String, bool), sqlx::Error> {
-    let row = sqlx::query("SELECT top_level_key, config_type FROM client_config_rules WHERE client_identifier = ?")
-        .bind(client_identifier)
-        .fetch_one(db_pool)
-        .await?;
-
-    let top_level_key: String = row.get("top_level_key");
-    let config_type: String = row.get("config_type");
-
-    // Check if config_type is 'array' (default to 'standard' if empty)
-    let config_type = if config_type.is_empty() {
-        "standard"
-    } else {
-        &config_type
-    };
-    let is_array_config = config_type == "array";
-
-    Ok((top_level_key, is_array_config))
 }
 
 /// Helper function to get file modification time
