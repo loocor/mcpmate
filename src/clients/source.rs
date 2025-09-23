@@ -275,11 +275,19 @@ impl FileTemplateSource {
         template: &mut ClientTemplate,
         ext: &str,
     ) {
-        match ext {
-            "json5" => template.format = TemplateFormat::Json5,
-            "yaml" | "yml" => template.format = TemplateFormat::Yaml,
-            "toml" => template.format = TemplateFormat::Toml,
-            _ => {}
+        // The `format` field on ClientTemplate represents the OUTPUT config format
+        // (json/json5/toml/yaml). Template files themselves may be authored in
+        // JSON, JSON5, YAML or TOML regardless of the output format. Here we
+        // only derive a default output format from the file extension when the
+        // template did not explicitly specify one (i.e. it remains at the
+        // enum default of JSON).
+        if matches!(template.format, TemplateFormat::Json) {
+            match ext {
+                "json5" => template.format = TemplateFormat::Json5,
+                "yaml" | "yml" => template.format = TemplateFormat::Yaml,
+                "toml" => template.format = TemplateFormat::Toml,
+                _ => {}
+            }
         }
     }
 
@@ -295,9 +303,9 @@ impl FileTemplateSource {
             )));
         }
 
-        if template.config_mapping.container_key.trim().is_empty() {
+        if template.config_mapping.container_keys.is_empty() {
             return Err(ConfigError::TemplateParseError(format!(
-                "Template {} missing config_mapping.container_key",
+                "Template {} missing config_mapping.container_keys",
                 template.identifier
             )));
         }

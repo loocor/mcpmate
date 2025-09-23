@@ -12,8 +12,6 @@ use crate::macros::resp::api_resp;
 pub enum ClientConfigType {
     #[schemars(description = "Object map container (default)")]
     Standard,
-    #[schemars(description = "Mixed container retaining existing config")]
-    Mixed,
     #[schemars(description = "Array container")]
     Array,
 }
@@ -146,6 +144,15 @@ pub struct ClientConfigUpdateData {
     pub backup_path: Option<String>,
     #[schemars(description = "Warning messages from the operation")]
     pub warnings: Vec<String>,
+    #[schemars(description = "Diff output format when previewing (json/json5/toml/yaml)")]
+    #[serde(default)]
+    pub diff_format: Option<String>,
+    #[schemars(description = "Original content before applying (if available in preview)")]
+    #[serde(default)]
+    pub diff_before: Option<String>,
+    #[schemars(description = "Content after applying (if available in preview)")]
+    #[serde(default)]
+    pub diff_after: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -195,9 +202,9 @@ pub struct ClientBackupActionData {
 pub struct ClientBackupPolicyData {
     #[schemars(description = "Client identifier")]
     pub identifier: String,
-    #[schemars(description = "Backup policy label")]
+    #[schemars(description = "Backup policy label (system default: keep_n)")]
     pub policy: String,
-    #[schemars(description = "Optional limit for keep_n policy")]
+    #[schemars(description = "Optional limit for keep_n policy (system default: 30)")]
     pub limit: Option<u32>,
 }
 
@@ -423,7 +430,7 @@ pub struct ClientBackupPolicySetReq {
 pub struct ClientBackupPolicyPayload {
     #[schemars(description = "Policy name: keep_last, keep_n, off")]
     pub policy: String,
-    #[schemars(description = "Optional limit for keep_n policy")]
+    #[schemars(description = "Optional limit for keep_n policy (recommended: 30; new clients default to 30)")]
     pub limit: Option<u32>,
 }
 

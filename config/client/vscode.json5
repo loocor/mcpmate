@@ -27,35 +27,37 @@
     ],
   },
   config_mapping: {
-    container_key: "servers",
-    container_type: "mixed",
+    container_keys: [
+      "servers",
+      "mcp.servers"
+    ],
+    container_type: "object_map",
     merge_strategy: "replace",
     keep_original_config: true,
     managed_source: "profile",
     format_rules: {
       stdio: {
         template: {
+          type: "stdio",
           command: "{{command}}",
           args: "{{{json args}}}",
           env: "{{{json env}}}",
-          timeout: 60,
-          type: "stdio",
         },
         requires_type_field: false,
       },
       sse: {
         template: {
-          type: "sse",
           url: "{{url}}",
+          type: "sse",
           headers: "{{{json headers}}}",
         },
         requires_type_field: false,
       },
       streamable_http: {
         template: {
+          type: "http",
           headers: "{{{json headers}}}",
           url: "{{url}}",
-          type: "http",
         },
         requires_type_field: false,
       },

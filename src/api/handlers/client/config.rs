@@ -5,26 +5,6 @@ use crate::clients::utils::get_nested_value;
 use crate::common::ConfigChecker;
 use crate::common::constants::config_keys;
 
-/// Helper function to check if a config file contains MCP configuration
-/// Now supports client-specific top-level keys
-pub async fn check_mcp_config_exists(
-    config_path: &std::path::Path,
-    client_identifier: &str,
-    template: &ClientTemplate,
-) -> bool {
-    // Use the unified configuration checker for basic checks
-    let checker = ConfigChecker::new();
-    if !checker.check_mcp_config_exists(config_path).await {
-        return false;
-    }
-
-    // If basic checks pass, perform more detailed client-specific checks
-    match std::fs::read_to_string(config_path) {
-        Ok(content) => analyze_config_content(&content, client_identifier, template).0,
-        Err(_) => false,
-    }
-}
-
 /// Helper function to analyze config content for MCP information
 pub fn analyze_config_content(
     content: &str,
@@ -37,14 +17,10 @@ pub fn analyze_config_content(
 
     // Get the client configuration details
     let mapping = &template.config_mapping;
-    let top_level_key = if mapping.container_key.trim().is_empty() {
-        String::new()
-    } else {
-        mapping.container_key.clone()
-    };
+    let keys = &mapping.container_keys;
     let is_array_config = matches!(mapping.container_type, ContainerType::Array);
 
-    if top_level_key.is_empty() && !mapping.keep_original_config {
+    if keys.is_empty() && !mapping.keep_original_config {
         return analyze_with_fallback_keys(content);
     }
 
@@ -67,15 +43,17 @@ pub fn analyze_config_content(
                 return (false, 0);
             }
 
-            // For object configs with a top-level key (supports nested paths like "mcp.servers")
-            if let Some(servers) = get_nested_value(&json, &top_level_key) {
-                if let Some(obj) = servers.as_object() {
-                    return (true, obj.len() as u32);
-                } else {
-                    return (true, 0);
+            // For object configs: scan container_keys for the first matching path
+            for key in keys {
+                if let Some(servers) = get_nested_value(&json, key) {
+                    if let Some(obj) = servers.as_object() {
+                        return (true, obj.len() as u32);
+                    } else if servers.is_null() || servers.is_array() || servers.is_string() {
+                        // Key exists but not an object; still treat as having MCP section
+                        return (true, 0);
+                    }
                 }
             }
-
             (false, 0)
         }
         Err(_) => {
@@ -88,20 +66,16 @@ pub fn analyze_config_content(
                 return (has_mcp, 0);
             }
 
-            // Early return if no top-level key
-            if top_level_key.is_empty() {
+            // Early return if no container keys provided
+            if keys.is_empty() {
                 return (false, 0);
             }
 
-            // Handle object configs with top-level key search
-            let search_key = if top_level_key.contains('.') {
-                // For nested paths like "mcp.servers", search for the last part
-                top_level_key.split('.').next_back().unwrap_or(&top_level_key)
-            } else {
-                &top_level_key
-            };
-
-            let has_mcp = content.contains(search_key);
+            // Handle object configs with container keys search (use last segment of each path)
+            let has_mcp = keys.iter().any(|k| {
+                let leaf = k.split('.').next_back().unwrap_or(k);
+                content.contains(leaf)
+            });
             (has_mcp, 0)
         }
     }
@@ -138,6 +112,26 @@ fn analyze_with_fallback_keys(content: &str) -> (bool, u32) {
                 || content.contains("\"mcp\"") && content.contains("\"servers\"");
             (has_mcp, 0)
         }
+    }
+}
+
+/// Helper function to check if a config file contains MCP configuration
+/// Now supports client-specific top-level keys
+pub async fn check_mcp_config_exists(
+    config_path: &std::path::Path,
+    client_identifier: &str,
+    template: &ClientTemplate,
+) -> bool {
+    // Use the unified configuration checker for basic checks
+    let checker = ConfigChecker::new();
+    if !checker.check_mcp_config_exists(config_path).await {
+        return false;
+    }
+
+    // If basic checks pass, perform more detailed client-specific checks
+    match std::fs::read_to_string(config_path) {
+        Ok(content) => analyze_config_content(&content, client_identifier, template).0,
+        Err(_) => false,
     }
 }
 

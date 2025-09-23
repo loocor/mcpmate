@@ -531,8 +531,8 @@ impl ClientConfigService {
         let generated_id = generate_id!("clnt");
         sqlx::query(
             r#"
-            INSERT INTO client (id, name, identifier, managed, backup_policy)
-            VALUES (?, ?, ?, 1, 'keep_last')
+            INSERT INTO client (id, name, identifier, managed, backup_policy, backup_limit)
+            VALUES (?, ?, ?, 1, 'keep_n', 30)
             "#,
         )
         .bind(&generated_id)
@@ -782,11 +782,22 @@ mod tests {
     use tempfile::tempdir;
 
     async fn memory_pool() -> SqlitePool {
-        SqlitePoolOptions::new()
+        // In-memory SQLite pool for tests. Ensure schema is initialized
+        // so tests that touch DB-backed client state (e.g., `client` table)
+        // do not fail with "no such table" errors.
+        let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
-            .expect("create sqlite memory pool")
+            .expect("create sqlite memory pool");
+
+        // Run the same initialization as production startup to create tables
+        // (server, client, profile, linking tables, etc.).
+        crate::config::initialization::run_initialization(&pool)
+            .await
+            .expect("initialize in-memory schema");
+
+        pool
     }
 
     async fn bootstrap_service_in(dir: &std::path::Path) -> ClientConfigService {

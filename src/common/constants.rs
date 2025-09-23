@@ -74,6 +74,11 @@ pub mod timeouts {
 
     /// Server startup timeout in seconds
     pub const SERVER_STARTUP_TIMEOUT_SEC: u64 = 30;
+
+    /// Template reload coalescing TTL for /api/client/** middleware in seconds
+    /// Requests within this window reuse the previous reload to reduce I/O,
+    /// while keeping near-real-time freshness for desktop usage.
+    pub const TEMPLATE_RELOAD_TTL_SEC: u64 = 2;
 }
 
 /// Transport type constants for unified transport handling

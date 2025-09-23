@@ -38,7 +38,7 @@
     ],
   },
   config_mapping: {
-    container_key: "context_servers",
+    container_keys: ["context_servers"],
     container_type: "object_map",
     merge_strategy: "replace",
     keep_original_config: true,
@@ -46,8 +46,8 @@
     format_rules: {
       stdio: {
         template: {
-          source: "custom",
           enabled: true,
+          source: "custom",
           command: "{{command}}",
           args: "{{{json args}}}",
           env: "{{{json env}}}"

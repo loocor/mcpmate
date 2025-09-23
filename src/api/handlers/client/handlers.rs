@@ -159,6 +159,16 @@ pub async fn config_apply(
         warnings.push(summary);
     }
 
+    // Extract diff details for preview calls
+    let (diff_format, diff_before, diff_after) = match &result.execution {
+        TemplateExecutionResult::DryRun { diff, .. } => (
+            Some(diff.format.as_str().to_string()),
+            diff.before.clone(),
+            diff.after.clone(),
+        ),
+        _ => (None, None, None),
+    };
+
     let (applied, backup_path) = match &result.execution {
         TemplateExecutionResult::Applied { backup_path, .. } => (true, backup_path.clone()),
         _ => (false, None),
@@ -170,6 +180,9 @@ pub async fn config_apply(
         applied: !request.preview && applied,
         backup_path,
         warnings,
+        diff_format,
+        diff_before,
+        diff_after,
     };
 
     Ok(Json(ClientConfigUpdateResp::success(data)))
@@ -345,11 +358,13 @@ fn build_template_metadata(template: &ClientTemplate) -> ClientTemplateMetadata 
             .unwrap_or(crate::api::models::client::ClientConfigType::Standard),
         merge_strategy: merge_strategy_to_str(template.config_mapping.merge_strategy).to_string(),
         keep_original_config: template.config_mapping.keep_original_config,
-        managed_source: template
-            .config_mapping
-            .managed_source
-            .clone()
-            .or_else(|| template.config_mapping.managed_endpoint.as_ref().and_then(|e| e.source.clone())),
+        managed_source: template.config_mapping.managed_source.clone().or_else(|| {
+            template
+                .config_mapping
+                .managed_endpoint
+                .as_ref()
+                .and_then(|e| e.source.clone())
+        }),
     }
 }
 
@@ -372,7 +387,6 @@ fn convert_container_type(container: ContainerType) -> Option<crate::api::models
     use crate::api::models::client::ClientConfigType;
     match container {
         ContainerType::ObjectMap => Some(ClientConfigType::Standard),
-        ContainerType::Mixed => Some(ClientConfigType::Mixed),
         ContainerType::Array => Some(ClientConfigType::Array),
     }
 }

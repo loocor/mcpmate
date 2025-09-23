@@ -4,7 +4,7 @@ use tracing;
 
 use crate::common::constants::database::tables;
 
-const DEFAULT_BACKUP_POLICY: &str = "keep_last";
+const DEFAULT_BACKUP_POLICY: &str = "keep_n";
 
 /// Initialize client management table (identifier-managed/policy metadata)
 pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
@@ -20,7 +20,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             backup_policy TEXT NOT NULL DEFAULT '{default_policy}' CHECK (
                 backup_policy IN ('keep_last', 'keep_n', 'off')
             ),
-            backup_limit INTEGER,
+            backup_limit INTEGER DEFAULT 30,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )

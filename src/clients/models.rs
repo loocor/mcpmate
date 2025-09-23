@@ -63,9 +63,10 @@ pub struct BackupPolicySetting {
 
 impl Default for BackupPolicySetting {
     fn default() -> Self {
+        // Default strategy: keep_n with a retention limit of 30
         Self {
-            policy: BackupPolicy::KeepLast,
-            limit: None,
+            policy: BackupPolicy::KeepN,
+            limit: Some(30),
         }
     }
 }
@@ -81,7 +82,7 @@ impl BackupPolicySetting {
                 limit: None,
             },
             Some("keep_n") => {
-                let normalized = limit.unwrap_or(5).max(1);
+                let normalized = limit.unwrap_or(30).max(1);
                 Self {
                     policy: BackupPolicy::KeepN,
                     limit: Some(normalized),
@@ -95,7 +96,7 @@ impl BackupPolicySetting {
         match self.policy {
             BackupPolicy::Off => (self.policy.as_str(), None),
             BackupPolicy::KeepLast => (self.policy.as_str(), None),
-            BackupPolicy::KeepN => (self.policy.as_str(), Some(self.limit.unwrap_or(5).max(1))),
+            BackupPolicy::KeepN => (self.policy.as_str(), Some(self.limit.unwrap_or(30).max(1))),
         }
     }
 
@@ -107,7 +108,7 @@ impl BackupPolicySetting {
         match self.policy {
             BackupPolicy::Off => None,
             BackupPolicy::KeepLast => Some(1),
-            BackupPolicy::KeepN => Some(self.limit.unwrap_or(5).max(1) as usize),
+            BackupPolicy::KeepN => Some(self.limit.unwrap_or(30).max(1) as usize),
         }
     }
 }
@@ -118,8 +119,10 @@ mod tests {
 
     #[test]
     fn parses_policy_from_pair() {
-        let keep_last = BackupPolicySetting::from_pair(None, None);
-        assert_eq!(keep_last.policy, BackupPolicy::KeepLast);
+        // Default now maps to keep_n with limit 30
+        let default_setting = BackupPolicySetting::from_pair(None, None);
+        assert_eq!(default_setting.policy, BackupPolicy::KeepN);
+        assert_eq!(default_setting.limit, Some(30));
 
         let off = BackupPolicySetting::from_pair(Some("off"), Some(3));
         assert_eq!(off.policy, BackupPolicy::Off);
@@ -130,7 +133,7 @@ mod tests {
         assert_eq!(keep_n.limit, Some(2));
 
         let keep_n_default = BackupPolicySetting::from_pair(Some("keep_n"), None);
-        assert_eq!(keep_n_default.limit, Some(5));
+        assert_eq!(keep_n_default.limit, Some(30));
     }
 }
 
@@ -147,7 +150,6 @@ pub enum ContainerType {
     #[default]
     ObjectMap,
     Array,
-    Mixed,
 }
 
 /// Merge strategy
@@ -196,7 +198,7 @@ pub struct FormatRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConfigMapping {
-    pub container_key: String,
+    pub container_keys: Vec<String>,
     pub container_type: ContainerType,
     pub merge_strategy: MergeStrategy,
     pub keep_original_config: bool,
@@ -209,7 +211,7 @@ pub struct ConfigMapping {
 impl Default for ConfigMapping {
     fn default() -> Self {
         Self {
-            container_key: String::new(),
+            container_keys: Vec::new(),
             container_type: ContainerType::ObjectMap,
             merge_strategy: MergeStrategy::Replace,
             keep_original_config: false,

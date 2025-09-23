@@ -209,7 +209,6 @@ impl TemplateEngine {
     ) -> ConfigResult<Value> {
         match template.config_mapping.container_type {
             ContainerType::ObjectMap => self.render_object_map(template, servers),
-            ContainerType::Mixed => self.render_object_map(template, servers),
             ContainerType::Array => self.render_array(template, servers),
         }
     }
@@ -529,7 +528,7 @@ mod tests {
                 adapter: None,
             },
             config_mapping: ConfigMapping {
-                container_key: "mcpServers".to_string(),
+                container_keys: vec!["mcpServers".to_string()],
                 container_type: ContainerType::ObjectMap,
                 merge_strategy: MergeStrategy::Replace,
                 keep_original_config: false,
@@ -640,7 +639,7 @@ mod tests {
                 adapter: None,
             },
             config_mapping: ConfigMapping {
-                container_key: "mcpServers".to_string(),
+                container_keys: vec!["mcpServers".to_string()],
                 container_type: ContainerType::ObjectMap,
                 merge_strategy: MergeStrategy::Replace,
                 keep_original_config: false,

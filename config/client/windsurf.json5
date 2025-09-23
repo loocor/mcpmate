@@ -37,7 +37,7 @@
     ],
   },
   config_mapping: {
-    container_key: "mcpServers",
+    container_keys: ["mcpServers"],
     container_type: "object_map",
     merge_strategy: "replace",
     keep_original_config: true,
@@ -45,7 +45,6 @@
     format_rules: {
       stdio: {
         template: {
-          type: "stdio",
           command: "{{command}}",
           args: "{{{json args}}}",
           env: "{{{json env}}}",
@@ -54,9 +53,15 @@
       },
       sse: {
         template: {
-          type: "sse",
           serverUrl: "{{url}}",
           headers: "{{{json headers}}}",
+        },
+        requires_type_field: false,
+      },
+      streamable_http: {
+        template: {
+          type: "streamable_http",
+          url: "{{url}}",
         },
         requires_type_field: false,
       },

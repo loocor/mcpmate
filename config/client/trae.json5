@@ -26,7 +26,7 @@
     ],
   },
   config_mapping: {
-    container_key: "mcpServers",
+    container_keys: ["mcpServers"],
     container_type: "object_map",
     merge_strategy: "replace",
     keep_original_config: true,

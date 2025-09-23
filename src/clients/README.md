@@ -54,7 +54,7 @@ Detection rules tell the engine how to recognise an installed client and which c
 
 ```json5
 config_mapping: {
-  container_key: "context_servers",
+  container_keys: ["context_servers"],
   container_type: "object_map",
   merge_strategy: "deep_merge",
   keep_original_config: true,
@@ -63,11 +63,11 @@ config_mapping: {
 }
 ```
 
-- `container_key` – dotted path inside the client config where MCP entries live (use `""` for root).
+- `container_keys` – ordered dot paths where MCP entries live (the first entry is used for creation; the rest act as version fallbacks).
 - `container_type` – controls how fragments are merged:
   - `"object_map"` – treat the container as a JSON object keyed by server name.
   - `"array"` – treat it as an array; items will be upserted by `name`.
-  - `"mixed"` – nested path (VS Code style); merge happens on the subtree only.
+Note: the historical `"mixed"` mode has been folded into `object_map` semantics. Use `container_keys` with dot paths to address subtrees.
 - `merge_strategy` – when a fragment already exists:
   - `"replace"` – overwrite the subtree with the new fragment.
   - `"deep_merge"` – recursively merge objects/arrays.
@@ -80,7 +80,7 @@ Defines how a “hosted/managed” profile should emit a single proxy server.  T
 - Priority: `streamable_http` → `sse` → `stdio`.
 - If `stdio` is chosen, MCPMate automatically uses the co-located bridge binary to expose its upstream endpoint over stdio, emitting a `command/args/env` entry the client understands. There is no separate `stdio_bridge` transport in templates.
 - `managed_source` – optional descriptor of where metadata comes from (e.g. `"profile"`).
-  - Legacy: older templates may use `managed_endpoint: { source: "profile" }`; both形式兼容，但推荐使用扁平字段 `managed_source`。
+  - Legacy: older templates may use `managed_endpoint: { source: "profile" }`; both forms are supported, but the flattened `managed_source` is preferred.
 
 #### Format Rules
 
@@ -107,8 +107,8 @@ Everything inside `template` becomes part of the rendered client config.  The `s
 
 The file storage adapter also exposes `PathService::atomic_write_with_backup(identifier, policy)` for safe writes.  Each client has a persisted `BackupPolicySetting` (`keep_last`, `keep_n`, or `off`) stored in the SQLite `client` table:
 
-- `keep_last` – maintain a single backup alongside the current file (default).
-- `keep_n` – retain `n` most recent backups under `~/.mcpmate/backups/client/…`.
+- `keep_last` – maintain a single backup alongside the current file.
+- `keep_n` – maintain the last N backups (default: 30), stored under `~/.mcpmate/backups/client/...`.
 - `off` – write without creating or pruning backups.
 
 Policy changes are surfaced through `/api/client/backups/policy` and drive retention for both automated renders and manual restores.
@@ -117,7 +117,7 @@ Policy changes are surfaced through `/api/client/backups/policy` and drive reten
 
 All enums/structs are defined in `src/clients/models.rs`.  Key type mappings:
 
-- `ContainerType` – `object_map | array | mixed`.
+- `ContainerType` – `object_map | array`.
 - `MergeStrategy` – `replace | deep_merge`.
 - `DetectionMethod` – `file_path | bundle_id | config_path`.
 - `StorageKind` – `file | kv | custom`.

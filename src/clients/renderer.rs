@@ -94,30 +94,27 @@ impl StructuredRenderer {
         patch: &Value,
         template: &ClientTemplate,
     ) -> Value {
+        let chosen_path = choose_container_path(&base, template);
         match template.config_mapping.container_type {
-            ContainerType::Array => self.merge_array_container(base, patch, template.config_mapping.merge_strategy),
-            ContainerType::ObjectMap | ContainerType::Mixed => self.merge_object_container(base, patch, template),
+            ContainerType::Array => self.merge_array_at_path(base, patch, &chosen_path, template.config_mapping.merge_strategy),
+            ContainerType::ObjectMap => self.merge_object_at_path(base, patch, &chosen_path, template),
         }
     }
 
-    fn merge_object_container(
+    fn merge_object_at_path(
         &self,
         base: Value,
         patch: &Value,
+        path: &str,
         template: &ClientTemplate,
     ) -> Value {
-        let container_key = template.config_mapping.container_key.as_str();
-        if container_key.is_empty() {
-            return patch.clone();
-        }
-
         let mut root = match base {
             Value::Object(map) => Value::Object(map),
             Value::Null => Value::Object(Map::new()),
             _ => Value::Object(Map::new()),
         };
 
-        let existing = get_nested_value(&root, container_key).cloned();
+        let existing = get_nested_value(&root, path).cloned();
         let fragment = match template.config_mapping.merge_strategy {
             MergeStrategy::Replace => patch.clone(),
             MergeStrategy::DeepMerge => {
@@ -125,22 +122,54 @@ impl StructuredRenderer {
                 deep_merge(base_fragment, patch)
             }
         };
-        set_nested_value(&mut root, container_key, fragment);
+        set_nested_value(&mut root, path, fragment);
         root
     }
 
-    fn merge_array_container(
+    fn merge_array_at_path(
         &self,
         base: Value,
         patch: &Value,
+        path: &str,
         strategy: MergeStrategy,
     ) -> Value {
+        let mut root = match base {
+            Value::Object(map) => Value::Object(map),
+            Value::Null => Value::Object(Map::new()),
+            _ => Value::Object(Map::new()),
+        };
+
+        let existing = get_nested_value(&root, path).cloned().unwrap_or(Value::Array(vec![]));
         let incoming = patch.as_array().cloned().unwrap_or_default();
-        match strategy {
+        let merged = match strategy {
             MergeStrategy::Replace => Value::Array(incoming),
-            MergeStrategy::DeepMerge => merge_array_by_name(base, incoming),
+            MergeStrategy::DeepMerge => merge_array_by_name(existing, incoming),
+        };
+        set_nested_value(&mut root, path, merged);
+        root
+    }
+}
+
+fn choose_container_path(base: &Value, template: &ClientTemplate) -> String {
+    let type_is_ok = |v: &Value| match template.config_mapping.container_type {
+        ContainerType::ObjectMap => v.is_object(),
+        ContainerType::Array => v.is_array(),
+    };
+
+    for key in &template.config_mapping.container_keys {
+        if let Some(v) = get_nested_value(base, key) {
+            if type_is_ok(v) {
+                return key.clone();
+            }
         }
     }
+    // default to first key or empty
+    template
+        .config_mapping
+        .container_keys
+        .get(0)
+        .cloned()
+        .unwrap_or_default()
 }
 
 impl ConfigRenderer for StructuredRenderer {

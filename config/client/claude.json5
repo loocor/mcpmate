@@ -27,7 +27,7 @@
     ],
   },
   config_mapping: {
-    container_key: "mcpServers",
+    container_keys: ["mcpServers"],
     container_type: "object_map",
     merge_strategy: "replace",
     keep_original_config: true,
@@ -39,7 +39,14 @@
           command: "{{command}}",
           args: "{{{json args}}}",
           env: "{{{json env}}}",
-          timeout: 60,
+        },
+        requires_type_field: false,
+      },
+      sse: {
+        template: {
+          type: "sse",
+          url: "{{url}}",
+          headers: "{{{json headers}}}",
         },
         requires_type_field: false,
       },
