@@ -1,0 +1,53 @@
+// Claude Desktop client template definition
+{
+  identifier: "claude_desktop",
+  display_name: "Claude Desktop",
+  format: "json",
+  protocol_revision: "2025-06-18",
+  metadata: {
+    logo_url: "https://claude.ai/favicon.ico",
+    category: "application",
+    supported_runtimes: ["npx", "uvx", "bunx"],
+  },
+  storage: {
+    kind: "file",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "config_path",
+        value: "~/Library/Application Support/Claude/claude_desktop_config.json",
+      },
+    ],
+    // windows: [
+    //   {
+    //     method: "config_path",
+    //     value: "~/AppData/Roaming/Claude/claude_desktop_config.json",
+    //   },
+    // ],
+    // linux: [
+    //   {
+    //     method: "config_path",
+    //     value: "~/.config/Claude/claude_desktop_config.json",
+    //   },
+    // ],
+  },
+  config_mapping: {
+    container_keys: ["mcpServers"],
+    container_type: "object_map",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    managed_source: "profile",
+    format_rules: {
+      stdio: {
+        template: {
+          command: "{{command}}",
+          args: "{{{json args}}}",
+          env: "{{{json env}}}",
+        },
+        requires_type_field: false,
+      },
+    },
+  },
+}
