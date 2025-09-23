@@ -153,6 +153,13 @@ pub struct ClientConfigUpdateData {
     #[schemars(description = "Content after applying (if available in preview)")]
     #[serde(default)]
     pub diff_after: Option<String>,
+
+    #[schemars(description = "Whether the write was scheduled due to a temporary lock" )]
+    #[serde(default)]
+    pub scheduled: Option<bool>,
+    #[schemars(description = "Reason for scheduling (e.g., 'db_locked')")]
+    #[serde(default)]
+    pub scheduled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -6,35 +6,23 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 use sqlx::{FromRow, SqlitePool};
 use std::fs as std_fs;
-use tokio::fs;
 
 use crate::clients::detector::{ClientDetector, DetectedClient};
 use crate::clients::engine::{RenderRequest, TemplateExecutionResult};
 use crate::clients::error::ConfigResult;
-use crate::clients::models::{BackupPolicySetting, ClientTemplate, ConfigMode, ServerTemplateInput};
+use crate::clients::models::{BackupPolicySetting, ClientTemplate, ConfigMode, ServerTemplateInput, TemplateFormat};
 use crate::clients::source::{ClientConfigSource, FileTemplateSource, TemplateRoot};
 use crate::clients::storage::BackupFile;
 use crate::clients::{ConfigError, TemplateEngine};
 use crate::common::constants::defaults;
+use crate::common::constants::timeouts;
 use crate::config::profile::basic::get_active_profile;
 use crate::config::server::{args::get_server_args, env::get_server_env};
 use crate::generate_id;
 use crate::system::paths::{PathService, get_path_service};
 
-const OFFICIAL_TEMPLATES: &[(&str, &str)] = &[
-    ("5ire.json5", include_str!("../../config/client/5ire.json5")),
-    ("claude.json5", include_str!("../../config/client/claude.json5")),
-    ("codebuddy.json5", include_str!("../../config/client/codebuddy.json5")),
-    ("codex.json5", include_str!("../../config/client/codex.json5")),
-    ("cursor.json5", include_str!("../../config/client/cursor.json5")),
-    ("deepchat.json5", include_str!("../../config/client/deepchat.json5")),
-    ("kiro.json5", include_str!("../../config/client/kiro.json5")),
-    ("qoder.json5", include_str!("../../config/client/qoder.json5")),
-    ("trae.json5", include_str!("../../config/client/trae.json5")),
-    ("vscode.json5", include_str!("../../config/client/vscode.json5")),
-    ("windsurf.json5", include_str!("../../config/client/windsurf.json5")),
-    ("zed.json5", include_str!("../../config/client/zed.json5")),
-];
+// Generated at build time from the repository's config/client directory
+include!(concat!(env!("OUT_DIR"), "/official_templates_generated.rs"));
 
 fn seed_official_templates(dir: &std::path::Path) -> ConfigResult<()> {
     for (file_name, contents) in OFFICIAL_TEMPLATES {
@@ -115,6 +103,24 @@ pub struct ClientRenderResult {
     pub execution: TemplateExecutionResult,
     pub target_path: Option<String>,
     pub servers: Vec<ServerTemplateInput>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PreviewOutcome {
+    pub format: TemplateFormat,
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ApplyOutcome {
+    pub preview: PreviewOutcome,
+    pub applied: bool,
+    pub backup_path: Option<String>,
+    pub scheduled: bool,
+    pub scheduled_reason: Option<String>,
+    pub warnings: Vec<String>,
 }
 
 /// High-level service wiring templates, detection, and storage backends
@@ -236,20 +242,9 @@ impl ClientConfigService {
         &self,
         client_id: &str,
     ) -> ConfigResult<Option<String>> {
-        let Some(path_str) = self.resolved_config_path(client_id).await? else {
-            return Ok(None);
-        };
-
-        match fs::read_to_string(&path_str).await {
-            Ok(content) => Ok(Some(content)),
-            Err(err) => {
-                if err.kind() == std::io::ErrorKind::NotFound {
-                    Ok(None)
-                } else {
-                    Err(ConfigError::IoError(err))
-                }
-            }
-        }
+        let template = self.get_client_template(client_id).await?;
+        let storage = self.template_engine.storage_for_template(&template)?;
+        storage.read(&template).await
     }
 
     /// Get resolved configuration path for a client on current platform
@@ -340,6 +335,86 @@ impl ClientConfigService {
         }
 
         Ok(servers)
+    }
+
+    fn preview_from_execution(exec: &TemplateExecutionResult) -> PreviewOutcome {
+        match exec {
+            TemplateExecutionResult::DryRun { diff, .. } => PreviewOutcome {
+                format: diff.format,
+                before: diff.before.clone(),
+                after: diff.after.clone(),
+                summary: diff.summary.clone(),
+            },
+            _ => PreviewOutcome {
+                format: TemplateFormat::Json,
+                before: None,
+                after: None,
+                summary: None,
+            },
+        }
+    }
+
+    pub async fn apply_or_preview(
+        &self,
+        options: ClientRenderOptions,
+    ) -> ConfigResult<ApplyOutcome> {
+        let result = self.execute_render(options.clone()).await?;
+        let mut outcome = ApplyOutcome::default();
+        outcome.preview = Self::preview_from_execution(&result.execution);
+        match result.execution {
+            TemplateExecutionResult::Applied { backup_path, .. } => {
+                outcome.applied = true;
+                outcome.backup_path = backup_path;
+            }
+            _ => {}
+        }
+        Ok(outcome)
+    }
+
+    pub async fn apply_with_deferred(
+        &self,
+        options: ClientRenderOptions,
+    ) -> ConfigResult<ApplyOutcome> {
+        // Always compute a preview via dry-run first for stable diff/preview fields.
+        let mut preview_opts = options.clone();
+        preview_opts.dry_run = true;
+        let preview_outcome = self.apply_or_preview(preview_opts).await?;
+
+        // If the original request is a preview, return directly
+        if options.dry_run {
+            return Ok(preview_outcome);
+        }
+
+        // If not a preview: try to write
+        match self.execute_render(options.clone()).await {
+            Ok(exec) => {
+                let mut out = preview_outcome;
+                if let TemplateExecutionResult::Applied { backup_path, .. } = exec.execution {
+                    out.applied = true;
+                    out.backup_path = backup_path;
+                }
+                Ok(out)
+            }
+            Err(ConfigError::FileOperationError(msg)) if msg.to_ascii_lowercase().contains("locked") => {
+                // Only Cherry triggers delayed write
+                let template = self.get_client_template(&options.client_id).await?;
+                let is_cherry = template.storage.kind == crate::clients::models::StorageKind::Kv
+                    && template.storage.adapter.as_deref() == Some("cherry_kv");
+                if !is_cherry {
+                    return Err(ConfigError::FileOperationError(msg));
+                }
+
+                let merged_after = preview_outcome.preview.after.clone().unwrap_or_default();
+                let policy = self.get_backup_policy(&options.client_id).await?;
+                self.schedule_write_after_unlock(template, merged_after, policy)?;
+
+                let mut out = preview_outcome;
+                out.scheduled = true;
+                out.scheduled_reason = Some("db_locked".into());
+                Ok(out)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     async fn resolve_server_selection(
@@ -698,6 +773,55 @@ impl ClientConfigService {
         let storage = self.template_engine.storage_for_template(&template)?;
         let policy = self.get_backup_policy(identifier).await?;
         storage.restore_backup(&template, backup, &policy).await
+    }
+
+    /// Schedule a background write when the target storage is temporarily locked.
+    pub fn schedule_write_after_unlock(
+        &self,
+        template: ClientTemplate,
+        content: String,
+        policy: BackupPolicySetting,
+    ) -> ConfigResult<()> {
+        let storage = self.template_engine.storage_for_template(&template)?;
+        let identifier = template.identifier.clone();
+        let retry_window = std::time::Duration::from_secs(timeouts::CHERRY_LOCK_RETRY_WINDOW_SEC);
+        let interval = std::time::Duration::from_millis(timeouts::CHERRY_LOCK_RETRY_INTERVAL_MS);
+
+        tokio::spawn(async move {
+            use std::time::Instant;
+            let deadline = Instant::now() + retry_window;
+            loop {
+                match storage.write_atomic(&template, &content, &policy).await {
+                    Ok(_) => {
+                        tracing::info!(
+                            client = %identifier,
+                            "Deferred Cherry config write applied after unlock"
+                        );
+                        break;
+                    }
+                    Err(ConfigError::FileOperationError(msg)) if msg.to_ascii_lowercase().contains("locked") => {
+                        if Instant::now() >= deadline {
+                            tracing::error!(
+                                client = %identifier,
+                                "Deferred write window expired; database remained locked"
+                            );
+                            break;
+                        }
+                        tokio::time::sleep(interval).await;
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            client = %identifier,
+                            error = %err,
+                            "Deferred write aborted due to non-lock error"
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(())
     }
 
     fn map_backup_record(

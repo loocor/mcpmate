@@ -140,49 +140,39 @@ pub async fn config_apply(
         tracing::error!("Failed to load client template {}: {}", request.identifier, err);
         StatusCode::NOT_FOUND
     })?;
-
     let options = build_render_options(&request);
-    let result = service.execute_render(options).await.map_err(|err| match err {
-        ConfigError::ClientDisabled { identifier } => {
-            tracing::warn!("Client {} is disabled; skipping configuration update", identifier);
-            StatusCode::FORBIDDEN
-        }
-        other => {
-            tracing::error!("Failed to execute render for {}: {}", request.identifier, other);
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
+    let outcome = service.apply_with_deferred(options).await.map_err(|err| match err {
+        ConfigError::ClientDisabled { .. } => StatusCode::FORBIDDEN,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
     })?;
-
-    let preview = build_update_preview(&template, &result.execution);
-    let mut warnings = Vec::new();
-    if let Some(summary) = diff_summary(&result.execution) {
-        warnings.push(summary);
-    }
-
-    // Extract diff details for preview calls
-    let (diff_format, diff_before, diff_after) = match &result.execution {
-        TemplateExecutionResult::DryRun { diff, .. } => (
-            Some(diff.format.as_str().to_string()),
-            diff.before.clone(),
-            diff.after.clone(),
-        ),
-        _ => (None, None, None),
+    let synthetic = TemplateExecutionResult::DryRun {
+        diff: crate::clients::renderer::ConfigDiff {
+            format: outcome.preview.format,
+            before: outcome.preview.before.clone(),
+            after: outcome.preview.after.clone(),
+            summary: outcome.preview.summary.clone(),
+        },
+        content: outcome.preview.after.clone().unwrap_or_default(),
     };
-
-    let (applied, backup_path) = match &result.execution {
-        TemplateExecutionResult::Applied { backup_path, .. } => (true, backup_path.clone()),
-        _ => (false, None),
-    };
+    let preview = build_update_preview(&template, &synthetic);
+    let warnings = outcome.preview.summary.clone().into_iter().collect::<Vec<_>>();
+    let diff_format = Some(outcome.preview.format.as_str().to_string());
+    let diff_before = outcome.preview.before.clone();
+    let diff_after = outcome.preview.after.clone();
+    let applied = outcome.applied && !request.preview;
+    let backup_path = outcome.backup_path.clone();
 
     let data = ClientConfigUpdateData {
         success: true,
         preview,
-        applied: !request.preview && applied,
+        applied,
         backup_path,
         warnings,
         diff_format,
         diff_before,
         diff_after,
+        scheduled: Some(outcome.scheduled),
+        scheduled_reason: outcome.scheduled_reason,
     };
 
     Ok(Json(ClientConfigUpdateResp::success(data)))
@@ -456,12 +446,5 @@ fn build_update_preview(
     match execution {
         TemplateExecutionResult::Applied { content, .. } => parse_config_value(content, template),
         TemplateExecutionResult::DryRun { content, .. } => parse_config_value(content, template),
-    }
-}
-
-fn diff_summary(execution: &TemplateExecutionResult) -> Option<String> {
-    match execution {
-        TemplateExecutionResult::DryRun { diff, .. } => diff.summary.clone(),
-        _ => None,
     }
 }

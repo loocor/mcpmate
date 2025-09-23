@@ -25,7 +25,8 @@ storage: {
 
 - `kind` – which storage adapter to use. Built-ins:
   - `"file"` – read/write a text file via `FileConfigStorage`.
-  - `"kv"`, `"custom"` – reserved for future adapters.
+  - `"kv"` – key-value backed adapters. Currently supported: `adapter: "cherry_kv"` (Cherry Studio LevelDB). Enabled by default via the `kv-cherry` feature.
+  - `"custom"` – reserved for future adapters.
 - `path_strategy` – optional hint to the storage adapter.  For the file adapter we currently support:
   - `"config_path"` – resolve the first `detection` rule that supplies `config_path`/`value` as the target file.
   - `null`/omitted – adapter chooses default behaviour.
@@ -144,3 +145,138 @@ All enums/structs are defined in `src/clients/models.rs`.  Key type mappings:
 - `/api/client/backups/policy` (GET/POST) reads or updates the retention policy described above.
 
 All state is persisted in the lightweight `client` table so that backups and management preferences survive restarts without reintroducing the legacy config tables.
+
+## Warp (SQLite) Support
+
+This section documents how Warp stores its MCP server configuration and how MCPMate can read/write it safely.
+
+### Storage Overview
+
+Warp persists MCP servers in a SQLite database at:
+- macOS: `~/Library/Application Support/dev.warp.Warp-Stable/warp.sqlite`
+
+Key tables involved:
+- `generic_string_objects` – JSON payloads for servers (name, uuid, transports).
+- `object_metadata` – tags each row as an MCP server and links it by `shareable_object_id`.
+- `mcp_environment_variables` – environment variables keyed by server UUID (as 16‑byte BLOB).
+- `active_mcp_servers` – optional, tracks which servers are active (ephemeral; not required for config persistence).
+
+### Data Invariants
+
+- `object_metadata.object_type` must be exactly `GENERIC_STRING_JSON_MCPSERVER` for Warp MCP entries.
+- `object_metadata.shareable_object_id = generic_string_objects.id`.
+- `generic_string_objects.data` (JSON) must include at least:
+  - `name: string`
+  - `uuid: string` (canonical UUID with dashes)
+  - `transport_type.CLIServer = { command: string, args: string[], cwd_parameter: null|string, static_env_vars: [] }`
+- `mcp_environment_variables.mcp_server_uuid` stores the same UUID as a 16‑byte BLOB.
+  - Join rule: `upper(replace(json_extract(g.data,'$.uuid'),'-','')) = upper(hex(mv.mcp_server_uuid))`.
+
+### List Servers (with env)
+
+```sql
+select
+  g.id,
+  json_extract(g.data,'$.name')  as name,
+  json_extract(g.data,'$.uuid')  as uuid,
+  json_extract(g.data,'$.transport_type.CLIServer.command') as command,
+  json_extract(g.data,'$.transport_type.CLIServer.args')    as args,
+  mv.environment_variables                                 as env_json
+from generic_string_objects g
+join object_metadata om
+  on om.shareable_object_id = g.id
+ and om.object_type = 'GENERIC_STRING_JSON_MCPSERVER'
+left join mcp_environment_variables mv
+  on upper(replace(json_extract(g.data,'$.uuid'),'-','')) = upper(hex(mv.mcp_server_uuid))
+order by g.id;
+```
+
+### Create Server (transaction)
+
+1) Insert JSON row and capture `id`:
+```sql
+insert into generic_string_objects(data) values (:data_json);
+select last_insert_rowid(); -- => :gso_id
+```
+2) Tag as MCP server:
+```sql
+insert into object_metadata(is_pending, object_type, shareable_object_id, retry_count)
+values (0, 'GENERIC_STRING_JSON_MCPSERVER', :gso_id, 0);
+```
+3) Upsert env by UUID (16‑byte BLOB):
+```sql
+insert into mcp_environment_variables(mcp_server_uuid, environment_variables)
+values (:uuid_blob, :env_json)
+on conflict(mcp_server_uuid) do update set environment_variables=excluded.environment_variables;
+```
+4) (Optional) Mark active:
+```sql
+insert or ignore into active_mcp_servers(mcp_server_uuid) values (:uuid_text);
+```
+
+UUID → BLOB mapping: remove dashes and interpret as raw bytes in big‑endian nibble order (no byte reordering). In Rust, `uuid::Uuid::parse_str(uuid).as_bytes()` yields the correct 16‑byte slice.
+
+### Update / Delete
+
+- Update JSON:
+```sql
+update generic_string_objects set data=:data_json where id=:gso_id;
+```
+- Update env:
+```sql
+update mcp_environment_variables set environment_variables=:env_json where mcp_server_uuid=:uuid_blob;
+```
+- Delete all related rows:
+```sql
+delete from active_mcp_servers where mcp_server_uuid=:uuid_text;
+delete from object_metadata where shareable_object_id=:gso_id and object_type='GENERIC_STRING_JSON_MCPSERVER';
+delete from mcp_environment_variables where mcp_server_uuid=:uuid_blob;
+delete from generic_string_objects where id=:gso_id;
+```
+
+### Adapter Mapping in MCPMate
+
+- Use `StorageKind::Custom` with a dedicated adapter `warp_sqlite` (see `src/clients/adapters/warp_sqlite.rs`).
+- Dispatch rule (planned): when a template has `kind: custom` and `metadata.managed_source == "warp_sqlite"`, route to the Warp adapter; otherwise fall back to other custom adapters.
+- The adapter implements `ConfigStorage` and interprets `read`/`write_atomic` as the SQL flows above. Backups are implemented via SQLite hot backup into a timestamped file next to `warp.sqlite`.
+
+Template hint (JSON5):
+```json5
+{
+  identifier: "warp.mcp",
+  display_name: "Warp MCP (SQLite)",
+  format: "json",
+  metadata: { managed_source: "warp_sqlite" },
+  storage: { kind: "custom" },
+  format_rules: {
+    // Render the minimal server JSON (goes into generic_string_objects.data)
+    custom: {
+      template: {
+        name: "{{name}}",
+        uuid: "{{uuid}}",
+        transport_type: {
+          CLIServer: { command: "{{command}}", args: {{args}}, cwd_parameter: null, static_env_vars: [] }
+        }
+      }
+    }
+  }
+}
+```
+
+### Safety & Operations
+
+- Prefer `BEGIN IMMEDIATE` transactions for multi‑step writes.
+- Back up `warp.sqlite` together with `-wal`/`-shm` if present; or use SQLite Backup API.
+- Do not place credentials inside CLI `args`; store them in `mcp_environment_variables.environment_variables` and inject at spawn time.
+
+### Rust UUID ↔ BLOB Notes
+
+```rust
+let u = uuid::Uuid::parse_str(uuid_text)?;           // "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+let uuid_blob: &[u8] = u.as_bytes();                 // 16 bytes for binding
+// rusqlite example
+conn.execute(
+    "insert into mcp_environment_variables(mcp_server_uuid, environment_variables) values (?1, ?2)",
+    (uuid_blob, env_json_str),
+)?;
+```

@@ -20,7 +20,7 @@ use super::common::{create_inspect_response, get_database_from_state};
 fn json_to_server_prompts_resp(json_response: axum::Json<serde_json::Value>) -> ServerPromptsData {
     let json_value = json_response.0;
 
-    let data = json_value
+    let items = json_value
         .get("data")
         .and_then(|d| d.as_array())
         .cloned()
@@ -49,7 +49,7 @@ fn json_to_server_prompts_resp(json_response: axum::Json<serde_json::Value>) -> 
             .to_string(),
     };
 
-    ServerPromptsData { data, state, meta }
+    ServerPromptsData { items, state, meta }
 }
 
 /// List all prompts for a specific server with standardized signature
@@ -69,11 +69,7 @@ async fn server_prompts_core(
 ) -> Result<ServerPromptsResp, StatusCode> {
     // Convert request to internal query format
     let query = super::common::InspectQuery {
-        refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
-        }),
+        refresh: request.refresh.as_ref().map(|r| (*r).into()),
         format: None,
         include_meta: None,
         timeout: None,

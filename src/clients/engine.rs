@@ -1,10 +1,7 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use handlebars::{
-    Context as HbContext, Handlebars, Helper, HelperResult, Output, RenderContext, RenderError, RenderErrorReason,
-};
-use serde_json::{Map, Value};
+#[cfg(feature = "kv-cherry")]
+use crate::clients::adapters::cherry_kv::CherryKvStorage;
+#[cfg(feature = "warp-sqlite")]
+use crate::clients::adapters::warp_sqlite::WarpSqliteStorage;
 
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
@@ -15,6 +12,12 @@ use crate::clients::source::ClientConfigSource;
 use crate::clients::storage::{DynConfigStorage, FileConfigStorage};
 use crate::common::get_bridge_path;
 use crate::system::config::get_runtime_port_config;
+use handlebars::{
+    Context as HbContext, Handlebars, Helper, HelperResult, Output, RenderContext, RenderError, RenderErrorReason,
+};
+use serde_json::{Map, Value};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Configuration rendering result
 #[derive(Debug, Clone)]
@@ -112,10 +115,55 @@ impl TemplateEngine {
         &self,
         template: &ClientTemplate,
     ) -> ConfigResult<DynConfigStorage> {
-        self.storages
-            .get(&template.storage.kind)
-            .cloned()
-            .ok_or_else(|| ConfigError::StorageAdapterMissing(format!("{:?}", template.storage.kind)))
+        match template.storage.kind {
+            StorageKind::File => self
+                .storages
+                .get(&template.storage.kind)
+                .cloned()
+                .ok_or_else(|| ConfigError::StorageAdapterMissing("file".into())),
+            StorageKind::Kv => {
+                let adapter = template.storage.adapter.as_deref().unwrap_or("").to_ascii_lowercase();
+                match adapter.as_str() {
+                    "cherry_kv" => {
+                        #[cfg(feature = "kv-cherry")]
+                        {
+                            Ok(Arc::new(CherryKvStorage::new(self.config_source.clone())))
+                        }
+                        #[cfg(not(feature = "kv-cherry"))]
+                        {
+                            Err(ConfigError::StorageAdapterMissing(
+                                "cherry_kv adapter requires kv-cherry feature".into(),
+                            ))
+                        }
+                    }
+                    other => Err(ConfigError::StorageAdapterMissing(format!(
+                        "kv adapter not supported: {}",
+                        other
+                    ))),
+                }
+            }
+            StorageKind::Custom => {
+                let adapter = template.storage.adapter.as_deref().unwrap_or("").to_ascii_lowercase();
+                match adapter.as_str() {
+                    "warp_sqlite" => {
+                        #[cfg(feature = "warp-sqlite")]
+                        {
+                            Ok(Arc::new(WarpSqliteStorage::new(self.config_source.clone())))
+                        }
+                        #[cfg(not(feature = "warp-sqlite"))]
+                        {
+                            Err(ConfigError::StorageAdapterMissing(
+                                "warp_sqlite adapter requires warp-sqlite feature".into(),
+                            ))
+                        }
+                    }
+                    other => Err(ConfigError::StorageAdapterMissing(format!(
+                        "custom adapter not supported: {}",
+                        other
+                    ))),
+                }
+            }
+        }
     }
 
     pub(crate) fn storage_for_template(
@@ -318,12 +366,9 @@ impl TemplateEngine {
         // apply fixed global priority: streamable_http -> sse -> stdio.
         let candidates = derive_transports_by_priority(&template.config_mapping.format_rules);
         for transport in candidates {
-            if let Some(server) = self.managed_runtime_for_transport(
-                transport,
-                transport,
-                template.identifier.as_str(),
-                profile_id,
-            )? {
+            if let Some(server) =
+                self.managed_runtime_for_transport(transport, transport, template.identifier.as_str(), profile_id)?
+            {
                 return Ok(server);
             }
         }
@@ -407,7 +452,9 @@ impl TemplateEngine {
 
 const TRANSPORT_PRIORITY: &[&str] = &["streamable_http", "sse", "stdio"];
 
-fn derive_transports_by_priority(format_rules: &std::collections::HashMap<String, crate::clients::models::FormatRule>) -> Vec<&'static str> {
+fn derive_transports_by_priority(
+    format_rules: &std::collections::HashMap<String, crate::clients::models::FormatRule>
+) -> Vec<&'static str> {
     let mut list = Vec::new();
     for t in TRANSPORT_PRIORITY {
         if format_rules.contains_key(*t) {
@@ -532,7 +579,9 @@ mod tests {
                 container_type: ContainerType::ObjectMap,
                 merge_strategy: MergeStrategy::Replace,
                 keep_original_config: false,
-                managed_endpoint: Some(ManagedEndpointConfig { source: Some("profile".to_string()) }),
+                managed_endpoint: Some(ManagedEndpointConfig {
+                    source: Some("profile".to_string()),
+                }),
                 managed_source: None,
                 format_rules,
             },
@@ -643,7 +692,9 @@ mod tests {
                 container_type: ContainerType::ObjectMap,
                 merge_strategy: MergeStrategy::Replace,
                 keep_original_config: false,
-                managed_endpoint: Some(ManagedEndpointConfig { source: Some("profile".to_string()) }),
+                managed_endpoint: Some(ManagedEndpointConfig {
+                    source: Some("profile".to_string()),
+                }),
                 managed_source: None,
                 format_rules,
             },

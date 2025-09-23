@@ -11,7 +11,7 @@ use crate::system::paths::get_path_service;
 
 pub type DynConfigStorage = Arc<dyn ConfigStorage>;
 
-const MAX_DEFAULT_BACKUPS: usize = 5;
+const MAX_DEFAULT_BACKUPS: usize = 30;
 
 #[derive(Debug, Clone)]
 pub struct BackupFile {

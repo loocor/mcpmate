@@ -1,3 +1,5 @@
+pub mod adapters;
+pub mod analyzer;
 pub mod detector;
 pub mod engine;
 pub mod error;
@@ -8,6 +10,7 @@ pub mod source;
 pub mod storage;
 pub mod utils;
 
+pub use analyzer::analyze_config_content;
 pub use detector::{ClientDetector, DetectedClient};
 pub use engine::{TemplateEngine, TemplateExecutionResult};
 pub use error::ConfigError;

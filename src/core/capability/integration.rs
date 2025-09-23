@@ -93,7 +93,7 @@ pub mod migration {
         legacy_result: &crate::api::models::server::ServerToolsResp,
         unified_result: &CapabilityResult,
     ) -> MigrationComparison {
-        let legacy_count = legacy_result.data.as_ref().map_or(0, |data| data.data.len());
+        let legacy_count = legacy_result.data.as_ref().map_or(0, |data| data.items.len());
         let unified_count = unified_result.items.len();
 
         MigrationComparison {

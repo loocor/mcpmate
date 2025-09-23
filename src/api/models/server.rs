@@ -106,7 +106,7 @@ pub struct ServerCapabilityReq {
 }
 
 /// Server refresh strategy enum
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy)]
 #[schemars(description = "Server refresh strategy enum")]
 pub enum ServerRefreshStrategy {
     #[schemars(description = "Auto refresh based on cache policy")]
@@ -346,7 +346,7 @@ pub struct InstanceHealthData {
 #[schemars(description = "Server tools response")]
 pub struct ServerToolsData {
     /// List of tools
-    pub data: Vec<serde_json::Value>,
+    pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
     /// Metadata about the response
@@ -358,7 +358,7 @@ pub struct ServerToolsData {
 #[schemars(description = "Server resources data")]
 pub struct ServerResourcesData {
     /// List of resources
-    pub data: Vec<serde_json::Value>,
+    pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
     /// Metadata about the response
@@ -370,7 +370,7 @@ pub struct ServerResourcesData {
 #[schemars(description = "Server resource templates response data")]
 pub struct ServerResourceTemplatesData {
     /// List of resource templates
-    pub data: Vec<serde_json::Value>,
+    pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
     /// Metadata about the response
@@ -382,7 +382,7 @@ pub struct ServerResourceTemplatesData {
 #[schemars(description = "Server prompts response")]
 pub struct ServerPromptsData {
     /// List of prompts
-    pub data: Vec<serde_json::Value>,
+    pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
     /// Metadata about the response
@@ -394,7 +394,7 @@ pub struct ServerPromptsData {
 #[schemars(description = "Server prompt arguments response")]
 pub struct ServerPromptArgumentsData {
     /// List of prompt arguments
-    pub data: Vec<serde_json::Value>,
+    pub items: Vec<serde_json::Value>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }

@@ -23,7 +23,7 @@ use super::common::{create_inspect_response, get_database_from_state};
 fn json_to_server_resources_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourcesData {
     let json_value = json_response.0;
 
-    let data = json_value
+    let items = json_value
         .get("data")
         .and_then(|d| d.as_array())
         .cloned()
@@ -52,14 +52,14 @@ fn json_to_server_resources_resp(json_response: axum::Json<serde_json::Value>) -
             .to_string(),
     };
 
-    ServerResourcesData { data, state, meta }
+    ServerResourcesData { items, state, meta }
 }
 
 /// Helper function to convert Json response to ServerResourceTemplatesResp
 fn json_to_server_resource_templates_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourceTemplatesData {
     let json_value = json_response.0;
 
-    let data = json_value
+    let items = json_value
         .get("data")
         .and_then(|d| d.as_array())
         .cloned()
@@ -88,7 +88,7 @@ fn json_to_server_resource_templates_resp(json_response: axum::Json<serde_json::
             .to_string(),
     };
 
-    ServerResourceTemplatesData { data, state, meta }
+    ServerResourceTemplatesData { items, state, meta }
 }
 
 /// List all resources for a specific server with standardized signature
@@ -108,11 +108,7 @@ async fn server_resources_core(
 ) -> Result<ServerResourcesResp, StatusCode> {
     // Convert request to internal query format
     let query = super::common::InspectQuery {
-        refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
-        }),
+        refresh: request.refresh.as_ref().map(|r| (*r).into()),
         format: None,
         include_meta: None,
         timeout: None,
@@ -220,11 +216,7 @@ async fn server_resource_templates_core(
 ) -> Result<ServerResourceTemplatesResp, StatusCode> {
     // Convert request to internal query format
     let query = super::common::InspectQuery {
-        refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
-        }),
+        refresh: request.refresh.as_ref().map(|r| (*r).into()),
         format: None,
         include_meta: None,
         timeout: None,

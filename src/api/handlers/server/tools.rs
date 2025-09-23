@@ -30,11 +30,7 @@ async fn server_tools_core(
 ) -> Result<ServerToolsResp, StatusCode> {
     // Convert ServerCapabilityReq to InspectQuery for compatibility with existing logic
     let query = InspectQuery {
-        refresh: request.refresh.as_ref().map(|r| match r {
-            crate::api::models::server::ServerRefreshStrategy::Auto => super::common::RefreshStrategy::CacheFirst,
-            crate::api::models::server::ServerRefreshStrategy::Force => super::common::RefreshStrategy::Force,
-            crate::api::models::server::ServerRefreshStrategy::Cache => super::common::RefreshStrategy::CacheFirst,
-        }),
+        refresh: request.refresh.as_ref().map(|r| (*r).into()),
         format: None,
         include_meta: None,
         timeout: None,
@@ -120,7 +116,7 @@ fn json_to_server_tools_resp(json_response: axum::Json<serde_json::Value>) -> Se
     let json_value = json_response.0;
 
     // Extract data from the JSON response
-    let data = json_value
+    let items = json_value
         .get("data")
         .and_then(|d| d.as_array())
         .cloned()
@@ -149,5 +145,5 @@ fn json_to_server_tools_resp(json_response: axum::Json<serde_json::Value>) -> Se
             .to_string(),
     };
 
-    ServerToolsData { data, state, meta }
+    ServerToolsData { items, state, meta }
 }

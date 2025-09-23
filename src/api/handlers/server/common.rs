@@ -410,6 +410,16 @@ pub enum RefreshStrategy {
     Force,
 }
 
+impl From<crate::api::models::server::ServerRefreshStrategy> for RefreshStrategy {
+    fn from(value: crate::api::models::server::ServerRefreshStrategy) -> Self {
+        match value {
+            crate::api::models::server::ServerRefreshStrategy::Auto => RefreshStrategy::CacheFirst,
+            crate::api::models::server::ServerRefreshStrategy::Force => RefreshStrategy::Force,
+            crate::api::models::server::ServerRefreshStrategy::Cache => RefreshStrategy::CacheFirst,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct InspectParams {
     pub refresh: Option<RefreshStrategy>,

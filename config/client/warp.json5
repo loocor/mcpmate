@@ -1,0 +1,36 @@
+// Warp terminal (SQLite-backed) MCP configuration template
+{
+  identifier: "warp",
+  display_name: "Warp",
+  format: "json",
+  protocol_revision: "2025-06-18",
+  metadata: { category: "application" },
+  storage: {
+    kind: "custom",
+    adapter: "warp_sqlite",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      { method: "config_path", value: "~/Library/Application Support/dev.warp.Warp-Stable/warp.sqlite" }
+    ]
+  },
+  config_mapping: {
+    container_keys: ["servers"],
+    container_type: "array",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    format_rules: {
+      stdio: {
+        template: {
+          name: "{{name}}",
+          transport_type: {
+            CLIServer: { command: "{{command}}", args: "{{{json args}}}", cwd_parameter: null, static_env_vars: [] }
+          }
+          , env: "{{{json env}}}"
+        },
+        requires_type_field: false
+      }
+    }
+  }
+}

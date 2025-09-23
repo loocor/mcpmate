@@ -1,0 +1,56 @@
+// Cherry Studio (LevelDB-backed) client template definition
+{
+  identifier: "cherry_studio",
+  display_name: "Cherry Studio",
+  format: "json",
+  protocol_revision: "2025-06-18",
+  metadata: {
+    category: "application",
+    storage: "leveldb",
+    adapter: "cherry_kv"
+  },
+  storage: {
+    kind: "kv",
+    adapter: "cherry_kv",
+    path_strategy: "config_path",
+  },
+  detection: {
+    macos: [
+      {
+        method: "config_path",
+        value: "~/Library/Application Support/CherryStudio/Local Storage/leveldb",
+      }
+    ],
+    windows: [
+      {
+        method: "config_path",
+        value: "~/AppData/Local/Cherry Studio/User Data/Default/Local Storage/leveldb",
+      }
+    ],
+    linux: [
+      {
+        method: "config_path",
+        value: "~/.config/Cherry Studio/User Data/Default/Local Storage/leveldb",
+      }
+    ],
+  },
+  config_mapping: {
+    container_keys: ["servers"],
+    container_type: "array",
+    merge_strategy: "replace",
+    keep_original_config: true,
+    format_rules: {
+      stdio: {
+        template: {
+          id: "{{name}}",
+          isActive: true,
+          type: "stdio",
+          name: "{{name}}",
+          command: "{{command}}",
+          args: "{{{json args}}}",
+        },
+        requires_type_field: false,
+      }
+    },
+  },
+}
