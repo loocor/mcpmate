@@ -31,57 +31,76 @@ impl CapabilityService {
 
     /// Prewarm REDB cache for enabled servers when cache is missing
     /// Uses temporary validation instances, writes back, and destroys them.
+    /// Optimization: run prewarm with concurrency = CPU cores (bounded by servers count).
     pub async fn prewarm_enabled_servers_if_cache_miss(&self) -> anyhow::Result<()> {
         use crate::core::cache::{CacheQuery, FreshnessLevel};
+        use futures::stream::{self, StreamExt};
 
         let servers = crate::config::server::get_all_servers(&self.database.pool).await?;
-
-        for server in servers {
-            let Some(server_id) = &server.id else {
-                continue;
-            };
-
-            let query = CacheQuery {
-                server_id: server_id.clone(),
-                freshness_level: FreshnessLevel::Cached,
-                include_disabled: false,
-            };
-            let cached = match self.redb.get_server_data(&query).await {
-                Ok(res) => res.data.is_some(),
-                Err(e) => {
-                    tracing::warn!(server = %server.name, error = %e, "Cache lookup failed; will attempt prewarm");
-                    false
-                }
-            };
-            if cached {
-                continue;
-            }
-
-            tracing::info!(server = %server.name, "Prewarming capability cache via temporary validation instance");
-            // Mark refreshing to help UI/consumers avoid treating empty cache as final
-            let _ = self
-                .redb
-                .set_refreshing(server_id, std::time::Duration::from_secs(60))
-                .await;
-            if let Err(e) = crate::config::server::capabilities::sync_via_connection_pool(
-                &self.pool,
-                &self.redb,
-                &self.database.pool,
-                server_id,
-                &server.name,
-                10,
-            )
-            .await
-            {
-                tracing::warn!(server = %server.name, error = %e, "Cache prewarm failed");
-                // Clear marker on failure to avoid sticky state; TTL would clear eventually but explicit is better
-                let _ = self.redb.clear_refreshing(server_id).await;
-            } else {
-                tracing::debug!(server = %server.name, "Cache prewarm completed");
-                let _ = self.redb.clear_refreshing(server_id).await;
-            }
+        if servers.is_empty() {
+            return Ok(());
         }
 
+        let concurrency = std::cmp::min(servers.len(), num_cpus::get());
+        tracing::info!("Prewarm start: servers={}, concurrency={}", servers.len(), concurrency);
+
+        let redb = self.redb.clone();
+        let pool = self.pool.clone();
+        let db_pool = self.database.pool.clone();
+
+        stream::iter(servers)
+            .for_each_concurrent(concurrency, move |server| {
+                let redb = redb.clone();
+                let pool = pool.clone();
+                let db_pool = db_pool.clone();
+                async move {
+                    let Some(server_id) = &server.id else { return; };
+
+                    // Cache hit, skip
+                    let query = CacheQuery {
+                        server_id: server_id.clone(),
+                        freshness_level: FreshnessLevel::Cached,
+                        include_disabled: false,
+                    };
+                    let cached = match redb.get_server_data(&query).await {
+                        Ok(res) => res.data.is_some(),
+                        Err(e) => {
+                            tracing::warn!(server = %server.name, error = %e, "Cache lookup failed; will attempt prewarm");
+                            false
+                        }
+                    };
+                    if cached { return; }
+
+                    // Mark refreshing to help UI/consumers avoid treating empty cache as final
+                    tracing::info!(server = %server.name, "Prewarming capability cache via temporary validation instance");
+                    let _ = redb
+                        .set_refreshing(server_id, std::time::Duration::from_secs(60))
+                        .await;
+
+                    let res = crate::config::server::capabilities::sync_via_connection_pool(
+                        &pool,
+                        &redb,
+                        &db_pool,
+                        server_id,
+                        &server.name,
+                        10,
+                    )
+                    .await;
+
+                    match res {
+                        Ok(_) => {
+                            tracing::debug!(server = %server.name, "Cache prewarm completed");
+                        }
+                        Err(e) => {
+                            tracing::warn!(server = %server.name, error = %e, "Cache prewarm failed");
+                        }
+                    }
+                    let _ = redb.clear_refreshing(server_id).await;
+                }
+            })
+            .await;
+
+        tracing::info!("Prewarm finished");
         Ok(())
     }
 

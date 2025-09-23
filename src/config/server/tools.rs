@@ -8,7 +8,10 @@ use sqlx::{Pool, Sqlite};
 use crate::{
     config::models::ServerTool,
     core::cache::CachedToolInfo,
-    core::capability::naming::{NamingKind, ensure_unique_name, strip_server_prefix},
+    core::capability::naming::{
+        NamingKind, ToolNamingPolicy, ensure_unique_name, ensure_unique_tool_name_with_policy,
+        infer_tool_naming_policy, strip_server_prefix,
+    },
     generate_id,
 };
 
@@ -32,6 +35,7 @@ pub async fn upsert_server_tool(
     server_name: &str,
     tool_name: &str,
     description: Option<&str>,
+    policy: Option<&ToolNamingPolicy>,
 ) -> Result<ServerToolUpsertResult> {
     tracing::debug!(
         "Upserting server tool mapping: server_id={}, tool_name={}",
@@ -39,9 +43,14 @@ pub async fn upsert_server_tool(
         tool_name
     );
 
-    let unique_name = ensure_unique_name(NamingKind::Tool, server_id, server_name, tool_name)
-        .await
-        .context("Failed to ensure unique name for tool")?;
+    let unique_name = match policy {
+        Some(p) => ensure_unique_tool_name_with_policy(server_id, server_name, tool_name, Some(p))
+            .await
+            .context("Failed to ensure unique name for tool (policy)")?,
+        None => ensure_unique_name(NamingKind::Tool, server_id, server_name, tool_name)
+            .await
+            .context("Failed to ensure unique name for tool")?,
+    };
 
     // Remove any stale duplicates that may have been created by legacy naming logic
     sqlx::query(
@@ -53,7 +62,7 @@ pub async fn upsert_server_tool(
         "#,
     )
     .bind(server_id)
-    .bind(&unique_name)
+    .bind(tool_name)
     .bind(&unique_name)
     .execute(pool)
     .await
@@ -201,10 +210,24 @@ pub async fn batch_upsert_server_tools(
 ) -> Result<Vec<String>> {
     let mut tool_ids = Vec::new();
 
-    for (tool_name, description) in tools {
-        let normalized_name = normalize_tool_name(server_name, tool_name.to_string());
-        let outcome =
-            upsert_server_tool(pool, server_id, server_name, &normalized_name, description.as_deref()).await?;
+    // Prepare normalized view and infer a policy for this batch
+    let normalized: Vec<(String, Option<&str>)> = tools
+        .iter()
+        .map(|(name, desc)| (normalize_tool_name(server_name, name.clone()), desc.as_deref()))
+        .collect();
+    let name_view: Vec<&str> = normalized.iter().map(|(n, _)| n.as_str()).collect();
+    let policy = infer_tool_naming_policy(server_name, name_view);
+
+    for (normalized_name, description) in normalized {
+        let outcome = upsert_server_tool(
+            pool,
+            server_id,
+            server_name,
+            &normalized_name,
+            description,
+            Some(&policy),
+        )
+        .await?;
         tool_ids.push(outcome.tool_id);
     }
 
@@ -224,6 +247,10 @@ pub async fn assign_unique_names_to_tools(
     server_name: &str,
     tools: &mut [Tool],
 ) -> Result<()> {
+    // Infer policy from the visible tool set (names before unique assignment)
+    let name_view: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    let policy = infer_tool_naming_policy(server_name, name_view);
+
     for tool in tools.iter_mut() {
         let mut original_name = normalize_tool_name(server_name, tool.name.to_string());
 
@@ -233,7 +260,8 @@ pub async fn assign_unique_names_to_tools(
             }
         }
         let description = tool.description.as_ref().map(|d| d.as_ref());
-        let outcome = upsert_server_tool(pool, server_id, server_name, &original_name, description).await?;
+        let outcome =
+            upsert_server_tool(pool, server_id, server_name, &original_name, description, Some(&policy)).await?;
         tool.name = std::borrow::Cow::Owned(outcome.unique_name);
     }
 
@@ -247,6 +275,9 @@ pub async fn assign_unique_names_to_cached_tools(
     server_name: &str,
     tools: &mut [CachedToolInfo],
 ) -> Result<()> {
+    let name_view: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    let policy = infer_tool_naming_policy(server_name, name_view);
+
     for tool in tools.iter_mut() {
         let mut original_name = normalize_tool_name(server_name, tool.name.clone());
 
@@ -268,6 +299,7 @@ pub async fn assign_unique_names_to_cached_tools(
             server_name,
             &original_name,
             tool.description.as_deref(),
+            Some(&policy),
         )
         .await?;
         tool.name = original_name;

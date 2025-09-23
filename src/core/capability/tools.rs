@@ -13,7 +13,7 @@ use rmcp::model::{PaginatedRequestParam, Tool};
 use tokio::sync::Mutex;
 use tracing;
 
-use crate::core::capability::naming::{NamingKind, generate_unique_name};
+use crate::core::capability::naming::{infer_tool_naming_policy, generate_tool_name_with_policy};
 use crate::core::pool::UpstreamConnectionPool;
 
 /// Tool mapping information returned by builders.
@@ -114,12 +114,18 @@ pub async fn get_all_tools(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>)
             }
         };
 
+        // Aggregate visible tool names across instances to infer a policy per server
+        let mut aggregated_names: Vec<&str> = Vec::new();
         for conn in instances.values() {
-            if !conn.is_connected() {
-                continue;
-            }
+            if !conn.is_connected() { continue; }
+            for tool in &conn.tools { aggregated_names.push(tool.name.as_ref()); }
+        }
+        let policy = infer_tool_naming_policy(&server_name, aggregated_names);
+
+        for conn in instances.values() {
+            if !conn.is_connected() { continue; }
             for tool in &conn.tools {
-                let unique_name = generate_unique_name(NamingKind::Tool, &server_name, &tool.name);
+                let unique_name = generate_tool_name_with_policy(&server_name, &tool.name, &policy);
                 let mut unique_tool = tool.clone();
                 unique_tool.name = unique_name.into();
                 all_tools.push(unique_tool);
@@ -190,27 +196,15 @@ async fn collect_tools_from_instance_peer(
         }
     };
 
+    // Collect all tools across pagination first
+    let mut raw_tools: Vec<Tool> = Vec::new();
     let mut cursor = None;
     loop {
         match peer.list_tools(Some(PaginatedRequestParam { cursor })).await {
             Ok(result) => {
-                for tool in result.tools {
-                    let unique_name = generate_unique_name(NamingKind::Tool, &server_name, &tool.name);
-                    let mut unique_tool = tool.clone();
-                    unique_tool.name = unique_name.clone().into();
-
-                    results.push(ToolMapping {
-                        server_name: server_name.clone(),
-                        server_id: Some(server_id.clone()),
-                        instance_id: instance_id.clone(),
-                        tool: unique_tool,
-                        upstream_tool_name: tool.name.to_string(),
-                    });
-                }
+                for tool in result.tools { raw_tools.push(tool); }
                 cursor = result.next_cursor;
-                if cursor.is_none() {
-                    break;
-                }
+                if cursor.is_none() { break; }
             }
             Err(e) => {
                 tracing::warn!(
@@ -222,6 +216,24 @@ async fn collect_tools_from_instance_peer(
                 break;
             }
         }
+    }
+
+    // Infer policy for this server from the collected list
+    let name_view: Vec<&str> = raw_tools.iter().map(|t| t.name.as_ref()).collect();
+    let policy = infer_tool_naming_policy(&server_name, name_view);
+
+    for tool in raw_tools.into_iter() {
+        let unique_name = generate_tool_name_with_policy(&server_name, &tool.name, &policy);
+        let mut unique_tool = tool.clone();
+        unique_tool.name = unique_name.clone().into();
+
+        results.push(ToolMapping {
+            server_name: server_name.clone(),
+            server_id: Some(server_id.clone()),
+            instance_id: instance_id.clone(),
+            tool: unique_tool,
+            upstream_tool_name: tool.name.to_string(),
+        });
     }
 
     results

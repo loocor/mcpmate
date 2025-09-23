@@ -237,6 +237,7 @@ pub async fn add_tool_to_profile(
             &server_name,
             &original_tool_name,
             None, // description will be updated during tool sync
+            None,
         )
         .await
         .context("Failed to upsert server tool")?
