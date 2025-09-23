@@ -17,6 +17,13 @@
 			"command": "npx",
 			"type": "stdio"
 		},
+		"Devtools": {
+			"command": "npx",
+			"type": "stdio",
+			"args": [
+				"chrome-devtools-mcp@latest"
+			]
+		},
 		"Deepwiki": {
 			"args": [
 				"-y",
@@ -42,10 +49,6 @@
 		},
 		"Gitmcp": {
 			"url": "https://gitmcp.io/modelcontextprotocol/rust-sdk",
-			"type": "sse"
-		},
-		"MCPMate": {
-			"url": "http://localhost:8888/sse",
 			"type": "sse"
 		},
 		"Playwright": {
