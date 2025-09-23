@@ -551,8 +551,13 @@ impl UpstreamConnectionPool {
             self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
         );
 
+        // Validation connect timeout: configurable via MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS (default 2000ms)
+        let timeout_ms: u64 = std::env::var("MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(10_000);
         let (service, tools, capabilities, _process_id) =
-            match tokio::time::timeout(std::time::Duration::from_secs(2), connect_fut).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), connect_fut).await {
                 Ok(Ok(ok)) => ok,
                 Ok(Err(e)) => {
                     // Register failure and enter backoff to protect startup/import flows
@@ -561,7 +566,7 @@ impl UpstreamConnectionPool {
                     return Err(e);
                 }
                 Err(_elapsed) => {
-                    let reason = "validation connect timeout (2s)".to_string();
+                    let reason = format!("validation connect timeout ({}ms)", timeout_ms);
                     let _ = self.register_failure(&failure_key, FailureKind::Connect, Some(reason));
                     return Err(anyhow::anyhow!(
                         "Timed out creating validation instance for server '{}'",

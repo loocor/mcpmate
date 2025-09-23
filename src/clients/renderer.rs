@@ -1,13 +1,11 @@
-use std::sync::Arc;
-
-use json5;
-use serde_json::{Map, Value};
-use serde_yaml;
-use toml;
-
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, TemplateFormat};
 use crate::clients::utils::{get_nested_value, set_nested_value};
+use json5;
+use serde_json::{Map, Value};
+use serde_yaml;
+use std::sync::Arc;
+use toml;
 
 /// Configuration difference information, used for dry-run display
 #[derive(Debug, Clone, Default)]
@@ -42,6 +40,7 @@ pub struct StructuredRenderer {
 }
 
 impl StructuredRenderer {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(format: TemplateFormat) -> DynConfigRenderer {
         Arc::new(Self { format })
     }
@@ -96,7 +95,9 @@ impl StructuredRenderer {
     ) -> Value {
         let chosen_path = choose_container_path(&base, template);
         match template.config_mapping.container_type {
-            ContainerType::Array => self.merge_array_at_path(base, patch, &chosen_path, template.config_mapping.merge_strategy),
+            ContainerType::Array => {
+                self.merge_array_at_path(base, patch, &chosen_path, template.config_mapping.merge_strategy)
+            }
             ContainerType::ObjectMap => self.merge_object_at_path(base, patch, &chosen_path, template),
         }
     }
@@ -150,7 +151,10 @@ impl StructuredRenderer {
     }
 }
 
-fn choose_container_path(base: &Value, template: &ClientTemplate) -> String {
+fn choose_container_path(
+    base: &Value,
+    template: &ClientTemplate,
+) -> String {
     let type_is_ok = |v: &Value| match template.config_mapping.container_type {
         ContainerType::ObjectMap => v.is_object(),
         ContainerType::Array => v.is_array(),
@@ -167,7 +171,7 @@ fn choose_container_path(base: &Value, template: &ClientTemplate) -> String {
     template
         .config_mapping
         .container_keys
-        .get(0)
+        .first()
         .cloned()
         .unwrap_or_default()
 }

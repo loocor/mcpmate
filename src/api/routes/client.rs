@@ -3,7 +3,7 @@ use crate::api::models::client::{
     ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq,
     ClientBackupPolicyResp, ClientBackupPolicySetReq, ClientCheckReq, ClientCheckResp, ClientConfigReq,
     ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientManageReq,
-    ClientManageResp,
+    ClientManageResp, ClientConfigImportReq, ClientConfigImportResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -33,7 +33,7 @@ aide_wrapper_query!(
     client::config_details,
     ClientConfigReq,
     ClientConfigResp,
-    "Get client configuration details with optional server import"
+    "Get client configuration details"
 );
 
 aide_wrapper_payload!(
@@ -48,6 +48,14 @@ aide_wrapper_payload!(
     ClientConfigRestoreReq,
     ClientBackupActionResp,
     "Restore a client configuration from backup"
+);
+
+// Import existing client configuration
+aide_wrapper_payload!(
+    client::config_import,
+    ClientConfigImportReq,
+    ClientConfigImportResp,
+    "Preview or import servers from client's existing configuration"
 );
 
 // Management toggle
@@ -100,6 +108,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/client/config/restore",
             post_with(config_restore_aide, config_restore_docs),
+        )
+        .api_route(
+            "/client/config/import",
+            post_with(config_import_aide, config_import_docs),
         )
         .api_route("/client/manage", post_with(manage_aide, manage_docs))
         .api_route("/client/backups/list", get_with(list_backups_aide, list_backups_docs))

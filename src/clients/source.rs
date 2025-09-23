@@ -393,7 +393,7 @@ impl ClientConfigSource for FileTemplateSource {
         for rule in rules {
             let candidate = match rule.method {
                 DetectionMethod::FilePath | DetectionMethod::ConfigPath => {
-                    rule.config_path.as_ref().or_else(|| Some(&rule.value))
+                    rule.config_path.as_ref().or(Some(&rule.value))
                 }
                 DetectionMethod::BundleId => None,
             };

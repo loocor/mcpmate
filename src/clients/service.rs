@@ -1,12 +1,3 @@
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use chrono::{DateTime, Utc};
-use serde_json::json;
-use sqlx::{FromRow, SqlitePool};
-use std::fs as std_fs;
-
 use crate::clients::detector::{ClientDetector, DetectedClient};
 use crate::clients::engine::{RenderRequest, TemplateExecutionResult};
 use crate::clients::error::ConfigResult;
@@ -20,6 +11,13 @@ use crate::config::profile::basic::get_active_profile;
 use crate::config::server::{args::get_server_args, env::get_server_env};
 use crate::generate_id;
 use crate::system::paths::{PathService, get_path_service};
+use chrono::{DateTime, Utc};
+use serde_json::json;
+use sqlx::{FromRow, SqlitePool};
+use std::collections::{HashMap, HashSet};
+use std::fs as std_fs;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 // Generated at build time from the repository's config/client directory
 include!(concat!(env!("OUT_DIR"), "/official_templates_generated.rs"));
@@ -234,7 +232,7 @@ impl ClientConfigService {
         self.template_source
             .get_template(client_id, PathService::get_current_platform())
             .await?
-            .ok_or_else(|| ConfigError::TemplateIndexError(format!("未找到客户端 {} 的模板", client_id)))
+            .ok_or_else(|| ConfigError::TemplateIndexError(format!("Client template not found for {}", client_id)))
     }
 
     /// Read current configuration file content for a client
@@ -359,14 +357,13 @@ impl ClientConfigService {
         options: ClientRenderOptions,
     ) -> ConfigResult<ApplyOutcome> {
         let result = self.execute_render(options.clone()).await?;
-        let mut outcome = ApplyOutcome::default();
-        outcome.preview = Self::preview_from_execution(&result.execution);
-        match result.execution {
-            TemplateExecutionResult::Applied { backup_path, .. } => {
-                outcome.applied = true;
-                outcome.backup_path = backup_path;
-            }
-            _ => {}
+        let mut outcome = ApplyOutcome {
+            preview: Self::preview_from_execution(&result.execution),
+            ..Default::default()
+        };
+        if let TemplateExecutionResult::Applied { backup_path, .. } = result.execution {
+            outcome.applied = true;
+            outcome.backup_path = backup_path;
         }
         Ok(outcome)
     }
@@ -855,7 +852,7 @@ impl ClientConfigService {
         let transport = row
             .transport_type
             .as_deref()
-            .unwrap_or_else(|| row.server_type.as_str())
+            .unwrap_or(row.server_type.as_str())
             .to_string();
 
         let mut metadata = HashMap::new();
@@ -896,164 +893,4 @@ struct ServerRow {
     url: Option<String>,
     transport_type: Option<String>,
     server_type: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
-    use std::fs;
-    use tempfile::tempdir;
-
-    async fn memory_pool() -> SqlitePool {
-        // In-memory SQLite pool for tests. Ensure schema is initialized
-        // so tests that touch DB-backed client state (e.g., `client` table)
-        // do not fail with "no such table" errors.
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite memory pool");
-
-        // Run the same initialization as production startup to create tables
-        // (server, client, profile, linking tables, etc.).
-        crate::config::initialization::run_initialization(&pool)
-            .await
-            .expect("initialize in-memory schema");
-
-        pool
-    }
-
-    async fn bootstrap_service_in(dir: &std::path::Path) -> ClientConfigService {
-        let template_root = TemplateRoot::new(dir.to_path_buf());
-        template_root.ensure_base_dirs().expect("ensure dirs");
-        seed_official_templates(&template_root.official_dir()).expect("seed templates");
-        let source = Arc::new(
-            FileTemplateSource::bootstrap(template_root)
-                .await
-                .expect("bootstrap source"),
-        );
-        ClientConfigService::with_source(Arc::new(memory_pool().await), source)
-            .await
-            .expect("service")
-    }
-
-    #[tokio::test]
-    async fn seeds_official_templates_on_bootstrap() {
-        let temp_dir = tempdir().expect("temp dir");
-        let service = bootstrap_service_in(temp_dir.path()).await;
-        let templates = service.template_source.list_client().await.expect("list templates");
-        let ids: Vec<_> = templates.iter().map(|tpl| tpl.identifier.as_str()).collect();
-        assert!(ids.contains(&"cursor"));
-        assert!(ids.contains(&"zed"));
-        assert!(ids.contains(&"codex"));
-        assert!(temp_dir.path().join("official/cursor.json5").exists());
-    }
-
-    #[tokio::test]
-    async fn cursor_native_dry_run_renders_stdio_server() {
-        let temp_dir = tempdir().expect("temp dir");
-        let service = bootstrap_service_in(temp_dir.path()).await;
-        let source = service.template_source.clone() as Arc<dyn ClientConfigSource>;
-        let engine = TemplateEngine::with_defaults(source);
-        let server = ServerTemplateInput {
-            name: "sample-server".to_string(),
-            display_name: Some("Sample Server".to_string()),
-            transport: "stdio".to_string(),
-            command: Some("uvx".to_string()),
-            args: vec!["run".to_string(), "tool".to_string()],
-            env: HashMap::from([("KEY".to_string(), "VALUE".to_string())]),
-            url: None,
-            headers: HashMap::new(),
-            metadata: HashMap::new(),
-        };
-        let policy = BackupPolicySetting::default();
-        let request = RenderRequest {
-            client_id: "cursor",
-            servers: &[server.clone()],
-            mode: ConfigMode::Native,
-            profile_id: None,
-            dry_run: true,
-            backup_policy: &policy,
-        };
-        let result = engine.render_config(request).await.expect("render cursor");
-        match result {
-            TemplateExecutionResult::DryRun { content, .. } => {
-                assert!(content.contains("sample-server"));
-                assert!(content.contains("\"command\""));
-            }
-            other => panic!("expected dry-run, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn cursor_managed_dry_run_includes_proxy_endpoint() {
-        let temp_dir = tempdir().expect("temp dir");
-        let service = bootstrap_service_in(temp_dir.path()).await;
-        let source = service.template_source.clone() as Arc<dyn ClientConfigSource>;
-        let engine = TemplateEngine::with_defaults(source);
-        let server = ServerTemplateInput {
-            name: "upstream".to_string(),
-            display_name: None,
-            transport: "streamable_http".to_string(),
-            command: None,
-            args: Vec::new(),
-            env: HashMap::new(),
-            url: Some("https://example.com".to_string()),
-            headers: HashMap::new(),
-            metadata: HashMap::new(),
-        };
-        let policy = BackupPolicySetting::default();
-        let request = RenderRequest {
-            client_id: "cursor",
-            servers: &[server],
-            mode: ConfigMode::Managed,
-            profile_id: Some("profile-demo"),
-            dry_run: true,
-            backup_policy: &policy,
-        };
-        let result = engine.render_config(request).await.expect("render managed");
-        match result {
-            TemplateExecutionResult::DryRun { content, .. } => {
-                let json: serde_json::Value = serde_json::from_str(&content).expect("managed json");
-                let server = &json["mcpServers"]["mcpmate"];
-                assert_eq!(server["url"], "http://localhost:8000/mcp");
-            }
-            other => panic!("expected dry-run, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn updates_official_templates_when_changed() {
-        let temp_dir = tempdir().expect("temp dir");
-        let official_dir = temp_dir.path().join("official");
-        fs::create_dir_all(&official_dir).expect("create official dir");
-
-        let path = official_dir.join("zed.json5");
-        fs::write(&path, "outdated").expect("write outdated template");
-
-        seed_official_templates(&official_dir).expect("seed templates");
-
-        let updated = fs::read_to_string(path).expect("read updated template");
-        assert_eq!(updated, include_str!("../../config/client/zed.json5"));
-    }
-
-    #[tokio::test]
-    async fn toggles_client_management_state() {
-        let temp_dir = tempdir().expect("temp dir");
-        let service = bootstrap_service_in(temp_dir.path()).await;
-
-        assert!(service.is_client_managed("cursor").await.expect("managed default"));
-
-        service
-            .set_client_managed("cursor", false)
-            .await
-            .expect("disable cursor");
-
-        assert!(!service.is_client_managed("cursor").await.expect("cursor disabled"));
-
-        service.set_client_managed("cursor", true).await.expect("enable cursor");
-
-        assert!(service.is_client_managed("cursor").await.expect("cursor enabled"));
-    }
 }

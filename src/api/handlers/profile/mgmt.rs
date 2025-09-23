@@ -208,7 +208,7 @@ pub async fn profile_delete(
 
     // Check if it's the default profile (prevent deletion)
     if profile.is_default {
-        return Err(ApiError::BadRequest("Cannot delete the default profile".to_string()));
+        return Err(ApiError::Forbidden("Cannot delete the default profile".to_string()));
     }
 
     // Delete the profile (cascade will handle related records)
@@ -429,7 +429,7 @@ async fn profile_operation_core(
         ProfileAction::Deactivate => {
             // Prevent deactivation of default profile
             if profile.is_default {
-                return Err(ApiError::BadRequest(
+                return Err(ApiError::Forbidden(
                     "Cannot deactivate the default profile".to_string(),
                 ));
             }

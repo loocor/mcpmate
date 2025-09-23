@@ -1,19 +1,12 @@
 // Configuration import for MCPMate
 // Contains functions for importing configuration from JSON files to database
 
-use std::{fs::File, path::Path, sync::Arc};
-
+use crate::core::cache::RedbCacheManager;
+use crate::core::models::Config;
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
-
-use crate::{
-    config::models::{Server, ServerMeta},
-    config::server::{upsert_server, upsert_server_args, upsert_server_env, upsert_server_meta},
-    core::models::Config,
-};
-
-// Imports for capability discovery and dual-write
-use crate::core::cache::RedbCacheManager;
+use std::collections::HashMap;
+use std::{fs::File, path::Path, sync::Arc};
 
 /// Import configuration from JSON files to database
 pub async fn import_from_mcp_config(
@@ -71,109 +64,40 @@ pub async fn import_from_mcp_config(
     let redb_cache =
         RedbCacheManager::global().map_err(|e| anyhow::anyhow!(format!("Failed to init REDB cache: {}", e)))?;
 
-    // Migrate server configurations
-    for (name, server_config) in mcp_config.mcp_servers {
-        // Keep a full clone for capability discovery before we consume args/env below
-        let server_cfg_for_discovery = server_config.clone();
-        // Create server configuration
-        let server = Server {
-            id: None,
-            name: name.clone(),
-            server_type: server_config.kind,
-            command: server_config.command.clone(),
-            url: server_config.url.clone(),
-            transport_type: server_config.transport_type.map(|t| match t {
-                crate::common::server::TransportType::Stdio => crate::common::server::TransportType::Stdio,
-                crate::common::server::TransportType::Sse => crate::common::server::TransportType::Sse,
-                crate::common::server::TransportType::StreamableHttp => {
-                    crate::common::server::TransportType::StreamableHttp
-                }
-            }),
-            capabilities: None,
-            enabled: crate::common::status::EnabledStatus::Enabled,
-            created_at: None,
-            updated_at: None,
-        };
-
-        // Insert server configuration
-        let server_id = match upsert_server(pool, &server).await {
-            Ok(id) => {
-                tracing::info!("Successfully imported server '{}' (ID: {})", name, id);
-                id
-            }
-            Err(e) => {
-                tracing::error!("Failed to import server '{}': {}", name, e);
-                continue;
-            }
-        };
-
-        // Insert server arguments if any
-        if let Some(args) = server_config.args {
-            match upsert_server_args(pool, &server_id, &args).await {
-                Ok(_) => tracing::info!("Successfully imported {} arguments for server '{}'", args.len(), name),
-                Err(e) => {
-                    tracing::error!("Failed to import arguments for server '{}': {}", name, e)
-                }
-            }
-        }
-
-        // Insert server environment variables if any
-        if let Some(env) = server_config.env {
-            match upsert_server_env(pool, &server_id, &env).await {
-                Ok(_) => tracing::info!(
-                    "Successfully imported {} environment variables for server '{}'",
-                    env.len(),
-                    name
-                ),
-                Err(e) => tracing::error!("Failed to import environment variables for server '{}': {}", name, e),
-            }
-        }
-
-        // Create basic server metadata
-        let meta = ServerMeta {
-            id: None,
-            server_id,
-            description: Some(format!("Imported from {}", mcp_config_path.display())),
-            author: None,
-            website: None,
-            repository: None,
-            category: None,
-            recommended_scenario: None,
-            rating: None,
-            created_at: None,
-            updated_at: None,
-        };
-
-        // Insert server metadata
-        match upsert_server_meta(pool, &meta).await {
-            Ok(_) => tracing::info!("Successfully created metadata for server '{}'", name),
-            Err(e) => tracing::error!("Failed to create metadata for server '{}': {}", name, e),
-        }
-
-        // Use unified capability manager for import
-        let dummy_pool = Arc::new(tokio::sync::Mutex::new(crate::core::pool::UpstreamConnectionPool::new(
-            Arc::new(Default::default()),
-            None,
-        )));
-
-        let capability_manager = crate::config::server::capabilities::CapabilityManager::new(
-            Arc::new(pool.clone()),
-            redb_cache.clone(),
-            dummy_pool,
+    // Convert Config to ServersImportConfig map
+    let mut items: HashMap<String, crate::api::models::server::ServersImportConfig> = HashMap::new();
+    for (name, sc) in mcp_config.mcp_servers.into_iter() {
+        items.insert(
+            name,
+            crate::api::models::server::ServersImportConfig {
+                kind: sc.kind.as_str().to_string(),
+                command: sc.command,
+                args: sc.args,
+                url: sc.url,
+                env: sc.env,
+            },
         );
-
-        let strategy = crate::config::server::capabilities::SyncStrategy::FromConfig(
-            server_cfg_for_discovery.clone(),
-            server.server_type,
-        );
-
-        if let Err(e) = capability_manager
-            .sync_server_capabilities(&meta.server_id, &name, strategy)
-            .await
-        {
-            tracing::warn!("Capability discovery failed for '{}': {}", name, e);
-        }
     }
+
+    // Use unified import core (by_name + by_fingerprint, skip on conflict)
+    let dummy_pool = Arc::new(tokio::sync::Mutex::new(crate::core::pool::UpstreamConnectionPool::new(
+        Arc::new(Default::default()),
+        None,
+    )));
+    let _ = crate::config::server::import_batch(
+        pool,
+        &dummy_pool,
+        &redb_cache,
+        items,
+        crate::config::server::ImportOptions {
+            by_name: true,
+            by_fingerprint: true,
+            conflict_policy: crate::config::server::ConflictPolicy::Skip,
+            preview: false,
+            target_profile: None,
+        },
+    )
+    .await?;
 
     tracing::info!("Configuration import completed successfully");
     Ok(())

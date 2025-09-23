@@ -37,7 +37,7 @@ pub fn analyze_config_content(content: &str, template: &ClientTemplate) -> (bool
         Err(_) => {
             if is_array { let has = content.contains("[") && (content.contains("\"command\"") || content.contains("\"url\"")); return (has, 0); }
             if keys.is_empty() { return (false, 0); }
-            let has = keys.iter().any(|k| { let leaf = k.split('.').last().unwrap_or(k); content.contains(leaf) });
+            let has = keys.iter().any(|k| { let leaf = k.rsplit('.').next().unwrap_or(k); content.contains(leaf) });
             (has, 0)
         }
     }

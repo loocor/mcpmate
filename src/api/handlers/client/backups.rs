@@ -234,16 +234,14 @@ mod tests {
             policy: "keep_0".into(),
             limit: None,
         })
-        .err()
-        .expect("invalid suffix");
+        .expect_err("invalid suffix");
         assert_eq!(err, StatusCode::BAD_REQUEST);
 
         let err = parse_policy(&ClientBackupPolicyPayload {
             policy: "keep_invalid".into(),
             limit: None,
         })
-        .err()
-        .expect("invalid token");
+        .expect_err("invalid token");
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 }

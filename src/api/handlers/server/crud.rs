@@ -1,10 +1,6 @@
 // MCPMate Proxy API handlers for MCP server CRUD operations
 // Contains handler functions for creating, updating, and importing servers
 
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::sync::Arc;
-
 use super::{common, shared::*};
 use crate::api::models::server::{
     ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerUpdateReq, ServersImportData,
@@ -17,6 +13,7 @@ use crate::{
     },
     common::{profile::ProfileType, server::ServerType},
     config::server::capabilities::sync_via_connection_pool,
+    config::server::{ConflictPolicy, ImportOptions, import_batch},
     config::{
         database::Database,
         models::{Profile, ServerMeta},
@@ -25,6 +22,8 @@ use crate::{
     },
 };
 use axum::{Json, extract::State};
+use std::str::FromStr;
+use std::sync::Arc;
 
 /// Validate server configuration
 #[inline]
@@ -442,64 +441,7 @@ pub async fn update_server(
     })))
 }
 
-/// Helper function to import a single server
-async fn import_single_server(
-    state: &Arc<AppState>,
-    db: &Database,
-    name: String,
-    config: crate::api::models::server::ServersImportConfig,
-) -> Result<(), String> {
-    // Check if server already exists
-    if crate::config::server::get_server(&db.pool, &name)
-        .await
-        .map_err(|e| e.to_string())?
-        .is_some()
-    {
-        return Err(format!(
-            "Server with name '{name}' already exists. Please choose a different name."
-        ));
-    }
-
-    // Validate and create server with strict type checking
-    let server_type =
-        ServerType::from_str(&config.kind).map_err(|_| format!("Invalid server type '{}'", config.kind))?;
-    validate_server_config(&config.kind, &config.command, &config.url).map_err(|e| e.to_string())?;
-    let server = create_server_from_config(name.clone(), server_type, config.command.clone(), config.url.clone());
-
-    // Insert server into database
-    let server_id = crate::config::server::upsert_server(&db.pool, &server)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Insert optional data (non-critical errors)
-    if let Some(args) = &config.args {
-        let _ = crate::config::server::upsert_server_args(&db.pool, &server_id, args).await;
-    }
-    if let Some(env) = &config.env {
-        let _ = crate::config::server::upsert_server_env(&db.pool, &server_id, env).await;
-    }
-    let _ = create_server_metadata(db, &server_id, "Imported via API").await;
-
-    // Add to default profile
-    if let Ok(profile_id) = get_or_create_default_profile(db).await {
-        let _ = add_server_to_profile_with_sync(state, db, &profile_id, &server_id, true).await;
-    }
-
-    // Initial capability discovery + dual write (SQLite shadow + REDB)
-    let _ = sync_via_connection_pool(
-        &state.connection_pool,
-        &state.redb_cache,
-        &db.pool,
-        &server_id,
-        &name,
-        10,
-    )
-    .await;
-
-    Ok(())
-}
-
-/// Import servers from JSON configuration
+/// Import servers from JSON configuration (now uses unified core)
 ///
 /// **Endpoint:** `POST /mcp/servers/import`
 pub async fn import_servers(
@@ -508,36 +450,31 @@ pub async fn import_servers(
 ) -> Result<Json<ServersImportData>, ApiError> {
     let db = common::get_database_from_state(&state)?;
 
-    let server_count = payload.mcp_servers.len();
-    let mut imported_servers = Vec::with_capacity(server_count);
-    let mut failed_servers = Vec::with_capacity(server_count);
-    let mut error_details = HashMap::with_capacity(server_count);
+    // Use safer dedup strategy by default: name + fingerprint, skip on conflict
+    let outcome = import_batch(
+        &db.pool,
+        &state.connection_pool,
+        &state.redb_cache,
+        payload.mcp_servers,
+        ImportOptions {
+            by_name: true,
+            by_fingerprint: true,
+            conflict_policy: ConflictPolicy::Skip,
+            preview: false,
+            target_profile: None,
+        },
+    )
+    .await
+    .map_err(|e| ApiError::InternalError(e.to_string()))?;
 
-    // Process each server in the payload
-    for (name, config) in payload.mcp_servers {
-        match import_single_server(&state, &db, name.clone(), config).await {
-            Ok(()) => {
-                tracing::info!("Successfully imported server '{}'", name);
-                imported_servers.push(name);
-            }
-            Err(error_msg) => {
-                tracing::error!("Failed to import server '{}': {}", name, error_msg);
-                let fail_name = name;
-                error_details.insert(fail_name.clone(), error_msg);
-                failed_servers.push(fail_name);
-            }
-        }
-    }
-
-    // Return success response
     Ok(Json(ServersImportData {
-        imported_count: imported_servers.len(),
-        imported_servers,
-        failed_servers,
-        error_details: if error_details.is_empty() {
+        imported_count: outcome.imported.len(),
+        imported_servers: outcome.imported.into_iter().map(|s| s.name).collect(),
+        failed_servers: outcome.failed.keys().cloned().collect(),
+        error_details: if outcome.failed.is_empty() {
             None
         } else {
-            Some(error_details)
+            Some(outcome.failed)
         },
     }))
 }
@@ -629,6 +566,14 @@ pub async fn delete_server(
 
     // Delete all server-related records
     delete_server_records(&db, &server_id).await?;
+
+    // Remove capability cache (REDB) for this server
+    if let Err(e) = state.redb_cache.remove_server_data(&server_id).await {
+        tracing::warn!("Failed to remove REDB cache for server '{}': {}", server_id, e);
+    }
+
+    // Remove resolver mapping to keep id<->name cache consistent
+    crate::core::capability::resolver::remove_by_id(&server_id).await;
 
     tracing::info!("Successfully deleted server '{}'", existing_server.name);
 

@@ -141,6 +141,11 @@ pub async fn set_profile_active(
     }
     let profile = profile.unwrap();
 
+    // Disallow deactivating the default profile
+    if profile.is_default && !active {
+        return Err(anyhow::anyhow!("The default profile cannot be deactivated"));
+    }
+
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
     // If activating and multi_select is false, deactivate all other profile (except default)
@@ -236,6 +241,13 @@ pub async fn delete_profile(
     id: &str,
 ) -> Result<bool> {
     tracing::debug!("Deleting profile with ID {}", id);
+
+    // Prevent deleting the default profile at the data layer as well
+    if let Some(p) = get_profile(pool, id).await? {
+        if p.is_default {
+            return Err(anyhow::anyhow!("Cannot delete the default profile"));
+        }
+    }
 
     let result = sqlx::query(
         r#"

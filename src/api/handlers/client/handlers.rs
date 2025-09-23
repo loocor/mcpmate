@@ -1,12 +1,12 @@
 // HTTP handlers for client management API (template-driven)
 
 use super::config::{analyze_config_content, get_config_last_modified};
-use super::import::import_servers_from_config;
+use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
     ClientBackupActionData, ClientBackupActionResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
-    ClientConfigMode, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected,
-    ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientImportedServer, ClientInfo,
-    ClientTemplateMetadata, ClientTemplateStorageMetadata,
+    ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
+    ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
+    ClientConfigUpdateResp, ClientImportSummary, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
 };
 use crate::api::routes::AppState;
 use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat};
@@ -105,11 +105,7 @@ pub async fn config_details(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let imported_servers = if request.import && config_exists {
-        import_configured_servers(&app_state, &parsed_content).await?
-    } else {
-        None
-    };
+    let (imported_servers, import_summary) = (None, None);
 
     let data = ClientConfigData {
         config_path: config_path.unwrap_or_default(),
@@ -120,6 +116,7 @@ pub async fn config_details(
         last_modified,
         config_type,
         imported_servers,
+        import_summary,
         template: build_template_metadata(&template),
         supported_transports: extract_supported_transports(&template),
         supported_runtimes: extract_supported_runtimes(&template),
@@ -222,6 +219,110 @@ pub async fn config_restore(
     Ok(Json(ClientBackupActionResp::success(data)))
 }
 
+/// Handler for POST /api/client/config/import
+/// Preview or import servers from the client's existing configuration
+#[tracing::instrument(skip(app_state, request), level = "debug", fields(client = %request.identifier, preview = %request.preview, profile = ?request.profile_id))]
+pub async fn config_import(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientConfigImportReq>,
+) -> Result<Json<ClientConfigImportResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+    let template = service.get_client_template(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to load client template {}: {}", request.identifier, err);
+        StatusCode::NOT_FOUND
+    })?;
+
+    let raw = service.read_current_config(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to read config for {}: {}", request.identifier, err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let json_value = raw
+        .as_deref()
+        .map(|raw| parse_config_value(raw, &template))
+        .unwrap_or(serde_json::Value::Null);
+
+    let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    // Build standard import payload from parsed config
+    let items = build_import_payload_from_value(&json_value);
+    let opts = crate::config::server::ImportOptions {
+        by_name: true,
+        by_fingerprint: true,
+        conflict_policy: crate::config::server::ConflictPolicy::Skip,
+        preview: request.preview,
+        target_profile: request.profile_id.clone(),
+    };
+    let outcome =
+        crate::config::server::import_batch(&db.pool, &app_state.connection_pool, &app_state.redb_cache, items, opts)
+            .await
+            .map_err(|err| {
+                tracing::error!("Failed to import via unified core: {}", err);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+
+    // Report the profile used for association (actual association is handled in import core)
+    let mut profile_used: Option<String> = None;
+    if !request.preview && !outcome.imported.is_empty() {
+        let profile_id = if let Some(pid) = &request.profile_id {
+            pid.clone()
+        } else {
+            // Ensure default profile exists so we can return its id consistently
+            match crate::config::profile::get_profile_by_name(&db.pool, "default").await {
+                Ok(Some(p)) => p.id.unwrap_or_default(),
+                _ => {
+                    let p = crate::config::models::Profile::new(
+                        "default".to_string(),
+                        crate::common::profile::ProfileType::Shared,
+                    );
+                    crate::config::profile::upsert_profile(&db.pool, &p)
+                        .await
+                        .unwrap_or_default()
+                }
+            }
+        };
+        if !profile_id.is_empty() {
+            profile_used = Some(profile_id);
+        }
+    }
+
+    let summary = ClientImportSummary {
+        attempted: true,
+        imported_count: outcome.imported.len() as u32,
+        skipped_count: outcome.skipped.len() as u32,
+        failed_count: outcome.failed.len() as u32,
+        errors: if outcome.failed.is_empty() {
+            None
+        } else {
+            Some(outcome.failed)
+        },
+    };
+
+    let data = ClientConfigImportData {
+        summary,
+        // In preview mode, return the would-be imported servers for visibility
+        imported_servers: outcome
+            .imported
+            .into_iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "command": s.command.unwrap_or_default(),
+                    "args": s.args,
+                    "env": s.env,
+                    "transport_type": s.transport_type,
+                })
+            })
+            .filter_map(|v| serde_json::from_value(v).ok())
+            .collect(),
+        profile_id: profile_used,
+        scheduled: Some(outcome.scheduled),
+        scheduled_reason: None,
+    };
+
+    Ok(Json(ClientConfigImportResp::success(data)))
+}
+
 pub(crate) fn get_client_service(state: &AppState) -> Result<Arc<ClientConfigService>, StatusCode> {
     state
         .client_service
@@ -285,19 +386,7 @@ async fn descriptor_to_client_info(
     })
 }
 
-async fn import_configured_servers(
-    state: &AppState,
-    content: &Value,
-) -> Result<Option<Vec<ClientImportedServer>>, StatusCode> {
-    let db = state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    import_servers_from_config(content, &db.pool)
-        .await
-        .map(Some)
-        .map_err(|err| {
-            tracing::error!("Failed to import servers: {}", err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })
-}
+// moved to POST /api/client/config/import
 
 fn template_display_name(template: &ClientTemplate) -> String {
     template

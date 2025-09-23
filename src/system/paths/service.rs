@@ -243,7 +243,7 @@ impl PathService {
 
         let file_component = target
             .file_name()
-            .map(|os| Self::sanitize_component(os))
+            .map(Self::sanitize_component)
             .unwrap_or_else(|| "config".to_string());
 
         Ok((dir, file_component))

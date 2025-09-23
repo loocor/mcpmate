@@ -1,23 +1,21 @@
 // MCP Proxy API routes for MCP server management
 // Contains route definitions for MCP server endpoints
 
-use std::sync::Arc;
-
-use aide::axum::{
-    ApiRouter,
-    routing::{delete_with, get_with, post_with},
-};
-
 use super::AppState;
 use crate::api::handlers::server;
 use crate::api::models::server::{
     InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq, InstanceListResp,
     InstanceManageReq, ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp,
-    ServerListReq, ServerListResp, ServerManageReq, ServerOperationResp, ServerPromptsResp,
-    ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp, ServerUpdateReq, ServersImportReq,
-    ServersImportResp,
+    ServerListReq, ServerListResp, ServerManageReq, ServerOperationResp, ServerPreviewReq, ServerPreviewResp,
+    ServerPromptsResp, ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp, ServerUpdateReq,
+    ServersImportReq, ServersImportResp,
 };
 use crate::{aide_wrapper_payload, aide_wrapper_query};
+use aide::axum::{
+    ApiRouter,
+    routing::{delete_with, get_with, post_with},
+};
+use std::sync::Arc;
 
 /// Create MCP server management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
@@ -38,6 +36,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/servers/import",
             post_with(import_servers_aide, import_servers_docs),
+        )
+        .api_route(
+            "/mcp/servers/preview",
+            post_with(preview_servers_aide, preview_servers_docs),
         )
         // Management operations - Payload with action enum
         .api_route("/mcp/servers/manage", post_with(manage_server_aide, manage_server_docs))
@@ -111,6 +113,14 @@ aide_wrapper_payload!(
     ServersImportReq,
     ServersImportResp,
     "Import servers from JSON configuration"
+);
+
+// Preview capabilities for arbitrary server configs (no side effects)
+aide_wrapper_payload!(
+    server::preview_servers,
+    ServerPreviewReq,
+    ServerPreviewResp,
+    "Preview capabilities for server configs without importing"
 );
 
 // Generate aide-compatible wrappers for capability handlers

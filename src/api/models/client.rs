@@ -1,10 +1,8 @@
 use crate::common::ClientCategory;
+use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx;
-
-// Import the unified response macro
-use crate::macros::resp::api_resp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -90,7 +88,7 @@ pub struct ClientInfo {
     pub template: ClientTemplateMetadata,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 #[schemars(description = "Configuration mode - hosted or transparent")]
 pub enum ClientConfigMode {
@@ -99,6 +97,23 @@ pub enum ClientConfigMode {
     Hosted,
     #[schemars(description = "Merge with existing client configuration")]
     Transparent,
+}
+
+impl<'de> serde::Deserialize<'de> for ClientConfigMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "hosted" => Ok(ClientConfigMode::Hosted),
+            "transparent" => Ok(ClientConfigMode::Transparent),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid mode '{}', allowed: hosted|transparent (case-insensitive)",
+                other
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -154,7 +169,7 @@ pub struct ClientConfigUpdateData {
     #[serde(default)]
     pub diff_after: Option<String>,
 
-    #[schemars(description = "Whether the write was scheduled due to a temporary lock" )]
+    #[schemars(description = "Whether the write was scheduled due to a temporary lock")]
     #[serde(default)]
     pub scheduled: Option<bool>,
     #[schemars(description = "Reason for scheduling (e.g., 'db_locked')")]
@@ -234,6 +249,9 @@ pub struct ClientConfigData {
     pub config_type: Option<ClientConfigType>,
     #[schemars(description = "List of imported server configurations")]
     pub imported_servers: Option<Vec<ClientImportedServer>>,
+    #[schemars(description = "Import attempt summary (counts and errors)")]
+    #[serde(default)]
+    pub import_summary: Option<ClientImportSummary>,
     #[schemars(description = "Template metadata summary for this client")]
     pub template: ClientTemplateMetadata,
     #[schemars(description = "Supported transports derived from the template")]
@@ -242,6 +260,41 @@ pub struct ClientConfigData {
     pub supported_runtimes: Vec<String>,
     #[schemars(description = "Whether MCPMate manages this client")]
     pub managed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[schemars(description = "Summary for servers imported from a client config")]
+pub struct ClientImportSummary {
+    #[schemars(description = "Whether import was attempted for this request")]
+    pub attempted: bool,
+    #[schemars(description = "Number of servers successfully imported")]
+    pub imported_count: u32,
+    #[schemars(description = "Number of servers skipped (e.g., duplicates)")]
+    pub skipped_count: u32,
+    #[schemars(description = "Number of servers failed to import")]
+    pub failed_count: u32,
+    #[schemars(description = "Optional per-server error messages for failures")]
+    #[serde(default)]
+    pub errors: Option<std::collections::HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Import result for client configuration import")]
+pub struct ClientConfigImportData {
+    #[schemars(description = "Summary for the import attempt")]
+    pub summary: ClientImportSummary,
+    #[schemars(description = "Imported servers (when applied)")]
+    #[serde(default)]
+    pub imported_servers: Vec<ClientImportedServer>,
+    #[schemars(description = "Profile id used for association (when applied)")]
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[schemars(description = "Whether capability sync was scheduled in background")]
+    #[serde(default)]
+    pub scheduled: Option<bool>,
+    #[schemars(description = "Reason for scheduling (if available)")]
+    #[serde(default)]
+    pub scheduled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -320,6 +373,11 @@ api_resp!(
     ClientConfigUpdateData,
     "Client configuration update response"
 );
+api_resp!(
+    ClientConfigImportResp,
+    ClientConfigImportData,
+    "Client configuration import response"
+);
 api_resp!(ClientManageResp, ClientManageData, "Client management toggle response");
 api_resp!(
     ClientBackupListResp,
@@ -353,9 +411,6 @@ pub struct ClientCheckReq {
 pub struct ClientConfigReq {
     #[schemars(description = "Client identifier")]
     pub identifier: String,
-    #[serde(default)]
-    #[schemars(description = "Whether to import servers from the configuration")]
-    pub import: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -383,12 +438,29 @@ pub struct ClientManageReq {
     pub action: ClientManageAction,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(description = "Management action enum")]
 pub enum ClientManageAction {
     Enable,
     Disable,
+}
+
+impl<'de> serde::Deserialize<'de> for ClientManageAction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "enable" => Ok(ClientManageAction::Enable),
+            "disable" => Ok(ClientManageAction::Disable),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid action '{}', allowed: enable|disable (case-insensitive)",
+                other
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
@@ -430,6 +502,20 @@ pub struct ClientBackupPolicySetReq {
     pub identifier: String,
     #[schemars(description = "Backup policy descriptor")]
     pub policy: ClientBackupPolicyPayload,
+}
+
+/// Request for client config import
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Request for client config import")]
+pub struct ClientConfigImportReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[serde(default = "super::default_true")]
+    #[schemars(description = "Preview only without applying changes (default: true)")]
+    pub preview: bool,
+    #[serde(default)]
+    #[schemars(description = "Target profile id; default profile if omitted")]
+    pub profile_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]

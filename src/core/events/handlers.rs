@@ -1,12 +1,10 @@
 //! Event handlers for the core event system
 
-use std::sync::Arc;
-
-use tokio::task;
-use tracing::{debug, error, info, warn};
-
 use super::{Event, EventBus};
 use crate::core::foundation::error::CoreResult;
+use std::sync::Arc;
+use tokio::task;
+use tracing::{debug, error, info, warn};
 
 /// Simplified event handlers without complex callback system
 pub struct EventHandlers {
@@ -106,7 +104,7 @@ impl EventHandlers {
 
             // Server enabled in profile changed - trigger immediate server management for active profile
             Event::ServerEnabledInProfileChanged {
-                server_id: _,
+                server_id,
                 server_name,
                 profile_id,
                 enabled,
@@ -124,8 +122,11 @@ impl EventHandlers {
                 // Use connection pool to manage server status
                 if let Some(connection_pool) = &self.connection_pool {
                     let mut pool = connection_pool.lock().await;
-                    if let Err(e) = pool.update_server_status(&server_name, enabled).await {
-                        error!("Failed to update server '{}' status: {}", server_name, e);
+                    if let Err(e) = pool.update_server_status(&server_id, enabled).await {
+                        error!(
+                            "Failed to update server '{}' (ID: {}) status: {}",
+                            server_name, server_id, e
+                        );
                     }
                 }
             }
@@ -134,9 +135,17 @@ impl EventHandlers {
             Event::ServerGlobalStatusChanged { .. } | Event::DatabaseChanged | Event::ConfigReloaded => {
                 debug!("Handling server sync event: {:?}", event);
 
-                // Invalidate cache
+                // Invalidate profile merge cache
                 if let Some(profile_service) = &self.profile_service {
                     profile_service.invalidate_cache().await;
+                }
+
+                // Keep connection pool configuration in sync with DB (placeholders only; no forced connect)
+                if let Some(connection_pool) = &self.connection_pool {
+                    let mut pool = connection_pool.lock().await;
+                    if let Err(e) = pool.sync_servers_from_active_profile().await {
+                        error!("Failed to sync servers after database/config event: {}", e);
+                    }
                 }
             }
 

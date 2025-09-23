@@ -129,7 +129,7 @@ impl ConfigStorage for WarpSqliteStorage {
                     let input = format!("warp://{}/{}", template.identifier, name);
                     Some(Uuid::new_v5(&Uuid::NAMESPACE_URL, input.as_bytes()).to_string())
                 }).unwrap();
-            if !v.get("uuid").and_then(|x| x.as_str()).is_some() {
+            if v.get("uuid").and_then(|x| x.as_str()).is_none() {
                 if let Some(obj) = v.as_object_mut() { obj.insert("uuid".into(), serde_json::Value::String(uuid_text.clone())); }
             }
             let data_json = serde_json::to_string(&v).map_err(ConfigError::JsonError)?;
@@ -184,7 +184,7 @@ impl ConfigStorage for WarpSqliteStorage {
                 let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
                 if !fname.starts_with("warp.backup.") || !fname.ends_with(".sqlite") { continue; }
                 let meta = match entry.metadata() { Ok(m) => m, Err(_) => continue };
-                out.push(BackupFile { name: fname.to_string(), path: p.clone(), size: meta.len(), modified_at: meta.modified().ok().map(|t| chrono::DateTime::<chrono::Utc>::from(t)) });
+                out.push(BackupFile { name: fname.to_string(), path: p.clone(), size: meta.len(), modified_at: meta.modified().ok().map(chrono::DateTime::<chrono::Utc>::from) });
             }
         }
         Ok(out)

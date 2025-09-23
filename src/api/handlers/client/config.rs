@@ -1,16 +1,20 @@
 // Configuration file processing for client handlers
 
+use crate::clients::analyzer::analyze_config_content as analyze;
 use crate::clients::models::ClientTemplate;
 use crate::common::ConfigChecker;
-// use crate::common::constants::config_keys; // unused after analyzer refactor
-use crate::clients::analyzer::analyze_config_content as analyze;
 
 /// Helper function to analyze config content for MCP information
-pub fn analyze_config_content(content: &str, _client_identifier: &str, template: &ClientTemplate) -> (bool, u32) { analyze(content, template) }
+pub fn analyze_config_content(
+    content: &str,
+    _client_identifier: &str,
+    template: &ClientTemplate,
+) -> (bool, u32) {
+    analyze(content, template)
+}
 
 /// Fallback analysis when database lookup fails
 /// Checks common top-level keys for compatibility
-
 /// Helper function to check if a config file contains MCP configuration
 /// Now supports client-specific top-level keys
 pub async fn check_mcp_config_exists(

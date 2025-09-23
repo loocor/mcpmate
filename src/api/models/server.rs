@@ -1,15 +1,11 @@
 // MCP Proxy API models for MCP server management
 // Contains data models for MCP server endpoints
 
-use std::collections::HashMap;
-
+use crate::common::server::ServerType;
+use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-use crate::common::server::ServerType;
-
-// Import the unified response macro
-use crate::macros::resp::api_resp;
+use std::collections::HashMap;
 
 // API Request Models
 //
@@ -83,13 +79,30 @@ pub struct ServerManageReq {
 }
 
 /// Server management action enum
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server management action enum")]
 pub enum ServerManageAction {
     #[schemars(description = "Enable the server")]
     Enable,
     #[schemars(description = "Disable the server")]
     Disable,
+}
+
+impl<'de> serde::Deserialize<'de> for ServerManageAction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "enable" => Ok(ServerManageAction::Enable),
+            "disable" => Ok(ServerManageAction::Disable),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid server action '{}', allowed: enable|disable (case-insensitive)",
+                other
+            ))),
+        }
+    }
 }
 
 /// Request for server capability inspection
@@ -106,7 +119,7 @@ pub struct ServerCapabilityReq {
 }
 
 /// Server refresh strategy enum
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Debug, Serialize, JsonSchema, Clone, Copy)]
 #[schemars(description = "Server refresh strategy enum")]
 pub enum ServerRefreshStrategy {
     #[schemars(description = "Auto refresh based on cache policy")]
@@ -115,6 +128,24 @@ pub enum ServerRefreshStrategy {
     Force,
     #[schemars(description = "Use cached data only")]
     Cache,
+}
+
+impl<'de> serde::Deserialize<'de> for ServerRefreshStrategy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => Ok(ServerRefreshStrategy::Auto),
+            "force" => Ok(ServerRefreshStrategy::Force),
+            "cache" => Ok(ServerRefreshStrategy::Cache),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid refresh strategy '{}', allowed: auto|force|cache (case-insensitive)",
+                other
+            ))),
+        }
+    }
 }
 
 /// Request for instance list operation
@@ -147,7 +178,7 @@ pub struct InstanceManageReq {
 }
 
 /// Server instance management action enum
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Server instance management action enum")]
 pub enum InstanceAction {
     #[schemars(description = "Disconnect normally")]
@@ -162,6 +193,27 @@ pub enum InstanceAction {
     Recover,
     #[schemars(description = "Cancel initializing instance")]
     Cancel,
+}
+
+impl<'de> serde::Deserialize<'de> for InstanceAction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "disconnect" => Ok(InstanceAction::Disconnect),
+            "forcedisconnect" | "force_disconnect" | "force-disconnect" => Ok(InstanceAction::ForceDisconnect),
+            "reconnect" => Ok(InstanceAction::Reconnect),
+            "resetreconnect" | "reset_reconnect" | "reset-reconnect" => Ok(InstanceAction::ResetReconnect),
+            "recover" => Ok(InstanceAction::Recover),
+            "cancel" => Ok(InstanceAction::Cancel),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid instance action '{}', allowed: disconnect|force_disconnect|reconnect|reset_reconnect|recover|cancel (case-insensitive)",
+                other
+            ))),
+        }
+    }
 }
 
 // API Model
@@ -400,7 +452,7 @@ pub struct ServerPromptArgumentsData {
 }
 
 /// Server capability response metadata
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
 #[schemars(description = "Server capability response metadata")]
 pub struct ServerCapabilityMeta {
     /// Whether data came from cache
@@ -615,4 +667,56 @@ api_resp!(
     ServerPromptArgumentsResp,
     ServerPromptArgumentsData,
     "Server prompt arguments API response"
+);
+
+// ================= Preview Capabilities =================
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Single server preview item request")]
+pub struct ServerPreviewItemReq {
+    pub name: String,
+    pub kind: String, // stdio|sse|streamable_http
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<std::collections::HashMap<String, String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Preview capabilities request")]
+pub struct ServerPreviewReq {
+    pub servers: Vec<ServerPreviewItemReq>,
+    #[serde(default)]
+    pub include_details: Option<bool>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Preview item response with capabilities snapshot")]
+pub struct ServerPreviewItemData {
+    pub name: String,
+    pub ok: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub tools: ServerToolsData,
+    pub resources: ServerResourcesData,
+    pub resource_templates: ServerResourceTemplatesData,
+    pub prompts: ServerPromptsData,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Preview capabilities response data")]
+pub struct ServerPreviewData {
+    pub items: Vec<ServerPreviewItemData>,
+}
+
+api_resp!(
+    ServerPreviewResp,
+    ServerPreviewData,
+    "Server capability preview response"
 );

@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
-use chrono::{DateTime, Utc};
-
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{ClientTemplate, DetectionMethod};
 use crate::clients::source::ClientConfigSource;
 use crate::system::paths::PathService;
+use chrono::{DateTime, Utc};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectedClient {
@@ -55,16 +53,12 @@ impl ClientDetector {
 
         for rule in rules {
             if self.check_detection_rule(rule).await? {
-                let config_path = rule
-                    .config_path
-                    .as_ref()
-                    .or_else(|| Some(&rule.value))
-                    .and_then(|path| {
-                        self.path_service
-                            .resolve_user_path(path)
-                            .ok()
-                            .map(|resolved| resolved.to_string_lossy().to_string())
-                    });
+                let config_path = rule.config_path.as_ref().or(Some(&rule.value)).and_then(|path| {
+                    self.path_service
+                        .resolve_user_path(path)
+                        .ok()
+                        .map(|resolved| resolved.to_string_lossy().to_string())
+                });
 
                 return Ok(Some(DetectedClient {
                     identifier: template.identifier.clone(),

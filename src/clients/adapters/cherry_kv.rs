@@ -3,21 +3,18 @@ use cherry_db_manager::{CherryDbManager, DefaultCherryDbManager, McpConfigReques
 #[cfg(feature = "kv-cherry")]
 use rusty_leveldb::{DB, LdbIterator, Options};
 
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use chrono::Utc;
-use nanoid::nanoid;
-use tokio::fs;
-
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{BackupPolicySetting, ClientTemplate, StorageKind};
 use crate::clients::source::ClientConfigSource;
+use crate::clients::storage::{BackupFile, ConfigStorage, DynConfigStorage};
 use crate::clients::utils::get_nested_value;
 use crate::system::paths::get_path_service;
-
-use crate::clients::storage::{BackupFile, ConfigStorage, DynConfigStorage};
+use async_trait::async_trait;
+use chrono::Utc;
+use nanoid::nanoid;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::fs;
 
 pub struct CherryKvStorage {
     config_source: Arc<dyn ClientConfigSource>,
@@ -328,7 +325,7 @@ impl ConfigStorage for CherryKvStorage {
             let path = template
                 .config_mapping
                 .container_keys
-                .get(0)
+                .first()
                 .map(|s| s.as_str())
                 .unwrap_or("");
             let servers_val = get_nested_value(&doc, path)
@@ -372,7 +369,7 @@ impl ConfigStorage for CherryKvStorage {
                 continue;
             }
             let meta = fs::metadata(&path).await.map_err(ConfigError::IoError)?;
-            let modified_at = meta.modified().ok().map(|t| chrono::DateTime::<chrono::Utc>::from(t));
+            let modified_at = meta.modified().ok().map(chrono::DateTime::<chrono::Utc>::from);
             out.push(BackupFile {
                 name,
                 path: path.clone(),

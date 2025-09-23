@@ -71,12 +71,13 @@ impl ServerType {
         }
     }
 
-    /// Create from client format string
+    /// Create from client format string (case-insensitive)
     pub fn from_client_format(s: &str) -> Result<Self, ParseServerTypeError> {
-        match s {
-            s if s == transport::STDIO => Ok(ServerType::Stdio),
-            s if s == transport::SSE => Ok(ServerType::Sse),
-            s if s == transport::STREAMABLE_HTTP => Ok(ServerType::StreamableHttp),
+        let lc = s.to_ascii_lowercase();
+        match lc.as_str() {
+            x if x == transport::STDIO => Ok(ServerType::Stdio),
+            x if x == transport::SSE => Ok(ServerType::Sse),
+            x if x == transport::STREAMABLE_HTTP => Ok(ServerType::StreamableHttp),
             _ => Err(ParseServerTypeError),
         }
     }
@@ -110,14 +111,14 @@ impl FromStr for ServerType {
     type Err = ParseServerTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Strict matching, no variants or case conversion allowed
-        match s {
+        let lc = s.to_ascii_lowercase();
+        match lc.as_str() {
             "stdio" => Ok(ServerType::Stdio),
             "sse" => Ok(ServerType::Sse),
             "streamable_http" => Ok(ServerType::StreamableHttp),
             _ => {
                 tracing::error!(
-                    "Invalid server type '{}'. Only strict standard formats allowed: 'stdio', 'sse', 'streamable_http'",
+                    "Invalid server type '{}'. Allowed: 'stdio'|'sse'|'streamable_http' (case-insensitive)",
                     s
                 );
                 Err(ParseServerTypeError)
@@ -223,12 +224,13 @@ impl TransportType {
         }
     }
 
-    /// Create from client format string
+    /// Create from client format string (case-insensitive)
     pub fn from_client_format(s: &str) -> Result<Self, ParseTransportTypeError> {
-        match s {
-            s if s == transport::STDIO => Ok(TransportType::Stdio),
-            s if s == transport::SSE => Ok(TransportType::Sse),
-            s if s == transport::STREAMABLE_HTTP => Ok(TransportType::StreamableHttp),
+        let lc = s.to_ascii_lowercase();
+        match lc.as_str() {
+            x if x == transport::STDIO => Ok(TransportType::Stdio),
+            x if x == transport::SSE => Ok(TransportType::Sse),
+            x if x == transport::STREAMABLE_HTTP => Ok(TransportType::StreamableHttp),
             _ => Err(ParseTransportTypeError),
         }
     }
@@ -262,14 +264,14 @@ impl FromStr for TransportType {
     type Err = ParseTransportTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Strict matching, no variants allowed
-        match s {
-            "StreamableHttp" => Ok(TransportType::StreamableHttp),
-            "Sse" => Ok(TransportType::Sse),
-            "Stdio" => Ok(TransportType::Stdio),
+        let lc = s.to_ascii_lowercase();
+        match lc.as_str() {
+            "streamablehttp" | "streamable_http" => Ok(TransportType::StreamableHttp),
+            "sse" => Ok(TransportType::Sse),
+            "stdio" => Ok(TransportType::Stdio),
             _ => {
                 tracing::error!(
-                    "Invalid transport type '{}'. Only strict standard formats allowed: 'StreamableHttp', 'Sse', 'Stdio'",
+                    "Invalid transport type '{}'. Allowed: 'Stdio'|'Sse'|'StreamableHttp' (case-insensitive)",
                     s
                 );
                 Err(ParseTransportTypeError)

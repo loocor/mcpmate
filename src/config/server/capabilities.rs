@@ -508,6 +508,13 @@ pub async fn sync_via_connection_pool(
     server_name: &str,
     lock_timeout_secs: u64,
 ) -> Result<()> {
+    tracing::info!(
+        target: "mcpmate::config::server::capabilities",
+        server_id = %server_id,
+        server_name = %server_name,
+        lock_timeout_secs = lock_timeout_secs,
+        "Starting capability sync via connection pool"
+    );
     // Acquire pool
     let pool_guard = timeout(Duration::from_secs(lock_timeout_secs), connection_pool.lock())
         .await

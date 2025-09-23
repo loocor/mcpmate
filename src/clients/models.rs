@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Supported template output formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -25,10 +24,11 @@ impl TemplateFormat {
 }
 
 /// Storage type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageKind {
     #[serde(alias = "file_system")]
+    #[default]
     File,
     Kv,
     Custom,
@@ -137,11 +137,7 @@ mod tests {
     }
 }
 
-impl Default for StorageKind {
-    fn default() -> Self {
-        StorageKind::File
-    }
-}
+// Default now derives on enum with #[default]
 
 /// Client configuration container type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]

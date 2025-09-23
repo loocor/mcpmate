@@ -193,7 +193,7 @@ impl ConfigStorage for FileConfigStorage {
             let modified_at = metadata
                 .modified()
                 .ok()
-                .map(|inner| chrono::DateTime::<chrono::Utc>::from(inner));
+                .map(chrono::DateTime::<chrono::Utc>::from);
 
             let name = path
                 .file_name()
@@ -264,7 +264,7 @@ impl FileConfigStorage {
 
     async fn write_with_custom_limit(
         &self,
-        target: &PathBuf,
+        target: &std::path::Path,
         content: &str,
         max_backups: usize,
         identifier: &str,

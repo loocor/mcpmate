@@ -1,6 +1,7 @@
 // MCPMate Proxy API handlers for Profile helpers
 // Contains helper functions for Profile handlers
 
+use super::common::get_database;
 use crate::{
     api::handlers::ApiError,
     clients::{ClientRenderOptions, ConfigMode},
@@ -9,8 +10,6 @@ use crate::{
         models::{Profile, ProfileTool},
     },
 };
-
-use super::common::get_database;
 
 /// Get a profile by ID or return an error
 pub async fn get_profile_or_error(
@@ -125,10 +124,12 @@ pub async fn sync_client_configurations(
         match client_service.execute_render(options).await {
             Ok(result) => {
                 tracing::debug!("Applied configuration for client {}", client_id);
-                if let crate::clients::TemplateExecutionResult::Applied { backup_path, .. } = result.execution {
-                    if let Some(path) = backup_path {
-                        tracing::debug!("Created backup for {} at {}", client_id, path);
-                    }
+                if let crate::clients::TemplateExecutionResult::Applied {
+                    backup_path: Some(path),
+                    ..
+                } = result.execution
+                {
+                    tracing::debug!("Created backup for {} at {}", client_id, path);
                 }
                 successes.push(client_id);
             }

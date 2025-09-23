@@ -9,6 +9,7 @@ pub use self::{
     mgmt::{disable_server, enable_server, manage_server},
     prompts::server_prompts,
     resources::{server_resource_templates, server_resources},
+    preview::preview_servers,
     tools::server_tools,
 };
 
@@ -18,6 +19,7 @@ mod crud;
 mod mgmt;
 
 // Inspect functionality
+mod preview;
 mod prompts;
 mod resources;
 mod tools;
