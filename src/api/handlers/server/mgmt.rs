@@ -120,24 +120,15 @@ async fn enable_server_core(
     // Sync connections and client configurations
     handle_server_sync(&state, &query).await?;
 
-    // Check if server is needed by active profile (early return if idle)
-    let enabled_in_active_profile =
-        crate::config::server::is_server_enabled_in_any_active_profile(&db.pool, &server_id)
-            .await
-            .unwrap_or(false);
-
-    if !enabled_in_active_profile {
-        return create_operation_response(
-            "idle".to_string(),
-            server_name,
-            "Server globally enabled but not used by any active profile".to_string(),
-            "Idle".to_string(),
-            true,
-        );
-    }
-
-    // Handle connection setup
-    handle_server_connection_setup(&state, &server_id).await
+    // Minimal behavior: only update SQLite enabled state, do not start a connection
+    // Keep cache invalidation/sync above, but skip connection pool operations.
+    create_operation_response(
+        "none".to_string(),
+        server_name,
+        "Server globally enabled (DB only; no connection started)".to_string(),
+        "Enabled".to_string(),
+        true,
+    )
 }
 
 /// Disable a server by setting its global availability to disabled
@@ -223,42 +214,7 @@ async fn handle_server_sync(
     Ok(())
 }
 
-/// Helper function to handle server connection setup
-#[inline]
-async fn handle_server_connection_setup(
-    state: &Arc<AppState>,
-    server_id: &str,
-) -> Result<Json<ServerOperationData>, ApiError> {
-    let mut pool = common::ConnectionPoolManager::get_pool_for_api(state).await?;
-
-    match pool.update_server_status(server_id, true).await {
-        Ok(()) => {
-            let instance_id = pool
-                .get_default_instance_id(server_id)
-                .unwrap_or_else(|_| "default".to_string());
-            create_operation_response(
-                instance_id,
-                server_id.to_string(),
-                "Successfully enabled server with new connection".to_string(),
-                "Enabled".to_string(),
-                true,
-            )
-        }
-        Err(e) => {
-            tracing::warn!("Failed to start server '{}' after enabling globally: {}", server_id, e);
-            let instance_id = pool
-                .get_default_instance_id(server_id)
-                .unwrap_or_else(|_| "default".to_string());
-            create_operation_response(
-                instance_id,
-                server_id.to_string(),
-                format!("Server enabled in configuration but connection failed: {}", e),
-                "Enabled (Connection Failed)".to_string(),
-                true,
-            )
-        }
-    }
-}
+// (removed) connection-setup helper is no longer used; enabling is DB-only now
 
 /// Helper function to handle connection pool disable operations
 #[inline]
