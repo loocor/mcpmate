@@ -6,9 +6,8 @@ use crate::core::foundation::utils::{get_sse_connection_timeout, get_sse_service
 use crate::core::models::MCPServerConfig;
 use anyhow::{Context, Result};
 use rmcp::{
-    RoleClient,
     model::{ServerCapabilities, Tool},
-    service::{RunningService, ServiceExt},
+    service::ServiceExt,
     transport::sse_client::SseClientConfig,
     transport::streamable_http_client::StreamableHttpClientTransportConfig,
     transport::{SseClientTransport, StreamableHttpClientTransport},
@@ -20,7 +19,11 @@ async fn connect_http_internal(
     server_name: &str,
     server_config: &MCPServerConfig,
     transport_type: TransportType,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)> {
+) -> Result<(
+    crate::core::transport::ClientService,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+)> {
     // Reuse previous implementation (moved from old connect_http_server body)
     // Get URL
     let url = server_config
@@ -70,13 +73,18 @@ async fn build_service_tools<T>(
     transport: T,
     service_timeout: std::time::Duration,
     tools_timeout: std::time::Duration,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)>
+) -> Result<(
+    crate::core::transport::ClientService,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+)>
 where
-    T: rmcp::transport::Transport<RoleClient> + Send + 'static,
+    T: rmcp::transport::Transport<rmcp::RoleClient> + Send + 'static,
 {
     // Serve transport with timeout
     // server_name is a display label (e.g., "Gitmcp (SERVxxxx)") provided by the caller
-    let service = timeout(service_timeout, async { ().serve(transport).await })
+    let handler = crate::core::transport::client::UpstreamClientHandler::new(server_name.to_string());
+    let service = timeout(service_timeout, async { handler.serve(transport).await })
         .await
         .map_err(|_| anyhow::anyhow!(format!("Connection timeout for server '{server_name}'")))??;
 
@@ -104,7 +112,11 @@ pub async fn connect_http_server(
     server_name: &str,
     server_config: &MCPServerConfig,
     transport_type: TransportType,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)> {
+) -> Result<(
+    crate::core::transport::ClientService,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+)> {
     let began = std::time::Instant::now();
     let res = connect_http_internal(server_name, server_config, transport_type).await;
     if let Ok((_, ref tools, _)) = res {
@@ -124,7 +136,11 @@ pub async fn connect_http_server_with_client(
     server_config: &MCPServerConfig,
     client: reqwest::Client,
     transport_type: TransportType,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)> {
+) -> Result<(
+    crate::core::transport::ClientService,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+)> {
     let began = std::time::Instant::now();
     let url = server_config
         .url
@@ -181,6 +197,10 @@ pub async fn connect_http_server_with_client(
 pub async fn connect_sse_server(
     server_name: &str,
     server_config: &MCPServerConfig,
-) -> Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)> {
+) -> Result<(
+    crate::core::transport::ClientService,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+)> {
     connect_http_internal(server_name, server_config, TransportType::Sse).await
 }

@@ -29,6 +29,9 @@ pub struct ProxyServer {
     pub downstream_clients: Arc<dashmap::DashMap<String, rmcp::service::Peer<rmcp::RoleServer>>>,
     pub resource_subscriptions: Arc<dashmap::DashMap<String, String>>, // unique_uri -> server_id
     pub server_resource_index: Arc<dashmap::DashMap<String, dashmap::DashSet<String>>>, // server_id -> {unique_uri}
+    pub call_sessions_by_token:
+        Arc<dashmap::DashMap<rmcp::model::ProgressToken, rmcp::service::Peer<rmcp::RoleServer>>>,
+    pub call_sessions_by_request: Arc<dashmap::DashMap<rmcp::model::RequestId, rmcp::service::Peer<rmcp::RoleServer>>>,
 }
 
 impl Clone for ProxyServer {
@@ -45,6 +48,8 @@ impl Clone for ProxyServer {
             downstream_clients: self.downstream_clients.clone(),
             resource_subscriptions: self.resource_subscriptions.clone(),
             server_resource_index: self.server_resource_index.clone(),
+            call_sessions_by_token: self.call_sessions_by_token.clone(),
+            call_sessions_by_request: self.call_sessions_by_request.clone(),
         }
     }
 }
@@ -154,6 +159,8 @@ impl ProxyServer {
             downstream_clients: Arc::new(dashmap::DashMap::new()),
             resource_subscriptions: Arc::new(dashmap::DashMap::new()),
             server_resource_index: Arc::new(dashmap::DashMap::new()),
+            call_sessions_by_token: Arc::new(dashmap::DashMap::new()),
+            call_sessions_by_request: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -414,6 +421,102 @@ impl ProxyServer {
         }
         ok
     }
+
+    // Register an active call session for downstream mapping
+    pub fn register_call_session(
+        &self,
+        progress_token: rmcp::model::ProgressToken,
+        request_id: rmcp::model::RequestId,
+        downstream: rmcp::service::Peer<rmcp::RoleServer>,
+    ) {
+        tracing::debug!(
+            progress_token = ?progress_token,
+            request_id = ?request_id,
+            "Registered call session for downstream mapping"
+        );
+        self.call_sessions_by_token.insert(progress_token, downstream.clone());
+        self.call_sessions_by_request.insert(request_id, downstream);
+    }
+
+    // Unregister a finished call session
+    pub fn unregister_call_session(
+        &self,
+        progress_token: &rmcp::model::ProgressToken,
+        request_id: &rmcp::model::RequestId,
+    ) {
+        self.call_sessions_by_token.remove(progress_token);
+        self.call_sessions_by_request.remove(request_id);
+    }
+
+    // Forwarders from upstream notifications
+    pub async fn forward_upstream_progress(
+        &self,
+        _server_id: &str,
+        param: rmcp::model::ProgressNotificationParam,
+        _meta_token: Option<rmcp::model::ProgressToken>,
+    ) -> bool {
+        if let Some(peer_ref) = self.call_sessions_by_token.get(&param.progress_token) {
+            let peer = peer_ref.clone(); // clone value to drop map guard before await
+            drop(peer_ref);
+            tracing::trace!(
+                progress_token = ?param.progress_token,
+                progress = ?param.progress,
+                "Forwarded progress to downstream"
+            );
+            let res = peer.notify_progress(param.clone()).await;
+            if res.is_err() {
+                self.call_sessions_by_token.remove(&param.progress_token);
+                return false;
+            }
+            return true;
+        }
+        false
+    }
+
+    pub async fn forward_upstream_cancelled(
+        &self,
+        _server_id: &str,
+        param: rmcp::model::CancelledNotificationParam,
+    ) -> bool {
+        if let Some(peer_ref) = self.call_sessions_by_request.get(&param.request_id) {
+            let peer = peer_ref.clone();
+            drop(peer_ref);
+            tracing::trace!(
+                request_id = ?param.request_id,
+                reason = ?param.reason,
+                "Forwarded cancellation to downstream"
+            );
+            let res = peer.notify_cancelled(param.clone()).await;
+            if res.is_err() {
+                self.call_sessions_by_request.remove(&param.request_id);
+                return false;
+            }
+            return true;
+        }
+        false
+    }
+
+    pub async fn forward_upstream_log(
+        &self,
+        _server_id: &str,
+        param: rmcp::model::LoggingMessageNotificationParam,
+        meta_token: Option<rmcp::model::ProgressToken>,
+    ) -> bool {
+        if let Some(token) = meta_token {
+            if let Some(peer_ref) = self.call_sessions_by_token.get(&token) {
+                let peer = peer_ref.clone();
+                drop(peer_ref);
+                tracing::trace!(
+                    progress_token = ?token,
+                    level = ?param.level,
+                    "Forwarded log message to downstream"
+                );
+                let _ = peer.notify_logging_message(param.clone()).await;
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl ServerHandler for ProxyServer {
@@ -461,6 +564,8 @@ impl ServerHandler for ProxyServer {
 
         Ok(self.get_info())
     }
+
+    // The rest of trait methods...
 
     async fn subscribe(
         &self,

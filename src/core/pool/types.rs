@@ -4,11 +4,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rmcp::{
-    RoleClient,
-    model::{ServerCapabilities, Tool},
-    service::RunningService,
-};
+use rmcp::model::{ServerCapabilities, Tool};
 
 use crate::core::foundation::types::{
     ConnectionOperation, // action to perform on the connection
@@ -124,7 +120,7 @@ pub struct UpstreamConnection {
     /// Name of the server
     pub server_name: String,
     /// Active service connection (using Arc for cheap cloning)
-    pub service: Option<Arc<RunningService<RoleClient, ()>>>,
+    pub service: Option<Arc<crate::core::transport::ClientService>>,
     /// Server capabilities (resources, tools, etc.)
     pub capabilities: Option<ServerCapabilities>,
     /// Tools provided by this server
@@ -218,7 +214,7 @@ impl UpstreamConnection {
     /// Update connection with successful connection details
     pub fn update_connected(
         &mut self,
-        service: RunningService<RoleClient, ()>,
+        service: crate::core::transport::ClientService,
         tools: Vec<Tool>,
         capabilities: Option<ServerCapabilities>,
     ) {

@@ -3,9 +3,8 @@
 
 use anyhow::{Context, Result};
 use rmcp::{
-    RoleClient,
     model::{ServerCapabilities, Tool},
-    service::{RunningService, serve_client_with_ct},
+    service::serve_client_with_ct,
     transport::TokioChildProcess,
 };
 use sysinfo;
@@ -106,7 +105,7 @@ async fn connect_with_timeout(
     ct: CancellationToken,
     server_name: &str,
     connection_timeout: std::time::Duration,
-) -> Result<RunningService<RoleClient, ()>> {
+) -> Result<crate::core::transport::ClientService> {
     // Use builder to capture stderr for logging
     let (child_process, stderr_handle) = TokioChildProcess::builder(cmd)
         .stderr(std::process::Stdio::piped())
@@ -143,7 +142,8 @@ async fn connect_with_timeout(
     }
 
     timeout(connection_timeout, async {
-        serve_client_with_ct((), child_process, ct.clone())
+        let handler = crate::core::transport::client::UpstreamClientHandler::new(server_name.to_string());
+        serve_client_with_ct(handler, child_process, ct.clone())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to connect to server: {e}"))
     })
@@ -159,7 +159,7 @@ async fn connect_with_timeout(
 
 /// Get tools from service with timeout handling
 async fn get_tools_with_timeout(
-    service: &RunningService<RoleClient, ()>,
+    service: &crate::core::transport::ClientService,
     server_name: &str,
     tools_timeout: std::time::Duration,
     ct: CancellationToken,
@@ -177,7 +177,7 @@ async fn get_tools_with_timeout(
 }
 
 /// Cancel service with timeout to prevent hanging
-async fn cancel_service_safely(service: RunningService<RoleClient, ()>) {
+async fn cancel_service_safely(service: crate::core::transport::ClientService) {
     match tokio::time::timeout(std::time::Duration::from_secs(3), service.cancel()).await {
         Ok(Ok(_)) => {
             tracing::debug!("Service cancelled successfully");
@@ -199,7 +199,7 @@ async fn connect_stdio_server_core(
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
     runtime_cache: Option<&crate::runtime::RuntimeCache>,
 ) -> Result<(
-    RunningService<RoleClient, ()>,
+    crate::core::transport::ClientService,
     Vec<Tool>,
     Option<ServerCapabilities>,
     Option<u32>,
@@ -299,7 +299,7 @@ pub async fn connect_stdio_server(
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
     runtime_cache: Option<&crate::runtime::RuntimeCache>,
 ) -> Result<(
-    RunningService<RoleClient, ()>,
+    crate::core::transport::ClientService,
     Vec<Tool>,
     Option<ServerCapabilities>,
     Option<u32>,

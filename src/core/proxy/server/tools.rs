@@ -2,7 +2,8 @@ use super::*;
 use crate::core::capability::naming::{NamingKind, resolve_unique_name};
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
-use rmcp::model::{CallToolRequestParam, CallToolResult, PaginatedRequestParam};
+use rmcp::model::{CallToolRequest, CallToolRequestParam, CallToolResult, ClientRequest, PaginatedRequestParam};
+use rmcp::service::PeerRequestOptions;
 use rmcp::service::RequestContext;
 
 pub(super) async fn list_tools(
@@ -171,16 +172,86 @@ pub(super) async fn call_tool(
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(60);
 
-    let ctx = crate::core::capability::runtime::CallCtx {
-        call_id: call_id.clone(),
-        server_id,
-        tool_name: original_tool_name,
-        timeout: Some(std::time::Duration::from_secs(call_timeout_secs)),
-        arguments: request.arguments.clone(),
+    // Acquire upstream peer (ensure connected if necessary)
+    let (peer_opt, instance_id_opt) = {
+        let pool_guard = server.connection_pool.lock().await;
+        let snap = pool_guard.get_snapshot();
+        let mut p: Option<rmcp::service::Peer<rmcp::RoleClient>> = None;
+        let mut iid: Option<String> = None;
+        if let Some(instances) = snap.get(&server_id) {
+            if let Some((iid0, _st, _res, _prm, peer)) = instances.iter().find(|(_, st, _, _, p)| {
+                matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
+            }) {
+                p = peer.clone();
+                iid = Some(iid0.clone());
+            }
+        }
+        (p, iid)
+    };
+    let peer = if let Some(peer) = peer_opt {
+        peer
+    } else {
+        let t_connect_begin = std::time::Instant::now();
+        {
+            let mut pool_guard = server.connection_pool.lock().await;
+            pool_guard
+                .ensure_connected(&server_id)
+                .await
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        }
+        let pool_guard = server.connection_pool.lock().await;
+        let snap = pool_guard.get_snapshot();
+        let Some(instances) = snap.get(&server_id) else {
+            return Err(McpError::internal_error(
+                "No instance after ensure_connected".to_string(),
+                None,
+            ));
+        };
+        let Some((iid, _st, _r, _p, peer)) = instances.iter().find(|(_, st, _, _, p)| {
+            matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
+        }) else {
+            return Err(McpError::internal_error("Ready instance not found".to_string(), None));
+        };
+        tracing::debug!(
+            call_id = %call_id,
+            ensure_connected_ms = %t_connect_begin.elapsed().as_millis(),
+            instance_id = %iid,
+            "Ensured connection before tool call"
+        );
+        drop(pool_guard);
+        instance_id_opt.or(Some(iid.clone()));
+        peer.clone().expect("peer exists by check")
     };
 
-    match crate::core::capability::runtime::call_tool(&ctx, &server.connection_pool).await {
-        Ok(result) => {
+    // Build cancellable request to capture progress token & request id
+    let req = ClientRequest::CallToolRequest(CallToolRequest {
+        method: Default::default(),
+        params: CallToolRequestParam {
+            name: original_tool_name.clone().into(),
+            arguments: request.arguments.clone(),
+        },
+        extensions: Default::default(),
+    });
+    let options = PeerRequestOptions {
+        timeout: Some(std::time::Duration::from_secs(call_timeout_secs)),
+        meta: None,
+    };
+    let handle = peer
+        .send_cancellable_request(req, options)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+    // Map progress token and request id to downstream peer for forwarding
+    server.register_call_session(handle.progress_token.clone(), handle.id.clone(), _context.peer.clone());
+
+    // Await response and cleanup mapping
+    let token = handle.progress_token.clone();
+    let req_id = handle.id.clone();
+    let resp = handle.await_response().await;
+    server.unregister_call_session(&token, &req_id);
+
+    match resp {
+        Ok(rmcp::model::ServerResult::CallToolResult(result)) => {
             tracing::info!(
                 call_id = %call_id,
                 tool = %request.name,
@@ -188,6 +259,10 @@ pub(super) async fn call_tool(
                 "ProxyServer::call_tool succeeded"
             );
             Ok(result)
+        }
+        Ok(other) => {
+            tracing::error!(?other, "Unexpected server result kind for tools/call");
+            Err(McpError::internal_error("Unexpected server result".to_string(), None))
         }
         Err(e) => {
             tracing::error!(

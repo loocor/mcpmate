@@ -2,11 +2,7 @@
 // Provides a single interface for connecting to any type of MCP server
 
 use anyhow::Result;
-use rmcp::{
-    RoleClient,
-    model::{ServerCapabilities, Tool},
-    service::RunningService,
-};
+use rmcp::model::{ServerCapabilities, Tool};
 use tokio_util::sync::CancellationToken;
 
 use super::{TransportType, http, stdio};
@@ -23,7 +19,7 @@ pub async fn connect_server(
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
     runtime_cache: Option<&crate::runtime::RuntimeCache>,
 ) -> Result<(
-    RunningService<RoleClient, ()>,
+    crate::core::transport::ClientService,
     Vec<Tool>,
     Option<ServerCapabilities>,
     Option<u32>, // Process ID (only for stdio)
@@ -56,7 +52,7 @@ pub async fn connect_server_simple(
     server_type: ServerType,
     transport_type: TransportType,
 ) -> Result<(
-    RunningService<RoleClient, ()>,
+    crate::core::transport::ClientService,
     Vec<Tool>,
     Option<ServerCapabilities>,
     Option<u32>,

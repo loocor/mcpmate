@@ -4,8 +4,12 @@
 pub mod http;
 
 // sse functions are merged into http module
+pub mod client;
 pub mod stdio;
 pub mod unified;
+
+// Unified alias for upstream client service with our handler type
+pub type ClientService = rmcp::service::RunningService<rmcp::RoleClient, client::UpstreamClientHandler>;
 
 // Re-export TransportType from common
 pub use crate::common::server::TransportType;

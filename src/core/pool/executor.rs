@@ -9,11 +9,7 @@
 use std::{future::Future, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use rmcp::{
-    RoleClient,
-    model::{ServerCapabilities, Tool},
-    service::RunningService,
-};
+use rmcp::model::{ServerCapabilities, Tool};
 use tracing;
 
 use super::{FailureKind, UpstreamConnectionPool};
@@ -564,7 +560,13 @@ impl UpstreamConnectionPool {
     ) -> Result<()>
     where
         F: FnOnce(String, crate::core::models::MCPServerConfig) -> Fut,
-        Fut: Future<Output = Result<(RunningService<RoleClient, ()>, Vec<Tool>, Option<ServerCapabilities>)>>,
+        Fut: Future<
+            Output = Result<(
+                crate::core::transport::ClientService,
+                Vec<Tool>,
+                Option<ServerCapabilities>,
+            )>,
+        >,
     {
         let server_config = self.config.mcp_servers.get(server_id).unwrap().clone();
         // Build a friendly label for transport-layer logging: "name (id)" or just id
@@ -602,7 +604,7 @@ impl UpstreamConnectionPool {
         &self,
         server_id: &str,
         instance_id: &str,
-        service_arc: Arc<RunningService<RoleClient, ()>>,
+        service_arc: Arc<crate::core::transport::ClientService>,
     ) {
         let cancel_timeout = Duration::from_secs(5);
         let label = self.server_label(server_id).await;
@@ -660,7 +662,7 @@ impl UpstreamConnectionPool {
         &self,
         server_id: &str,
         instance_id: &str,
-        service_arc: Arc<RunningService<RoleClient, ()>>,
+        service_arc: Arc<crate::core::transport::ClientService>,
     ) {
         let instance_id = instance_id.to_string();
 
@@ -727,7 +729,7 @@ impl UpstreamConnectionPool {
         &mut self,
         server_id: &str,
         instance_id: &str,
-        service: RunningService<RoleClient, ()>,
+        service: crate::core::transport::ClientService,
         tools: Vec<Tool>,
         capabilities: Option<rmcp::model::ServerCapabilities>,
     ) {
@@ -749,6 +751,8 @@ impl UpstreamConnectionPool {
         let service_for_sync = service.peer().clone();
 
         // Update connection properties
+        // Set server_id on upstream client handler so notifications can be forwarded correctly
+        service.service().set_server_id(server_id);
         conn.service = Some(Arc::new(service));
         conn.tools = tools.clone();
         conn.capabilities = capabilities;
