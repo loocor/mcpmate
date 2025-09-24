@@ -85,11 +85,18 @@ pub(super) async fn list_prompts(
     );
     prompts = vis.filter_prompts(prompts).await;
 
-    tracing::info!("Proxy listed {} total prompts", prompts.len());
+    // Apply pagination
+    let page = server.paginator.paginate_prompts(&_request, prompts)?;
+
+    tracing::info!(
+        total = page.items.len(),
+        has_next = page.next_cursor.is_some(),
+        "Proxy listed prompts"
+    );
 
     Ok(ListPromptsResult {
-        prompts,
-        next_cursor: None,
+        prompts: page.items,
+        next_cursor: page.next_cursor,
     })
 }
 

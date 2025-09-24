@@ -88,11 +88,18 @@ pub(super) async fn list_resources(
     );
     resources = vis.filter_resources(resources).await;
 
-    tracing::info!("Proxy listed {} total resources", resources.len());
+    // Apply pagination
+    let page = server.paginator.paginate_resources(&_request, resources)?;
+
+    tracing::info!(
+        total = page.items.len(),
+        has_next = page.next_cursor.is_some(),
+        "Proxy listed resources"
+    );
 
     Ok(ListResourcesResult {
-        resources,
-        next_cursor: None,
+        resources: page.items,
+        next_cursor: page.next_cursor,
     })
 }
 
@@ -164,11 +171,20 @@ pub(super) async fn list_resource_templates(
         }
     }
 
-    tracing::info!("Proxy listed {} total resource templates", resource_templates.len());
+    // Apply pagination
+    let page = server
+        .paginator
+        .paginate_resource_templates(&_request, resource_templates)?;
+
+    tracing::info!(
+        total = page.items.len(),
+        has_next = page.next_cursor.is_some(),
+        "Proxy listed resource templates"
+    );
 
     Ok(ListResourceTemplatesResult {
-        resource_templates,
-        next_cursor: None,
+        resource_templates: page.items,
+        next_cursor: page.next_cursor,
     })
 }
 

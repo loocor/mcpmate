@@ -73,11 +73,18 @@ pub(super) async fn list_tools(
     tracing::debug!("Including {} builtin service tools", builtin_tools.len());
     tools.extend(builtin_tools);
 
-    tracing::info!("Proxy listed {} total tools (including builtin services)", tools.len());
+    // Apply pagination (natural sort inside paginator)
+    let page = server.paginator.paginate_tools(&_request, tools)?;
+
+    tracing::info!(
+        total = page.items.len(),
+        has_next = page.next_cursor.is_some(),
+        "Proxy listed tools (including builtin services)"
+    );
 
     Ok(rmcp::model::ListToolsResult {
-        tools,
-        next_cursor: None,
+        tools: page.items,
+        next_cursor: page.next_cursor,
     })
 }
 

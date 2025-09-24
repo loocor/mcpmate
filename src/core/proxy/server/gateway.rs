@@ -57,7 +57,10 @@ impl ProxyServer {
         GLOBAL_PROXY_SERVER.get().cloned()
     }
 
-    fn is_streamable_http(&self, context: &RequestContext<rmcp::RoleServer>) -> bool {
+    fn is_streamable_http(
+        &self,
+        context: &RequestContext<rmcp::RoleServer>,
+    ) -> bool {
         context.extensions.get::<axum::http::request::Parts>().is_some()
     }
 
@@ -78,7 +81,10 @@ impl ProxyServer {
             || o.starts_with("https://[::1]")
     }
 
-    fn enforce_origin_if_present(&self, context: &RequestContext<rmcp::RoleServer>) -> Result<(), rmcp::ErrorData> {
+    fn enforce_origin_if_present(
+        &self,
+        context: &RequestContext<rmcp::RoleServer>,
+    ) -> Result<(), rmcp::ErrorData> {
         if let Some(parts) = context.extensions.get::<axum::http::request::Parts>() {
             if let Some(val) = parts.headers.get(axum::http::header::ORIGIN) {
                 if let Ok(s) = val.to_str() {
@@ -95,7 +101,10 @@ impl ProxyServer {
         Ok(())
     }
 
-    fn enforce_mcp_protocol_header(&self, context: &RequestContext<rmcp::RoleServer>) -> Result<(), rmcp::ErrorData> {
+    fn enforce_mcp_protocol_header(
+        &self,
+        context: &RequestContext<rmcp::RoleServer>,
+    ) -> Result<(), rmcp::ErrorData> {
         if !self.is_streamable_http(context) {
             return Ok(()); // SSE/stdio path: no HTTP parts
         }
@@ -335,7 +344,10 @@ impl ProxyServer {
     }
 
     /// Notify downstream clients that a specific resource URI was updated.
-    pub async fn notify_resource_updated(&self, uri: &str) -> usize {
+    pub async fn notify_resource_updated(
+        &self,
+        uri: &str,
+    ) -> usize {
         let uri = uri.to_string();
         let mut ok = 0usize;
         let mut stale: Vec<String> = Vec::new();
@@ -351,19 +363,26 @@ impl ProxyServer {
                 }
             }
         }
-        for k in stale { let _ = self.downstream_clients.remove(&k); }
+        for k in stale {
+            let _ = self.downstream_clients.remove(&k);
+        }
         ok
     }
 
     /// For a given server, notify resources/updated for all subscribed unique URIs.
-    pub async fn notify_resource_updates_for_server(&self, server_id: &str) -> usize {
+    pub async fn notify_resource_updates_for_server(
+        &self,
+        server_id: &str,
+    ) -> usize {
         if let Some(set) = self.server_resource_index.get(server_id) {
             let mut total = 0usize;
             for uri in set.iter() {
                 total += self.notify_resource_updated(uri.key()).await;
             }
             total
-        } else { 0 }
+        } else {
+            0
+        }
     }
 
     async fn broadcast_notify<F, Fut>(
@@ -451,21 +470,23 @@ impl ServerHandler for ProxyServer {
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
         let unique_uri = request.uri;
-        let server_id_opt = if let Ok((server_name, _)) =
-            crate::core::capability::naming::resolve_unique_name(
-                crate::core::capability::naming::NamingKind::Resource,
-                &unique_uri,
-            )
-            .await
+        let server_id_opt = if let Ok((server_name, _)) = crate::core::capability::naming::resolve_unique_name(
+            crate::core::capability::naming::NamingKind::Resource,
+            &unique_uri,
+        )
+        .await
         {
-            crate::core::capability::resolver::to_id(&server_name).await.ok().flatten()
-        } else { None };
+            crate::core::capability::resolver::to_id(&server_name)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
         if let Some(server_id) = server_id_opt {
-            self.resource_subscriptions.insert(unique_uri.clone(), server_id.clone());
-            let entry = self
-                .server_resource_index
-                .entry(server_id.clone())
-                .or_default();
+            self.resource_subscriptions
+                .insert(unique_uri.clone(), server_id.clone());
+            let entry = self.server_resource_index.entry(server_id.clone()).or_default();
             entry.insert(unique_uri.clone());
             tracing::info!(server_id = %server_id, uri = %unique_uri, "Subscribed resource updates");
         } else {
@@ -518,9 +539,7 @@ impl ServerHandler for ProxyServer {
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::tools::list_tools(self, _request, _context)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
+        super::tools::list_tools(self, _request, _context).await
     }
 
     async fn call_tool(
@@ -542,9 +561,7 @@ impl ServerHandler for ProxyServer {
     ) -> Result<ListResourcesResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::resources::list_resources(self, _request, _context)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
+        super::resources::list_resources(self, _request, _context).await
     }
 
     async fn list_resource_templates(
@@ -554,9 +571,7 @@ impl ServerHandler for ProxyServer {
     ) -> Result<ListResourceTemplatesResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::resources::list_resource_templates(self, _request, _context)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
+        super::resources::list_resource_templates(self, _request, _context).await
     }
 
     async fn read_resource(
@@ -578,9 +593,7 @@ impl ServerHandler for ProxyServer {
     ) -> Result<ListPromptsResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::prompts::list_prompts(self, _request, _context)
-            .await
-            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
+        super::prompts::list_prompts(self, _request, _context).await
     }
 
     async fn get_prompt(
