@@ -254,7 +254,9 @@ async fn execute_unified_operations(
     }
 
     // Invalidate cache after any successful operation
-    if success_count > 0 { invalidate_profile_cache(state).await; }
+    if success_count > 0 {
+        invalidate_profile_cache(state).await;
+    }
 
     // Build unified response
     let response = ProfileServerManageData {
@@ -286,18 +288,23 @@ async fn process_single_component(
         }
         ComponentType::Resource => {
             // For resources, get context then call config-layer updater (which publishes events)
-            let (server_id, resource_uri): (String, String) = sqlx::query_as(
-                "SELECT server_id, resource_uri FROM profile_resource WHERE id = ?",
-            )
-            .bind(component_id)
-            .fetch_optional(&db.pool)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get resource: {e}")))?
-            .ok_or_else(|| ApiError::NotFound("Resource not found".to_string()))?;
+            let (server_id, resource_uri): (String, String) =
+                sqlx::query_as("SELECT server_id, resource_uri FROM profile_resource WHERE id = ?")
+                    .bind(component_id)
+                    .fetch_optional(&db.pool)
+                    .await
+                    .map_err(|e| ApiError::InternalError(format!("Failed to get resource: {e}")))?
+                    .ok_or_else(|| ApiError::NotFound("Resource not found".to_string()))?;
 
-            crate::config::profile::update_resource_enabled_status(&db.pool, profile_id, &server_id, &resource_uri, enabled)
-                .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
+            crate::config::profile::update_resource_enabled_status(
+                &db.pool,
+                profile_id,
+                &server_id,
+                &resource_uri,
+                enabled,
+            )
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
         }
         ComponentType::Prompt => {
             crate::config::profile::update_prompt_enabled_status(&db.pool, component_id, enabled)
