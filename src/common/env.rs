@@ -4,8 +4,9 @@
 //! eliminating duplication across runtime and conf modules.
 
 use anyhow::Result;
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::Path;
 use tokio::process::Command;
@@ -295,4 +296,92 @@ pub fn prepare_command_environment(
     let env = create_runtime_environment(runtime_type, bin_path, version)?;
     env.apply_to_command(command);
     Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Origin allowlist (shared by API and /mcp)
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct AllowedOrigins {
+    entries: Vec<String>,
+}
+
+static GLOBAL_ALLOWED_ORIGINS: OnceCell<AllowedOrigins> = OnceCell::new();
+
+impl AllowedOrigins {
+    fn load_from_env() -> Self {
+        let mut entries: Vec<String> = vec![
+            "null".into(),
+            "http://localhost".into(),
+            "https://localhost".into(),
+            "http://127.0.0.1".into(),
+            "https://127.0.0.1".into(),
+            "http://[::1]".into(),
+            "https://[::1]".into(),
+        ];
+        if let Ok(raw) = std::env::var(constants::MCPMATE_ALLOWED_ORIGINS) {
+            for part in raw.split(',') {
+                let s = part.trim().to_ascii_lowercase();
+                if !s.is_empty() {
+                    entries.push(s);
+                }
+            }
+        }
+        let mut seen = HashSet::new();
+        entries.retain(|e| seen.insert(e.clone()));
+        Self { entries }
+    }
+
+    pub fn global() -> &'static Self {
+        GLOBAL_ALLOWED_ORIGINS.get_or_init(Self::load_from_env)
+    }
+
+    pub fn is_allowed(
+        &self,
+        origin: &str,
+    ) -> bool {
+        let o = origin.trim().to_ascii_lowercase();
+        for e in &self.entries {
+            if let Some(prefix) = e.strip_suffix('*') {
+                if o.starts_with(prefix) {
+                    return true;
+                }
+            } else if o == *e {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Check if an origin is allowed using the global configuration.
+pub fn is_allowed_origin(origin: &str) -> bool {
+    AllowedOrigins::global().is_allowed(origin)
+}
+
+/// Axum middleware that enforces origin allowlist if `Origin` header is present.
+pub async fn origin_guard_middleware(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::{http::header, response::IntoResponse};
+
+    let origin_opt = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+
+    if let Some(origin) = origin_opt {
+        if !is_allowed_origin(&origin) {
+            tracing::warn!(origin = %origin, path = %req.uri(), "API request rejected: disallowed Origin");
+            let body = axum::Json(serde_json::json!({
+                "error": {"message": format!("Disallowed Origin: {}", origin), "status": 403}
+            }));
+            return (axum::http::StatusCode::FORBIDDEN, body).into_response();
+        }
+    }
+
+    next.run(req).await
 }

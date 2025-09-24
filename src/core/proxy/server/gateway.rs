@@ -70,20 +70,8 @@ impl ProxyServer {
     }
 
     fn allowed_origin(origin: &str) -> bool {
-        // TODO(PR4-followup): When deploying MCPMate remotely (cloud/VM/K8s),
-        // replace this hardcoded loopback allowlist with a configurable policy:
-        // - sources: env (e.g., MCPMATE_ALLOWED_ORIGINS), DB, or admin API
-        // - semantics: exact match, wildcard, or regex; default-deny
-        // - integration: shared CORS/Origin guard reused by API and /mcp
-        // For now we keep a minimal, safe-by-default loopback allowlist.
-        let o = origin.trim().to_ascii_lowercase();
-        o == "null"
-            || o.starts_with("http://localhost")
-            || o.starts_with("https://localhost")
-            || o.starts_with("http://127.0.0.1")
-            || o.starts_with("https://127.0.0.1")
-            || o.starts_with("http://[::1]")
-            || o.starts_with("https://[::1]")
+        // Delegates to shared global allowlist; defaults remain loopback-only
+        crate::common::env::is_allowed_origin(origin)
     }
 
     fn enforce_origin_if_present(

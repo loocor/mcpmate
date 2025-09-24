@@ -37,6 +37,9 @@ pub mod env_vars {
 
     /// System PATH environment variable
     pub const PATH: &str = "PATH";
+
+    /// Origin allowlist for API and /mcp (comma-separated; supports trailing '*')
+    pub const MCPMATE_ALLOWED_ORIGINS: &str = "MCPMATE_ALLOWED_ORIGINS";
 }
 
 /// Path separator constants
