@@ -6,9 +6,9 @@ use crate::{
 use anyhow::Context;
 use once_cell::sync::OnceCell;
 use rmcp::model::{
-    CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult, ListPromptsResult,
-    ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParam, ReadResourceResult,
-    ServerInfo,
+    CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult, InitializeRequestParam,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParam,
+    ReadResourceResult, ServerInfo,
 };
 use rmcp::{ServerHandler, service::RequestContext};
 use std::{net::SocketAddr, sync::Arc};
@@ -26,6 +26,7 @@ pub struct ProxyServer {
     pub paginator: crate::core::foundation::pagination::ProxyPaginator,
     pub builtin_services: Arc<BuiltinServiceRegistry>,
     pub cancellation_token: tokio_util::sync::CancellationToken,
+    pub downstream_clients: Arc<dashmap::DashMap<String, rmcp::service::Peer<rmcp::RoleServer>>>,
 }
 
 impl Clone for ProxyServer {
@@ -39,6 +40,7 @@ impl Clone for ProxyServer {
             paginator: self.paginator.clone(),
             builtin_services: self.builtin_services.clone(),
             cancellation_token: self.cancellation_token.clone(),
+            downstream_clients: self.downstream_clients.clone(),
         }
     }
 }
@@ -73,6 +75,7 @@ impl ProxyServer {
             paginator,
             builtin_services,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
+            downstream_clients: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -235,17 +238,120 @@ impl ProxyServer {
         tracing::info!("Streamable HTTP server started successfully");
         Ok(())
     }
+
+    /// Broadcast tools listChanged to all downstream MCP clients.
+    pub async fn notify_tool_list_changed(&self) -> usize {
+        self.broadcast_notify(|peer| Box::pin(async move { peer.notify_tool_list_changed().await }))
+            .await
+    }
+
+    /// Broadcast prompts listChanged to all downstream MCP clients.
+    pub async fn notify_prompt_list_changed(&self) -> usize {
+        self.broadcast_notify(|peer| Box::pin(async move { peer.notify_prompt_list_changed().await }))
+            .await
+    }
+
+    /// Broadcast resources listChanged to all downstream MCP clients.
+    pub async fn notify_resource_list_changed(&self) -> usize {
+        self.broadcast_notify(|peer| Box::pin(async move { peer.notify_resource_list_changed().await }))
+            .await
+    }
+
+    /// Notify tools/prompts/resources listChanged and return counts per type (t, p, r)
+    pub async fn notify_all_list_changed(&self) -> (usize, usize, usize) {
+        let t = self.notify_tool_list_changed().await;
+        let p = self.notify_prompt_list_changed().await;
+        let r = self.notify_resource_list_changed().await;
+        (t, p, r)
+    }
+
+    async fn broadcast_notify<F, Fut>(
+        &self,
+        make_call: F,
+    ) -> usize
+    where
+        F: Fn(rmcp::service::Peer<rmcp::RoleServer>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), rmcp::service::ServiceError>>,
+    {
+        let mut ok = 0usize;
+        let mut stale: Vec<String> = Vec::new();
+        for entry in self.downstream_clients.iter() {
+            let key = entry.key().clone();
+            let peer = entry.value().clone();
+            match make_call(peer).await {
+                Ok(()) => {
+                    ok += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(client = %key, error = %e, "notify downstream failed, marking stale");
+                    stale.push(key);
+                }
+            }
+        }
+        // clean up stale peers
+        for k in stale {
+            let _ = self.downstream_clients.remove(&k);
+        }
+        ok
+    }
 }
 
 impl ServerHandler for ProxyServer {
+    async fn initialize(
+        &self,
+        request: InitializeRequestParam,
+        context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<ServerInfo, rmcp::ErrorData> {
+        // Log client-declared protocol version and capabilities
+        tracing::info!(
+            client_protocol = %request.protocol_version,
+            has_roots = %request.capabilities.roots.is_some(),
+            has_sampling = %request.capabilities.sampling.is_some(),
+            has_elicitation = %request.capabilities.elicitation.is_some(),
+            client_name = %request.client_info.name,
+            client_version = %request.client_info.version,
+            "MCP client initialize"
+        );
+
+        // Best-effort: also log raw HTTP headers if available (Streamable HTTP)
+        if let Some(parts) = context.extensions.get::<axum::http::request::Parts>() {
+            if let Some(v) = parts.headers.get("MCP-Protocol-Version").and_then(|h| h.to_str().ok()) {
+                tracing::debug!(header_mcp_protocol_version = %v, "HTTP header: MCP-Protocol-Version");
+            }
+            if let Some(v) = parts
+                .headers
+                .get(axum::http::header::ORIGIN)
+                .and_then(|h| h.to_str().ok())
+            {
+                tracing::debug!(header_origin = %v, "HTTP header: Origin");
+            }
+        }
+
+        // Preserve peer info for later use (keeps default behavior)
+        if context.peer.peer_info().is_none() {
+            context.peer.set_peer_info(request);
+        }
+
+        // Register downstream peer for notifications
+        let client_id = crate::generate_id!("dcli");
+        self.downstream_clients.insert(client_id.clone(), context.peer.clone());
+        tracing::debug!(client_id = %client_id, total_clients = %self.downstream_clients.len(), "downstream client registered");
+
+        Ok(self.get_info())
+    }
+
     fn get_info(&self) -> ServerInfo {
+        let capabilities = rmcp::model::ServerCapabilities::builder()
+            .enable_tools()
+            .enable_resources()
+            .enable_prompts()
+            .enable_tool_list_changed()
+            .enable_prompts_list_changed()
+            .enable_resources_list_changed()
+            .build();
         ServerInfo {
             protocol_version: rmcp::model::ProtocolVersion::LATEST,
-            capabilities: rmcp::model::ServerCapabilities::builder()
-                .enable_tools()
-                .enable_resources()
-                .enable_prompts()
-                .build(),
+            capabilities,
             server_info: crate::common::constants::branding::create_implementation(),
             instructions: Some(crate::common::constants::branding::DESCRIPTION.to_string()),
         }
