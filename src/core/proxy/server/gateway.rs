@@ -8,7 +8,7 @@ use once_cell::sync::OnceCell;
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult, InitializeRequestParam,
     ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParam,
-    ReadResourceResult, ServerInfo,
+    ReadResourceResult, ResourceUpdatedNotificationParam, ServerInfo, SubscribeRequestParam, UnsubscribeRequestParam,
 };
 use rmcp::{ServerHandler, service::RequestContext};
 use std::{net::SocketAddr, sync::Arc};
@@ -27,6 +27,8 @@ pub struct ProxyServer {
     pub builtin_services: Arc<BuiltinServiceRegistry>,
     pub cancellation_token: tokio_util::sync::CancellationToken,
     pub downstream_clients: Arc<dashmap::DashMap<String, rmcp::service::Peer<rmcp::RoleServer>>>,
+    pub resource_subscriptions: Arc<dashmap::DashMap<String, String>>, // unique_uri -> server_id
+    pub server_resource_index: Arc<dashmap::DashMap<String, dashmap::DashSet<String>>>, // server_id -> {unique_uri}
 }
 
 impl Clone for ProxyServer {
@@ -41,6 +43,8 @@ impl Clone for ProxyServer {
             builtin_services: self.builtin_services.clone(),
             cancellation_token: self.cancellation_token.clone(),
             downstream_clients: self.downstream_clients.clone(),
+            resource_subscriptions: self.resource_subscriptions.clone(),
+            server_resource_index: self.server_resource_index.clone(),
         }
     }
 }
@@ -76,6 +80,8 @@ impl ProxyServer {
             builtin_services,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             downstream_clients: Arc::new(dashmap::DashMap::new()),
+            resource_subscriptions: Arc::new(dashmap::DashMap::new()),
+            server_resource_index: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -265,6 +271,38 @@ impl ProxyServer {
         (t, p, r)
     }
 
+    /// Notify downstream clients that a specific resource URI was updated.
+    pub async fn notify_resource_updated(&self, uri: &str) -> usize {
+        let uri = uri.to_string();
+        let mut ok = 0usize;
+        let mut stale: Vec<String> = Vec::new();
+        for entry in self.downstream_clients.iter() {
+            let key = entry.key().clone();
+            let peer = entry.value().clone();
+            let param = ResourceUpdatedNotificationParam { uri: uri.clone() };
+            match peer.notify_resource_updated(param).await {
+                Ok(()) => ok += 1,
+                Err(e) => {
+                    tracing::warn!(client = %key, error = %e, "notify resources/updated failed, marking stale");
+                    stale.push(key);
+                }
+            }
+        }
+        for k in stale { let _ = self.downstream_clients.remove(&k); }
+        ok
+    }
+
+    /// For a given server, notify resources/updated for all subscribed unique URIs.
+    pub async fn notify_resource_updates_for_server(&self, server_id: &str) -> usize {
+        if let Some(set) = self.server_resource_index.get(server_id) {
+            let mut total = 0usize;
+            for uri in set.iter() {
+                total += self.notify_resource_updated(uri.key()).await;
+            }
+            total
+        } else { 0 }
+    }
+
     async fn broadcast_notify<F, Fut>(
         &self,
         make_call: F,
@@ -340,6 +378,52 @@ impl ServerHandler for ProxyServer {
         Ok(self.get_info())
     }
 
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParam,
+        _context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<(), rmcp::ErrorData> {
+        let unique_uri = request.uri;
+        let server_id_opt = if let Ok((server_name, _)) =
+            crate::core::capability::naming::resolve_unique_name(
+                crate::core::capability::naming::NamingKind::Resource,
+                &unique_uri,
+            )
+            .await
+        {
+            crate::core::capability::resolver::to_id(&server_name).await.ok().flatten()
+        } else { None };
+        if let Some(server_id) = server_id_opt {
+            self.resource_subscriptions.insert(unique_uri.clone(), server_id.clone());
+            let entry = self
+                .server_resource_index
+                .entry(server_id.clone())
+                .or_default();
+            entry.insert(unique_uri.clone());
+            tracing::info!(server_id = %server_id, uri = %unique_uri, "Subscribed resource updates");
+        } else {
+            // still accept to be tolerant; updates may be broadcast-only
+            self.resource_subscriptions.insert(unique_uri.clone(), String::new());
+            tracing::warn!(uri = %unique_uri, "Subscribed without resolvable server id");
+        }
+        Ok(())
+    }
+
+    async fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParam,
+        _context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<(), rmcp::ErrorData> {
+        let unique_uri = request.uri;
+        if let Some((_, server_id)) = self.resource_subscriptions.remove(&unique_uri) {
+            if let Some(set) = self.server_resource_index.get(&server_id) {
+                set.remove(&unique_uri);
+            }
+            tracing::info!(server_id = %server_id, uri = %unique_uri, "Unsubscribed resource updates");
+        }
+        Ok(())
+    }
+
     fn get_info(&self) -> ServerInfo {
         let capabilities = rmcp::model::ServerCapabilities::builder()
             .enable_tools()
@@ -348,6 +432,7 @@ impl ServerHandler for ProxyServer {
             .enable_tool_list_changed()
             .enable_prompts_list_changed()
             .enable_resources_list_changed()
+            .enable_resources_subscribe()
             .build();
         ServerInfo {
             protocol_version: rmcp::model::ProtocolVersion::LATEST,

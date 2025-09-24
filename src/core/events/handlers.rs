@@ -217,6 +217,15 @@ impl EventHandlers {
                     "Cache updated for server '{}' ({}): {:?}",
                     server_name, server_id, update_type
                 );
+                // If resources on a server may have changed content, notify subscribed clients
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let n = guard.notify_resource_updates_for_server(&server_id).await;
+                        if n > 0 {
+                            info!(server = %server_name, notified = %n, "resources/updated broadcast for subscribed URIs");
+                        }
+                    }
+                }
             }
 
             Event::CacheInvalidated { server_id, server_name } => {
