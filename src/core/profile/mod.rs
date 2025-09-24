@@ -19,6 +19,7 @@ pub mod config;
 pub mod merge;
 pub mod service;
 pub mod types;
+pub mod visibility;
 
 // Re-export core types and services
 pub use config::ConfigApplicationStateManager;

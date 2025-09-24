@@ -78,6 +78,13 @@ pub(super) async fn list_prompts(
         }
     }
 
+    // Apply centralized profile visibility filter (prompts)
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    prompts = vis.filter_prompts(prompts).await;
+
     tracing::info!("Proxy listed {} total prompts", prompts.len());
 
     Ok(ListPromptsResult {

@@ -62,6 +62,13 @@ pub(super) async fn list_tools(
         }
     }
 
+    // Apply centralized profile visibility filter (tools) before appending builtins
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    tools = vis.filter_tools(tools).await;
+
     let builtin_tools = server.builtin_services.tools();
     tracing::debug!("Including {} builtin service tools", builtin_tools.len());
     tools.extend(builtin_tools);

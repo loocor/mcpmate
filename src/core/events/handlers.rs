@@ -174,7 +174,10 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let (t, p, r) = guard.notify_all_list_changed().await;
-                        info!("Server sync event: list_changed notified (tools={}, prompts={}, resources={})", t, p, r);
+                        info!(
+                            "Server sync event: list_changed notified (tools={}, prompts={}, resources={})",
+                            t, p, r
+                        );
                     }
                 }
             }
@@ -182,6 +185,10 @@ impl EventHandlers {
             // Emit listChanged notifications for downstream clients
             Event::ToolEnabledInProfileChanged { .. } => {
                 debug!("Tool configuration changed: emitting tools/list_changed");
+                // Invalidate profile cache so visibility recalculates
+                if let Some(profile_service) = &self.profile_service {
+                    profile_service.invalidate_cache().await;
+                }
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let count = guard.notify_tool_list_changed().await;
@@ -191,6 +198,9 @@ impl EventHandlers {
             }
             Event::PromptEnabledInProfileChanged { .. } => {
                 debug!("Prompt configuration changed: emitting prompts/list_changed");
+                if let Some(profile_service) = &self.profile_service {
+                    profile_service.invalidate_cache().await;
+                }
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let count = guard.notify_prompt_list_changed().await;
@@ -200,6 +210,9 @@ impl EventHandlers {
             }
             Event::ResourceEnabledInProfileChanged { .. } => {
                 debug!("Resource configuration changed: emitting resources/list_changed");
+                if let Some(profile_service) = &self.profile_service {
+                    profile_service.invalidate_cache().await;
+                }
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let count = guard.notify_resource_list_changed().await;

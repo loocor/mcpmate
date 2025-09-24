@@ -305,6 +305,29 @@ async fn process_single_component_in_tx(
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| ApiError::InternalError(format!("Failed to update tool status: {e}")))?;
+
+            // Publish MCP-facing event so downstream clients receive tools/list_changed
+            if let Ok(Some(tool_name)) = sqlx::query_scalar::<_, String>(
+                r#"
+                SELECT st.tool_name
+                FROM profile_tool cst
+                JOIN server_tools st ON cst.server_tool_id = st.id
+                WHERE cst.id = ?
+                "#,
+            )
+            .bind(component_id)
+            .fetch_optional(&mut **tx)
+            .await
+            {
+                crate::core::events::EventBus::global().publish(
+                    crate::core::events::Event::ToolEnabledInProfileChanged {
+                        tool_id: component_id.to_string(),
+                        tool_name,
+                        profile_id: profile_id.to_string(),
+                        enabled,
+                    },
+                );
+            }
         }
         ComponentType::Resource => {
             // For resources, we need to get details first
@@ -327,6 +350,16 @@ async fn process_single_component_in_tx(
             .execute(&mut **tx)
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
+
+            // Publish MCP-facing event so downstream clients receive resources/list_changed
+            crate::core::events::EventBus::global().publish(
+                crate::core::events::Event::ResourceEnabledInProfileChanged {
+                    resource_id: component_id.to_string(),
+                    resource_uri: resource.1.clone(),
+                    profile_id: profile_id.to_string(),
+                    enabled,
+                },
+            );
         }
         ComponentType::Prompt => {
             sqlx::query("UPDATE profile_prompt SET enabled = ? WHERE id = ?")
@@ -335,6 +368,24 @@ async fn process_single_component_in_tx(
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| ApiError::InternalError(format!("Failed to update prompt status: {e}")))?;
+
+            // Publish MCP-facing event so downstream clients receive prompts/list_changed
+            if let Ok(Some(prompt_name)) = sqlx::query_scalar::<_, String>(
+                "SELECT prompt_name FROM profile_prompt WHERE id = ?",
+            )
+            .bind(component_id)
+            .fetch_optional(&mut **tx)
+            .await
+            {
+                crate::core::events::EventBus::global().publish(
+                    crate::core::events::Event::PromptEnabledInProfileChanged {
+                        prompt_id: component_id.to_string(),
+                        prompt_name,
+                        profile_id: profile_id.to_string(),
+                        enabled,
+                    },
+                );
+            }
         }
     }
 

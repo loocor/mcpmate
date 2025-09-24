@@ -81,6 +81,13 @@ pub(super) async fn list_resources(
         }
     }
 
+    // Apply centralized profile visibility filter (resources)
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    resources = vis.filter_resources(resources).await;
+
     tracing::info!("Proxy listed {} total resources", resources.len());
 
     Ok(ListResourcesResult {
