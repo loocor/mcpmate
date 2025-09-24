@@ -7,9 +7,9 @@ pub use self::{
     crud::{create_server, delete_server, import_servers, update_server},
     instance::{check_health, get_instance, manage_instance},
     mgmt::{disable_server, enable_server, manage_server},
+    preview::preview_servers,
     prompts::server_prompts,
     resources::{server_resource_templates, server_resources},
-    preview::preview_servers,
     tools::server_tools,
 };
 

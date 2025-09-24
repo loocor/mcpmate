@@ -96,7 +96,10 @@ pub async fn set_backup_policy(
 fn parse_policy(payload: &ClientBackupPolicyPayload) -> Result<BackupPolicySetting, StatusCode> {
     let policy = payload.policy.trim().to_lowercase();
     match policy.as_str() {
-        "keep_last" => Ok(BackupPolicySetting { policy: BackupPolicy::KeepLast, limit: None }),
+        "keep_last" => Ok(BackupPolicySetting {
+            policy: BackupPolicy::KeepLast,
+            limit: None,
+        }),
         "off" => Ok(BackupPolicySetting {
             policy: BackupPolicy::Off,
             limit: None,

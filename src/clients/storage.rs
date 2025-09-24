@@ -190,10 +190,7 @@ impl ConfigStorage for FileConfigStorage {
                 }
             };
 
-            let modified_at = metadata
-                .modified()
-                .ok()
-                .map(chrono::DateTime::<chrono::Utc>::from);
+            let modified_at = metadata.modified().ok().map(chrono::DateTime::<chrono::Utc>::from);
 
             let name = path
                 .file_name()

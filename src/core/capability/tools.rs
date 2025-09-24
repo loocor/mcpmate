@@ -13,7 +13,7 @@ use rmcp::model::{PaginatedRequestParam, Tool};
 use tokio::sync::Mutex;
 use tracing;
 
-use crate::core::capability::naming::{infer_tool_naming_policy, generate_tool_name_with_policy};
+use crate::core::capability::naming::{generate_tool_name_with_policy, infer_tool_naming_policy};
 use crate::core::pool::UpstreamConnectionPool;
 
 /// Tool mapping information returned by builders.
@@ -117,13 +117,19 @@ pub async fn get_all_tools(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>)
         // Aggregate visible tool names across instances to infer a policy per server
         let mut aggregated_names: Vec<&str> = Vec::new();
         for conn in instances.values() {
-            if !conn.is_connected() { continue; }
-            for tool in &conn.tools { aggregated_names.push(tool.name.as_ref()); }
+            if !conn.is_connected() {
+                continue;
+            }
+            for tool in &conn.tools {
+                aggregated_names.push(tool.name.as_ref());
+            }
         }
         let policy = infer_tool_naming_policy(&server_name, aggregated_names);
 
         for conn in instances.values() {
-            if !conn.is_connected() { continue; }
+            if !conn.is_connected() {
+                continue;
+            }
             for tool in &conn.tools {
                 let unique_name = generate_tool_name_with_policy(&server_name, &tool.name, &policy);
                 let mut unique_tool = tool.clone();
@@ -202,9 +208,13 @@ async fn collect_tools_from_instance_peer(
     loop {
         match peer.list_tools(Some(PaginatedRequestParam { cursor })).await {
             Ok(result) => {
-                for tool in result.tools { raw_tools.push(tool); }
+                for tool in result.tools {
+                    raw_tools.push(tool);
+                }
                 cursor = result.next_cursor;
-                if cursor.is_none() { break; }
+                if cursor.is_none() {
+                    break;
+                }
             }
             Err(e) => {
                 tracing::warn!(

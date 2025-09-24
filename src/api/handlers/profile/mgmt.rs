@@ -429,9 +429,7 @@ async fn profile_operation_core(
         ProfileAction::Deactivate => {
             // Prevent deactivation of default profile
             if profile.is_default {
-                return Err(ApiError::Forbidden(
-                    "Cannot deactivate the default profile".to_string(),
-                ));
+                return Err(ApiError::Forbidden("Cannot deactivate the default profile".to_string()));
             }
             profile.is_active = false;
             ("deactivated", "inactive")

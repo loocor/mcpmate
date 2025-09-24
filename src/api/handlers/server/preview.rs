@@ -50,11 +50,14 @@ async fn preview_one(
     }
 }
 
-fn build_item(name: String, snap: crate::config::server::capabilities::CapabilitySnapshot, include_details: bool) -> ServerPreviewItemData {
+fn build_item(
+    name: String,
+    snap: crate::config::server::capabilities::CapabilitySnapshot,
+    include_details: bool,
+) -> ServerPreviewItemData {
     // tools
     let tool_items: Vec<serde_json::Value> = if include_details {
-        snap
-            .tools
+        snap.tools
             .iter()
             .map(super::capability::tool_json_from_cached)
             .collect()
@@ -64,79 +67,125 @@ fn build_item(name: String, snap: crate::config::server::capabilities::Capabilit
 
     // resources
     let resource_items: Vec<serde_json::Value> = if include_details {
-        snap
-            .resources
+        snap.resources
             .iter()
-            .map(|r| serde_json::json!({
-                "uri": r.uri,
-                "name": r.name,
-                "description": r.description,
-                "mime_type": r.mime_type,
-                "enabled": r.enabled,
-                "cached_at": r.cached_at.to_rfc3339(),
-            }))
+            .map(|r| {
+                serde_json::json!({
+                    "uri": r.uri,
+                    "name": r.name,
+                    "description": r.description,
+                    "mime_type": r.mime_type,
+                    "enabled": r.enabled,
+                    "cached_at": r.cached_at.to_rfc3339(),
+                })
+            })
             .collect()
     } else {
         Vec::new()
     };
 
     let template_items: Vec<serde_json::Value> = if include_details {
-        snap
-            .resource_templates
+        snap.resource_templates
             .iter()
-            .map(|t| serde_json::json!({
-                "uri_template": t.uri_template,
-                "name": t.name,
-                "description": t.description,
-                "mime_type": t.mime_type,
-                "enabled": t.enabled,
-                "cached_at": t.cached_at.to_rfc3339(),
-            }))
+            .map(|t| {
+                serde_json::json!({
+                    "uri_template": t.uri_template,
+                    "name": t.name,
+                    "description": t.description,
+                    "mime_type": t.mime_type,
+                    "enabled": t.enabled,
+                    "cached_at": t.cached_at.to_rfc3339(),
+                })
+            })
             .collect()
     } else {
         Vec::new()
     };
 
     let prompt_items: Vec<serde_json::Value> = if include_details {
-        snap
-            .prompts
+        snap.prompts
             .iter()
-            .map(|p| serde_json::json!({
-                "name": p.name,
-                "description": p.description,
-                "arguments": p.arguments.iter().map(|a| serde_json::json!({
-                    "name": a.name,
-                    "description": a.description,
-                    "required": a.required,
-                })).collect::<Vec<_>>()
-            }))
+            .map(|p| {
+                serde_json::json!({
+                    "name": p.name,
+                    "description": p.description,
+                    "arguments": p.arguments.iter().map(|a| serde_json::json!({
+                        "name": a.name,
+                        "description": a.description,
+                        "required": a.required,
+                    })).collect::<Vec<_>>()
+                })
+            })
             .collect()
     } else {
         Vec::new()
     };
 
-    let meta = ServerCapabilityMeta { cache_hit: false, strategy: "preview".to_string(), source: "live".to_string() };
+    let meta = ServerCapabilityMeta {
+        cache_hit: false,
+        strategy: "preview".to_string(),
+        source: "live".to_string(),
+    };
 
     ServerPreviewItemData {
         name,
         ok: true,
         error: None,
-        tools: ServerToolsData { items: tool_items, state: "ok".to_string(), meta: meta.clone() },
-        resources: ServerResourcesData { items: resource_items, state: "ok".to_string(), meta: meta.clone() },
-        resource_templates: ServerResourceTemplatesData { items: template_items, state: "ok".to_string(), meta: meta.clone() },
-        prompts: ServerPromptsData { items: prompt_items, state: "ok".to_string(), meta },
+        tools: ServerToolsData {
+            items: tool_items,
+            state: "ok".to_string(),
+            meta: meta.clone(),
+        },
+        resources: ServerResourcesData {
+            items: resource_items,
+            state: "ok".to_string(),
+            meta: meta.clone(),
+        },
+        resource_templates: ServerResourceTemplatesData {
+            items: template_items,
+            state: "ok".to_string(),
+            meta: meta.clone(),
+        },
+        prompts: ServerPromptsData {
+            items: prompt_items,
+            state: "ok".to_string(),
+            meta,
+        },
     }
 }
 
-fn empty_with_error(name: String, err: String) -> ServerPreviewItemData {
-    let meta = ServerCapabilityMeta { cache_hit: false, strategy: "preview".to_string(), source: "none".to_string() };
+fn empty_with_error(
+    name: String,
+    err: String,
+) -> ServerPreviewItemData {
+    let meta = ServerCapabilityMeta {
+        cache_hit: false,
+        strategy: "preview".to_string(),
+        source: "none".to_string(),
+    };
     ServerPreviewItemData {
         name,
         ok: false,
         error: Some(err),
-        tools: ServerToolsData { items: Vec::new(), state: "error".to_string(), meta: meta.clone() },
-        resources: ServerResourcesData { items: Vec::new(), state: "error".to_string(), meta: meta.clone() },
-        resource_templates: ServerResourceTemplatesData { items: Vec::new(), state: "error".to_string(), meta: meta.clone() },
-        prompts: ServerPromptsData { items: Vec::new(), state: "error".to_string(), meta },
+        tools: ServerToolsData {
+            items: Vec::new(),
+            state: "error".to_string(),
+            meta: meta.clone(),
+        },
+        resources: ServerResourcesData {
+            items: Vec::new(),
+            state: "error".to_string(),
+            meta: meta.clone(),
+        },
+        resource_templates: ServerResourceTemplatesData {
+            items: Vec::new(),
+            state: "error".to_string(),
+            meta: meta.clone(),
+        },
+        prompts: ServerPromptsData {
+            items: Vec::new(),
+            state: "error".to_string(),
+            meta,
+        },
     }
 }

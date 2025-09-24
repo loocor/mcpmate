@@ -467,7 +467,13 @@ mod tests {
     #[test]
     fn infer_prefix_single_tool_returns_none() {
         let p = infer_uniform_tool_prefix("X", ["browser_open"].iter().copied());
-        assert_eq!(p, ToolNamingPolicy { uniform_prefix: None, strip_subprefix: None });
+        assert_eq!(
+            p,
+            ToolNamingPolicy {
+                uniform_prefix: None,
+                strip_subprefix: None
+            }
+        );
     }
 
     #[test]

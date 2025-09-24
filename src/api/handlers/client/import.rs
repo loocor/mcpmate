@@ -143,10 +143,14 @@ fn merge_key_equals_into_env(
 
 fn parse_env_assignment(s: &str) -> Option<(String, String)> {
     // Reject flags like --foo=bar
-    if s.starts_with('-') { return None; }
+    if s.starts_with('-') {
+        return None;
+    }
     let eq = s.find('=')?;
     let (k, v) = s.split_at(eq);
-    if k.is_empty() { return None; }
+    if k.is_empty() {
+        return None;
+    }
     // v starts with '='
     let mut value = v[1..].trim().to_string();
     // Strip matching quotes
@@ -158,9 +162,14 @@ fn parse_env_assignment(s: &str) -> Option<(String, String)> {
     // Accept typical env var keys
     let valid_key = {
         let mut chars = k.chars();
-        match chars.next() { Some(c) if c.is_ascii_alphabetic() || c == '_' => (), _ => return None };
-        chars.all(|c| c.is_ascii_alphanumeric() || c == '_' )
+        match chars.next() {
+            Some(c) if c.is_ascii_alphabetic() || c == '_' => (),
+            _ => return None,
+        };
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
     };
-    if !valid_key { return None; }
+    if !valid_key {
+        return None;
+    }
     Some((k.to_string(), value))
 }

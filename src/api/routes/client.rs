@@ -1,9 +1,9 @@
 use crate::api::handlers::client;
 use crate::api::models::client::{
     ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq,
-    ClientBackupPolicyResp, ClientBackupPolicySetReq, ClientCheckReq, ClientCheckResp, ClientConfigReq,
-    ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientManageReq,
-    ClientManageResp, ClientConfigImportReq, ClientConfigImportResp,
+    ClientBackupPolicyResp, ClientBackupPolicySetReq, ClientCheckReq, ClientCheckResp, ClientConfigImportReq,
+    ClientConfigImportResp, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq,
+    ClientConfigUpdateResp, ClientManageReq, ClientManageResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -16,9 +16,9 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, middleware};
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use std::sync::Arc;
 
 // Generate aide-compatible wrapper for client check (with query parameters)
 aide_wrapper_query!(
@@ -136,7 +136,8 @@ async fn reload_templates_middleware(
     next: Next,
 ) -> Response {
     // Short TTL to coalesce bursty requests and reduce I/O
-    const TEMPLATE_RELOAD_TTL: Duration = Duration::from_secs(crate::common::constants::timeouts::TEMPLATE_RELOAD_TTL_SEC);
+    const TEMPLATE_RELOAD_TTL: Duration =
+        Duration::from_secs(crate::common::constants::timeouts::TEMPLATE_RELOAD_TTL_SEC);
 
     if let Some(service) = &app_state.client_service {
         // Fast path: skip reload if still fresh
@@ -183,7 +184,10 @@ struct ReloadFreshness {
 }
 
 impl ReloadFreshness {
-    fn is_fresh(&self, ttl: Duration) -> bool {
+    fn is_fresh(
+        &self,
+        ttl: Duration,
+    ) -> bool {
         match self.last {
             Some(t) => t.elapsed() < ttl,
             None => false,

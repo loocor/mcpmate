@@ -370,12 +370,11 @@ async fn process_single_component_in_tx(
                 .map_err(|e| ApiError::InternalError(format!("Failed to update prompt status: {e}")))?;
 
             // Publish MCP-facing event so downstream clients receive prompts/list_changed
-            if let Ok(Some(prompt_name)) = sqlx::query_scalar::<_, String>(
-                "SELECT prompt_name FROM profile_prompt WHERE id = ?",
-            )
-            .bind(component_id)
-            .fetch_optional(&mut **tx)
-            .await
+            if let Ok(Some(prompt_name)) =
+                sqlx::query_scalar::<_, String>("SELECT prompt_name FROM profile_prompt WHERE id = ?")
+                    .bind(component_id)
+                    .fetch_optional(&mut **tx)
+                    .await
             {
                 crate::core::events::EventBus::global().publish(
                     crate::core::events::Event::PromptEnabledInProfileChanged {
