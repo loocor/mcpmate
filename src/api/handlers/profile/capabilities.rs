@@ -225,16 +225,9 @@ async fn execute_unified_operations(
     let mut success_count = 0;
     let mut failed_count = 0;
 
-    // Start transaction for all operations
-    let mut tx = db
-        .pool
-        .begin()
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to begin transaction: {e}")))?;
-
-    // Process each component
+    // Process each component individually via config layer (unified events inside)
     for component_id in &request.component_ids {
-        let result = process_single_component_in_tx(&mut tx, &request.profile_id, component_id, enabled).await;
+        let result = process_single_component(&db, &request.profile_id, component_id, enabled).await;
 
         match result {
             Ok(component_type) => {
@@ -260,20 +253,8 @@ async fn execute_unified_operations(
         }
     }
 
-    // Commit transaction if any operations succeeded
-    if success_count > 0 {
-        tx.commit()
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to commit transaction: {e}")))?;
-
-        // Invalidate cache after successful operations
-        invalidate_profile_cache(state).await;
-    } else {
-        // Rollback if all operations failed
-        tx.rollback()
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to rollback transaction: {e}")))?;
-    }
+    // Invalidate cache after any successful operation
+    if success_count > 0 { invalidate_profile_cache(state).await; }
 
     // Build unified response
     let response = ProfileServerManageData {
@@ -288,8 +269,8 @@ async fn execute_unified_operations(
 }
 
 /// Process a single component within a transaction
-async fn process_single_component_in_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+async fn process_single_component(
+    db: &crate::config::database::Database,
     profile_id: &str,
     component_id: &str,
     enabled: bool,
@@ -299,92 +280,29 @@ async fn process_single_component_in_tx(
     // Execute the appropriate management action within the transaction
     match component_type {
         ComponentType::Tool => {
-            sqlx::query("UPDATE profile_tool SET enabled = ? WHERE id = ?")
-                .bind(enabled)
-                .bind(component_id)
-                .execute(&mut **tx)
+            crate::config::profile::update_tool_enabled_status(&db.pool, component_id, enabled)
                 .await
                 .map_err(|e| ApiError::InternalError(format!("Failed to update tool status: {e}")))?;
-
-            // Publish MCP-facing event so downstream clients receive tools/list_changed
-            if let Ok(Some(tool_name)) = sqlx::query_scalar::<_, String>(
-                r#"
-                SELECT st.tool_name
-                FROM profile_tool cst
-                JOIN server_tools st ON cst.server_tool_id = st.id
-                WHERE cst.id = ?
-                "#,
-            )
-            .bind(component_id)
-            .fetch_optional(&mut **tx)
-            .await
-            {
-                crate::core::events::EventBus::global().publish(
-                    crate::core::events::Event::ToolEnabledInProfileChanged {
-                        tool_id: component_id.to_string(),
-                        tool_name,
-                        profile_id: profile_id.to_string(),
-                        enabled,
-                    },
-                );
-            }
         }
         ComponentType::Resource => {
-            // For resources, we need to get details first
-            let resource = sqlx::query_as::<_, (String, String, String)>(
-                "SELECT server_id, resource_uri, id FROM profile_resource WHERE id = ?",
+            // For resources, get context then call config-layer updater (which publishes events)
+            let (server_id, resource_uri): (String, String) = sqlx::query_as(
+                "SELECT server_id, resource_uri FROM profile_resource WHERE id = ?",
             )
             .bind(component_id)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&db.pool)
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to get resource: {e}")))?
             .ok_or_else(|| ApiError::NotFound("Resource not found".to_string()))?;
 
-            sqlx::query(
-                "UPDATE profile_resource SET enabled = ? WHERE profile_id = ? AND server_id = ? AND resource_uri = ?",
-            )
-            .bind(enabled)
-            .bind(profile_id)
-            .bind(&resource.0)
-            .bind(&resource.1)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
-
-            // Publish MCP-facing event so downstream clients receive resources/list_changed
-            crate::core::events::EventBus::global().publish(
-                crate::core::events::Event::ResourceEnabledInProfileChanged {
-                    resource_id: component_id.to_string(),
-                    resource_uri: resource.1.clone(),
-                    profile_id: profile_id.to_string(),
-                    enabled,
-                },
-            );
+            crate::config::profile::update_resource_enabled_status(&db.pool, profile_id, &server_id, &resource_uri, enabled)
+                .await
+                .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
         }
         ComponentType::Prompt => {
-            sqlx::query("UPDATE profile_prompt SET enabled = ? WHERE id = ?")
-                .bind(enabled)
-                .bind(component_id)
-                .execute(&mut **tx)
+            crate::config::profile::update_prompt_enabled_status(&db.pool, component_id, enabled)
                 .await
                 .map_err(|e| ApiError::InternalError(format!("Failed to update prompt status: {e}")))?;
-
-            // Publish MCP-facing event so downstream clients receive prompts/list_changed
-            if let Ok(Some(prompt_name)) =
-                sqlx::query_scalar::<_, String>("SELECT prompt_name FROM profile_prompt WHERE id = ?")
-                    .bind(component_id)
-                    .fetch_optional(&mut **tx)
-                    .await
-            {
-                crate::core::events::EventBus::global().publish(
-                    crate::core::events::Event::PromptEnabledInProfileChanged {
-                        prompt_id: component_id.to_string(),
-                        prompt_name,
-                        profile_id: profile_id.to_string(),
-                        enabled,
-                    },
-                );
-            }
         }
     }
 

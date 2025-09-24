@@ -362,3 +362,60 @@ pub async fn remove_tool_from_profile(
         Ok(false)
     }
 }
+
+/// Update tool enabled status in a profile by profile_tool id
+/// Publishes ToolEnabledInProfileChanged when status changes
+pub async fn update_tool_enabled_status(
+    pool: &Pool<Sqlite>,
+    profile_tool_id: &str,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    tracing::debug!(
+        "Updating tool enabled status: id={}, enabled={}",
+        profile_tool_id,
+        enabled
+    );
+
+    // Fetch context for event publishing
+    let (tool_name, profile_id): (String, String) = sqlx::query_as(
+        r#"
+        SELECT st.tool_name, cst.profile_id
+        FROM profile_tool cst
+        JOIN server_tools st ON cst.server_tool_id = st.id
+        WHERE cst.id = ?
+        "#,
+    )
+    .bind(profile_tool_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to get tool info for event publishing")?
+    .ok_or_else(|| anyhow::anyhow!("Tool association not found: {}", profile_tool_id))?;
+
+    let result = sqlx::query(
+        r#"
+        UPDATE profile_tool
+        SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+    )
+    .bind(enabled)
+    .bind(profile_tool_id)
+    .execute(pool)
+    .await
+    .context("Failed to update tool enabled status")?;
+
+    if result.rows_affected() == 0 {
+        return Err(anyhow::anyhow!("No rows updated for tool id {}", profile_tool_id));
+    }
+
+    crate::core::events::EventBus::global().publish(
+        crate::core::events::Event::ToolEnabledInProfileChanged {
+            tool_id: profile_tool_id.to_string(),
+            tool_name,
+            profile_id,
+            enabled,
+        },
+    );
+
+    Ok(())
+}

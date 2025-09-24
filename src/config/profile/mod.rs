@@ -41,4 +41,5 @@ pub use tool::{
     add_tool_to_profile,      // Add a tool to a profile
     get_profile_tools,        // Get all tools for a profile
     remove_tool_from_profile, // Remove a tool from a profile
+    update_tool_enabled_status,
 };
