@@ -245,8 +245,11 @@ pub async fn update_resource_enabled_status(
 /// Common query builder for enabled resources from active profile.
 /// This helper reduces code duplication and ensures consistency.
 pub fn build_enabled_resources_query(additional_where: Option<&str>) -> String {
+    // Note: select original server name from server_config (sc.name) instead of the
+    // underscored safe name stored in profile_resource.csr.server_name to keep
+    // unique-name generation consistent with aggregation path.
     let base_query = r#"
-        SELECT DISTINCT csr.server_name, csr.resource_uri
+        SELECT DISTINCT sc.id as server_id, sc.name as server_name, csr.resource_uri
         FROM profile_resource csr
         JOIN profile cs ON csr.profile_id = cs.id
         JOIN server_config sc ON csr.server_id = sc.id

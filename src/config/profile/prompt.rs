@@ -258,8 +258,9 @@ pub async fn update_prompt_enabled_status(
 
 /// Common query builder for enabled prompts from active profile.
 pub fn build_enabled_prompts_query(additional_where: Option<&str>) -> String {
+    // Select original server name from server_config to align with aggregator naming
     let base_query = r#"
-        SELECT DISTINCT csp.server_name, csp.prompt_name
+        SELECT DISTINCT sc.id as server_id, sc.name as server_name, csp.prompt_name
         FROM profile_prompt csp
         JOIN profile cs ON csp.profile_id = cs.id
         JOIN server_config sc ON csp.server_id = sc.id
