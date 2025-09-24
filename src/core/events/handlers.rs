@@ -84,7 +84,7 @@ impl EventHandlers {
         event: Event,
     ) {
         match event {
-            // Config profile status changed - trigger server management
+            // Config profile status changed - trigger server management and listChanged
             Event::ProfileStatusChanged { profile_id, enabled } => {
                 debug!("Handling ProfileStatusChanged: {} -> {}", profile_id, enabled);
 
@@ -98,6 +98,17 @@ impl EventHandlers {
                     let mut pool = connection_pool.lock().await;
                     if let Err(e) = pool.sync_servers_from_active_profile().await {
                         error!("Failed to sync servers after profile change: {}", e);
+                    }
+                }
+
+                // Downstream: listChanged across tools/prompts/resources
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let (t, p, r) = guard.notify_all_list_changed().await;
+                        info!(
+                            "Profile change: list_changed notified (tools={}, prompts={}, resources={})",
+                            t, p, r
+                        );
                     }
                 }
             }
@@ -129,6 +140,17 @@ impl EventHandlers {
                         );
                     }
                 }
+
+                // Downstream: listChanged across tools/prompts/resources
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let (t, p, r) = guard.notify_all_list_changed().await;
+                        info!(
+                            "Server enabled change: list_changed notified (tools={}, prompts={}, resources={})",
+                            t, p, r
+                        );
+                    }
+                }
             }
 
             // Events that require server synchronization (but not specific server management)
@@ -147,13 +169,43 @@ impl EventHandlers {
                         error!("Failed to sync servers after database/config event: {}", e);
                     }
                 }
+
+                // Downstream: listChanged across tools/prompts/resources (capability surface likely changed)
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let (t, p, r) = guard.notify_all_list_changed().await;
+                        info!("Server sync event: list_changed notified (tools={}, prompts={}, resources={})", t, p, r);
+                    }
+                }
             }
 
-            // Events that don't require server synchronization
-            Event::ToolEnabledInProfileChanged { .. }
-            | Event::ResourceEnabledInProfileChanged { .. }
-            | Event::PromptEnabledInProfileChanged { .. } => {
-                debug!("Configuration changed, no server sync needed: {:?}", event);
+            // Emit listChanged notifications for downstream clients
+            Event::ToolEnabledInProfileChanged { .. } => {
+                debug!("Tool configuration changed: emitting tools/list_changed");
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let count = guard.notify_tool_list_changed().await;
+                        info!("tools/list_changed notified {} client(s)", count);
+                    }
+                }
+            }
+            Event::PromptEnabledInProfileChanged { .. } => {
+                debug!("Prompt configuration changed: emitting prompts/list_changed");
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let count = guard.notify_prompt_list_changed().await;
+                        info!("prompts/list_changed notified {} client(s)", count);
+                    }
+                }
+            }
+            Event::ResourceEnabledInProfileChanged { .. } => {
+                debug!("Resource configuration changed: emitting resources/list_changed");
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let count = guard.notify_resource_list_changed().await;
+                        info!("resources/list_changed notified {} client(s)", count);
+                    }
+                }
             }
 
             Event::CacheUpdated {
