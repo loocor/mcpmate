@@ -17,6 +17,149 @@ use crate::core::{
 };
 use tokio::time::{Duration, timeout};
 
+/// Internal helpers to deduplicate discovery and application steps
+mod discovery_helpers {
+    use super::*;
+
+    pub async fn collect_all_prompts(service: &crate::core::transport::ClientService) -> Vec<CachedPromptInfo> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            match service
+                .list_prompts(
+                    cursor
+                        .clone()
+                        .map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }),
+                )
+                .await
+            {
+                Ok(result) => {
+                    for p in result.prompts {
+                        let converted_args = p
+                            .arguments
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|arg| crate::core::cache::PromptArgument {
+                                name: arg.name,
+                                description: arg.description,
+                                required: arg.required.unwrap_or(false),
+                            })
+                            .collect();
+                        out.push(CachedPromptInfo {
+                            name: p.name,
+                            description: p.description,
+                            arguments: converted_args,
+                            enabled: true,
+                            cached_at: chrono::Utc::now(),
+                        });
+                    }
+                    cursor = result.next_cursor;
+                    if cursor.is_none() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        out
+    }
+
+    pub async fn collect_all_resources(service: &crate::core::transport::ClientService) -> Vec<CachedResourceInfo> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            match service
+                .list_resources(
+                    cursor
+                        .clone()
+                        .map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }),
+                )
+                .await
+            {
+                Ok(result) => {
+                    for r in result.resources {
+                        out.push(CachedResourceInfo {
+                            uri: r.uri.clone(),
+                            name: Some(r.name.clone()),
+                            description: r.description.clone(),
+                            mime_type: r.mime_type.clone(),
+                            enabled: true,
+                            cached_at: chrono::Utc::now(),
+                        });
+                    }
+                    cursor = result.next_cursor;
+                    if cursor.is_none() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        out
+    }
+
+    pub async fn collect_all_resource_templates(
+        service: &crate::core::transport::ClientService
+    ) -> Vec<CachedResourceTemplateInfo> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        while let Ok(result) = service
+            .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
+            .await
+        {
+            for t in result.resource_templates {
+                out.push(CachedResourceTemplateInfo {
+                    uri_template: t.uri_template.clone(),
+                    name: Some(t.name.clone()),
+                    description: t.description.clone(),
+                    mime_type: t.mime_type.clone(),
+                    enabled: true,
+                    cached_at: chrono::Utc::now(),
+                });
+            }
+            cursor = result.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        out
+    }
+
+    pub async fn apply_snapshot(
+        db_pool: &Pool<Sqlite>,
+        redb: &RedbCacheManager,
+        server_id: &str,
+        server_name: &str,
+        snapshot: &super::CapabilitySnapshot,
+        seed_profiles: bool,
+    ) -> Result<()> {
+        super::store_dual_write(
+            db_pool,
+            redb,
+            server_id,
+            server_name,
+            snapshot.tools.clone(),
+            snapshot.resources.clone(),
+            snapshot.prompts.clone(),
+            snapshot.resource_templates.clone(),
+        )
+        .await?;
+
+        let supports_tools = !snapshot.tools.is_empty();
+        let supports_prompts = !snapshot.prompts.is_empty();
+        let supports_resources = !snapshot.resources.is_empty() || !snapshot.resource_templates.is_empty();
+
+        super::overwrite_capabilities(db_pool, server_id, supports_tools, supports_prompts, supports_resources).await?;
+
+        if seed_profiles {
+            if let Err(e) = super::seed_profiles_with_snapshot(db_pool, server_id, snapshot).await {
+                tracing::warn!(server_id = %server_id, error = %e, "Failed to seed profiles with snapshot");
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Cache helpers used by API and startup paths
 pub mod cache_utils {
     use super::*;
@@ -59,94 +202,18 @@ pub async fn discover_from_connection(conn: &crate::core::pool::UpstreamConnecti
     // Prompts (paginate defensively)
     if conn.supports_prompts() {
         if let Some(service) = &conn.service {
-            let mut cursor: Option<String> = None;
-            loop {
-                match service
-                    .list_prompts(cursor.clone().map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }))
-                    .await
-                {
-                    Ok(result) => {
-                        for p in result.prompts {
-                            let converted_args = p
-                                .arguments
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|arg| crate::core::cache::PromptArgument {
-                                    name: arg.name,
-                                    description: arg.description,
-                                    required: arg.required.unwrap_or(false),
-                                })
-                                .collect();
-                            snap.prompts.push(CachedPromptInfo {
-                                name: p.name,
-                                description: p.description,
-                                arguments: converted_args,
-                                enabled: true,
-                                cached_at: chrono::Utc::now(),
-                            });
-                        }
-                        cursor = result.next_cursor;
-                        if cursor.is_none() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
+            let items = discovery_helpers::collect_all_prompts(service).await;
+            snap.prompts.extend(items);
         }
     }
 
     // Resources and templates (paginate fully)
     if conn.supports_resources() {
         if let Some(service) = &conn.service {
-            // Resources
-            let mut cursor: Option<String> = None;
-            loop {
-                match service
-                    .list_resources(cursor.clone().map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }))
-                    .await
-                {
-                    Ok(result) => {
-                        for r in result.resources {
-                            snap.resources.push(CachedResourceInfo {
-                                uri: r.uri.clone(),
-                                name: Some(r.name.clone()),
-                                description: r.description.clone(),
-                                mime_type: r.mime_type.clone(),
-                                enabled: true,
-                                cached_at: chrono::Utc::now(),
-                            });
-                        }
-                        cursor = result.next_cursor;
-                        if cursor.is_none() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-
-            // Resource templates
-            let mut cursor: Option<String> = None;
-            while let Ok(result) = service
-                .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
-                .await
-            {
-                for t in result.resource_templates {
-                    snap.resource_templates.push(CachedResourceTemplateInfo {
-                        uri_template: t.uri_template.clone(),
-                        name: Some(t.name.clone()),
-                        description: t.description.clone(),
-                        mime_type: t.mime_type.clone(),
-                        enabled: true,
-                        cached_at: chrono::Utc::now(),
-                    });
-                }
-                cursor = result.next_cursor;
-                if cursor.is_none() {
-                    break;
-                }
-            }
+            let resources = discovery_helpers::collect_all_resources(service).await;
+            let templates = discovery_helpers::collect_all_resource_templates(service).await;
+            snap.resources.extend(resources);
+            snap.resource_templates.extend(templates);
         }
     }
 
@@ -193,88 +260,16 @@ pub async fn discover_from_config(
 
     // Prompts (paginate defensively)
     if capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
-        let mut cursor: Option<String> = None;
-        loop {
-            match service
-                .list_prompts(cursor.clone().map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }))
-                .await
-            {
-                Ok(result) => {
-                    for p in result.prompts {
-                        let converted_args = p
-                            .arguments
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|arg| crate::core::cache::PromptArgument {
-                                name: arg.name,
-                                description: arg.description,
-                                required: arg.required.unwrap_or(false),
-                            })
-                            .collect();
-                        snap.prompts.push(CachedPromptInfo {
-                            name: p.name,
-                            description: p.description,
-                            arguments: converted_args,
-                            enabled: true,
-                            cached_at: chrono::Utc::now(),
-                        });
-                    }
-                    cursor = result.next_cursor;
-                    if cursor.is_none() { break; }
-                }
-                Err(_) => break,
-            }
-        }
+        let items = discovery_helpers::collect_all_prompts(&service).await;
+        snap.prompts.extend(items);
     }
 
     // Resources & templates (paginate fully)
     if capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
-        // Resources
-        let mut cursor: Option<String> = None;
-        loop {
-            match service
-                .list_resources(cursor.clone().map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }))
-                .await
-            {
-                Ok(result) => {
-                    for r in result.resources {
-                        snap.resources.push(CachedResourceInfo {
-                            uri: r.uri.clone(),
-                            name: Some(r.name.clone()),
-                            description: r.description.clone(),
-                            mime_type: r.mime_type.clone(),
-                            enabled: true,
-                            cached_at: chrono::Utc::now(),
-                        });
-                    }
-                    cursor = result.next_cursor;
-                    if cursor.is_none() { break; }
-                }
-                Err(_) => break,
-            }
-        }
-
-        // Templates
-        let mut cursor: Option<String> = None;
-        while let Ok(result) = service
-            .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
-            .await
-        {
-            for t in result.resource_templates {
-                snap.resource_templates.push(CachedResourceTemplateInfo {
-                    uri_template: t.uri_template.clone(),
-                    name: Some(t.name.clone()),
-                    description: t.description.clone(),
-                    mime_type: t.mime_type.clone(),
-                    enabled: true,
-                    cached_at: chrono::Utc::now(),
-                });
-            }
-            cursor = result.next_cursor;
-            if cursor.is_none() {
-                break;
-            }
-        }
+        let resources = discovery_helpers::collect_all_resources(&service).await;
+        let templates = discovery_helpers::collect_all_resource_templates(&service).await;
+        snap.resources.extend(resources);
+        snap.resource_templates.extend(templates);
     }
 
     Ok(snap)
@@ -538,7 +533,9 @@ pub async fn seed_profiles_with_snapshot(
     }
 
     for profile in profiles {
-        let Some(profile_id) = profile.id.as_deref() else { continue };
+        let Some(profile_id) = profile.id.as_deref() else {
+            continue;
+        };
 
         // Tools
         for t in &snapshot.tools {
@@ -622,40 +619,15 @@ pub async fn sync_via_connection_pool(
         }
     };
 
-    // Discover and store (now fully paginated)
+    // Discover and apply (now fully paginated)
     let snap = discover_from_connection(conn).await?;
-    // Clone for store and keep original for capability flags
-    let tools_clone = snap.tools.clone();
-    let resources_clone = snap.resources.clone();
-    let prompts_clone = snap.prompts.clone();
-    let templates_clone = snap.resource_templates.clone();
-    store_dual_write(
-        db_pool,
-        redb,
-        server_id,
-        server_name,
-        tools_clone,
-        resources_clone,
-        prompts_clone,
-        templates_clone,
-    )
-    .await?;
-
-    // Full overwrite of capabilities using protocol support flags from this connection
-    let supports_tools = !snap.tools.is_empty();
-    let supports_prompts = !snap.prompts.is_empty();
-    let supports_resources = !snap.resources.is_empty();
-    overwrite_capabilities(db_pool, server_id, supports_tools, supports_prompts, supports_resources).await?;
+    discovery_helpers::apply_snapshot(db_pool, redb, server_id, server_name, &snap, true).await?;
 
     // Cleanup
     if let Err(e) = pool.destroy_validation_instance(server_name, "api").await {
         tracing::trace!(server_name = %server_name, error = %e, "Failed to destroy validation instance (api)");
     }
 
-    // Seed active profiles to avoid empty /mcp/profile/* on first-run
-    if let Err(e) = seed_profiles_with_snapshot(db_pool, server_id, &snap).await {
-        tracing::warn!(server_id = %server_id, error = %e, "Failed to seed profiles with snapshot");
-    }
     Ok(())
 }
 
@@ -740,32 +712,20 @@ impl CapabilityManager {
             }
         };
 
-        // Store capabilities data
-        store_dual_write(
+        // Store capabilities and overwrite flags (no seeding here)
+        discovery_helpers::apply_snapshot(
             &self.db_pool,
             &self.redb_cache,
             server_id,
             server_name,
-            snapshot.tools.clone(),
-            snapshot.resources.clone(),
-            snapshot.prompts.clone(),
-            snapshot.resource_templates.clone(),
+            &snapshot,
+            false,
         )
         .await?;
 
-        // Update capabilities field in server_config
         let supports_tools = !snapshot.tools.is_empty();
         let supports_prompts = !snapshot.prompts.is_empty();
         let supports_resources = !snapshot.resources.is_empty() || !snapshot.resource_templates.is_empty();
-
-        overwrite_capabilities(
-            &self.db_pool,
-            server_id,
-            supports_tools,
-            supports_prompts,
-            supports_resources,
-        )
-        .await?;
 
         Ok(CapabilitySync {
             server_id: server_id.to_string(),
