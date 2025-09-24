@@ -57,6 +57,69 @@ impl ProxyServer {
         GLOBAL_PROXY_SERVER.get().cloned()
     }
 
+    fn is_streamable_http(&self, context: &RequestContext<rmcp::RoleServer>) -> bool {
+        context.extensions.get::<axum::http::request::Parts>().is_some()
+    }
+
+    fn allowed_origin(origin: &str) -> bool {
+        // TODO(PR4-followup): When deploying MCPMate remotely (cloud/VM/K8s),
+        // replace this hardcoded loopback allowlist with a configurable policy:
+        // - sources: env (e.g., MCPMATE_ALLOWED_ORIGINS), DB, or admin API
+        // - semantics: exact match, wildcard, or regex; default-deny
+        // - integration: shared CORS/Origin guard reused by API and /mcp
+        // For now we keep a minimal, safe-by-default loopback allowlist.
+        let o = origin.trim().to_ascii_lowercase();
+        o == "null"
+            || o.starts_with("http://localhost")
+            || o.starts_with("https://localhost")
+            || o.starts_with("http://127.0.0.1")
+            || o.starts_with("https://127.0.0.1")
+            || o.starts_with("http://[::1]")
+            || o.starts_with("https://[::1]")
+    }
+
+    fn enforce_origin_if_present(&self, context: &RequestContext<rmcp::RoleServer>) -> Result<(), rmcp::ErrorData> {
+        if let Some(parts) = context.extensions.get::<axum::http::request::Parts>() {
+            if let Some(val) = parts.headers.get(axum::http::header::ORIGIN) {
+                if let Ok(s) = val.to_str() {
+                    if !Self::allowed_origin(s) {
+                        tracing::warn!(origin = %s, "Rejected request due to disallowed Origin");
+                        return Err(rmcp::ErrorData::invalid_request(
+                            format!("Disallowed Origin: {}", s),
+                            None,
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn enforce_mcp_protocol_header(&self, context: &RequestContext<rmcp::RoleServer>) -> Result<(), rmcp::ErrorData> {
+        if !self.is_streamable_http(context) {
+            return Ok(()); // SSE/stdio path: no HTTP parts
+        }
+        let parts = match context.extensions.get::<axum::http::request::Parts>() {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+        let required = [
+            rmcp::model::ProtocolVersion::V_2025_06_18.to_string(),
+            rmcp::model::ProtocolVersion::V_2025_03_26.to_string(),
+        ];
+        match parts.headers.get("MCP-Protocol-Version").and_then(|h| h.to_str().ok()) {
+            Some(v) if required.iter().any(|r| r == v) => Ok(()),
+            Some(v) => Err(rmcp::ErrorData::invalid_request(
+                format!("Unsupported MCP-Protocol-Version: {}", v),
+                None,
+            )),
+            None => Err(rmcp::ErrorData::invalid_request(
+                "Missing MCP-Protocol-Version header".to_string(),
+                None,
+            )),
+        }
+    }
+
     pub fn new(config: Arc<crate::core::models::Config>) -> Self {
         let mut pool = UpstreamConnectionPool::new(config.clone(), None);
         pool.initialize();
@@ -340,6 +403,8 @@ impl ServerHandler for ProxyServer {
         request: InitializeRequestParam,
         context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ServerInfo, rmcp::ErrorData> {
+        // Origin check (if header present)
+        self.enforce_origin_if_present(&context)?;
         // Log client-declared protocol version and capabilities
         tracing::info!(
             client_protocol = %request.protocol_version,
@@ -383,6 +448,8 @@ impl ServerHandler for ProxyServer {
         request: SubscribeRequestParam,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<(), rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         let unique_uri = request.uri;
         let server_id_opt = if let Ok((server_name, _)) =
             crate::core::capability::naming::resolve_unique_name(
@@ -414,6 +481,8 @@ impl ServerHandler for ProxyServer {
         request: UnsubscribeRequestParam,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<(), rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         let unique_uri = request.uri;
         if let Some((_, server_id)) = self.resource_subscriptions.remove(&unique_uri) {
             if let Some(set) = self.server_resource_index.get(&server_id) {
@@ -447,6 +516,8 @@ impl ServerHandler for ProxyServer {
         _request: Option<rmcp::model::PaginatedRequestParam>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         super::tools::list_tools(self, _request, _context)
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
@@ -457,6 +528,8 @@ impl ServerHandler for ProxyServer {
         request: CallToolRequestParam,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         super::tools::call_tool(self, request, _context)
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
@@ -467,6 +540,8 @@ impl ServerHandler for ProxyServer {
         _request: Option<rmcp::model::PaginatedRequestParam>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourcesResult, rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         super::resources::list_resources(self, _request, _context)
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
@@ -477,6 +552,8 @@ impl ServerHandler for ProxyServer {
         _request: Option<rmcp::model::PaginatedRequestParam>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourceTemplatesResult, rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         super::resources::list_resource_templates(self, _request, _context)
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
@@ -487,6 +564,8 @@ impl ServerHandler for ProxyServer {
         request: ReadResourceRequestParam,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ReadResourceResult, rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         super::resources::read_resource(self, request, _context)
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
@@ -497,6 +576,8 @@ impl ServerHandler for ProxyServer {
         _request: Option<rmcp::model::PaginatedRequestParam>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListPromptsResult, rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         super::prompts::list_prompts(self, _request, _context)
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
@@ -507,6 +588,8 @@ impl ServerHandler for ProxyServer {
         request: GetPromptRequestParam,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<GetPromptResult, rmcp::ErrorData> {
+        self.enforce_mcp_protocol_header(&_context)?;
+        self.enforce_origin_if_present(&_context)?;
         super::prompts::get_prompt(self, request, _context)
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
