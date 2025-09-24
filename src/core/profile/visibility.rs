@@ -14,9 +14,8 @@ use crate::config::database::Database;
 use crate::core::profile::ProfileService;
 
 pub struct ProfileVisibilityService {
-    db: Option<Arc<Database>>, // required for queries when merge lacks categories
-    #[allow(dead_code)]
-    profile_service: Option<Arc<ProfileService>>, // reserved for future use (merged resources/prompts)
+    db: Option<Arc<Database>>,                    // fallback when merge cache unavailable
+    profile_service: Option<Arc<ProfileService>>, // preferred source (merged caches)
 }
 
 impl ProfileVisibilityService {
@@ -29,6 +28,12 @@ impl ProfileVisibilityService {
 
     /// Return Some(allowed) if any profile rows exist for tools; otherwise None (no filtering).
     async fn allowed_tools_set(&self) -> Result<Option<HashSet<String>>> {
+        // Prefer merged cache
+        if let Some(ps) = &self.profile_service {
+            if let Some(set) = ps.allowed_tool_unique_set().await {
+                return Ok(Some(set));
+            }
+        }
         let Some(db) = &self.db else { return Ok(None) };
 
         // Determine if any profile_tool rows exist under active profiles
@@ -61,6 +66,12 @@ impl ProfileVisibilityService {
 
     /// Return Some(allowed) if any profile_resource rows exist; otherwise None (no filtering).
     async fn allowed_resources_set(&self) -> Result<Option<HashSet<String>>> {
+        // Prefer merged cache
+        if let Some(ps) = &self.profile_service {
+            if let Some(set) = ps.allowed_resource_unique_set().await {
+                return Ok(Some(set));
+            }
+        }
         let Some(db) = &self.db else { return Ok(None) };
         let any_count: i64 = sqlx::query_scalar(
             r#"
@@ -93,6 +104,12 @@ impl ProfileVisibilityService {
 
     /// Return Some(allowed) if any profile_prompt rows exist; otherwise None (no filtering).
     async fn allowed_prompts_set(&self) -> Result<Option<HashSet<String>>> {
+        // Prefer merged cache
+        if let Some(ps) = &self.profile_service {
+            if let Some(set) = ps.allowed_prompt_unique_set().await {
+                return Ok(Some(set));
+            }
+        }
         let Some(db) = &self.db else { return Ok(None) };
         let any_count: i64 = sqlx::query_scalar(
             r#"

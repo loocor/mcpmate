@@ -48,12 +48,105 @@ impl ProfileMerger {
         // Merge tools from all active profile
         let merged_tools = self.merge_all_tools(&active_profile).await?;
 
+        // Build allowlists for tools/resources/prompts
+        let (allowed_tool_unique, allowed_resource_unique, allowed_prompt_unique) = {
+            // tools
+            let tools_any: i64 = sqlx::query_scalar(
+                r#"
+                SELECT COUNT(1)
+                FROM profile_tool cst
+                JOIN profile cs ON cst.profile_id = cs.id
+                WHERE cs.is_active = 1
+                "#,
+            )
+            .fetch_one(&self.db.pool)
+            .await
+            .unwrap_or(0);
+            let tools_allowed = if tools_any == 0 {
+                None
+            } else {
+                let sql = crate::config::profile::tool::build_enabled_tools_query(None);
+                let rows: Vec<(String, String, String, String)> =
+                    sqlx::query_as(&sql).fetch_all(&self.db.pool).await.unwrap_or_default();
+                let mut v = Vec::new();
+                for (unique_name, _server_name, _tool_name, _server_id) in rows {
+                    v.push(unique_name);
+                }
+                Some(v)
+            };
+
+            // resources
+            let res_any: i64 = sqlx::query_scalar(
+                r#"
+                SELECT COUNT(1)
+                FROM profile_resource csr
+                JOIN profile cs ON csr.profile_id = cs.id
+                WHERE cs.is_active = 1
+                "#,
+            )
+            .fetch_one(&self.db.pool)
+            .await
+            .unwrap_or(0);
+            let res_allowed = if res_any == 0 {
+                None
+            } else {
+                let sql = crate::config::profile::resource::build_enabled_resources_query(None);
+                let rows: Vec<(String, String)> =
+                    sqlx::query_as(&sql).fetch_all(&self.db.pool).await.unwrap_or_default();
+                let mut v = Vec::new();
+                for (server_name, upstream_uri) in rows {
+                    let unique = crate::core::capability::naming::generate_unique_name(
+                        crate::core::capability::naming::NamingKind::Resource,
+                        &server_name,
+                        &upstream_uri,
+                    );
+                    v.push(unique);
+                }
+                Some(v)
+            };
+
+            // prompts
+            let pro_any: i64 = sqlx::query_scalar(
+                r#"
+                SELECT COUNT(1)
+                FROM profile_prompt csp
+                JOIN profile cs ON csp.profile_id = cs.id
+                WHERE cs.is_active = 1
+                "#,
+            )
+            .fetch_one(&self.db.pool)
+            .await
+            .unwrap_or(0);
+            let pro_allowed = if pro_any == 0 {
+                None
+            } else {
+                let sql = crate::config::profile::prompt::build_enabled_prompts_query(None);
+                let rows: Vec<(String, String)> =
+                    sqlx::query_as(&sql).fetch_all(&self.db.pool).await.unwrap_or_default();
+                let mut v = Vec::new();
+                for (server_name, prompt_name) in rows {
+                    let unique = crate::core::capability::naming::generate_unique_name(
+                        crate::core::capability::naming::NamingKind::Prompt,
+                        &server_name,
+                        &prompt_name,
+                    );
+                    v.push(unique);
+                }
+                Some(v)
+            };
+
+            (tools_allowed, res_allowed, pro_allowed)
+        };
+
         // Build merge result
         let profile_ids: Vec<String> = active_profile.iter().filter_map(|s| s.id.clone()).collect();
 
         Ok(ProfileMergeResult {
             servers: merged_servers,
             tools: merged_tools,
+            allowed_tool_unique,
+            allowed_resource_unique,
+            allowed_prompt_unique,
             merged_profile: profile_ids,
             merged_at: chrono::Utc::now(),
         })

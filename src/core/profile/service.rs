@@ -138,6 +138,28 @@ impl ProfileService {
         Ok(merge_result)
     }
 
+    // -------------------- Visibility helpers --------------------
+    pub async fn allowed_tool_unique_set(&self) -> Option<std::collections::HashSet<String>> {
+        if let Ok(m) = self.get_or_create_merge_result().await {
+            return m.allowed_tool_set();
+        }
+        None
+    }
+
+    pub async fn allowed_resource_unique_set(&self) -> Option<std::collections::HashSet<String>> {
+        if let Ok(m) = self.get_or_create_merge_result().await {
+            return m.allowed_resource_set();
+        }
+        None
+    }
+
+    pub async fn allowed_prompt_unique_set(&self) -> Option<std::collections::HashSet<String>> {
+        if let Ok(m) = self.get_or_create_merge_result().await {
+            return m.allowed_prompt_set();
+        }
+        None
+    }
+
     /// Resolve a tool name to server and original tool name
     ///
     /// This function resolves a unique tool name to the server name and original tool name
