@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod client;
 pub mod common;
+pub mod inspector;
 pub mod notifs;
 pub mod profile;
 pub mod runtime;

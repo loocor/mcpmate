@@ -5,6 +5,7 @@ pub mod ai;
 pub mod board;
 pub mod cache;
 pub mod client;
+pub mod inspector;
 pub mod notifs;
 pub mod openapi;
 pub mod profile;
@@ -162,11 +163,10 @@ async fn create_router_internal(
         .merge(notifs::routes(state.clone()))
         .merge(profile::routes(state.clone()))
         .merge(runtime::routes(state.clone()))
+        .merge(inspector::routes(state.clone()))
         .merge(client::routes(state.clone()))
         .finish_api_with(&mut api, openapi::api_docs)
-        .layer(axum::middleware::from_fn(
-            crate::common::env::origin_guard_middleware,
-        ));
+        .layer(axum::middleware::from_fn(crate::common::env::origin_guard_middleware));
 
     // Create main router with API routes, docs, and board static files
     // Note: API routes must come first to avoid being intercepted by board fallback
