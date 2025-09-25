@@ -312,13 +312,22 @@ static GLOBAL_ALLOWED_ORIGINS: OnceCell<AllowedOrigins> = OnceCell::new();
 impl AllowedOrigins {
     fn load_from_env() -> Self {
         let mut entries: Vec<String> = vec![
+            // no-origin requests (curl, server-to-server)
             "null".into(),
+            // loopback without port
             "http://localhost".into(),
             "https://localhost".into(),
             "http://127.0.0.1".into(),
             "https://127.0.0.1".into(),
             "http://[::1]".into(),
             "https://[::1]".into(),
+            // loopback with any port (for Swagger UI / apidocs on 8080, etc.)
+            "http://localhost:*".into(),
+            "https://localhost:*".into(),
+            "http://127.0.0.1:*".into(),
+            "https://127.0.0.1:*".into(),
+            "http://[::1]:*".into(),
+            "https://[::1]:*".into(),
         ];
         if let Ok(raw) = std::env::var(constants::MCPMATE_ALLOWED_ORIGINS) {
             for part in raw.split(',') {
