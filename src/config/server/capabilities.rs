@@ -24,41 +24,36 @@ mod discovery_helpers {
     pub async fn collect_all_prompts(service: &crate::core::transport::ClientService) -> Vec<CachedPromptInfo> {
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
-        loop {
-            match service
-                .list_prompts(
-                    cursor
-                        .clone()
-                        .map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }),
-                )
-                .await
-            {
-                Ok(result) => {
-                    for p in result.prompts {
-                        let converted_args = p
-                            .arguments
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|arg| crate::core::cache::PromptArgument {
-                                name: arg.name,
-                                description: arg.description,
-                                required: arg.required.unwrap_or(false),
-                            })
-                            .collect();
-                        out.push(CachedPromptInfo {
-                            name: p.name,
-                            description: p.description,
-                            arguments: converted_args,
-                            enabled: true,
-                            cached_at: chrono::Utc::now(),
-                        });
-                    }
-                    cursor = result.next_cursor;
-                    if cursor.is_none() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(result) = service
+            .list_prompts(
+                cursor
+                    .clone()
+                    .map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }),
+            )
+            .await
+        {
+            for p in result.prompts {
+                let converted_args = p
+                    .arguments
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|arg| crate::core::cache::PromptArgument {
+                        name: arg.name,
+                        description: arg.description,
+                        required: arg.required.unwrap_or(false),
+                    })
+                    .collect();
+                out.push(CachedPromptInfo {
+                    name: p.name,
+                    description: p.description,
+                    arguments: converted_args,
+                    enabled: true,
+                    cached_at: chrono::Utc::now(),
+                });
+            }
+            cursor = result.next_cursor;
+            if cursor.is_none() {
+                break;
             }
         }
         out
@@ -67,32 +62,27 @@ mod discovery_helpers {
     pub async fn collect_all_resources(service: &crate::core::transport::ClientService) -> Vec<CachedResourceInfo> {
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
-        loop {
-            match service
-                .list_resources(
-                    cursor
-                        .clone()
-                        .map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }),
-                )
-                .await
-            {
-                Ok(result) => {
-                    for r in result.resources {
-                        out.push(CachedResourceInfo {
-                            uri: r.uri.clone(),
-                            name: Some(r.name.clone()),
-                            description: r.description.clone(),
-                            mime_type: r.mime_type.clone(),
-                            enabled: true,
-                            cached_at: chrono::Utc::now(),
-                        });
-                    }
-                    cursor = result.next_cursor;
-                    if cursor.is_none() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(result) = service
+            .list_resources(
+                cursor
+                    .clone()
+                    .map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }),
+            )
+            .await
+        {
+            for r in result.resources {
+                out.push(CachedResourceInfo {
+                    uri: r.uri.clone(),
+                    name: Some(r.name.clone()),
+                    description: r.description.clone(),
+                    mime_type: r.mime_type.clone(),
+                    enabled: true,
+                    cached_at: chrono::Utc::now(),
+                });
+            }
+            cursor = result.next_cursor;
+            if cursor.is_none() {
+                break;
             }
         }
         out
