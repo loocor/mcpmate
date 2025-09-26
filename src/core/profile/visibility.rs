@@ -90,8 +90,7 @@ impl ProfileVisibilityService {
 
         let sql = crate::config::profile::resource::build_enabled_resources_query(None);
         // Selected columns: server_id, server_name(original), resource_uri
-        let rows: Vec<(String, String, String)> =
-            sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
+        let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
         let mut set = HashSet::new();
         for (_server_id, server_name_original, upstream_uri) in rows {
             let unique = crate::core::capability::naming::generate_unique_name(
@@ -130,8 +129,7 @@ impl ProfileVisibilityService {
 
         let sql = crate::config::profile::prompt::build_enabled_prompts_query(None);
         // Selected columns: server_id, server_name(original), prompt_name
-        let rows: Vec<(String, String, String)> =
-            sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
+        let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
         let mut set = HashSet::new();
         for (_server_id, server_name_original, upstream_name) in rows {
             let unique = crate::core::capability::naming::generate_unique_name(

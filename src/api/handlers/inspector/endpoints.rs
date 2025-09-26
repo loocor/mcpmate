@@ -75,7 +75,11 @@ pub async fn tool_call(
                 .unwrap_or("completed")
                 .to_string();
             let result: Option<Value> = data_v.get("result").cloned();
-            let data = InspectorToolCallData { call_id: call_id.clone(), message, result };
+            let data = InspectorToolCallData {
+                call_id: call_id.clone(),
+                message,
+                result,
+            };
             return Ok(Json(InspectorToolCallResp::success(data)));
         } else {
             let msg = inline

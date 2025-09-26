@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use axum::routing::{post, Router};
-use tower::ServiceExt; // for `oneshot`
 use axum::body::to_bytes;
+use axum::routing::{Router, post};
 use hyper::Request;
 use tokio::sync::Mutex;
+use tower::ServiceExt; // for `oneshot`
 // bring crate types into scope
 use mcpmate::api::handlers::inspector;
 use mcpmate::api::routes::AppState;
@@ -35,19 +35,19 @@ async fn inspector_tool_call_inline_error_or_accept() {
     });
 
     let app = Router::new()
-        .route(
-            "/api/mcp/inspector/tool/call",
-            post(inspector::tool_call),
-        )
+        .route("/api/mcp/inspector/tool/call", post(inspector::tool_call))
         .with_state(state);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mcp/inspector/tool/call")
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(serde_json::to_vec(&serde_json::json!({
-            "tool":"noop",
-            "mode":"proxy"
-        })).unwrap()))
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "tool":"noop",
+                "mode":"proxy"
+            }))
+            .unwrap(),
+        ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), 200);

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use crate::api::handlers::inspector;
 use crate::api::models::inspector::{
-    InspectorListQuery, InspectorPromptGetReq, InspectorResourceReadQuery, InspectorToolCallReq,
-    InspectorToolsListResp, InspectorPromptsListResp, InspectorResourcesListResp,
-    InspectorPromptGetResp, InspectorResourceReadResp, InspectorToolCallResp,
+    InspectorListQuery, InspectorPromptGetReq, InspectorPromptGetResp, InspectorPromptsListResp,
+    InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListResp, InspectorToolCallReq,
+    InspectorToolCallResp, InspectorToolsListResp,
 };
 use crate::{aide_wrapper, aide_wrapper_payload, aide_wrapper_query};
 use aide::axum::{
@@ -13,10 +13,30 @@ use aide::axum::{
 };
 
 // Aide wrappers to satisfy OperationHandler trait and generate docs
-aide_wrapper_query!(inspector::tools_list, InspectorListQuery, InspectorToolsListResp, "Inspector: list tools");
-aide_wrapper_query!(inspector::prompts_list, InspectorListQuery, InspectorPromptsListResp, "Inspector: list prompts");
-aide_wrapper_query!(inspector::resources_list, InspectorListQuery, InspectorResourcesListResp, "Inspector: list resources");
-aide_wrapper_payload!(inspector::tool_call, InspectorToolCallReq, InspectorToolCallResp, "Inspector: call tool");
+aide_wrapper_query!(
+    inspector::tools_list,
+    InspectorListQuery,
+    InspectorToolsListResp,
+    "Inspector: list tools"
+);
+aide_wrapper_query!(
+    inspector::prompts_list,
+    InspectorListQuery,
+    InspectorPromptsListResp,
+    "Inspector: list prompts"
+);
+aide_wrapper_query!(
+    inspector::resources_list,
+    InspectorListQuery,
+    InspectorResourcesListResp,
+    "Inspector: list resources"
+);
+aide_wrapper_payload!(
+    inspector::tool_call,
+    InspectorToolCallReq,
+    InspectorToolCallResp,
+    "Inspector: call tool"
+);
 // manual wrapper for SSE (aide_wrapper macros target JSON handlers)
 use aide::transform::TransformOperation;
 pub async fn tool_call_stream_aide(
@@ -31,9 +51,24 @@ pub async fn tool_call_stream_aide(
 pub fn tool_call_stream_docs(op: TransformOperation) -> TransformOperation {
     op.description("Inspector: tool call stream").tag("inspector")
 }
-aide_wrapper_payload!(inspector::tool_call_cancel, serde_json::Value, serde_json::Value, "Inspector: cancel tool call");
-aide_wrapper_query!(inspector::resource_read, InspectorResourceReadQuery, InspectorResourceReadResp, "Inspector: read resource");
-aide_wrapper_payload!(inspector::prompt_get, InspectorPromptGetReq, InspectorPromptGetResp, "Inspector: get prompt");
+aide_wrapper_payload!(
+    inspector::tool_call_cancel,
+    serde_json::Value,
+    serde_json::Value,
+    "Inspector: cancel tool call"
+);
+aide_wrapper_query!(
+    inspector::resource_read,
+    InspectorResourceReadQuery,
+    InspectorResourceReadResp,
+    "Inspector: read resource"
+);
+aide_wrapper_payload!(
+    inspector::prompt_get,
+    InspectorPromptGetReq,
+    InspectorPromptGetResp,
+    "Inspector: get prompt"
+);
 aide_wrapper_query!(inspector::calls_recent, std::collections::HashMap<String, String>, serde_json::Value, "Inspector: recent calls");
 aide_wrapper_query!(inspector::calls_details, std::collections::HashMap<String, String>, serde_json::Value, "Inspector: call details");
 aide_wrapper!(inspector::calls_clear, serde_json::Value, "Inspector: clear calls");

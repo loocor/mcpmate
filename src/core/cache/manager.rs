@@ -3,6 +3,8 @@
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
+    thread,
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -23,6 +25,9 @@ use super::{
 
 // Global singleton instance
 static GLOBAL_CACHE_INSTANCE: OnceLock<Arc<RedbCacheManager>> = OnceLock::new();
+
+const MAX_DB_OPEN_RETRIES: usize = 10;
+const DB_RETRY_DELAY_MS: u64 = 200;
 
 /// High-performance cache manager using Redb
 #[derive(Debug)]
@@ -104,18 +109,20 @@ impl CacheMetrics {
 impl RedbCacheManager {
     /// Get or create global singleton instance
     pub fn global() -> Result<Arc<RedbCacheManager>> {
-        Ok(GLOBAL_CACHE_INSTANCE
-            .get_or_init(|| {
-                let cache_path = crate::common::paths::global_paths().cache_dir().join("capability.redb");
-                match Self::new(cache_path, CacheConfig::default()) {
-                    Ok(manager) => Arc::new(manager),
-                    Err(e) => {
-                        tracing::error!("Failed to initialize global cache manager: {}", e);
-                        panic!("Failed to initialize global cache manager: {}", e);
-                    }
-                }
-            })
-            .clone())
+        if let Some(instance) = GLOBAL_CACHE_INSTANCE.get() {
+            return Ok(instance.clone());
+        }
+
+        let cache_path = crate::common::paths::global_paths().cache_dir().join("capability.redb");
+        let manager = Arc::new(Self::new(cache_path, CacheConfig::default())?);
+
+        if GLOBAL_CACHE_INSTANCE.set(manager.clone()).is_err() {
+            if let Some(instance) = GLOBAL_CACHE_INSTANCE.get() {
+                return Ok(instance.clone());
+            }
+        }
+
+        Ok(manager)
     }
 
     /// Generate cache key from server_id and instance_type (consistent with operations.rs)
@@ -142,12 +149,7 @@ impl RedbCacheManager {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Create or open database (Redb::create fails when file exists, so fall back to open)
-        let db = if db_path.exists() {
-            Arc::new(Database::open(&db_path)?)
-        } else {
-            Arc::new(Database::create(&db_path)?)
-        };
+        let (db, actual_path) = Self::open_database_with_retry(&db_path)?;
 
         // Initialize database schema
         Self::initialize_schema(&db)?;
@@ -159,7 +161,7 @@ impl RedbCacheManager {
 
         let manager = Self {
             db,
-            db_path: db_path.clone(),
+            db_path: actual_path,
             memory_cache,
             config,
             metrics: Arc::new(RwLock::new(CacheMetrics::default())),
@@ -168,6 +170,62 @@ impl RedbCacheManager {
 
         info!("Cache manager initialized at: {:?}", db_path);
         Ok(manager)
+    }
+
+    fn open_database_with_retry(db_path: &Path) -> Result<(Arc<Database>, PathBuf)> {
+        let target_path = db_path.to_path_buf();
+        let mut create_mode = !target_path.exists();
+        let mut last_error: Option<anyhow::Error> = None;
+
+        for attempt in 1..=MAX_DB_OPEN_RETRIES {
+            let result = if create_mode {
+                Database::create(&target_path)
+            } else {
+                Database::open(&target_path)
+            };
+
+            match result {
+                Ok(db) => return Ok((Arc::new(db), target_path.clone())),
+                Err(err) => {
+                    let message = err.to_string();
+                    let is_lock_error =
+                        message.contains("Database already open") || message.contains("Cannot acquire lock");
+
+                    last_error = Some(err.into());
+                    create_mode = false;
+
+                    if !is_lock_error || attempt == MAX_DB_OPEN_RETRIES {
+                        break;
+                    }
+
+                    tracing::warn!(
+                        "Cache database locked, retrying ({}/{})...",
+                        attempt,
+                        MAX_DB_OPEN_RETRIES
+                    );
+                    thread::sleep(Duration::from_millis(DB_RETRY_DELAY_MS));
+                }
+            }
+        }
+
+        if let Some(err) = &last_error {
+            tracing::error!(error = %err, path = %db_path.display(), "Failed to open cache database after retries");
+        }
+
+        let fallback_path = std::env::temp_dir().join(format!(
+            "mcpmate-cache-{}-{}.redb",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+
+        tracing::warn!("Falling back to temporary cache database at {:?}", fallback_path);
+
+        if let Some(parent) = fallback_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let db = Database::create(&fallback_path)?;
+        Ok((Arc::new(db), fallback_path))
     }
 
     /// Initialize database schema

@@ -70,7 +70,11 @@ pub struct InspectorToolsListData {
     pub tools: Vec<serde_json::Value>,
     pub total: usize,
 }
-api_resp!(InspectorToolsListResp, InspectorToolsListData, "Inspector tools list response");
+api_resp!(
+    InspectorToolsListResp,
+    InspectorToolsListData,
+    "Inspector tools list response"
+);
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorPromptsListData {
@@ -78,7 +82,11 @@ pub struct InspectorPromptsListData {
     pub prompts: Vec<serde_json::Value>,
     pub total: usize,
 }
-api_resp!(InspectorPromptsListResp, InspectorPromptsListData, "Inspector prompts list response");
+api_resp!(
+    InspectorPromptsListResp,
+    InspectorPromptsListData,
+    "Inspector prompts list response"
+);
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorResourcesListData {
@@ -86,21 +94,33 @@ pub struct InspectorResourcesListData {
     pub resources: Vec<serde_json::Value>,
     pub total: usize,
 }
-api_resp!(InspectorResourcesListResp, InspectorResourcesListData, "Inspector resources list response");
+api_resp!(
+    InspectorResourcesListResp,
+    InspectorResourcesListData,
+    "Inspector resources list response"
+);
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorPromptGetData {
     pub result: serde_json::Value,
     pub server_id: String,
 }
-api_resp!(InspectorPromptGetResp, InspectorPromptGetData, "Inspector prompt get response");
+api_resp!(
+    InspectorPromptGetResp,
+    InspectorPromptGetData,
+    "Inspector prompt get response"
+);
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorResourceReadData {
     pub result: serde_json::Value,
     pub server_id: Option<String>,
 }
-api_resp!(InspectorResourceReadResp, InspectorResourceReadData, "Inspector resource read response");
+api_resp!(
+    InspectorResourceReadResp,
+    InspectorResourceReadData,
+    "Inspector resource read response"
+);
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorToolCallData {
@@ -109,4 +129,8 @@ pub struct InspectorToolCallData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
 }
-api_resp!(InspectorToolCallResp, InspectorToolCallData, "Inspector tool call response (accepted or completed)");
+api_resp!(
+    InspectorToolCallResp,
+    InspectorToolCallData,
+    "Inspector tool call response (accepted or completed)"
+);

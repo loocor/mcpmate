@@ -408,14 +408,12 @@ pub async fn update_tool_enabled_status(
         return Err(anyhow::anyhow!("No rows updated for tool id {}", profile_tool_id));
     }
 
-    crate::core::events::EventBus::global().publish(
-        crate::core::events::Event::ToolEnabledInProfileChanged {
-            tool_id: profile_tool_id.to_string(),
-            tool_name,
-            profile_id,
-            enabled,
-        },
-    );
+    crate::core::events::EventBus::global().publish(crate::core::events::Event::ToolEnabledInProfileChanged {
+        tool_id: profile_tool_id.to_string(),
+        tool_name,
+        profile_id,
+        enabled,
+    });
 
     Ok(())
 }
