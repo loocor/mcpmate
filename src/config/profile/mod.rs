@@ -25,7 +25,8 @@ pub use prompt::{
 
 // Server association operations
 pub use server::{
-    add_server_to_profile, get_profile_servers, remove_server_from_profile, sync_server_capabilities_to_profile,
+    ServerCapabilityAction, add_server_to_profile, get_profile_servers, remove_server_from_profile,
+    sync_server_capabilities,
 };
 
 // Resource association operations

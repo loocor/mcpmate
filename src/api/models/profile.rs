@@ -43,6 +43,8 @@ pub enum ProfileComponentAction {
     Enable,
     #[schemars(description = "Disable the component")]
     Disable,
+    #[schemars(description = "Remove the component")]
+    Remove,
 }
 
 // Query Request Models

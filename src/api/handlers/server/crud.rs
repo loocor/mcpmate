@@ -128,10 +128,11 @@ async fn add_server_to_profile_with_sync(
                 }
             };
 
-            if let Err(e) = crate::config::profile::sync_server_capabilities_to_profile(
+            if let Err(e) = crate::config::profile::sync_server_capabilities(
                 &pool_clone,
                 &profile_id_clone,
                 &server_id_clone,
+                crate::config::profile::ServerCapabilityAction::Add,
             )
             .await
             {

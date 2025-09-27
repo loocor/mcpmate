@@ -6,56 +6,6 @@ use crate::api::models::profile::{
     ProfileComponentAction, ProfileComponentListReq, ProfileComponentManageReq, ProfileServerManageData,
     ProfileServerManageResp, ProfileServerResp, ProfileServersListData, ProfileServersListResp,
 };
-use sqlx::{Pool, Sqlite};
-
-// Shared semaphore to limit concurrent capability sync operations (max 2 concurrent syncs)
-static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
-
-/// Get the capability sync semaphore, initializing it if needed
-fn get_capability_sync_semaphore() -> &'static tokio::sync::Semaphore {
-    CAPABILITY_SYNC_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(2))
-}
-
-/// Spawn async capability sync task with semaphore protection
-fn spawn_capability_sync(
-    pool: Pool<Sqlite>,
-    profile_id: String,
-    server_id: String,
-) {
-    let semaphore = get_capability_sync_semaphore();
-
-    tokio::spawn(async move {
-        // Acquire semaphore permit
-        let _permit = match semaphore.try_acquire() {
-            Ok(permit) => permit,
-            Err(_) => {
-                tracing::warn!(
-                    "Too many concurrent capability sync operations. Skipping sync for server {} to profile {}",
-                    server_id,
-                    profile_id
-                );
-                return;
-            }
-        };
-
-        if let Err(e) =
-            crate::config::profile::sync_server_capabilities_to_profile(&pool, &profile_id, &server_id).await
-        {
-            tracing::warn!(
-                "Failed to sync capabilities for server {} to profile {}: {}",
-                server_id,
-                profile_id,
-                e
-            );
-        } else {
-            tracing::debug!(
-                "Successfully synced capabilities for server {} to profile {}",
-                server_id,
-                profile_id
-            );
-        }
-    });
-}
 
 /// Invalidate profile cache if merge service is available
 async fn invalidate_profile_cache(state: &Arc<AppState>) {
@@ -155,8 +105,25 @@ pub async fn server_manage(
                 .await
                 .map_err(|e| ApiError::InternalError(format!("Failed to enable server: {e}")))?;
 
-            // Sync server capabilities asynchronously
-            spawn_capability_sync(db.pool.clone(), request.profile_id.clone(), component_id.clone());
+            // Sync server capabilities: add if not exists, then enable
+            crate::config::profile::sync_server_capabilities(
+                &db.pool,
+                &request.profile_id,
+                component_id,
+                crate::config::profile::ServerCapabilityAction::Add,
+            )
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to add server capabilities: {e}")))?;
+
+            // Enable all capabilities for this server
+            crate::config::profile::sync_server_capabilities(
+                &db.pool,
+                &request.profile_id,
+                component_id,
+                crate::config::profile::ServerCapabilityAction::Enable,
+            )
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to add server capabilities: {e}")))?;
 
             ("enabled", "active")
         }
@@ -166,7 +133,35 @@ pub async fn server_manage(
                 .await
                 .map_err(|e| ApiError::InternalError(format!("Failed to disable server: {e}")))?;
 
+            // Sync capabilities: disable all tools, resources, and prompts for this server
+            crate::config::profile::sync_server_capabilities(
+                &db.pool,
+                &request.profile_id,
+                component_id,
+                crate::config::profile::ServerCapabilityAction::Disable,
+            )
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to disable server capabilities: {e}")))?;
+
             ("disabled", "inactive")
+        }
+        ProfileComponentAction::Remove => {
+            // Remove server from profile completely
+            crate::config::profile::remove_server_from_profile(&db.pool, &request.profile_id, component_id)
+                .await
+                .map_err(|e| ApiError::InternalError(format!("Failed to remove server: {e}")))?;
+
+            // Remove all capabilities: delete all tools, resources, and prompts for this server
+            crate::config::profile::sync_server_capabilities(
+                &db.pool,
+                &request.profile_id,
+                component_id,
+                crate::config::profile::ServerCapabilityAction::Remove,
+            )
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to remove server capabilities: {e}")))?;
+
+            ("removed", "removed")
         }
     };
 

@@ -206,12 +206,56 @@ pub async fn remove_server_from_profile(
     Ok(result.rows_affected() > 0)
 }
 
-/// TODO: Sync server capabilities to a profile
-///
-/// This function retrieves all capabilities (tools, prompts, resources) from a server
-/// and creates corresponding records in the profile with enabled=false by default.
-/// This ensures that capabilities are available for viewing even when the server is not enabled.
-pub async fn sync_server_capabilities_to_profile(
+/// Server capability synchronization actions
+#[derive(Debug, Clone)]
+pub enum ServerCapabilityAction {
+    /// Add server: create all capabilities (disabled by default)
+    Add,
+    /// Enable server: enable all existing capabilities
+    Enable,
+    /// Disable server: disable all capabilities
+    Disable,
+    /// Remove server: delete all capabilities
+    Remove,
+}
+
+/// Unified server capabilities synchronization function
+/// Handles all capability management operations (add, enable, disable, remove) in one place
+pub async fn sync_server_capabilities(
+    pool: &Pool<Sqlite>,
+    profile_id: &str,
+    server_id: &str,
+    action: ServerCapabilityAction,
+) -> Result<()> {
+    tracing::debug!(
+        "Syncing server {} capabilities in profile {} with action: {:?}",
+        server_id,
+        profile_id,
+        action
+    );
+
+    match action {
+        ServerCapabilityAction::Add => add_server_capabilities_to_profile(pool, profile_id, server_id).await,
+        ServerCapabilityAction::Enable => {
+            batch_server_capabilities_operation(pool, profile_id, server_id, CapabilityOperation::UpdateEnabled(true))
+                .await?;
+            Ok(())
+        }
+        ServerCapabilityAction::Disable => {
+            batch_server_capabilities_operation(pool, profile_id, server_id, CapabilityOperation::UpdateEnabled(false))
+                .await?;
+            Ok(())
+        }
+        ServerCapabilityAction::Remove => {
+            batch_server_capabilities_operation(pool, profile_id, server_id, CapabilityOperation::Delete).await?;
+            Ok(())
+        }
+    }
+}
+
+/// Internal function to add server capabilities to a profile
+/// Retrieves all capabilities from server and creates profile associations (disabled by default)
+async fn add_server_capabilities_to_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
@@ -222,7 +266,7 @@ pub async fn sync_server_capabilities_to_profile(
         profile_id
     );
 
-    // Check if capabilities already exist to avoid duplicate work
+    // Check individual capability types to ensure all are properly synced
     let existing_tools_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM profile_tool cst
          JOIN server_tools st ON cst.server_tool_id = st.id
@@ -234,15 +278,309 @@ pub async fn sync_server_capabilities_to_profile(
     .await
     .unwrap_or(0);
 
-    if existing_tools_count > 0 {
+    let existing_resources_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM profile_resource
+         WHERE profile_id = ? AND server_id = ?",
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let existing_prompts_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM profile_prompt
+         WHERE profile_id = ? AND server_id = ?",
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    tracing::debug!(
+        "Capability sync status for server {} in profile {}: {} tools, {} resources, {} prompts existing",
+        server_id,
+        profile_id,
+        existing_tools_count,
+        existing_resources_count,
+        existing_prompts_count
+    );
+
+    let mut tools_added = 0_u64;
+    let mut resources_added = 0_u64;
+    let mut prompts_added = 0_u64;
+
+    // 1. Sync Tools from server_tools (only if not already synced)
+    if existing_tools_count == 0 {
+        let server_tools = sqlx::query_as::<_, (String,)>("SELECT tool_name FROM server_tools WHERE server_id = ?")
+            .bind(server_id)
+            .fetch_all(pool)
+            .await
+            .context("Failed to fetch server tools")?;
+
+        for (tool_name,) in server_tools {
+            match crate::config::profile::add_tool_to_profile(
+                pool, profile_id, server_id, &tool_name, false, // disabled by default
+            )
+            .await
+            {
+                Ok(_) => tools_added += 1,
+                Err(e) => tracing::warn!("Failed to add tool {} to profile {}: {}", tool_name, profile_id, e),
+            }
+        }
+    } else {
         tracing::debug!(
-            "Server {} already has {} tools in profile {}. Skipping capability sync.",
+            "Tools already synced for server {} in profile {}, skipping",
             server_id,
-            existing_tools_count,
             profile_id
         );
-        return Ok(());
     }
 
+    // 2. Sync Resources from server_resources (if table exists and not already synced)
+    if existing_resources_count == 0 {
+        let server_resources_result =
+            sqlx::query_as::<_, (String,)>("SELECT resource_uri FROM server_resources WHERE server_id = ? LIMIT 100")
+                .bind(server_id)
+                .fetch_all(pool)
+                .await;
+
+        if let Ok(server_resources) = server_resources_result {
+            for (resource_uri,) in server_resources {
+                match crate::config::profile::add_resource_to_profile(
+                    pool,
+                    profile_id,
+                    server_id,
+                    &resource_uri,
+                    false, // disabled by default
+                )
+                .await
+                {
+                    Ok(_) => resources_added += 1,
+                    Err(e) => tracing::warn!(
+                        "Failed to add resource {} to profile {}: {}",
+                        resource_uri,
+                        profile_id,
+                        e
+                    ),
+                }
+            }
+        } else {
+            // No server_resources table or no resources found - this is normal
+            tracing::debug!(
+                "No server resources table found or no resources for server {}",
+                server_id
+            );
+        }
+    } else {
+        tracing::debug!(
+            "Resources already synced for server {} in profile {}, skipping",
+            server_id,
+            profile_id
+        );
+    }
+
+    // 3. Sync Prompts from server_prompts (if table exists and not already synced)
+    if existing_prompts_count == 0 {
+        let server_prompts_result =
+            sqlx::query_as::<_, (String,)>("SELECT prompt_name FROM server_prompts WHERE server_id = ? LIMIT 100")
+                .bind(server_id)
+                .fetch_all(pool)
+                .await;
+
+        if let Ok(server_prompts) = server_prompts_result {
+            for (prompt_name,) in server_prompts {
+                match crate::config::profile::add_prompt_to_profile(
+                    pool,
+                    profile_id,
+                    server_id,
+                    &prompt_name,
+                    false, // disabled by default
+                )
+                .await
+                {
+                    Ok(_) => prompts_added += 1,
+                    Err(e) => tracing::warn!("Failed to add prompt {} to profile {}: {}", prompt_name, profile_id, e),
+                }
+            }
+        } else {
+            // No server_prompts table or no prompts found - this is normal
+            tracing::debug!("No server prompts table found or no prompts for server {}", server_id);
+        }
+    } else {
+        tracing::debug!(
+            "Prompts already synced for server {} in profile {}, skipping",
+            server_id,
+            profile_id
+        );
+    }
+
+    tracing::info!(
+        "Successfully synced capabilities for server {} to profile {}: {} tools, {} resources, {} prompts added (disabled by default)",
+        server_id,
+        profile_id,
+        tools_added,
+        resources_added,
+        prompts_added
+    );
+
     Ok(())
+}
+
+/// Capability operation types for batch processing
+#[derive(Debug, Clone)]
+enum CapabilityOperation {
+    UpdateEnabled(bool),
+    Delete,
+}
+
+/// Batch operation results for different capability types
+#[derive(Debug)]
+struct CapabilityOperationResults {
+    tools_affected: u64,
+    resources_affected: u64,
+    prompts_affected: u64,
+}
+
+/// Generic batch operations on server capabilities within a profile
+/// Handles tools, resources, and prompts uniformly with transaction safety
+async fn batch_server_capabilities_operation(
+    pool: &Pool<Sqlite>,
+    profile_id: &str,
+    server_id: &str,
+    operation: CapabilityOperation,
+) -> Result<CapabilityOperationResults> {
+    let operation_name = match &operation {
+        CapabilityOperation::UpdateEnabled(enabled) => format!("update enabled={}", enabled),
+        CapabilityOperation::Delete => "delete".to_string(),
+    };
+
+    tracing::debug!(
+        "Batch {} capabilities for server {} in profile {}",
+        operation_name,
+        server_id,
+        profile_id
+    );
+
+    // Start a transaction for consistency
+    let mut tx = pool.begin().await.context("Failed to start transaction")?;
+
+    // Execute operation based on type
+    let (tools_result, resources_result, prompts_result) = match operation {
+        CapabilityOperation::UpdateEnabled(enabled) => {
+            // Update tools: profile_tool -> server_tools -> server_id
+            let tools = sqlx::query(
+                r#"
+                UPDATE profile_tool
+                SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE profile_id = ? AND server_tool_id IN (
+                    SELECT id FROM server_tools WHERE server_id = ?
+                )
+                "#,
+            )
+            .bind(enabled)
+            .bind(profile_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to update tools enabled status")?;
+
+            // Update resources: direct server_id reference
+            let resources = sqlx::query(
+                r#"
+                UPDATE profile_resource
+                SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE profile_id = ? AND server_id = ?
+                "#,
+            )
+            .bind(enabled)
+            .bind(profile_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to update resources enabled status")?;
+
+            // Update prompts: direct server_id reference
+            let prompts = sqlx::query(
+                r#"
+                UPDATE profile_prompt
+                SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE profile_id = ? AND server_id = ?
+                "#,
+            )
+            .bind(enabled)
+            .bind(profile_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to update prompts enabled status")?;
+
+            (tools, resources, prompts)
+        }
+        CapabilityOperation::Delete => {
+            // Delete tools: profile_tool -> server_tools -> server_id
+            let tools = sqlx::query(
+                r#"
+                DELETE FROM profile_tool
+                WHERE profile_id = ? AND server_tool_id IN (
+                    SELECT id FROM server_tools WHERE server_id = ?
+                )
+                "#,
+            )
+            .bind(profile_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to delete tools from profile")?;
+
+            // Delete resources: direct server_id reference
+            let resources = sqlx::query(
+                r#"
+                DELETE FROM profile_resource
+                WHERE profile_id = ? AND server_id = ?
+                "#,
+            )
+            .bind(profile_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to delete resources from profile")?;
+
+            // Delete prompts: direct server_id reference
+            let prompts = sqlx::query(
+                r#"
+                DELETE FROM profile_prompt
+                WHERE profile_id = ? AND server_id = ?
+                "#,
+            )
+            .bind(profile_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to delete prompts from profile")?;
+
+            (tools, resources, prompts)
+        }
+    };
+
+    // Commit transaction
+    tx.commit().await.context("Failed to commit transaction")?;
+
+    let results = CapabilityOperationResults {
+        tools_affected: tools_result.rows_affected(),
+        resources_affected: resources_result.rows_affected(),
+        prompts_affected: prompts_result.rows_affected(),
+    };
+
+    tracing::info!(
+        "Successfully {} capabilities for server {} in profile {}: {} tools, {} resources, {} prompts affected",
+        operation_name,
+        server_id,
+        profile_id,
+        results.tools_affected,
+        results.resources_affected,
+        results.prompts_affected
+    );
+
+    Ok(results)
 }
