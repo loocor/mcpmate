@@ -1,0 +1,36 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "MCPMate",
+	"version": "0.1.0",
+	"identifier": "io.mcpmate.desktop",
+	"build": {
+		"devUrl": "http://127.0.0.1:5173",
+		"frontendDist": "../../../board/dist"
+	},
+	"app": {
+		"withGlobalTauri": true,
+		"security": {
+			"csp": null
+		},
+		"windows": [
+			{
+				"label": "main",
+				"title": "MCPMate",
+				"width": 1280,
+				"height": 800,
+				"resizable": true,
+				"create": false
+			}
+		]
+	},
+	"bundle": {
+		"active": true,
+		"targets": ["app", "dmg"],
+		"icon": ["icons/icon.icns"]
+	},
+	"plugins": {
+		"shell": {
+			"open": "https?://.*"
+		}
+	}
+}

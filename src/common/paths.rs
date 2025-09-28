@@ -4,7 +4,10 @@
 //! eliminating duplication across runtime, conf, and other modules.
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 use super::constants;
 use super::types::RuntimeType;
@@ -18,8 +21,26 @@ pub struct MCPMatePaths {
 impl MCPMatePaths {
     /// Create a new path manager instance
     pub fn new() -> Result<Self> {
+        if let Ok(override_dir) = env::var("MCPMATE_DATA_DIR") {
+            let trimmed = override_dir.trim();
+            if !trimmed.is_empty() {
+                return Self::from_base_dir(trimmed);
+            }
+        }
+
         let home_dir = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot get user home directory"))?;
         let base_dir = home_dir.join(constants::paths::MCPMATE_DIR_NAME);
+
+        Ok(Self { base_dir })
+    }
+
+    /// Construct path manager from a custom base directory
+    pub fn from_base_dir<P: Into<PathBuf>>(base_dir: P) -> Result<Self> {
+        let mut base_dir = base_dir.into();
+        if !base_dir.is_absolute() {
+            let cwd = env::current_dir().context("Cannot determine current working directory")?;
+            base_dir = cwd.join(base_dir);
+        }
 
         Ok(Self { base_dir })
     }
@@ -173,6 +194,44 @@ static GLOBAL_PATHS: std::sync::OnceLock<MCPMatePaths> = std::sync::OnceLock::ne
 /// Get the global path manager instance
 pub fn global_paths() -> &'static MCPMatePaths {
     GLOBAL_PATHS.get_or_init(|| MCPMatePaths::new().expect("Failed to initialize global path manager"))
+}
+
+/// Initialize the global path manager with a custom instance.
+///
+/// This must be called before [`global_paths`] is used anywhere else.
+pub fn set_global_paths(paths: MCPMatePaths) -> Result<()> {
+    GLOBAL_PATHS
+        .set(paths)
+        .map_err(|_| anyhow::anyhow!("Global MCPMate paths already initialized"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use tempfile::tempdir;
+
+    #[test]
+    fn from_base_dir_uses_absolute_path() {
+        let tmp = tempdir().expect("tmp dir");
+        let nested = tmp.path().join("nested");
+        let paths = MCPMatePaths::from_base_dir(&nested).expect("construct");
+        assert_eq!(paths.base_dir(), nested.as_path());
+    }
+
+    #[test]
+    fn env_override_selected_when_present() {
+        let tmp = tempdir().expect("tmp dir");
+        let desired = tmp.path().join("custom");
+        unsafe {
+            env::set_var("MCPMATE_DATA_DIR", &desired);
+        }
+        let paths = MCPMatePaths::new().expect("construct");
+        unsafe {
+            env::remove_var("MCPMATE_DATA_DIR");
+        }
+        assert_eq!(paths.base_dir(), desired.as_path());
+    }
 }
 
 /// Get the bridge component path dynamically

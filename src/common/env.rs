@@ -328,6 +328,8 @@ impl AllowedOrigins {
             "https://127.0.0.1:*".into(),
             "http://[::1]:*".into(),
             "https://[::1]:*".into(),
+            // embedded desktop shell (Tauri v2 uses the tauri://localhost origin)
+            "tauri://localhost".into(),
         ];
         if let Ok(raw) = std::env::var(constants::MCPMATE_ALLOWED_ORIGINS) {
             for part in raw.split(',') {
@@ -374,23 +376,72 @@ pub async fn origin_guard_middleware(
     req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    use axum::{http::header, response::IntoResponse};
+    use axum::{
+        http::{HeaderValue, Method, StatusCode, header},
+        response::IntoResponse,
+    };
 
+    let method = req.method().clone();
     let origin_opt = req
         .headers()
         .get(header::ORIGIN)
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
 
-    if let Some(origin) = origin_opt {
-        if !is_allowed_origin(&origin) {
+    if let Some(origin) = origin_opt.as_ref() {
+        if !is_allowed_origin(origin) {
             tracing::warn!(origin = %origin, path = %req.uri(), "API request rejected: disallowed Origin");
             let body = axum::Json(serde_json::json!({
                 "error": {"message": format!("Disallowed Origin: {}", origin), "status": 403}
             }));
-            return (axum::http::StatusCode::FORBIDDEN, body).into_response();
+            return (StatusCode::FORBIDDEN, body).into_response();
         }
     }
 
-    next.run(req).await
+    // Handle CORS preflight requests explicitly
+    if method == Method::OPTIONS {
+        let mut response = StatusCode::NO_CONTENT.into_response();
+        if let Some(origin) = origin_opt.as_ref() {
+            if let Ok(value) = HeaderValue::from_str(origin) {
+                response
+                    .headers_mut()
+                    .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
+            }
+        }
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET,POST,PUT,PATCH,DELETE,OPTIONS"),
+        );
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("Authorization,Content-Type"),
+        );
+        response.headers_mut().insert(
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            HeaderValue::from_static("true"),
+        );
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Origin"));
+        return response;
+    }
+
+    let mut response = next.run(req).await;
+
+    if let Some(origin) = origin_opt.as_ref() {
+        if let Ok(value) = HeaderValue::from_str(origin) {
+            response
+                .headers_mut()
+                .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
+            response.headers_mut().insert(
+                header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                HeaderValue::from_static("true"),
+            );
+            response
+                .headers_mut()
+                .insert(header::VARY, HeaderValue::from_static("Origin"));
+        }
+    }
+
+    response
 }

@@ -23,7 +23,7 @@ pub use checker::{ConfigCheckResult, ConfigChecker};
 pub use database::{count_records, fetch_all_ordered, fetch_optional, fetch_scalar, fetch_where, record_exists};
 pub use env::{EnvironmentManager, create_runtime_environment, prepare_command_environment};
 pub use json::strip_comments;
-pub use paths::{MCPMatePaths, get_bridge_path, global_paths};
+pub use paths::{MCPMatePaths, get_bridge_path, global_paths, set_global_paths};
 pub use sync::{SyncContext, SyncHelper, SyncResult};
 pub use types::{ClientCategory, RuntimeError, RuntimeType};
 pub use validation::{FieldValidation, ValidationBuilder, ValidationResult, Validator};

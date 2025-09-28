@@ -15,8 +15,23 @@ use tracing;
 
 use super::AppState;
 
+fn should_skip_board_static() -> bool {
+    std::env::var("MCPMATE_SKIP_BOARD_STATIC")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
 /// Create static file serving routes
 pub fn routes(_state: Arc<AppState>) -> Router {
+    if should_skip_board_static() {
+        tracing::info!("Skipping board static routes due to MCPMATE_SKIP_BOARD_STATIC override");
+        return Router::new().fallback(frontend_disabled_handler);
+    }
+
     // Try multiple possible paths for the frontend files
     let possible_paths = vec![
         PathBuf::from("board/dist"),    // Development/source directory
@@ -209,4 +224,29 @@ async fn frontend_not_found_handler() -> impl IntoResponse {
     );
 
     (StatusCode::NOT_FOUND, Html(html))
+}
+
+async fn frontend_disabled_handler() -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        Html(r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>MCPMate Dashboard (Embedded)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; text-align: center; }
+        .container { max-width: 680px; margin: 0 auto; }
+        .info { color: #1976d2; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MCPMate Dashboard</h1>
+        <p class="info">The embedded MCPMate desktop shell provides the dashboard UI.</p>
+        <p>If you reached this page via a browser, please launch the desktop app or build the frontend bundle under <code>board/dist</code>.</p>
+    </div>
+</body>
+</html>"#.to_string()),
+    )
 }
