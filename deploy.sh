@@ -220,13 +220,10 @@ print_status "Creating deployment package..."
 rm -rf "$DIST_DIR"
 
 # Create deployment structure
-mkdir -p "$DIST_DIR/board"
+mkdir -p "$DIST_DIR"
 
 # Copy binary
 cp "$BINARY_PATH" "$DIST_DIR/"
-
-# Copy frontend dist
-cp -r "board/dist" "$DIST_DIR/board/"
 
 # Create platform-specific README
 cat > "$DIST_DIR/README.md" << EOF
@@ -243,13 +240,11 @@ This is a standalone deployment package for MCPMate.
 ## How to run:
 
 1. Double-click the \`$BINARY_NAME\` executable (or run \`./mcpmate\` in terminal)
-2. Your browser should open automatically to: http://localhost:8080
-3. The management dashboard will be available
+2. API endpoints will be available at http://localhost:8080
 
 ## What's included:
 
 - \`$BINARY_NAME\` - The MCPMate server binary
-- \`board/dist/\` - The web management interface
 
 ## Requirements:
 
@@ -259,13 +254,9 @@ This is a standalone deployment package for MCPMate.
 
 ## Troubleshooting:
 
-If the web interface doesn't load, make sure:
-1. The \`board/dist/\` directory exists and contains \`index.html\`
-2. Port 8080 is not being used by another application
-3. Check the console output for any error messages
-
-If the browser doesn't open automatically:
-- Manually open your browser and go to: http://localhost:8080
+If API requests fail, verify:
+1. Port 8080 is not being used by another application
+2. Check the console output for any error messages
 EOF
 
 # Create platform-specific launcher scripts

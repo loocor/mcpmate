@@ -58,6 +58,11 @@ You can override runtime ports or modes without recompiling by exporting the fol
 - The existing `cargo test` suite still reports doctest failures that predate this integration (`aide_wrapper_*` macros). Track and resolve separately.
 - Icon assets are placeholders; replace `src-tauri/icons/icon.png` before branding.
 
+## Release & Update Resources
+
+- Desktop release & updater workflow: `docs/desktop-release-guide.md`
+- Automation helpers: `script/build-tauri-release.sh`, `script/generate-update-manifest.sh`
+
 ## Next Steps
 
 - Wire the Inspector bundle once the backend API schema stabilises.

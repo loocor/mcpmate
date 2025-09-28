@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: generate-update-manifest.sh --version <ver> --output <file> [options]
+
+Required:
+  --version <ver>              Version string written to the manifest
+  --output <file>             Output JSON file path
+
+Optional (repeatable):
+  --platform <target> <url> <signature>
+                              Add an entry under platforms[target] with the given download URL and
+                              base64 Ed25519 signature. Invoke multiple times for each target.
+  --notes <text>               Release notes (default: empty)
+  --pub-date <ISO8601>         Publication timestamp (default: current UTC)
+
+Example:
+  script/generate-update-manifest.sh \
+    --version 0.1.2 \
+    --output dist/update.json \
+    --notes "Fix desktop links" \
+    --platform universal-apple-darwin https://cdn/app_0.1.2_universal.dmg BASE64SIG1 \
+    --platform x86_64-pc-windows-msvc https://cdn/app_0.1.2_x64.msi BASE64SIG2
+USAGE
+}
+
+VERSION=""
+OUTPUT=""
+NOTES=""
+PUB_DATE=""
+declare -A PLATFORM_URLS
+declare -A PLATFORM_SIGS
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      VERSION="$2"
+      shift 2
+      ;;
+    --output)
+      OUTPUT="$2"
+      shift 2
+      ;;
+    --notes)
+      NOTES="$2"
+      shift 2
+      ;;
+    --pub-date)
+      PUB_DATE="$2"
+      shift 2
+      ;;
+    --platform)
+      TARGET="$2"
+      URL="$3"
+      SIG="$4"
+      PLATFORM_URLS["$TARGET"]="$URL"
+      PLATFORM_SIGS["$TARGET"]="$SIG"
+      shift 4
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ -z "$VERSION" || -z "$OUTPUT" ]]; then
+  echo "--version and --output are required" >&2
+  usage >&2
+  exit 1
+fi
+
+if [[ -z "$PUB_DATE" ]]; then
+  PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+fi
+
+tmpfile=$(mktemp)
+{
+  echo "{";
+  echo "  \"version\": \"$VERSION\",";
+  echo "  \"notes\": \"${NOTES//"/\\"}\",";
+  echo "  \"pub_date\": \"$PUB_DATE\",";
+  echo "  \"platforms\": {";
+  first=1;
+  for target in "${!PLATFORM_URLS[@]}"; do
+    [[ $first -eq 0 ]] && echo "," || first=0
+    url="${PLATFORM_URLS[$target]}"
+    sig="${PLATFORM_SIGS[$target]}"
+    printf "    \"%s\": {\n      \"signature\": \"%s\",\n      \"url\": \"%s\"\n    }" "$target" "$sig" "$url"
+  done
+  echo
+  echo "  }";
+  echo "}";
+} > "$tmpfile"
+
+mv "$tmpfile" "$OUTPUT"
+
+echo "[generate-update-manifest] wrote $OUTPUT"
