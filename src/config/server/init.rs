@@ -41,6 +41,7 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             transport_type TEXT CHECK (
                 transport_type IN ('{}', '{}', '{}') OR transport_type IS NULL
             ),
+            registry_server_id TEXT UNIQUE,
             capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

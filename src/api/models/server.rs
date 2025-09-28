@@ -263,6 +263,8 @@ pub struct ServerDetailsData {
     pub id: Option<String>,
     /// Server name
     pub name: String,
+    /// Registry server id (from official registry)
+    pub registry_server_id: Option<String>,
     /// Is enabled in configuration (combined global and profile status)
     pub enabled: bool,
     /// Is globally enabled (server_config.enabled)
@@ -544,6 +546,10 @@ pub struct ServerCreateReq {
     /// Whether to enable the server in the default profile
     #[schemars(description = "Whether to enable this server in the default profile")]
     pub enabled: Option<bool>,
+
+    /// Registry server id (if sourced from official registry)
+    #[schemars(description = "Registry server identifier from MCP official registry")]
+    pub registry_server_id: Option<String>,
 }
 
 /// MCP Server Update Request
@@ -588,6 +594,10 @@ pub struct ServerUpdateReq {
     /// Whether to enable the server (optional update)
     #[schemars(description = "Whether to enable this server")]
     pub enabled: Option<bool>,
+
+    /// Registry server id (optional update)
+    #[schemars(description = "Registry server identifier from MCP official registry")]
+    pub registry_server_id: Option<String>,
 }
 
 /// Import servers request
@@ -614,6 +624,9 @@ pub struct ServersImportConfig {
     pub url: Option<String>,
     /// Environment variables to set (for stdio servers)
     pub env: Option<HashMap<String, String>>,
+
+    /// Registry server id (if sourced from official registry)
+    pub registry_server_id: Option<String>,
 }
 
 /// Import servers response

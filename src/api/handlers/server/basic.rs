@@ -84,6 +84,7 @@ async fn server_details_core(
     let server_details = ServerDetailsData {
         id: id_opt,
         name,
+        registry_server_id: server.registry_server_id.clone(),
         enabled,
         globally_enabled: details.globally_enabled,
         enabled_in_profile: details.enabled_in_profile,
@@ -153,6 +154,7 @@ async fn server_list_core(
             filtered_servers.push(ServerDetailsData {
                 id: id_opt,
                 name,
+                registry_server_id: server.registry_server_id.clone(),
                 enabled,
                 globally_enabled: details.globally_enabled,
                 enabled_in_profile: details.enabled_in_profile,

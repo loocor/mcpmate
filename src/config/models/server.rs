@@ -29,6 +29,8 @@ pub struct Server {
     pub url: Option<String>,
     /// Transport type
     pub transport_type: Option<TransportType>,
+    /// Registry server id (from official registry)
+    pub registry_server_id: Option<String>,
     /// Capabilities list string (e.g., "tools,prompts,resources")
     pub capabilities: Option<String>,
     /// Whether the server is globally enabled
@@ -141,6 +143,7 @@ impl Server {
             command: None,
             url: None,
             transport_type: None,
+            registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             created_at: None,
@@ -160,6 +163,7 @@ impl Server {
             command,
             url: None,
             transport_type: Some(TransportType::Stdio),
+            registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             created_at: None,
@@ -179,6 +183,7 @@ impl Server {
             command: None,
             url,
             transport_type: Some(TransportType::Sse),
+            registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             created_at: None,
@@ -198,6 +203,7 @@ impl Server {
             command: None,
             url,
             transport_type: Some(TransportType::StreamableHttp),
+            registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             created_at: None,

@@ -144,6 +144,7 @@ pub async fn import_batch(
             ServerType::Sse => Server::new_sse(name.clone(), cfg.url.clone()),
             ServerType::StreamableHttp => Server::new_streamable_http(name.clone(), cfg.url.clone()),
         };
+        server.registry_server_id = cfg.registry_server_id.clone();
         // Keep DB transport_type NULL to satisfy CHECK constraint (enum uses TitleCase in DB encoding)
         server.set_transport_type(None);
 

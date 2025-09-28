@@ -75,6 +75,7 @@ pub async fn import_from_mcp_config(
                 args: sc.args,
                 url: sc.url,
                 env: sc.env,
+                registry_server_id: None,
             },
         );
     }

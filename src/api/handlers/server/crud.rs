@@ -240,12 +240,13 @@ pub async fn create_server(
     validate_server_config(&payload.server_type, &payload.command, &payload.url)?;
 
     // Create server model using validated ServerType
-    let server = create_server_from_config(
+    let mut server = create_server_from_config(
         payload.name.clone(),
         server_type,
         payload.command.clone(),
         payload.url.clone(),
     );
+    server.registry_server_id = payload.registry_server_id.clone();
 
     // Insert server into database
     let server_id = crate::config::server::upsert_server(&db.pool, &server)
@@ -293,6 +294,7 @@ pub async fn create_server(
     Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: payload.name.clone(),
+        registry_server_id: payload.registry_server_id.clone(),
         enabled,
         globally_enabled: true,
         enabled_in_profile: enabled,
@@ -390,6 +392,10 @@ pub async fn update_server(
         updated_server.url = Some(url);
     }
 
+    if let Some(registry_id) = payload.registry_server_id.clone() {
+        updated_server.registry_server_id = Some(registry_id);
+    }
+
     // Update server in database
     crate::config::server::upsert_server(&db.pool, &updated_server)
         .await
@@ -427,6 +433,7 @@ pub async fn update_server(
     Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: existing_server.name,
+        registry_server_id: updated_server.registry_server_id.clone(),
         enabled: details.globally_enabled && details.enabled_in_profile,
         globally_enabled: details.globally_enabled,
         enabled_in_profile: details.enabled_in_profile,

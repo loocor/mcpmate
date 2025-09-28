@@ -89,9 +89,10 @@ pub async fn upsert_server_tx(
 
     let result = sqlx::query(&format!(
         r#"
-        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {})
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {}, {})
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT({}) DO UPDATE SET
+            {} = excluded.{},
             {} = excluded.{},
             {} = excluded.{},
             {} = excluded.{},
@@ -106,6 +107,7 @@ pub async fn upsert_server_tx(
         columns::COMMAND,
         columns::URL,
         columns::TRANSPORT_TYPE,
+        columns::REGISTRY_SERVER_ID,
         columns::CAPABILITIES,
         columns::NAME,
         columns::SERVER_TYPE,
@@ -116,6 +118,8 @@ pub async fn upsert_server_tx(
         columns::URL,
         columns::TRANSPORT_TYPE,
         columns::TRANSPORT_TYPE,
+        columns::REGISTRY_SERVER_ID,
+        columns::REGISTRY_SERVER_ID,
         columns::CAPABILITIES,
         columns::CAPABILITIES,
         columns::UPDATED_AT
@@ -126,6 +130,7 @@ pub async fn upsert_server_tx(
     .bind(&server.command)
     .bind(&server.url)
     .bind(server.transport_type)
+    .bind(&server.registry_server_id)
     .bind(&server.capabilities)
     .execute(&mut **tx)
     .await

@@ -132,6 +132,7 @@ pub mod database {
         pub const URL: &str = "url";
         pub const TRANSPORT_TYPE: &str = "transport_type";
         pub const CAPABILITIES: &str = "capabilities";
+        pub const REGISTRY_SERVER_ID: &str = "registry_server_id";
         pub const DESCRIPTION: &str = "description";
         pub const ARGS: &str = "args";
         pub const ENV: &str = "env";
