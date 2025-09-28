@@ -7,6 +7,7 @@ pub mod common;
 pub mod inspector;
 pub mod notifs;
 pub mod profile;
+pub mod registry;
 pub mod runtime;
 pub mod server;
 pub mod system;

@@ -2,13 +2,13 @@
 // Contains route definitions for the API server
 
 pub mod ai;
-pub mod board;
 pub mod cache;
 pub mod client;
 pub mod inspector;
 pub mod notifs;
 pub mod openapi;
 pub mod profile;
+pub mod registry;
 pub mod runtime;
 pub mod server;
 pub mod system;
@@ -165,6 +165,7 @@ async fn create_router_internal(
         .merge(runtime::routes(state.clone()))
         .merge(inspector::routes(state.clone()))
         .merge(client::routes(state.clone()))
+        .merge(registry::routes(state.clone()))
         .finish_api_with(&mut api, openapi::api_docs)
         .layer(axum::middleware::from_fn(crate::common::env::origin_guard_middleware));
 
@@ -173,5 +174,4 @@ async fn create_router_internal(
     Router::new()
         .nest("/api", api_router)
         .merge(openapi::openapi_routes(api))
-        .merge(board::routes(state.clone()))
 }
