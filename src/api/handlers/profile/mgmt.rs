@@ -26,6 +26,36 @@ fn validate_profile_type(profile_type: &str) -> Result<crate::common::profile::P
     })
 }
 
+/// Ensure only one default profile exists
+///
+/// When setting a profile as default, this function ensures all other profiles
+/// are set to non-default to maintain the "only one default" rule
+async fn ensure_single_default_profile(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    new_default_id: &str,
+) -> Result<(), ApiError> {
+    use sqlx::Row;
+
+    // First, get all profiles that are currently marked as default
+    let rows = sqlx::query("SELECT id FROM profiles WHERE is_default = 1 AND id != ?")
+        .bind(new_default_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Failed to query default profiles: {e}")))?;
+
+    // Update all other default profiles to be non-default
+    for row in rows {
+        let profile_id: String = row.get("id");
+        sqlx::query("UPDATE profiles SET is_default = 0 WHERE id = ?")
+            .bind(&profile_id)
+            .execute(pool)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update profile {}: {e}", profile_id)))?;
+    }
+
+    Ok(())
+}
+
 /// Validate default profile rules
 ///
 /// Ensures business rules for default profile are followed
@@ -273,6 +303,11 @@ pub async fn profile_create(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to create profile: {e}")))?;
 
+    // If the new profile is set as default, ensure no other profiles are default
+    if new_profile.is_default {
+        ensure_single_default_profile(&db.pool, &profile_id).await?;
+    }
+
     // If cloning from existing profile, copy server and tool associations
     if let Some(clone_from_id) = request.clone_from_id {
         profile_cloning_core(&db.pool, &profile_id, &clone_from_id).await?;
@@ -314,6 +349,11 @@ pub async fn profile_update(
     crate::config::profile::update_profile(&db.pool, &existing_profile)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to update profile: {e}")))?;
+
+    // 5.5. If the updated profile is set as default, ensure no other profiles are default
+    if existing_profile.is_default {
+        ensure_single_default_profile(&db.pool, &request.id).await?;
+    }
 
     // 6. Get the updated profile for response
     let updated_profile = get_profile_or_error(&db, &request.id).await?;
