@@ -15,15 +15,21 @@ use mcpmate::{
 };
 use tauri::{
     Manager, RunEvent,
+    menu::{HELP_SUBMENU_ID, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu},
     utils::config::WindowConfig,
     webview::{NewWindowResponse, WebviewWindowBuilder},
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_updater::Builder as UpdaterPluginBuilder;
+use tauri_plugin_updater::UpdaterExt;
 use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
+const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
+const MENU_ABOUT_ID: &str = "menu.help.about";
 
 #[derive(Clone, Default)]
 struct BackendState {
@@ -91,11 +97,56 @@ pub fn run() -> Result<()> {
 
     builder = builder.manage(backend_state.clone());
 
+    builder = builder.on_menu_event(|app_handle, event| {
+        if event.id.as_ref() == MENU_CHECK_UPDATES_ID {
+            let handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let (title, message) = match handle.updater() {
+                    Ok(updater) => match updater.check().await {
+                        Ok(Some(update)) => (
+                            "Update Available".to_string(),
+                            format!(
+                                "Version {} is ready. Auto-update will activate once CDN hosting is connected.",
+                                update.version
+                            ),
+                        ),
+                        Ok(None) => (
+                            "Up To Date".to_string(),
+                            "You are already running the latest MCPMate build.".to_string(),
+                        ),
+                        Err(err) => (
+                            "Update Check Failed".to_string(),
+                            format!("Unable to check for updates right now: {}", err),
+                        ),
+                    },
+                    Err(err) => (
+                        "Updater Unavailable".to_string(),
+                        format!("The updater service is not ready yet. Infrastructure pending: {}", err),
+                    ),
+                };
+
+                handle
+                    .dialog()
+                    .message(message)
+                    .title(title)
+                    .buttons(MessageDialogButtons::Ok)
+                    .show(|_| {});
+            });
+        } else if event.id.as_ref() == MENU_ABOUT_ID {
+            show_about_dialog(app_handle);
+        }
+    });
+
+    let updater_plugin = UpdaterPluginBuilder::new().build();
+
     builder
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(updater_plugin)
         .setup(move |app| {
             initialize_paths(app)?;
             configure_tauri_environment();
+            initialize_menu(app)?;
             bootstrap_backend(app, backend_state.clone())?;
             spawn_main_window(app)?;
             Ok(())
@@ -125,6 +176,50 @@ fn configure_tauri_environment() {
     }
 }
 
+fn initialize_menu(app: &mut tauri::App) -> Result<()> {
+    let app_handle = app.handle();
+
+    let menu = Menu::default(&app_handle)?;
+
+    let about_item = MenuItem::with_id(app, MENU_ABOUT_ID, "About MCPMate", true, None::<&str>)?;
+    let check_updates_item = MenuItem::with_id(app, MENU_CHECK_UPDATES_ID, "Check for Updates…", true, None::<&str>)?;
+
+    if let Some(MenuItemKind::Submenu(help_menu)) = menu.get(&HELP_SUBMENU_ID.to_string()) {
+        let existing_items = help_menu.items()?.len();
+        help_menu.insert(&check_updates_item, 0)?;
+        help_menu.insert(&about_item, 0)?;
+        if existing_items > 0 {
+            let separator = PredefinedMenuItem::separator(app)?;
+            help_menu.insert(&separator, 2)?;
+        }
+    } else {
+        let help_menu =
+            Submenu::with_id_and_items(app, HELP_SUBMENU_ID, "Help", true, &[&about_item, &check_updates_item])?;
+        menu.append(&help_menu)?;
+    }
+
+    app.set_menu(menu)?;
+
+    Ok(())
+}
+
+fn show_about_dialog(app_handle: &tauri::AppHandle) {
+    let pkg = app_handle.package_info();
+    let version = pkg.version.to_string();
+    let tauri_version = tauri::VERSION;
+    let message = format!(
+        "MCPMate Desktop Alpha\n\nVersion: {}\nTauri: {}\n\nAuto-update will activate once CDN hosting & signing pipeline are live.",
+        version, tauri_version
+    );
+
+    app_handle
+        .dialog()
+        .message(message)
+        .title("About MCPMate")
+        .buttons(MessageDialogButtons::Ok)
+        .show(|_| {});
+}
+
 fn spawn_main_window(app: &mut tauri::App) -> Result<()> {
     if app.get_webview_window("main").is_some() {
         return Ok(());
@@ -141,7 +236,16 @@ fn spawn_main_window(app: &mut tauri::App) -> Result<()> {
 
     let app_handle = app.handle().clone();
 
-    let builder = WebviewWindowBuilder::from_config(app, &window_config)?.on_new_window(move |url, _features| {
+    let mut builder = WebviewWindowBuilder::from_config(app, &window_config)?;
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Transparent)
+            .hidden_title(true);
+    }
+
+    let builder = builder.on_new_window(move |url, _features| {
         let scheme = url.scheme();
         if matches!(scheme, "http" | "https") {
             if let Err(err) = app_handle.shell().open(url.as_str().to_string(), None) {

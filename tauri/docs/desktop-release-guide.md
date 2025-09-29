@@ -62,7 +62,7 @@ Artifacts are written to `target/<triple>/release/bundle/{msi,nsis}/`.
 
 ## 4. Automatic Update Pipeline
 
-The updater is enabled via `tauri.conf.json > plugins.updater`. A release requires:
+The updater plugin is already wired under `tauri.conf.json > plugins.updater`, but ships disabled (`active: false`) until CDN/storage is provisioned. The config currently keeps a placeholder Minisign public key (from the Tauri examples); replace it with the real Ed25519 public key before enabling updates. A release requires:
 
 1. **Desktop bundles** for each platform (see above).
 2. **Ed25519 signatures** per bundle (`tauri signer sign --private-key signing-key.pem <bundle>`).
@@ -75,8 +75,9 @@ Scripts in `script/` help automate these steps:
 - `script/generate-update-manifest.sh` &mdash; creates an updater manifest JSON from command-line inputs.
 
 Integration tip: run the scripts from CI after tagging a release. Upload the produced bundles to the
-configured CDN, generate the manifest, then publish both assets. The desktop client will discover the
-new version automatically on next launch.
+configured CDN, generate the manifest, then publish both assets. Once hosting is ready, flip
+`plugins.updater.active` to `true`, provide the manifest endpoint + signing key, and the desktop client
+will discover the new version automatically on next launch.
 
 ## 5. Release Checklist
 
@@ -93,4 +94,3 @@ new version automatically on next launch.
 - [Tauri Updater Guide](https://tauri.app/v2/guides/distribution/updater/)
 - [Tauri Signing](https://tauri.app/v2/guides/distribution/signing/)
 - Project scripts under `backend/tauri/script/`
-
