@@ -245,21 +245,34 @@ fn spawn_main_window(app: &mut tauri::App) -> Result<()> {
             .hidden_title(true);
     }
 
+    builder = builder.initialization_script(
+        r#"window.addEventListener('contextmenu', (event) => {
+            if (event.metaKey || event.ctrlKey) {
+                return;
+            }
+            event.preventDefault();
+        });"#,
+    );
+
     let builder = builder.on_new_window(move |url, _features| {
         let scheme = url.scheme();
-        if matches!(scheme, "http" | "https") {
-            if let Err(err) = app_handle.shell().open(url.as_str().to_string(), None) {
-                warn!(
-                    error = %err,
-                    target_url = %url,
-                    "Failed to open external link from webview"
-                );
+        match scheme {
+            "http" | "https" => {
+                if let Err(err) = app_handle.shell().open(url.as_str().to_string(), None) {
+                    warn!(
+                        error = %err,
+                        target_url = %url,
+                        "Failed to open external link from webview"
+                    );
+                }
+                NewWindowResponse::Deny
             }
-        } else {
-            warn!(target_url = %url, "Blocked unsupported window.open URL scheme");
+            "tauri" | "app" | "about" | "" => NewWindowResponse::Allow,
+            other => {
+                warn!(target_url = %url, scheme = other, "Blocked unsupported window.open URL scheme");
+                NewWindowResponse::Deny
+            }
         }
-
-        NewWindowResponse::Deny
     });
 
     builder.build()?;
