@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use axum::body::to_bytes;
-use axum::routing::{Router, post};
-use hyper::Request;
+use axum::routing::{Router, get, post};
+use hyper::{Request, StatusCode};
 use tokio::sync::Mutex;
 use tower::ServiceExt; // for `oneshot`
 // bring crate types into scope
@@ -14,15 +14,14 @@ use mcpmate::core::pool::UpstreamConnectionPool;
 use mcpmate::core::profile::ConfigApplicationStateManager;
 use mcpmate::system::metrics::MetricsCollector;
 
-#[tokio::test]
-async fn inspector_tool_call_inline_error_or_accept() {
+fn build_test_state() -> Arc<AppState> {
     let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
         Arc::new(Config::default()),
         None,
     )));
     let metrics = Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1)));
     let redb = RedbCacheManager::global().expect("redb");
-    let state = Arc::new(AppState {
+    Arc::new(AppState {
         connection_pool: pool,
         metrics_collector: metrics,
         http_proxy: None,
@@ -32,7 +31,12 @@ async fn inspector_tool_call_inline_error_or_accept() {
         redb_cache: redb,
         unified_query: None,
         client_service: None,
-    });
+    })
+}
+
+#[tokio::test]
+async fn inspector_tool_call_inline_error_or_accept() {
+    let state = build_test_state();
 
     let app = Router::new()
         .route("/api/mcp/inspector/tool/call", post(inspector::tool_call))
@@ -58,9 +62,27 @@ async fn inspector_tool_call_inline_error_or_accept() {
         // accepted path
         let data = body.get("data").cloned().unwrap_or_default();
         assert!(data.get("call_id").is_some());
+        assert!(data.get("message").is_some());
     } else {
         // inline error path
         let err = body.get("error").cloned().unwrap_or_default();
         assert!(err.get("message").is_some());
     }
+}
+
+#[tokio::test]
+async fn inspector_native_mode_disabled_returns_forbidden() {
+    let state = build_test_state();
+    let app = Router::new()
+        .route("/api/mcp/inspector/tool/list", get(inspector::tools_list))
+        .with_state(state);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/mcp/inspector/tool/list?mode=native&server_id=test")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
 }

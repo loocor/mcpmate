@@ -69,6 +69,8 @@ pub struct InspectorToolsListData {
     // NOTE: rmcp::model types don't implement JsonSchema in this build; use Value for OpenAPI
     pub tools: Vec<serde_json::Value>,
     pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Vec<serde_json::Value>>,
 }
 api_resp!(
     InspectorToolsListResp,
@@ -81,6 +83,8 @@ pub struct InspectorPromptsListData {
     pub mode: String,
     pub prompts: Vec<serde_json::Value>,
     pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Vec<serde_json::Value>>,
 }
 api_resp!(
     InspectorPromptsListResp,
@@ -93,6 +97,8 @@ pub struct InspectorResourcesListData {
     pub mode: String,
     pub resources: Vec<serde_json::Value>,
     pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Vec<serde_json::Value>>,
 }
 api_resp!(
     InspectorResourcesListResp,
@@ -104,6 +110,7 @@ api_resp!(
 pub struct InspectorPromptGetData {
     pub result: serde_json::Value,
     pub server_id: String,
+    pub elapsed_ms: u64,
 }
 api_resp!(
     InspectorPromptGetResp,
@@ -115,6 +122,7 @@ api_resp!(
 pub struct InspectorResourceReadData {
     pub result: serde_json::Value,
     pub server_id: Option<String>,
+    pub elapsed_ms: u64,
 }
 api_resp!(
     InspectorResourceReadResp,
@@ -128,6 +136,10 @@ pub struct InspectorToolCallData {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
 }
 api_resp!(
     InspectorToolCallResp,

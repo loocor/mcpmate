@@ -37,7 +37,7 @@ async fn ensure_single_default_profile(
     use sqlx::Row;
 
     // First, get all profiles that are currently marked as default
-    let rows = sqlx::query("SELECT id FROM profiles WHERE is_default = 1 AND id != ?")
+    let rows = sqlx::query("SELECT id FROM profile WHERE is_default = 1 AND id != ?")
         .bind(new_default_id)
         .fetch_all(pool)
         .await
@@ -46,7 +46,7 @@ async fn ensure_single_default_profile(
     // Update all other default profiles to be non-default
     for row in rows {
         let profile_id: String = row.get("id");
-        sqlx::query("UPDATE profiles SET is_default = 0 WHERE id = ?")
+        sqlx::query("UPDATE profile SET is_default = 0 WHERE id = ?")
             .bind(&profile_id)
             .execute(pool)
             .await
