@@ -5,9 +5,12 @@
   format: "json",
   protocol_revision: "2025-06-18",
   metadata: {
-    logo_url: "https://claude.ai/favicon.ico",
     category: "application",
-    supported_runtimes: ["npx", "uvx", "bunx"],
+    description: "Always there when you need it—Claude sits quietly in your workflow. No tab-hopping required.",
+    docs_url: "https://docs.claude.com",
+    homepage_url: "https://claude.ai/download",
+    logo_url: "https://claude.ai/favicon.ico",
+    support_url: "https://support.claude.com",
   },
   storage: {
     kind: "file",

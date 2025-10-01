@@ -6,13 +6,12 @@
   format: "json",
   protocol_revision: "2025-06-18",
   metadata: {
-    logo_url: "https://zed.dev/icon.png",
     category: "application",
-    supported_runtimes: {
-      macos: ["npx", "uvx"],
-      linux: ["npx"],
-      windows: ["npx"],
-    },
+    description: "Zed is a next-generation code editor designed for high-performance collaboration with humans and AI.",
+    docs_url: "https://zed.dev/docs",
+    homepage_url: "https://zed.dev",
+    logo_url: "https://zed.dev/favicon_black_64.png",
+    support_url: "https://zed.dev/support",
   },
   storage: {
     kind: "file",

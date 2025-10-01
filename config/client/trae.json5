@@ -5,13 +5,12 @@
   format: "json",
   protocol_revision: "2025-06-18",
   metadata: {
-    logo_url: "https://trae.ai/favicon.ico",
+    logo_url: "https://lf-cdn.trae.ai/obj/trae-ai-us/trae_website_prod/favicon.png",
     category: "application",
-    supported_runtimes: {
-      macos: ["npx", "uvx", "docker", "binary"],
-      linux: ["npx", "uvx", "docker", "binary"],
-      windows: ["npx", "uvx", "binary"],
-    },
+    description: "Understand. Execute. Deliver. TRAE is your 10x AI Engineer who can independently build software solutions for you.",
+    homepage_url: "https://trae.ai",
+    docs_url: "https://docs.trae.ai/",
+    support_url: "https://discord.gg/NV3MF24tAe",
   },
   storage: {
     kind: "file",

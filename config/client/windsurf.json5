@@ -7,11 +7,10 @@
   metadata: {
     logo_url: "https://windsurf.com/favicon_270.png",
     category: "application",
-    supported_runtimes: {
-      macos: ["npx", "uvx", "docker", "binary"],
-      linux: ["npx", "uvx", "docker", "binary"],
-      windows: ["npx", "uvx", "binary"],
-    },
+    description: "Codeium's Windsurf IDE for AI pair programming across platforms.",
+    homepage_url: "https://windsurf.com",
+    docs_url: "https://docs.codeium.com/windsurf",
+    support_url: "https://discord.gg/codeium",
   },
   storage: {
     kind: "file",

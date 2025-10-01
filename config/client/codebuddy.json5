@@ -4,12 +4,11 @@
   display_name: "CodeBuddy",
   format: "json",
   metadata: {
-    logo_url: "https://codebuddy.qq.com/favicon.ico",
     category: "application",
-    supported_runtimes: {
-      macos: ["npx", "uvx", "bunx", "docker", "binary"],
-      windows: ["npx", "uvx", "bunx", "binary"],
-    },
+    description: "Harnessed for productivity. Designed for collaboration. Celebrated for built-in security. Welcome to the platform developers love..",
+    homepage_url: "https://www.codebuddy.ai/",
+    logo_url: "https://codebuddy-1328495429.cos.accelerate.myqcloud.com/web/ide/icon.png",
+    support_url: "https://discord.gg/cWTkReTh8N",
   },
   storage: {
     kind: "file",

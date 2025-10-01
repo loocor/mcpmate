@@ -4,13 +4,12 @@
   display_name: "Kiro",
   format: "json",
   metadata: {
-    logo_url: "https://kiro.ai/favicon.ico",
     category: "application",
-    supported_runtimes: {
-      macos: ["npx", "uvx", "docker", "binary"],
-      linux: ["npx", "uvx", "docker", "binary"],
-      windows: ["npx", "uvx", "binary"],
-    },
+    description: "Kiro helps you do your best work by bringing structure to AI coding with spec-driven development.",
+    docs_url: "https://kiro.dev/docs/",
+    homepage_url: "https://kiro.dev/",
+    logo_url: "https://kiro.dev/favicon.ico",
+    support_url: "https://github.com/kirodotdev/Kiro/issues",
   },
   storage: {
     kind: "file",

@@ -5,9 +5,12 @@
   format: "json",
   protocol_revision: "2025-06-18",
   metadata: {
-    logo_url: "https://cursor.sh/icon.png",
     category: "application",
-    supported_runtimes: ["npx", "uvx", "docker", "binary"],
+    description: "Built to make you extraordinarily productive, Cursor is the best way to code with AI.",
+    docs_url: "https://cursor.com/docs",
+    homepage_url: "https://cursor.sh",
+    logo_url: "https://cursor.com/marketing-static/favicon-light.svg",
+    support_url: "https://forum.cursor.com/",
   },
   storage: {
     kind: "file",

@@ -4,9 +4,12 @@
   display_name: "VS Code",
   format: "json",
   metadata: {
-    logo_url: "https://code.visualstudio.com/assets/favicon.ico",
     category: "application",
-    supported_runtimes: ["npx", "uvx", "bunx"],
+    description: "Visual Studio Code with MCP extension support for AI-assisted tooling.",
+    docs_url: "https://code.visualstudio.com/docs",
+    homepage_url: "https://code.visualstudio.com",
+    logo_url: "https://code.visualstudio.com/assets/favicon.ico",
+    support_url: "https://code.visualstudio.com/docs/supporting/faq",
   },
   storage: {
     kind: "file",

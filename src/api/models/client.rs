@@ -72,8 +72,18 @@ pub struct ClientInfo {
     pub has_mcp_config: bool,
     #[schemars(description = "Supported MCP transport protocols")]
     pub supported_transports: Vec<String>,
-    #[schemars(description = "Supported MCP runtime environments")]
-    pub supported_runtimes: Vec<String>,
+    #[schemars(description = "Short description of the client application")]
+    #[serde(default)]
+    pub description: Option<String>,
+    #[schemars(description = "Homepage URL for the client application")]
+    #[serde(default)]
+    pub homepage_url: Option<String>,
+    #[schemars(description = "Documentation URL for the client application")]
+    #[serde(default)]
+    pub docs_url: Option<String>,
+    #[schemars(description = "Support or community URL for the client application")]
+    #[serde(default)]
+    pub support_url: Option<String>,
     #[schemars(description = "Configuration management mode")]
     pub config_mode: Option<String>,
     #[schemars(description = "Format type of configuration file")]
@@ -256,10 +266,23 @@ pub struct ClientConfigData {
     pub template: ClientTemplateMetadata,
     #[schemars(description = "Supported transports derived from the template")]
     pub supported_transports: Vec<String>,
-    #[schemars(description = "Supported runtimes for current platform or fallback")]
-    pub supported_runtimes: Vec<String>,
     #[schemars(description = "Whether MCPMate manages this client")]
     pub managed: bool,
+    #[schemars(description = "Short description of the client application")]
+    #[serde(default)]
+    pub description: Option<String>,
+    #[schemars(description = "Homepage URL for the client application")]
+    #[serde(default)]
+    pub homepage_url: Option<String>,
+    #[schemars(description = "Documentation URL for the client application")]
+    #[serde(default)]
+    pub docs_url: Option<String>,
+    #[schemars(description = "Support or community URL for the client application")]
+    #[serde(default)]
+    pub support_url: Option<String>,
+    #[schemars(description = "Logo URL for the client application")]
+    #[serde(default)]
+    pub logo_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -314,6 +337,18 @@ pub struct ClientTemplateMetadata {
     pub keep_original_config: bool,
     #[schemars(description = "Managed config source (e.g., 'profile') if declared")]
     pub managed_source: Option<String>,
+    #[schemars(description = "Short description of the client template")]
+    #[serde(default)]
+    pub description: Option<String>,
+    #[schemars(description = "Homepage URL linked with the client template")]
+    #[serde(default)]
+    pub homepage_url: Option<String>,
+    #[schemars(description = "Documentation URL linked with the client template")]
+    #[serde(default)]
+    pub docs_url: Option<String>,
+    #[schemars(description = "Support or community URL linked with the client template")]
+    #[serde(default)]
+    pub support_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

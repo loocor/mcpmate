@@ -25,8 +25,6 @@ use serde_yaml;
 use std::sync::Arc;
 use toml;
 
-const DEFAULT_RUNTIMES: &[&str] = &["npx", "uvx", "docker", "binary"];
-
 /// Handler for GET /api/client
 /// Detects and returns all clients, with optional template reload
 pub async fn list(
@@ -106,6 +104,11 @@ pub async fn config_details(
     })?;
 
     let (imported_servers, import_summary) = (None, None);
+    let description = metadata_string(&template, "description");
+    let homepage_url = metadata_string(&template, "homepage_url");
+    let docs_url = metadata_string(&template, "docs_url");
+    let support_url = metadata_string(&template, "support_url");
+    let logo_url = extract_logo_url(&template);
 
     let data = ClientConfigData {
         config_path: config_path.unwrap_or_default(),
@@ -119,8 +122,12 @@ pub async fn config_details(
         import_summary,
         template: build_template_metadata(&template),
         supported_transports: extract_supported_transports(&template),
-        supported_runtimes: extract_supported_runtimes(&template),
         managed,
+        description,
+        homepage_url,
+        docs_url,
+        support_url,
+        logo_url,
     };
 
     Ok(Json(ClientConfigResp::success(data)))
@@ -340,7 +347,10 @@ async fn descriptor_to_client_info(
     let logo_url = extract_logo_url(&template);
     let category = extract_category(&template);
     let supported_transports = extract_supported_transports(&template);
-    let supported_runtimes = extract_supported_runtimes(&template);
+    let description = metadata_string(&template, "description");
+    let homepage_url = metadata_string(&template, "homepage_url");
+    let docs_url = metadata_string(&template, "docs_url");
+    let support_url = metadata_string(&template, "support_url");
     let config_type = convert_container_type(template.config_mapping.container_type);
 
     let content = if descriptor.config_exists {
@@ -376,7 +386,10 @@ async fn descriptor_to_client_info(
         config_exists: descriptor.config_exists,
         has_mcp_config,
         supported_transports,
-        supported_runtimes,
+        description,
+        homepage_url,
+        docs_url,
+        support_url,
         config_mode: None,
         config_type,
         last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
@@ -410,21 +423,6 @@ fn extract_supported_transports(template: &ClientTemplate) -> Vec<String> {
     template.config_mapping.format_rules.keys().cloned().collect()
 }
 
-fn extract_supported_runtimes(template: &ClientTemplate) -> Vec<String> {
-    match template.metadata.get("supported_runtimes") {
-        Some(Value::Array(values)) => values
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
-        Some(Value::Object(map)) => map
-            .values()
-            .find_map(|value| value.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-            .unwrap_or_else(|| DEFAULT_RUNTIMES.iter().map(|s| s.to_string()).collect()),
-        _ => DEFAULT_RUNTIMES.iter().map(|s| s.to_string()).collect(),
-    }
-}
-
 fn build_template_metadata(template: &ClientTemplate) -> ClientTemplateMetadata {
     ClientTemplateMetadata {
         format: template.format.as_str().to_string(),
@@ -444,6 +442,10 @@ fn build_template_metadata(template: &ClientTemplate) -> ClientTemplateMetadata 
                 .as_ref()
                 .and_then(|e| e.source.clone())
         }),
+        description: metadata_string(template, "description"),
+        homepage_url: metadata_string(template, "homepage_url"),
+        docs_url: metadata_string(template, "docs_url"),
+        support_url: metadata_string(template, "support_url"),
     }
 }
 

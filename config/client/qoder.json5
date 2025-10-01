@@ -4,12 +4,12 @@
   display_name: "Qoder",
   format: "json",
   metadata: {
-    logo_url: "https://qoder.io/favicon.ico",
     category: "application",
-    supported_runtimes: {
-      macos: ["npx", "uvx", "bunx", "docker", "binary"],
-      windows: ["npx", "uvx", "bunx", "binary"],
-    },
+    description: "Agentic Coding Platform for Real Software. Think Deeper. Build Better.",
+    docs_url: "https://docs.qoder.com/",
+    homepage_url: "http://qoder.ai/",
+    logo_url: "https://g.alicdn.com/qbase/qoder/0.0.99/favIcon.svg",
+    support_url: "https://forum.qoder.com/",
   },
   storage: {
     kind: "file",

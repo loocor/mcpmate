@@ -4,9 +4,12 @@
   display_name: "Claude Code",
   format: "json",
   metadata: {
-    logo_url: "https://claude.ai/favicon.ico",
     category: "application",
-    supported_runtimes: ["npx", "bunx", "uvx"],
+    description: "Unleash Claude’s raw power directly in your terminal. Search million-line codebases instantly.",
+    docs_url: "https://docs.claude.com/en/docs/claude-code/overview",
+    homepage_url: "https://www.claude.com/product/claude-code",
+    logo_url: "https://claude.ai/favicon.ico",
+    support_url: "https://support.claude.com",
   },
   storage: {
     kind: "file",

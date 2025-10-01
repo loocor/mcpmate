@@ -5,13 +5,12 @@
   format: "json",
   protocol_revision: "2025-06-18",
   metadata: {
-    logo_url: "https://5ire.app/logo.png",
     category: "application",
-    supported_runtimes: {
-      macos: ["npx", "uvx", "docker", "binary"],
-      linux: ["npx", "uvx", "docker", "binary"],
-      windows: ["npx", "uvx", "binary"],
-    },
+    description: "5ire is an open-source cross-platform desktop AI assistant and MCP client with a built-in knowledge base and tool marketplace.",
+    docs_url: "https://5ire.app/docs",
+    homepage_url: "https://5ire.app",
+    logo_url: "https://5ire.app/favicon.ico",
+    support_url: "https://github.com/nanbingxyz/5ire/issues",
   },
   storage: {
     kind: "file",

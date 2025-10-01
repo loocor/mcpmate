@@ -1,10 +1,17 @@
 // Warp terminal (SQLite-backed) MCP configuration template
 {
   identifier: "warp",
-  display_name: "Warp",
+  display_name: "Warp (WIP)",
   format: "json",
   protocol_revision: "2025-06-18",
-  metadata: { category: "application" },
+  metadata: {
+    category: "application",
+    description: "From prompt to production The best way to code with Al agents. Prompt, review, edit, and ship.",
+    homepage_url: "https://warp.dev",
+    docs_url: "https://docs.warp.dev/",
+    support_url: "https://www.warp.dev/contact",
+    logo_url: "https://www.warp.dev/favicon.png",
+  },
   storage: {
     kind: "custom",
     adapter: "warp_sqlite",

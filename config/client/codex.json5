@@ -2,13 +2,15 @@
 {
   identifier: "codex",
   display_name: "Codex",
-  // output format for the rendered file
   format: "toml",
   protocol_revision: "2025-06-18",
   metadata: {
-    logo_url: "https://codex.example/assets/icon.png",
+    logo_url: "https://openai.com/favicon.ico",
     category: "application",
-    supported_runtimes: ["npx", "uvx", "docker"],
+    description: "One agent for everywhere you code—included in ChatGPT Plus, Pro, Business, Edu, and Enterprise plans.",
+    homepage_url: "https://openai.com/codex/",
+    docs_url: "https://developers.openai.com/codex/cloud",
+    support_url: "https://github.com/openai/codex/issues",
   },
   storage: {
     kind: "file",

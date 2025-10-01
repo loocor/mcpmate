@@ -7,7 +7,12 @@
   metadata: {
     category: "application",
     storage: "leveldb",
-    adapter: "cherry_kv"
+    adapter: "cherry_kv",
+    description: "Cherry Studio —— AI conversation client with multi-provider integration.",
+    homepage_url: "https://www.cherry-ai.com",
+    docs_url: "https://docs.cherry-ai.com/docs/en-us",
+    support_url: "https://discord.gg/wez8HtpxqQ",
+    logo_url: "https://www.cherry-ai.com/assets/favicon-BmbgeFTf.png",
   },
   storage: {
     kind: "kv",

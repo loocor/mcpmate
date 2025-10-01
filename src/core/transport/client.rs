@@ -72,6 +72,7 @@ impl ClientHandler for UpstreamClientHandler {
                 }
             }
         }
+        let _ = crate::inspector::service::inspector_forward_progress(&params).await;
     }
 
     async fn on_cancelled(
@@ -92,6 +93,7 @@ impl ClientHandler for UpstreamClientHandler {
                 }
             }
         }
+        let _ = crate::inspector::service::inspector_forward_cancel(&params.request_id, params.reason.clone()).await;
     }
 
     async fn on_logging_message(
@@ -115,5 +117,8 @@ impl ClientHandler for UpstreamClientHandler {
                 }
             }
         }
+        let token = context.meta.get_progress_token();
+        let token_ref = token.as_ref();
+        let _ = crate::inspector::service::inspector_forward_log(token_ref, &params).await;
     }
 }
