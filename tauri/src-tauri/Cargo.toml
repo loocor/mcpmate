@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "MCPMate desktop alpha shell built with Tauri"
 authors = ["Loocor <loocor@gmail.com>"]
-default-run = "mcpmate-tauri"
+default-run = "mcpmate"
 
 [workspace]
 
@@ -15,9 +15,9 @@ tokio = { version = "1.44", features = ["macros", "rt-multi-thread", "time"] }
 tokio-util = "0.7"
 tracing = "0.1"
 mcpmate = { path = "../.." }
-tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 serde_json = "1"
 
 [build-dependencies]
@@ -25,3 +25,7 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
+
+[[bin]]
+name = "mcpmate"
+path = "src/main.rs"

@@ -26,12 +26,11 @@
 	"bundle": {
 		"active": true,
 		"targets": ["app", "dmg"],
-		"icon": ["icons/icon.icns"]
+		"icon": ["icons/icon.icns"],
+		"externalBin": ["../../target/sidecars/bridge"]
 	},
 	"plugins": {
-		"shell": {
-			"open": "https?://.*"
-		},
+		"opener": {},
 		"updater": {
 			"active": false,
 			"dialog": true,

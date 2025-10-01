@@ -20,7 +20,7 @@ use tauri::{
     webview::{NewWindowResponse, WebviewWindowBuilder},
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::Builder as UpdaterPluginBuilder;
 use tauri_plugin_updater::UpdaterExt;
 use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle, time::timeout};
@@ -141,7 +141,7 @@ pub fn run() -> Result<()> {
 
     builder
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(updater_plugin)
         .setup(move |app| {
             initialize_paths(app)?;
@@ -258,7 +258,7 @@ fn spawn_main_window(app: &mut tauri::App) -> Result<()> {
         let scheme = url.scheme();
         match scheme {
             "http" | "https" => {
-                if let Err(err) = app_handle.shell().open(url.as_str().to_string(), None) {
+                if let Err(err) = app_handle.opener().open_url(url.as_str(), None::<String>) {
                     warn!(
                         error = %err,
                         target_url = %url,

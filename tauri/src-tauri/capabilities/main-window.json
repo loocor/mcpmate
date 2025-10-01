@@ -3,5 +3,5 @@
 	"identifier": "main-window",
 	"description": "Default capability for the main window to run the MCPMate dashboard",
 	"windows": ["main"],
-	"permissions": ["core:default", "shell:default", "shell:allow-open"]
+	"permissions": ["core:default", "opener:default"]
 }

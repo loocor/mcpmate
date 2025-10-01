@@ -61,7 +61,7 @@ You can override runtime ports or modes without recompiling by exporting the fol
 ## Release & Update Resources
 
 - Desktop release & updater workflow: `docs/desktop-release-guide.md`
-- Automation helpers: `script/build-tauri-release.sh`, `script/generate-update-manifest.sh`
+- Automation helpers: `script/macos-build-tauri-release.sh`, `script/generate-update-manifest.sh`
 - Auto-updater plugin is compiled in but disabled by default (`plugins.updater.active = false`). Replace the placeholder Minisign public key in `tauri.conf.json` and point to real endpoints before turning it on.
 
 ## Next Steps

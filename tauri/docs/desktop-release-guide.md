@@ -71,7 +71,7 @@ The updater plugin is already wired under `tauri.conf.json > plugins.updater`, b
 
 Scripts in `script/` help automate these steps:
 
-- `script/build-tauri-release.sh` &mdash; orchestrates the board build and Tauri bundling for selectable targets.
+- `script/macos-build-tauri-release.sh` &mdash; orchestrates the board build and Tauri bundling for selectable targets.
 - `script/generate-update-manifest.sh` &mdash; creates an updater manifest JSON from command-line inputs.
 
 Integration tip: run the scripts from CI after tagging a release. Upload the produced bundles to the
