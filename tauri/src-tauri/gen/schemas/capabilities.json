@@ -1,1 +1,0 @@
-{"main-window":{"identifier":"main-window","description":"Default capability for the main window to run the MCPMate dashboard","local":true,"windows":["main"],"permissions":["core:default","opener:default"]}}
