@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::common::profile::ProfileType;
+use crate::common::profile::{ProfileRole, ProfileType};
 
 /// Profile model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -19,6 +19,8 @@ pub struct Profile {
     /// Type of the profile
     #[sqlx(rename = "type")]
     pub profile_type: ProfileType,
+    /// Role of the profile within the system lifecycle
+    pub role: ProfileRole,
     /// Whether multiple profile can be selected simultaneously
     pub multi_select: bool,
     /// Priority of the profile (higher priority wins in case of conflicts)
@@ -44,6 +46,7 @@ impl Profile {
             name,
             description: None,
             profile_type,
+            role: ProfileRole::User,
             multi_select: false,
             priority: 0,
             is_active: false,
@@ -64,6 +67,7 @@ impl Profile {
             name,
             description,
             profile_type,
+            role: ProfileRole::User,
             multi_select: false,
             priority: 0,
             is_active: false,

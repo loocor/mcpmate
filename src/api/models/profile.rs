@@ -311,6 +311,8 @@ pub struct ProfileData {
     pub description: Option<String>,
     /// Type of the profile (host_app, scenario, shared)
     pub profile_type: String,
+    /// Role of the profile (user, default_anchor)
+    pub role: String,
     /// Whether multiple profile can be selected simultaneously
     pub multi_select: bool,
     /// Priority of the profile (higher priority wins in case of conflicts)

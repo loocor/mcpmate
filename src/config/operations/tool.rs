@@ -6,7 +6,7 @@ use sqlx::{Pool, Sqlite};
 
 use crate::config::{
     models::ProfileTool,
-    profile::{DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_SLUG, LEGACY_DEFAULT_PROFILE_NAME},
+    profile::{DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION},
 };
 
 /// Enable or disable a tool in the active profile
@@ -28,30 +28,23 @@ pub async fn set_tool_enabled(
             if active_profile.is_empty() {
                 let default_profile = crate::config::profile::get_default_profile(pool).await?;
 
-                // If there's no default profile, try the legacy "default" named profile
+                // If there's no default profile, create a new default anchor profile
                 let profile_id = if let Some(profile) = default_profile {
                     profile.id.unwrap()
                 } else {
-                    let legacy_default =
-                        crate::config::profile::get_profile_by_name(pool, LEGACY_DEFAULT_PROFILE_NAME).await?;
+                    let mut new_profile = crate::config::models::Profile::new_with_description(
+                        DEFAULT_ANCHOR_INITIAL_NAME.to_string(),
+                        Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
+                        crate::common::profile::ProfileType::Shared,
+                    );
 
-                    // If there's no legacy default profile either, create a new default profile
-                    if let Some(profile) = legacy_default {
-                        profile.id.unwrap()
-                    } else {
-                        // Create default profile if it doesn't exist
-                        let mut new_profile = crate::config::models::Profile::new_with_description(
-                            DEFAULT_PROFILE_SLUG.to_string(),
-                            Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
-                            crate::common::profile::ProfileType::Shared,
-                        );
+                    // Set active and default flags
+                    new_profile.is_active = true;
+                    new_profile.is_default = true;
+                    new_profile.multi_select = true;
+                    new_profile.role = DEFAULT_ANCHOR_ROLE;
 
-                        // Set active and default flags
-                        new_profile.is_active = true;
-                        new_profile.is_default = true;
-                        new_profile.multi_select = true;
-                        crate::config::profile::upsert_profile(pool, &new_profile).await?
-                    }
+                    crate::config::profile::upsert_profile(pool, &new_profile).await?
                 };
 
                 // Add the tool to the profile
@@ -101,19 +94,11 @@ pub async fn get_tool_id(
             // Get the default profile
             let default_profile = crate::config::profile::get_default_profile(pool).await?;
 
-            // If there's no default profile, try the legacy "default" named profile
+            // If there's no default profile, nothing to return
             let profile_id = if let Some(profile) = default_profile {
                 profile.id.unwrap()
             } else {
-                let legacy_default =
-                    crate::config::profile::get_profile_by_name(pool, LEGACY_DEFAULT_PROFILE_NAME).await?;
-
-                // If there's no legacy default profile either, return None
-                if legacy_default.is_none() {
-                    return Ok(None);
-                }
-
-                legacy_default.unwrap().id.unwrap()
+                return Ok(None);
             };
 
             // Get all tools in this profile
@@ -212,24 +197,15 @@ pub async fn is_tool_enabled(
             if active_profile.is_empty() {
                 let default_profile = crate::config::profile::get_default_profile(pool).await?;
 
-                // If there's no default profile, try the legacy "default" named profile
-                if default_profile.is_none() {
-                    let legacy_default =
-                        crate::config::profile::get_profile_by_name(pool, LEGACY_DEFAULT_PROFILE_NAME).await?;
-
-                    // If there's no legacy default profile either, the tool is enabled by default
-                    if legacy_default.is_none() {
+                let default_profile = match default_profile {
+                    Some(profile) => profile,
+                    None => {
                         tracing::debug!("No active or default profile found, tool is enabled by default");
                         return Ok(true);
                     }
+                };
 
-                    // Use the legacy default profile
-                    let profile_id = legacy_default.unwrap().id.unwrap();
-                    return is_tool_enabled_in_profile(pool, server_id, tool_name, &profile_id).await;
-                }
-
-                // Use the default profile
-                let profile_id = default_profile.unwrap().id.unwrap();
+                let profile_id = default_profile.id.unwrap();
                 return is_tool_enabled_in_profile(pool, server_id, tool_name, &profile_id).await;
             }
 

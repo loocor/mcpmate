@@ -9,7 +9,7 @@ use sqlx::{Pool, Sqlite};
 use std::collections::HashSet;
 
 use super::crud::get_server_by_id;
-use crate::config::models::Server;
+use crate::{common::profile::USER_PROFILE_INITIAL_NAME, config::models::Server};
 
 // ============================================================================
 // CORE SERVICE - ServerEnabledService
@@ -300,7 +300,7 @@ impl ServerEnabledService {
 
     /// Helper method to try getting the legacy default profile ID
     async fn try_get_legacy_default_profile(&self) -> Result<Option<String>> {
-        let legacy_default = crate::config::profile::get_profile_by_name(&self.pool, "default").await?;
+        let legacy_default = crate::config::profile::get_profile_by_name(&self.pool, USER_PROFILE_INITIAL_NAME).await?;
         Ok(legacy_default.and_then(|profile| profile.id))
     }
 }

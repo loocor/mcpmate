@@ -13,12 +13,11 @@ pub mod tool;
 // Basic query operations
 pub use basic::{
     get_active_profile, get_all_profile, get_default_profile, get_default_profiles, get_profile, get_profile_by_name,
-    get_profile_by_type,
+    get_profile_by_role, get_profile_by_type,
 };
 
 pub use constants::{
-    DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_SLUG, LEGACY_DEFAULT_PROFILE_NAME, is_primary_default_name,
-    is_primary_default_profile,
+    DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION, is_default_anchor_profile,
 };
 
 // Management operations

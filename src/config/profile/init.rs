@@ -45,6 +45,7 @@ async fn create_profile_table(pool: &Pool<Sqlite>) -> Result<()> {
             name TEXT NOT NULL UNIQUE,
             description TEXT,
             type TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
             multi_select BOOLEAN NOT NULL DEFAULT 0,
             priority INTEGER NOT NULL DEFAULT 0,
             is_active BOOLEAN NOT NULL DEFAULT 0,

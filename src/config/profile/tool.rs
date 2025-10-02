@@ -6,7 +6,10 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
 use crate::{
-    config::models::ProfileToolWithDetails,
+    config::{
+        models::ProfileToolWithDetails,
+        profile::{DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION},
+    },
     core::capability::naming::{NamingKind, strip_server_prefix},
     generate_id,
 };
@@ -93,23 +96,16 @@ impl ToolStatusService {
             return Ok(profile.id.unwrap());
         }
 
-        // Try legacy "default" named profile
-        if let Some(profile) =
-            crate::config::profile::get_profile_by_name(pool, crate::config::profile::LEGACY_DEFAULT_PROFILE_NAME)
-                .await?
-        {
-            return Ok(profile.id.unwrap());
-        }
-
-        // Create new default profile
+        // Create new default anchor profile when none exists
         let mut new_profile = crate::config::models::Profile::new_with_description(
-            crate::config::profile::DEFAULT_PROFILE_SLUG.to_string(),
-            Some(crate::config::profile::DEFAULT_PROFILE_DESCRIPTION.to_string()),
+            DEFAULT_ANCHOR_INITIAL_NAME.to_string(),
+            Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
             crate::common::profile::ProfileType::Shared,
         );
         new_profile.is_active = true;
         new_profile.is_default = true;
         new_profile.multi_select = true;
+        new_profile.role = DEFAULT_ANCHOR_ROLE;
 
         crate::config::profile::upsert_profile(pool, &new_profile).await
     }

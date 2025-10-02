@@ -28,23 +28,27 @@ impl ResponseConverter {
     /// Convert Profile to ProfileResponse with consistent logic
     pub fn profile_to_response(profile: &crate::config::models::Profile) -> crate::api::models::profile::ProfileData {
         let mut allowed_operations = Vec::new();
+        let is_default_anchor = profile.role.is_default_anchor();
 
         // Add allowed operations based on current state
-        if profile.is_active {
+        if profile.is_active && !is_default_anchor {
             allowed_operations.push("deactivate".to_string());
-        } else {
+        } else if !profile.is_active {
             allowed_operations.push("activate".to_string());
         }
 
         // Always allow update and delete
         allowed_operations.push("update".to_string());
-        allowed_operations.push("delete".to_string());
+        if !is_default_anchor {
+            allowed_operations.push("delete".to_string());
+        }
 
         crate::api::models::profile::ProfileData {
             id: profile.id.clone().unwrap_or_default(),
             name: profile.name.clone(),
             description: profile.description.clone(),
             profile_type: profile.profile_type_string(),
+            role: profile.role.to_string(),
             multi_select: profile.multi_select,
             priority: profile.priority,
             is_active: profile.is_active,

@@ -9,7 +9,7 @@ use tracing;
 use crate::{
     common::paths::global_paths,
     common::profile::ProfileType,
-    config::{import, initialization, models, profile, server},
+    config::{import, initialization, models, server},
     core::capability::naming,
 };
 
@@ -167,31 +167,12 @@ impl Database {
 
     /// Initialize the database with some default values
     pub async fn initialize_defaults(&self) -> Result<()> {
-        use crate::config::profile::{DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_SLUG, LEGACY_DEFAULT_PROFILE_NAME};
+        use crate::config::profile::{
+            self, DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION,
+        };
 
-        // Create default profile if it doesn't exist
-        let mut default_profile = profile::get_profile_by_name(&self.pool, DEFAULT_PROFILE_SLUG).await?;
-
-        if default_profile.is_none() {
-            if let Some(mut legacy_profile) =
-                profile::get_profile_by_name(&self.pool, LEGACY_DEFAULT_PROFILE_NAME).await?
-            {
-                tracing::info!(
-                    "Renaming legacy default profile '{}' to '{}'",
-                    LEGACY_DEFAULT_PROFILE_NAME,
-                    DEFAULT_PROFILE_SLUG
-                );
-
-                legacy_profile.name = DEFAULT_PROFILE_SLUG.to_string();
-                legacy_profile.description = Some(DEFAULT_PROFILE_DESCRIPTION.to_string());
-                legacy_profile.is_default = true;
-                legacy_profile.is_active = true;
-                legacy_profile.multi_select = true;
-
-                profile::update_profile(&self.pool, &legacy_profile).await?;
-                default_profile = Some(legacy_profile);
-            }
-        }
+        // Ensure the default anchor profile exists
+        let default_profile = profile::get_default_profile(&self.pool).await?;
 
         let profile_id = if let Some(mut profile) = default_profile {
             let id = profile
@@ -199,21 +180,39 @@ impl Database {
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("Default profile has no ID"))?;
 
+            let mut needs_update = false;
+
+            if profile.role != DEFAULT_ANCHOR_ROLE {
+                tracing::info!("Setting profile '{}' to default anchor role", profile.name);
+                profile.role = DEFAULT_ANCHOR_ROLE;
+                needs_update = true;
+            }
+
             if !profile.is_active || !profile.is_default || !profile.multi_select {
-                tracing::info!("Normalizing default profile flags");
+                tracing::info!("Normalizing default anchor profile flags");
                 profile.is_active = true;
                 profile.is_default = true;
                 profile.multi_select = true;
+                needs_update = true;
+            }
+
+            if profile.profile_type != ProfileType::Shared {
+                tracing::info!("Normalizing default anchor profile type to shared");
+                profile.profile_type = ProfileType::Shared;
+                needs_update = true;
+            }
+
+            if needs_update {
                 profile::update_profile(&self.pool, &profile).await?;
             }
 
             id
         } else {
-            tracing::info!("Creating default profile '{}'", DEFAULT_PROFILE_SLUG);
+            tracing::info!("Creating default anchor profile '{}'", DEFAULT_ANCHOR_INITIAL_NAME);
 
             // Create a new default profile
             let mut new_profile = models::Profile::new_with_description(
-                DEFAULT_PROFILE_SLUG.to_string(),
+                DEFAULT_ANCHOR_INITIAL_NAME.to_string(),
                 Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
                 ProfileType::Shared,
             );
@@ -222,6 +221,7 @@ impl Database {
             new_profile.is_active = true;
             new_profile.is_default = true;
             new_profile.multi_select = true;
+            new_profile.role = DEFAULT_ANCHOR_ROLE;
 
             // Insert the default profile
             let id = profile::upsert_profile(&self.pool, &new_profile).await?;

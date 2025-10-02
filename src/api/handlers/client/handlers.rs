@@ -13,7 +13,7 @@ use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, Stora
 use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
-use crate::common::ClientCategory;
+use crate::common::{ClientCategory, profile::USER_PROFILE_INITIAL_NAME};
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -275,11 +275,11 @@ pub async fn config_import(
             pid.clone()
         } else {
             // Ensure default profile exists so we can return its id consistently
-            match crate::config::profile::get_profile_by_name(&db.pool, "default").await {
+            match crate::config::profile::get_profile_by_name(&db.pool, USER_PROFILE_INITIAL_NAME).await {
                 Ok(Some(p)) => p.id.unwrap_or_default(),
                 _ => {
                     let p = crate::config::models::Profile::new(
-                        "default".to_string(),
+                        USER_PROFILE_INITIAL_NAME.to_string(),
                         crate::common::profile::ProfileType::Shared,
                     );
                     crate::config::profile::upsert_profile(&db.pool, &p)

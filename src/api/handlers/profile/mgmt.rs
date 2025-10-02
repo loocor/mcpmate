@@ -8,7 +8,7 @@ use crate::{
         ProfileListData, ProfileListReq, ProfileListResp, ProfileManageData, ProfileManageReq, ProfileManageResp,
         ProfileOperationResult, ProfileResp, ProfileUpdateReq,
     },
-    config::profile::{is_primary_default_name, is_primary_default_profile},
+    config::profile::is_default_anchor_profile,
 };
 use chrono::Utc;
 use std::str::FromStr;
@@ -42,22 +42,16 @@ fn validate_default_profile_rules(
         return Err(ApiError::BadRequest("Default profiles must remain active".to_string()));
     }
 
-    if is_primary_default_profile(profile) {
-        if !is_primary_default_name(&profile.name) {
-            return Err(ApiError::BadRequest(
-                "System default profile name cannot be changed".to_string(),
-            ));
-        }
-
+    if is_default_anchor_profile(profile) {
         if !profile.is_default {
             return Err(ApiError::BadRequest(
-                "System default profile must stay in the default bundle".to_string(),
+                "Default anchor profile must stay in the default bundle".to_string(),
             ));
         }
 
         if !profile.is_active {
             return Err(ApiError::BadRequest(
-                "System default profile must stay active".to_string(),
+                "Default anchor profile must stay active".to_string(),
             ));
         }
     }
@@ -66,12 +60,11 @@ fn validate_default_profile_rules(
 }
 
 fn reconcile_default_flags(profile: &mut crate::config::models::Profile) {
-    if profile.is_default {
+    if crate::config::profile::is_default_anchor_profile(profile) {
         profile.is_active = true;
-    }
-
-    if !profile.is_active {
-        profile.is_default = false;
+        profile.is_default = true;
+    } else {
+        // No automatic coupling required for user profiles; keep caller's intent.
     }
 }
 
@@ -242,7 +235,7 @@ pub async fn profile_delete(
     };
 
     // Check if it's the default profile (prevent deletion)
-    if profile.is_default {
+    if profile.is_default || is_default_anchor_profile(&profile) {
         return Err(ApiError::Forbidden("Cannot delete the default profile".to_string()));
     }
 
@@ -467,21 +460,19 @@ async fn profile_operation_core(
             ("activated", "active")
         }
         ProfileAction::Deactivate => {
-            if is_primary_default_profile(&profile) {
+            if is_default_anchor_profile(&profile) {
                 return Err(ApiError::Forbidden(
-                    "Cannot deactivate the system default profile".to_string(),
+                    "Cannot deactivate the default anchor profile".to_string(),
                 ));
             }
             profile.is_active = false;
-            profile.is_default = false;
             ("deactivated", "inactive")
         }
     };
 
     reconcile_default_flags(&mut profile);
 
-    // Update the profile in database
-    crate::config::profile::upsert_profile(pool, &profile)
+    crate::config::profile::set_profile_active(pool, profile_id, profile.is_active)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to update profile: {e}")))?;
 
@@ -515,11 +506,6 @@ fn profile_updates_core(
 ) -> Result<(), ApiError> {
     // Update name if provided
     if let Some(ref name) = updates.name {
-        if is_primary_default_name(&profile.name) && name != &profile.name {
-            return Err(ApiError::BadRequest(
-                "System default profile name cannot be changed".to_string(),
-            ));
-        }
         profile.name = name.clone();
     }
 
@@ -541,20 +527,17 @@ fn profile_updates_core(
         profile.priority = priority;
     }
     if let Some(is_active) = updates.is_active {
-        if is_primary_default_name(&profile.name) && !is_active {
+        if is_default_anchor_profile(profile) && !is_active {
             return Err(ApiError::BadRequest(
-                "System default profile must stay active".to_string(),
+                "Default anchor profile must stay active".to_string(),
             ));
         }
         profile.is_active = is_active;
-        if !profile.is_active {
-            profile.is_default = false;
-        }
     }
     if let Some(is_default) = updates.is_default {
-        if is_primary_default_name(&profile.name) && !is_default {
+        if is_default_anchor_profile(profile) && !is_default {
             return Err(ApiError::BadRequest(
-                "System default profile must stay in the default bundle".to_string(),
+                "Default anchor profile must stay in the default bundle".to_string(),
             ));
         }
         profile.is_default = is_default;

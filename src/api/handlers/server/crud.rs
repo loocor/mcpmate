@@ -11,7 +11,10 @@ use crate::{
         ApiError,
         common::{internal_error, map_anyhow_error, map_database_error},
     },
-    common::{profile::ProfileType, server::ServerType},
+    common::{
+        profile::{ProfileType, USER_PROFILE_INITIAL_NAME},
+        server::ServerType,
+    },
     config::server::capabilities::sync_via_connection_pool,
     config::server::{ConflictPolicy, ImportOptions, import_batch},
     config::{
@@ -61,14 +64,14 @@ fn create_server_from_config(
 
 /// Get or create default profile
 async fn get_or_create_default_profile(db: &Database) -> Result<String, ApiError> {
-    let default_profile = profile::get_profile_by_name(&db.pool, "default")
+    let default_profile = profile::get_profile_by_name(&db.pool, USER_PROFILE_INITIAL_NAME)
         .await
         .map_err(map_anyhow_error)?;
 
     match default_profile {
         Some(profile) => profile.id.ok_or_else(|| internal_error("Profile id missing")),
         None => {
-            let new_profile = Profile::new("default".to_owned(), ProfileType::Shared);
+            let new_profile = Profile::new(USER_PROFILE_INITIAL_NAME.to_owned(), ProfileType::Shared);
             profile::upsert_profile(&db.pool, &new_profile)
                 .await
                 .map_err(map_anyhow_error)

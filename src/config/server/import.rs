@@ -8,7 +8,7 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::api::models::server::ServersImportConfig;
-use crate::common::server::ServerType;
+use crate::common::{profile::USER_PROFILE_INITIAL_NAME, server::ServerType};
 use crate::config::models::Server;
 use crate::config::server::{args, env, get_all_servers, upsert_server};
 
@@ -165,7 +165,7 @@ pub async fn import_batch(
         } else if let Some(pid) = default_profile_cache.clone() {
             pid
         } else {
-            match crate::config::profile::get_profile_by_name(db_pool, "default").await {
+            match crate::config::profile::get_profile_by_name(db_pool, USER_PROFILE_INITIAL_NAME).await {
                 Ok(Some(p)) => {
                     let id = p.id.unwrap_or_default();
                     default_profile_cache = Some(id.clone());
@@ -173,7 +173,7 @@ pub async fn import_batch(
                 }
                 _ => {
                     let p = crate::config::models::Profile::new(
-                        "default".to_string(),
+                        USER_PROFILE_INITIAL_NAME.to_string(),
                         crate::common::profile::ProfileType::Shared,
                     );
                     let id = crate::config::profile::upsert_profile(db_pool, &p)

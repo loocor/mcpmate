@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
 use crate::{
-    config::{models::Profile, profile::is_primary_default_profile},
+    config::{models::Profile, profile::is_default_anchor_profile},
     generate_id,
 };
 
@@ -29,11 +29,12 @@ pub async fn upsert_profile(
 
     let result = sqlx::query(
         r#"
-        INSERT INTO profile (id, name, description, type, multi_select, priority, is_active, is_default)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO profile (id, name, description, type, role, multi_select, priority, is_active, is_default)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(name) DO UPDATE SET
             description = excluded.description,
             type = excluded.type,
+            role = excluded.role,
             multi_select = excluded.multi_select,
             priority = excluded.priority,
             is_active = excluded.is_active,
@@ -45,6 +46,7 @@ pub async fn upsert_profile(
     .bind(&profile.name)
     .bind(&profile.description)
     .bind(profile.profile_type)
+    .bind(profile.role)
     .bind(profile.multi_select)
     .bind(profile.priority)
     .bind(profile.is_active)
@@ -93,13 +95,14 @@ pub async fn update_profile(
     let result = sqlx::query(
         r#"
         UPDATE profile
-        SET name = ?, description = ?, type = ?, multi_select = ?, priority = ?, is_active = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
+        SET name = ?, description = ?, type = ?, role = ?, multi_select = ?, priority = ?, is_active = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         "#,
     )
     .bind(&profile.name)
     .bind(&profile.description)
     .bind(profile.profile_type)
+    .bind(profile.role)
     .bind(profile.multi_select)
     .bind(profile.priority)
     .bind(profile.is_active)
@@ -145,7 +148,7 @@ pub async fn set_profile_active(
     let profile = profile.unwrap();
 
     // Disallow deactivating the default profile
-    if is_primary_default_profile(&profile) && !active {
+    if is_default_anchor_profile(&profile) && !active {
         return Err(anyhow::anyhow!("The system default profile cannot be deactivated"));
     }
 
@@ -168,34 +171,19 @@ pub async fn set_profile_active(
     }
 
     // Update the specified profile
-    if active {
-        sqlx::query(
-            r#"
-            UPDATE profile
-            SET is_active = 1,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            "#,
-        )
-        .bind(profile_id)
-        .execute(&mut *tx)
-        .await
-        .context("Failed to update profile active status")?;
-    } else {
-        sqlx::query(
-            r#"
-            UPDATE profile
-            SET is_active = 0,
-                is_default = 0,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            "#,
-        )
-        .bind(profile_id)
-        .execute(&mut *tx)
-        .await
-        .context("Failed to update profile active status")?;
-    }
+    sqlx::query(
+        r#"
+        UPDATE profile
+        SET is_active = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        "#,
+    )
+    .bind(active)
+    .bind(profile_id)
+    .execute(&mut *tx)
+    .await
+    .context("Failed to update profile active status")?;
 
     tx.commit().await.context("Failed to commit transaction")?;
 
@@ -251,7 +239,7 @@ pub async fn delete_profile(
 
     // Prevent deleting the default profile at the data layer as well
     if let Some(p) = get_profile(pool, id).await? {
-        if is_primary_default_profile(&p) {
+        if is_default_anchor_profile(&p) {
             return Err(anyhow::anyhow!("Cannot delete the system default profile"));
         }
     }

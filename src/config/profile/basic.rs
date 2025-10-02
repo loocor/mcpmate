@@ -7,12 +7,9 @@ use sqlx::{Pool, Sqlite};
 use crate::{
     common::{
         database::{fetch_all_ordered, fetch_optional},
-        profile::ProfileType,
+        profile::{ProfileRole, ProfileType},
     },
-    config::{
-        models::Profile,
-        profile::{DEFAULT_PROFILE_SLUG, LEGACY_DEFAULT_PROFILE_NAME},
-    },
+    config::models::Profile,
 };
 
 /// Get all profile from the database
@@ -41,15 +38,13 @@ pub async fn get_active_profile(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
 
 /// Get the default profile from the database
 pub async fn get_default_profile(pool: &Pool<Sqlite>) -> Result<Option<Profile>> {
-    tracing::debug!("Retrieving primary default profile");
+    tracing::debug!("Retrieving default anchor profile");
 
-    if let Some(profile) = get_profile_by_name(pool, DEFAULT_PROFILE_SLUG).await? {
+    if let Some(profile) = get_profile_by_role(pool, ProfileRole::DefaultAnchor).await? {
         return Ok(Some(profile));
     }
 
-    if let Some(profile) = get_profile_by_name(pool, LEGACY_DEFAULT_PROFILE_NAME).await? {
-        return Ok(Some(profile));
-    }
+    tracing::debug!("Default anchor profile not found via role, falling back to is_default flag");
 
     let profile = sqlx::query_as::<_, Profile>(
         r#"
@@ -133,6 +128,39 @@ pub async fn get_profile(
         tracing::debug!("Found profile '{}' with ID {}, type: {}", p.name, id, p.profile_type);
     } else {
         tracing::debug!("No profile found with ID {}", id);
+    }
+
+    Ok(profile)
+}
+
+/// Get a specific profile by role from the database
+pub async fn get_profile_by_role(
+    pool: &Pool<Sqlite>,
+    role: ProfileRole,
+) -> Result<Option<Profile>> {
+    tracing::debug!("Executing SQL query to get profile with role '{}'", role.as_str());
+
+    let profile = sqlx::query_as::<_, Profile>(
+        r#"
+        SELECT * FROM profile
+        WHERE role = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(role)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch profile by role")?;
+
+    if let Some(ref p) = profile {
+        tracing::debug!(
+            "Found profile '{}' with ID {} for role '{}'",
+            p.name,
+            p.id.as_ref().unwrap_or(&"unknown".to_string()),
+            role.as_str()
+        );
+    } else {
+        tracing::debug!("No profile found for role '{}'", role.as_str());
     }
 
     Ok(profile)
