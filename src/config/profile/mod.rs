@@ -2,6 +2,7 @@
 // Contains CRUD operations for profile, organized by functional domains
 
 pub mod basic;
+pub mod constants;
 pub mod init;
 pub mod mgmt;
 pub mod prompt;
@@ -11,7 +12,13 @@ pub mod tool;
 
 // Basic query operations
 pub use basic::{
-    get_active_profile, get_all_profile, get_default_profile, get_profile, get_profile_by_name, get_profile_by_type,
+    get_active_profile, get_all_profile, get_default_profile, get_default_profiles, get_profile, get_profile_by_name,
+    get_profile_by_type,
+};
+
+pub use constants::{
+    DEFAULT_PROFILE_DESCRIPTION, DEFAULT_PROFILE_SLUG, LEGACY_DEFAULT_PROFILE_NAME, is_primary_default_name,
+    is_primary_default_profile,
 };
 
 // Management operations

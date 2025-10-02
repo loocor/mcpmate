@@ -4,7 +4,10 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::{config::models::Profile, generate_id};
+use crate::{
+    config::{models::Profile, profile::is_primary_default_profile},
+    generate_id,
+};
 
 use super::basic::get_profile;
 
@@ -142,8 +145,8 @@ pub async fn set_profile_active(
     let profile = profile.unwrap();
 
     // Disallow deactivating the default profile
-    if profile.is_default && !active {
-        return Err(anyhow::anyhow!("The default profile cannot be deactivated"));
+    if is_primary_default_profile(&profile) && !active {
+        return Err(anyhow::anyhow!("The system default profile cannot be deactivated"));
     }
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
@@ -165,19 +168,34 @@ pub async fn set_profile_active(
     }
 
     // Update the specified profile
-    sqlx::query(
-        r#"
-        UPDATE profile
-        SET is_active = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        "#,
-    )
-    .bind(active)
-    .bind(profile_id)
-    .execute(&mut *tx)
-    .await
-    .context("Failed to update profile active status")?;
+    if active {
+        sqlx::query(
+            r#"
+            UPDATE profile
+            SET is_active = 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#,
+        )
+        .bind(profile_id)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to update profile active status")?;
+    } else {
+        sqlx::query(
+            r#"
+            UPDATE profile
+            SET is_active = 0,
+                is_default = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#,
+        )
+        .bind(profile_id)
+        .execute(&mut *tx)
+        .await
+        .context("Failed to update profile active status")?;
+    }
 
     tx.commit().await.context("Failed to commit transaction")?;
 
@@ -205,23 +223,12 @@ pub async fn set_profile_default(
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
-    // Clear default flag from all profile
-    sqlx::query(
-        r#"
-        UPDATE profile
-        SET is_default = 0,
-            updated_at = CURRENT_TIMESTAMP
-        "#,
-    )
-    .execute(&mut *tx)
-    .await
-    .context("Failed to clear default flag from all profile")?;
-
-    // Set the specified profile as default
+    // Set the specified profile as default and ensure it remains active
     sqlx::query(
         r#"
         UPDATE profile
         SET is_default = 1,
+            is_active = 1,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         "#,
@@ -244,8 +251,8 @@ pub async fn delete_profile(
 
     // Prevent deleting the default profile at the data layer as well
     if let Some(p) = get_profile(pool, id).await? {
-        if p.is_default {
-            return Err(anyhow::anyhow!("Cannot delete the default profile"));
+        if is_primary_default_profile(&p) {
+            return Err(anyhow::anyhow!("Cannot delete the system default profile"));
         }
     }
 

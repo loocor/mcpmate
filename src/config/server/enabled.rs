@@ -186,17 +186,25 @@ impl ServerEnabledService {
         &self,
         server_id: &str,
     ) -> Result<bool> {
-        // Try to get the default profile
-        if let Some(profile_id) = self.try_get_default_profile().await? {
-            return self.is_server_enabled_in_specific_profile(server_id, &profile_id).await;
+        let default_profiles = crate::config::profile::get_default_profiles(&self.pool).await?;
+        for profile in default_profiles {
+            if !profile.is_active {
+                continue;
+            }
+            if let Some(profile_id) = profile.id.as_ref() {
+                if self
+                    .is_server_enabled_in_specific_profile(server_id, profile_id)
+                    .await?
+                {
+                    return Ok(true);
+                }
+            }
         }
 
-        // Try legacy "default" named profile
         if let Some(profile_id) = self.try_get_legacy_default_profile().await? {
             return self.is_server_enabled_in_specific_profile(server_id, &profile_id).await;
         }
 
-        // No default profile found, early return
         Ok(false)
     }
 
@@ -267,24 +275,27 @@ impl ServerEnabledService {
 
     /// Get server IDs enabled in the default profile
     async fn get_server_ids_enabled_in_default_profile(&self) -> Result<HashSet<String>> {
-        // Try to get the default profile
-        if let Some(profile_id) = self.try_get_default_profile().await? {
-            return self.get_server_ids_enabled_in_specific_profile(&profile_id).await;
+        let mut enabled = HashSet::new();
+
+        let default_profiles = crate::config::profile::get_default_profiles(&self.pool).await?;
+        for profile in default_profiles {
+            if !profile.is_active {
+                continue;
+            }
+            if let Some(profile_id) = profile.id.as_ref() {
+                let ids = self.get_server_ids_enabled_in_specific_profile(profile_id).await?;
+                enabled.extend(ids);
+            }
         }
 
-        // Try legacy "default" named profile
-        if let Some(profile_id) = self.try_get_legacy_default_profile().await? {
-            return self.get_server_ids_enabled_in_specific_profile(&profile_id).await;
+        if enabled.is_empty() {
+            if let Some(profile_id) = self.try_get_legacy_default_profile().await? {
+                let ids = self.get_server_ids_enabled_in_specific_profile(&profile_id).await?;
+                enabled.extend(ids);
+            }
         }
 
-        // No default profile found, early return
-        Ok(HashSet::new())
-    }
-
-    /// Helper method to try getting the default profile ID
-    async fn try_get_default_profile(&self) -> Result<Option<String>> {
-        let default_profile = crate::config::profile::get_default_profile(&self.pool).await?;
-        Ok(default_profile.and_then(|profile| profile.id))
+        Ok(enabled)
     }
 
     /// Helper method to try getting the legacy default profile ID

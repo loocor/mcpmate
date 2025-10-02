@@ -2,10 +2,13 @@
 // Contains handler functions for activating and deactivating Profile
 
 use super::{common::*, helpers, helpers::get_profile_or_error};
-use crate::api::models::profile::{
-    ProfileAction, ProfileCreateReq, ProfileDeleteReq, ProfileDetailsData, ProfileDetailsReq, ProfileDetailsResp,
-    ProfileListData, ProfileListReq, ProfileListResp, ProfileManageData, ProfileManageReq, ProfileManageResp,
-    ProfileOperationResult, ProfileResp, ProfileUpdateReq,
+use crate::{
+    api::models::profile::{
+        ProfileAction, ProfileCreateReq, ProfileDeleteReq, ProfileDetailsData, ProfileDetailsReq, ProfileDetailsResp,
+        ProfileListData, ProfileListReq, ProfileListResp, ProfileManageData, ProfileManageReq, ProfileManageResp,
+        ProfileOperationResult, ProfileResp, ProfileUpdateReq,
+    },
+    config::profile::{is_primary_default_name, is_primary_default_profile},
 };
 use chrono::Utc;
 use std::str::FromStr;
@@ -26,36 +29,6 @@ fn validate_profile_type(profile_type: &str) -> Result<crate::common::profile::P
     })
 }
 
-/// Ensure only one default profile exists
-///
-/// When setting a profile as default, this function ensures all other profiles
-/// are set to non-default to maintain the "only one default" rule
-async fn ensure_single_default_profile(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    new_default_id: &str,
-) -> Result<(), ApiError> {
-    use sqlx::Row;
-
-    // First, get all profiles that are currently marked as default
-    let rows = sqlx::query("SELECT id FROM profile WHERE is_default = 1 AND id != ?")
-        .bind(new_default_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to query default profiles: {e}")))?;
-
-    // Update all other default profiles to be non-default
-    for row in rows {
-        let profile_id: String = row.get("id");
-        sqlx::query("UPDATE profile SET is_default = 0 WHERE id = ?")
-            .bind(&profile_id)
-            .execute(pool)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update profile {}: {e}", profile_id)))?;
-    }
-
-    Ok(())
-}
-
 /// Validate default profile rules
 ///
 /// Ensures business rules for default profile are followed
@@ -63,11 +36,43 @@ fn validate_default_profile_rules(
     profile: &crate::config::models::Profile,
     is_update: bool,
 ) -> Result<(), ApiError> {
-    // For now, we don't have specific default profile rules
-    // This function is a placeholder for future business logic
-    // such as "only one default profile per type" etc.
-    let _ = (profile, is_update);
+    let _ = is_update;
+
+    if profile.is_default && !profile.is_active {
+        return Err(ApiError::BadRequest("Default profiles must remain active".to_string()));
+    }
+
+    if is_primary_default_profile(profile) {
+        if !is_primary_default_name(&profile.name) {
+            return Err(ApiError::BadRequest(
+                "System default profile name cannot be changed".to_string(),
+            ));
+        }
+
+        if !profile.is_default {
+            return Err(ApiError::BadRequest(
+                "System default profile must stay in the default bundle".to_string(),
+            ));
+        }
+
+        if !profile.is_active {
+            return Err(ApiError::BadRequest(
+                "System default profile must stay active".to_string(),
+            ));
+        }
+    }
+
     Ok(())
+}
+
+fn reconcile_default_flags(profile: &mut crate::config::models::Profile) {
+    if profile.is_default {
+        profile.is_active = true;
+    }
+
+    if !profile.is_active {
+        profile.is_default = false;
+    }
 }
 
 /// Validate profile name uniqueness
@@ -298,15 +303,14 @@ pub async fn profile_create(
         new_profile.is_default = is_default;
     }
 
+    if new_profile.is_default {
+        new_profile.is_active = true;
+    }
+
     // Insert the new profile and get the ID
     let profile_id = crate::config::profile::upsert_profile(&db.pool, &new_profile)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to create profile: {e}")))?;
-
-    // If the new profile is set as default, ensure no other profiles are default
-    if new_profile.is_default {
-        ensure_single_default_profile(&db.pool, &profile_id).await?;
-    }
 
     // If cloning from existing profile, copy server and tool associations
     if let Some(clone_from_id) = request.clone_from_id {
@@ -341,6 +345,7 @@ pub async fn profile_update(
 
     // 3. Apply partial updates to the profile
     profile_updates_core(&mut existing_profile, &request)?;
+    reconcile_default_flags(&mut existing_profile);
 
     // 4. Validate business rules
     validate_default_profile_rules(&existing_profile, true)?;
@@ -349,11 +354,6 @@ pub async fn profile_update(
     crate::config::profile::update_profile(&db.pool, &existing_profile)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to update profile: {e}")))?;
-
-    // 5.5. If the updated profile is set as default, ensure no other profiles are default
-    if existing_profile.is_default {
-        ensure_single_default_profile(&db.pool, &request.id).await?;
-    }
 
     // 6. Get the updated profile for response
     let updated_profile = get_profile_or_error(&db, &request.id).await?;
@@ -467,14 +467,18 @@ async fn profile_operation_core(
             ("activated", "active")
         }
         ProfileAction::Deactivate => {
-            // Prevent deactivation of default profile
-            if profile.is_default {
-                return Err(ApiError::Forbidden("Cannot deactivate the default profile".to_string()));
+            if is_primary_default_profile(&profile) {
+                return Err(ApiError::Forbidden(
+                    "Cannot deactivate the system default profile".to_string(),
+                ));
             }
             profile.is_active = false;
+            profile.is_default = false;
             ("deactivated", "inactive")
         }
     };
+
+    reconcile_default_flags(&mut profile);
 
     // Update the profile in database
     crate::config::profile::upsert_profile(pool, &profile)
@@ -511,6 +515,11 @@ fn profile_updates_core(
 ) -> Result<(), ApiError> {
     // Update name if provided
     if let Some(ref name) = updates.name {
+        if is_primary_default_name(&profile.name) && name != &profile.name {
+            return Err(ApiError::BadRequest(
+                "System default profile name cannot be changed".to_string(),
+            ));
+        }
         profile.name = name.clone();
     }
 
@@ -532,10 +541,26 @@ fn profile_updates_core(
         profile.priority = priority;
     }
     if let Some(is_active) = updates.is_active {
+        if is_primary_default_name(&profile.name) && !is_active {
+            return Err(ApiError::BadRequest(
+                "System default profile must stay active".to_string(),
+            ));
+        }
         profile.is_active = is_active;
+        if !profile.is_active {
+            profile.is_default = false;
+        }
     }
     if let Some(is_default) = updates.is_default {
+        if is_primary_default_name(&profile.name) && !is_default {
+            return Err(ApiError::BadRequest(
+                "System default profile must stay in the default bundle".to_string(),
+            ));
+        }
         profile.is_default = is_default;
+        if profile.is_default {
+            profile.is_active = true;
+        }
     }
 
     // Update timestamp

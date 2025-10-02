@@ -9,7 +9,10 @@ use crate::{
         database::{fetch_all_ordered, fetch_optional},
         profile::ProfileType,
     },
-    config::models::Profile,
+    config::{
+        models::Profile,
+        profile::{DEFAULT_PROFILE_SLUG, LEGACY_DEFAULT_PROFILE_NAME},
+    },
 };
 
 /// Get all profile from the database
@@ -38,12 +41,21 @@ pub async fn get_active_profile(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
 
 /// Get the default profile from the database
 pub async fn get_default_profile(pool: &Pool<Sqlite>) -> Result<Option<Profile>> {
-    tracing::debug!("Executing SQL query to get default profile");
+    tracing::debug!("Retrieving primary default profile");
+
+    if let Some(profile) = get_profile_by_name(pool, DEFAULT_PROFILE_SLUG).await? {
+        return Ok(Some(profile));
+    }
+
+    if let Some(profile) = get_profile_by_name(pool, LEGACY_DEFAULT_PROFILE_NAME).await? {
+        return Ok(Some(profile));
+    }
 
     let profile = sqlx::query_as::<_, Profile>(
         r#"
         SELECT * FROM profile
         WHERE is_default = 1
+        ORDER BY priority DESC, created_at ASC
         LIMIT 1
         "#,
     )
@@ -53,7 +65,7 @@ pub async fn get_default_profile(pool: &Pool<Sqlite>) -> Result<Option<Profile>>
 
     if let Some(ref s) = profile {
         tracing::debug!(
-            "Found default profile '{}' with ID {}",
+            "Found fallback default profile '{}' with ID {}",
             s.name,
             s.id.as_ref().unwrap_or(&"unknown".to_string())
         );
@@ -61,6 +73,25 @@ pub async fn get_default_profile(pool: &Pool<Sqlite>) -> Result<Option<Profile>>
         tracing::debug!("No default profile found");
     }
 
+    Ok(profile)
+}
+
+/// Get all profiles marked as default and active from the database
+pub async fn get_default_profiles(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
+    tracing::debug!("Executing SQL query to get all default profiles");
+
+    let profile = sqlx::query_as::<_, Profile>(
+        r#"
+        SELECT * FROM profile
+        WHERE is_default = 1
+        ORDER BY priority DESC, created_at ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("Failed to fetch default profiles")?;
+
+    tracing::debug!("Successfully fetched {} default profiles from database", profile.len());
     Ok(profile)
 }
 

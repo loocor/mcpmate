@@ -94,14 +94,17 @@ impl ToolStatusService {
         }
 
         // Try legacy "default" named profile
-        if let Some(profile) = crate::config::profile::get_profile_by_name(pool, "default").await? {
+        if let Some(profile) =
+            crate::config::profile::get_profile_by_name(pool, crate::config::profile::LEGACY_DEFAULT_PROFILE_NAME)
+                .await?
+        {
             return Ok(profile.id.unwrap());
         }
 
         // Create new default profile
         let mut new_profile = crate::config::models::Profile::new_with_description(
-            "default".to_string(),
-            Some("Default profile".to_string()),
+            crate::config::profile::DEFAULT_PROFILE_SLUG.to_string(),
+            Some(crate::config::profile::DEFAULT_PROFILE_DESCRIPTION.to_string()),
             crate::common::profile::ProfileType::Shared,
         );
         new_profile.is_active = true;
