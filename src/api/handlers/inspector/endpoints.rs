@@ -53,7 +53,7 @@ pub async fn tools_list(
         .get("total")
         .and_then(|v| v.as_u64())
         .unwrap_or(tools.len() as u64) as usize;
-    let meta = data_value.get("meta").and_then(|v| v.as_array()).map(|arr| arr.clone());
+    let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
     let data = InspectorToolsListData {
         mode,
         tools,
@@ -131,7 +131,7 @@ pub async fn prompts_list(
         .get("total")
         .and_then(|v| v.as_u64())
         .unwrap_or(prompts.len() as u64) as usize;
-    let meta = data_value.get("meta").and_then(|v| v.as_array()).map(|arr| arr.clone());
+    let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
     let data = InspectorPromptsListData {
         mode,
         prompts,
@@ -260,7 +260,7 @@ pub async fn resources_list(
         .get("total")
         .and_then(|v| v.as_u64())
         .unwrap_or(resources.len() as u64) as usize;
-    let meta = v.get("meta").and_then(|v| v.as_array()).map(|arr| arr.clone());
+    let meta = v.get("meta").and_then(|v| v.as_array()).cloned();
     Ok(Json(InspectorResourcesListResp::success(InspectorResourcesListData {
         mode,
         resources,

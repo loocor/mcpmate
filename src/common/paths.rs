@@ -205,35 +205,6 @@ pub fn set_global_paths(paths: MCPMatePaths) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("Global MCPMate paths already initialized"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::env;
-    use tempfile::tempdir;
-
-    #[test]
-    fn from_base_dir_uses_absolute_path() {
-        let tmp = tempdir().expect("tmp dir");
-        let nested = tmp.path().join("nested");
-        let paths = MCPMatePaths::from_base_dir(&nested).expect("construct");
-        assert_eq!(paths.base_dir(), nested.as_path());
-    }
-
-    #[test]
-    fn env_override_selected_when_present() {
-        let tmp = tempdir().expect("tmp dir");
-        let desired = tmp.path().join("custom");
-        unsafe {
-            env::set_var("MCPMATE_DATA_DIR", &desired);
-        }
-        let paths = MCPMatePaths::new().expect("construct");
-        unsafe {
-            env::remove_var("MCPMATE_DATA_DIR");
-        }
-        assert_eq!(paths.base_dir(), desired.as_path());
-    }
-}
-
 /// Get the bridge component path dynamically
 ///
 /// Resolves the bridge executable path based on the current server executable location.
@@ -274,4 +245,33 @@ pub fn get_bridge_path() -> Result<String> {
         3. Verify the bridge executable exists and has proper permissions",
         bridge_name
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use tempfile::tempdir;
+
+    #[test]
+    fn from_base_dir_uses_absolute_path() {
+        let tmp = tempdir().expect("tmp dir");
+        let nested = tmp.path().join("nested");
+        let paths = MCPMatePaths::from_base_dir(&nested).expect("construct");
+        assert_eq!(paths.base_dir(), nested.as_path());
+    }
+
+    #[test]
+    fn env_override_selected_when_present() {
+        let tmp = tempdir().expect("tmp dir");
+        let desired = tmp.path().join("custom");
+        unsafe {
+            env::set_var("MCPMATE_DATA_DIR", &desired);
+        }
+        let paths = MCPMatePaths::new().expect("construct");
+        unsafe {
+            env::remove_var("MCPMATE_DATA_DIR");
+        }
+        assert_eq!(paths.base_dir(), desired.as_path());
+    }
 }

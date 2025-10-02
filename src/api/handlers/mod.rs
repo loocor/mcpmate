@@ -10,10 +10,6 @@ pub mod registry;
 pub mod runtime;
 pub mod server;
 pub mod system;
-pub mod cache {
-    pub mod capabilities;
-}
-
 use std::fmt;
 
 use axum::{

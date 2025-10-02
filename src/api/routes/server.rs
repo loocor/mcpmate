@@ -3,14 +3,17 @@
 
 use super::AppState;
 use crate::api::handlers::server;
-use crate::api::models::server::{
-    InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq, InstanceListResp,
-    InstanceManageReq, ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp,
-    ServerListReq, ServerListResp, ServerManageReq, ServerOperationResp, ServerPreviewReq, ServerPreviewResp,
-    ServerPromptsResp, ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp, ServerUpdateReq,
-    ServersImportReq, ServersImportResp,
+use crate::api::models::{
+    cache::{CacheDetailsReq, CacheDetailsResp, CacheResetResp},
+    server::{
+        InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq,
+        InstanceListResp, InstanceManageReq, ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq,
+        ServerDetailsResp, ServerListReq, ServerListResp, ServerManageReq, ServerOperationResp, ServerPreviewReq,
+        ServerPreviewResp, ServerPromptsResp, ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp,
+        ServerUpdateReq, ServersImportReq, ServersImportResp,
+    },
 };
-use crate::{aide_wrapper_payload, aide_wrapper_query};
+use crate::{aide_wrapper, aide_wrapper_payload, aide_wrapper_query};
 use aide::axum::{
     ApiRouter,
     routing::{delete_with, get_with, post_with},
@@ -43,6 +46,15 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         )
         // Management operations - Payload with action enum
         .api_route("/mcp/servers/manage", post_with(manage_server_aide, manage_server_docs))
+        // Cache endpoints - Query parameters with refresh enum
+        .api_route(
+            "/mcp/servers/cache/detail",
+            get_with(server_cache_detail_aide, server_cache_detail_docs),
+        )
+        .api_route(
+            "/mcp/servers/cache/reset",
+            post_with(server_cache_reset_aide, server_cache_reset_docs),
+        )
         // Capability endpoints - Query parameters with refresh enum
         .api_route("/mcp/servers/tools", get_with(server_tools_aide, server_tools_docs))
         .api_route(
@@ -150,6 +162,19 @@ aide_wrapper_query!(
     ServerCapabilityReq,
     ServerPromptsResp,
     "List all prompts for a specific server"
+);
+
+aide_wrapper_query!(
+    server::server_cache_detail,
+    CacheDetailsReq,
+    CacheDetailsResp,
+    "Inspect capability cache detail for MCP servers"
+);
+
+aide_wrapper!(
+    server::server_cache_reset,
+    CacheResetResp,
+    "Reset the MCP server capability cache"
 );
 
 // Generate aide-compatible wrappers for management handlers
