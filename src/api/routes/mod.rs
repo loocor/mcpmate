@@ -2,10 +2,8 @@
 // Contains route definitions for the API server
 
 pub mod ai;
-pub mod cache;
 pub mod client;
 pub mod inspector;
-pub mod notifs;
 pub mod openapi;
 pub mod profile;
 pub mod registry;
@@ -159,8 +157,6 @@ async fn create_router_internal(
         .merge(ai::routes(state.clone()))
         .merge(server::routes(state.clone()))
         .merge(system::routes(state.clone()))
-        .merge(cache::routes(state.clone()))
-        .merge(notifs::routes(state.clone()))
         .merge(profile::routes(state.clone()))
         .merge(runtime::routes(state.clone()))
         .merge(inspector::routes(state.clone()))

@@ -32,6 +32,11 @@ pub fn api_docs(api: TransformOpenApi) -> TransformOpenApi {
             ..Default::default()
         })
         .tag(Tag {
+            name: "profile".into(),
+            description: Some("Profile management endpoints".into()),
+            ..Default::default()
+        })
+        .tag(Tag {
             name: "client".into(),
             description: Some("Client management endpoints".into()),
             ..Default::default()
@@ -52,18 +57,8 @@ pub fn api_docs(api: TransformOpenApi) -> TransformOpenApi {
             ..Default::default()
         })
         .tag(Tag {
-            name: "profile".into(),
-            description: Some("Profile management endpoints".into()),
-            ..Default::default()
-        })
-        .tag(Tag {
             name: "ai".into(),
             description: Some("AI configuration management endpoints".into()),
-            ..Default::default()
-        })
-        .tag(Tag {
-            name: "notifs".into(),
-            description: Some("Notification management endpoints".into()),
             ..Default::default()
         })
 }

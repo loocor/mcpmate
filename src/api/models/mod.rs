@@ -4,7 +4,6 @@
 pub mod cache;
 pub mod client;
 pub mod inspector;
-pub mod notifs;
 pub mod profile;
 pub mod resp;
 pub mod runtime;

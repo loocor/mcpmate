@@ -14,7 +14,6 @@ Routes define the URL structure and HTTP methods for the API endpoints. They map
 - `profile.rs` - Routes for profile management (`/api/mcp/profile/*`)
 - `specs.rs` - Routes for MCP specification-compliant endpoints (`/api/mcp/specs/*`)
 - `system.rs` - Routes for system operations (`/api/system/*`)
-- `notifs.rs` - Routes for notification management (`/api/notifications/*`)
 
 ## Route Structure
 

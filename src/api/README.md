@@ -599,12 +599,9 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
   - **Function**: Get system metrics
   - **Response**: System performance metrics, such as CPU usage, memory usage, etc.
 
-### 5. Notification Management
+### 5. MCP Notification Delivery
 
-- **POST /api/notifications/tools/changed**
-  - **Function**: Notify that the tool list has changed
-  - **Request**: Change information
-  - **Response**: Operation result
+MCPMate relies on the MCP protocol's native notification messages (e.g., `tools/listChanged`, `prompts/listChanged`, `resources/listChanged`) to inform clients about configuration updates. No separate REST endpoints are provided.
 
 ## Usage
 
@@ -669,7 +666,6 @@ src/
 │   │   ├── tool.rs       # Tool management related routes
 │   │   ├── profile.rs       # Profile management related routes
 │   │   ├── specs.rs      # MCP specification-compliant routes
-│   │   ├── notifs.rs     # Notification related routes
 │   │   └── system.rs     # System related routes
 │   ├── handlers/         # Request handlers
 │   │   ├── mod.rs        # Handlers module entry point
@@ -677,7 +673,6 @@ src/
 │   │   ├── tool.rs       # Tool management related handlers
 │   │   ├── profile.rs       # Profile management related handlers
 │   │   ├── specs.rs      # MCP specification-compliant handlers
-│   │   ├── notification.rs # Notification related handlers
 │   │   └── system.rs     # System related handlers
 │   └── models/           # Request/response models
 │       ├── mod.rs        # Models module entry point
@@ -685,7 +680,6 @@ src/
 │       ├── tool.rs       # Tool management related models
 │       ├── profile.rs       # Profile management related models
 │       ├── specs.rs      # MCP specification-compliant models
-│       ├── notifications.rs # Notification related models
 │       └── system.rs     # System related models
 └── proxy/                # Existing proxy service code
     └── ...
