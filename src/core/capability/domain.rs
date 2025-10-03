@@ -7,6 +7,7 @@
 //! Integration with existing code is done through adapter pattern, not through type re-export.
 
 use chrono::{DateTime, Utc};
+use rmcp::model::Icon;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
@@ -154,6 +155,7 @@ impl Adapter {
             input_schema: tool.input_schema().unwrap_or_default(),
             unique_name: tool.unique_name.clone().unwrap_or_default(),
             enabled: tool.enabled,
+            icons: tool.icons.clone(),
         }
     }
 
@@ -166,6 +168,7 @@ impl Adapter {
             mime_type: resource.mime_type.clone(),
             unique_uri: resource.uri.clone(), // Use uri as unique_uri
             enabled: resource.enabled,
+            icons: resource.icons.clone(),
         }
     }
 
@@ -190,6 +193,7 @@ impl Adapter {
             arguments: domain_arguments,
             unique_name: prompt.name.clone(), // Use name as unique_name
             enabled: prompt.enabled,
+            icons: prompt.icons.clone(),
         }
     }
 
@@ -397,6 +401,8 @@ pub struct ToolCapability {
     pub input_schema: serde_json::Value,
     pub unique_name: String,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icons: Option<Vec<Icon>>,
 }
 
 /// Resource capability
@@ -408,6 +414,8 @@ pub struct ResourceCapability {
     pub mime_type: Option<String>,
     pub unique_uri: String,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icons: Option<Vec<Icon>>,
 }
 
 /// Prompt capability
@@ -418,6 +426,8 @@ pub struct PromptCapability {
     pub arguments: Option<Vec<PromptArgument>>,
     pub unique_name: String,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icons: Option<Vec<Icon>>,
 }
 
 /// Prompt argument

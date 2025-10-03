@@ -241,18 +241,18 @@ pub mod branding {
     /// MCPMate logo MIME type
     pub const LOGO_MIME_TYPE: &str = "image/svg+xml";
 
-    /// MCPMate logo sizes (SVG is scalable)
-    pub const LOGO_SIZES: &str = "any";
-
     /// MCPMate description for MCP server info
     pub const DESCRIPTION: &str = "MCPMate - Aggregates tools, resources, and prompts from multiple upstream MCP servers. Connect to access all configured MCP services through a single endpoint.";
 
     /// Create MCPMate icon for RMCP Implementation
     pub fn create_logo_icon() -> rmcp::model::Icon {
+        // Some upstream MCP servers still expect the icon sizes field to follow the
+        // pre-2025-06 list-based schema. Until the SDK migrates fully, omit it to
+        // stay compatible while keeping the icon metadata available.
         rmcp::model::Icon {
             src: LOGO_URL.to_string(),
             mime_type: Some(LOGO_MIME_TYPE.to_string()),
-            sizes: Some(LOGO_SIZES.to_string()),
+            sizes: None,
         }
     }
 

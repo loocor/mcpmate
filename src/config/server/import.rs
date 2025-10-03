@@ -220,7 +220,16 @@ pub async fn import_batch(
                     .unwrap_or(2000);
 
                 for attempt in 0..=max_retries {
-                    match sync_via_connection_pool(&cp, &redb, &dbp, &sid, &sname, 10).await {
+                    match sync_via_connection_pool(
+                        &cp,
+                        &redb,
+                        &dbp,
+                        &sid,
+                        &sname,
+                        crate::config::server::capabilities::default_pool_lock_timeout_secs(),
+                    )
+                    .await
+                    {
                         Ok(_) => {
                             tracing::info!(
                                 target: "mcpmate::config::server::import",

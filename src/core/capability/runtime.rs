@@ -722,7 +722,7 @@ fn convert_cached_prompt(cached: CachedPromptInfo) -> rmcp::model::Prompt {
         title: None,
         description: cached.description,
         arguments,
-        icons: None,
+        icons: cached.icons,
     }
 }
 
@@ -734,6 +734,7 @@ fn convert_cached_resource(cached: CachedResourceInfo) -> Option<rmcp::model::Re
     let mut raw = rmcp::model::RawResource::new(cached.uri.clone(), resolved_name);
     raw.description = cached.description;
     raw.mime_type = cached.mime_type;
+    raw.icons = cached.icons;
     Some(rmcp::model::Resource { raw, annotations: None })
 }
 
@@ -769,7 +770,7 @@ fn convert_cached_tool(
         input_schema: Arc::new(schema_object),
         output_schema: None,
         annotations: None,
-        icons: None,
+        icons: cached.icons,
     })
 }
 

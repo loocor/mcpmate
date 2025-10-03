@@ -317,6 +317,7 @@ fn tool_to_capability(tool: rmcp::model::Tool) -> CapabilityItem {
         input_schema: schema,
         unique_name: name,
         enabled: true,
+        icons: tool.icons,
     })
 }
 
@@ -330,6 +331,7 @@ fn resource_to_capability(resource: rmcp::model::Resource) -> CapabilityItem {
         mime_type: raw.mime_type,
         unique_uri,
         enabled: true,
+        icons: raw.icons,
     })
 }
 
@@ -356,6 +358,7 @@ fn prompt_to_capability(prompt: rmcp::model::Prompt) -> CapabilityItem {
         }),
         unique_name,
         enabled: true,
+        icons: prompt.icons,
     })
 }
 

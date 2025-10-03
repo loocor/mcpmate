@@ -3,8 +3,8 @@
 
 use super::{common, shared::*};
 use crate::api::models::server::{
-    ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerUpdateReq, ServersImportData,
-    ServersImportReq,
+    ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload, ServerUpdateReq,
+    ServersImportData, ServersImportReq,
 };
 use crate::{
     api::handlers::{
@@ -158,25 +158,22 @@ async fn add_server_to_profile_with_sync(
     Ok(())
 }
 
-/// Create server metadata
-async fn create_server_metadata(
+async fn upsert_meta_payload(
     db: &Database,
     server_id: &str,
-    description: &str,
+    payload: &ServerMetaPayload,
 ) -> Result<(), ApiError> {
-    let meta = ServerMeta {
-        id: None,
-        server_id: server_id.to_owned(),
-        description: Some(description.to_owned()),
-        author: None,
-        website: None,
-        repository: None,
-        category: None,
-        recommended_scenario: None,
-        rating: None,
-        created_at: None,
-        updated_at: None,
-    };
+    let mut meta = ServerMeta::new(server_id.to_owned());
+    meta.description = payload.description.clone();
+    meta.author = payload.author.clone();
+    meta.website = payload.website.clone();
+    meta.repository = payload.repository.clone();
+    meta.category = payload.category.clone();
+    meta.recommended_scenario = payload.recommended_scenario.clone();
+    meta.rating = payload.rating;
+    meta.icons_json = None;
+    meta.server_version = None;
+    meta.protocol_version = None;
 
     server::upsert_server_meta(&db.pool, &meta)
         .await
@@ -270,12 +267,14 @@ pub async fn create_server(
             .map_err(map_anyhow_error)?;
     }
 
-    // Create server metadata
-    create_server_metadata(&db, &server_id, "Created via API").await?;
+    // Apply optional metadata payload
+    if let Some(meta_payload) = payload.meta.as_ref() {
+        upsert_meta_payload(&db, &server_id, meta_payload).await?;
+    }
 
     // Add server to default profile if enabled
-    let enabled = payload.enabled.unwrap_or(true);
-    if enabled {
+    let initial_enabled = payload.enabled.unwrap_or(true);
+    if initial_enabled {
         let profile_id = get_or_create_default_profile(&db).await?;
         add_server_to_profile(&db, &profile_id, &server_id, true).await?;
         tracing::info!("Enabled server '{}' in default profile", payload.name);
@@ -288,28 +287,44 @@ pub async fn create_server(
         &db.pool,
         &server_id,
         &payload.name,
-        10,
+        crate::config::server::capabilities::default_pool_lock_timeout_secs(),
     )
     .await;
 
-    // Return success response
-    let now = chrono::Utc::now();
+    let server_row = crate::config::server::get_server_by_id(&db.pool, &server_id)
+        .await
+        .map_err(map_anyhow_error)?
+        .ok_or_else(|| internal_error("Server record missing after creation"))?;
+
+    let server_name = server_row.name.clone();
+    let registry_server_id = server_row.registry_server_id.clone();
+    let command = server_row.command.clone();
+    let url = server_row.url.clone();
+    let server_type = server_row.server_type;
+    let created_at = server_row.created_at.map(|dt| dt.to_rfc3339());
+    let updated_at = server_row.updated_at.map(|dt| dt.to_rfc3339());
+
+    let details = common::get_complete_server_details(&db.pool, &server_id, &server_name, &state).await;
+    let effective_enabled = details.globally_enabled && details.enabled_in_profile;
+
     Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
-        name: payload.name.clone(),
-        registry_server_id: payload.registry_server_id.clone(),
-        enabled,
-        globally_enabled: true,
-        enabled_in_profile: enabled,
-        server_type: payload.server_type.parse().unwrap_or(ServerType::Stdio),
-        command: payload.command.clone(),
-        url: payload.url.clone(),
-        args: payload.args.clone(),
-        env: payload.env.clone(),
-        meta: None,
-        created_at: Some(now.to_rfc3339()),
-        updated_at: Some(now.to_rfc3339()),
-        instances: Vec::new(),
+        name: server_name,
+        registry_server_id,
+        enabled: effective_enabled,
+        globally_enabled: details.globally_enabled,
+        enabled_in_profile: details.enabled_in_profile,
+        server_type,
+        command,
+        url,
+        args: details.args,
+        env: details.env,
+        meta: details.meta,
+        capability: details.capability,
+        protocol_version: details.protocol_version,
+        created_at,
+        updated_at,
+        instances: details.instances,
     })))
 }
 
@@ -418,6 +433,10 @@ pub async fn update_server(
             .map_err(map_anyhow_error)?;
     }
 
+    if let Some(meta_payload) = payload.meta.as_ref() {
+        upsert_meta_payload(&db, &server_id, meta_payload).await?;
+    }
+
     // Update server enabled status if provided
     if let Some(enabled) = payload.enabled {
         let profile_id = get_or_create_default_profile(&db).await?;
@@ -446,6 +465,8 @@ pub async fn update_server(
         args: details.args,
         env: details.env,
         meta: details.meta,
+        capability: details.capability,
+        protocol_version: details.protocol_version,
         created_at: updated_server.created_at.map(|dt| dt.to_rfc3339()),
         updated_at: updated_server.updated_at.map(|dt| dt.to_rfc3339()),
         instances: details.instances,

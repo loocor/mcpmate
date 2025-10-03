@@ -362,6 +362,12 @@ pub struct ServerMeta {
     pub recommended_scenario: Option<String>,
     /// Rating of the server (1-5)
     pub rating: Option<i32>,
+    /// JSON-serialized list of server icons (rmcp::model::Icon)
+    pub icons_json: Option<String>,
+    /// Upstream server version (from Implementation.version)
+    pub server_version: Option<String>,
+    /// MCP protocol version advertised by the server
+    pub protocol_version: Option<String>,
     /// When the metadata was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the metadata was last updated
@@ -381,6 +387,9 @@ impl ServerMeta {
             category: None,
             recommended_scenario: None,
             rating: None,
+            icons_json: None,
+            server_version: None,
+            protocol_version: None,
             created_at: None,
             updated_at: None,
         }

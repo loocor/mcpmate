@@ -15,6 +15,7 @@ use axum::{
     extract::{Query, State},
     http::StatusCode,
 };
+use rmcp::model::Icon;
 use sqlx::{Pool, Sqlite};
 use std::{collections::HashMap, sync::Arc};
 
@@ -390,6 +391,7 @@ pub fn tool_json(
     input_schema: serde_json::Value,
     unique_name: Option<String>,
     id: Option<String>,
+    icons: Option<Vec<Icon>>,
 ) -> serde_json::Value {
     serde_json::json!({
         "name": name,
@@ -397,12 +399,20 @@ pub fn tool_json(
         "input_schema": input_schema,
         "unique_name": unique_name,
         "id": id,
+        "icons": icons,
     })
 }
 
 pub fn tool_json_from_cached(t: &crate::core::cache::CachedToolInfo) -> serde_json::Value {
     let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
-    tool_json(&t.name, t.description.clone(), schema, t.unique_name.clone(), None)
+    tool_json(
+        &t.name,
+        t.description.clone(),
+        schema,
+        t.unique_name.clone(),
+        None,
+        t.icons.clone(),
+    )
 }
 
 pub fn resource_json(
@@ -412,6 +422,7 @@ pub fn resource_json(
     mime_type: Option<String>,
     unique_uri: Option<String>,
     id: Option<String>,
+    icons: Option<Vec<Icon>>,
 ) -> serde_json::Value {
     serde_json::json!({
         "uri": uri,
@@ -420,11 +431,12 @@ pub fn resource_json(
         "mime_type": mime_type,
         "unique_uri": unique_uri,
         "id": id,
+        "icons": icons,
     })
 }
 
 pub fn resource_json_from_cached(r: crate::core::cache::CachedResourceInfo) -> serde_json::Value {
-    resource_json(&r.uri, r.name, r.description, r.mime_type, None, None)
+    resource_json(&r.uri, r.name, r.description, r.mime_type, None, None, r.icons)
 }
 
 pub fn resource_template_json(
@@ -455,6 +467,7 @@ pub fn prompt_json(
     arguments: Vec<crate::core::cache::PromptArgument>,
     unique_name: Option<String>,
     id: Option<String>,
+    icons: Option<Vec<Icon>>,
 ) -> serde_json::Value {
     let args: Vec<serde_json::Value> = arguments
         .into_iter()
@@ -473,11 +486,19 @@ pub fn prompt_json(
         "arguments": args,
         "unique_name": unique_name,
         "id": id,
+        "icons": icons,
     })
 }
 
 pub fn prompt_json_from_cached(p: crate::core::cache::CachedPromptInfo) -> serde_json::Value {
-    prompt_json(&p.name, p.description.clone(), p.arguments.clone(), None, None)
+    prompt_json(
+        &p.name,
+        p.description.clone(),
+        p.arguments.clone(),
+        None,
+        None,
+        p.icons.clone(),
+    )
 }
 
 pub async fn extract_tools_capability(
@@ -495,6 +516,7 @@ pub async fn extract_tools_capability(
                 "description": t.description,
                 "input_schema": schema,
                 "unique_name": serde_json::Value::Null,
+                "icons": t.icons.clone(),
             });
 
             let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
@@ -503,6 +525,7 @@ pub async fn extract_tools_capability(
                 description: t.description.clone().map(|d| d.into_owned()),
                 input_schema_json,
                 unique_name: None,
+                icons: t.icons.clone(),
                 enabled: true,
                 cached_at: now,
             };
@@ -556,6 +579,7 @@ pub async fn extract_prompts_capability(
                         required: arg.required.unwrap_or(false),
                     })
                     .collect(),
+                icons: p.icons.clone(),
                 enabled: true,
                 cached_at: now,
             };
@@ -564,6 +588,7 @@ pub async fn extract_prompts_capability(
                 "name": prompt_info.name,
                 "description": prompt_info.description,
                 "arguments": arguments,
+                "icons": prompt_info.icons.clone(),
             });
 
             (data_item, prompt_info)
@@ -607,6 +632,7 @@ pub async fn extract_resources_capability(
                 name: Some(raw.name.clone()),
                 description: raw.description.clone(),
                 mime_type: raw.mime_type.clone(),
+                icons: raw.icons.clone(),
                 enabled: true,
                 cached_at: now,
             };
@@ -616,6 +642,7 @@ pub async fn extract_resources_capability(
                 "name": resource_info.name,
                 "description": resource_info.description,
                 "mime_type": resource_info.mime_type,
+                "icons": resource_info.icons.clone(),
             });
 
             (data_item, resource_info)
@@ -747,6 +774,7 @@ pub async fn create_temporary_instance_for_capability(
                         extracted.resources.clone(),
                         extracted.prompts.clone(),
                         extracted.resource_templates.clone(),
+                        None,
                     )
                     .await;
                 }
@@ -790,6 +818,7 @@ pub async fn create_temporary_instance_for_capability(
                         extracted.resources.clone(),
                         extracted.prompts.clone(),
                         extracted.resource_templates.clone(),
+                        None,
                     )
                     .await;
                 }

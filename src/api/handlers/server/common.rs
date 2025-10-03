@@ -2,12 +2,12 @@
 // Provides shared functions for server identification, validation, and response formatting
 
 use sqlx::{Pool, Sqlite};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, convert::TryInto, sync::Arc};
 
 use crate::{
     api::{
         handlers::ApiError,
-        models::server::{InstanceSummary, ServerMetaInfo},
+        models::server::{InstanceSummary, ServerCapabilitySummary, ServerIcon, ServerMetaInfo},
         routes::AppState,
     },
     config::{database::Database, server},
@@ -113,6 +113,8 @@ pub struct ServerDetails {
     pub globally_enabled: bool,
     pub enabled_in_profile: bool,
     pub instances: Vec<InstanceSummary>,
+    pub capability: Option<ServerCapabilitySummary>,
+    pub protocol_version: Option<String>,
 }
 
 /// Resolve server identifier (name or ID) to complete server information
@@ -195,6 +197,17 @@ pub async fn get_complete_server_details(
     if !server_id.is_empty() {
         match server::get_server_meta(pool, server_id).await {
             Ok(Some(server_meta)) => {
+                let icons = match server_meta.icons_json.as_deref() {
+                    Some(raw) => match serde_json::from_str::<Vec<rmcp::model::Icon>>(raw) {
+                        Ok(list) if !list.is_empty() => Some(list.into_iter().map(ServerIcon::from).collect()),
+                        Ok(_) => None,
+                        Err(err) => {
+                            tracing::warn!("Failed to parse icons for server '{}': {}", server_name, err);
+                            None
+                        }
+                    },
+                    None => None,
+                };
                 details.meta = Some(ServerMetaInfo {
                     description: server_meta.description,
                     author: server_meta.author,
@@ -203,6 +216,7 @@ pub async fn get_complete_server_details(
                     category: server_meta.category,
                     recommended_scenario: server_meta.recommended_scenario,
                     rating: server_meta.rating,
+                    icons,
                 });
             }
             Ok(None) => {}
@@ -224,6 +238,12 @@ pub async fn get_complete_server_details(
 
     // Get instance information from connection pool
     details.instances = get_server_instances(state, server_id).await;
+
+    // Capability summary derived from SQLite shadow tables
+    details.capability = get_server_capability_summary(pool, server_id).await;
+
+    // Protocol version sourced from live instances or cached capability snapshot
+    details.protocol_version = get_server_protocol_version(state, server_id).await;
 
     details
 }
@@ -269,6 +289,124 @@ pub async fn get_server_instances(
             }
         })
         .collect()
+}
+
+async fn get_server_capability_summary(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Option<ServerCapabilitySummary> {
+    if server_id.is_empty() {
+        return None;
+    }
+
+    let capability_tokens =
+        match sqlx::query_scalar::<_, Option<String>>("SELECT capabilities FROM server_config WHERE id = ?")
+            .bind(server_id)
+            .fetch_optional(pool)
+            .await
+        {
+            Ok(row) => row.flatten().unwrap_or_default(),
+            Err(error) => {
+                tracing::warn!(server_id = %server_id, error = %error, "Failed to load capability flags");
+                String::new()
+            }
+        };
+
+    let mut supports_tools = false;
+    let mut supports_prompts = false;
+    let mut supports_resources = false;
+
+    for token in capability_tokens.split(',').map(|t| t.trim().to_ascii_lowercase()) {
+        match token.as_str() {
+            "tools" => supports_tools = true,
+            "prompts" => supports_prompts = true,
+            "resources" => supports_resources = true,
+            _ => {}
+        }
+    }
+
+    let tools_count = count_rows(pool, "server_tools", server_id).await;
+    let prompts_count = count_rows(pool, "server_prompts", server_id).await;
+    let resources_count = count_rows(pool, "server_resources", server_id).await;
+    let resource_templates_count = count_rows(pool, "server_resource_templates", server_id).await;
+
+    // Consider non-zero counts as evidence of support even if capability flags are missing
+    let supports_tools = supports_tools || tools_count > 0;
+    let supports_prompts = supports_prompts || prompts_count > 0;
+    let supports_resources = supports_resources || resources_count > 0 || resource_templates_count > 0;
+
+    Some(ServerCapabilitySummary {
+        supports_tools,
+        supports_prompts,
+        supports_resources,
+        tools_count: tools_count,
+        prompts_count: prompts_count,
+        resources_count: resources_count,
+        resource_templates_count: resource_templates_count,
+    })
+}
+
+async fn count_rows(
+    pool: &Pool<Sqlite>,
+    table: &str,
+    server_id: &str,
+) -> u32 {
+    let query = format!("SELECT COUNT(*) FROM {} WHERE server_id = ?", table);
+    match sqlx::query_scalar::<_, i64>(&query)
+        .bind(server_id)
+        .fetch_one(pool)
+        .await
+    {
+        Ok(value) => value.try_into().unwrap_or(u32::MAX),
+        Err(error) => {
+            tracing::warn!(
+                server_id = %server_id,
+                table = table,
+                error = %error,
+                "Failed to count rows in capability shadow table"
+            );
+            0
+        }
+    }
+}
+
+async fn get_server_protocol_version(
+    state: &Arc<AppState>,
+    server_id: &str,
+) -> Option<String> {
+    if server_id.is_empty() {
+        return None;
+    }
+
+    if let Ok(pool_guard) = ConnectionPoolManager::get_pool_for_api(state).await {
+        let version = pool_guard.connections.get(server_id).and_then(|instances| {
+            instances.values().find_map(|conn| {
+                conn.service
+                    .as_ref()
+                    .and_then(|service| service.peer_info().map(|info| info.protocol_version.to_string()))
+            })
+        });
+
+        if version.is_some() {
+            return version;
+        }
+    }
+
+    let query = CacheQuery {
+        server_id: server_id.to_string(),
+        freshness_level: FreshnessLevel::Cached,
+        include_disabled: true,
+    };
+
+    if let Ok(result) = state.redb_cache.get_server_data(&query).await {
+        if let Some(data) = result.data {
+            if !data.protocol_version.is_empty() {
+                return Some(data.protocol_version);
+            }
+        }
+    }
+
+    None
 }
 
 /// Get server by name or ID with validation

@@ -2,6 +2,7 @@
 // Centralizes insert/update logic so API handlers and migration can reuse.
 
 use anyhow::{Context, Result};
+use once_cell::sync::OnceCell;
 use sqlx::{Pool, Sqlite};
 
 use crate::core::capability::naming::{NamingKind, generate_unique_name};
@@ -47,6 +48,7 @@ mod discovery_helpers {
                     name: p.name,
                     description: p.description,
                     arguments: converted_args,
+                    icons: p.icons,
                     enabled: true,
                     cached_at: chrono::Utc::now(),
                 });
@@ -76,6 +78,7 @@ mod discovery_helpers {
                     name: Some(r.name.clone()),
                     description: r.description.clone(),
                     mime_type: r.mime_type.clone(),
+                    icons: r.icons.clone(),
                     enabled: true,
                     cached_at: chrono::Utc::now(),
                 });
@@ -132,6 +135,7 @@ mod discovery_helpers {
             snapshot.resources.clone(),
             snapshot.prompts.clone(),
             snapshot.resource_templates.clone(),
+            snapshot.protocol_version.clone(),
         )
         .await?;
 
@@ -169,11 +173,17 @@ pub struct CapabilitySnapshot {
     pub resources: Vec<CachedResourceInfo>,
     pub prompts: Vec<CachedPromptInfo>,
     pub resource_templates: Vec<CachedResourceTemplateInfo>,
+    pub protocol_version: Option<String>,
 }
 
 /// Discover capabilities from an existing upstream connection (API temporary instance)
 pub async fn discover_from_connection(conn: &crate::core::pool::UpstreamConnection) -> Result<CapabilitySnapshot> {
     let mut snap = CapabilitySnapshot::default();
+
+    snap.protocol_version = conn
+        .service
+        .as_ref()
+        .and_then(|service| service.peer_info().map(|info| info.protocol_version.to_string()));
 
     // Tools
     for t in &conn.tools {
@@ -184,6 +194,7 @@ pub async fn discover_from_connection(conn: &crate::core::pool::UpstreamConnecti
             description: t.description.clone().map(|d| d.into_owned()),
             input_schema_json,
             unique_name: None,
+            icons: t.icons.clone(),
             enabled: true,
             cached_at: chrono::Utc::now(),
         });
@@ -234,6 +245,8 @@ pub async fn discover_from_config(
 
     let mut snap = CapabilitySnapshot::default();
 
+    snap.protocol_version = service.peer_info().map(|info| info.protocol_version.to_string());
+
     // Tools
     for t in &tools {
         let schema = t.schema_as_json_value();
@@ -243,6 +256,7 @@ pub async fn discover_from_config(
             description: t.description.clone().map(|d| d.into_owned()),
             input_schema_json,
             unique_name: None,
+            icons: t.icons.clone(),
             enabled: true,
             cached_at: chrono::Utc::now(),
         });
@@ -382,12 +396,14 @@ pub async fn store_redb_snapshot(
     resources: Vec<CachedResourceInfo>,
     prompts: Vec<CachedPromptInfo>,
     resource_templates: Vec<CachedResourceTemplateInfo>,
+    protocol_version: Option<&str>,
 ) -> Result<()> {
+    let protocol_version = protocol_version.unwrap_or("unknown").to_string();
     let server_data = CachedServerData {
         server_id: server_id.to_string(),
         server_name: server_name.to_string(),
         server_version: None,
-        protocol_version: "latest".to_string(),
+        protocol_version,
         tools,
         resources,
         prompts,
@@ -410,6 +426,7 @@ pub async fn store_dual_write(
     resources: Vec<CachedResourceInfo>,
     prompts: Vec<CachedPromptInfo>,
     templates: Vec<CachedResourceTemplateInfo>,
+    protocol_version: Option<String>,
 ) -> Result<()> {
     if !tools.is_empty() {
         crate::config::server::tools::assign_unique_names_to_cached_tools(pool, server_id, server_name, &mut tools)
@@ -425,6 +442,7 @@ pub async fn store_dual_write(
         resources.clone(),
         prompts.clone(),
         templates.clone(),
+        protocol_version.as_deref(),
     )
     .await?;
     // Clear any refreshing marker now that we have a fresh snapshot
@@ -562,6 +580,22 @@ pub async fn overwrite_capabilities(
         caps.push(CapabilityToken::Resources.as_str());
     }
     let caps_opt: Option<String> = if caps.is_empty() { None } else { Some(caps.join(",")) };
+
+    if caps_opt.is_none() {
+        // Preserve previous capability snapshot if discovery returned nothing.
+        if let Some(existing_caps) =
+            sqlx::query_scalar::<_, Option<String>>(r#"SELECT capabilities FROM server_config WHERE id = ?"#)
+                .bind(server_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?
+        {
+            if existing_caps.is_some() {
+                return Ok(());
+            }
+        }
+    }
+
     sqlx::query(r#"UPDATE server_config SET capabilities = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#)
         .bind(caps_opt)
         .bind(server_id)
@@ -898,4 +932,17 @@ impl CapabilityManager {
 
         self.sync_server_capabilities(&server_id, server_name, strategy).await
     }
+}
+/// Resolve the default lock timeout (seconds) to use when acquiring the upstream
+/// connection pool. Allow overriding via `MCPMATE_CAPABILITY_POOL_LOCK_TIMEOUT_SECS`
+/// to accommodate environments where upstream servers have heavy cold-start costs.
+pub fn default_pool_lock_timeout_secs() -> u64 {
+    static TIMEOUT: OnceCell<u64> = OnceCell::new();
+    *TIMEOUT.get_or_init(|| {
+        std::env::var("MCPMATE_CAPABILITY_POOL_LOCK_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(60)
+    })
 }

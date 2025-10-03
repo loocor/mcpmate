@@ -255,6 +255,26 @@ pub struct InstanceSummary {
     pub connected_at: Option<String>,
 }
 
+/// Server capability summary information
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
+#[schemars(description = "Capability summary for a server")]
+pub struct ServerCapabilitySummary {
+    #[schemars(description = "Whether the server declares tool support")]
+    pub supports_tools: bool,
+    #[schemars(description = "Whether the server declares prompt support")]
+    pub supports_prompts: bool,
+    #[schemars(description = "Whether the server declares resource support (including templates)")]
+    pub supports_resources: bool,
+    #[schemars(description = "Number of tools discovered for this server")]
+    pub tools_count: u32,
+    #[schemars(description = "Number of prompts discovered for this server")]
+    pub prompts_count: u32,
+    #[schemars(description = "Number of resources discovered for this server")]
+    pub resources_count: u32,
+    #[schemars(description = "Number of resource templates discovered for this server")]
+    pub resource_templates_count: u32,
+}
+
 /// Server details response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server details response")]
@@ -283,12 +303,62 @@ pub struct ServerDetailsData {
     pub env: Option<HashMap<String, String>>,
     /// Server metadata
     pub meta: Option<ServerMetaInfo>,
+    /// Capability summary including support flags and counts
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability: Option<ServerCapabilitySummary>,
+    /// Last known MCP protocol version advertised by the server
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
     /// When the configuration was created
     pub created_at: Option<String>,
     /// When the configuration was last updated
     pub updated_at: Option<String>,
     /// Summary of instances
     pub instances: Vec<InstanceSummary>,
+}
+
+/// Payload for creating or updating server metadata
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Default)]
+#[schemars(description = "Editable metadata fields for an MCP server")]
+pub struct ServerMetaPayload {
+    #[schemars(description = "Description of the server")]
+    pub description: Option<String>,
+    #[schemars(description = "Author or maintainer name")]
+    pub author: Option<String>,
+    #[schemars(description = "Project website")]
+    pub website: Option<String>,
+    #[schemars(description = "Source repository URL")]
+    pub repository: Option<String>,
+    #[schemars(description = "Server category or classification")]
+    pub category: Option<String>,
+    #[schemars(description = "Recommended usage scenario")]
+    pub recommended_scenario: Option<String>,
+    #[schemars(description = "Optional rating between 1 and 5")]
+    pub rating: Option<i32>,
+}
+
+/// API representation of an MCP icon payload
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Icon metadata for MCP entities")]
+pub struct ServerIcon {
+    /// Icon URI (absolute URL or data URI)
+    pub src: String,
+    /// Optional MIME type override when upstream omits it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Declared icon sizes (e.g. "48x48" or "any")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizes: Option<String>,
+}
+
+impl From<rmcp::model::Icon> for ServerIcon {
+    fn from(icon: rmcp::model::Icon) -> Self {
+        Self {
+            src: icon.src,
+            mime_type: icon.mime_type,
+            sizes: icon.sizes,
+        }
+    }
 }
 
 /// Server Metadata Information
@@ -309,6 +379,9 @@ pub struct ServerMetaInfo {
     pub recommended_scenario: Option<String>,
     /// Rating of the server (1-5)
     pub rating: Option<i32>,
+    /// Icons declared by the upstream implementation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icons: Option<Vec<ServerIcon>>,
 }
 
 /// Server instance list response
@@ -550,6 +623,11 @@ pub struct ServerCreateReq {
     /// Registry server id (if sourced from official registry)
     #[schemars(description = "Registry server identifier from MCP official registry")]
     pub registry_server_id: Option<String>,
+
+    /// Optional metadata block for this server
+    #[serde(default)]
+    #[schemars(description = "Optional metadata fields for the server")]
+    pub meta: Option<ServerMetaPayload>,
 }
 
 /// MCP Server Update Request
@@ -598,6 +676,11 @@ pub struct ServerUpdateReq {
     /// Registry server id (optional update)
     #[schemars(description = "Registry server identifier from MCP official registry")]
     pub registry_server_id: Option<String>,
+
+    /// Optional metadata update payload
+    #[serde(default)]
+    #[schemars(description = "Optional metadata fields to update")]
+    pub meta: Option<ServerMetaPayload>,
 }
 
 /// Import servers request

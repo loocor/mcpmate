@@ -747,6 +747,10 @@ impl UpstreamConnectionPool {
         let supports_resources = capabilities.as_ref().and_then(|caps| caps.resources.as_ref()).is_some();
         let supports_prompts = capabilities.as_ref().and_then(|caps| caps.prompts.as_ref()).is_some();
 
+        // Clone service metadata before moving into Arc
+        let peer_info = service.peer_info().cloned();
+        let server_icons_payload = peer_info.as_ref().and_then(|info| info.server_info.icons.clone());
+
         // Clone service for database sync operations
         let service_for_sync = service.peer().clone();
 
@@ -769,6 +773,42 @@ impl UpstreamConnectionPool {
         let Some(db) = &self.database else {
             return; // No database available, skip sync operations
         };
+
+        if let Some(peer) = peer_info.as_ref() {
+            let db_clone = db.clone();
+            let server_id_clone = server_id.to_string();
+            let icons_for_update = server_icons_payload.clone();
+            let server_version = peer.server_info.version.clone();
+            let protocol_version = peer.protocol_version.to_string();
+
+            tokio::spawn(async move {
+                if let Err(e) = crate::config::server::meta::update_server_versions(
+                    &db_clone.pool,
+                    &server_id_clone,
+                    Some(server_version.clone()),
+                    protocol_version.clone(),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        server_id = %server_id_clone,
+                        error = %e,
+                        "Failed to upsert server version metadata"
+                    );
+                }
+
+                if let Err(e) =
+                    crate::config::server::meta::update_server_icons(&db_clone.pool, &server_id_clone, icons_for_update)
+                        .await
+                {
+                    tracing::warn!(
+                        server_id = %server_id_clone,
+                        error = %e,
+                        "Failed to upsert server icons"
+                    );
+                }
+            });
+        }
 
         self.spawn_database_sync_task(
             db.clone(),

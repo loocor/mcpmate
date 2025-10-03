@@ -10,6 +10,7 @@
 //! consistent CacheFirst strategy by default.
 
 use chrono::{DateTime, Utc};
+use rmcp::model::Icon;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -50,6 +51,7 @@ pub struct CachedToolInfo {
     pub description: Option<String>,
     pub input_schema_json: String, // Store as JSON string for bincode compatibility
     pub unique_name: Option<String>,
+    pub icons: Option<Vec<Icon>>,
     pub enabled: bool,
     pub cached_at: DateTime<Utc>,
 }
@@ -77,6 +79,7 @@ pub struct CachedResourceInfo {
     pub name: Option<String>,
     pub description: Option<String>,
     pub mime_type: Option<String>,
+    pub icons: Option<Vec<Icon>>,
     pub enabled: bool,
     pub cached_at: DateTime<Utc>,
 }
@@ -87,6 +90,7 @@ pub struct CachedPromptInfo {
     pub name: String,
     pub description: Option<String>,
     pub arguments: Vec<PromptArgument>,
+    pub icons: Option<Vec<Icon>>,
     pub enabled: bool,
     pub cached_at: DateTime<Utc>,
 }

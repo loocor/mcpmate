@@ -83,7 +83,7 @@ impl CapabilityService {
                         &db_pool,
                         server_id,
                         &server.name,
-                        10,
+                        crate::config::server::capabilities::default_pool_lock_timeout_secs(),
                     )
                     .await;
 

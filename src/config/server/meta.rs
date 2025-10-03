@@ -55,9 +55,9 @@ pub async fn upsert_server_meta(
         r#"
         INSERT INTO server_meta (
             id, server_id, server_name, description, author, website, repository,
-            category, recommended_scenario, rating
+            category, recommended_scenario, rating, icons_json, server_version, protocol_version
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id) DO UPDATE SET
             server_name = excluded.server_name,
             description = excluded.description,
@@ -67,6 +67,9 @@ pub async fn upsert_server_meta(
             category = excluded.category,
             recommended_scenario = excluded.recommended_scenario,
             rating = excluded.rating,
+            icons_json = excluded.icons_json,
+            server_version = excluded.server_version,
+            protocol_version = excluded.protocol_version,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -80,6 +83,9 @@ pub async fn upsert_server_meta(
     .bind(&meta.category)
     .bind(&meta.recommended_scenario)
     .bind(meta.rating)
+    .bind(&meta.icons_json)
+    .bind(&meta.server_version)
+    .bind(&meta.protocol_version)
     .execute(pool)
     .await
     .context("Failed to upsert server metadata")?;
@@ -101,4 +107,73 @@ pub async fn upsert_server_meta(
     }
 
     Ok(meta_id)
+}
+
+/// Update server icons based on the rmcp::Implementation metadata.
+pub async fn update_server_icons(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    icons: Option<Vec<rmcp::model::Icon>>,
+) -> Result<()> {
+    let icons_json = if let Some(icons) = icons {
+        Some(serde_json::to_string(&icons).context("Failed to serialize server icons")?)
+    } else {
+        None
+    };
+
+    let server_name = get_server_name(pool, server_id).await?;
+    let icon_id = generate_id!("smet");
+
+    sqlx::query(
+        r#"
+        INSERT INTO server_meta (id, server_id, server_name, icons_json)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(server_id) DO UPDATE SET
+            server_name = excluded.server_name,
+            icons_json = excluded.icons_json,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(icon_id)
+    .bind(server_id)
+    .bind(server_name)
+    .bind(icons_json)
+    .execute(pool)
+    .await
+    .context("Failed to upsert server icons")?;
+
+    Ok(())
+}
+
+/// Update server and protocol version fields captured from peer info
+pub async fn update_server_versions(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_version: Option<String>,
+    protocol_version: String,
+) -> Result<()> {
+    let server_name = get_server_name(pool, server_id).await?;
+    let meta_id = generate_id!("smet");
+
+    sqlx::query(
+        r#"
+        INSERT INTO server_meta (id, server_id, server_name, server_version, protocol_version)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(server_id) DO UPDATE SET
+            server_name = excluded.server_name,
+            server_version = excluded.server_version,
+            protocol_version = excluded.protocol_version,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(meta_id)
+    .bind(server_id)
+    .bind(server_name)
+    .bind(server_version)
+    .bind(protocol_version)
+    .execute(pool)
+    .await
+    .context("Failed to upsert server versions")?;
+
+    Ok(())
 }

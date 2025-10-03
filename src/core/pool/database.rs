@@ -145,6 +145,8 @@ impl UpstreamConnectionPool {
             profile_data.len()
         );
 
+        let protocol_version = service.peer_info().map(|info| info.protocol_version.to_string());
+
         let mut cached_tools: Vec<CachedToolInfo> = Vec::new();
         let mut cached_resources: Vec<CachedResourceInfo> = Vec::new();
         let mut cached_prompts: Vec<CachedPromptInfo> = Vec::new();
@@ -180,6 +182,7 @@ impl UpstreamConnectionPool {
                         description: tool.description.clone().map(|d| d.into_owned()),
                         input_schema_json,
                         unique_name: None,
+                        icons: tool.icons.clone(),
                         enabled: true,
                         cached_at: now,
                     }
@@ -198,21 +201,23 @@ impl UpstreamConnectionPool {
             let resources = Self::fetch_resources_from_service(service, &server_name, instance_id).await?;
 
             if !resources.is_empty() {
+                let resource_uris: Vec<String> = resources.iter().map(|r| r.uri.clone()).collect();
                 Self::sync_resources_to_database_internal(
                     db,
                     &resolved_server_id,
                     &server_name,
-                    &resources,
+                    &resource_uris,
                     &profile_data,
                 )
                 .await?;
 
                 let now = Utc::now();
-                cached_resources.extend(resources.iter().map(|uri| CachedResourceInfo {
-                    uri: uri.clone(),
-                    name: None,
-                    description: None,
-                    mime_type: None,
+                cached_resources.extend(resources.iter().map(|resource| CachedResourceInfo {
+                    uri: resource.uri.clone(),
+                    name: Some(resource.name.clone()),
+                    description: resource.description.clone(),
+                    mime_type: resource.mime_type.clone(),
+                    icons: resource.icons.clone(),
                     enabled: true,
                     cached_at: now,
                 }));
@@ -249,6 +254,7 @@ impl UpstreamConnectionPool {
                                 required: arg.required.unwrap_or(false),
                             })
                             .collect(),
+                        icons: prompt.icons.clone(),
                         enabled: true,
                         cached_at: now,
                     }
@@ -324,6 +330,7 @@ impl UpstreamConnectionPool {
                     cached_resources,
                     cached_prompts,
                     cached_templates,
+                    protocol_version,
                 )
                 .await
                 {
@@ -489,7 +496,7 @@ impl UpstreamConnectionPool {
         service: &rmcp::service::Peer<rmcp::service::RoleClient>,
         server_name: &str,
         instance_id: &str,
-    ) -> AnyhowResult<Vec<String>> {
+    ) -> AnyhowResult<Vec<rmcp::model::Resource>> {
         use anyhow::Context;
 
         let resources = service.list_all_resources().await.with_context(|| {
@@ -499,7 +506,7 @@ impl UpstreamConnectionPool {
             )
         })?;
 
-        Ok(resources.into_iter().map(|r| r.uri.clone()).collect::<Vec<String>>())
+        Ok(resources)
     }
 
     /// Helper function to fetch resource templates from service with pagination

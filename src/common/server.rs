@@ -209,9 +209,9 @@ impl TransportType {
     /// Convert to string
     pub fn as_str(&self) -> &'static str {
         match self {
-            TransportType::StreamableHttp => "StreamableHttp",
-            TransportType::Sse => "Sse",
-            TransportType::Stdio => "Stdio",
+            TransportType::StreamableHttp => transport::STREAMABLE_HTTP,
+            TransportType::Sse => transport::SSE,
+            TransportType::Stdio => transport::STDIO,
         }
     }
 
