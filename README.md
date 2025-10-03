@@ -98,7 +98,7 @@ Content-Type: application/json
 }
 ```
 
-For more details on profile and API usage, see [Configuration Management](./docs/features/configuration_management.md) and [API Documentation](./src/api/README.md).
+For more details on profile and API usage, see [Client Configuration Management](./docs/features/client_configuration_management.md) and [API Documentation](./src/api/README.md).
 
 ### MCPMate Desktop
 
@@ -141,6 +141,16 @@ MCPMate uses the following technology stack:
 - **Data Storage**: SQLite database with structured configuration management
 - **Communication**: RESTful API + FFI integration for desktop applications
 - **Build System**: Automated build scripts with cross-platform packaging support
+
+## Authentication & Authorization Layers
+
+MCPMate relies on three distinct security tracks—keep them separated to avoid conceptual drift:
+
+- **Protocol-Scope Auth** (mandated by the MCP spec): Protects the proxy surfaces exposed to downstream clients (Cursor, VSCode, Claude Desktop, etc.) across Streamable HTTP, SSE, and stdio, and ensures outbound connections to upstream hosted services include the required bearer tokens, OAuth flows, or mTLS material. See `backend/docs/roadmap/security-audit-management.md`.
+- **Management-Scope Accounts** (control plane, planned): Centralised login, RBAC, and multi-tenant governance for operators who manage profiles, servers, and audit policies. The design remains in planning; reference `backend/docs/roadmap/multi_tenant_hosting.md` and related docs.
+- **Service Credentials** (upstream integration): Secrets that MCPMate injects when calling external APIs/MCP servers, carried via `auth_config` payloads such as API keys, OAuth tokens, or JWTs. Details live in `backend/docs/roadmap/builtin_mcp_services.md`.
+
+The immediate priority is Protocol-Scope Auth; the remaining layers will follow as cloud deployment, profile sharing, and collaboration features mature. Consult `docs/overview/auth_layers.md` for the full map and rollout notes.
 
 ## Future Plans
 

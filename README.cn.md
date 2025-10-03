@@ -68,7 +68,7 @@ Content-Type: application/json
 }
 ```
 
-更多关于配置和 API 用法，详见 [配置管理](./docs/features/configuration_management.md) 和 [API 文档](./src/api/README.md)。
+更多关于配置和 API 用法，详见 [客户端配置管理](./docs/features/client_configuration_management.md) 和 [API 文档](./src/api/README.md)。
 
 ### MCPMate Desktop
 
