@@ -81,7 +81,7 @@ pub async fn serve_docs() -> Html<&'static str> {
             </head>
             <body>
                 <script id="api-reference" data-url="/openapi.json"></script>
-                <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+                <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.36.0"></script>
             </body>
             </html>
         "#,
