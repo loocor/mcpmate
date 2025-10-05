@@ -54,22 +54,39 @@ pub async fn upsert_server_meta(
     let result = sqlx::query(
         r#"
         INSERT INTO server_meta (
-            id, server_id, server_name, description, author, website, repository,
-            category, recommended_scenario, rating, icons_json, server_version, protocol_version
+            id,
+            server_id,
+            server_name,
+            description,
+            website,
+            repository,
+            registry_version,
+            registry_meta_json,
+            extras_json,
+            icons_json,
+            server_version,
+            protocol_version,
+            author,
+            category,
+            recommended_scenario,
+            rating
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id) DO UPDATE SET
             server_name = excluded.server_name,
             description = excluded.description,
-            author = excluded.author,
             website = excluded.website,
             repository = excluded.repository,
-            category = excluded.category,
-            recommended_scenario = excluded.recommended_scenario,
-            rating = excluded.rating,
-            icons_json = excluded.icons_json,
-            server_version = excluded.server_version,
-            protocol_version = excluded.protocol_version,
+            registry_version = excluded.registry_version,
+            registry_meta_json = excluded.registry_meta_json,
+            extras_json = excluded.extras_json,
+            icons_json = COALESCE(excluded.icons_json, server_meta.icons_json),
+            server_version = COALESCE(excluded.server_version, server_meta.server_version),
+            protocol_version = COALESCE(excluded.protocol_version, server_meta.protocol_version),
+            author = COALESCE(excluded.author, server_meta.author),
+            category = COALESCE(excluded.category, server_meta.category),
+            recommended_scenario = COALESCE(excluded.recommended_scenario, server_meta.recommended_scenario),
+            rating = COALESCE(excluded.rating, server_meta.rating),
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -77,15 +94,18 @@ pub async fn upsert_server_meta(
     .bind(&meta.server_id)
     .bind(&server_name)
     .bind(&meta.description)
-    .bind(&meta.author)
     .bind(&meta.website)
     .bind(&meta.repository)
-    .bind(&meta.category)
-    .bind(&meta.recommended_scenario)
-    .bind(meta.rating)
+    .bind(&meta.registry_version)
+    .bind(&meta.registry_meta_json)
+    .bind(&meta.extras_json)
     .bind(&meta.icons_json)
     .bind(&meta.server_version)
     .bind(&meta.protocol_version)
+    .bind(&meta.author)
+    .bind(&meta.category)
+    .bind(&meta.recommended_scenario)
+    .bind(meta.rating)
     .execute(pool)
     .await
     .context("Failed to upsert server metadata")?;

@@ -13,6 +13,7 @@ use rmcp::{
     transport::{SseClientTransport, StreamableHttpClientTransport},
 };
 use tokio::time::timeout;
+use std::time::Duration;
 
 /// Internal helper used by both SSE and Streamable HTTP connections
 async fn connect_http_internal(
@@ -190,6 +191,65 @@ pub async fn connect_http_server_with_client(
         tools.len(),
         elapsed
     );
+    Ok((service, tools, capabilities))
+}
+
+/// Connect to an HTTP-based server (SSE or Streamable HTTP) with custom timeouts
+pub async fn connect_http_server_with_client_timeouts(
+    server_name: &str,
+    server_config: &MCPServerConfig,
+    client: reqwest::Client,
+    transport_type: TransportType,
+    connection_timeout: Duration,
+    service_timeout: Duration,
+    tools_timeout: Duration,
+) -> Result<(
+    crate::core::transport::ClientService,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+)> {
+    let began = std::time::Instant::now();
+    let url = server_config
+        .url
+        .as_ref()
+        .context("URL not specified for HTTP server")?;
+
+    let (service, tools, capabilities) = match transport_type {
+        TransportType::Sse => {
+            let transport = tokio::time::timeout(connection_timeout, async move {
+                SseClientTransport::start_with_client(
+                    client,
+                    SseClientConfig {
+                        sse_endpoint: url.clone().into(),
+                        ..Default::default()
+                    },
+                )
+                .await
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!(format!("Timeout creating SSE transport for server '{server_name}'")))??;
+            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
+        }
+        TransportType::StreamableHttp => {
+            let config = StreamableHttpClientTransportConfig {
+                uri: url.clone().into(),
+                ..Default::default()
+            };
+            let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
+            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
+        }
+        TransportType::Stdio => {
+            anyhow::bail!("HTTP timeouts not applicable for stdio transport");
+        }
+    };
+
+    tracing::debug!(
+        "[HTTP CONNECT][custom] server={} tools={} elapsed_ms={}",
+        server_name,
+        tools.len(),
+        began.elapsed().as_millis()
+    );
+
     Ok((service, tools, capabilities))
 }
 

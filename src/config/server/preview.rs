@@ -4,6 +4,7 @@
 use crate::common::server::ServerType;
 use crate::core::models::MCPServerConfig;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::time::Duration;
 
 /// Preview capabilities for a single server config.
@@ -13,6 +14,8 @@ pub async fn preview_capabilities(
     kind: ServerType,
     command: Option<String>,
     url: Option<String>,
+    args: Option<Vec<String>>,
+    env: Option<HashMap<String, String>>,
     _timeout: Option<Duration>,
 ) -> Result<crate::config::server::capabilities::CapabilitySnapshot> {
     tracing::info!(
@@ -21,14 +24,13 @@ pub async fn preview_capabilities(
         kind = ?kind,
         "Preview capabilities (no side effects)"
     );
-    // Build a minimal MCPServerConfig; args/env are None for preview (handlers may enrich later if needed)
+    // Build a minimal MCPServerConfig; include args/env from request for accurate preview
     let cfg = MCPServerConfig {
         kind,
         command,
         url,
-        args: None,
-        env: None,
-        transport_type: None,
+        args,
+        env,
     };
     // Reuse existing discovery (no dual-write, no pool)
     crate::config::server::capabilities::discover_from_config(name, &cfg, kind).await

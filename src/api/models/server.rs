@@ -5,6 +5,7 @@ use crate::common::server::ServerType;
 use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 // API Request Models
@@ -317,24 +318,85 @@ pub struct ServerDetailsData {
     pub instances: Vec<InstanceSummary>,
 }
 
-/// Payload for creating or updating server metadata
+/// Repository information compatible with the MCP registry schema
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[schemars(description = "Repository metadata for an MCP server, mirroring registry fields")]
+pub struct RegistryRepositoryInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Repository clone URL (e.g. GitHub HTTPS URL)")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Repository source identifier (e.g. github, gitlab)")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Optional repository subfolder containing the server manifest")]
+    pub subfolder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Stable identifier for the repository entry")]
+    pub id: Option<String>,
+}
+
+/// Official registry metadata envelope
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[schemars(description = "Official MCP registry metadata block (`io.modelcontextprotocol.registry/official`)")]
+pub struct RegistryOfficialMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Publication status (e.g. published, draft)")]
+    pub status: Option<String>,
+    #[serde(rename = "publishedAt", skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "ISO timestamp when this entry was published")]
+    pub published_at: Option<String>,
+    #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "ISO timestamp when this entry was last updated")]
+    pub updated_at: Option<String>,
+    #[serde(rename = "isLatest", skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Whether this entry represents the latest version")]
+    pub is_latest: Option<bool>,
+}
+
+/// Registry metadata payload that carries namespaced blocks
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[schemars(description = "Namespaced metadata blocks from registry or external manifests")]
+pub struct RegistryMetaPayload {
+    #[serde(
+        rename = "io.modelcontextprotocol.registry/official",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(description = "Official registry controlled metadata block")]
+    pub official: Option<RegistryOfficialMeta>,
+    #[serde(
+        rename = "io.modelcontextprotocol.registry/publisher-provided",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(description = "Publisher-provided metadata or annotations")]
+    pub publisher_provided: Option<Value>,
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    #[schemars(description = "Additional namespaced metadata blocks (e.g. MCPB manifests)")]
+    pub additional_blocks: HashMap<String, Value>,
+}
+
+/// Payload for creating or updating server metadata (registry-aligned)
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Default)]
-#[schemars(description = "Editable metadata fields for an MCP server")]
+#[schemars(description = "Editable metadata fields for an MCP server, following registry naming")]
 pub struct ServerMetaPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Description of the server")]
     pub description: Option<String>,
-    #[schemars(description = "Author or maintainer name")]
-    pub author: Option<String>,
-    #[schemars(description = "Project website")]
-    pub website: Option<String>,
-    #[schemars(description = "Source repository URL")]
-    pub repository: Option<String>,
-    #[schemars(description = "Server category or classification")]
-    pub category: Option<String>,
-    #[schemars(description = "Recommended usage scenario")]
-    pub recommended_scenario: Option<String>,
-    #[schemars(description = "Optional rating between 1 and 5")]
-    pub rating: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Declared server version")]
+    pub version: Option<String>,
+    #[serde(rename = "websiteUrl", skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Public website URL for the server")]
+    pub website_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Repository reference for the server implementation")]
+    pub repository: Option<RegistryRepositoryInfo>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Registry metadata namespaces (e.g. official + publisher provided)")]
+    pub meta: Option<RegistryMetaPayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Raw manifest or auxiliary metadata that should round-trip without interpretation")]
+    pub extras: Option<Value>,
 }
 
 /// API representation of an MCP icon payload
@@ -362,23 +424,27 @@ impl From<rmcp::model::Icon> for ServerIcon {
 }
 
 /// Server Metadata Information
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Server metadata information")]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+#[schemars(description = "Server metadata information exposed by the proxy")]
 pub struct ServerMetaInfo {
     /// Description of the server
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Author of the server
-    pub author: Option<String>,
-    /// Website of the server
-    pub website: Option<String>,
-    /// Repository URL of the server
-    pub repository: Option<String>,
-    /// Category of the server
-    pub category: Option<String>,
-    /// Recommended scenario for the server
-    pub recommended_scenario: Option<String>,
-    /// Rating of the server (1-5)
-    pub rating: Option<i32>,
+    /// Declared version from registry or manifest
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Public website URL
+    #[serde(rename = "websiteUrl", skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
+    /// Repository metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<RegistryRepositoryInfo>,
+    /// Registry `_meta` block
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<RegistryMetaPayload>,
+    /// Additional manifest content that should round-trip untouched
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extras: Option<Value>,
     /// Icons declared by the upstream implementation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icons: Option<Vec<ServerIcon>>,
@@ -710,6 +776,9 @@ pub struct ServersImportConfig {
 
     /// Registry server id (if sourced from official registry)
     pub registry_server_id: Option<String>,
+    /// Optional metadata payload aligned with registry schema
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<ServerMetaPayload>,
 }
 
 /// Import servers response
@@ -780,6 +849,9 @@ pub struct ServerPreviewItemReq {
     pub args: Option<Vec<String>>,
     #[serde(default)]
     pub env: Option<std::collections::HashMap<String, String>>,
+    /// Optional HTTP headers for SSE/streamable_http preview
+    #[serde(default)]
+    pub headers: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

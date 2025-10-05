@@ -7,9 +7,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use url::Url;
 
-use crate::api::models::server::ServersImportConfig;
+use crate::api::models::server::{ServerMetaPayload, ServersImportConfig};
 use crate::common::{profile::USER_PROFILE_INITIAL_NAME, server::ServerType};
-use crate::config::models::Server;
+use crate::config::models::{Server, ServerMeta};
+use crate::config::server as server_ops;
 use crate::config::server::{args, env, get_all_servers, upsert_server};
 
 // Capability sync utilities (dual write to SQLite shadow + REDB)
@@ -59,7 +60,7 @@ pub struct ImportedServer {
     pub command: Option<String>,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
-    pub transport_type: String,
+    pub server_type: String,
 }
 
 /// Import a batch of servers with consistent deduplication and capability sync.
@@ -127,7 +128,7 @@ pub async fn import_batch(
                 command: cfg.command.clone(),
                 args: cfg.args.clone().unwrap_or_default(),
                 env: cfg.env.clone().unwrap_or_default(),
-                transport_type: cfg.kind.clone(),
+                server_type: cfg.kind.clone(),
             });
             continue;
         }
@@ -145,8 +146,9 @@ pub async fn import_batch(
             ServerType::StreamableHttp => Server::new_streamable_http(name.clone(), cfg.url.clone()),
         };
         server.registry_server_id = cfg.registry_server_id.clone();
-        // Keep DB transport_type NULL to satisfy CHECK constraint (enum uses TitleCase in DB encoding)
-        server.set_transport_type(None);
+        // Persist transport_type consistent with server_type to aid validation/preview paths
+        // (DB accepts lowercase client-format values per Type/Encode implementation)
+        // Stdio/Sse/StreamableHttp map 1:1 here via Server::new_* constructors; keep as-is.
 
         let server_id = upsert_server(db_pool, &server)
             .await
@@ -157,6 +159,18 @@ pub async fn import_batch(
         }
         if !env_norm.is_empty() {
             let _ = env::upsert_server_env(db_pool, &server_id, &env_norm).await;
+        }
+
+        if let Some(meta_payload) = cfg.meta.as_ref() {
+            if let Err(err) = upsert_import_meta(db_pool, &server_id, meta_payload).await {
+                tracing::warn!(
+                    target: "mcpmate::config::server::import",
+                    server_id = %server_id,
+                    server_name = %name,
+                    error = %err,
+                    "Failed to persist metadata for imported server"
+                );
+            }
         }
 
         // Associate to a single target profile if provided, otherwise default profile
@@ -275,11 +289,46 @@ pub async fn import_batch(
             command: cfg.command.clone(),
             args: args_norm,
             env: env_norm,
-            transport_type: server_type.client_format().to_string(),
+            server_type: server_type.client_format().to_string(),
         });
     }
 
     Ok(outcome)
+}
+
+async fn upsert_import_meta(
+    db_pool: &Pool<Sqlite>,
+    server_id: &str,
+    payload: &ServerMetaPayload,
+) -> Result<()> {
+    let mut meta = ServerMeta::new(server_id.to_owned());
+    meta.description = payload.description.clone();
+    meta.website = payload.website_url.clone();
+    meta.registry_version = payload.version.clone();
+    meta.repository = payload
+        .repository
+        .as_ref()
+        .map(|repo| serde_json::to_string(repo))
+        .transpose()
+        .context("Failed to serialize repository metadata for import")?;
+    meta.registry_meta_json = payload
+        .meta
+        .as_ref()
+        .map(|meta_block| serde_json::to_string(meta_block))
+        .transpose()
+        .context("Failed to serialize registry meta block for import")?;
+    meta.extras_json = payload
+        .extras
+        .as_ref()
+        .map(|extras| serde_json::to_string(extras))
+        .transpose()
+        .context("Failed to serialize extras metadata for import")?;
+
+    server_ops::upsert_server_meta(db_pool, &meta)
+        .await
+        .context("Failed to persist server metadata during import")?;
+
+    Ok(())
 }
 
 fn normalize_args_env(

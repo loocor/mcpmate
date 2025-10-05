@@ -317,7 +317,7 @@ pub async fn config_import(
                     "command": s.command.unwrap_or_default(),
                     "args": s.args,
                     "env": s.env,
-                    "transport_type": s.transport_type,
+                    "server_type": s.server_type,
                 })
             })
             .filter_map(|v| serde_json::from_value(v).ok())

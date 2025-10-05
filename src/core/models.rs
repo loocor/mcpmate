@@ -39,21 +39,12 @@ pub struct MCPServerConfig {
     pub url: Option<String>,
     /// Environment variables to set (for stdio servers)
     pub env: Option<HashMap<String, String>>,
-    /// Transport type
-    #[serde(rename = "transportType")]
-    #[serde(default)]
-    pub transport_type: Option<TransportType>,
 }
 
 impl MCPServerConfig {
     /// Get the transport type for this server
     pub fn get_transport_type(&self) -> TransportType {
-        // If transport_type is explicitly set, use it
-        if let Some(transport_type) = self.transport_type {
-            return transport_type;
-        }
-
-        // Otherwise, infer from the 'kind' field
+        // Infer strictly from the 'kind' field
         match self.kind {
             ServerType::Stdio => TransportType::Stdio,
             ServerType::Sse => TransportType::Sse,

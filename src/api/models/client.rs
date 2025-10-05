@@ -373,8 +373,8 @@ pub struct ClientImportedServer {
     pub args: Vec<String>,
     #[schemars(description = "Environment variables")]
     pub env: std::collections::HashMap<String, String>,
-    #[schemars(description = "Transport protocol type")]
-    pub transport_type: String,
+    #[schemars(description = "Server type (stdio|sse|streamable_http)")]
+    pub server_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

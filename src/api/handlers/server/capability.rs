@@ -389,6 +389,7 @@ pub fn tool_json(
     name: &str,
     description: Option<String>,
     input_schema: serde_json::Value,
+    output_schema: Option<serde_json::Value>,
     unique_name: Option<String>,
     id: Option<String>,
     icons: Option<Vec<Icon>>,
@@ -397,6 +398,7 @@ pub fn tool_json(
         "name": name,
         "description": description,
         "input_schema": input_schema,
+        "output_schema": output_schema,
         "unique_name": unique_name,
         "id": id,
         "icons": icons,
@@ -405,10 +407,12 @@ pub fn tool_json(
 
 pub fn tool_json_from_cached(t: &crate::core::cache::CachedToolInfo) -> serde_json::Value {
     let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
+    let out = t.output_schema();
     tool_json(
         &t.name,
         t.description.clone(),
         schema,
+        out,
         t.unique_name.clone(),
         None,
         t.icons.clone(),
@@ -515,6 +519,7 @@ pub async fn extract_tools_capability(
                 "name": t.name,
                 "description": t.description,
                 "input_schema": schema,
+                "output_schema": t.output_schema.as_ref().map(|s| serde_json::Value::Object((**s).clone())),
                 "unique_name": serde_json::Value::Null,
                 "icons": t.icons.clone(),
             });
@@ -524,6 +529,10 @@ pub async fn extract_tools_capability(
                 name: t.name.to_string(),
                 description: t.description.clone().map(|d| d.into_owned()),
                 input_schema_json,
+                output_schema_json: t.output_schema.as_ref().map(|s| {
+                    serde_json::to_string(&serde_json::Value::Object((**s).clone()))
+                        .unwrap_or_else(|_| "{}".to_string())
+                }),
                 unique_name: None,
                 icons: t.icons.clone(),
                 enabled: true,

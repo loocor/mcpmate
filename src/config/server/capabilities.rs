@@ -193,6 +193,9 @@ pub async fn discover_from_connection(conn: &crate::core::pool::UpstreamConnecti
             name: t.name.to_string(),
             description: t.description.clone().map(|d| d.into_owned()),
             input_schema_json,
+            output_schema_json: t.output_schema.as_ref().map(|s| {
+                serde_json::to_string(&serde_json::Value::Object((**s).clone())).unwrap_or_else(|_| "{}".to_string())
+            }),
             unique_name: None,
             icons: t.icons.clone(),
             enabled: true,
@@ -255,6 +258,9 @@ pub async fn discover_from_config(
             name: t.name.to_string(),
             description: t.description.clone().map(|d| d.into_owned()),
             input_schema_json,
+            output_schema_json: t.output_schema.as_ref().map(|s| {
+                serde_json::to_string(&serde_json::Value::Object((**s).clone())).unwrap_or_else(|_| "{}".to_string())
+            }),
             unique_name: None,
             icons: t.icons.clone(),
             enabled: true,
@@ -276,6 +282,119 @@ pub async fn discover_from_config(
         snap.resource_templates.extend(templates);
     }
 
+    Ok(snap)
+}
+
+/// Discover capabilities with optional custom HTTP client and timeouts (used by preview)
+pub async fn discover_from_config_preview(
+    server_name: &str,
+    server_config: &crate::core::models::MCPServerConfig,
+    server_type: crate::common::server::ServerType,
+    http_client: Option<reqwest::Client>,
+    http_timeouts: Option<(std::time::Duration, std::time::Duration, std::time::Duration)>,
+    stdio_timeout: Option<std::time::Duration>,
+) -> Result<CapabilitySnapshot> {
+    use crate::core::transport::{
+        TransportType, connect_http_server, connect_http_server_with_client, connect_http_server_with_client_timeouts,
+        connect_server_simple,
+    };
+
+    let (service, tools, capabilities, _pid) = match server_type {
+        crate::common::server::ServerType::Stdio => {
+            // allow wrapping stdio connect with timeout if provided
+            let fut = connect_server_simple(server_name, server_config, server_type, TransportType::Stdio);
+            let (svc, tools, caps, pid) = if let Some(to) = stdio_timeout {
+                tokio::time::timeout(to, fut)
+                    .await
+                    .map_err(|_| anyhow::anyhow!(format!("Timeout connecting stdio server '{server_name}'")))??
+            } else {
+                fut.await?
+            };
+            (svc, tools, caps, pid)
+        }
+        crate::common::server::ServerType::Sse => {
+            if let Some(client) = http_client {
+                if let Some((c_to, s_to, t_to)) = http_timeouts {
+                    let (s, t, c) = connect_http_server_with_client_timeouts(
+                        server_name,
+                        server_config,
+                        client,
+                        TransportType::Sse,
+                        c_to,
+                        s_to,
+                        t_to,
+                    )
+                    .await?;
+                    (s, t, c, None)
+                } else {
+                    let (s, t, c) =
+                        connect_http_server_with_client(server_name, server_config, client, TransportType::Sse).await?;
+                    (s, t, c, None)
+                }
+            } else {
+                let (s, t, c) = connect_http_server(server_name, server_config, TransportType::Sse).await?;
+                (s, t, c, None)
+            }
+        }
+        crate::common::server::ServerType::StreamableHttp => {
+            if let Some(client) = http_client {
+                if let Some((c_to, s_to, t_to)) = http_timeouts {
+                    let (s, t, c) = connect_http_server_with_client_timeouts(
+                        server_name,
+                        server_config,
+                        client,
+                        TransportType::StreamableHttp,
+                        c_to,
+                        s_to,
+                        t_to,
+                    )
+                    .await?;
+                    (s, t, c, None)
+                } else {
+                    let (s, t, c) = connect_http_server_with_client(
+                        server_name,
+                        server_config,
+                        client,
+                        TransportType::StreamableHttp,
+                    )
+                    .await?;
+                    (s, t, c, None)
+                }
+            } else {
+                let (s, t, c) = connect_http_server(server_name, server_config, TransportType::StreamableHttp).await?;
+                (s, t, c, None)
+            }
+        }
+    };
+
+    let mut snap = CapabilitySnapshot::default();
+    snap.protocol_version = service.peer_info().map(|info| info.protocol_version.to_string());
+    for t in &tools {
+        let schema = t.schema_as_json_value();
+        let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
+        snap.tools.push(CachedToolInfo {
+            name: t.name.to_string(),
+            description: t.description.clone().map(|d| d.into_owned()),
+            input_schema_json,
+            output_schema_json: t.output_schema.as_ref().map(|s| {
+                serde_json::to_string(&serde_json::Value::Object((**s).clone())).unwrap_or_else(|_| "{}".to_string())
+            }),
+            unique_name: None,
+            icons: t.icons.clone(),
+            enabled: true,
+            cached_at: chrono::Utc::now(),
+        });
+    }
+    if capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
+        let items = discovery_helpers::collect_all_prompts(&service).await;
+        snap.prompts.extend(items);
+    }
+    if capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
+        let resources = discovery_helpers::collect_all_resources(&service).await;
+        let templates = discovery_helpers::collect_all_resource_templates(&service).await;
+        snap.resources.extend(resources);
+        snap.resource_templates.extend(templates);
+    }
     Ok(snap)
 }
 
@@ -729,7 +848,6 @@ impl CapabilityManager {
                     url: server_row.url,
                     args: None,
                     env: None,
-                    transport_type: server_row.transport_type,
                 };
 
                 discover_from_config(server_name, &config, server_row.server_type).await?
@@ -818,7 +936,6 @@ impl CapabilityManager {
                             url: server.url,
                             args: None,
                             env: None,
-                            transport_type: server.transport_type,
                         };
                         SyncStrategy::FromConfig(config, server.server_type)
                     }
@@ -898,7 +1015,6 @@ impl CapabilityManager {
                     url: server_row.url,
                     args: None,
                     env: None,
-                    transport_type: server_row.transport_type,
                 };
                 SyncStrategy::FromConfig(config, server_row.server_type)
             }

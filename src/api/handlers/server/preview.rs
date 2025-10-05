@@ -35,12 +35,52 @@ async fn preview_one(
     };
 
     // Call preview (no side effects)
-    let snap = crate::config::server::preview::preview_capabilities(
-        &item.name,
+    // Build optional HTTP client with default headers if provided
+    let mut client: Option<reqwest::Client> = None;
+    if matches!(
         kind,
-        item.command.clone(),
-        item.url.clone(),
-        timeout,
+        crate::common::server::ServerType::Sse | crate::common::server::ServerType::StreamableHttp
+    ) {
+        if let Some(headers) = item.headers.as_ref() {
+            let mut header_map = reqwest::header::HeaderMap::new();
+            for (k, v) in headers.iter() {
+                if let Ok(name) = reqwest::header::HeaderName::from_bytes(k.as_bytes()) {
+                    if let Ok(value) = reqwest::header::HeaderValue::from_str(v) {
+                        header_map.insert(name, value);
+                    }
+                }
+            }
+            let builder = reqwest::Client::builder().default_headers(header_map);
+            if let Ok(built) = builder.build() {
+                client = Some(built);
+            }
+        }
+    }
+
+    // Compute preview timeouts (fallbacks if not provided)
+    let stdio_timeout = timeout;
+    let http_to = timeout.map(|t| {
+        // Split a single timeout into connection/service/tools windows
+        // Connection: min(10s, total), Service+Tools: total
+        let conn = std::cmp::min(std::time::Duration::from_secs(10), t);
+        (conn, t, t)
+    });
+
+    let cfg = crate::core::models::MCPServerConfig {
+        kind,
+        command: item.command.clone(),
+        url: item.url.clone(),
+        args: item.args.clone(),
+        env: item.env.clone(),
+    };
+
+    let snap = crate::config::server::capabilities::discover_from_config_preview(
+        &item.name,
+        &cfg,
+        kind,
+        client,
+        http_to,
+        stdio_timeout,
     )
     .await;
 

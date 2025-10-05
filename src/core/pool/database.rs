@@ -181,6 +181,10 @@ impl UpstreamConnectionPool {
                         name: tool.name.to_string(),
                         description: tool.description.clone().map(|d| d.into_owned()),
                         input_schema_json,
+                        output_schema_json: tool
+                            .output_schema
+                            .as_ref()
+                            .map(|s| serde_json::to_string(&serde_json::Value::Object((**s).clone())).unwrap_or_else(|_| "{}".to_string())),
                         unique_name: None,
                         icons: tool.icons.clone(),
                         enabled: true,

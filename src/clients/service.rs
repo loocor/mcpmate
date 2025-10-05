@@ -457,7 +457,7 @@ impl ClientConfigService {
             ServerSelection::AllEnabled => {
                 let rows = sqlx::query_as::<_, ServerRow>(
                     r#"
-                    SELECT id, name, command, url, transport_type, server_type
+                    SELECT id, name, command, url, server_type
                     FROM server_config
                     WHERE enabled = 1
                     ORDER BY name
@@ -472,7 +472,7 @@ impl ClientConfigService {
             ServerSelection::Profile(profile_id) => {
                 let rows = sqlx::query_as::<_, ServerRow>(
                     r#"
-                    SELECT sc.id, sc.name, sc.command, sc.url, sc.transport_type, sc.server_type
+                    SELECT sc.id, sc.name, sc.command, sc.url, sc.server_type
                     FROM server_config sc
                     JOIN profile_server ps ON sc.id = ps.server_id
                     WHERE ps.profile_id = ?
@@ -496,13 +496,7 @@ impl ClientConfigService {
                 let placeholders = vec!["?"; profile_ids.len()].join(", ");
                 let sql = format!(
                     r#"
-                    SELECT DISTINCT
-                        sc.id,
-                        sc.name,
-                        sc.command,
-                        sc.url,
-                        sc.transport_type,
-                        sc.server_type
+                    SELECT DISTINCT sc.id, sc.name, sc.command, sc.url, sc.server_type
                     FROM server_config sc
                     JOIN profile_server ps ON sc.id = ps.server_id
                     WHERE ps.profile_id IN ({})
@@ -531,7 +525,7 @@ impl ClientConfigService {
                 let placeholders = vec!["?"; ids.len()].join(", ");
                 let sql = format!(
                     r#"
-                    SELECT id, name, command, url, transport_type, server_type
+                    SELECT id, name, command, url, server_type
                     FROM server_config
                     WHERE id IN ({}) AND enabled = 1
                     ORDER BY name
@@ -849,11 +843,7 @@ impl ClientConfigService {
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-        let transport = row
-            .transport_type
-            .as_deref()
-            .unwrap_or(row.server_type.as_str())
-            .to_string();
+        let transport = row.server_type.as_str().to_string();
 
         let mut metadata = HashMap::new();
         metadata.insert("server_id".to_string(), json!(row.id));
@@ -891,6 +881,5 @@ struct ServerRow {
     name: String,
     command: Option<String>,
     url: Option<String>,
-    transport_type: Option<String>,
     server_type: String,
 }

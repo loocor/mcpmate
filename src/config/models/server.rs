@@ -9,7 +9,7 @@ use sqlx::{FromRow, Pool, Sqlite};
 
 use crate::common::{
     constants::database::{columns, tables},
-    server::{ServerType, TransportType},
+    server::ServerType,
     status::EnabledStatus,
 };
 use crate::macros::entity::DatabaseEntity;
@@ -27,8 +27,6 @@ pub struct Server {
     pub command: Option<String>,
     /// URL (for sse and streamable_http servers)
     pub url: Option<String>,
-    /// Transport type
-    pub transport_type: Option<TransportType>,
     /// Registry server id (from official registry)
     pub registry_server_id: Option<String>,
     /// Capabilities list string (e.g., "tools,prompts,resources")
@@ -100,14 +98,6 @@ impl Server {
         self.server_type = server_type;
     }
 
-    /// Set the transport type
-    pub fn set_transport_type(
-        &mut self,
-        transport_type: Option<TransportType>,
-    ) {
-        self.transport_type = transport_type;
-    }
-
     /// Set the enabled status
     pub fn set_enabled_status(
         &mut self,
@@ -119,11 +109,6 @@ impl Server {
     /// Get server type as string (for API compatibility)
     pub fn server_type_string(&self) -> String {
         self.server_type.to_string()
-    }
-
-    /// Get transport type as string (for API compatibility)
-    pub fn transport_type_string(&self) -> Option<String> {
-        self.transport_type.map(|t| t.to_string())
     }
 
     /// Get enabled as boolean (for API compatibility)
@@ -142,7 +127,7 @@ impl Server {
             server_type,
             command: None,
             url: None,
-            transport_type: None,
+
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
@@ -162,7 +147,7 @@ impl Server {
             server_type: ServerType::Stdio,
             command,
             url: None,
-            transport_type: Some(TransportType::Stdio),
+
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
@@ -182,7 +167,7 @@ impl Server {
             server_type: ServerType::Sse,
             command: None,
             url,
-            transport_type: Some(TransportType::Sse),
+
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
@@ -202,7 +187,7 @@ impl Server {
             server_type: ServerType::StreamableHttp,
             command: None,
             url,
-            transport_type: Some(TransportType::StreamableHttp),
+
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
@@ -252,7 +237,6 @@ impl Server {
             url: self.url.clone(),
             args: None, // Args are loaded separately when needed
             env: None,  // Env vars are loaded separately when needed
-            transport_type: self.transport_type,
         }
     }
 
@@ -350,17 +334,23 @@ pub struct ServerMeta {
     pub server_id: String,
     /// Description of the server
     pub description: Option<String>,
-    /// Author of the server
-    pub author: Option<String>,
-    /// Website of the server
+    /// Website of the server (registry `websiteUrl`)
     pub website: Option<String>,
-    /// Repository URL of the server
+    /// Repository payload serialized as JSON
     pub repository: Option<String>,
-    /// Category of the server
+    /// Registry-declared version string
+    pub registry_version: Option<String>,
+    /// Serialized registry `_meta` block (namespaced metadata)
+    pub registry_meta_json: Option<String>,
+    /// Raw extras JSON (e.g., MCPB manifest contents)
+    pub extras_json: Option<String>,
+    /// Legacy author field (kept for backward compatibility)
+    pub author: Option<String>,
+    /// Legacy category field (kept for backward compatibility)
     pub category: Option<String>,
-    /// Recommended scenario for the server
+    /// Legacy recommended scenario field (kept for backward compatibility)
     pub recommended_scenario: Option<String>,
-    /// Rating of the server (1-5)
+    /// Legacy rating field (kept for backward compatibility)
     pub rating: Option<i32>,
     /// JSON-serialized list of server icons (rmcp::model::Icon)
     pub icons_json: Option<String>,
@@ -380,16 +370,19 @@ impl ServerMeta {
         Self {
             id: None,
             server_id,
-            description: None,
-            author: None,
-            website: None,
-            repository: None,
-            category: None,
-            recommended_scenario: None,
-            rating: None,
-            icons_json: None,
             server_version: None,
+            author: None,
+            category: None,
+            description: None,
+            extras_json: None,
+            icons_json: None,
             protocol_version: None,
+            rating: None,
+            recommended_scenario: None,
+            registry_meta_json: None,
+            registry_version: None,
+            repository: None,
+            website: None,
             created_at: None,
             updated_at: None,
         }

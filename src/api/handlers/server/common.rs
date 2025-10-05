@@ -208,14 +208,81 @@ pub async fn get_complete_server_details(
                     },
                     None => None,
                 };
+                let repository = server_meta
+                    .repository
+                    .as_deref()
+                    .and_then(|raw| match serde_json::from_str(raw) {
+                        Ok(repo) => Some(repo),
+                        Err(err) => {
+                            tracing::warn!(
+                                "Failed to parse repository metadata for server '{}': {}",
+                                server_name,
+                                err
+                            );
+                            None
+                        }
+                    });
+                let registry_meta =
+                    server_meta
+                        .registry_meta_json
+                        .as_deref()
+                        .and_then(|raw| match serde_json::from_str(raw) {
+                            Ok(meta) => Some(meta),
+                            Err(err) => {
+                                tracing::warn!(
+                                    "Failed to parse registry meta block for server '{}': {}",
+                                    server_name,
+                                    err
+                                );
+                                None
+                            }
+                        });
+                let mut extras: Option<serde_json::Value> =
+                    server_meta
+                        .extras_json
+                        .as_deref()
+                        .and_then(|raw| match serde_json::from_str(raw) {
+                            Ok(val) => Some(val),
+                            Err(err) => {
+                                tracing::warn!("Failed to parse extras metadata for server '{}': {}", server_name, err);
+                                None
+                            }
+                        });
+
+                // Fold legacy fields into extras. Keeps backward compatibility for pre-registry metadata.
+                if extras.is_none()
+                    && (server_meta.author.is_some()
+                        || server_meta.category.is_some()
+                        || server_meta.recommended_scenario.is_some()
+                        || server_meta.rating.is_some())
+                {
+                    let mut legacy = serde_json::Map::new();
+                    if let Some(author) = server_meta.author.clone() {
+                        legacy.insert("author".to_string(), serde_json::Value::String(author));
+                    }
+                    if let Some(category) = server_meta.category.clone() {
+                        legacy.insert("category".to_string(), serde_json::Value::String(category));
+                    }
+                    if let Some(scene) = server_meta.recommended_scenario.clone() {
+                        legacy.insert("recommended_scenario".to_string(), serde_json::Value::String(scene));
+                    }
+                    if let Some(rating) = server_meta.rating {
+                        legacy.insert("rating".to_string(), serde_json::Value::Number(rating.into()));
+                    }
+                    if !legacy.is_empty() {
+                        let mut wrapper = serde_json::Map::new();
+                        wrapper.insert("legacy".to_string(), serde_json::Value::Object(legacy));
+                        extras = Some(serde_json::Value::Object(wrapper));
+                    }
+                }
+
                 details.meta = Some(ServerMetaInfo {
                     description: server_meta.description,
-                    author: server_meta.author,
-                    website: server_meta.website,
-                    repository: server_meta.repository,
-                    category: server_meta.category,
-                    recommended_scenario: server_meta.recommended_scenario,
-                    rating: server_meta.rating,
+                    version: server_meta.registry_version,
+                    website_url: server_meta.website,
+                    repository,
+                    meta: registry_meta,
+                    extras,
                     icons,
                 });
             }

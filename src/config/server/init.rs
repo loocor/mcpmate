@@ -38,9 +38,6 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             ),
             command TEXT,
             url TEXT,
-            transport_type TEXT CHECK (
-                transport_type IN ('{}', '{}', '{}') OR transport_type IS NULL
-            ),
             registry_server_id TEXT UNIQUE,
             capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
@@ -48,9 +45,6 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         "#,
-        transport::STDIO,
-        transport::SSE,
-        transport::STREAMABLE_HTTP,
         transport::STDIO,
         transport::SSE,
         transport::STREAMABLE_HTTP
@@ -131,16 +125,19 @@ async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
             id TEXT PRIMARY KEY,
             server_id TEXT NOT NULL,
             server_name TEXT NOT NULL,
-            description TEXT,
             author TEXT,
-            website TEXT,
-            repository TEXT,
             category TEXT,
-            recommended_scenario TEXT,
-            rating INTEGER,
+            description TEXT,
+            extras_json TEXT,
             icons_json TEXT,
-            server_version TEXT,
             protocol_version TEXT,
+            rating INTEGER,
+            recommended_scenario TEXT,
+            registry_meta_json TEXT,
+            registry_version TEXT,
+            repository TEXT,
+            server_version TEXT,
+            website TEXT,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
@@ -156,7 +153,41 @@ async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
     })?;
 
     tracing::debug!("server_meta table created or already exists");
+
+    // Backfill new columns when upgrading an existing development database
+    ensure_column(pool, "server_meta", "registry_version", "TEXT").await?;
+    ensure_column(pool, "server_meta", "registry_meta_json", "TEXT").await?;
+    ensure_column(pool, "server_meta", "extras_json", "TEXT").await?;
+
     Ok(())
+}
+
+async fn ensure_column(
+    pool: &Pool<Sqlite>,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let stmt = format!(
+        "ALTER TABLE {table} ADD COLUMN {column} {definition}",
+        table = table,
+        column = column,
+        definition = definition
+    );
+    match sqlx::query(&stmt).execute(pool).await {
+        Ok(_) => {
+            tracing::debug!("Added column {}.{}", table, column);
+            Ok(())
+        }
+        Err(sqlx::Error::Database(db_err)) if db_err.message().contains("duplicate column name") => {
+            tracing::trace!("Column {}.{} already exists", table, column);
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("Failed to add column {}.{}: {}", table, column, e);
+            Err(anyhow::anyhow!("Failed to add column {}.{}: {}", table, column, e))
+        }
+    }
 }
 
 /// Verify that all server tables were created successfully

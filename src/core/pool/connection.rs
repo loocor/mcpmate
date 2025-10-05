@@ -541,11 +541,21 @@ impl UpstreamConnectionPool {
         connection.status = ConnectionStatus::Validating;
 
         // Connect to server using unified transport interface with a short timeout to avoid startup stalls
+        // Determine transport type strictly from server_type (DB no longer stores transport_type)
+        let effective_transport = match server.server_type {
+            crate::common::server::ServerType::StreamableHttp =>
+                crate::common::server::TransportType::StreamableHttp,
+            crate::common::server::ServerType::Sse =>
+                crate::common::server::TransportType::Sse,
+            crate::common::server::ServerType::Stdio =>
+                crate::common::server::TransportType::Stdio,
+        };
+
         let connect_fut = crate::core::transport::unified::connect_server(
             server_name,
             &server_config,
             server.server_type,
-            server_config.transport_type.unwrap_or_default(),
+            effective_transport,
             None, // No cancellation token needed for short-lived validation
             Some(&db.pool),
             self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
@@ -619,7 +629,6 @@ impl UpstreamConnectionPool {
             args,
             url: server.url.clone(),
             env,
-            transport_type: server.transport_type,
         })
     }
 

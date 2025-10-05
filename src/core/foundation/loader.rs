@@ -72,7 +72,6 @@ pub async fn load_servers_from_active_profile(
                 args: args_strings,
                 url: server.url,
                 env,
-                transport_type: server.transport_type,
             };
 
             // Use server_id as key instead of server_name
@@ -172,9 +171,6 @@ pub async fn load_server_config_with_params(
             None
         };
 
-        // Use transport_type directly as it's the same type now
-        let transport_type = server.transport_type;
-
         // Create MCPServerConfig
         let server_config = MCPServerConfig {
             kind: server.server_type,
@@ -182,7 +178,6 @@ pub async fn load_server_config_with_params(
             args,
             url: server.url,
             env,
-            transport_type,
         };
 
         // Add to config using server_id as key

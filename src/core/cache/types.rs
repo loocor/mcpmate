@@ -50,6 +50,8 @@ pub struct CachedToolInfo {
     pub name: String,
     pub description: Option<String>,
     pub input_schema_json: String, // Store as JSON string for bincode compatibility
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema_json: Option<String>,
     pub unique_name: Option<String>,
     pub icons: Option<Vec<Icon>>,
     pub enabled: bool,
@@ -69,6 +71,13 @@ impl CachedToolInfo {
     ) -> Result<(), serde_json::Error> {
         self.input_schema_json = serde_json::to_string(schema)?;
         Ok(())
+    }
+
+    /// Get the output schema as a serde_json::Value if present
+    pub fn output_schema(&self) -> Option<serde_json::Value> {
+        self.output_schema_json
+            .as_ref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
     }
 }
 

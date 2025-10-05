@@ -221,7 +221,6 @@ mod tests {
                     args: Some(vec!["arg1".to_string()]),
                     url: None,
                     env: None,
-                    transport_type: Some(crate::common::server::TransportType::Stdio),
                 },
             );
         }

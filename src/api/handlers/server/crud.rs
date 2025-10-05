@@ -165,12 +165,26 @@ async fn upsert_meta_payload(
 ) -> Result<(), ApiError> {
     let mut meta = ServerMeta::new(server_id.to_owned());
     meta.description = payload.description.clone();
-    meta.author = payload.author.clone();
-    meta.website = payload.website.clone();
-    meta.repository = payload.repository.clone();
-    meta.category = payload.category.clone();
-    meta.recommended_scenario = payload.recommended_scenario.clone();
-    meta.rating = payload.rating;
+    meta.website = payload.website_url.clone();
+    meta.registry_version = payload.version.clone();
+    meta.repository = payload
+        .repository
+        .as_ref()
+        .map(|repo| serde_json::to_string(repo))
+        .transpose()
+        .map_err(|err| ApiError::BadRequest(format!("Failed to serialize repository metadata: {err}")))?;
+    meta.registry_meta_json = payload
+        .meta
+        .as_ref()
+        .map(|meta_block| serde_json::to_string(meta_block))
+        .transpose()
+        .map_err(|err| ApiError::BadRequest(format!("Failed to serialize registry meta block: {err}")))?;
+    meta.extras_json = payload
+        .extras
+        .as_ref()
+        .map(|extras| serde_json::to_string(extras))
+        .transpose()
+        .map_err(|err| ApiError::BadRequest(format!("Failed to serialize extras metadata: {err}")))?;
     meta.icons_json = None;
     meta.server_version = None;
     meta.protocol_version = None;
@@ -395,11 +409,6 @@ pub async fn update_server(
 
     if let Some(server_type) = validated_server_type {
         updated_server.server_type = server_type;
-        updated_server.transport_type = Some(match server_type {
-            ServerType::Stdio => crate::common::server::TransportType::Stdio,
-            ServerType::Sse => crate::common::server::TransportType::Sse,
-            ServerType::StreamableHttp => crate::common::server::TransportType::StreamableHttp,
-        });
     }
 
     if let Some(command) = payload.command {
