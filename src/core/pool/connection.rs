@@ -73,8 +73,17 @@ impl HttpClientRegistry {
             .pool_idle_timeout(std::time::Duration::from_secs(45))
             .pool_max_idle_per_host(8)
             .tcp_keepalive(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .danger_accept_invalid_certs(false)
+            .connect_timeout(std::time::Duration::from_secs(60))
+            // TODO: Make HTTP connection timeout configurable via environment variable
+            // to handle different network conditions and server response times
+            // TODO: Add more TLS debugging options and retry logic for connection issues
+            .danger_accept_invalid_certs(
+                std::env::var("MCPMATE_ACCEPT_INVALID_CERTS")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false),
+            )
+            .timeout(std::time::Duration::from_secs(60))
+            .user_agent("MCPMate/1.0")
             .build()
             .expect("Failed to build shared reqwest Client")
     }
@@ -558,11 +567,11 @@ impl UpstreamConnectionPool {
             self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
         );
 
-        // Validation connect timeout: configurable via MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS (default 2000ms)
+        // Validation connect timeout: configurable via MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS (default 60000ms)
         let timeout_ms: u64 = std::env::var("MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(10_000);
+            .unwrap_or(60_000); // Increased from 10s to 60s for consistency
         let (service, tools, capabilities, _process_id) =
             match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), connect_fut).await {
                 Ok(Ok(ok)) => ok,
