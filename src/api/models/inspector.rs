@@ -132,7 +132,6 @@ api_resp!(
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorToolCallData {
-    pub call_id: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,

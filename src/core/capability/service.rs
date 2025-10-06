@@ -112,27 +112,13 @@ impl CapabilityService {
         // 1) Try runtime pipeline (REDB-first -> runtime)
         let mut result = crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await?;
 
-        // 2) If runtime had no peer, optionally create a temporary validation instance and retry once
+        // 2) If runtime had no peer, ensure a standard instance is connected and retry once
         if result.items.is_empty() && !result.meta.cache_hit && !result.meta.had_peer {
-            let server_name = crate::core::capability::resolver::to_name(&ctx.server_id)
-                .await
-                .unwrap_or(None)
-                .unwrap_or_else(|| ctx.server_id.clone());
-
             {
                 let mut pool = self.pool.lock().await;
-                // NOTE: Using validation instance API as a temporary instance provider
-                // This aligns with "black-box" creation controlled by pool layer
-                let _ = pool
-                    .get_or_create_validation_instance(
-                        &server_name,
-                        CAPABILITY_VALIDATION_SESSION,
-                        std::time::Duration::from_secs(60),
-                    )
-                    .await?;
+                pool.ensure_connected(&ctx.server_id).await?;
             }
 
-            // Retry runtime pipeline once
             result = crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await?;
         }
 
