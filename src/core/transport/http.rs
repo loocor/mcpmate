@@ -12,8 +12,8 @@ use rmcp::{
     transport::streamable_http_client::StreamableHttpClientTransportConfig,
     transport::{SseClientTransport, StreamableHttpClientTransport},
 };
-use tokio::time::timeout;
 use std::time::Duration;
+use tokio::time::timeout;
 
 /// Internal helper used by both SSE and Streamable HTTP connections
 async fn connect_http_internal(

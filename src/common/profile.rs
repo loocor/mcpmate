@@ -2,9 +2,6 @@
 //!
 //! This module contains types and constants related to profile and settings.
 
-/// Default display name applied to the first user-managed profile we seed.
-pub const USER_PROFILE_INITIAL_NAME: &str = "Customized";
-
 use std::{fmt, str::FromStr};
 
 use serde::{
@@ -145,9 +142,10 @@ impl<'r> Decode<'r, Sqlite> for ProfileType {
 }
 
 /// Role of a profile in the system
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ProfileRole {
     /// User-managed profile with no special guarantees
+    #[default]
     User,
     /// System default anchor profile that must always remain active
     DefaultAnchor,
@@ -165,12 +163,6 @@ impl ProfileRole {
     /// Returns true when this role denotes the default anchor profile
     pub fn is_default_anchor(&self) -> bool {
         matches!(self, ProfileRole::DefaultAnchor)
-    }
-}
-
-impl Default for ProfileRole {
-    fn default() -> Self {
-        ProfileRole::User
     }
 }
 

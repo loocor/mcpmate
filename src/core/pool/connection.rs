@@ -543,12 +543,9 @@ impl UpstreamConnectionPool {
         // Connect to server using unified transport interface with a short timeout to avoid startup stalls
         // Determine transport type strictly from server_type (DB no longer stores transport_type)
         let effective_transport = match server.server_type {
-            crate::common::server::ServerType::StreamableHttp =>
-                crate::common::server::TransportType::StreamableHttp,
-            crate::common::server::ServerType::Sse =>
-                crate::common::server::TransportType::Sse,
-            crate::common::server::ServerType::Stdio =>
-                crate::common::server::TransportType::Stdio,
+            crate::common::server::ServerType::StreamableHttp => crate::common::server::TransportType::StreamableHttp,
+            crate::common::server::ServerType::Sse => crate::common::server::TransportType::Sse,
+            crate::common::server::ServerType::Stdio => crate::common::server::TransportType::Stdio,
         };
 
         let connect_fut = crate::core::transport::unified::connect_server(

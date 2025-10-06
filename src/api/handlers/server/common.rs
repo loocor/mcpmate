@@ -406,10 +406,10 @@ async fn get_server_capability_summary(
         supports_tools,
         supports_prompts,
         supports_resources,
-        tools_count: tools_count,
-        prompts_count: prompts_count,
-        resources_count: resources_count,
-        resource_templates_count: resource_templates_count,
+        tools_count,
+        prompts_count,
+        resources_count,
+        resource_templates_count,
     })
 }
 

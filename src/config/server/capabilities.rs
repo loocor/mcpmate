@@ -178,12 +178,13 @@ pub struct CapabilitySnapshot {
 
 /// Discover capabilities from an existing upstream connection (API temporary instance)
 pub async fn discover_from_connection(conn: &crate::core::pool::UpstreamConnection) -> Result<CapabilitySnapshot> {
-    let mut snap = CapabilitySnapshot::default();
-
-    snap.protocol_version = conn
-        .service
-        .as_ref()
-        .and_then(|service| service.peer_info().map(|info| info.protocol_version.to_string()));
+    let mut snap = CapabilitySnapshot {
+        protocol_version: conn
+            .service
+            .as_ref()
+            .and_then(|service| service.peer_info().map(|info| info.protocol_version.to_string())),
+        ..Default::default()
+    };
 
     // Tools
     for t in &conn.tools {
@@ -246,9 +247,10 @@ pub async fn discover_from_config(
         }
     };
 
-    let mut snap = CapabilitySnapshot::default();
-
-    snap.protocol_version = service.peer_info().map(|info| info.protocol_version.to_string());
+    let mut snap = CapabilitySnapshot {
+        protocol_version: service.peer_info().map(|info| info.protocol_version.to_string()),
+        ..Default::default()
+    };
 
     // Tools
     for t in &tools {
@@ -367,8 +369,10 @@ pub async fn discover_from_config_preview(
         }
     };
 
-    let mut snap = CapabilitySnapshot::default();
-    snap.protocol_version = service.peer_info().map(|info| info.protocol_version.to_string());
+    let mut snap = CapabilitySnapshot {
+        protocol_version: service.peer_info().map(|info| info.protocol_version.to_string()),
+        ..Default::default()
+    };
     for t in &tools {
         let schema = t.schema_as_json_value();
         let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());

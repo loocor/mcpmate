@@ -13,7 +13,7 @@ use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, Stora
 use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
-use crate::common::{ClientCategory, profile::USER_PROFILE_INITIAL_NAME};
+use crate::common::ClientCategory;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -274,17 +274,12 @@ pub async fn config_import(
         let profile_id = if let Some(pid) = &request.profile_id {
             pid.clone()
         } else {
-            // Ensure default profile exists so we can return its id consistently
-            match crate::config::profile::get_profile_by_name(&db.pool, USER_PROFILE_INITIAL_NAME).await {
-                Ok(Some(p)) => p.id.unwrap_or_default(),
-                _ => {
-                    let p = crate::config::models::Profile::new(
-                        USER_PROFILE_INITIAL_NAME.to_string(),
-                        crate::common::profile::ProfileType::Shared,
-                    );
-                    crate::config::profile::upsert_profile(&db.pool, &p)
-                        .await
-                        .unwrap_or_default()
+            // Ensure the system default anchor profile exists so we can report its identifier
+            match crate::config::profile::ensure_default_anchor_profile_id(&db.pool).await {
+                Ok(id) => id,
+                Err(err) => {
+                    tracing::error!("Failed to ensure default anchor profile during client import: {}", err);
+                    String::new()
                 }
             }
         };

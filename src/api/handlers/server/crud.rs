@@ -11,15 +11,12 @@ use crate::{
         ApiError,
         common::{internal_error, map_anyhow_error, map_database_error},
     },
-    common::{
-        profile::{ProfileType, USER_PROFILE_INITIAL_NAME},
-        server::ServerType,
-    },
+    common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
     config::server::{ConflictPolicy, ImportOptions, import_batch},
     config::{
         database::Database,
-        models::{Profile, ServerMeta},
+        models::ServerMeta,
         profile,
         server::{self},
     },
@@ -64,19 +61,9 @@ fn create_server_from_config(
 
 /// Get or create default profile
 async fn get_or_create_default_profile(db: &Database) -> Result<String, ApiError> {
-    let default_profile = profile::get_profile_by_name(&db.pool, USER_PROFILE_INITIAL_NAME)
+    profile::ensure_default_anchor_profile_id(&db.pool)
         .await
-        .map_err(map_anyhow_error)?;
-
-    match default_profile {
-        Some(profile) => profile.id.ok_or_else(|| internal_error("Profile id missing")),
-        None => {
-            let new_profile = Profile::new(USER_PROFILE_INITIAL_NAME.to_owned(), ProfileType::Shared);
-            profile::upsert_profile(&db.pool, &new_profile)
-                .await
-                .map_err(map_anyhow_error)
-        }
-    }
+        .map_err(map_anyhow_error)
 }
 
 /// Add server to profile
@@ -170,19 +157,19 @@ async fn upsert_meta_payload(
     meta.repository = payload
         .repository
         .as_ref()
-        .map(|repo| serde_json::to_string(repo))
+        .map(serde_json::to_string)
         .transpose()
         .map_err(|err| ApiError::BadRequest(format!("Failed to serialize repository metadata: {err}")))?;
     meta.registry_meta_json = payload
         .meta
         .as_ref()
-        .map(|meta_block| serde_json::to_string(meta_block))
+        .map(serde_json::to_string)
         .transpose()
         .map_err(|err| ApiError::BadRequest(format!("Failed to serialize registry meta block: {err}")))?;
     meta.extras_json = payload
         .extras
         .as_ref()
-        .map(|extras| serde_json::to_string(extras))
+        .map(serde_json::to_string)
         .transpose()
         .map_err(|err| ApiError::BadRequest(format!("Failed to serialize extras metadata: {err}")))?;
     meta.icons_json = None;

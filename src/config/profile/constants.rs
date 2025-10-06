@@ -4,7 +4,7 @@ use crate::common::profile::ProfileRole;
 use crate::config::models::Profile;
 
 /// Initial display name applied when seeding the default anchor profile.
-pub const DEFAULT_ANCHOR_INITIAL_NAME: &str = "Default Anchor";
+pub const DEFAULT_ANCHOR_INITIAL_NAME: &str = "Default";
 
 /// Description applied to the default anchor profile when seeding the database.
 pub const DEFAULT_PROFILE_DESCRIPTION: &str = "Default anchor profile";

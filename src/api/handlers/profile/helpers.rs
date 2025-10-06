@@ -5,7 +5,6 @@ use super::common::get_database;
 use crate::{
     api::handlers::ApiError,
     clients::{ClientRenderOptions, ConfigMode},
-    common::profile::USER_PROFILE_INITIAL_NAME,
     config::{
         database::Database,
         models::{Profile, ProfileTool},
@@ -76,10 +75,7 @@ pub async fn get_profile_id(
                 .map_err(|e| ApiError::InternalError(format!("Failed to get active  profile: {}", e)))?;
 
             match active_profile.first() {
-                Some(profile) => Ok(profile
-                    .id
-                    .clone()
-                    .unwrap_or_else(|| USER_PROFILE_INITIAL_NAME.to_string())),
+                Some(profile) => Ok(profile.id.clone().unwrap_or_else(|| profile.name.clone())),
                 None => {
                     tracing::warn!("No active profile found");
                     Err(ApiError::NotFound("No active profile found".to_string()))

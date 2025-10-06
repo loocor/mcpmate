@@ -8,7 +8,7 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::api::models::server::{ServerMetaPayload, ServersImportConfig};
-use crate::common::{profile::USER_PROFILE_INITIAL_NAME, server::ServerType};
+use crate::common::server::ServerType;
 use crate::config::models::{Server, ServerMeta};
 use crate::config::server as server_ops;
 use crate::config::server::{args, env, get_all_servers, upsert_server};
@@ -179,22 +179,18 @@ pub async fn import_batch(
         } else if let Some(pid) = default_profile_cache.clone() {
             pid
         } else {
-            match crate::config::profile::get_profile_by_name(db_pool, USER_PROFILE_INITIAL_NAME).await {
-                Ok(Some(p)) => {
-                    let id = p.id.unwrap_or_default();
+            match crate::config::profile::ensure_default_anchor_profile_id(db_pool).await {
+                Ok(id) => {
                     default_profile_cache = Some(id.clone());
                     id
                 }
-                _ => {
-                    let p = crate::config::models::Profile::new(
-                        USER_PROFILE_INITIAL_NAME.to_string(),
-                        crate::common::profile::ProfileType::Shared,
+                Err(err) => {
+                    tracing::error!(
+                        target: "mcpmate::config::server::import",
+                        error = %err,
+                        "Failed to ensure default anchor profile while importing servers"
                     );
-                    let id = crate::config::profile::upsert_profile(db_pool, &p)
-                        .await
-                        .unwrap_or_default();
-                    default_profile_cache = Some(id.clone());
-                    id
+                    String::new()
                 }
             }
         };
@@ -308,19 +304,19 @@ async fn upsert_import_meta(
     meta.repository = payload
         .repository
         .as_ref()
-        .map(|repo| serde_json::to_string(repo))
+        .map(serde_json::to_string)
         .transpose()
         .context("Failed to serialize repository metadata for import")?;
     meta.registry_meta_json = payload
         .meta
         .as_ref()
-        .map(|meta_block| serde_json::to_string(meta_block))
+        .map(serde_json::to_string)
         .transpose()
         .context("Failed to serialize registry meta block for import")?;
     meta.extras_json = payload
         .extras
         .as_ref()
-        .map(|extras| serde_json::to_string(extras))
+        .map(serde_json::to_string)
         .transpose()
         .context("Failed to serialize extras metadata for import")?;
 

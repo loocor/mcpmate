@@ -5,9 +5,36 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
 use crate::{
+    common::profile::ProfileType,
     config::{models::Profile, profile::is_default_anchor_profile},
     generate_id,
 };
+
+use super::{DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION};
+
+/// Ensure the system default anchor profile exists and return its identifier.
+pub async fn ensure_default_anchor_profile_id(pool: &Pool<Sqlite>) -> Result<String> {
+    if let Some(profile) = super::get_default_profile(pool).await? {
+        if let Some(id) = profile.id.clone() {
+            return Ok(id);
+        }
+
+        // If the profile somehow lost its ID, re-upsert to restore persistence guarantees.
+        return upsert_profile(pool, &profile).await;
+    }
+
+    let mut profile = Profile::new_with_description(
+        DEFAULT_ANCHOR_INITIAL_NAME.to_string(),
+        Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
+        ProfileType::Shared,
+    );
+    profile.is_active = true;
+    profile.is_default = true;
+    profile.multi_select = true;
+    profile.role = DEFAULT_ANCHOR_ROLE;
+
+    upsert_profile(pool, &profile).await
+}
 
 use super::basic::get_profile;
 

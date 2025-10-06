@@ -21,7 +21,10 @@ pub use constants::{
 };
 
 // Management operations
-pub use mgmt::{delete_profile, set_profile_active, set_profile_default, update_profile, upsert_profile};
+pub use mgmt::{
+    delete_profile, ensure_default_anchor_profile_id, set_profile_active, set_profile_default, update_profile,
+    upsert_profile,
+};
 
 // Prompt association operations
 pub use prompt::{
