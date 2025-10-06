@@ -6,6 +6,7 @@ pub mod capabilities;
 pub mod crud;
 pub mod enabled;
 pub mod env;
+pub mod fingerprint;
 pub mod import;
 pub mod init;
 pub mod meta;
@@ -27,4 +28,4 @@ pub use enabled::{
     is_server_enabled_in_any_active_profile, is_server_enabled_in_any_profile, is_server_in_profile,
     update_server_global_status,
 };
-pub use import::{ConflictPolicy, ImportOptions, ImportOutcome, import_batch};
+pub use import::{ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import_batch};

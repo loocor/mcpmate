@@ -5,13 +5,12 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use url::Url;
 
 use crate::api::models::server::{ServerMetaPayload, ServersImportConfig};
 use crate::common::server::ServerType;
 use crate::config::models::{Server, ServerMeta};
 use crate::config::server as server_ops;
-use crate::config::server::{args, env, get_all_servers, upsert_server};
+use crate::config::server::{args, env, fingerprint, get_all_servers, upsert_server};
 
 // Capability sync utilities (dual write to SQLite shadow + REDB)
 use crate::config::server::capabilities::sync_via_connection_pool;
@@ -49,7 +48,7 @@ impl Default for ImportOptions {
 #[derive(Debug, Default, Clone)]
 pub struct ImportOutcome {
     pub imported: Vec<ImportedServer>,
-    pub skipped: Vec<String>,
+    pub skipped: Vec<SkippedServer>,
     pub failed: HashMap<String, String>,
     pub scheduled: bool,
 }
@@ -61,6 +60,22 @@ pub struct ImportedServer {
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
     pub server_type: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SkippedServer {
+    pub name: String,
+    pub reason: SkipReason,
+}
+
+#[derive(Debug, Clone)]
+pub enum SkipReason {
+    DuplicateName,
+    DuplicateFingerprint,
+    UrlQueryMismatch {
+        existing_query: Option<String>,
+        incoming_query: Option<String>,
+    },
 }
 
 /// Import a batch of servers with consistent deduplication and capability sync.
@@ -92,32 +107,82 @@ pub async fn import_batch(
         validate_server_config(&cfg.kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         // Compute fingerprint
+        let mut url_signature: Option<fingerprint::UrlSignature> = None;
         let fp = match server_type {
-            ServerType::Stdio => fingerprint_for_stdio(
+            ServerType::Stdio => fingerprint::fingerprint_for_stdio(
                 cfg.command.as_deref().unwrap_or_default(),
                 cfg.args.as_deref().unwrap_or(&[]),
             ),
             ServerType::Sse | ServerType::StreamableHttp => {
-                fingerprint_for_url(cfg.url.as_deref().unwrap_or_default()).unwrap_or_default()
+                let sig = fingerprint::url_signature(cfg.url.as_deref().unwrap_or_default());
+                let key = sig.fingerprint.clone();
+                url_signature = Some(sig);
+                key
             }
         };
 
         // Dedup
         let by_name_dup = opts.by_name && existing.names.contains(&name);
         let by_fp_dup = opts.by_fingerprint && !fp.is_empty() && existing.fingerprints.contains(&fp);
-        if by_name_dup || by_fp_dup {
+
+        if by_fp_dup {
             match opts.conflict_policy {
                 ConflictPolicy::Skip => {
-                    outcome.skipped.push(name);
+                    outcome.skipped.push(SkippedServer {
+                        name,
+                        reason: SkipReason::DuplicateFingerprint,
+                    });
                     continue;
                 }
                 ConflictPolicy::Error => {
                     outcome.failed.insert(name, "duplicate".to_string());
                     continue;
                 }
-                ConflictPolicy::Update => {
-                    // fall through to upsert below
+                ConflictPolicy::Update => {}
+            }
+        }
+
+        if opts.by_fingerprint && !by_fp_dup {
+            if let Some(sig) = url_signature.as_ref() {
+                if existing.url_bases.contains(&sig.base) {
+                    let existing_sig = existing.url_signatures.get(&sig.base);
+                    match opts.conflict_policy {
+                        ConflictPolicy::Skip => {
+                            let existing_query = existing_sig.and_then(|s| s.display_query());
+                            let incoming_query = sig.display_query();
+                            outcome.skipped.push(SkippedServer {
+                                name,
+                                reason: SkipReason::UrlQueryMismatch {
+                                    existing_query,
+                                    incoming_query,
+                                },
+                            });
+                            continue;
+                        }
+                        ConflictPolicy::Error => {
+                            outcome.failed.insert(name, "duplicate".to_string());
+                            continue;
+                        }
+                        ConflictPolicy::Update => {}
+                    }
                 }
+            }
+        }
+
+        if by_name_dup {
+            match opts.conflict_policy {
+                ConflictPolicy::Skip => {
+                    outcome.skipped.push(SkippedServer {
+                        name,
+                        reason: SkipReason::DuplicateName,
+                    });
+                    continue;
+                }
+                ConflictPolicy::Error => {
+                    outcome.failed.insert(name, "duplicate".to_string());
+                    continue;
+                }
+                ConflictPolicy::Update => {}
             }
         }
 
@@ -395,12 +460,16 @@ fn parse_env_assignment(s: &str) -> Option<(String, String)> {
 struct ExistingIndex {
     names: HashSet<String>,
     fingerprints: HashSet<String>,
+    url_bases: HashSet<String>,
+    url_signatures: HashMap<String, fingerprint::UrlSignature>,
 }
 
 impl ExistingIndex {
     async fn build(db: &Pool<Sqlite>) -> Result<Self> {
         let mut names = HashSet::new();
         let mut fps = HashSet::new();
+        let mut url_bases = HashSet::new();
+        let mut url_sigs = HashMap::new();
         let servers = get_all_servers(db).await?;
         for s in servers {
             names.insert(s.name.clone());
@@ -416,17 +485,20 @@ impl ExistingIndex {
                 } else {
                     Vec::new()
                 };
-                fps.insert(fingerprint_for_stdio(cmd, &args_list));
+                fps.insert(fingerprint::fingerprint_for_stdio(cmd, &args_list));
             }
             if let Some(url) = s.url.as_ref() {
-                if let Some(fp) = fingerprint_for_url(url) {
-                    fps.insert(fp);
-                }
+                let sig = fingerprint::url_signature(url);
+                fps.insert(sig.fingerprint.clone());
+                url_bases.insert(sig.base.clone());
+                url_sigs.entry(sig.base.clone()).or_insert(sig);
             }
         }
         Ok(Self {
             names,
             fingerprints: fps,
+            url_bases,
+            url_signatures: url_sigs,
         })
     }
 }
@@ -444,97 +516,4 @@ fn validate_server_config(
     }
 }
 
-fn fingerprint_for_stdio(
-    command: &str,
-    args: &[String],
-) -> String {
-    let cmd = command.trim().to_ascii_lowercase();
-    let mut a: Vec<&str> = args.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-
-    // Node runners: npx/bunx/pnpm dlx/yarn dlx => node-pkg:<pkg> ...
-    if cmd == "npx" || cmd == "bunx" || cmd == "pnpm" || cmd == "yarn" {
-        if (cmd == "pnpm" || cmd == "yarn") && a.first().map(|s| *s == "dlx").unwrap_or(false) && a.len() >= 2 {
-            let pkg = a[1];
-            return format!("node-pkg:{}:{}", pkg, a.get(2..).unwrap_or(&[]).join(" "));
-        }
-        if !a.is_empty() {
-            let pkg = a[0];
-            return format!("node-pkg:{}:{}", pkg, a.get(1..).unwrap_or(&[]).join(" "));
-        }
-    }
-
-    // Python: uvx python -m <mod> / python -m <mod> / uvx <pkg>
-    if cmd == "uvx" || cmd == "pipx" || cmd == "python" || cmd == "python3" || cmd == "py" {
-        if cmd == "uvx" && a.first().map(|s| s.to_ascii_lowercase()) == Some("python".to_string()) {
-            a.remove(0);
-        }
-        let lower: Vec<String> = a.iter().map(|s| s.to_ascii_lowercase()).collect();
-        if lower.first().map(|s| s.as_str()) == Some("-m") {
-            if let Some(module) = a.get(1) {
-                return format!("python-module:{}:{}", module, a.get(2..).unwrap_or(&[]).join(" "));
-            }
-        }
-        if cmd == "uvx" && !a.is_empty() {
-            let pkg = a[0];
-            return format!("python-pkg:{}:{}", pkg, a.get(1..).unwrap_or(&[]).join(" "));
-        }
-        if (cmd == "python" || cmd == "python3" || cmd == "py") && !a.is_empty() {
-            let script = a[0].rsplit('/').next().unwrap_or(a[0]);
-            return format!("python-file:{}:{}", script, a.get(1..).unwrap_or(&[]).join(" "));
-        }
-    }
-
-    // Default: raw cmd + first 3 args
-    let mut tail = String::new();
-    for (i, v) in a.iter().take(3).enumerate() {
-        if i > 0 {
-            tail.push(' ');
-        }
-        tail.push_str(v);
-    }
-    format!("cmd:{}:{}", cmd, tail)
-}
-
-fn fingerprint_for_url(raw: &str) -> Option<String> {
-    let url = Url::parse(raw).ok()?;
-    let mut url = url;
-    url.set_fragment(None);
-
-    let scheme = url.scheme().to_ascii_lowercase();
-    let host = url.host_str()?.to_ascii_lowercase();
-    let port_opt = url.port();
-    let default_port = match scheme.as_str() {
-        "http" => Some(80),
-        "https" => Some(443),
-        _ => None,
-    };
-    let port_part = match (port_opt, default_port) {
-        (Some(p), Some(d)) if p != d => format!(":{}", p),
-        (Some(p), None) => format!(":{}", p),
-        _ => String::new(),
-    };
-    let mut path = url.path().to_string();
-    if path.ends_with('/') && path.len() > 1 {
-        path.pop();
-    }
-    if path.is_empty() {
-        path = "/".to_string();
-    }
-    let query_sorted = if let Some(q) = url.query() {
-        let mut pairs: Vec<(String, String)> = url::form_urlencoded::parse(q.as_bytes()).into_owned().collect();
-        pairs.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        if pairs.is_empty() {
-            String::new()
-        } else {
-            let serialized = pairs
-                .into_iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<_>>()
-                .join("&");
-            format!("?{}", serialized)
-        }
-    } else {
-        String::new()
-    };
-    Some(format!("{}://{}{}{}{}", scheme, host, port_part, path, query_sorted))
-}
+// Fingerprint helpers for stdio servers live in fingerprint.rs

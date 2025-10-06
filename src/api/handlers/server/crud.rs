@@ -4,7 +4,7 @@
 use super::{common, shared::*};
 use crate::api::models::server::{
     ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload, ServerUpdateReq,
-    ServersImportData, ServersImportReq,
+    ServersImportData, ServersImportReq, SkippedServerData,
 };
 use crate::{
     api::handlers::{
@@ -13,7 +13,7 @@ use crate::{
     },
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
-    config::server::{ConflictPolicy, ImportOptions, import_batch},
+    config::server::{ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import_batch},
     config::{
         database::Database,
         models::ServerMeta,
@@ -495,16 +495,45 @@ pub async fn import_servers(
     .await
     .map_err(|e| ApiError::InternalError(e.to_string()))?;
 
+    let ImportOutcome {
+        imported,
+        skipped,
+        failed,
+        scheduled: _,
+    } = outcome;
+
+    let imported_servers: Vec<String> = imported.into_iter().map(|s| s.name).collect();
+    let skipped_servers: Vec<SkippedServerData> = skipped.into_iter().map(skipped_server_to_api).collect();
+    let failed_servers: Vec<String> = failed.keys().cloned().collect();
+    let error_details = if failed.is_empty() { None } else { Some(failed) };
+
     Ok(Json(ServersImportData {
-        imported_count: outcome.imported.len(),
-        imported_servers: outcome.imported.into_iter().map(|s| s.name).collect(),
-        failed_servers: outcome.failed.keys().cloned().collect(),
-        error_details: if outcome.failed.is_empty() {
-            None
-        } else {
-            Some(outcome.failed)
-        },
+        imported_count: imported_servers.len(),
+        imported_servers,
+        skipped_count: skipped_servers.len(),
+        skipped_servers,
+        failed_count: failed_servers.len(),
+        failed_servers,
+        error_details,
     }))
+}
+
+fn skipped_server_to_api(source: SkippedServer) -> SkippedServerData {
+    let (reason, existing_query, incoming_query) = match source.reason {
+        SkipReason::DuplicateName => ("duplicate_name".to_string(), None, None),
+        SkipReason::DuplicateFingerprint => ("duplicate_fingerprint".to_string(), None, None),
+        SkipReason::UrlQueryMismatch {
+            existing_query,
+            incoming_query,
+        } => ("url_query_mismatch".to_string(), existing_query, incoming_query),
+    };
+
+    SkippedServerData {
+        name: source.name,
+        reason,
+        existing_query,
+        incoming_query,
+    }
 }
 
 /// Disconnect server instances from connection pool
