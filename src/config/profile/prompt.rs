@@ -163,6 +163,12 @@ pub async fn get_prompts_for_profile(
         SELECT id, profile_id, server_id, server_name, prompt_name, enabled, created_at, updated_at
         FROM profile_prompt
         WHERE profile_id = ?
+          AND EXISTS (
+              SELECT 1
+              FROM profile_server ps
+              WHERE ps.profile_id = profile_prompt.profile_id
+                AND ps.server_id = profile_prompt.server_id
+          )
         ORDER BY server_name, prompt_name
         "#,
     )
@@ -185,7 +191,14 @@ pub async fn get_enabled_prompts_for_profile(
         r#"
         SELECT id, profile_id, server_id, server_name, prompt_name, enabled, created_at, updated_at
         FROM profile_prompt
-        WHERE profile_id = ? AND enabled = 1
+        WHERE profile_id = ?
+          AND enabled = 1
+          AND EXISTS (
+              SELECT 1
+              FROM profile_server ps
+              WHERE ps.profile_id = profile_prompt.profile_id
+                AND ps.server_id = profile_prompt.server_id
+          )
         ORDER BY server_name, prompt_name
         "#,
     )

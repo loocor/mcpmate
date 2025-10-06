@@ -147,7 +147,10 @@ pub fn build_tool_details_query(additional_where: Option<&str>) -> String {
             st.unique_name,
             st.description
         FROM profile_tool cst
-        JOIN server_tools st ON cst.server_tool_id = st.id"#;
+        JOIN server_tools st ON cst.server_tool_id = st.id
+        JOIN profile_server ps
+            ON ps.profile_id = cst.profile_id
+           AND ps.server_id = st.server_id"#;
 
     match additional_where {
         Some(condition) => format!("{} WHERE {}", base_query, condition),

@@ -150,6 +150,12 @@ pub async fn get_resources_for_profile(
         SELECT id, profile_id, server_id, server_name, resource_uri, enabled, created_at, updated_at
         FROM profile_resource
         WHERE profile_id = ?
+          AND EXISTS (
+              SELECT 1
+              FROM profile_server ps
+              WHERE ps.profile_id = profile_resource.profile_id
+                AND ps.server_id = profile_resource.server_id
+          )
         ORDER BY server_name, resource_uri
         "#,
     )
@@ -172,7 +178,14 @@ pub async fn get_enabled_resources_for_profile(
         r#"
         SELECT id, profile_id, server_id, server_name, resource_uri, enabled, created_at, updated_at
         FROM profile_resource
-        WHERE profile_id = ? AND enabled = 1
+        WHERE profile_id = ?
+          AND enabled = 1
+          AND EXISTS (
+              SELECT 1
+              FROM profile_server ps
+              WHERE ps.profile_id = profile_resource.profile_id
+                AND ps.server_id = profile_resource.server_id
+          )
         ORDER BY server_name, resource_uri
         "#,
     )

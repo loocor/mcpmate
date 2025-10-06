@@ -235,22 +235,24 @@ pub async fn sync_server_capabilities(
     );
 
     match action {
-        ServerCapabilityAction::Add => add_server_capabilities_to_profile(pool, profile_id, server_id).await,
+        ServerCapabilityAction::Add => add_server_capabilities_to_profile(pool, profile_id, server_id).await?,
         ServerCapabilityAction::Enable => {
             batch_server_capabilities_operation(pool, profile_id, server_id, CapabilityOperation::UpdateEnabled(true))
                 .await?;
-            Ok(())
         }
         ServerCapabilityAction::Disable => {
             batch_server_capabilities_operation(pool, profile_id, server_id, CapabilityOperation::UpdateEnabled(false))
                 .await?;
-            Ok(())
         }
         ServerCapabilityAction::Remove => {
             batch_server_capabilities_operation(pool, profile_id, server_id, CapabilityOperation::Delete).await?;
-            Ok(())
         }
     }
+
+    // Always prune capability rows that lost their server association so profile metrics stay accurate.
+    cleanup_orphan_capabilities(pool, profile_id).await?;
+
+    Ok(())
 }
 
 /// Internal function to add server capabilities to a profile
@@ -440,6 +442,84 @@ struct CapabilityOperationResults {
     tools_affected: u64,
     resources_affected: u64,
     prompts_affected: u64,
+}
+
+/// Remove any capability rows that no longer have a matching server association in the profile.
+async fn cleanup_orphan_capabilities(
+    pool: &Pool<Sqlite>,
+    profile_id: &str,
+) -> Result<()> {
+    // Remove orphaned tools first (missing matching profile_server/server_tools association)
+    let orphan_tools = sqlx::query(
+        r#"
+        DELETE FROM profile_tool
+        WHERE profile_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM server_tools st
+              JOIN profile_server ps
+                ON ps.profile_id = profile_tool.profile_id
+               AND ps.server_id = st.server_id
+              WHERE st.id = profile_tool.server_tool_id
+          )
+        "#,
+    )
+    .bind(profile_id)
+    .execute(pool)
+    .await
+    .context("Failed to delete orphaned profile tools")?;
+
+    // Remove orphaned resources (no corresponding server association)
+    let orphan_resources = sqlx::query(
+        r#"
+        DELETE FROM profile_resource
+        WHERE profile_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM profile_server ps
+              WHERE ps.profile_id = profile_resource.profile_id
+                AND ps.server_id = profile_resource.server_id
+          )
+        "#,
+    )
+    .bind(profile_id)
+    .execute(pool)
+    .await
+    .context("Failed to delete orphaned profile resources")?;
+
+    // Remove orphaned prompts (no corresponding server association)
+    let orphan_prompts = sqlx::query(
+        r#"
+        DELETE FROM profile_prompt
+        WHERE profile_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM profile_server ps
+              WHERE ps.profile_id = profile_prompt.profile_id
+                AND ps.server_id = profile_prompt.server_id
+          )
+        "#,
+    )
+    .bind(profile_id)
+    .execute(pool)
+    .await
+    .context("Failed to delete orphaned profile prompts")?;
+
+    let total_removed =
+        orphan_tools.rows_affected() + orphan_resources.rows_affected() + orphan_prompts.rows_affected();
+
+    if total_removed > 0 {
+        tracing::info!(
+            "Cleaned up {} orphaned capability records for profile {} ({} tools, {} resources, {} prompts)",
+            total_removed,
+            profile_id,
+            orphan_tools.rows_affected(),
+            orphan_resources.rows_affected(),
+            orphan_prompts.rows_affected()
+        );
+    }
+
+    Ok(())
 }
 
 /// Generic batch operations on server capabilities within a profile
