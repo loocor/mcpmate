@@ -13,6 +13,7 @@ use crate::{
     },
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
+    config::server::{replace_server_headers, upsert_server_headers},
     config::server::{ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import_batch},
     config::{
         database::Database,
@@ -254,6 +255,15 @@ pub async fn create_server(
         .await
         .map_err(map_anyhow_error)?;
 
+    // Persist default headers if provided
+    if let Some(headers) = &payload.headers {
+        if !headers.is_empty() {
+            upsert_server_headers(&db.pool, &server_id, headers)
+                .await
+                .map_err(map_anyhow_error)?;
+        }
+    }
+
     // Insert server arguments if provided
     if let Some(args) = &payload.args {
         crate::config::server::upsert_server_args(&db.pool, &server_id, args)
@@ -320,6 +330,7 @@ pub async fn create_server(
         url,
         args: details.args,
         env: details.env,
+        headers: None,
         meta: details.meta,
         capability: details.capability,
         protocol_version: details.protocol_version,
@@ -415,6 +426,13 @@ pub async fn update_server(
         .await
         .map_err(map_anyhow_error)?;
 
+    // Replace default headers if provided
+    if let Some(headers) = &payload.headers {
+        replace_server_headers(&db.pool, &server_id, headers)
+            .await
+            .map_err(map_anyhow_error)?;
+    }
+
     // Update server arguments if provided
     if let Some(args) = &payload.args {
         crate::config::server::upsert_server_args(&db.pool, &server_id, args)
@@ -460,6 +478,7 @@ pub async fn update_server(
         url: updated_server.url.clone(),
         args: details.args,
         env: details.env,
+        headers: None,
         meta: details.meta,
         capability: details.capability,
         protocol_version: details.protocol_version,

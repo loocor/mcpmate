@@ -65,6 +65,14 @@ pub async fn load_servers_from_active_profile(
                 Some(args.into_iter().map(|arg| arg.arg_value).collect())
             };
 
+            // Load default HTTP headers (if any)
+            let headers = if let Some(id) = &server.id {
+                match crate::config::server::get_server_headers(&db.pool, id).await {
+                    Ok(map) if !map.is_empty() => Some(map),
+                    _ => None,
+                }
+            } else { None };
+
             // Create MCPServerConfig
             let server_config = MCPServerConfig {
                 kind: server.server_type,
@@ -72,6 +80,7 @@ pub async fn load_servers_from_active_profile(
                 args: args_strings,
                 url: server.url,
                 env,
+                headers,
             };
 
             // Use server_id as key instead of server_name
@@ -171,6 +180,14 @@ pub async fn load_server_config_with_params(
             None
         };
 
+        // Load default HTTP headers (if any)
+        let headers = if let Some(id) = &server.id {
+            match crate::config::server::get_server_headers(&db.pool, id).await {
+                Ok(map) if !map.is_empty() => Some(map),
+                _ => None,
+            }
+        } else { None };
+
         // Create MCPServerConfig
         let server_config = MCPServerConfig {
             kind: server.server_type,
@@ -178,6 +195,7 @@ pub async fn load_server_config_with_params(
             args,
             url: server.url,
             env,
+            headers,
         };
 
         // Add to config using server_id as key

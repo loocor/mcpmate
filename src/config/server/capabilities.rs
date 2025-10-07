@@ -852,6 +852,7 @@ impl CapabilityManager {
                     url: server_row.url,
                     args: None,
                     env: None,
+                    headers: None,
                 };
 
                 discover_from_config(server_name, &config, server_row.server_type).await?
@@ -940,6 +941,7 @@ impl CapabilityManager {
                             url: server.url,
                             args: None,
                             env: None,
+                            headers: None,
                         };
                         SyncStrategy::FromConfig(config, server.server_type)
                     }
@@ -1019,6 +1021,7 @@ impl CapabilityManager {
                     url: server_row.url,
                     args: None,
                     env: None,
+                    headers: None,
                 };
                 SyncStrategy::FromConfig(config, server_row.server_type)
             }

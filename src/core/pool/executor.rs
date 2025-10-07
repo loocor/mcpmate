@@ -447,6 +447,27 @@ impl UpstreamConnectionPool {
         self.connect_with_transport(server_id, instance_id, move |label, config| {
             let client_opt = client_opt.clone();
             async move {
+                // If server has default headers, use a per-server client with those headers
+                if let Some(h) = config.headers.as_ref() {
+                    if !h.is_empty() {
+                        let mut header_map = reqwest::header::HeaderMap::new();
+                        for (k, v) in h.iter() {
+                            if let (Ok(name), Ok(value)) = (
+                                reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                                reqwest::header::HeaderValue::from_str(v),
+                            ) {
+                                let controlled = matches!(name.as_str().to_ascii_lowercase().as_str(),
+                                    "accept" | "content-length" | "host" | "connection" | "transfer-encoding" | "mcp-protocol-version"
+                                );
+                                if controlled { continue; }
+                                header_map.insert(name, value);
+                            }
+                        }
+                        let client = reqwest::Client::builder().default_headers(header_map).build()?;
+                        return crate::core::transport::http::connect_http_server_with_client(&label, &config, client, crate::common::server::TransportType::Sse).await;
+                    }
+                }
+                // else fall back to shared client or plain connection
                 if let Some(client) = client_opt {
                     crate::core::transport::http::connect_http_server_with_client(
                         &label,
@@ -536,6 +557,27 @@ impl UpstreamConnectionPool {
         self.connect_with_transport(server_id, instance_id, move |label, config| {
             let client_opt = client_opt.clone();
             async move {
+                // If server has default headers, use a per-server client with those headers
+                if let Some(h) = config.headers.as_ref() {
+                    if !h.is_empty() {
+                        let mut header_map = reqwest::header::HeaderMap::new();
+                        for (k, v) in h.iter() {
+                            if let (Ok(name), Ok(value)) = (
+                                reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                                reqwest::header::HeaderValue::from_str(v),
+                            ) {
+                                let controlled = matches!(name.as_str().to_ascii_lowercase().as_str(),
+                                    "accept" | "content-length" | "host" | "connection" | "transfer-encoding" | "mcp-protocol-version"
+                                );
+                                if controlled { continue; }
+                                header_map.insert(name, value);
+                            }
+                        }
+                        let client = reqwest::Client::builder().default_headers(header_map).build()?;
+                        return crate::core::transport::http::connect_http_server_with_client(&label, &config, client, TransportType::StreamableHttp).await;
+                    }
+                }
+                // else fall back to shared client or plain connection
                 if let Some(client) = client_opt {
                     crate::core::transport::http::connect_http_server_with_client(
                         &label,

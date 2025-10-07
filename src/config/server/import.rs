@@ -204,7 +204,7 @@ pub async fn import_batch(
             cfg.env.clone().unwrap_or_default(),
         );
 
-        // Apply: upsert server, args, env
+        // Apply: upsert server, args, env, headers
         let mut server = match server_type {
             ServerType::Stdio => Server::new_stdio(name.clone(), cfg.command.clone()),
             ServerType::Sse => Server::new_sse(name.clone(), cfg.url.clone()),
@@ -224,6 +224,12 @@ pub async fn import_batch(
         }
         if !env_norm.is_empty() {
             let _ = env::upsert_server_env(db_pool, &server_id, &env_norm).await;
+        }
+
+        if let Some(headers) = cfg.headers.as_ref() {
+            if !headers.is_empty() {
+                let _ = crate::config::server::upsert_server_headers(db_pool, &server_id, headers).await;
+            }
         }
 
         if let Some(meta_payload) = cfg.meta.as_ref() {

@@ -39,6 +39,9 @@ pub struct MCPServerConfig {
     pub url: Option<String>,
     /// Environment variables to set (for stdio servers)
     pub env: Option<HashMap<String, String>>,
+    /// Default HTTP headers for SSE/Streamable HTTP
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
 }
 
 impl MCPServerConfig {

@@ -31,6 +31,7 @@ pub async fn preview_capabilities(
         url,
         args,
         env,
+        headers: None,
     };
     // Reuse existing discovery (no dual-write, no pool)
     crate::config::server::capabilities::discover_from_config(name, &cfg, kind).await

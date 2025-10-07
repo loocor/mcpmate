@@ -32,16 +32,31 @@ pub fn get_tools_timeout(command: &str) -> Duration {
 
 /// determine appropriate SSE connection timeout
 pub fn get_sse_connection_timeout() -> Duration {
+    if let Ok(v) = std::env::var("MCPMATE_SSE_CONNECT_TIMEOUT_MS") {
+        if let Ok(ms) = v.parse::<u64>() {
+            return Duration::from_millis(ms);
+        }
+    }
     Duration::from_secs(60)
 }
 
 /// determine appropriate SSE service timeout
 pub fn get_sse_service_timeout() -> Duration {
+    if let Ok(v) = std::env::var("MCPMATE_SSE_SERVICE_TIMEOUT_MS") {
+        if let Ok(ms) = v.parse::<u64>() {
+            return Duration::from_millis(ms);
+        }
+    }
     Duration::from_secs(60)
 }
 
 /// determine appropriate SSE tools timeout
 pub fn get_sse_tools_timeout() -> Duration {
+    if let Ok(v) = std::env::var("MCPMATE_SSE_TOOLS_TIMEOUT_MS") {
+        if let Ok(ms) = v.parse::<u64>() {
+            return Duration::from_millis(ms);
+        }
+    }
     Duration::from_secs(60)
 }
 

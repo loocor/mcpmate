@@ -219,6 +219,7 @@ mod tests {
                     kind: crate::common::server::ServerType::Stdio,
                     command: Some("test-command".to_string()),
                     args: Some(vec!["arg1".to_string()]),
+                    headers: None,
                     url: None,
                     env: None,
                 },

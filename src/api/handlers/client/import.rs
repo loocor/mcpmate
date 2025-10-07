@@ -39,6 +39,7 @@ pub fn build_import_payload_from_value(config: &Value) -> HashMap<String, Server
                     args: Some(sc.args),
                     url,
                     env: Some(sc.env),
+                    headers: None,
                     registry_server_id: None,
                     meta: None,
                 },

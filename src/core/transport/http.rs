@@ -119,6 +119,29 @@ pub async fn connect_http_server(
     Option<ServerCapabilities>,
 )> {
     let began = std::time::Instant::now();
+
+    // If default headers are configured, build a client with those headers and reuse the with_client path
+    if let Some(hdrs) = server_config.headers.as_ref() {
+        if !hdrs.is_empty() {
+            let mut header_map = reqwest::header::HeaderMap::new();
+            for (k, v) in hdrs.iter() {
+                if let (Ok(name), Ok(value)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    // Skip controlled headers that transport layer will manage itself
+                    let controlled = matches!(name.as_str().to_ascii_lowercase().as_str(),
+                        "accept" | "content-length" | "host" | "connection" | "transfer-encoding" | "mcp-protocol-version"
+                    );
+                    if controlled { continue; }
+                    header_map.insert(name, value);
+                }
+            }
+            let client = reqwest::Client::builder().default_headers(header_map).build()?;
+            return connect_http_server_with_client(server_name, server_config, client, transport_type).await;
+        }
+    }
+
     let res = connect_http_internal(server_name, server_config, transport_type).await;
     if let Ok((_, ref tools, _)) = res {
         tracing::debug!(

@@ -69,21 +69,40 @@ impl HttpClientRegistry {
     }
 
     fn build_client() -> reqwest::Client {
+        // Environment-configurable HTTP pooling and timeouts (with sensible defaults)
+        let idle_ms = std::env::var("MCPMATE_HTTP_POOL_IDLE_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(45_000);
+        let max_idle = std::env::var("MCPMATE_HTTP_POOL_MAX_IDLE_PER_HOST")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(8);
+        let keepalive_ms = std::env::var("MCPMATE_HTTP_TCP_KEEPALIVE_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(30_000);
+        let connect_ms = std::env::var("MCPMATE_HTTP_CONNECT_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(60_000);
+        let request_ms = std::env::var("MCPMATE_HTTP_REQUEST_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(60_000);
+        let accept_invalid = std::env::var("MCPMATE_ACCEPT_INVALID_CERTS")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+        let user_agent = std::env::var("MCPMATE_USER_AGENT").unwrap_or_else(|_| "MCPMate/1.0".to_string());
+
         reqwest::Client::builder()
-            .pool_idle_timeout(std::time::Duration::from_secs(45))
-            .pool_max_idle_per_host(8)
-            .tcp_keepalive(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(60))
-            // TODO: Make HTTP connection timeout configurable via environment variable
-            // to handle different network conditions and server response times
-            // TODO: Add more TLS debugging options and retry logic for connection issues
-            .danger_accept_invalid_certs(
-                std::env::var("MCPMATE_ACCEPT_INVALID_CERTS")
-                    .map(|v| v == "true" || v == "1")
-                    .unwrap_or(false),
-            )
-            .timeout(std::time::Duration::from_secs(60))
-            .user_agent("MCPMate/1.0")
+            .pool_idle_timeout(std::time::Duration::from_millis(idle_ms))
+            .pool_max_idle_per_host(max_idle)
+            .tcp_keepalive(std::time::Duration::from_millis(keepalive_ms))
+            .connect_timeout(std::time::Duration::from_millis(connect_ms))
+            .danger_accept_invalid_certs(accept_invalid)
+            .timeout(std::time::Duration::from_millis(request_ms))
+            .user_agent(user_agent)
             .build()
             .expect("Failed to build shared reqwest Client")
     }
@@ -152,7 +171,10 @@ impl UpstreamConnectionPool {
             runtime_cache: None, // Will be set by the proxy server
             failure_states: HashMap::new(),
             http_clients: {
-                let reuse = std::env::var("MCMP_MATE_HTTP_CLIENT_REUSE").ok();
+                // Prefer new env name MCPMATE_HTTP_CLIENT_REUSE, fallback to legacy MCMP_MATE_HTTP_CLIENT_REUSE
+                let reuse = std::env::var("MCPMATE_HTTP_CLIENT_REUSE")
+                    .ok()
+                    .or_else(|| std::env::var("MCMP_MATE_HTTP_CLIENT_REUSE").ok());
                 let enabled = match reuse.as_deref() {
                     Some("0") | Some("false") | Some("off") => false,
                     _ => true, // default ON unless explicitly disabled
@@ -628,6 +650,16 @@ impl UpstreamConnectionPool {
             None
         };
 
+        // Load default HTTP headers if any (validation path previously missed headers)
+        let headers = if let Some(id) = &server.id {
+            match crate::config::server::get_server_headers(pool, id).await {
+                Ok(map) if !map.is_empty() => Some(map),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         // Create MCPServerConfig (reusing existing structure)
         Ok(crate::core::models::MCPServerConfig {
             kind: server.server_type,
@@ -635,6 +667,7 @@ impl UpstreamConnectionPool {
             args,
             url: server.url.clone(),
             env,
+            headers,
         })
     }
 

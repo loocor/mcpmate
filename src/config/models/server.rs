@@ -237,6 +237,7 @@ impl Server {
             url: self.url.clone(),
             args: None, // Args are loaded separately when needed
             env: None,  // Env vars are loaded separately when needed
+            headers: None,
         }
     }
 

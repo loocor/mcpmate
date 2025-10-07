@@ -72,6 +72,7 @@ async fn preview_one(
         url: item.url.clone(),
         args: item.args.clone(),
         env: item.env.clone(),
+        headers: item.headers.clone(),
     };
 
     let snap = crate::config::server::capabilities::discover_from_config_preview(

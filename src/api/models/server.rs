@@ -302,6 +302,9 @@ pub struct ServerDetailsData {
     pub args: Option<Vec<String>>,
     /// Environment variables to set (for stdio servers)
     pub env: Option<HashMap<String, String>>,
+    /// Default HTTP headers for SSE/Streamable HTTP (sensitive keys may be redacted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
     /// Server metadata
     pub meta: Option<ServerMetaInfo>,
     /// Capability summary including support flags and counts
@@ -681,6 +684,9 @@ pub struct ServerCreateReq {
     /// Environment variables (only used for stdio type)
     #[schemars(description = "Environment variables to set (optional for stdio type)")]
     pub env: Option<HashMap<String, String>>,
+    /// Default HTTP headers for SSE/Streamable HTTP
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
 
     /// Whether to enable the server in the default profile
     #[schemars(description = "Whether to enable this server in the default profile")]
@@ -734,6 +740,9 @@ pub struct ServerUpdateReq {
     /// Environment variables (optional update)
     #[schemars(description = "Environment variables to set")]
     pub env: Option<HashMap<String, String>>,
+    /// Default HTTP headers for SSE/Streamable HTTP (replace semantics)
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
 
     /// Whether to enable the server (optional update)
     #[schemars(description = "Whether to enable this server")]
@@ -773,6 +782,9 @@ pub struct ServersImportConfig {
     pub url: Option<String>,
     /// Environment variables to set (for stdio servers)
     pub env: Option<HashMap<String, String>>,
+    /// Default HTTP headers for SSE/Streamable HTTP
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
 
     /// Registry server id (if sourced from official registry)
     pub registry_server_id: Option<String>,
