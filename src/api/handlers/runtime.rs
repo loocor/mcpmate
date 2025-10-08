@@ -1,11 +1,11 @@
 use chrono;
-use std::fs;
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{Json, extract::State, http::StatusCode};
 
-use tokio::process::Command as AsyncCommand;
+use tokio::{process::Command as AsyncCommand, task};
+use walkdir::WalkDir;
 
 use crate::{
     api::{models::runtime::*, routes::AppState},
@@ -147,12 +147,17 @@ async fn runtime_cache_core(_app_state: &AppState) -> Result<RuntimeCacheResp, S
 async fn get_cache_info(runtime_type: RuntimeType) -> RuntimeCacheItem {
     let paths = global_paths();
     let cache_path = paths.runtime_cache_dir(runtime_type.as_str());
+    let cache_path_string = cache_path.to_string_lossy().to_string();
+
+    let stats = task::spawn_blocking(move || collect_cache_stats(&cache_path))
+        .await
+        .unwrap_or_default();
 
     RuntimeCacheItem {
-        path: cache_path.to_string_lossy().to_string(),
-        size_bytes: calculate_dir_size(&cache_path),
-        package_count: count_packages_in_cache(&cache_path),
-        last_modified: get_last_modified(&cache_path),
+        path: cache_path_string,
+        size_bytes: stats.size_bytes,
+        package_count: stats.package_count,
+        last_modified: stats.last_modified,
     }
 }
 
@@ -215,42 +220,62 @@ async fn get_version_from_exec_async(path: &std::path::Path) -> Option<String> {
     })?
 }
 
-fn calculate_dir_size(dir_path: &std::path::Path) -> u64 {
-    fs::read_dir(dir_path)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .map(|entry| {
-                    let path = entry.path();
-                    match path.is_dir() {
-                        true => calculate_dir_size(&path),
-                        false => entry.metadata().map(|m| m.len()).unwrap_or(0),
-                    }
-                })
-                .sum()
-        })
-        .unwrap_or(0)
+#[derive(Default)]
+struct CacheStats {
+    size_bytes: u64,
+    package_count: u64,
+    last_modified: Option<String>,
 }
 
-fn count_packages_in_cache(cache_path: &std::path::Path) -> u64 {
-    fs::read_dir(cache_path)
-        .map(|entries| entries.filter_map(Result::ok).count() as u64)
-        .unwrap_or(0)
-}
+fn collect_cache_stats(cache_path: &std::path::Path) -> CacheStats {
+    if !cache_path.exists() {
+        return CacheStats::default();
+    }
 
-fn get_last_modified(path: &std::path::Path) -> Option<String> {
-    fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .map(|time| {
-            time.duration_since(UNIX_EPOCH)
-                .map(|dur| {
-                    chrono::DateTime::from_timestamp(dur.as_secs() as i64, 0)
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_else(|| dur.as_secs().to_string())
-                })
-                .unwrap_or_else(|_| "unknown".to_string())
+    let mut size_bytes = 0u64;
+    let mut package_count = 0u64;
+    let mut latest_modified: Option<SystemTime> = None;
+
+    for entry in WalkDir::new(cache_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let depth = entry.depth();
+        let metadata = match entry.metadata() {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+
+        if metadata.is_file() {
+            size_bytes = size_bytes.saturating_add(metadata.len());
+        }
+
+        if depth == 1 {
+            package_count = package_count.saturating_add(1);
+        }
+
+        if let Ok(modified) = metadata.modified() {
+            latest_modified = match latest_modified {
+                Some(existing) if existing > modified => Some(existing),
+                _ => Some(modified),
+            };
+        }
+    }
+
+    let last_modified = latest_modified.and_then(|time| {
+        time.duration_since(UNIX_EPOCH).ok().map(|dur| {
+            chrono::DateTime::from_timestamp(dur.as_secs() as i64, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| dur.as_secs().to_string())
         })
-        .ok()
+    });
+
+    CacheStats {
+        size_bytes,
+        package_count,
+        last_modified,
+    }
 }
 
 fn get_last_cleanup_time() -> Option<String> {

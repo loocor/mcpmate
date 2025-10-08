@@ -20,14 +20,13 @@ macro_rules! get_db_pool {
 
 /// Whether API should include default HTTP headers in responses (redacted)
 fn should_expose_headers() -> bool {
-    match std::env::var("MCPMATE_API_EXPOSE_HEADERS")
-        .unwrap_or_else(|_| "false".to_string())
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "1" | "true" | "on" | "yes" => true,
-        _ => false,
-    }
+    matches!(
+        std::env::var("MCPMATE_API_EXPOSE_HEADERS")
+            .unwrap_or_else(|_| "false".to_string())
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    )
 }
 
 /// Redact sensitive header values while keeping general visibility
@@ -49,7 +48,7 @@ fn redact_headers(input: &std::collections::HashMap<String, String>) -> std::col
         if sensitive.iter().any(|s| *s == lower) {
             // Show short masked preview for long tokens, else fully masked
             if v.len() > 12 {
-                let (head, tail) = (&v[..6], &v[v.len()-2..]);
+                let (head, tail) = (&v[..6], &v[v.len() - 2..]);
                 out.insert(k.clone(), format!("{}***{}", head, tail));
             } else {
                 out.insert(k.clone(), "***REDACTED***".to_string());
@@ -127,12 +126,16 @@ async fn server_details_core(
     // Optionally expose default headers (redacted)
     let headers = if should_expose_headers() {
         if let Some(ref id) = id_opt {
-            match crate::config::server::get_server_headers(&db_pool, id).await {
+            match crate::config::server::get_server_headers(db_pool, id).await {
                 Ok(map) if !map.is_empty() => Some(redact_headers(&map)),
                 _ => None,
             }
-        } else { None }
-    } else { None };
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let server_details = ServerDetailsData {
         id: id_opt,
@@ -210,12 +213,16 @@ async fn server_list_core(
             // Optionally expose default headers (redacted) per item
             let headers = if should_expose_headers() {
                 if let Some(ref sid) = id_opt {
-                    match crate::config::server::get_server_headers(&db_pool, sid).await {
+                    match crate::config::server::get_server_headers(db_pool, sid).await {
                         Ok(map) if !map.is_empty() => Some(redact_headers(&map)),
                         _ => None,
                     }
-                } else { None }
-            } else { None };
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
             filtered_servers.push(ServerDetailsData {
                 id: id_opt,
