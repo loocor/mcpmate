@@ -1,8 +1,15 @@
-# DXT 兼容性支持 (DXT Compatibility Support)
+# MCPB Compatibility (DXT → MCPB)
 
 ## 功能概述
 
-MCPMate 将支持 Anthropic 的 Desktop Extensions (DXT) 规范，为用户提供一键安装 MCP 服务器扩展的能力。DXT 支持不是对 MCPMate 现有功能的替代，而是重要的功能增强，体现了 MCPMate 的技术敏捷性和对 MCP 生态系统发展的快速响应。
+This module note has been superseded by the consolidated feature document. The DXT naming has evolved into MCPB (MCP Bundles).
+
+Please see:
+
+- docs/features/server_sources_and_artifacts.md — unified model for sources and artifacts (MCPB + local + package)
+- docs/roadmap/mcpb_support.md — plan and milestones
+
+Historical context and prior analysis remain below for reference.
 
 ## 核心价值总结
 
