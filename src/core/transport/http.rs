@@ -130,10 +130,18 @@ pub async fn connect_http_server(
                     reqwest::header::HeaderValue::from_str(v),
                 ) {
                     // Skip controlled headers that transport layer will manage itself
-                    let controlled = matches!(name.as_str().to_ascii_lowercase().as_str(),
-                        "accept" | "content-length" | "host" | "connection" | "transfer-encoding" | "mcp-protocol-version"
+                    let controlled = matches!(
+                        name.as_str().to_ascii_lowercase().as_str(),
+                        "accept"
+                            | "content-length"
+                            | "host"
+                            | "connection"
+                            | "transfer-encoding"
+                            | "mcp-protocol-version"
                     );
-                    if controlled { continue; }
+                    if controlled {
+                        continue;
+                    }
                     header_map.insert(name, value);
                 }
             }

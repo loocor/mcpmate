@@ -71,7 +71,9 @@ pub async fn load_servers_from_active_profile(
                     Ok(map) if !map.is_empty() => Some(map),
                     _ => None,
                 }
-            } else { None };
+            } else {
+                None
+            };
 
             // Create MCPServerConfig
             let server_config = MCPServerConfig {
@@ -186,7 +188,9 @@ pub async fn load_server_config_with_params(
                 Ok(map) if !map.is_empty() => Some(map),
                 _ => None,
             }
-        } else { None };
+        } else {
+            None
+        };
 
         // Create MCPServerConfig
         let server_config = MCPServerConfig {

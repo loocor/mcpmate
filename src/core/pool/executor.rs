@@ -456,15 +456,29 @@ impl UpstreamConnectionPool {
                                 reqwest::header::HeaderName::from_bytes(k.as_bytes()),
                                 reqwest::header::HeaderValue::from_str(v),
                             ) {
-                                let controlled = matches!(name.as_str().to_ascii_lowercase().as_str(),
-                                    "accept" | "content-length" | "host" | "connection" | "transfer-encoding" | "mcp-protocol-version"
+                                let controlled = matches!(
+                                    name.as_str().to_ascii_lowercase().as_str(),
+                                    "accept"
+                                        | "content-length"
+                                        | "host"
+                                        | "connection"
+                                        | "transfer-encoding"
+                                        | "mcp-protocol-version"
                                 );
-                                if controlled { continue; }
+                                if controlled {
+                                    continue;
+                                }
                                 header_map.insert(name, value);
                             }
                         }
                         let client = reqwest::Client::builder().default_headers(header_map).build()?;
-                        return crate::core::transport::http::connect_http_server_with_client(&label, &config, client, crate::common::server::TransportType::Sse).await;
+                        return crate::core::transport::http::connect_http_server_with_client(
+                            &label,
+                            &config,
+                            client,
+                            crate::common::server::TransportType::Sse,
+                        )
+                        .await;
                     }
                 }
                 // else fall back to shared client or plain connection
@@ -566,15 +580,29 @@ impl UpstreamConnectionPool {
                                 reqwest::header::HeaderName::from_bytes(k.as_bytes()),
                                 reqwest::header::HeaderValue::from_str(v),
                             ) {
-                                let controlled = matches!(name.as_str().to_ascii_lowercase().as_str(),
-                                    "accept" | "content-length" | "host" | "connection" | "transfer-encoding" | "mcp-protocol-version"
+                                let controlled = matches!(
+                                    name.as_str().to_ascii_lowercase().as_str(),
+                                    "accept"
+                                        | "content-length"
+                                        | "host"
+                                        | "connection"
+                                        | "transfer-encoding"
+                                        | "mcp-protocol-version"
                                 );
-                                if controlled { continue; }
+                                if controlled {
+                                    continue;
+                                }
                                 header_map.insert(name, value);
                             }
                         }
                         let client = reqwest::Client::builder().default_headers(header_map).build()?;
-                        return crate::core::transport::http::connect_http_server_with_client(&label, &config, client, TransportType::StreamableHttp).await;
+                        return crate::core::transport::http::connect_http_server_with_client(
+                            &label,
+                            &config,
+                            client,
+                            TransportType::StreamableHttp,
+                        )
+                        .await;
                     }
                 }
                 // else fall back to shared client or plain connection

@@ -36,6 +36,8 @@ pub struct InspectorToolCallReq {
     #[serde(default)]
     pub mode: InspectorMode,
     pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -145,3 +147,77 @@ api_resp!(
     InspectorToolCallData,
     "Inspector tool call response (accepted or completed)"
 );
+
+#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
+pub struct InspectorToolCallStartData {
+    pub call_id: String,
+    pub server_id: String,
+    pub mode: InspectorMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    pub request_id: String,
+    pub progress_token: String,
+}
+api_resp!(
+    InspectorToolCallStartResp,
+    InspectorToolCallStartData,
+    "Inspector tool call start response"
+);
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InspectorToolCallCancelReq {
+    pub call_id: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
+pub struct InspectorToolCallCancelData {
+    pub cancelled: bool,
+}
+api_resp!(
+    InspectorToolCallCancelResp,
+    InspectorToolCallCancelData,
+    "Inspector tool call cancel response"
+);
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InspectorSessionOpenReq {
+    pub server_id: Option<String>,
+    pub server_name: Option<String>,
+    #[serde(default)]
+    pub mode: InspectorMode,
+}
+
+#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
+pub struct InspectorSessionOpenData {
+    pub session_id: String,
+    pub server_id: String,
+    pub mode: InspectorMode,
+    pub expires_at_epoch_ms: u128,
+}
+api_resp!(
+    InspectorSessionOpenResp,
+    InspectorSessionOpenData,
+    "Inspector session open response"
+);
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InspectorSessionCloseReq {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
+pub struct InspectorSessionCloseData {
+    pub closed: bool,
+}
+api_resp!(
+    InspectorSessionCloseResp,
+    InspectorSessionCloseData,
+    "Inspector session close response"
+);
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InspectorCallEventsQuery {
+    pub call_id: String,
+}

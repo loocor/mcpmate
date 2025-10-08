@@ -12,6 +12,9 @@ use mcpmate::core::cache::RedbCacheManager;
 use mcpmate::core::models::Config;
 use mcpmate::core::pool::UpstreamConnectionPool;
 use mcpmate::core::profile::ConfigApplicationStateManager;
+use mcpmate::inspector::{
+    calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager,
+};
 use mcpmate::system::metrics::MetricsCollector;
 
 fn build_test_state() -> Arc<AppState> {
@@ -21,6 +24,10 @@ fn build_test_state() -> Arc<AppState> {
     )));
     let metrics = Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1)));
     let redb = RedbCacheManager::global().expect("redb");
+    let inspector_calls = Arc::new(InspectorCallRegistry::new());
+    inspector_service::set_call_registry(inspector_calls.clone());
+    let inspector_sessions = Arc::new(InspectorSessionManager::new());
+
     Arc::new(AppState {
         connection_pool: pool,
         metrics_collector: metrics,
@@ -31,6 +38,8 @@ fn build_test_state() -> Arc<AppState> {
         redb_cache: redb,
         unified_query: None,
         client_service: None,
+        inspector_calls,
+        inspector_sessions,
     })
 }
 

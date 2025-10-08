@@ -4,19 +4,26 @@ use std::sync::Arc;
 use axum::{
     Json,
     extract::{Query, State},
+    response::sse::{Event, KeepAlive, Sse},
 };
+use futures::StreamExt;
 use serde_json::{Value, json};
+use std::{convert::Infallible, time::Duration};
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::handlers::ApiError;
 // use crate::api::models::inspector::InspectorMode;
 use crate::api::models::inspector::{
-    InspectorListQuery, InspectorPromptGetData, InspectorPromptGetReq, InspectorPromptGetResp,
-    InspectorPromptsListData, InspectorPromptsListResp, InspectorResourceReadData, InspectorResourceReadQuery,
-    InspectorResourceReadResp, InspectorResourcesListData, InspectorResourcesListResp, InspectorToolCallData,
-    InspectorToolCallReq, InspectorToolCallResp, InspectorToolsListData, InspectorToolsListResp,
+    InspectorCallEventsQuery, InspectorListQuery, InspectorPromptGetData, InspectorPromptGetReq,
+    InspectorPromptGetResp, InspectorPromptsListData, InspectorPromptsListResp, InspectorResourceReadData,
+    InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListData, InspectorResourcesListResp,
+    InspectorSessionCloseData, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenReq,
+    InspectorSessionOpenResp, InspectorToolCallCancelData, InspectorToolCallCancelReq, InspectorToolCallCancelResp,
+    InspectorToolCallData, InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartData,
+    InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
 };
 use crate::api::routes::AppState;
-use crate::inspector::service;
+use crate::inspector::{calls::CallSubscription, service};
 
 // ==============================
 // Tools
@@ -63,6 +70,98 @@ pub async fn tool_call(
         elapsed_ms: Some(outcome.elapsed_ms),
     };
     Ok(Json(InspectorToolCallResp::success(data)))
+}
+
+pub async fn tool_call_start(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorToolCallReq>,
+) -> Result<Json<InspectorToolCallStartResp>, ApiError> {
+    let info = service::start_tool_call(&state, &req).await?;
+    let data = InspectorToolCallStartData {
+        call_id: info.call_id,
+        server_id: info.server_id,
+        mode: info.mode,
+        session_id: info.session_id,
+        request_id: info.request_id,
+        progress_token: info.progress_token,
+    };
+    Ok(Json(InspectorToolCallStartResp::success(data)))
+}
+
+pub async fn tool_call_events(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<InspectorCallEventsQuery>,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    let subscription = state
+        .inspector_calls
+        .subscribe(&query.call_id)
+        .await
+        .ok_or_else(|| ApiError::NotFound(format!("Inspector call '{}' not found", query.call_id)))?;
+
+    let stream: futures::stream::BoxStream<'static, Result<Event, Infallible>> = match subscription {
+        CallSubscription::Active(receiver) => BroadcastStream::new(receiver)
+            .filter_map(|msg| async move {
+                match msg {
+                    Ok(event) => match Event::default().json_data(&event) {
+                        Ok(ev) => Some(Ok::<Event, Infallible>(ev)),
+                        Err(err) => {
+                            tracing::warn!(error = %err, "Failed to serialize inspector event");
+                            None
+                        }
+                    },
+                    Err(err) => {
+                        tracing::warn!("Inspector events stream lagged: {}", err);
+                        None
+                    }
+                }
+            })
+            .boxed(),
+        CallSubscription::Completed(event) => {
+            let event_opt = match Event::default().json_data(&event) {
+                Ok(ev) => Some(ev),
+                Err(err) => {
+                    tracing::warn!(error = %err, "Failed to serialize inspector terminal event");
+                    None
+                }
+            };
+            futures::stream::iter(event_opt.into_iter().map(Ok::<Event, Infallible>)).boxed()
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive")))
+}
+
+pub async fn tool_call_cancel(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorToolCallCancelReq>,
+) -> Result<Json<InspectorToolCallCancelResp>, ApiError> {
+    state
+        .inspector_calls
+        .cancel_call(&req.call_id, req.reason.clone())
+        .await
+        .map_err(ApiError::BadRequest)?;
+
+    Ok(Json(InspectorToolCallCancelResp::success(
+        InspectorToolCallCancelData { cancelled: true },
+    )))
+}
+
+pub async fn session_open(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorSessionOpenReq>,
+) -> Result<Json<InspectorSessionOpenResp>, ApiError> {
+    let data = service::open_session(&state, &req).await?;
+    Ok(Json(InspectorSessionOpenResp::success(data)))
+}
+
+pub async fn session_close(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorSessionCloseReq>,
+) -> Result<Json<InspectorSessionCloseResp>, ApiError> {
+    let closed = service::close_session(&state, &req).await?;
+    Ok(Json(InspectorSessionCloseResp::success(InspectorSessionCloseData {
+        closed,
+    })))
 }
 
 // ==============================

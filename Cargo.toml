@@ -72,7 +72,7 @@ tar = "0.4"
 terminal_size = "0.3"
 thiserror = "1.0"
 tokio = { version = "1.44", features = ["full"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -3,8 +3,10 @@ use std::sync::Arc;
 use crate::api::handlers::inspector;
 use crate::api::models::inspector::{
     InspectorListQuery, InspectorPromptGetReq, InspectorPromptGetResp, InspectorPromptsListResp,
-    InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListResp, InspectorToolCallReq,
-    InspectorToolCallResp, InspectorToolsListResp,
+    InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListResp, InspectorSessionCloseReq,
+    InspectorSessionCloseResp, InspectorSessionOpenReq, InspectorSessionOpenResp, InspectorToolCallCancelReq,
+    InspectorToolCallCancelResp, InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartResp,
+    InspectorToolsListResp,
 };
 use crate::{aide_wrapper_payload, aide_wrapper_query};
 use aide::axum::{
@@ -37,6 +39,18 @@ aide_wrapper_payload!(
     InspectorToolCallResp,
     "Inspector: call tool"
 );
+aide_wrapper_payload!(
+    inspector::tool_call_start,
+    InspectorToolCallReq,
+    InspectorToolCallStartResp,
+    "Inspector: start tool call"
+);
+aide_wrapper_payload!(
+    inspector::tool_call_cancel,
+    InspectorToolCallCancelReq,
+    InspectorToolCallCancelResp,
+    "Inspector: cancel tool call"
+);
 aide_wrapper_query!(
     inspector::resource_read,
     InspectorResourceReadQuery,
@@ -49,6 +63,18 @@ aide_wrapper_payload!(
     InspectorPromptGetResp,
     "Inspector: get prompt"
 );
+aide_wrapper_payload!(
+    inspector::session_open,
+    InspectorSessionOpenReq,
+    InspectorSessionOpenResp,
+    "Inspector: open session"
+);
+aide_wrapper_payload!(
+    inspector::session_close,
+    InspectorSessionCloseReq,
+    InspectorSessionCloseResp,
+    "Inspector: close session"
+);
 use crate::api::routes::AppState;
 
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
@@ -56,6 +82,14 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         // tools
         .api_route("/mcp/inspector/tool/list", get_with(tools_list_aide, tools_list_docs))
         .api_route("/mcp/inspector/tool/call", post_with(tool_call_aide, tool_call_docs))
+        .api_route(
+            "/mcp/inspector/tool/call/start",
+            post_with(tool_call_start_aide, tool_call_start_docs),
+        )
+        .api_route(
+            "/mcp/inspector/tool/call/cancel",
+            post_with(tool_call_cancel_aide, tool_call_cancel_docs),
+        )
         // resources
         .api_route(
             "/mcp/inspector/resource/list",
@@ -71,5 +105,14 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             get_with(prompts_list_aide, prompts_list_docs),
         )
         .api_route("/mcp/inspector/prompt/get", post_with(prompt_get_aide, prompt_get_docs))
+        // sessions
+        .api_route(
+            "/mcp/inspector/session/open",
+            post_with(session_open_aide, session_open_docs),
+        )
+        .api_route(
+            "/mcp/inspector/session/close",
+            post_with(session_close_aide, session_close_docs),
+        )
         .with_state(state)
 }

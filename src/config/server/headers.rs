@@ -18,7 +18,9 @@ pub async fn upsert_server_headers(
     // Upsert each header (normalized key to lowercase)
     for (k, v) in headers.iter() {
         let key = k.trim().to_ascii_lowercase();
-        if key.is_empty() { continue; }
+        if key.is_empty() {
+            continue;
+        }
         sqlx::query(&format!(
             r#"
             INSERT INTO {TABLE} (server_id, header_key, header_value)
@@ -46,18 +48,18 @@ pub async fn replace_server_headers(
     let mut tx = pool.begin().await?;
 
     // Fetch existing keys
-    let rows: Vec<(String,)> = sqlx::query_as(&format!(
-        "SELECT header_key FROM {TABLE} WHERE server_id = ?"
-    ))
-    .bind(server_id)
-    .fetch_all(&mut *tx)
-    .await?;
+    let rows: Vec<(String,)> = sqlx::query_as(&format!("SELECT header_key FROM {TABLE} WHERE server_id = ?"))
+        .bind(server_id)
+        .fetch_all(&mut *tx)
+        .await?;
     let existing: std::collections::HashSet<String> = rows.into_iter().map(|(k,)| k).collect();
 
     // Upsert provided
     for (k, v) in headers.iter() {
         let key = k.trim().to_ascii_lowercase();
-        if key.is_empty() { continue; }
+        if key.is_empty() {
+            continue;
+        }
         sqlx::query(&format!(
             r#"INSERT INTO {TABLE} (server_id, header_key, header_value)
                 VALUES (?, ?, ?)
@@ -98,4 +100,3 @@ pub async fn get_server_headers(
     .await?;
     Ok(rows.into_iter().collect())
 }
-

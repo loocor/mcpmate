@@ -14,12 +14,13 @@ pub mod system;
 use std::sync::Arc;
 
 use aide::{axum::ApiRouter, openapi::OpenApi};
-use axum::Router;
+use axum::{Router, routing::get};
 use tokio::sync::Mutex;
 
 use crate::clients::ClientConfigService;
 use crate::{
     core::{pool::UpstreamConnectionPool, proxy::ProxyServer},
+    inspector::{calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager},
     system::metrics::MetricsCollector,
 };
 
@@ -44,6 +45,10 @@ pub struct AppState {
     pub unified_query: Option<Arc<crate::core::capability::UnifiedQueryAdapter>>,
     /// Client configuration service (template-driven)
     pub client_service: Option<Arc<ClientConfigService>>,
+    /// Inspector call registry (long-running tool calls)
+    pub inspector_calls: Arc<InspectorCallRegistry>,
+    /// Inspector session manager
+    pub inspector_sessions: Arc<InspectorSessionManager>,
 }
 
 /// Create the API router with all routes
@@ -105,6 +110,10 @@ async fn create_router_internal(
     let redb_cache = crate::core::cache::RedbCacheManager::global()
         .expect("Failed to initialize standard Redb cache manager for API operations");
 
+    let inspector_calls = Arc::new(InspectorCallRegistry::new());
+    let inspector_sessions = Arc::new(InspectorSessionManager::new());
+    inspector_service::set_call_registry(inspector_calls.clone());
+
     // 创建统一查询适配器（可选，用于渐进式迁移）
     let unified_query = if database.is_some() {
         crate::core::capability::UnifiedQueryIntegration::create_adapter(&AppState {
@@ -117,6 +126,8 @@ async fn create_router_internal(
             redb_cache: redb_cache.clone(),
             unified_query: None, // 避免递归
             client_service: None,
+            inspector_calls: inspector_calls.clone(),
+            inspector_sessions: inspector_sessions.clone(),
         })
     } else {
         None
@@ -147,6 +158,8 @@ async fn create_router_internal(
         redb_cache,
         unified_query,
         client_service,
+        inspector_calls,
+        inspector_sessions,
     });
 
     // Create OpenAPI specification
@@ -165,9 +178,16 @@ async fn create_router_internal(
         .finish_api_with(&mut api, openapi::api_docs)
         .layer(axum::middleware::from_fn(crate::common::env::origin_guard_middleware));
 
+    let inspector_events = Router::new()
+        .route(
+            "/mcp/inspector/tool/call/events",
+            get(crate::api::handlers::inspector::tool_call_events),
+        )
+        .with_state(state.clone());
+
     // Create main router with API routes, docs, and board static files
     // Note: API routes must come first to avoid being intercepted by board fallback
     Router::new()
-        .nest("/api", api_router)
+        .nest("/api", api_router.merge(inspector_events))
         .merge(openapi::openapi_routes(api))
 }

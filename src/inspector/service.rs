@@ -9,17 +9,22 @@ use rmcp::service::{Peer, PeerRequestOptions};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Instant;
+use tokio::sync::oneshot;
 use tokio::time::Duration;
 
 use crate::api::handlers::ApiError;
 use crate::api::models::inspector::{
-    InspectorListQuery, InspectorMode, InspectorPromptGetReq, InspectorResourceReadQuery, InspectorToolCallReq,
+    InspectorListQuery, InspectorMode, InspectorPromptGetReq, InspectorResourceReadQuery, InspectorSessionCloseReq,
+    InspectorSessionOpenData, InspectorSessionOpenReq, InspectorToolCallReq,
 };
 use crate::api::routes::AppState;
 use crate::core::capability;
 use crate::core::capability::resolver;
 use crate::core::proxy::server::supports_capability;
+use crate::inspector::calls::{InspectorCallInfo, InspectorCallRegistry, InspectorTerminal, RegisteredCall};
+use crate::core::capability::naming::NamingKind;
 
 #[derive(Debug, Clone)]
 pub struct ToolCallOutcome {
@@ -27,6 +32,19 @@ pub struct ToolCallOutcome {
     pub server_id: Option<String>,
     pub elapsed_ms: u64,
     pub message: Option<String>,
+}
+
+pub struct PreparedCall {
+    pub info: InspectorCallInfo,
+    pub completion: oneshot::Receiver<InspectorTerminal>,
+    pub server_id: String,
+    pub native_validation_session: Option<String>,
+}
+
+static GLOBAL_CALL_REGISTRY: OnceLock<Arc<InspectorCallRegistry>> = OnceLock::new();
+
+pub fn set_call_registry(registry: Arc<InspectorCallRegistry>) {
+    let _ = GLOBAL_CALL_REGISTRY.set(registry);
 }
 
 #[derive(Clone, Copy)]
@@ -193,14 +211,140 @@ pub async fn resource_read(
 }
 
 pub async fn call_tool(
-    state: &AppState,
+    state: &Arc<AppState>,
     req: &InspectorToolCallReq,
 ) -> Result<ToolCallOutcome, ApiError> {
+    let prepared = start_tool_call_internal(state, req).await?;
+    let native_cleanup = prepared.native_validation_session.clone();
+    let server_id = prepared.server_id.clone();
+
+    let result = prepared
+        .completion
+        .await
+        .map_err(|_| ApiError::InternalError("Inspector call channel dropped".into()))?;
+
+    if let Some(session) = native_cleanup {
+        cleanup_native_session(state, &server_id, Some(&session)).await;
+    }
+
+    match result {
+        InspectorTerminal::Result {
+            result,
+            elapsed_ms,
+            server_id,
+        } => Ok(ToolCallOutcome {
+            result: Some(result),
+            server_id: Some(server_id),
+            elapsed_ms,
+            message: Some("completed".to_string()),
+        }),
+        InspectorTerminal::Error { message, .. } => Err(ApiError::InternalError(message)),
+        InspectorTerminal::Cancelled { reason, .. } => Err(ApiError::Conflict(
+            reason.unwrap_or_else(|| "Inspector call cancelled".to_string()),
+        )),
+    }
+}
+
+pub async fn start_tool_call(
+    state: &Arc<AppState>,
+    req: &InspectorToolCallReq,
+) -> Result<InspectorCallInfo, ApiError> {
+    let prepared = start_tool_call_internal(state, req).await?;
+    let info = prepared.info.clone();
+    let state_clone = state.clone();
+
+    tokio::spawn(async move {
+        let completion = prepared.completion;
+        let server_id = prepared.server_id.clone();
+        let native_cleanup = prepared.native_validation_session.clone();
+
+        let _ = completion.await;
+
+        if let Some(session) = native_cleanup {
+            cleanup_native_session(&state_clone, &server_id, Some(&session)).await;
+        }
+    });
+
+    Ok(info)
+}
+
+pub async fn open_session(
+    state: &Arc<AppState>,
+    req: &InspectorSessionOpenReq,
+) -> Result<InspectorSessionOpenData, ApiError> {
     if matches!(req.mode, InspectorMode::Native) {
         ensure_native_allowed()?;
     }
-    let started = Instant::now();
-    let (server_id, upstream_tool_name, session_id) = match req.mode {
+
+    let server_id = resolve_server(&req.server_id, &req.server_name).await?;
+    let validation_session = if matches!(req.mode, InspectorMode::Native) {
+        Some(ensure_native_session(state, &server_id).await?)
+    } else {
+        {
+            let mut pool = state.connection_pool.lock().await;
+            pool.ensure_connected(&server_id).await.map_err(map_anyhow)?;
+        }
+        None
+    };
+
+    let peer = acquire_peer_for_call(state, &server_id, validation_session.as_deref())
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    let session_id = crate::generate_id!("inspses");
+    let info = state
+        .inspector_sessions
+        .open_session(
+            session_id.clone(),
+            server_id.clone(),
+            req.mode,
+            peer,
+            validation_session.clone(),
+        )
+        .await;
+
+    Ok(InspectorSessionOpenData {
+        session_id: info.session_id,
+        server_id: info.server_id,
+        mode: info.mode,
+        expires_at_epoch_ms: info.expires_at_epoch_ms,
+    })
+}
+
+pub async fn close_session(
+    state: &Arc<AppState>,
+    req: &InspectorSessionCloseReq,
+) -> Result<bool, ApiError> {
+    if let Some(closed) = state.inspector_sessions.close_session(&req.session_id).await {
+        if matches!(closed.mode, InspectorMode::Native) {
+            cleanup_native_session(state, &closed.server_id, closed.validation_session.as_deref()).await;
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+async fn start_tool_call_internal(
+    state: &Arc<AppState>,
+    req: &InspectorToolCallReq,
+) -> Result<PreparedCall, ApiError> {
+    if matches!(req.mode, InspectorMode::Native) {
+        ensure_native_allowed()?;
+    }
+
+    let timeout = Duration::from_millis(req.timeout_ms.unwrap_or(60_000));
+
+    let active_session =
+        if let Some(session_id) = req.session_id.as_ref() {
+            Some(state.inspector_sessions.get_session(session_id).await.ok_or_else(|| {
+                ApiError::NotFound(format!("Inspector session '{}' not found or expired", session_id))
+            })?)
+        } else {
+            None
+        };
+
+    let (server_id, mut upstream_tool_name) = match req.mode {
         InspectorMode::Proxy => {
             if let Ok((server_name, upstream)) =
                 capability::naming::resolve_unique_name(capability::naming::NamingKind::Tool, &req.tool).await
@@ -210,49 +354,72 @@ pub async fn call_tool(
                     .ok()
                     .flatten()
                     .ok_or_else(|| ApiError::BadRequest(format!("Server '{}' not found", server_name)))?;
-                (sid, upstream, None)
+                (sid, upstream)
             } else {
-                let sid = resolve_server(&req.server_id, &req.server_name).await?;
-                (sid, req.tool.clone(), None)
+                let sid = if let Some(session) = &active_session {
+                    session.server_id.clone()
+                } else {
+                    resolve_server(&req.server_id, &req.server_name).await?
+                };
+                (sid.clone(), req.tool.clone())
             }
         }
         InspectorMode::Native => {
-            let sid = resolve_server(&req.server_id, &req.server_name).await?;
-            let session = ensure_native_session(state, &sid).await?;
-            let requested = req.tool.clone();
-            let expected_server_name = if let Some(name) = req.server_name.clone() {
-                Some(name)
+            let sid = if let Some(session) = &active_session {
+                session.server_id.clone()
             } else {
-                resolver::to_name(&sid).await.ok().flatten()
+                resolve_server(&req.server_id, &req.server_name).await?
             };
-            let upstream =
-                match capability::naming::resolve_unique_name(capability::naming::NamingKind::Tool, &requested).await {
-                    Ok((unique_server_name, upstream_name)) => {
-                        let matches_server = match expected_server_name {
-                            Some(ref expected) => expected == &unique_server_name,
-                            None => resolver::to_id(&unique_server_name)
-                                .await
-                                .ok()
-                                .flatten()
-                                .is_some_and(|resolved_id| resolved_id == sid),
-                        };
-                        if matches_server {
-                            upstream_name
-                        } else {
-                            requested.clone()
-                        }
-                    }
-                    Err(_) => requested.clone(),
-                };
-            (sid, upstream, Some(session))
+            (sid.clone(), req.tool.clone())
         }
     };
 
-    let peer = acquire_peer_for_call(state, &server_id, session_id.as_deref())
-        .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    if let Ok((resolved_server_name, resolved_tool_name)) =
+        capability::naming::resolve_unique_name(NamingKind::Tool, &upstream_tool_name).await
+    {
+        let resolved_server_id = resolver::to_id(&resolved_server_name)
+            .await
+            .ok()
+            .flatten();
+        let matches_server = resolved_server_id
+            .as_deref()
+            .map(|id| id == server_id)
+            .unwrap_or_else(|| resolved_server_name == server_id);
+        if matches_server {
+            upstream_tool_name = resolved_tool_name;
+        }
+    }
 
-    let timeout = Duration::from_millis(req.timeout_ms.unwrap_or(60_000));
+    if let Some(session) = &active_session {
+        if session.server_id != server_id {
+            return Err(ApiError::BadRequest(
+                "Inspector session is bound to a different server".into(),
+            ));
+        }
+    }
+
+    let (peer, native_cleanup_session) = match (req.mode, active_session) {
+        (InspectorMode::Native, Some(session)) => (session.peer, None),
+        (InspectorMode::Native, None) => {
+            let validation_session = ensure_native_session(state, &server_id).await?;
+            let peer = acquire_peer_for_call(state, &server_id, Some(&validation_session))
+                .await
+                .map_err(|e| ApiError::InternalError(e.to_string()))?;
+            (peer, Some(validation_session))
+        }
+        (_, Some(session)) => (session.peer, None),
+        _ => {
+            {
+                let mut pool = state.connection_pool.lock().await;
+                pool.ensure_connected(&server_id).await.map_err(map_anyhow)?;
+            }
+            let peer = acquire_peer_for_call(state, &server_id, None)
+                .await
+                .map_err(|e| ApiError::InternalError(e.to_string()))?;
+            (peer, None)
+        }
+    };
+
     let request = ClientRequest::CallToolRequest(CallToolRequest {
         method: Default::default(),
         params: CallToolRequestParam {
@@ -267,40 +434,23 @@ pub async fn call_tool(
         meta: None,
     };
 
+    let call_id = crate::generate_id!("inspcall");
     let handle = peer
         .send_cancellable_request(request, options)
         .await
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
 
-    let response = handle.await_response().await;
-    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let RegisteredCall { info, completion } = state
+        .inspector_calls
+        .start_call(call_id, server_id.clone(), req.mode, req.session_id.clone(), handle)
+        .await;
 
-    let outcome = match response {
-        Ok(rmcp::model::ServerResult::CallToolResult(result)) => {
-            let value = serde_json::to_value(result).unwrap_or_else(|_| json!({}));
-            ToolCallOutcome {
-                result: Some(value),
-                server_id: Some(server_id.clone()),
-                elapsed_ms,
-                message: Some("completed".to_string()),
-            }
-        }
-        Ok(other) => {
-            cleanup_native_session(state, &server_id, session_id.as_deref()).await;
-            return Err(ApiError::InternalError(format!(
-                "Unexpected server result: {:?}",
-                other
-            )));
-        }
-        Err(err) => {
-            cleanup_native_session(state, &server_id, session_id.as_deref()).await;
-            let (api_error, _message) = map_tool_call_error(anyhow!(err.to_string()));
-            return Err(api_error);
-        }
-    };
-
-    cleanup_native_session(state, &server_id, session_id.as_deref()).await;
-    Ok(outcome)
+    Ok(PreparedCall {
+        info,
+        completion,
+        server_id,
+        native_validation_session: native_cleanup_session,
+    })
 }
 
 fn extract_tools(result: capability::runtime::ListResult) -> Vec<Value> {
@@ -650,36 +800,29 @@ async fn resolve_server(
     Err(ApiError::BadRequest("server_id or server_name is required".into()))
 }
 
-fn map_tool_call_error(e: anyhow::Error) -> (ApiError, String) {
-    let message = e.to_string();
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("timeout") {
-        (ApiError::Timeout(message.clone()), message)
-    } else if lower.contains("not found") {
-        (ApiError::NotFound(message.clone()), message)
-    } else if lower.contains("forbidden") {
-        (ApiError::Forbidden(message.clone()), message)
-    } else {
-        (ApiError::InternalError(message.clone()), message)
+pub(crate) async fn inspector_forward_progress(params: &ProgressNotificationParam) -> bool {
+    if let Some(registry) = GLOBAL_CALL_REGISTRY.get() {
+        registry.emit_progress(params).await;
     }
-}
-
-// Inspector forwarders are retained for compatibility with the upstream transport handler,
-// but now operate as no-ops because Inspector runs synchronously.
-pub(crate) async fn inspector_forward_progress(_params: &ProgressNotificationParam) -> bool {
     false
 }
 
 pub(crate) async fn inspector_forward_log(
-    _token: Option<&ProgressToken>,
-    _params: &LoggingMessageNotificationParam,
+    token: Option<&ProgressToken>,
+    params: &LoggingMessageNotificationParam,
 ) -> bool {
+    if let Some(registry) = GLOBAL_CALL_REGISTRY.get() {
+        registry.emit_log(token, params).await;
+    }
     false
 }
 
 pub(crate) async fn inspector_forward_cancel(
-    _request_id: &RequestId,
-    _reason: Option<String>,
+    request_id: &RequestId,
+    reason: Option<String>,
 ) -> bool {
+    if let Some(registry) = GLOBAL_CALL_REGISTRY.get() {
+        registry.emit_cancelled(request_id, reason).await;
+    }
     false
 }
