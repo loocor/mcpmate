@@ -78,10 +78,23 @@ pub async fn config_details(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let content = service.read_current_config(&request.identifier).await.map_err(|err| {
-        tracing::error!("Failed to read config for {}: {}", request.identifier, err);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let mut warnings: Vec<String> = Vec::new();
+    let content = match service.read_current_config(&request.identifier).await {
+        Ok(content) => content,
+        Err(err) => {
+            let message = format!(
+                "Unable to read current configuration: {}",
+                err
+            );
+            tracing::warn!(
+                client = %request.identifier,
+                error = %err,
+                "Gracefully degrading after configuration read failure"
+            );
+            warnings.push(message);
+            None
+        }
+    };
 
     let config_exists = content.is_some();
     let parsed_content = content
@@ -98,10 +111,21 @@ pub async fn config_details(
 
     let config_type = convert_container_type(template.config_mapping.container_type);
 
-    let managed = service.is_client_managed(&request.identifier).await.map_err(|err| {
-        tracing::error!("Failed to fetch managed state for {}: {}", request.identifier, err);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let managed = match service.is_client_managed(&request.identifier).await {
+        Ok(state) => state,
+        Err(err) => {
+            tracing::warn!(
+                client = %request.identifier,
+                error = %err,
+                "Falling back to disabled managed state after lookup failure"
+            );
+            warnings.push(format!(
+                "Failed to load managed state: {}",
+                err
+            ));
+            false
+        }
+    };
 
     let (imported_servers, import_summary) = (None, None);
     let description = metadata_string(&template, "description");
@@ -128,6 +152,7 @@ pub async fn config_details(
         docs_url,
         support_url,
         logo_url,
+        warnings,
     };
 
     Ok(Json(ClientConfigResp::success(data)))
@@ -349,14 +374,17 @@ async fn descriptor_to_client_info(
     let config_type = convert_container_type(template.config_mapping.container_type);
 
     let content = if descriptor.config_exists {
-        service.read_current_config(&template.identifier).await.map_err(|err| {
-            tracing::error!(
-                "Failed to read config for {} while building list: {}",
-                template.identifier,
-                err
-            );
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
+        match service.read_current_config(&template.identifier).await {
+            Ok(content) => content,
+            Err(err) => {
+                tracing::warn!(
+                    client = %template.identifier,
+                    error = %err,
+                    "Continuing list operation despite configuration read failure"
+                );
+                None
+            }
+        }
     } else {
         None
     };

@@ -247,6 +247,9 @@ pub struct ClientConfigData {
     pub config_path: String,
     #[schemars(description = "Whether configuration file exists")]
     pub config_exists: bool,
+    #[schemars(description = "Warning messages related to reading configuration")]
+    #[serde(default)]
+    pub warnings: Vec<String>,
     #[schemars(description = "Configuration file content")]
     pub content: serde_json::Value,
     #[schemars(description = "Whether MCP servers are configured")]

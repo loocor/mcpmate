@@ -595,7 +595,7 @@ impl ClientConfigService {
         }
 
         let generated_id = generate_id!("clnt");
-        sqlx::query(
+        let insert_result = sqlx::query(
             r#"
             INSERT INTO client (id, name, identifier, managed, backup_policy, backup_limit)
             VALUES (?, ?, ?, 1, 'keep_n', 30)
@@ -605,8 +605,22 @@ impl ClientConfigService {
         .bind(name)
         .bind(identifier)
         .execute(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        .await;
+
+        if let Err(err) = insert_result {
+            if let sqlx::Error::Database(db_err) = &err {
+                if db_err.code().map(|code| code == "2067").unwrap_or(false) {
+                    tracing::warn!(
+                        client = %identifier,
+                        "Concurrent client state insert detected; reusing existing row"
+                    );
+                } else {
+                    return Err(ConfigError::DataAccessError(err.to_string()));
+                }
+            } else {
+                return Err(ConfigError::DataAccessError(err.to_string()));
+            }
+        }
 
         self.fetch_state(identifier)
             .await?
