@@ -13,6 +13,8 @@ use crate::core::{
     models::Config,
 };
 
+const STANDARD_INSTANCE_IDLE_SECS: u64 = 5 * 60;
+
 use super::config::PoolConfigManager;
 use super::sync::ServerSyncManager;
 use super::types::{self, FailureKind};
@@ -225,6 +227,48 @@ impl UpstreamConnectionPool {
     ) {
         self.runtime_cache = runtime_cache;
         tracing::info!("Runtime cache reference updated for connection pool");
+    }
+
+    /// Idle timeout for standard instances (may become configurable later)
+    pub fn standard_instance_idle_timeout() -> Duration {
+        let env_override = std::env::var("MCPMATE_INSTANCE_IDLE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
+        Duration::from_secs(env_override.unwrap_or(STANDARD_INSTANCE_IDLE_SECS))
+    }
+
+    /// Disconnect instances that have been idle beyond the configured timeout.
+    pub async fn reap_idle_instances(&mut self) {
+        let idle_timeout = Self::standard_instance_idle_timeout();
+        let now = Instant::now();
+        let mut targets: Vec<(String, String)> = Vec::new();
+
+        for (server_id, instances) in &self.connections {
+            for (instance_id, conn) in instances {
+                if matches!(conn.status, ConnectionStatus::Ready)
+                    && now.duration_since(conn.last_activity) >= idle_timeout
+                {
+                    targets.push((server_id.clone(), instance_id.clone()));
+                }
+            }
+        }
+
+        for (server_id, instance_id) in targets {
+            match self.disconnect_non_blocking(&server_id, &instance_id).await {
+                Ok(()) => tracing::info!(
+                    server_id = %server_id,
+                    instance_id = %instance_id,
+                    idle_timeout_secs = idle_timeout.as_secs(),
+                    "Disconnected idle instance after timeout"
+                ),
+                Err(e) => tracing::warn!(
+                    server_id = %server_id,
+                    instance_id = %instance_id,
+                    error = %e,
+                    "Failed to disconnect idle instance"
+                ),
+            }
+        }
     }
 
     fn failure_state_mut(

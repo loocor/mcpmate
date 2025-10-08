@@ -129,6 +129,8 @@ pub struct UpstreamConnection {
     pub created_at: Instant,
     /// Last time the server was connected
     pub last_connected: Instant,
+    /// Last time the connection served a request
+    pub last_activity: Instant,
     /// Number of connection attempts
     pub connection_attempts: u32,
     /// Current connection status
@@ -157,6 +159,7 @@ impl Clone for UpstreamConnection {
             tools: self.tools.clone(),
             created_at: self.created_at,
             last_connected: self.last_connected,
+            last_activity: self.last_activity,
             connection_attempts: self.connection_attempts,
             status: self.status.clone(),
             last_health_check: self.last_health_check,
@@ -180,6 +183,7 @@ impl UpstreamConnection {
             tools: Vec::new(),
             created_at: now,
             last_connected: now,
+            last_activity: now,
             connection_attempts: 0,
             status: ConnectionStatus::Idle,
             last_health_check: now,
@@ -223,6 +227,7 @@ impl UpstreamConnection {
         self.capabilities = capabilities;
         self.status = ConnectionStatus::Ready;
         self.last_connected = Instant::now();
+        self.last_activity = self.last_connected;
     }
 
     /// Update connection status to error (basic error handling without escalation)
@@ -283,7 +288,9 @@ impl UpstreamConnection {
     /// Update connection status to ready
     pub fn update_ready(&mut self) {
         self.status = ConnectionStatus::Ready;
-        self.last_connected = Instant::now();
+        let now = Instant::now();
+        self.last_connected = now;
+        self.last_activity = now;
     }
 
     /// Update connection status with progressive failure escalation
@@ -357,6 +364,7 @@ impl UpstreamConnection {
         self.service = None;
         self.tools = Vec::new();
         self.status = ConnectionStatus::Shutdown;
+        self.last_activity = Instant::now();
     }
 
     /// Update connection status to shutdown (legacy method, use update_disconnected instead)

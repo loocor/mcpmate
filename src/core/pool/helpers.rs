@@ -10,7 +10,7 @@ use crate::core::foundation::types::{
 };
 use crate::core::pool::UpstreamConnection;
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 /// Helper methods for managing connection instances and utilities
 impl super::UpstreamConnectionPool {
@@ -161,6 +161,20 @@ impl super::UpstreamConnectionPool {
             .context(format!("Server '{server_id}' not found in connection pool"))?;
 
         Ok(instances.keys().cloned().collect())
+    }
+
+    /// Mark the default connection's last activity timestamp.
+    ///
+    /// Used by runtime flows to keep long-lived instances alive when they
+    /// successfully serve API or MCP requests.
+    pub fn mark_instance_activity(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) {
+        if let Ok(instance) = self.get_instance_mut(server_id, instance_id) {
+            instance.last_activity = Instant::now();
+        }
     }
 
     // ========================================

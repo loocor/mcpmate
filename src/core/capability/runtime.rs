@@ -384,6 +384,13 @@ async fn list_impl(
         source: instance_source,
     };
 
+    if matches!(instance.source, OperationSource::Runtime) {
+        let instance_id = instance.instance_id.clone();
+        let mut pool_guard = pool.lock().await;
+        pool_guard.mark_instance_activity(&ctx.server_id, &instance_id);
+        drop(pool_guard);
+    }
+
     let (mut result, runtime_failure) = list_with_instance(ctx, instance, timeout, database.clone()).await?;
     result.meta.duration_ms = start.elapsed().as_millis() as u64;
     if let Some(failure) = runtime_failure {
@@ -620,6 +627,11 @@ async fn call_tool_impl(
     let peer: Peer<RoleClient> =
         peer_opt.ok_or_else(|| anyhow::anyhow!("No ready instance for server {}", ctx.server_id))?;
 
+    if let Some(instance_id) = selected_instance.as_ref() {
+        let mut pool_guard = pool.lock().await;
+        pool_guard.mark_instance_activity(&ctx.server_id, instance_id);
+    }
+
     let selected_instance_id = selected_instance.clone();
     let tool_name = ctx.tool_name.clone();
     let arguments = ctx.arguments.clone();
@@ -636,6 +648,9 @@ async fn call_tool_impl(
             if selected_instance_id.is_some() {
                 let mut pool = pool.lock().await;
                 pool.clear_failure_state(&ctx.server_id);
+                if let Some(instance_id) = selected_instance_id.as_ref() {
+                    pool.mark_instance_activity(&ctx.server_id, instance_id);
+                }
             }
             tracing::info!(
                 server_id = %ctx.server_id,

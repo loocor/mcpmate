@@ -14,7 +14,8 @@ pub async fn start_background_connections(
 ) -> Result<()> {
     // Get a reference to the core connection pool
     let connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>> = Arc::clone(&proxy.connection_pool);
-    let _proxy_arc_clone = Arc::clone(&proxy_arc);
+    let connection_pool_for_prewarm = Arc::clone(&connection_pool);
+    let proxy_arc_for_prewarm = Arc::clone(&proxy_arc);
 
     // No eager connections at startup; keep instances registered as Idle placeholders.
     // Background task: delegate prewarm to capability service
@@ -23,7 +24,7 @@ pub async fn start_background_connections(
 
         // Log current registered servers as placeholders
         {
-            let pool = connection_pool.lock().await;
+            let pool = connection_pool_for_prewarm.lock().await;
             let enabled_servers_count = pool.connections.len();
             tracing::info!(
                 "Startup: {} enabled servers registered as placeholders (Idle). Will connect on demand.",
@@ -31,10 +32,10 @@ pub async fn start_background_connections(
             );
         }
 
-        if let Some(db) = proxy_arc.database.clone() {
+        if let Some(db) = proxy_arc_for_prewarm.database.clone() {
             let service = crate::core::capability::CapabilityService::new(
-                proxy_arc.redb_cache.clone(),
-                connection_pool.clone(),
+                proxy_arc_for_prewarm.redb_cache.clone(),
+                connection_pool_for_prewarm.clone(),
                 db.clone(),
             );
             if let Err(e) = service.prewarm_enabled_servers_if_cache_miss().await {
@@ -42,6 +43,17 @@ pub async fn start_background_connections(
             }
         } else {
             tracing::debug!("Database not set on proxy; skipping cache prewarm");
+        }
+    });
+
+    // Background task: reap idle instances to keep pool lean
+    let idle_pool = connection_pool.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let mut pool = idle_pool.lock().await;
+            pool.reap_idle_instances().await;
         }
     });
 

@@ -1,6 +1,6 @@
 use crate::core::{cache::RedbCacheManager, pool::UpstreamConnectionPool};
-use anyhow::Result;
-use std::sync::Arc;
+use anyhow::{Context, Result, anyhow};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 /// Session identifier used for temporary validation instances when capability
@@ -112,16 +112,70 @@ impl CapabilityService {
         // 1) Try runtime pipeline (REDB-first -> runtime)
         let mut result = crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await?;
 
-        // 2) If runtime had no peer, ensure a standard instance is connected and retry once
+        // 2) If runtime had no peer, create a temporary validation instance (if available) or fall back to standard instance
         if result.items.is_empty() && !result.meta.cache_hit && !result.meta.had_peer {
-            {
-                let mut pool = self.pool.lock().await;
-                pool.ensure_connected(&ctx.server_id).await?;
+            let mut retried_with_validation = false;
+            if let Some(session_id) = ctx.validation_session.as_deref() {
+                let server_name = self.resolve_server_name(&ctx.server_id).await?;
+                let mut pool_guard = self.pool.lock().await;
+                let create_result = pool_guard
+                    .get_or_create_validation_instance(&server_name, session_id, Duration::from_secs(300))
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to create validation instance for server '{}' (session '{}')",
+                            server_name, session_id
+                        )
+                    })?;
+                if create_result.is_some() {
+                    retried_with_validation = true;
+                }
+                drop(pool_guard);
+
+                if retried_with_validation {
+                    result =
+                        crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await?;
+
+                    // Only auto-cleanup the shared capability session; other sessions manage lifecycle themselves.
+                    if session_id == CAPABILITY_VALIDATION_SESSION {
+                        let mut pool_guard = self.pool.lock().await;
+                        if let Err(e) = pool_guard.destroy_validation_instance(&server_name, session_id).await {
+                            tracing::debug!(
+                                server = %server_name,
+                                session = %session_id,
+                                error = %e,
+                                "Failed to destroy validation instance after capability listing"
+                            );
+                        }
+                    }
+                }
             }
 
-            result = crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await?;
+            if !retried_with_validation {
+                let mut pool = self.pool.lock().await;
+                pool.ensure_connected(&ctx.server_id).await?;
+                drop(pool);
+
+                result = crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await?;
+            }
         }
 
         Ok(result)
+    }
+
+    async fn resolve_server_name(
+        &self,
+        server_id: &str,
+    ) -> Result<String> {
+        if let Some(name) = crate::core::capability::resolver::to_name(server_id).await? {
+            return Ok(name);
+        }
+
+        let server = crate::config::server::get_server_by_id(&self.database.pool, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server '{}' not found in database", server_id))?;
+
+        crate::core::capability::resolver::upsert(server_id, &server.name).await;
+        Ok(server.name)
     }
 }
