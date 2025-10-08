@@ -60,6 +60,7 @@ pub struct ImportedServer {
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
     pub server_type: String,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +195,7 @@ pub async fn import_batch(
                 args: cfg.args.clone().unwrap_or_default(),
                 env: cfg.env.clone().unwrap_or_default(),
                 server_type: cfg.kind.clone(),
+                url: cfg.url.clone(),
             });
             continue;
         }
@@ -357,6 +359,7 @@ pub async fn import_batch(
             args: args_norm,
             env: env_norm,
             server_type: server_type.client_format().to_string(),
+            url: cfg.url.clone(),
         });
     }
 

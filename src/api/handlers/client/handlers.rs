@@ -6,7 +6,8 @@ use crate::api::models::client::{
     ClientBackupActionData, ClientBackupActionResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
     ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
     ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientImportSummary, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
+    ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata,
+    ClientTemplateStorageMetadata,
 };
 use crate::api::routes::AppState;
 use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat};
@@ -82,10 +83,7 @@ pub async fn config_details(
     let content = match service.read_current_config(&request.identifier).await {
         Ok(content) => content,
         Err(err) => {
-            let message = format!(
-                "Unable to read current configuration: {}",
-                err
-            );
+            let message = format!("Unable to read current configuration: {}", err);
             tracing::warn!(
                 client = %request.identifier,
                 error = %err,
@@ -119,10 +117,7 @@ pub async fn config_details(
                 error = %err,
                 "Falling back to disabled managed state after lookup failure"
             );
-            warnings.push(format!(
-                "Failed to load managed state: {}",
-                err
-            ));
+            warnings.push(format!("Failed to load managed state: {}", err));
             false
         }
     };
@@ -313,37 +308,38 @@ pub async fn config_import(
         }
     }
 
+    let crate::config::server::ImportOutcome {
+        imported,
+        skipped,
+        failed,
+        scheduled,
+    } = outcome;
+
+    let imported_servers: Vec<ClientImportedServer> = imported
+        .into_iter()
+        .map(|s| ClientImportedServer {
+            name: s.name,
+            command: s.command.unwrap_or_default(),
+            args: s.args,
+            env: s.env,
+            server_type: s.server_type,
+            url: s.url,
+        })
+        .collect();
+
     let summary = ClientImportSummary {
         attempted: true,
-        imported_count: outcome.imported.len() as u32,
-        skipped_count: outcome.skipped.len() as u32,
-        failed_count: outcome.failed.len() as u32,
-        errors: if outcome.failed.is_empty() {
-            None
-        } else {
-            Some(outcome.failed)
-        },
+        imported_count: imported_servers.len() as u32,
+        skipped_count: skipped.len() as u32,
+        failed_count: failed.len() as u32,
+        errors: if failed.is_empty() { None } else { Some(failed) },
     };
 
     let data = ClientConfigImportData {
         summary,
-        // In preview mode, return the would-be imported servers for visibility
-        imported_servers: outcome
-            .imported
-            .into_iter()
-            .map(|s| {
-                serde_json::json!({
-                    "name": s.name,
-                    "command": s.command.unwrap_or_default(),
-                    "args": s.args,
-                    "env": s.env,
-                    "server_type": s.server_type,
-                })
-            })
-            .filter_map(|v| serde_json::from_value(v).ok())
-            .collect(),
+        imported_servers,
         profile_id: profile_used,
-        scheduled: Some(outcome.scheduled),
+        scheduled: Some(scheduled),
         scheduled_reason: None,
     };
 

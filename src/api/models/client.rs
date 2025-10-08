@@ -378,6 +378,9 @@ pub struct ClientImportedServer {
     pub env: std::collections::HashMap<String, String>,
     #[schemars(description = "Server type (stdio|sse|streamable_http)")]
     pub server_type: String,
+    #[schemars(description = "Endpoint URL for HTTP/SSE servers")]
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
