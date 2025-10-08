@@ -425,20 +425,12 @@ impl TemplateEngine {
                     env.insert("PROFILE_ID".to_string(), pid.to_string());
                 }
 
-                let sse_url = format!("{}?client_id={}", runtime_config.mcp_sse_url(), client_id);
-
-                let sanitized_client: String = client_id
-                    .chars()
-                    .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-                    .collect();
-                let bridge_name = format!("mcpmate_bridge_{}", sanitized_client);
-
                 Ok(Some(ServerTemplateInput {
-                    name: bridge_name,
+                    name: "MCPMate".to_string(),
                     display_name: Some("MCPMate Bridge".to_string()),
                     transport: effective_transport.to_string(),
                     command: Some(bridge_path),
-                    args: vec!["--sse-url".to_string(), sse_url],
+                    args: Vec::new(),
                     env,
                     url: None,
                     headers: HashMap::new(),

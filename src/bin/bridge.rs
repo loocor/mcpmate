@@ -1,47 +1,418 @@
 use anyhow::Result;
 use clap::Parser;
 use mcpmate::common::constants::branding;
-use once_cell::sync::OnceCell;
+use reqwest::{
+    Client as HttpClient,
+    header::{HeaderMap, HeaderName, HeaderValue},
+};
 use rmcp::{
     ClientHandler, ErrorData as McpError, RoleClient, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, ProtocolVersion, ServerCapabilities,
-        ServerInfo,
+        CallToolRequestParam, CallToolResult, CancelledNotificationParam, ClientCapabilities, ClientInfo,
+        CompleteRequestParam, CompleteResult, GetPromptRequestParam, GetPromptResult, InitializeRequestParam,
+        InitializeResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+        PaginatedRequestParam, ProtocolVersion, ReadResourceRequestParam, ReadResourceResult, ServerCapabilities,
+        ServerInfo, SetLevelRequestParam, SubscribeRequestParam, UnsubscribeRequestParam,
     },
     serve_server,
     service::{NotificationContext, RequestContext, ServiceExt},
-    transport::{SseClientTransport, io},
+    transport::{
+        StreamableHttpClientTransport, io,
+        sse_client::{SseClientConfig, SseClientTransport},
+        streamable_http_client::StreamableHttpClientTransportConfig,
+    },
 };
-use std::sync::Arc;
+use std::{
+    future::Future,
+    sync::{Arc, RwLock},
+};
 use tokio::sync::Mutex;
 use tracing_subscriber::{self, EnvFilter};
 
-// Global variable to store SSE client
-static SSE_CLIENT: OnceCell<Mutex<Option<rmcp::service::RunningService<RoleClient, BridgeClient>>>> = OnceCell::new();
+/// Command line arguments for the bridge.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// URL of the upstream MCP server to connect to (Streamable HTTP endpoint).
+    #[arg(
+        short = 'u',
+        short_alias = 's',
+        long = "upstream-url",
+        alias = "sse-url",
+        default_value = "http://127.0.0.1:8000/mcp"
+    )]
+    upstream_url: String,
 
-/// A client handler for the bridge client
-#[derive(Clone, Debug)]
+    /// Log level
+    #[arg(short, long, default_value = "info")]
+    log_level: String,
+}
+
+#[derive(Default)]
+struct NotificationState {
+    tool_list_changed: bool,
+    prompt_list_changed: bool,
+    resource_list_changed: bool,
+    cancelled: Vec<CancelledNotificationParam>,
+    progress: Vec<rmcp::model::ProgressNotificationParam>,
+    logging: Vec<rmcp::model::LoggingMessageNotificationParam>,
+    resource_updates: Vec<rmcp::model::ResourceUpdatedNotificationParam>,
+}
+
+#[derive(Default)]
+struct BridgeNotifications {
+    inner: Mutex<NotificationState>,
+}
+
+impl BridgeNotifications {
+    async fn mark_tool_list_changed(&self) {
+        self.inner.lock().await.tool_list_changed = true;
+    }
+
+    async fn mark_prompt_list_changed(&self) {
+        self.inner.lock().await.prompt_list_changed = true;
+    }
+
+    async fn mark_resource_list_changed(&self) {
+        self.inner.lock().await.resource_list_changed = true;
+    }
+
+    async fn push_cancelled(
+        &self,
+        param: CancelledNotificationParam,
+    ) {
+        self.inner.lock().await.cancelled.push(param);
+    }
+
+    async fn push_progress(
+        &self,
+        param: rmcp::model::ProgressNotificationParam,
+    ) {
+        self.inner.lock().await.progress.push(param);
+    }
+
+    async fn push_logging(
+        &self,
+        param: rmcp::model::LoggingMessageNotificationParam,
+    ) {
+        self.inner.lock().await.logging.push(param);
+    }
+
+    async fn push_resource_update(
+        &self,
+        param: rmcp::model::ResourceUpdatedNotificationParam,
+    ) {
+        self.inner.lock().await.resource_updates.push(param);
+    }
+
+    async fn take(&self) -> NotificationState {
+        let mut guard = self.inner.lock().await;
+        std::mem::take(&mut *guard)
+    }
+}
+
+#[derive(Default)]
+struct BridgeRuntimeStore {
+    inner: Mutex<Option<BridgeRuntime>>,
+}
+
+struct BridgeRuntime {
+    service: Arc<rmcp::service::RunningService<RoleClient, BridgeClient>>,
+}
+
+#[derive(Clone)]
+struct BridgeServer {
+    upstream_url: String,
+    notifications: Arc<BridgeNotifications>,
+    runtime: Arc<BridgeRuntimeStore>,
+    server_info: Arc<RwLock<Option<ServerInfo>>>,
+}
+
+fn map_service_error(error: rmcp::service::ServiceError) -> McpError {
+    match error {
+        rmcp::service::ServiceError::McpError(err) => err,
+        rmcp::service::ServiceError::TransportSend(err) => {
+            McpError::internal_error(format!("Upstream transport send error: {err}"), None)
+        }
+        rmcp::service::ServiceError::TransportClosed => McpError::internal_error("Upstream transport closed", None),
+        rmcp::service::ServiceError::UnexpectedResponse => {
+            McpError::internal_error("Unexpected upstream response", None)
+        }
+        rmcp::service::ServiceError::Cancelled { reason } => McpError::internal_error(
+            format!("Upstream request cancelled: {}", reason.unwrap_or_default()),
+            None,
+        ),
+        rmcp::service::ServiceError::Timeout { timeout } => {
+            McpError::internal_error(format!("Upstream request timed out after {:?}", timeout), None)
+        }
+        _ => McpError::internal_error(format!("Unhandled upstream service error: {error}"), None),
+    }
+}
+
+impl BridgeRuntimeStore {
+    async fn get(&self) -> Option<Arc<rmcp::service::RunningService<RoleClient, BridgeClient>>> {
+        let guard = self.inner.lock().await;
+        guard.as_ref().map(|runtime| runtime.service.clone())
+    }
+
+    async fn set(
+        &self,
+        service: Arc<rmcp::service::RunningService<RoleClient, BridgeClient>>,
+    ) {
+        let mut guard = self.inner.lock().await;
+        *guard = Some(BridgeRuntime { service });
+    }
+
+    async fn is_some(&self) -> bool {
+        self.inner.lock().await.is_some()
+    }
+}
+
+enum UpstreamKind {
+    Streamable(String),
+    Sse(String),
+}
+
+fn remap_sse_to_mcp(url: &str) -> Option<String> {
+    let mut parsed = reqwest::Url::parse(url).ok()?;
+    let trimmed = parsed.path().trim_end_matches('/');
+    if let Some(stripped) = trimmed.strip_suffix("/sse") {
+        let mut new_path = if stripped.is_empty() {
+            String::from("/")
+        } else {
+            stripped.to_string()
+        };
+        if !new_path.ends_with('/') {
+            new_path.push('/');
+        }
+        new_path.push_str("mcp");
+        parsed.set_path(&new_path);
+        Some(parsed.to_string())
+    } else {
+        None
+    }
+}
+
+fn resolve_upstream_kind(url: &str) -> UpstreamKind {
+    if let Ok(parsed) = reqwest::Url::parse(url) {
+        let path = parsed.path().trim_end_matches('/');
+        if path == "/mcp" || path.ends_with("/mcp") {
+            return UpstreamKind::Streamable(url.to_string());
+        }
+    }
+
+    if let Some(remapped) = remap_sse_to_mcp(url) {
+        UpstreamKind::Streamable(remapped)
+    } else {
+        UpstreamKind::Sse(url.to_string())
+    }
+}
+
+impl BridgeServer {
+    fn new(
+        upstream_url: String,
+        notifications: Arc<BridgeNotifications>,
+        runtime: Arc<BridgeRuntimeStore>,
+        server_info: Arc<RwLock<Option<ServerInfo>>>,
+    ) -> Self {
+        Self {
+            upstream_url,
+            notifications,
+            runtime,
+            server_info,
+        }
+    }
+
+    async fn ensure_runtime(&self) -> Result<Arc<rmcp::service::RunningService<RoleClient, BridgeClient>>, McpError> {
+        if let Some(service) = self.runtime.get().await {
+            return Ok(service);
+        }
+        self.establish_upstream().await?;
+        self.runtime
+            .get()
+            .await
+            .ok_or_else(|| McpError::internal_error("Upstream MCP service is not available", None))
+    }
+
+    async fn establish_upstream(&self) -> Result<(), McpError> {
+        if self.runtime.is_some().await {
+            return Ok(());
+        }
+
+        let protocol_version = ProtocolVersion::LATEST.to_string();
+        let mut default_headers = HeaderMap::new();
+        let header_value = HeaderValue::from_str(&protocol_version).map_err(|err| {
+            tracing::error!("Invalid MCP protocol version header: {err}");
+            McpError::internal_error("Invalid MCP protocol version header", None)
+        })?;
+        default_headers.insert(HeaderName::from_static("mcp-protocol-version"), header_value);
+
+        let http_client = HttpClient::builder()
+            .default_headers(default_headers)
+            .build()
+            .map_err(|err| {
+                tracing::error!("Failed to create upstream HTTP client: {err}");
+                McpError::internal_error("Failed to create upstream HTTP client", None)
+            })?;
+
+        let notifications = self.notifications.clone();
+        let client_handler = BridgeClient::new(notifications);
+        let client_handler_for_streamable = client_handler.clone();
+
+        let upstream_kind = resolve_upstream_kind(&self.upstream_url);
+
+        let service_result = match upstream_kind {
+            UpstreamKind::Streamable(stream_url) => {
+                tracing::info!(upstream = %stream_url, "Using streamable HTTP upstream");
+                let transport = StreamableHttpClientTransport::with_client(
+                    http_client.clone(),
+                    StreamableHttpClientTransportConfig {
+                        uri: stream_url.clone().into(),
+                        ..Default::default()
+                    },
+                );
+                client_handler_for_streamable.serve(transport).await.map_err(|err| {
+                    tracing::error!("Failed to initialize upstream MCP client (streamable): {err}");
+                    McpError::internal_error(format!("Failed to initialize upstream MCP client: {err}"), None)
+                })
+            }
+            UpstreamKind::Sse(sse_url) => {
+                tracing::info!(upstream = %sse_url, "Using SSE upstream");
+                let transport = SseClientTransport::start_with_client(
+                    http_client.clone(),
+                    SseClientConfig {
+                        sse_endpoint: sse_url.clone().into(),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|err| {
+                    tracing::error!("Failed to create SSE transport: {err}");
+                    McpError::internal_error(format!("Failed to initialize upstream MCP client: {err}"), None)
+                })?;
+                client_handler.serve(transport).await.map_err(|err| {
+                    tracing::error!("Failed to initialize upstream MCP client (sse): {err}");
+                    McpError::internal_error(format!("Failed to initialize upstream MCP client: {err}"), None)
+                })
+            }
+        };
+
+        match service_result {
+            Ok(service) => {
+                let service = Arc::new(service);
+                if let Some(info) = service.peer().peer_info().cloned() {
+                    let mut guard = self.server_info.write().expect("server_info poisoned");
+                    *guard = Some(info);
+                }
+                self.runtime.set(service).await;
+                tracing::info!("Successfully initialized upstream MCP client");
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn upstream_request<F, Fut, T>(
+        &self,
+        f: F,
+    ) -> Result<T, McpError>
+    where
+        F: FnOnce(Arc<rmcp::service::RunningService<RoleClient, BridgeClient>>) -> Fut,
+        Fut: Future<Output = Result<T, rmcp::service::ServiceError>>,
+    {
+        let service = self.ensure_runtime().await?;
+        f(service).await.map_err(map_service_error)
+    }
+
+    async fn forward_request<F, Fut, T>(
+        &self,
+        context: &RequestContext<RoleServer>,
+        f: F,
+    ) -> Result<T, McpError>
+    where
+        F: FnOnce(Arc<rmcp::service::RunningService<RoleClient, BridgeClient>>) -> Fut,
+        Fut: Future<Output = Result<T, rmcp::service::ServiceError>>,
+    {
+        self.flush_notifications(context).await?;
+        let result = self.upstream_request(f).await?;
+        self.flush_notifications(context).await?;
+        Ok(result)
+    }
+
+    async fn forward_notification<F, Fut>(
+        &self,
+        f: F,
+    ) where
+        F: FnOnce(Arc<rmcp::service::RunningService<RoleClient, BridgeClient>>) -> Fut,
+        Fut: Future<Output = Result<(), rmcp::service::ServiceError>>,
+    {
+        if let Err(err) = self.upstream_request(f).await {
+            tracing::warn!("Failed to forward notification upstream: {err}");
+        }
+    }
+
+    async fn flush_notifications(
+        &self,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let pending = self.notifications.take().await;
+        let peer = context.peer.clone();
+
+        if pending.tool_list_changed {
+            peer.notify_tool_list_changed().await.map_err(map_service_error)?;
+        }
+        if pending.prompt_list_changed {
+            peer.notify_prompt_list_changed().await.map_err(map_service_error)?;
+        }
+        if pending.resource_list_changed {
+            peer.notify_resource_list_changed().await.map_err(map_service_error)?;
+        }
+        for update in pending.resource_updates {
+            peer.notify_resource_updated(update).await.map_err(map_service_error)?;
+        }
+        for progress in pending.progress {
+            peer.notify_progress(progress).await.map_err(map_service_error)?;
+        }
+        for cancelled in pending.cancelled {
+            peer.notify_cancelled(cancelled).await.map_err(map_service_error)?;
+        }
+        for logging in pending.logging {
+            peer.notify_logging_message(logging).await.map_err(map_service_error)?;
+        }
+        Ok(())
+    }
+
+    fn downstream_server_info(&self) -> ServerInfo {
+        if let Some(info) = self.server_info.read().expect("server_info poisoned").clone() {
+            info
+        } else {
+            ServerInfo {
+                server_info: branding::bridge::create_server_implementation(),
+                capabilities: ServerCapabilities::builder().build(),
+                instructions: Some(branding::bridge::DESCRIPTION.to_string()),
+                protocol_version: ProtocolVersion::LATEST,
+            }
+        }
+    }
+}
+
+/// Bridge client forwards upstream notifications into shared state.
+#[derive(Clone)]
 struct BridgeClient {
-    /// Flag indicating whether the tool list has changed
-    tool_list_changed: Arc<Mutex<bool>>,
+    notifications: Arc<BridgeNotifications>,
 }
 
 impl BridgeClient {
-    /// Create a new bridge client
-    fn new() -> Self {
-        Self {
-            tool_list_changed: Arc::new(Mutex::new(false)),
-        }
+    fn new(notifications: Arc<BridgeNotifications>) -> Self {
+        Self { notifications }
     }
 }
 
 impl ClientHandler for BridgeClient {
     fn get_info(&self) -> ClientInfo {
-        // get the appid from the environment variable
         let appid = std::env::var("APPID").unwrap_or_default();
-
         ClientInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
+            protocol_version: ProtocolVersion::LATEST,
             capabilities: ClientCapabilities::default(),
             client_info: branding::bridge::create_client_implementation(&appid),
         }
@@ -51,34 +422,21 @@ impl ClientHandler for BridgeClient {
         &self,
         _context: NotificationContext<RoleClient>,
     ) {
-        tracing::info!("Received tool list changed notification from upstream server");
-
-        // Set the tool list changed flag
-        let mut flag = self.tool_list_changed.lock().await;
-        *flag = true;
-
-        // The notification will be forwarded to downstream client
-        // when they call list_tools or call_tool
+        self.notifications.mark_tool_list_changed().await;
     }
-
-    // Implement other notification handlers with default behavior
-    // These are provided by the trait with default implementations,
-    // but we're explicitly implementing them for clarity
 
     async fn on_resource_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
     ) {
-        tracing::debug!("Received resource list changed notification (ignored)");
-        // We don't handle resource list changes in the bridge
+        self.notifications.mark_resource_list_changed().await;
     }
 
     async fn on_prompt_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
     ) {
-        tracing::debug!("Received prompt list changed notification (ignored)");
-        // We don't handle prompt list changes in the bridge
+        self.notifications.mark_prompt_list_changed().await;
     }
 
     async fn on_resource_updated(
@@ -86,11 +444,7 @@ impl ClientHandler for BridgeClient {
         params: rmcp::model::ResourceUpdatedNotificationParam,
         _context: NotificationContext<RoleClient>,
     ) {
-        tracing::debug!(
-            "Received resource updated notification for URI: {} (ignored)",
-            params.uri
-        );
-        // We don't handle resource updates in the bridge
+        self.notifications.push_resource_update(params).await;
     }
 
     async fn on_progress(
@@ -98,8 +452,7 @@ impl ClientHandler for BridgeClient {
         params: rmcp::model::ProgressNotificationParam,
         _context: NotificationContext<RoleClient>,
     ) {
-        tracing::debug!("Received progress notification: {:?} (ignored)", params);
-        // We don't handle progress notifications in the bridge
+        self.notifications.push_progress(params).await;
     }
 
     async fn on_cancelled(
@@ -107,8 +460,7 @@ impl ClientHandler for BridgeClient {
         params: rmcp::model::CancelledNotificationParam,
         _context: NotificationContext<RoleClient>,
     ) {
-        tracing::debug!("Received cancelled notification: {:?} (ignored)", params);
-        // We don't handle cancelled notifications in the bridge
+        self.notifications.push_cancelled(params).await;
     }
 
     async fn on_logging_message(
@@ -116,276 +468,269 @@ impl ClientHandler for BridgeClient {
         params: rmcp::model::LoggingMessageNotificationParam,
         _context: NotificationContext<RoleClient>,
     ) {
-        tracing::debug!("Received logging message: {:?} (ignored)", params);
-        // We don't handle logging messages in the bridge
+        self.notifications.push_logging(params).await;
     }
 }
 
-/// Command line arguments for the stdio to SSE bridge
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// URL of the SSE server to connect to
-    #[arg(short, long, default_value = "http://127.0.0.1:8000/sse")]
-    sse_url: String,
-
-    /// Log level
-    #[arg(short, long, default_value = "info")]
-    log_level: String,
-}
-
-/// A bridge server that forwards requests to an SSE server
-#[derive(Clone)]
-struct BridgeServer {
-    /// The URL of the upstream SSE server
-    sse_url: String,
-}
-
-impl BridgeServer {
-    /// Create a new bridge server
-    fn new(sse_url: String) -> Self {
-        Self { sse_url }
-    }
-
-    /// Check if the tool list has changed and send a notification if needed
-    async fn check_tool_list_changed(
-        &self,
-        context: RequestContext<RoleServer>,
-    ) -> Result<(), McpError> {
-        // Get the global SSE client
-        if let Some(client_mutex) = SSE_CLIENT.get() {
-            let client_guard = client_mutex.lock().await;
-
-            if let Some(sse_client) = &*client_guard {
-                // Get the client handler
-                let client_handler = sse_client.service();
-
-                // Check if the tool list has changed
-                let tool_list_changed = {
-                    let flag = client_handler.tool_list_changed.lock().await;
-                    *flag
-                };
-
-                // If the tool list has changed, send a notification
-                if tool_list_changed {
-                    // Send the notification
-                    if let Err(e) = context.peer.notify_tool_list_changed().await {
-                        tracing::error!("Failed to send tool list changed notification: {e:?}");
-                        return Err(McpError::internal_error(
-                            format!("Failed to send tool list changed notification: {e:?}"),
-                            None,
-                        ));
-                    }
-
-                    // Reset the flag
-                    let mut flag = client_handler.tool_list_changed.lock().await;
-                    *flag = false;
-
-                    tracing::info!("Sent tool list changed notification to downstream client");
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Connect to the upstream SSE server
-    async fn connect_to_sse(&self) -> Result<(), McpError> {
-        // initialize the global SSE client
-        if SSE_CLIENT.get().is_none() {
-            let mutex = Mutex::new(None);
-            SSE_CLIENT.set(mutex).unwrap();
-        }
-
-        let client_mutex = SSE_CLIENT.get().unwrap();
-        let mut client_guard = client_mutex.lock().await;
-
-        // if already connected, do not repeat the connection
-        if client_guard.is_some() {
-            return Ok(());
-        }
-
-        // create client handler
-        let client_handler = BridgeClient::new();
-
-        // create SSE transport
-        let sse_transport = match SseClientTransport::start(self.sse_url.as_str()).await {
-            Ok(transport) => {
-                tracing::debug!("Successfully connected to SSE server");
-                transport
-            }
-            Err(e) => {
-                tracing::error!("Failed to connect to SSE server: {}", e);
-                return Err(McpError::internal_error("Failed to connect to SSE server", None));
-            }
-        };
-
-        // initialize SSE client
-        *client_guard = match client_handler.serve(sse_transport).await {
-            Ok(client) => {
-                tracing::info!("Successfully initialized SSE client");
-                Some(client)
-            }
-            Err(e) => {
-                tracing::error!("Failed to initialize SSE client: {}", e);
-                return Err(McpError::internal_error("Failed to initialize SSE client", None));
-            }
-        };
-
-        Ok(())
-    }
-}
-
-/// A server handler for the bridge server
+/// The bridge server simply proxies upstream capabilities.
+#[allow(clippy::manual_async_fn)]
 impl ServerHandler for BridgeServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .enable_tool_list_changed() // Enable tool list changed notifications
-                .build(),
-            server_info: branding::bridge::create_server_implementation(),
-            instructions: Some(branding::bridge::DESCRIPTION.to_string()),
-        }
+        self.downstream_server_info()
     }
 
-    async fn list_tools(
+    fn initialize(
         &self,
-        request: Option<rmcp::model::PaginatedRequestParam>,
-        ctx: RequestContext<RoleServer>,
-    ) -> Result<rmcp::model::ListToolsResult, McpError> {
-        // Check if the tool list has changed and send a notification if needed
-        if let Err(e) = self.check_tool_list_changed(ctx.clone()).await {
-            tracing::warn!("Failed to check tool list changed: {}", e);
-            // Continue with the request even if the notification failed
-        }
-
-        // get the global SSE client
-        if let Some(client_mutex) = SSE_CLIENT.get() {
-            let client_guard = client_mutex.lock().await;
-
-            if let Some(sse_client) = &*client_guard {
-                match sse_client.list_tools(request).await {
-                    Ok(upstream_result) => Ok(upstream_result),
-                    Err(e) => {
-                        tracing::error!("Failed to get tools from SSE server: {}", e);
-                        // report upstream service error
-                        Err(McpError::internal_error(
-                            format!("Upstream SSE service error: {e:?}"),
-                            None,
-                        ))
-                    }
-                }
-            } else {
-                // report upstream service not available
-                Err(McpError::internal_error("Upstream SSE service is not available", None))
+        request: InitializeRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
+        async move {
+            if context.peer.peer_info().is_none() {
+                context.peer.set_peer_info(request);
             }
-        } else {
-            // report upstream service not available
-            Err(McpError::internal_error("Upstream SSE service is not available", None))
+            self.ensure_runtime().await?;
+            Ok(self.downstream_server_info())
         }
     }
 
-    async fn call_tool(
+    fn list_prompts(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListPromptsResult, McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.list_prompts(req).await }
+            })
+            .await
+        }
+    }
+
+    fn list_tools(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.list_tools(req).await }
+            })
+            .await
+        }
+    }
+
+    fn call_tool(
         &self,
         request: CallToolRequestParam,
-        ctx: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        // Check if the tool list has changed and send a notification if needed
-        if let Err(e) = self.check_tool_list_changed(ctx.clone()).await {
-            tracing::warn!("Failed to check tool list changed: {}", e);
-            // Continue with the request even if the notification failed
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.call_tool(req).await }
+            })
+            .await
         }
+    }
 
-        // get the global SSE client
-        if let Some(client_mutex) = SSE_CLIENT.get() {
-            let client_guard = client_mutex.lock().await;
+    fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.list_resources(req).await }
+            })
+            .await
+        }
+    }
 
-            if let Some(sse_client) = &*client_guard {
-                // create CallToolRequestParam
-                let call_request = CallToolRequestParam {
-                    name: request.name.clone(),
-                    arguments: request.arguments.clone(),
-                };
+    fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParam>,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.list_resource_templates(req).await }
+            })
+            .await
+        }
+    }
 
-                match sse_client.call_tool(call_request).await {
-                    Ok(result) => Ok(result),
-                    Err(e) => {
-                        tracing::error!("Failed to call tool on SSE server: {}", e);
-                        // report upstream service error
-                        Err(McpError::internal_error(
-                            format!("Upstream SSE service error: {e:?}"),
-                            None,
-                        ))
-                    }
-                }
-            } else {
-                // report upstream service not available
-                Err(McpError::internal_error("Upstream SSE service is not available", None))
-            }
-        } else {
-            // report upstream service not available
-            Err(McpError::internal_error("Upstream SSE service is not available", None))
+    fn read_resource(
+        &self,
+        request: ReadResourceRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.read_resource(req).await }
+            })
+            .await
+        }
+    }
+
+    fn subscribe(
+        &self,
+        request: SubscribeRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.subscribe(req).await }
+            })
+            .await
+        }
+    }
+
+    fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.unsubscribe(req).await }
+            })
+            .await
+        }
+    }
+
+    fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<GetPromptResult, McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.get_prompt(req).await }
+            })
+            .await
+        }
+    }
+
+    fn complete(
+        &self,
+        request: CompleteRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<CompleteResult, McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.complete(req).await }
+            })
+            .await
+        }
+    }
+
+    fn set_level(
+        &self,
+        request: SetLevelRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
+        async move {
+            self.forward_request(&context, move |service| {
+                let req = request;
+                async move { service.set_level(req).await }
+            })
+            .await
+        }
+    }
+
+    fn on_cancelled(
+        &self,
+        notification: CancelledNotificationParam,
+        _context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        async move {
+            self.forward_notification(move |service| {
+                let param = notification;
+                async move { service.notify_cancelled(param).await }
+            })
+            .await;
+        }
+    }
+
+    fn on_progress(
+        &self,
+        notification: rmcp::model::ProgressNotificationParam,
+        _context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        async move {
+            self.forward_notification(move |service| {
+                let param = notification;
+                async move { service.notify_progress(param).await }
+            })
+            .await;
+        }
+    }
+
+    fn on_initialized(
+        &self,
+        _context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        async move {
+            self.forward_notification(|service| async move { service.notify_initialized().await })
+                .await;
         }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse command line arguments
     let args = Args::parse();
 
-    // Initialize the tracing subscriber to write logs to stderr instead of stdout
-    // This is critical for stdio mode as stdout is used for JSON-RPC communication
     tracing_subscriber::fmt()
-        .with_writer(std::io::stderr) // Redirect logs to stderr
+        .with_writer(std::io::stderr)
         .with_env_filter(
             EnvFilter::from_default_env().add_directive(args.log_level.parse().unwrap_or(tracing::Level::INFO.into())),
         )
         .init();
 
-    tracing::info!("Starting stdio to SSE bridge");
-    tracing::info!("Using protocol version: 2024-11-05 for compatibility");
+    tracing::info!("Starting stdio ↔ MCP bridge");
+    tracing::info!("Using protocol version: {}", ProtocolVersion::LATEST);
 
-    // Create a new bridge server
-    let bridge_server = BridgeServer::new(args.sse_url.clone());
+    let notifications = Arc::new(BridgeNotifications::default());
+    let runtime = Arc::new(BridgeRuntimeStore::default());
+    let server_info = Arc::new(RwLock::new(None));
 
-    // try to connect to the upstream SSE server
-    tracing::info!("Connecting to upstream SSE server at {}", args.sse_url);
-    match bridge_server.connect_to_sse().await {
-        Ok(_) => tracing::debug!("Successfully connected to upstream SSE server"),
-        Err(e) => {
-            // record the error but continue to start the service
-            tracing::error!("Failed to connect to upstream SSE server: {}", e);
-            tracing::warn!("Bridge will start but will report upstream service as unavailable");
-        }
+    let bridge_server = BridgeServer::new(args.upstream_url.clone(), notifications, runtime, server_info);
+
+    tracing::info!("Connecting to upstream MCP server at {}", args.upstream_url);
+    if let Err(err) = bridge_server.establish_upstream().await {
+        tracing::error!("Failed to connect to upstream MCP server: {}", err);
+        tracing::warn!("Bridge will start but report upstream service as unavailable until reconnection succeeds");
     }
 
-    // Create stdio transport
     let stdio_transport = io::stdio();
     tracing::info!("Created stdio transport");
 
-    // Serve the bridge server over stdio
     tracing::info!("Initializing stdio server...");
-
-    // Use rmcp's serve_server function to create and serve our bridge server
     let server = match serve_server(bridge_server, stdio_transport).await {
         Ok(server) => {
             tracing::info!("Successfully initialized stdio server");
             server
         }
-        Err(e) => {
-            tracing::error!("Failed to initialize stdio server: {}", e);
-            return Err(anyhow::anyhow!("Failed to initialize stdio server: {}", e));
+        Err(err) => {
+            tracing::error!("Failed to initialize stdio server: {}", err);
+            return Err(anyhow::anyhow!("Failed to initialize stdio server: {}", err));
         }
     };
 
-    // Wait for the server to exit
-    tracing::info!("Bridge is now running. Waiting for stdio server to exit...");
+    tracing::info!("Bridge is running. Waiting for stdio server to exit...");
     match server.waiting().await {
         Ok(_) => tracing::info!("Stdio server exited normally"),
-        Err(e) => tracing::error!("Stdio server exited with error: {}", e),
+        Err(err) => tracing::error!("Stdio server exited with error: {}", err),
     }
 
     tracing::info!("Bridge shut down");
