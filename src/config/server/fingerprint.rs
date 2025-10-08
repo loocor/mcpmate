@@ -384,6 +384,29 @@ fn parse_python_runner(args: &[String]) -> Option<PythonSignature> {
             break;
         }
 
+        if token == "-m" {
+            if i + 1 < args.len() {
+                let module = args[i + 1].clone();
+                let remainder = args[i + 2..].to_vec();
+                return Some(PythonSignature {
+                    kind: SignatureKind::PythonModule,
+                    primary: Some(module),
+                    remainder,
+                });
+            }
+            return None;
+        }
+
+        if token.starts_with("-m") && token.len() > 2 {
+            let module = token[2..].to_string();
+            let remainder = args[i + 1..].to_vec();
+            return Some(PythonSignature {
+                kind: SignatureKind::PythonModule,
+                primary: Some(module),
+                remainder,
+            });
+        }
+
         if let Some(stripped) = token.strip_prefix("--spec=") {
             if spec_value.is_none() {
                 spec_value = Some(stripped.to_string());

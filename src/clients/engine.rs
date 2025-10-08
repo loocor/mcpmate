@@ -18,6 +18,7 @@ use handlebars::{
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use url::form_urlencoded;
 
 /// Configuration rendering result
 #[derive(Debug, Clone)]
@@ -425,12 +426,30 @@ impl TemplateEngine {
                     env.insert("PROFILE_ID".to_string(), pid.to_string());
                 }
 
+                let mut sse_url = runtime_config.mcp_sse_url();
+                let mut query = form_urlencoded::Serializer::new(String::new());
+                query.append_pair("client_id", client_id);
+                if let Some(pid) = profile_id {
+                    query.append_pair("profile_id", pid);
+                }
+                let query = query.finish();
+                if !query.is_empty() {
+                    if sse_url.contains('?') {
+                        sse_url.push('&');
+                    } else {
+                        sse_url.push('?');
+                    }
+                    sse_url.push_str(&query);
+                }
+
+                let args = vec!["--sse-url".to_string(), sse_url];
+
                 Ok(Some(ServerTemplateInput {
                     name: "MCPMate".to_string(),
                     display_name: Some("MCPMate Bridge".to_string()),
                     transport: effective_transport.to_string(),
                     command: Some(bridge_path),
-                    args: Vec::new(),
+                    args,
                     env,
                     url: None,
                     headers: HashMap::new(),

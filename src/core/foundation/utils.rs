@@ -183,13 +183,10 @@ pub fn needs_runtime_setup(command: &str) -> bool {
 
 /// Transform npx commands to bunx for better performance and compatibility
 pub fn transform_command(command: &str) -> String {
-    match command {
-        "npx" => {
-            tracing::debug!("Transforming npx command to bunx for better performance");
-            "bunx".to_string()
-        }
-        _ => command.to_string(),
+    if command.eq_ignore_ascii_case("npx") {
+        tracing::debug!("Respecting user-provided 'npx' command without bunx rewrite");
     }
+    command.to_string()
 }
 
 /// Generic deduplication helper that removes duplicates based on a key function
@@ -260,8 +257,8 @@ mod tests {
 
     #[test]
     fn test_transform_command() {
-        // Test npx transformation
-        assert_eq!(transform_command("npx"), "bunx");
+        // Ensure user-provided commands are preserved
+        assert_eq!(transform_command("npx"), "npx");
 
         // Test other commands remain unchanged
         assert_eq!(transform_command("uvx"), "uvx");
