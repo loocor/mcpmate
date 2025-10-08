@@ -37,121 +37,180 @@ impl ProfileService {
         }
     }
 
-    async fn list_profile(&self) -> Result<CallToolResult> {
-        // TODO: Token optimization - Current implementation balances information value
-        // with token consumption by providing counts + samples instead of full details.
-        // For full details, consider implementing a separate tool or parameter-based detail levels.
-
-        let profile = profile::get_all_profile(&self.database.pool)
+    async fn profile_list(&self) -> Result<CallToolResult> {
+        let profiles = profile::get_all_profile(&self.database.pool)
             .await
             .context("Failed to list profile")?;
 
-        let mut response: Vec<ProfileInfo> = Vec::new();
+        let mut summaries = Vec::new();
 
-        // For each profile, get information using existing APIs but optimize for token usage
-        for prof in profile {
-            if let Some(id) = prof.id {
-                // Use existing APIs to get detailed information instead of counts
-                let servers = get_profile_servers(&self.database.pool, &id)
-                    .await
-                    .context("Failed to get profile servers")?;
-
-                let tools = get_profile_tools(&self.database.pool, &id)
-                    .await
-                    .context("Failed to get profile tools")?;
-
-                let prompts = get_prompts_for_profile(&self.database.pool, &id)
-                    .await
-                    .context("Failed to get profile prompts")?;
-
-                let resources = get_resources_for_profile(&self.database.pool, &id)
-                    .await
-                    .context("Failed to get profile resources")?;
-
-                // Get server names for server summaries
-                let server_summaries: Vec<ServerSummary> = {
-                    let mut summaries = Vec::new();
-                    for server in servers {
-                        // Get server name from database
-                        if let Ok(Some(server_model)) =
-                            crate::config::server::crud::get_server_by_id(&self.database.pool, &server.server_id).await
-                        {
-                            summaries.push(ServerSummary {
-                                name: server_model.name,
-                                enabled: server.enabled,
-                            });
-                        }
-                    }
-                    summaries
-                };
-
-                // Create tool summaries with valuable information
-                let tool_summaries: Vec<ToolSummary> = tools
-                    .into_iter()
-                    .map(|t| ToolSummary {
-                        name: t.tool_name,
-                        unique_name: t.unique_name,
-                        description: t.description,
-                        server_name: t.server_name,
-                        enabled: t.enabled,
-                    })
-                    .collect();
-
-                // Create prompt summaries
-                let prompt_summaries: Vec<PromptSummary> = prompts
-                    .into_iter()
-                    .map(|p| PromptSummary {
-                        name: p.prompt_name,
-                        server_name: p.server_name,
-                        enabled: p.enabled,
-                    })
-                    .collect();
-
-                // Create resource summaries
-                let resource_summaries: Vec<ResourceSummary> = resources
-                    .into_iter()
-                    .map(|r| ResourceSummary {
-                        uri: r.resource_uri,
-                        server_name: r.server_name,
-                        enabled: r.enabled,
-                    })
-                    .collect();
-
-                // Create simplified version to reduce token consumption
-                // Get sample tool names (first 3) to give users a taste
-                let sample_tools: Vec<String> = tool_summaries
-                    .iter()
-                    .take(3)
-                    .map(|t| format!("{} ({})", t.name, t.unique_name))
-                    .collect();
-
-                // Get sample server names (first 3)
-                let sample_servers: Vec<String> = server_summaries.iter().take(3).map(|s| s.name.clone()).collect();
-
-                response.push(ProfileInfo {
-                    id: id.clone(),
-                    name: prof.name,
-                    description: prof.description,
-                    is_active: prof.is_active,
-                    profile_type: prof.profile_type.to_string(),
-                    server_count: server_summaries.len() as u32,
-                    tool_count: tool_summaries.len() as u32,
-                    prompt_count: prompt_summaries.len() as u32,
-                    resource_count: resource_summaries.len() as u32,
-                    sample_tools,
-                    sample_servers,
-                });
-            } else {
+        for prof in profiles {
+            let Some(profile_id) = prof.id.clone() else {
                 tracing::warn!("Found profile '{}' without ID, skipping", prof.name);
-            }
+                continue;
+            };
+
+            let servers = get_profile_servers(&self.database.pool, &profile_id)
+                .await
+                .context("Failed to get profile servers")?;
+
+            let tools = get_profile_tools(&self.database.pool, &profile_id)
+                .await
+                .context("Failed to get profile tools")?;
+
+            let prompts = get_prompts_for_profile(&self.database.pool, &profile_id)
+                .await
+                .context("Failed to get profile prompts")?;
+
+            let resources = get_resources_for_profile(&self.database.pool, &profile_id)
+                .await
+                .context("Failed to get profile resources")?;
+
+            summaries.push(ProfileSummary {
+                id: profile_id,
+                name: prof.name.clone(),
+                description: prof.description.clone(),
+                is_active: prof.is_active,
+                profile_type: prof.profile_type.to_string(),
+                server_count: servers.len() as u32,
+                tool_count: tools.len() as u32,
+                prompt_count: prompts.len() as u32,
+                resource_count: resources.len() as u32,
+            });
         }
 
+        summaries.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-            serde_json::to_string_pretty(&response).context("Failed to serialize response")?,
+            serde_json::to_string_pretty(&summaries).context("Failed to serialize response")?,
         )]))
     }
 
-    async fn switch_profile(
+    async fn profile_details(
+        &self,
+        profile_id: String,
+    ) -> Result<CallToolResult> {
+        let profile = profile::get_profile(&self.database.pool, &profile_id)
+            .await
+            .context("Failed to get profile")?
+            .ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
+
+        let servers = get_profile_servers(&self.database.pool, &profile_id)
+            .await
+            .context("Failed to get profile servers")?;
+
+        let tools = get_profile_tools(&self.database.pool, &profile_id)
+            .await
+            .context("Failed to get profile tools")?;
+
+        let prompts = get_prompts_for_profile(&self.database.pool, &profile_id)
+            .await
+            .context("Failed to get profile prompts")?;
+
+        let resources = get_resources_for_profile(&self.database.pool, &profile_id)
+            .await
+            .context("Failed to get profile resources")?;
+
+        let mut server_details = Vec::new();
+        for server in servers {
+            let server_id = server.server_id.clone();
+            let server_name = match crate::config::server::crud::get_server_by_id(&self.database.pool, &server_id).await
+            {
+                Ok(Some(server_model)) => server_model.name,
+                Ok(None) => {
+                    tracing::warn!("Server '{}' not found when listing profile '{}'", server_id, profile_id);
+                    server_id.clone()
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        server_id = %server_id,
+                        profile_id = %profile_id,
+                        "Failed to load server metadata, falling back to ID"
+                    );
+                    server_id.clone()
+                }
+            };
+
+            server_details.push(ServerDetail {
+                association_id: server.id.clone(),
+                server_id,
+                name: server_name,
+                enabled: server.enabled,
+            });
+        }
+        server_details.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.server_id.cmp(&b.server_id)));
+
+        let mut tool_details: Vec<ToolDetail> = tools
+            .into_iter()
+            .map(|tool| ToolDetail {
+                association_id: tool.id,
+                server_tool_id: tool.server_tool_id,
+                server_id: tool.server_id,
+                server_name: tool.server_name,
+                tool_name: tool.tool_name,
+                unique_name: tool.unique_name,
+                description: tool.description,
+                enabled: tool.enabled,
+            })
+            .collect();
+        tool_details.sort_by(|a, b| {
+            a.server_name
+                .cmp(&b.server_name)
+                .then_with(|| a.tool_name.cmp(&b.tool_name))
+                .then_with(|| a.unique_name.cmp(&b.unique_name))
+        });
+
+        let mut prompt_details: Vec<PromptDetail> = prompts
+            .into_iter()
+            .map(|prompt| PromptDetail {
+                association_id: prompt.id,
+                server_id: prompt.server_id,
+                server_name: prompt.server_name,
+                prompt_name: prompt.prompt_name,
+                enabled: prompt.enabled,
+            })
+            .collect();
+        prompt_details.sort_by(|a, b| {
+            a.server_name
+                .cmp(&b.server_name)
+                .then_with(|| a.prompt_name.cmp(&b.prompt_name))
+        });
+
+        let mut resource_details: Vec<ResourceDetail> = resources
+            .into_iter()
+            .map(|resource| ResourceDetail {
+                association_id: resource.id,
+                server_id: resource.server_id,
+                server_name: resource.server_name,
+                resource_uri: resource.resource_uri,
+                enabled: resource.enabled,
+            })
+            .collect();
+        resource_details.sort_by(|a, b| {
+            a.server_name
+                .cmp(&b.server_name)
+                .then_with(|| a.resource_uri.cmp(&b.resource_uri))
+        });
+
+        let details = ProfileDetails {
+            id: profile_id.clone(),
+            name: profile.name,
+            description: profile.description,
+            is_active: profile.is_active,
+            profile_type: profile.profile_type.to_string(),
+            servers: server_details,
+            tools: tool_details,
+            prompts: prompt_details,
+            resources: resource_details,
+        };
+
+        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+            serde_json::to_string_pretty(&details).context("Failed to serialize response")?,
+        )]))
+    }
+
+    async fn profile_switch(
         &self,
         profile_id: String,
         activate: bool,
@@ -210,8 +269,8 @@ impl BuiltinService for ProfileService {
     fn tools(&self) -> Vec<rmcp::model::Tool> {
         vec![
             Tool::new(
-                "mcpmate_list_profile",
-                "List all available profile with their current status",
+                "mcpmate_profile_list",
+                "List available profiles with counts for each capability type",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -224,7 +283,26 @@ impl BuiltinService for ProfileService {
                 ),
             ),
             Tool::new(
-                "mcpmate_switch_profile",
+                "mcpmate_profile_details",
+                "Get detailed servers, tools, prompts, and resources for a profile",
+                std::sync::Arc::new(
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "profile_id": {
+                                "type": "string",
+                                "description": "The ID of the profile to inspect"
+                            }
+                        },
+                        "required": ["profile_id"]
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+            ),
+            Tool::new(
+                "mcpmate_profile_switch",
                 "Activate or deactivate a profile",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -254,12 +332,18 @@ impl BuiltinService for ProfileService {
         request: &CallToolRequestParam,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            "mcpmate_list_profile" => self.list_profile().await,
-            "mcpmate_switch_profile" => {
+            "mcpmate_profile_list" => self.profile_list().await,
+            "mcpmate_profile_details" => {
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                let params: SwitchProfileParams =
-                    serde_json::from_value(args).context("Invalid parameters for switch_profile")?;
-                self.switch_profile(params.profile_id, params.activate).await
+                let params: ProfileDetailsParams =
+                    serde_json::from_value(args).context("Invalid parameters for profile_details")?;
+                self.profile_details(params.profile_id).await
+            }
+            "mcpmate_profile_switch" => {
+                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
+                let params: ProfileSwitchParams =
+                    serde_json::from_value(args).context("Invalid parameters for profile_switch")?;
+                self.profile_switch(params.profile_id, params.activate).await
             }
             _ => Err(anyhow::anyhow!("Unknown tool: {}", request.name)),
         }
@@ -267,73 +351,76 @@ impl BuiltinService for ProfileService {
 }
 
 #[derive(Debug, Deserialize)]
-struct SwitchProfileParams {
+struct ProfileDetailsParams {
+    profile_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileSwitchParams {
     profile_id: String,
     activate: bool,
 }
 
-/// TODO: Optimize token usage - current version provides detailed information
-/// but may consume too many tokens. Consider implementing parameter-based
-/// detail levels (basic/detailed) or pagination for large datasets.
 #[derive(Debug, Serialize)]
-struct ProfileInfo {
+struct ProfileSummary {
     id: String,
     name: String,
     description: Option<String>,
     is_active: bool,
     profile_type: String,
-    // Simplified version to reduce token consumption
-    // TODO: Make this configurable or provide both basic/detailed modes
     server_count: u32,
     tool_count: u32,
     prompt_count: u32,
     resource_count: u32,
-    // Sample of available tools (first 3) to give users a taste
-    sample_tools: Vec<String>,
-    sample_servers: Vec<String>,
 }
 
-/// Detailed version (currently unused to save tokens)
-// TODO: Implement detailed profile information structure for enhanced profile management
-#[allow(dead_code)]
 #[derive(Debug, Serialize)]
-struct DetailedProfileInfo {
+struct ProfileDetails {
     id: String,
     name: String,
     description: Option<String>,
     is_active: bool,
     profile_type: String,
-    servers: Vec<ServerSummary>,
-    tools: Vec<ToolSummary>,
-    prompts: Vec<PromptSummary>,
-    resources: Vec<ResourceSummary>,
+    servers: Vec<ServerDetail>,
+    tools: Vec<ToolDetail>,
+    prompts: Vec<PromptDetail>,
+    resources: Vec<ResourceDetail>,
 }
 
 #[derive(Debug, Serialize)]
-struct ServerSummary {
+struct ServerDetail {
+    association_id: Option<String>,
+    server_id: String,
     name: String,
     enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
-struct ToolSummary {
-    name: String,
+struct ToolDetail {
+    association_id: String,
+    server_tool_id: String,
+    server_id: String,
+    server_name: String,
+    tool_name: String,
     unique_name: String,
     description: Option<String>,
-    server_name: String,
     enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
-struct PromptSummary {
-    name: String,
+struct PromptDetail {
+    association_id: Option<String>,
+    server_id: String,
     server_name: String,
+    prompt_name: String,
     enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
-struct ResourceSummary {
-    uri: String,
+struct ResourceDetail {
+    association_id: Option<String>,
+    server_id: String,
     server_name: String,
+    resource_uri: String,
     enabled: bool,
 }
