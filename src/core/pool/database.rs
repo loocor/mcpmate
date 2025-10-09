@@ -49,9 +49,15 @@ impl UpstreamConnectionPool {
     async fn get_server_and_profile(
         db: &Arc<crate::config::database::Database>,
         server_id: &str,
-    ) -> AnyhowResult<(String, Vec<(String, String)>)> {
+    ) -> AnyhowResult<Option<(String, Vec<(String, String)>)>> {
         // Use the unified sync framework
-        let sync_context = SyncHelper::get_server_context(&db.pool, server_id).await?;
+        let Some(sync_context) = SyncHelper::get_server_context(&db.pool, server_id).await? else {
+            tracing::warn!(
+                "Skipping capability sync for server '{}' because configuration is missing",
+                server_id
+            );
+            return Ok(None);
+        };
 
         // Convert to the format expected by existing code
         let profile_data: Vec<(String, String)> = sync_context
@@ -68,7 +74,15 @@ impl UpstreamConnectionPool {
             })
             .collect();
 
-        Ok((sync_context.server_id, profile_data))
+        if profile_data.is_empty() {
+            tracing::warn!(
+                "Skipping capability sync for server '{}' because it is not enabled in any profiles",
+                server_id
+            );
+            return Ok(None);
+        }
+
+        Ok(Some((sync_context.server_id, profile_data)))
     }
 
     // Note: get_profile_with_server function removed as it's now handled by SyncHelper::get_server_context
@@ -134,7 +148,16 @@ impl UpstreamConnectionPool {
             .unwrap_or_else(|_| server_id.to_string());
 
         // Common setup: get server and profile data once
-        let (resolved_server_id, profile_data) = Self::get_server_and_profile(db, server_id).await?;
+        let Some((resolved_server_id, profile_data)) = Self::get_server_and_profile(db, server_id).await? else {
+            if let Ok(cache_manager) = RedbCacheManager::global() {
+                let _ = cache_manager.clear_refreshing(server_id).await;
+            }
+            tracing::warn!(
+                "Capability sync aborted for server '{}' because configuration context was missing",
+                server_id
+            );
+            return Ok(());
+        };
 
         tracing::debug!(
             "Syncing capabilities (flags: {:?}) from server '{}' (ID: {}, instance: {}) to {} profiles",

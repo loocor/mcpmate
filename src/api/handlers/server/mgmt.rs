@@ -4,7 +4,7 @@
 // Server Status Synchronization Policy:
 // 1. API operations have priority over profile settings
 // 2. When a server is disabled via API, it is disabled in all profile
-// 3. When a server is enabled via API, it is only enabled in the default profile
+// 3. When a server is enabled via API, target profiles must be explicitly specified
 // 4. Changes to server status in profile trigger connection/disconnection operations
 // 5. This creates a one-way synchronization where API operations take priority
 

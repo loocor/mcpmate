@@ -21,10 +21,10 @@ use crate::api::models::inspector::{
 };
 use crate::api::routes::AppState;
 use crate::core::capability;
+use crate::core::capability::naming::NamingKind;
 use crate::core::capability::resolver;
 use crate::core::proxy::server::supports_capability;
 use crate::inspector::calls::{InspectorCallInfo, InspectorCallRegistry, InspectorTerminal, RegisteredCall};
-use crate::core::capability::naming::NamingKind;
 
 #[derive(Debug, Clone)]
 pub struct ToolCallOutcome {
@@ -377,10 +377,7 @@ async fn start_tool_call_internal(
     if let Ok((resolved_server_name, resolved_tool_name)) =
         capability::naming::resolve_unique_name(NamingKind::Tool, &upstream_tool_name).await
     {
-        let resolved_server_id = resolver::to_id(&resolved_server_name)
-            .await
-            .ok()
-            .flatten();
+        let resolved_server_id = resolver::to_id(&resolved_server_name).await.ok().flatten();
         let matches_server = resolved_server_id
             .as_deref()
             .map(|id| id == server_id)

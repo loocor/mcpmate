@@ -117,7 +117,7 @@ impl SyncHelper {
     pub async fn get_server_context(
         db_pool: &sqlx::Pool<sqlx::Sqlite>,
         server_id: &str,
-    ) -> Result<SyncContext> {
+    ) -> Result<Option<SyncContext>> {
         tracing::debug!("Getting sync context for server '{}'", server_id);
 
         // Verify the server exists
@@ -126,7 +126,8 @@ impl SyncHelper {
             .with_context(|| format!("Failed to get server '{}'", server_id))?;
 
         if server.is_none() {
-            return Err(anyhow::anyhow!("Server '{}' not found", server_id));
+            tracing::warn!("Server '{}' not found while building sync context", server_id);
+            return Ok(None);
         }
 
         // Get all profile that have this server enabled
@@ -143,7 +144,7 @@ impl SyncHelper {
 
         tracing::debug!("Found {} profile for server '{}'", context.profile_ids.len(), server_id);
 
-        Ok(context)
+        Ok(Some(context))
     }
 
     /// Helper function to get profile that have a specific server enabled
