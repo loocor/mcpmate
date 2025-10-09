@@ -23,8 +23,8 @@ use crate::{
     },
 };
 use axum::{Json, extract::State};
-use std::str::FromStr;
 use std::sync::Arc;
+use std::{collections::BTreeSet, str::FromStr};
 
 /// Validate server configuration
 #[inline]
@@ -58,13 +58,6 @@ fn create_server_from_config(
         ServerType::Sse => Server::new_sse(name, url),
         ServerType::StreamableHttp => Server::new_streamable_http(name, url),
     }
-}
-
-/// Get or create default profile
-async fn get_or_create_default_profile(db: &Database) -> Result<String, ApiError> {
-    profile::ensure_default_anchor_profile_id(&db.pool)
-        .await
-        .map_err(map_anyhow_error)
 }
 
 /// Add server to profile
@@ -283,12 +276,35 @@ pub async fn create_server(
         upsert_meta_payload(&db, &server_id, meta_payload).await?;
     }
 
-    // Add server to default profile if enabled
+    // Associate server with specified profiles if provided
     let initial_enabled = payload.enabled.unwrap_or(true);
-    if initial_enabled {
-        let profile_id = get_or_create_default_profile(&db).await?;
-        add_server_to_profile(&db, &profile_id, &server_id, true).await?;
-        tracing::info!("Enabled server '{}' in default profile", payload.name);
+
+    if let Some(profile_ids) = payload.profile_ids.as_ref() {
+        let mut unique_profiles = BTreeSet::new();
+        for profile_id in profile_ids {
+            if !unique_profiles.insert(profile_id) {
+                continue;
+            }
+
+            let profile = crate::config::profile::get_profile(&db.pool, profile_id)
+                .await
+                .map_err(map_anyhow_error)?
+                .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", profile_id)))?;
+
+            if !profile.is_active {
+                return Err(ApiError::BadRequest(format!("Profile '{}' is not active", profile_id)));
+            }
+
+            add_server_to_profile(&db, profile_id, &server_id, initial_enabled).await?;
+            tracing::info!(
+                server_id = %server_id,
+                profile_id = %profile_id,
+                "Associated server '{}' with profile '{}' (enabled={})",
+                payload.name,
+                profile_id,
+                initial_enabled
+            );
+        }
     }
 
     // Initial capability discovery + dual write (SQLite shadow + REDB)
@@ -452,14 +468,33 @@ pub async fn update_server(
     }
 
     // Update server enabled status if provided
-    if let Some(enabled) = payload.enabled {
-        let profile_id = get_or_create_default_profile(&db).await?;
-        add_server_to_profile_with_sync(&state, &db, &profile_id, &server_id, enabled).await?;
-        tracing::info!(
-            "Updated server '{}' enabled status to {} in default profile",
-            existing_server.name,
-            enabled
-        );
+    if let Some(profile_ids) = payload.profile_ids.as_ref() {
+        let enabled_flag = payload.enabled.unwrap_or(true);
+        let mut unique_profiles = BTreeSet::new();
+        for profile_id in profile_ids {
+            if !unique_profiles.insert(profile_id) {
+                continue;
+            }
+
+            let profile = crate::config::profile::get_profile(&db.pool, profile_id)
+                .await
+                .map_err(map_anyhow_error)?
+                .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", profile_id)))?;
+
+            if !profile.is_active {
+                return Err(ApiError::BadRequest(format!("Profile '{}' is not active", profile_id)));
+            }
+
+            add_server_to_profile_with_sync(&state, &db, profile_id, &server_id, enabled_flag).await?;
+            tracing::info!(
+                server_id = %server_id,
+                profile_id = %profile_id,
+                "Updated server '{}' association in profile '{}' (enabled={})",
+                existing_server.name,
+                profile_id,
+                enabled_flag
+            );
+        }
     }
 
     // Get server details via shared helper
@@ -498,6 +533,17 @@ pub async fn import_servers(
     let db = common::get_database_from_state(&state)?;
 
     // Use safer dedup strategy by default: name + fingerprint, skip on conflict
+    if let Some(profile_id) = payload.target_profile_id.as_ref() {
+        let profile = crate::config::profile::get_profile(&db.pool, profile_id)
+            .await
+            .map_err(map_anyhow_error)?
+            .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", profile_id)))?;
+
+        if !profile.is_active {
+            return Err(ApiError::BadRequest(format!("Profile '{}' is not active", profile_id)));
+        }
+    }
+
     let outcome = import_batch(
         &db.pool,
         &state.connection_pool,
@@ -507,8 +553,8 @@ pub async fn import_servers(
             by_name: true,
             by_fingerprint: true,
             conflict_policy: ConflictPolicy::Skip,
-            preview: false,
-            target_profile: None,
+            preview: payload.dry_run,
+            target_profile: payload.target_profile_id.clone(),
         },
     )
     .await

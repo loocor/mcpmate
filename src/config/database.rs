@@ -9,7 +9,7 @@ use tracing;
 use crate::{
     common::paths::global_paths,
     common::profile::ProfileType,
-    config::{import, initialization, models, server},
+    config::{import, initialization, models},
     core::capability::naming,
 };
 
@@ -174,8 +174,8 @@ impl Database {
         // Ensure the default anchor profile exists
         let default_profile = profile::get_default_profile(&self.pool).await?;
 
-        let profile_id = if let Some(mut profile) = default_profile {
-            let id = profile
+        if let Some(mut profile) = default_profile {
+            let profile_id = profile
                 .id
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("Default profile has no ID"))?;
@@ -183,13 +183,17 @@ impl Database {
             let mut needs_update = false;
 
             if profile.role != DEFAULT_ANCHOR_ROLE {
-                tracing::info!("Setting profile '{}' to default anchor role", profile.name);
+                tracing::info!(
+                    "Setting profile '{}' (ID {}) to default anchor role",
+                    profile.name,
+                    profile_id
+                );
                 profile.role = DEFAULT_ANCHOR_ROLE;
                 needs_update = true;
             }
 
             if !profile.is_active || !profile.is_default || !profile.multi_select {
-                tracing::info!("Normalizing default anchor profile flags");
+                tracing::info!("Normalizing default anchor profile flags for '{}'", profile_id);
                 profile.is_active = true;
                 profile.is_default = true;
                 profile.multi_select = true;
@@ -197,7 +201,7 @@ impl Database {
             }
 
             if profile.profile_type != ProfileType::Shared {
-                tracing::info!("Normalizing default anchor profile type to shared");
+                tracing::info!("Normalizing default anchor profile type to shared for '{}'", profile_id);
                 profile.profile_type = ProfileType::Shared;
                 needs_update = true;
             }
@@ -205,8 +209,6 @@ impl Database {
             if needs_update {
                 profile::update_profile(&self.pool, &profile).await?;
             }
-
-            id
         } else {
             tracing::info!("Creating default anchor profile '{}'", DEFAULT_ANCHOR_INITIAL_NAME);
 
@@ -226,26 +228,7 @@ impl Database {
             // Insert the default profile
             let id = profile::upsert_profile(&self.pool, &new_profile).await?;
             tracing::info!("Created default profile with ID {}", id);
-            id
         };
-
-        // Check if we need to add servers to the default profile
-        let profile_servers = profile::get_profile_servers(&self.pool, &profile_id).await?;
-
-        if profile_servers.is_empty() {
-            let all_servers = server::get_all_servers(&self.pool).await?;
-
-            for server in &all_servers {
-                if let Some(server_id) = &server.id {
-                    profile::add_server_to_profile(&self.pool, &profile_id, server_id, true).await?;
-                }
-            }
-
-            if !all_servers.is_empty() {
-                tracing::info!("Added {} servers to default profile", all_servers.len());
-            }
-        }
-
         // Publish DatabaseChanged event
         crate::core::events::EventBus::global().publish(crate::core::events::Event::DatabaseChanged);
 

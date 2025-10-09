@@ -688,8 +688,13 @@ pub struct ServerCreateReq {
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
 
-    /// Whether to enable the server in the default profile
-    #[schemars(description = "Whether to enable this server in the default profile")]
+    /// Optional target profiles to associate with this server at creation time
+    #[serde(default)]
+    #[schemars(description = "Optional list of profile IDs to associate this server with")]
+    pub profile_ids: Option<Vec<String>>,
+
+    /// Whether to enable the server in the associated profiles (if any)
+    #[schemars(description = "Whether to enable this server in the specified profiles")]
     pub enabled: Option<bool>,
 
     /// Registry server id (if sourced from official registry)
@@ -744,8 +749,13 @@ pub struct ServerUpdateReq {
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
 
+    /// Optional target profiles to associate or update
+    #[serde(default)]
+    #[schemars(description = "Optional list of profile IDs to associate this server with during update")]
+    pub profile_ids: Option<Vec<String>>,
+
     /// Whether to enable the server (optional update)
-    #[schemars(description = "Whether to enable this server")]
+    #[schemars(description = "Whether to enable this server in the specified profiles")]
     pub enabled: Option<bool>,
 
     /// Registry server id (optional update)
@@ -765,6 +775,12 @@ pub struct ServersImportReq {
     /// Map of MCP server name to configuration
     #[serde(rename = "mcpServers")]
     pub mcp_servers: HashMap<String, ServersImportConfig>,
+    /// Optional profile ID to auto-enable imported servers
+    #[serde(default)]
+    pub target_profile_id: Option<String>,
+    /// Dry-run mode: validate and preview import without persisting changes (default: false)
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 /// Import server configuration

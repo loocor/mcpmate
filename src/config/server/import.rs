@@ -99,7 +99,6 @@ pub async fn import_batch(
     let existing = ExistingIndex::build(db_pool).await?;
 
     // We'll need profile association (lazily resolve default if not provided)
-    let mut default_profile_cache: Option<String> = opts.target_profile.clone();
 
     for (name, cfg) in items.into_iter() {
         // Validate and normalize
@@ -246,29 +245,17 @@ pub async fn import_batch(
             }
         }
 
-        // Associate to a single target profile if provided, otherwise default profile
-        let pid = if let Some(pid) = opts.target_profile.clone() {
-            pid
-        } else if let Some(pid) = default_profile_cache.clone() {
-            pid
-        } else {
-            match crate::config::profile::ensure_default_anchor_profile_id(db_pool).await {
-                Ok(id) => {
-                    default_profile_cache = Some(id.clone());
-                    id
-                }
-                Err(err) => {
-                    tracing::error!(
-                        target: "mcpmate::config::server::import",
-                        error = %err,
-                        "Failed to ensure default anchor profile while importing servers"
-                    );
-                    String::new()
-                }
+        // Associate to target profiles only when explicitly requested
+        if let Some(pid) = opts.target_profile.clone() {
+            if let Err(err) = crate::config::profile::add_server_to_profile(db_pool, &pid, &server_id, true).await {
+                tracing::error!(
+                    target: "mcpmate::config::server::import",
+                    server_id = %server_id,
+                    profile_id = %pid,
+                    error = %err,
+                    "Failed to associate imported server with target profile"
+                );
             }
-        };
-        if !pid.is_empty() {
-            let _ = crate::config::profile::add_server_to_profile(db_pool, &pid, &server_id, true).await;
         }
 
         // Update resolver cache (id <-> name) so capability service can map server_id to server_name immediately
