@@ -664,3 +664,391 @@ async fn batch_server_capabilities_operation(
 
     Ok(results)
 }
+
+/// Check whether any capability on the server remains enabled in the profile
+async fn server_has_enabled_capabilities(
+    pool: &Pool<Sqlite>,
+    profile_id: &str,
+    server_id: &str,
+) -> Result<bool> {
+    // Check enabled tools
+    let tools_enabled = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM profile_tool pt
+            JOIN server_tools st ON st.id = pt.server_tool_id
+            WHERE pt.profile_id = ?
+              AND st.server_id = ?
+              AND pt.enabled = 1
+        )
+        "#,
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_one(pool)
+    .await
+    .context("Failed to check enabled tools for server")?;
+
+    if tools_enabled {
+        return Ok(true);
+    }
+
+    // Check enabled resources
+    let resources_enabled = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM profile_resource
+            WHERE profile_id = ?
+              AND server_id = ?
+              AND enabled = 1
+        )
+        "#,
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_one(pool)
+    .await
+    .context("Failed to check enabled resources for server")?;
+
+    if resources_enabled {
+        return Ok(true);
+    }
+
+    // Check enabled prompts
+    let prompts_enabled = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM profile_prompt
+            WHERE profile_id = ?
+              AND server_id = ?
+              AND enabled = 1
+        )
+        "#,
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_one(pool)
+    .await
+    .context("Failed to check enabled prompts for server")?;
+
+    Ok(prompts_enabled)
+}
+
+/// Ensure the server is enabled in the profile when any capability becomes active
+pub async fn ensure_server_enabled_for_profile(
+    pool: &Pool<Sqlite>,
+    profile_id: &str,
+    server_id: &str,
+) -> Result<bool> {
+    let current = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT enabled FROM profile_server
+        WHERE profile_id = ? AND server_id = ?
+        "#,
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch current server enabled status")?;
+
+    if current == Some(true) {
+        return Ok(false);
+    }
+
+    let _ = add_server_to_profile(pool, profile_id, server_id, true)
+        .await
+        .context("Failed to enable server for profile")?;
+
+    Ok(true)
+}
+
+/// Disable the server if all of its capabilities are currently disabled
+pub async fn disable_server_if_all_capabilities_disabled(
+    pool: &Pool<Sqlite>,
+    profile_id: &str,
+    server_id: &str,
+) -> Result<bool> {
+    let current = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT enabled FROM profile_server
+        WHERE profile_id = ? AND server_id = ?
+        "#,
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch current server enabled status")?;
+
+    if current != Some(true) {
+        return Ok(false);
+    }
+
+    if server_has_enabled_capabilities(pool, profile_id, server_id).await? {
+        return Ok(false);
+    }
+
+    let _ = add_server_to_profile(pool, profile_id, server_id, false)
+        .await
+        .context("Failed to disable server for profile")?;
+
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Context, Result};
+    use sqlx::{Pool, Sqlite, sqlite::SqlitePoolOptions};
+
+    const PROFILE_ID: &str = "profile-1";
+    const SERVER_ID: &str = "server-1";
+
+    async fn setup_test_db() -> Result<Pool<Sqlite>> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .context("Failed to create in-memory Sqlite pool")?;
+
+        sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await?;
+
+        // Minimal schema required for capability/server linkage tests
+        sqlx::query(
+            r#"
+            CREATE TABLE server_config (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE profile_server (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                server_id TEXT NOT NULL,
+                server_name TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(profile_id, server_id)
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE server_tools (
+                id TEXT PRIMARY KEY,
+                server_id TEXT NOT NULL,
+                server_name TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                unique_name TEXT,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE profile_tool (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                server_tool_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE profile_resource (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                server_id TEXT NOT NULL,
+                server_name TEXT NOT NULL,
+                resource_uri TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE profile_prompt (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                server_id TEXT NOT NULL,
+                server_name TEXT NOT NULL,
+                prompt_name TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        Ok(pool)
+    }
+
+    async fn seed_server(pool: &Pool<Sqlite>) -> Result<()> {
+        sqlx::query("INSERT INTO server_config (id, name, enabled) VALUES (?, ?, 0)")
+            .bind(SERVER_ID)
+            .bind("Demo Server")
+            .bind(0)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn seed_profile_server(
+        pool: &Pool<Sqlite>,
+        enabled: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("assoc-1")
+        .bind(PROFILE_ID)
+        .bind(SERVER_ID)
+        .bind("Demo_Server")
+        .bind(if enabled { 1 } else { 0 })
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn seed_tool(
+        pool: &Pool<Sqlite>,
+        enabled: bool,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO server_tools (id, server_id, server_name, tool_name) VALUES (?, ?, ?, ?)")
+            .bind("tool-1")
+            .bind(SERVER_ID)
+            .bind("Demo_Server")
+            .bind("demo-tool")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("INSERT INTO profile_tool (id, profile_id, server_tool_id, enabled) VALUES (?, ?, ?, ?)")
+            .bind("pt-1")
+            .bind(PROFILE_ID)
+            .bind("tool-1")
+            .bind(if enabled { 1 } else { 0 })
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn seed_resource(
+        pool: &Pool<Sqlite>,
+        enabled: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO profile_resource (id, profile_id, server_id, server_name, resource_uri, enabled) VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .bind("res-1")
+        .bind(PROFILE_ID)
+        .bind(SERVER_ID)
+        .bind("Demo_Server")
+        .bind("resource://one")
+        .bind(if enabled { 1 } else { 0 })
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn read_server_enabled(pool: &Pool<Sqlite>) -> Result<bool> {
+        sqlx::query_scalar::<_, bool>("SELECT enabled FROM profile_server WHERE profile_id = ? AND server_id = ?")
+            .bind(PROFILE_ID)
+            .bind(SERVER_ID)
+            .fetch_one(pool)
+            .await
+            .context("Failed to fetch server enabled state")
+    }
+
+    #[tokio::test]
+    async fn enabling_capability_reactivates_server() -> Result<()> {
+        let pool = setup_test_db().await?;
+        seed_server(&pool).await?;
+        seed_profile_server(&pool, false).await?;
+        seed_tool(&pool, false).await?;
+
+        crate::config::profile::update_tool_enabled_status(&pool, "pt-1", true).await?;
+
+        let server_enabled = read_server_enabled(&pool).await?;
+        assert!(
+            server_enabled,
+            "Server should be enabled when a capability is activated"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn disabling_last_capability_turns_off_server() -> Result<()> {
+        let pool = setup_test_db().await?;
+        seed_server(&pool).await?;
+        seed_profile_server(&pool, true).await?;
+        seed_tool(&pool, true).await?;
+        seed_resource(&pool, true).await?;
+
+        // Disable resource first; server stays enabled because tool is still active
+        let resource_changed = crate::config::profile::update_resource_enabled_status(
+            &pool,
+            PROFILE_ID,
+            SERVER_ID,
+            "resource://one",
+            false,
+        )
+        .await?;
+        assert!(resource_changed);
+
+        let server_enabled = read_server_enabled(&pool).await?;
+        assert!(
+            server_enabled,
+            "Server should remain enabled while other capabilities stay active"
+        );
+
+        // Disable the remaining tool; server should auto-disable now
+        crate::config::profile::update_tool_enabled_status(&pool, "pt-1", false).await?;
+
+        let server_enabled = read_server_enabled(&pool).await?;
+        assert!(
+            !server_enabled,
+            "Server should disable when all capabilities are inactive"
+        );
+
+        Ok(())
+    }
+}

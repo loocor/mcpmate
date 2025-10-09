@@ -244,12 +244,21 @@ pub async fn update_prompt_enabled_status(
     .await
     .context("Failed to update prompt enabled status")?;
 
-    if result.rows_affected() == 0 {
+    let updated = result.rows_affected();
+
+    if updated == 0 {
         return Err(anyhow::anyhow!("Prompt with ID {} not found", prompt_id));
     }
 
     // Publish event if we have prompt info
-    if let Some((prompt_name, profile_id, _server_id)) = prompt_info {
+    if let Some((prompt_name, profile_id, server_id)) = prompt_info {
+        if enabled {
+            crate::config::profile::server::ensure_server_enabled_for_profile(pool, &profile_id, &server_id).await?;
+        } else {
+            crate::config::profile::server::disable_server_if_all_capabilities_disabled(pool, &profile_id, &server_id)
+                .await?;
+        }
+
         let event = crate::core::events::Event::PromptEnabledInProfileChanged {
             prompt_id: prompt_id.to_string(),
             prompt_name,

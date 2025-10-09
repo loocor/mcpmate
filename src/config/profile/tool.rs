@@ -379,9 +379,9 @@ pub async fn update_tool_enabled_status(
     );
 
     // Fetch context for event publishing
-    let (tool_name, profile_id): (String, String) = sqlx::query_as(
+    let (tool_name, profile_id, server_id): (String, String, String) = sqlx::query_as(
         r#"
-        SELECT st.tool_name, cst.profile_id
+        SELECT st.tool_name, cst.profile_id, st.server_id
         FROM profile_tool cst
         JOIN server_tools st ON cst.server_tool_id = st.id
         WHERE cst.id = ?
@@ -406,8 +406,17 @@ pub async fn update_tool_enabled_status(
     .await
     .context("Failed to update tool enabled status")?;
 
-    if result.rows_affected() == 0 {
+    let updated = result.rows_affected();
+
+    if updated == 0 {
         return Err(anyhow::anyhow!("No rows updated for tool id {}", profile_tool_id));
+    }
+
+    if enabled {
+        crate::config::profile::server::ensure_server_enabled_for_profile(pool, &profile_id, &server_id).await?;
+    } else {
+        crate::config::profile::server::disable_server_if_all_capabilities_disabled(pool, &profile_id, &server_id)
+            .await?;
     }
 
     crate::core::events::EventBus::global().publish(crate::core::events::Event::ToolEnabledInProfileChanged {

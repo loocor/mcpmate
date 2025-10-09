@@ -227,7 +227,16 @@ pub async fn update_resource_enabled_status(
     .await
     .context("Failed to update resource enabled status")?;
 
-    if result.rows_affected() > 0 {
+    let updated = result.rows_affected() > 0;
+
+    if updated {
+        if enabled {
+            crate::config::profile::server::ensure_server_enabled_for_profile(pool, profile_id, server_id).await?;
+        } else {
+            crate::config::profile::server::disable_server_if_all_capabilities_disabled(pool, profile_id, server_id)
+                .await?;
+        }
+
         // Publish event for the status change
         if let Ok(resource_id) = sqlx::query_scalar::<_, String>(
             r#"
@@ -252,7 +261,7 @@ pub async fn update_resource_enabled_status(
         }
     }
 
-    Ok(result.rows_affected() > 0)
+    Ok(updated)
 }
 
 /// Common query builder for enabled resources from active profile.
