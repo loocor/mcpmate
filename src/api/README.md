@@ -16,248 +16,61 @@ The API module provides HTTP endpoints for controlling and monitoring the MCPMat
 
 ## API Endpoints Reference
 
+This project adopts a consistent “list/details/create/update/delete/manage” style with query parameters for reads and JSON payloads for writes. All endpoints are served under `/api`.
+
 ### 1. Server Management
 
-#### Basic Server Operations
-- **GET /api/mcp/servers/**
-  - **Function**: List all servers
-  - **Response**: List of servers with their names, types, and status information
-
-- **POST /api/mcp/servers/**
-  - **Function**: Create a new server
-  - **Request**: Server configuration (name, type, URL/command, etc.)
-  - **Response**: Information about the created server
-  - **Request Body**:
-    ```json
-    {
-      "name": "string (required)",
-      "kind": "string (required, one of: stdio, sse, streamable_http)",
-      "command": "string (required for stdio servers)",
-      "url": "string (required for sse and streamable_http servers)",
-      "args": ["string", "..."] (optional, for stdio servers),
-      "env": { "key": "value", ... } (optional, for stdio servers),
-      "enabled": boolean (optional, default: true)
-    }
-    ```
-  - **Response Body**:
-    ```json
-    {
-      "name": "string",
-      "enabled": boolean,
-      "server_type": "string",
-      "command": "string (optional, for stdio servers)",
-      "url": "string (optional, for sse and streamable_http servers)",
-      "args": ["string", "..."] (optional, for stdio servers),
-      "env": { "key": "value", ... } (optional, for stdio servers),
-      "meta": {
-        "description": "string (optional)",
-        "author": "string (optional)",
-        "website": "string (optional)",
-        "repository": "string (optional)",
-        "category": "string (optional)",
-        "recommended_scenario": "string (optional)",
-        "rating": number (optional)
-      } (optional),
-      "created_at": "string (ISO 8601 format, optional)",
-      "updated_at": "string (ISO 8601 format, optional)",
-      "instances": [] // Empty array for new servers
-    }
-    ```
-  - **Error Responses**:
-    - `400 Bad Request`: Invalid server type or missing required fields
-    - `409 Conflict`: Server with the same name already exists
-    - `500 Internal Server Error`: Database or other server error
-
-- **POST /api/mcp/servers/import**
-  - **Function**: Bulk import server configurations
-  - **Request**: Data containing multiple server configurations
-  - **Response**: Import results
-  - **Request Body**:
-    ```json
-    {
-      "mcpServers": {
-        "server1": {
-          "type": "stdio",
-          "command": "string (for stdio servers)",
-          "args": ["string", "..."] (optional, for stdio servers),
-          "env": { "key": "value", ... } (optional, for stdio servers)
-        },
-        "server2": {
-          "type": "sse",
-          "url": "string (for sse servers)"
-        },
-        // ... more servers
-      }
-    }
-    ```
-  - **Response Body**:
-    ```json
-    {
-      "imported_count": number,
-      "imported_servers": ["string", "..."],
-      "failed_servers": ["string", "..."]
-    }
-    ```
-  - **Error Responses**:
-    - `400 Bad Request`: Invalid JSON format or server configurations
-    - `500 Internal Server Error`: Database or other server error
-
-- **GET /api/mcp/servers/{name}**
-  - **Function**: Get detailed information about a specific server
-  - **Parameters**: Server name
-  - **Response**: Detailed server configuration and status
-
-- **PUT /api/mcp/servers/{name}**
-  - **Function**: Update server configuration
-  - **Parameters**: Server name
-  - **Request**: Updated server configuration
-  - **Response**: Updated server information
-  - **Request Body**:
-    ```json
-    {
-      "kind": "string (optional, one of: stdio, sse, streamable_http)",
-      "command": "string (optional, for stdio servers)",
-      "url": "string (optional, for sse and streamable_http servers)",
-      "args": ["string", "..."] (optional, for stdio servers),
-      "env": { "key": "value", ... } (optional, for stdio servers),
-      "enabled": boolean (optional)
-    }
-    ```
-  - **Response Body**:
-    ```json
-    {
-      "name": "string",
-      "enabled": boolean,
-      "server_type": "string",
-      "command": "string (optional, for stdio servers)",
-      "url": "string (optional, for sse and streamable_http servers)",
-      "args": ["string", "..."] (optional, for stdio servers),
-      "env": { "key": "value", ... } (optional, for stdio servers),
-      "meta": {
-        "description": "string (optional)",
-        "author": "string (optional)",
-        "website": "string (optional)",
-        "repository": "string (optional)",
-        "category": "string (optional)",
-        "recommended_scenario": "string (optional)",
-        "rating": number (optional)
-      } (optional),
-      "created_at": "string (ISO 8601 format, optional)",
-      "updated_at": "string (ISO 8601 format, optional)",
-      "instances": [
-        {
-          "id": "string",
-          "status": "string",
-          "started_at": "string (ISO 8601 format, optional)",
-          "connected_at": "string (ISO 8601 format, optional)"
-        },
-        // ... more instances if any
-      ]
-    }
-    ```
-  - **Error Responses**:
-    - `400 Bad Request`: Invalid server type or incompatible configuration
-    - `404 Not Found`: Server with the specified name does not exist
-    - `500 Internal Server Error`: Database or other server error
-
-- **POST /api/mcp/servers/{name}/enable**
-  - **Function**: Enable a server
-  - **Parameters**: Server name
-  - **Response**: Operation result
-
-- **POST /api/mcp/servers/{name}/disable**
-  - **Function**: Disable a server
-  - **Parameters**: Server name
-  - **Response**: Operation result
-
-- **GET /api/mcp/servers/{name}/instances**
-  - **Function**: List all instances for a specific server
-  - **Parameters**: Server name
-  - **Response**: List of instances
-
-#### Instance Management
-- **GET /api/mcp/servers/{name}/instances/{id}**
-  - **Function**: Get detailed information about a specific instance
-  - **Parameters**: Server name, instance ID
-  - **Response**: Detailed instance information
-
-- **GET /api/mcp/servers/{name}/instances/{id}/health**
-  - **Function**: Check instance health status
-  - **Parameters**: Server name, instance ID
-  - **Response**: Health status information
-
-- **POST /api/mcp/servers/{name}/instances/{id}/disconnect**
-  - **Function**: Disconnect an instance
-  - **Parameters**: Server name, instance ID
-  - **Response**: Operation result
-
-- **POST /api/mcp/servers/{name}/instances/{id}/disconnect/force**
-  - **Function**: Force disconnect an instance
-  - **Parameters**: Server name, instance ID
-  - **Response**: Operation result
-
-- **POST /api/mcp/servers/{name}/instances/{id}/reconnect**
-  - **Function**: Reconnect an instance
-  - **Parameters**: Server name, instance ID
-  - **Response**: Operation result
-
-- **POST /api/mcp/servers/{name}/instances/{id}/reconnect/reset**
-  - **Function**: Reset and reconnect an instance
-  - **Parameters**: Server name, instance ID
-  - **Response**: Operation result
-
-- **POST /api/mcp/servers/{name}/instances/{id}/cancel**
-  - **Function**: Cancel an initializing instance
-  - **Parameters**: Server name, instance ID
-  - **Response**: Operation result
-
-
+- List and details
+  - `GET /mcp/servers/list`
+  - `GET /mcp/servers/details?id=SERVxxxx`
+- Mutations
+  - `POST /mcp/servers/create`
+  - `POST /mcp/servers/update`
+  - `DELETE /mcp/servers/delete`
+  - `POST /mcp/servers/import`
+  - `POST /mcp/servers/preview` (side‑effect free)
+  - `POST /mcp/servers/manage` with body `{ id, action: "enable"|"disable", sync? }`
+- Instances
+  - `GET /mcp/servers/instances/list?id=SERVxxxx` (omit `id` to list all)
+  - `GET /mcp/servers/instances/details?server=SERVxxxx&instance=INSTyyyy`
+  - `GET /mcp/servers/instances/health?server=...&instance=...`
+  - `POST /mcp/servers/instances/manage`
+- Capabilities and cache
+  - `GET /mcp/servers/tools|resources|resources/templates|prompts`
+  - `GET /mcp/servers/cache/detail`, `POST /mcp/servers/cache/reset`
 
 ### 2. Profile Management
 
-> **Note**: Tool enabling/disabling should be managed through Profile. This is the primary interface for managing tool availability.
+- List and details
+  - `GET /mcp/profile/list`, `GET /mcp/profile/details?id=...`
+- Mutations
+  - `POST /mcp/profile/create`, `POST /mcp/profile/update`, `DELETE /mcp/profile/delete`
+  - `POST /mcp/profile/manage` (activate/deactivate)
+- Components
+  - `GET /mcp/profile/servers|tools|resources|prompts/list`
+  - `POST /mcp/profile/servers|tools|resources|prompts/manage`
 
-#### Basic Profile Operations
-- **GET /api/mcp/profile/**
-  - **Function**: List all profile
-  - **Response**: List of profile
-  - **Response Body**:
-    ```json
-    {
-      "profile": [
-        {
-          "id": "string",
-          "name": "string",
-          "description": "string (optional)",
-          "profile_type": "string (host_app, scenario, shared)",
-          "multi_select": boolean,
-          "priority": number,
-          "is_active": boolean,
-          "is_default": boolean,
-          "allowed_operations": ["string", "..."]
-        },
-        // ... more profile
-      ]
-    }
-    ```
+### 3. Client Configuration Management
 
-- **POST /api/mcp/profile/**
-  - **Function**: Create a new profile
-  - **Request**: Profile information
-  - **Response**: Created profile
-  - **Request Body**:
-    ```json
-    {
-      "name": "string (required)",
-      "description": "string (optional)",
-      "profile_type": "string (required, one of: host_app, scenario, shared)",
-      "multi_select": boolean (optional),
-      "priority": number (optional),
-      "is_active": boolean (optional),
-      "is_default": boolean (optional),
-      "clone_from_id": "string (optional)"
-    }
-    ```
+- `GET /client/list`
+- `GET /client/config/details`
+- `POST /client/config/apply|restore|import`
+- `POST /client/manage`
+- `GET /client/backups/list`, `POST /client/backups/delete`
+- `GET /client/backups/policy`, `POST /client/backups/policy`
+
+### 4. Inspector (Proxy/Native Diagnostics)
+
+- `GET /mcp/inspector/tool|prompt|resource/list`
+- `POST /mcp/inspector/tool/call`, `POST /mcp/inspector/tool/call/start`, `POST /mcp/inspector/tool/call/cancel`
+- `GET /mcp/inspector/resource/read`, `POST /mcp/inspector/prompt/get`
+- `POST /mcp/inspector/session/open|close`
+- SSE events (stream): `GET /mcp/inspector/tool/call/events`
+
+### 5. System & Runtime
+
+- System: `GET /system/status`, `GET /system/metrics`
+- Runtime: `POST /runtime/install`, `GET /runtime/status`, `GET /runtime/cache`, `POST /runtime/cache/reset`
   - **Response**: The created Profile object
 
 - **GET /api/mcp/profile/{id}**
