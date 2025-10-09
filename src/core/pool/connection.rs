@@ -725,10 +725,13 @@ impl UpstreamConnectionPool {
     ) -> Result<(), anyhow::Error> {
         if let Some(session_servers) = self.validation_sessions.get_mut(session_id) {
             if let Some(mut connection) = session_servers.remove(server_name) {
-                // Disconnect the service if still connected
-                if connection.is_connected() {
-                    connection.update_disconnected();
+                // Best-effort graceful shutdown: ask running service to cancel before dropping pipes.
+                if let Some(service) = connection.service.as_ref() {
+                    // Use cancellation token to request shutdown without taking ownership
+                    service.cancellation_token().cancel();
                 }
+                // Disconnect the service if still connected (clears handles/status)
+                if connection.is_connected() { connection.update_disconnected(); }
                 tracing::info!("Destroyed validation instance for server '{}'", server_name);
             }
         }
