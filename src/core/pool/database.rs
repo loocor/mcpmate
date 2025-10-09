@@ -74,12 +74,17 @@ impl UpstreamConnectionPool {
             })
             .collect();
 
+        // NOTE:
+        // Historically we aborted capability sync entirely when the server wasn't
+        // enabled in any profiles. That prevented REDB/SQLite shadow snapshots from
+        // being refreshed for unattached servers. We now keep proceeding even when
+        // no profiles are bound, so the service-level snapshot is always current,
+        // while profile_* seeding is conditionally executed only when profiles exist.
         if profile_data.is_empty() {
-            tracing::warn!(
-                "Skipping capability sync for server '{}' because it is not enabled in any profiles",
+            tracing::debug!(
+                "No profiles currently enable server '{}'; will persist snapshot (REDB/SQLite shadow) but skip profile seeding",
                 server_id
             );
-            return Ok(None);
         }
 
         Ok(Some((sync_context.server_id, profile_data)))
@@ -193,8 +198,17 @@ impl UpstreamConnectionPool {
                 )
                 .await?;
 
-                Self::sync_tools_to_database_internal(db, &resolved_server_id, &server_name, &tools, &profile_data)
+                // Only sync to profile_* when there are profiles bound to this server
+                if !profile_data.is_empty() {
+                    Self::sync_tools_to_database_internal(
+                        db,
+                        &resolved_server_id,
+                        &server_name,
+                        &tools,
+                        &profile_data,
+                    )
                     .await?;
+                }
 
                 let now = Utc::now();
                 cached_tools.extend(tools.iter().map(|tool| {
@@ -229,14 +243,16 @@ impl UpstreamConnectionPool {
 
             if !resources.is_empty() {
                 let resource_uris: Vec<String> = resources.iter().map(|r| r.uri.clone()).collect();
-                Self::sync_resources_to_database_internal(
-                    db,
-                    &resolved_server_id,
-                    &server_name,
-                    &resource_uris,
-                    &profile_data,
-                )
-                .await?;
+                if !profile_data.is_empty() {
+                    Self::sync_resources_to_database_internal(
+                        db,
+                        &resolved_server_id,
+                        &server_name,
+                        &resource_uris,
+                        &profile_data,
+                    )
+                    .await?;
+                }
 
                 let now = Utc::now();
                 cached_resources.extend(resources.iter().map(|resource| CachedResourceInfo {
@@ -262,8 +278,16 @@ impl UpstreamConnectionPool {
             let prompts = Self::fetch_prompts_from_service(service, &server_name, instance_id).await?;
 
             if !prompts.is_empty() {
-                Self::sync_prompts_to_database_internal(db, &resolved_server_id, &server_name, &prompts, &profile_data)
+                if !profile_data.is_empty() {
+                    Self::sync_prompts_to_database_internal(
+                        db,
+                        &resolved_server_id,
+                        &server_name,
+                        &prompts,
+                        &profile_data,
+                    )
                     .await?;
+                }
 
                 let now = Utc::now();
                 cached_prompts.extend(prompts.iter().map(|prompt| {
