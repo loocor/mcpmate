@@ -421,7 +421,7 @@ async fn start_tool_call_internal(
         method: Default::default(),
         params: CallToolRequestParam {
             name: upstream_tool_name.into(),
-            arguments: req.arguments.clone(),
+            arguments: req.arguments.clone().or_else(|| Some(serde_json::Map::new())),
         },
         extensions: Default::default(),
     });
