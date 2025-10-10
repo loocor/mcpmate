@@ -194,7 +194,9 @@ pub(super) async fn list_resource_templates(
     let resource_templates = vis.filter_resource_templates(resource_templates).await;
 
     // Apply pagination
-    let page = server.paginator.paginate_resource_templates(&_request, resource_templates)?;
+    let page = server
+        .paginator
+        .paginate_resource_templates(&_request, resource_templates)?;
 
     tracing::info!(
         total = page.items.len(),
@@ -248,11 +250,7 @@ pub(super) async fn read_resource(
                 if let Some(sid) = hinted {
                     server_filter = Some(sid);
                 } else {
-                    tracing::trace!(
-                        "Resource URI '{}' not unique; resolver error: {}",
-                        request.uri,
-                        err
-                    );
+                    tracing::trace!("Resource URI '{}' not unique; resolver error: {}", request.uri, err);
                 }
             }
         }

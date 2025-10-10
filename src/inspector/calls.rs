@@ -429,6 +429,13 @@ async fn call_worker(
     let call_id = entry.call_id.clone();
     let request_id = handle.id.clone();
     let peer = handle.peer.clone();
+
+    tracing::info!(
+        call_id = %call_id,
+        server_id = %server_id,
+        "Inspector call_worker started, awaiting response"
+    );
+
     let response_fut = handle.await_response();
     tokio::pin!(response_fut);
 
@@ -452,23 +459,46 @@ async fn call_worker(
             InspectorTerminal::Cancelled { reason, server_id }
         }
         resp = &mut response_fut => {
+            tracing::info!(
+                call_id = %call_id,
+                "Inspector call_worker received response"
+            );
+
             match resp {
                 Ok(ServerResult::CallToolResult(res)) => {
+                    tracing::info!(
+                        call_id = %call_id,
+                        "Inspector call succeeded with CallToolResult"
+                    );
                     let value = serde_json::to_value(res).unwrap_or(Value::Null);
                     let elapsed_ms = started_at.elapsed().as_millis() as u64;
                     InspectorTerminal::Result { result: value, elapsed_ms, server_id }
                 }
                 Ok(other) => {
                     let msg = format!("Unexpected server result: {:?}", other);
+                    tracing::warn!(
+                        call_id = %call_id,
+                        result = ?other,
+                        "Inspector call received unexpected result type"
+                    );
                     InspectorTerminal::Error { message: msg, server_id }
                 }
                 Err(ServiceError::Timeout { .. }) => {
+                    tracing::warn!(
+                        call_id = %call_id,
+                        "Inspector call timed out"
+                    );
                     InspectorTerminal::Error {
                         message: "Request timed out".to_string(),
                         server_id,
                     }
                 }
                 Err(e) => {
+                    tracing::error!(
+                        call_id = %call_id,
+                        error = %e,
+                        "Inspector call failed with error"
+                    );
                     InspectorTerminal::Error {
                         message: e.to_string(),
                         server_id,
@@ -478,5 +508,16 @@ async fn call_worker(
         }
     };
 
+    tracing::info!(
+        call_id = %call_id,
+        terminal = ?terminal,
+        "Inspector call_worker finishing call"
+    );
+
     registry.finish_call(&call_id, terminal).await;
+
+    tracing::info!(
+        call_id = %call_id,
+        "Inspector call_worker completed"
+    );
 }

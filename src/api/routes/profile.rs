@@ -13,7 +13,7 @@ use crate::api::handlers::profile;
 use crate::api::models::profile::{
     ProfileComponentListReq, ProfileComponentManageReq, ProfileCreateReq, ProfileDeleteReq, ProfileDetailsReq,
     ProfileDetailsResp, ProfileListReq, ProfileListResp, ProfileManageReq, ProfileManageResp, ProfilePromptsListResp,
-    ProfileResourcesListResp, ProfileResourceTemplatesListResp, ProfileResp, ProfileServerManageResp,
+    ProfileResourceTemplatesListResp, ProfileResourcesListResp, ProfileResp, ProfileServerManageResp,
     ProfileServersListResp, ProfileToolsListResp, ProfileUpdateReq,
 };
 use crate::{aide_wrapper_payload, aide_wrapper_query};

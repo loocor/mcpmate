@@ -173,13 +173,10 @@ pub async fn prompt_get(
                     .cloned()
                     .ok_or_else(|| ApiError::InternalError("Validation connection not found".into()))?
             };
-            let res = crate::core::capability::prompts::get_upstream_prompt_direct(
-                &conn,
-                &req.name,
-                req.arguments.clone(),
-            )
-            .await
-            .map_err(map_anyhow)?;
+            let res =
+                crate::core::capability::prompts::get_upstream_prompt_direct(&conn, &req.name, req.arguments.clone())
+                    .await
+                    .map_err(map_anyhow)?;
             Ok(json!({
                 "result": res,
                 "server_id": server_id,

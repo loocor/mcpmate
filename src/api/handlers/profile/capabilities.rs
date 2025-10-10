@@ -4,10 +4,10 @@
 use super::{common::*, helpers::get_profile_or_error};
 use crate::api::models::profile::{
     ComponentOperationResult, ProfileComponentAction, ProfileComponentListReq, ProfileComponentManageReq,
-    ProfilePromptData, ProfilePromptsListData, ProfilePromptsListResp, ProfileResourceData, ProfileResourcesListData,
-    ProfileResourcesListResp, ProfileResourceTemplateData, ProfileResourceTemplatesListData,
-    ProfileResourceTemplatesListResp, ProfileServerManageData, ProfileServerManageResp, ProfileToolData,
-    ProfileToolsListData, ProfileToolsListResp,
+    ProfilePromptData, ProfilePromptsListData, ProfilePromptsListResp, ProfileResourceData,
+    ProfileResourceTemplateData, ProfileResourceTemplatesListData, ProfileResourceTemplatesListResp,
+    ProfileResourcesListData, ProfileResourcesListResp, ProfileServerManageData, ProfileServerManageResp,
+    ProfileToolData, ProfileToolsListData, ProfileToolsListResp,
 };
 
 // Component type enumeration for type-safe operations
@@ -172,13 +172,12 @@ pub async fn resource_templates_list(
         .unwrap_or(0);
 
         if upstream_count > 0 {
-            let server_ids: Vec<String> = sqlx::query_scalar(
-                "SELECT server_id FROM profile_server WHERE profile_id = ?",
-            )
-            .bind(&request.profile_id)
-            .fetch_all(&db.pool)
-            .await
-            .unwrap_or_default();
+            let server_ids: Vec<String> =
+                sqlx::query_scalar("SELECT server_id FROM profile_server WHERE profile_id = ?")
+                    .bind(&request.profile_id)
+                    .fetch_all(&db.pool)
+                    .await
+                    .unwrap_or_default();
 
             for sid in server_ids {
                 let _ = crate::config::profile::sync_server_capabilities(
@@ -194,9 +193,11 @@ pub async fn resource_templates_list(
             template_configs =
                 crate::config::profile::get_resource_templates_for_profile(&db.pool, &request.profile_id)
                     .await
-                    .map_err(|e| ApiError::InternalError(format!(
-                        "Failed to get profile resource templates (after backfill): {e}"
-                    )))?;
+                    .map_err(|e| {
+                        ApiError::InternalError(format!(
+                            "Failed to get profile resource templates (after backfill): {e}"
+                        ))
+                    })?;
         }
     }
 
@@ -401,14 +402,13 @@ async fn process_single_component(
             .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
         }
         ComponentType::ResourceTemplate => {
-            let (server_id, uri_template): (String, String) = sqlx::query_as(
-                "SELECT server_id, uri_template FROM profile_resource_template WHERE id = ?",
-            )
-            .bind(component_id)
-            .fetch_optional(&db.pool)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get resource template: {e}")))?
-            .ok_or_else(|| ApiError::NotFound("Resource template not found".to_string()))?;
+            let (server_id, uri_template): (String, String) =
+                sqlx::query_as("SELECT server_id, uri_template FROM profile_resource_template WHERE id = ?")
+                    .bind(component_id)
+                    .fetch_optional(&db.pool)
+                    .await
+                    .map_err(|e| ApiError::InternalError(format!("Failed to get resource template: {e}")))?
+                    .ok_or_else(|| ApiError::NotFound("Resource template not found".to_string()))?;
 
             crate::config::profile::update_resource_template_enabled_status(
                 &db.pool,

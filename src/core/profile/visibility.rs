@@ -150,7 +150,9 @@ impl ProfileVisibilityService {
         .fetch_one(&db.pool)
         .await
         .unwrap_or(0);
-        if any_count == 0 { return Ok(None); }
+        if any_count == 0 {
+            return Ok(None);
+        }
 
         let sql = crate::config::profile::resource_template::build_enabled_resource_templates_query(None);
         let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
@@ -261,7 +263,11 @@ impl ProfileVisibilityService {
         });
 
         let after = resources.len();
-        tracing::debug!(filtered = (before as i64 - after as i64), kept = after as i64, "ProfileVisibility: resources filtered (with templates)");
+        tracing::debug!(
+            filtered = (before as i64 - after as i64),
+            kept = after as i64,
+            "ProfileVisibility: resources filtered (with templates)"
+        );
         resources
     }
 

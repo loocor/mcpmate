@@ -15,6 +15,10 @@ use tracing_subscriber::{self, EnvFilter};
 /// Setup logging based on command line arguments
 /// This function is safe to call multiple times - it will only initialize once
 pub fn setup_logging(args: &Args) -> Result<()> {
+    // TODO(temporary): This file logging toggle and multiplexer are temporary.
+    // Once the audit logging subsystem is implemented, remove MCPMATE_LOG_TO_FILE,
+    // the MultiWriter, and all file-path handling here.
+    use crate::common::constants::{defaults, env_vars};
     // Create environment filter with smart defaults
     let (env_filter, log_config_msg) = if let Ok(rust_log) = std::env::var("RUST_LOG") {
         // If RUST_LOG is set, respect it completely - no overrides
@@ -41,12 +45,108 @@ pub fn setup_logging(args: &Args) -> Result<()> {
         (filter, msg)
     };
 
-    let result = tracing_subscriber::fmt().with_env_filter(env_filter).try_init();
+    // Setup with stdout + optional file logging
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    // Determine whether to enable file logging (env overrides default)
+    let mut post_init_warning: Option<String> = None;
+    let enable_file_log = match std::env::var(env_vars::MCPMATE_LOG_TO_FILE) {
+        Ok(raw) => {
+            let v = raw.trim().to_lowercase();
+            match v.as_str() {
+                "1" | "true" | "on" | "yes" => true,
+                "0" | "false" | "off" | "no" => false,
+                other => {
+                    // Keep backward-compat by defaulting to enabled for unknown values
+                    post_init_warning = Some(format!(
+                        "Unrecognized {} value ('{}'); defaulting to enabled",
+                        env_vars::MCPMATE_LOG_TO_FILE,
+                        other
+                    ));
+                    true
+                }
+            }
+        }
+        Err(_) => defaults::LOG_TO_FILE_DEFAULT,
+    };
+
+    // Determine log file path (only if enabled)
+    let log_file_path = if enable_file_log {
+        use crate::common::paths::global_paths;
+        let logs_dir = global_paths().logs_dir();
+        std::fs::create_dir_all(&logs_dir).ok();
+        Some(logs_dir.join("mcpmate.log"))
+    } else {
+        None
+    };
+
+    // Create multi-writer that writes to both stdout and file
+    #[derive(Clone)]
+    struct MultiWriter {
+        file: Option<Arc<Mutex<std::fs::File>>>,
+    }
+
+    impl Write for MultiWriter {
+        fn write(
+            &mut self,
+            buf: &[u8],
+        ) -> std::io::Result<usize> {
+            // Always write to stdout
+            std::io::stdout().write_all(buf).ok();
+
+            // Also write to file if available
+            if let Some(ref file) = self.file {
+                if let Ok(mut f) = file.lock() {
+                    f.write_all(buf).ok();
+                }
+            }
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            std::io::stdout().flush().ok();
+            if let Some(ref file) = self.file {
+                if let Ok(mut f) = file.lock() {
+                    f.flush().ok();
+                }
+            }
+            Ok(())
+        }
+    }
+
+    let file_handle = match log_file_path {
+        Some(ref path) => std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()
+            .map(|f| Arc::new(Mutex::new(f))),
+        None => None,
+    };
+
+    let multi_writer = MultiWriter { file: file_handle };
+
+    let result = tracing_subscriber::fmt()
+        .with_writer(move || multi_writer.clone())
+        .with_env_filter(env_filter)
+        .try_init();
 
     match result {
         Ok(()) => {
             tracing::info!("Logging system initialized successfully");
             tracing::info!("{}", log_config_msg);
+            if let Some(ref path) = log_file_path {
+                tracing::info!("Log file: {}", path.display());
+            } else {
+                tracing::info!(
+                    "File logging disabled (set {}=true to enable)",
+                    env_vars::MCPMATE_LOG_TO_FILE
+                );
+            }
+            if let Some(msg) = post_init_warning.take() {
+                tracing::warn!("{}", msg);
+            }
         }
         Err(_) => {
             // Global subscriber already set, this is fine for FFI mode

@@ -552,7 +552,10 @@ async fn create_profile_resource_index(pool: &Pool<Sqlite>) -> Result<()> {
 /// Create profile_resource_template table if it doesn't exist
 async fn create_profile_resource_template_table(pool: &Pool<Sqlite>) -> Result<()> {
     use crate::common::constants::database::tables;
-    tracing::debug!("Creating {} table if it doesn't exist", tables::PROFILE_RESOURCE_TEMPLATE);
+    tracing::debug!(
+        "Creating {} table if it doesn't exist",
+        tables::PROFILE_RESOURCE_TEMPLATE
+    );
 
     sqlx::query(
         r#"
@@ -578,18 +581,13 @@ async fn create_profile_resource_template_table(pool: &Pool<Sqlite>) -> Result<(
         anyhow::anyhow!("Failed to create {} table: {}", tables::PROFILE_RESOURCE_TEMPLATE, e)
     })?;
 
-    tracing::debug!(
-        "{} table created or already exists",
-        tables::PROFILE_RESOURCE_TEMPLATE
-    );
+    tracing::debug!("{} table created or already exists", tables::PROFILE_RESOURCE_TEMPLATE);
     Ok(())
 }
 
 /// Create index on profile_resource_template for performance
 async fn create_profile_resource_template_index(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!(
-        "Creating index on profile_resource_template for performance"
-    );
+    tracing::debug!("Creating index on profile_resource_template for performance");
 
     sqlx::query(
         r#"
@@ -600,14 +598,8 @@ async fn create_profile_resource_template_index(pool: &Pool<Sqlite>) -> Result<(
     .execute(pool)
     .await
     .map_err(|e| {
-        tracing::error!(
-            "Failed to create index on profile_resource_template: {}",
-            e
-        );
-        anyhow::anyhow!(
-            "Failed to create index on profile_resource_template: {}",
-            e
-        )
+        tracing::error!("Failed to create index on profile_resource_template: {}", e);
+        anyhow::anyhow!("Failed to create index on profile_resource_template: {}", e)
     })?;
 
     tracing::debug!("Index on profile_resource_template created or already exists");

@@ -77,7 +77,23 @@ pub async fn tool_call_start(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InspectorToolCallReq>,
 ) -> Result<Json<InspectorToolCallStartResp>, ApiError> {
+    tracing::info!(
+        tool = %req.tool,
+        mode = ?req.mode,
+        server_id = ?req.server_id,
+        server_name = ?req.server_name,
+        session_id = ?req.session_id,
+        has_arguments = req.arguments.is_some(),
+        "Inspector tool_call_start request received"
+    );
+
     let info = service::start_tool_call(&state, &req).await?;
+
+    tracing::info!(
+        call_id = %info.call_id,
+        "Inspector tool call started successfully"
+    );
+
     let data = InspectorToolCallStartData {
         call_id: info.call_id,
         server_id: info.server_id,
@@ -93,31 +109,64 @@ pub async fn tool_call_events(
     State(state): State<Arc<AppState>>,
     Query(query): Query<InspectorCallEventsQuery>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let subscription = state
-        .inspector_calls
-        .subscribe(&query.call_id)
-        .await
-        .ok_or_else(|| ApiError::NotFound(format!("Inspector call '{}' not found", query.call_id)))?;
+    tracing::info!(
+        call_id = %query.call_id,
+        "SSE connection request received for inspector call"
+    );
 
+    let subscription = state.inspector_calls.subscribe(&query.call_id).await.ok_or_else(|| {
+        tracing::warn!(
+            call_id = %query.call_id,
+            "Inspector call not found for SSE subscription"
+        );
+        ApiError::NotFound(format!("Inspector call '{}' not found", query.call_id))
+    })?;
+
+    let call_id_clone = query.call_id.clone();
     let stream: futures::stream::BoxStream<'static, Result<Event, Infallible>> = match subscription {
-        CallSubscription::Active(receiver) => BroadcastStream::new(receiver)
-            .filter_map(|msg| async move {
-                match msg {
-                    Ok(event) => match Event::default().json_data(&event) {
-                        Ok(ev) => Some(Ok::<Event, Infallible>(ev)),
-                        Err(err) => {
-                            tracing::warn!(error = %err, "Failed to serialize inspector event");
-                            None
+        CallSubscription::Active(receiver) => {
+            tracing::info!(
+                call_id = %call_id_clone,
+                "SSE subscription established with Active receiver"
+            );
+            BroadcastStream::new(receiver)
+                .filter_map(move |msg| {
+                    let call_id = call_id_clone.clone();
+                    async move {
+                        match msg {
+                            Ok(event) => {
+                                tracing::info!(
+                                    call_id = %call_id,
+                                    event = ?event,
+                                    "SSE broadcasting inspector event"
+                                );
+                                match Event::default().json_data(&event) {
+                                    Ok(ev) => Some(Ok::<Event, Infallible>(ev)),
+                                    Err(err) => {
+                                        tracing::warn!(error = %err, "Failed to serialize inspector event");
+                                        None
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    call_id = %call_id,
+                                    error = ?err,
+                                    "Inspector events stream lagged"
+                                );
+                                None
+                            }
                         }
-                    },
-                    Err(err) => {
-                        tracing::warn!("Inspector events stream lagged: {}", err);
-                        None
                     }
-                }
-            })
-            .boxed(),
+                })
+                .boxed()
+        }
         CallSubscription::Completed(event) => {
+            tracing::info!(
+                call_id = %query.call_id,
+                event = ?event,
+                "SSE subscription for already completed call, sending terminal event"
+            );
             let event_opt = match Event::default().json_data(&event) {
                 Ok(ev) => Some(ev),
                 Err(err) => {
@@ -128,6 +177,11 @@ pub async fn tool_call_events(
             futures::stream::iter(event_opt.into_iter().map(Ok::<Event, Infallible>)).boxed()
         }
     };
+
+    tracing::info!(
+        call_id = %query.call_id,
+        "SSE stream created, returning to client"
+    );
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive")))
 }

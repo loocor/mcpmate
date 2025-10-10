@@ -40,6 +40,10 @@ pub mod env_vars {
 
     /// Origin allowlist for API and /mcp (comma-separated; supports trailing '*')
     pub const MCPMATE_ALLOWED_ORIGINS: &str = "MCPMATE_ALLOWED_ORIGINS";
+
+    /// Toggle file logging for backend ("1/true/on/yes" to enable, "0/false/off/no" to disable).
+    /// TODO(temporary): remove this env after audit logging subsystem lands.
+    pub const MCPMATE_LOG_TO_FILE: &str = "MCPMATE_LOG_TO_FILE";
 }
 
 /// Path separator constants
@@ -211,6 +215,9 @@ pub mod defaults {
     pub const DEFAULT_REQUESTS_LIMIT: u32 = 100;
     /// Default runtime value
     pub const RUNTIME: &str = "node";
+
+    /// Default behavior for writing logs to file (temporary default: disabled to avoid log bloat)
+    pub const LOG_TO_FILE_DEFAULT: bool = false;
 }
 
 /// Common strategy labels for inspect responses

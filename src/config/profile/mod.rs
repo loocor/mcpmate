@@ -47,9 +47,9 @@ pub use resource::{
 
 // Resource template association operations
 pub use resource_template::{
-    add_resource_template_to_profile, get_enabled_resource_templates_for_profile,
-    get_resource_templates_for_profile, remove_resource_template_from_profile,
-    update_resource_template_enabled_status, build_enabled_resource_templates_query,
+    add_resource_template_to_profile, build_enabled_resource_templates_query,
+    get_enabled_resource_templates_for_profile, get_resource_templates_for_profile,
+    remove_resource_template_from_profile, update_resource_template_enabled_status,
 };
 
 // Tool association operations

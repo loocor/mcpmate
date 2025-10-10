@@ -200,14 +200,8 @@ impl UpstreamConnectionPool {
 
                 // Only sync to profile_* when there are profiles bound to this server
                 if !profile_data.is_empty() {
-                    Self::sync_tools_to_database_internal(
-                        db,
-                        &resolved_server_id,
-                        &server_name,
-                        &tools,
-                        &profile_data,
-                    )
-                    .await?;
+                    Self::sync_tools_to_database_internal(db, &resolved_server_id, &server_name, &tools, &profile_data)
+                        .await?;
                 }
 
                 let now = Utc::now();

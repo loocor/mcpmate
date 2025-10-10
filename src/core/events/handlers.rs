@@ -230,7 +230,10 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let count = guard.notify_resource_list_changed().await;
-                        info!("resources/list_changed notified {} client(s) (via template change)", count);
+                        info!(
+                            "resources/list_changed notified {} client(s) (via template change)",
+                            count
+                        );
                     }
                 }
             }

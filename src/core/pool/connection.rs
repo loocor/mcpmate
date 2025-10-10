@@ -731,7 +731,9 @@ impl UpstreamConnectionPool {
                     service.cancellation_token().cancel();
                 }
                 // Disconnect the service if still connected (clears handles/status)
-                if connection.is_connected() { connection.update_disconnected(); }
+                if connection.is_connected() {
+                    connection.update_disconnected();
+                }
                 tracing::info!("Destroyed validation instance for server '{}'", server_name);
             }
         }

@@ -60,6 +60,11 @@ impl MCPMatePaths {
         self.base_dir.join(constants::paths::CACHE_DIR_NAME)
     }
 
+    /// Get the logs directory (~/.mcpmate/logs)
+    pub fn logs_dir(&self) -> PathBuf {
+        self.base_dir.join("logs")
+    }
+
     /// Get the downloads directory (system temp dir)
     pub fn downloads_dir(&self) -> PathBuf {
         std::env::temp_dir().join("mcpmate-downloads")
