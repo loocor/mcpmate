@@ -52,6 +52,7 @@ enum CapabilityKind {
     Tools,
     Prompts,
     Resources,
+    ResourceTemplates,
 }
 
 impl CapabilityKind {
@@ -60,6 +61,7 @@ impl CapabilityKind {
             CapabilityKind::Tools => capability::CapabilityType::Tools,
             CapabilityKind::Prompts => capability::CapabilityType::Prompts,
             CapabilityKind::Resources => capability::CapabilityType::Resources,
+            CapabilityKind::ResourceTemplates => capability::CapabilityType::ResourceTemplates,
         }
     }
 
@@ -68,6 +70,7 @@ impl CapabilityKind {
             CapabilityKind::Tools => "tools",
             CapabilityKind::Prompts => "prompts",
             CapabilityKind::Resources => "resources",
+            CapabilityKind::ResourceTemplates => "templates",
         }
     }
 
@@ -76,6 +79,7 @@ impl CapabilityKind {
             CapabilityKind::Tools => extract_tools,
             CapabilityKind::Prompts => extract_prompts,
             CapabilityKind::Resources => extract_resources,
+            CapabilityKind::ResourceTemplates => extract_resource_templates,
         }
     }
 }
@@ -107,17 +111,21 @@ pub async fn list_resources(
     list_capability_response(state, query, CapabilityKind::Resources).await
 }
 
+pub async fn list_templates(
+    state: &AppState,
+    query: &InspectorListQuery,
+) -> Result<Value, ApiError> {
+    list_capability_response(state, query, CapabilityKind::ResourceTemplates).await
+}
+
 pub async fn prompt_get(
     state: &AppState,
     req: &InspectorPromptGetReq,
 ) -> Result<Value, ApiError> {
-    if matches!(req.mode, InspectorMode::Native) {
-        ensure_native_allowed()?;
-    }
     let start = Instant::now();
-    let (server_id, upstream_name) = match req.mode {
+    match req.mode {
         InspectorMode::Proxy => {
-            if let Ok((server_name, upstream)) =
+            let (server_id, upstream_name) = if let Ok((server_name, upstream)) =
                 capability::naming::resolve_unique_name(capability::naming::NamingKind::Prompt, &req.name).await
             {
                 let sid = resolver::to_id(&server_name)
@@ -129,42 +137,66 @@ pub async fn prompt_get(
             } else {
                 let sid = resolve_server(&req.server_id, &req.server_name).await?;
                 (sid, req.name.clone())
-            }
+            };
+
+            let mapping = capability::facade::build_prompt_mapping(&state.connection_pool).await;
+            let res = capability::facade::get_upstream_prompt(
+                &state.connection_pool,
+                &mapping,
+                &upstream_name,
+                req.arguments.clone(),
+                Some(&server_id),
+            )
+            .await
+            .map_err(map_anyhow)?;
+            Ok(json!({
+                "result": res,
+                "server_id": server_id,
+                "elapsed_ms": start.elapsed().as_millis() as u64,
+            }))
         }
         InspectorMode::Native => {
-            let sid = resolve_server(&req.server_id, &req.server_name).await?;
-            (sid, req.name.clone())
+            ensure_native_allowed()?;
+            let server_id = resolve_server(&req.server_id, &req.server_name).await?;
+            let session_id = ensure_native_session(state, &server_id).await?;
+            let server_name = resolver::to_name(&server_id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| server_id.clone());
+            // Clone the connection to reuse capability direct helper
+            let conn = {
+                let pool = state.connection_pool.lock().await;
+                pool.validation_sessions
+                    .get(&session_id)
+                    .and_then(|m| m.get(&server_name))
+                    .cloned()
+                    .ok_or_else(|| ApiError::InternalError("Validation connection not found".into()))?
+            };
+            let res = crate::core::capability::prompts::get_upstream_prompt_direct(
+                &conn,
+                &req.name,
+                req.arguments.clone(),
+            )
+            .await
+            .map_err(map_anyhow)?;
+            Ok(json!({
+                "result": res,
+                "server_id": server_id,
+                "elapsed_ms": start.elapsed().as_millis() as u64,
+            }))
         }
-    };
-
-    let mapping = capability::facade::build_prompt_mapping(&state.connection_pool).await;
-    let res = capability::facade::get_upstream_prompt(
-        &state.connection_pool,
-        &mapping,
-        &upstream_name,
-        req.arguments.clone(),
-        Some(&server_id),
-    )
-    .await
-    .map_err(map_anyhow)?;
-    Ok(json!({
-        "result": res,
-        "server_id": server_id,
-        "elapsed_ms": start.elapsed().as_millis() as u64,
-    }))
+    }
 }
 
 pub async fn resource_read(
     state: &AppState,
     req: &InspectorResourceReadQuery,
 ) -> Result<Value, ApiError> {
-    if matches!(req.mode, InspectorMode::Native) {
-        ensure_native_allowed()?;
-    }
     let start = Instant::now();
-    let (server_filter, upstream_uri) = match req.mode {
+    match req.mode {
         InspectorMode::Proxy => {
-            if let Ok((server_name, upstream)) =
+            let (server_filter, upstream_uri) = if let Ok((server_name, upstream)) =
                 capability::naming::resolve_unique_name(capability::naming::NamingKind::Resource, &req.uri).await
             {
                 let sid = resolver::to_id(&server_name)
@@ -175,39 +207,61 @@ pub async fn resource_read(
                 (Some(sid), upstream)
             } else {
                 (req.server_id.clone(), req.uri.clone())
-            }
-        }
-        InspectorMode::Native => (
-            resolve_server(&req.server_id, &req.server_name).await.ok(),
-            req.uri.clone(),
-        ),
-    };
+            };
 
-    let mapping = if let Some(sid) = &server_filter {
-        let mut filter: HashSet<String> = HashSet::new();
-        filter.insert(sid.clone());
-        capability::facade::build_resource_mapping_filtered(
-            &state.connection_pool,
-            state.database.as_ref(),
-            Some(&filter),
-        )
-        .await
-    } else {
-        capability::facade::build_resource_mapping(&state.connection_pool, state.database.as_ref()).await
-    };
-    let res = capability::facade::read_upstream_resource(
-        &state.connection_pool,
-        &mapping,
-        &upstream_uri,
-        server_filter.as_deref(),
-    )
-    .await
-    .map_err(map_anyhow)?;
-    Ok(json!({
-        "result": res,
-        "server_id": server_filter,
-        "elapsed_ms": start.elapsed().as_millis() as u64,
-    }))
+            let mapping = if let Some(sid) = &server_filter {
+                let mut filter: HashSet<String> = HashSet::new();
+                filter.insert(sid.clone());
+                capability::facade::build_resource_mapping_filtered(
+                    &state.connection_pool,
+                    state.database.as_ref(),
+                    Some(&filter),
+                )
+                .await
+            } else {
+                capability::facade::build_resource_mapping(&state.connection_pool, state.database.as_ref()).await
+            };
+            let res = capability::facade::read_upstream_resource(
+                &state.connection_pool,
+                &mapping,
+                &upstream_uri,
+                server_filter.as_deref(),
+            )
+            .await
+            .map_err(map_anyhow)?;
+            Ok(json!({
+                "result": res,
+                "server_id": server_filter,
+                "elapsed_ms": start.elapsed().as_millis() as u64,
+            }))
+        }
+        InspectorMode::Native => {
+            ensure_native_allowed()?;
+            let server_id = resolve_server(&req.server_id, &req.server_name).await?;
+            let session_id = ensure_native_session(state, &server_id).await?;
+            let server_name = resolver::to_name(&server_id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| server_id.clone());
+            let conn = {
+                let pool = state.connection_pool.lock().await;
+                pool.validation_sessions
+                    .get(&session_id)
+                    .and_then(|m| m.get(&server_name))
+                    .cloned()
+                    .ok_or_else(|| ApiError::InternalError("Validation connection not found".into()))?
+            };
+            let res = crate::core::capability::resources::read_upstream_resource_direct(&conn, &req.uri)
+                .await
+                .map_err(map_anyhow)?;
+            Ok(json!({
+                "result": res,
+                "server_id": server_id,
+                "elapsed_ms": start.elapsed().as_millis() as u64,
+            }))
+        }
+    }
 }
 
 pub async fn call_tool(
@@ -477,6 +531,16 @@ fn extract_resources(result: capability::runtime::ListResult) -> Vec<Value> {
         .unwrap_or_default()
         .into_iter()
         .map(|resource| serde_json::to_value(resource).unwrap_or_else(|_| json!({})))
+        .collect()
+}
+
+fn extract_resource_templates(result: capability::runtime::ListResult) -> Vec<Value> {
+    result
+        .items
+        .into_resource_templates()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|template| serde_json::to_value(template).unwrap_or_else(|_| json!({})))
         .collect()
 }
 

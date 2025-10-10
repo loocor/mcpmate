@@ -18,9 +18,10 @@ use crate::api::models::inspector::{
     InspectorPromptGetResp, InspectorPromptsListData, InspectorPromptsListResp, InspectorResourceReadData,
     InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListData, InspectorResourcesListResp,
     InspectorSessionCloseData, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenReq,
-    InspectorSessionOpenResp, InspectorToolCallCancelData, InspectorToolCallCancelReq, InspectorToolCallCancelResp,
-    InspectorToolCallData, InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartData,
-    InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
+    InspectorSessionOpenResp, InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData,
+    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallReq,
+    InspectorToolCallResp, InspectorToolCallStartData, InspectorToolCallStartResp, InspectorToolsListData,
+    InspectorToolsListResp,
 };
 use crate::api::routes::AppState;
 use crate::inspector::{calls::CallSubscription, service};
@@ -345,4 +346,34 @@ pub async fn resource_read(
     })))
 }
 
-// no SSE / call history endpoints in synchronous mode
+// ==============================
+// Templates
+// ==============================
+
+pub async fn templates_list(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<InspectorListQuery>,
+) -> Result<Json<InspectorTemplatesListResp>, ApiError> {
+    let data_value = service::list_templates(&state, &query).await?;
+    let mode = data_value
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let templates: Vec<Value> = match data_value.get("templates").cloned() {
+        Some(Value::Array(v)) => v,
+        _ => Vec::new(),
+    };
+    let total = data_value
+        .get("total")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(templates.len() as u64) as usize;
+    let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
+    let data = InspectorTemplatesListData {
+        mode,
+        templates,
+        total,
+        meta,
+    };
+    Ok(Json(InspectorTemplatesListResp::success(data)))
+}

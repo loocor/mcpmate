@@ -17,7 +17,7 @@ use tracing;
 use crate::core::capability::facade::{
     collect_capability_from_instance_peer, concurrency_limit, is_method_not_supported,
 };
-use crate::core::pool::UpstreamConnectionPool;
+use crate::core::pool::{UpstreamConnection, UpstreamConnectionPool};
 
 #[derive(Debug, Clone)]
 pub struct ResourceMapping {
@@ -466,6 +466,32 @@ pub async fn read_upstream_resource(
             }
         }
     }
+
+    Ok(result)
+}
+
+/// Read a resource directly from a specific upstream connection (native/direct path)
+pub async fn read_upstream_resource_direct(
+    connection: &UpstreamConnection,
+    uri: &str,
+) -> Result<ReadResourceResult> {
+    validate_resource_uri(uri)?;
+    let service = connection
+        .service
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("No service available for upstream connection"))?;
+
+    if !connection.is_connected() {
+        return Err(anyhow::anyhow!(
+            "Connection is not ready (status: {})",
+            connection.status
+        ));
+    }
+
+    let result = service
+        .read_resource(ReadResourceRequestParam { uri: uri.to_string() })
+        .await
+        .context("Failed to read resource from upstream server")?;
 
     Ok(result)
 }

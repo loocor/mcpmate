@@ -109,6 +109,20 @@ api_resp!(
 );
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
+pub struct InspectorTemplatesListData {
+    pub mode: String,
+    pub templates: Vec<serde_json::Value>,
+    pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Vec<serde_json::Value>>,
+}
+api_resp!(
+    InspectorTemplatesListResp,
+    InspectorTemplatesListData,
+    "Inspector templates list response"
+);
+
+#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorPromptGetData {
     pub result: serde_json::Value,
     pub server_id: String,
