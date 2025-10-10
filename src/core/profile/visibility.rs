@@ -103,6 +103,71 @@ impl ProfileVisibilityService {
         Ok(Some(set))
     }
 
+    /// Return Some(allowed) for resource templates (unique template names) if any rows exist; otherwise None
+    async fn allowed_resource_templates_unique_set(&self) -> Result<Option<HashSet<String>>> {
+        let Some(db) = &self.db else { return Ok(None) };
+        let any_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(1)
+            FROM profile_resource_template prt
+            JOIN profile cs ON prt.profile_id = cs.id
+            WHERE cs.is_active = 1
+            "#,
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap_or(0);
+        if any_count == 0 {
+            return Ok(None);
+        }
+
+        let sql = crate::config::profile::resource_template::build_enabled_resource_templates_query(None);
+        let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
+        let mut set = HashSet::new();
+        for (_server_id, server_name_original, uri_template) in rows {
+            // Build template unique-name in template namespace: server_norm_/uri_template
+            let unique = crate::core::capability::naming::generate_unique_name(
+                crate::core::capability::naming::NamingKind::ResourceTemplate,
+                &server_name_original,
+                &uri_template,
+            );
+            set.insert(unique);
+        }
+        Ok(Some(set))
+    }
+
+    /// Return Some(allowed) resource unique-name prefixes derived from enabled templates: server_norm:/prefix
+    async fn allowed_resource_prefixes_from_templates(&self) -> Result<Option<HashSet<String>>> {
+        let Some(db) = &self.db else { return Ok(None) };
+        let any_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(1)
+            FROM profile_resource_template prt
+            JOIN profile cs ON prt.profile_id = cs.id
+            WHERE cs.is_active = 1
+            "#,
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap_or(0);
+        if any_count == 0 { return Ok(None); }
+
+        let sql = crate::config::profile::resource_template::build_enabled_resource_templates_query(None);
+        let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
+        let mut set = HashSet::new();
+        for (_server_id, server_name_original, uri_template) in rows {
+            let prefix = crate::config::profile::resource_template::template_prefix(&uri_template).to_string();
+            // Build resource unique-name prefix: server_norm:/prefix
+            let unique_prefix = crate::core::capability::naming::generate_unique_name(
+                crate::core::capability::naming::NamingKind::Resource,
+                &server_name_original,
+                &prefix,
+            );
+            set.insert(unique_prefix);
+        }
+        Ok(Some(set))
+    }
+
     /// Return Some(allowed) if any profile_prompt rows exist; otherwise None (no filtering).
     async fn allowed_prompts_set(&self) -> Result<Option<HashSet<String>>> {
         // Prefer merged cache
@@ -166,20 +231,38 @@ impl ProfileVisibilityService {
         &self,
         mut resources: Vec<rmcp::model::Resource>,
     ) -> Vec<rmcp::model::Resource> {
-        match self.allowed_resources_set().await {
-            Ok(Some(allowed)) => {
-                let before = resources.len();
-                resources.retain(|r| allowed.contains(r.raw.uri.as_str()));
-                let after = resources.len();
-                tracing::debug!(
-                    filtered = (before as i64 - after as i64),
-                    kept = after as i64,
-                    "ProfileVisibility: resources filtered"
-                );
-                resources
-            }
-            _ => resources,
+        let allowed_explicit = self.allowed_resources_set().await.unwrap_or(None);
+        let allowed_prefixes = self.allowed_resource_prefixes_from_templates().await.unwrap_or(None);
+
+        // If neither explicit nor templates gating exists, do not filter
+        if allowed_explicit.is_none() && allowed_prefixes.is_none() {
+            return resources;
         }
+
+        // allowed_prefixes 已是 server_norm:/prefix 形式
+
+        let before = resources.len();
+        resources.retain(|r| {
+            let u = r.raw.uri.as_str();
+            // Explicit allow list
+            if let Some(ref aset) = allowed_explicit {
+                if aset.contains(u) {
+                    return true;
+                }
+            }
+            // Template-derived allow prefixes
+            if let Some(ref prefixes) = allowed_prefixes {
+                if prefixes.iter().any(|p| u.starts_with(p)) {
+                    return true;
+                }
+            }
+            // If explicit gating exists but none matched, drop; else keep
+            allowed_explicit.is_none()
+        });
+
+        let after = resources.len();
+        tracing::debug!(filtered = (before as i64 - after as i64), kept = after as i64, "ProfileVisibility: resources filtered (with templates)");
+        resources
     }
 
     pub async fn filter_prompts(
@@ -199,6 +282,26 @@ impl ProfileVisibilityService {
                 prompts
             }
             _ => prompts,
+        }
+    }
+
+    pub async fn filter_resource_templates(
+        &self,
+        mut templates: Vec<rmcp::model::ResourceTemplate>,
+    ) -> Vec<rmcp::model::ResourceTemplate> {
+        match self.allowed_resource_templates_unique_set().await {
+            Ok(Some(allowed)) => {
+                let before = templates.len();
+                templates.retain(|t| allowed.contains(t.raw.name.as_str()));
+                let after = templates.len();
+                tracing::debug!(
+                    filtered = (before as i64 - after as i64),
+                    kept = after as i64,
+                    "ProfileVisibility: resource templates filtered"
+                );
+                templates
+            }
+            _ => templates,
         }
     }
 }

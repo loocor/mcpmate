@@ -13,8 +13,8 @@ use crate::api::handlers::profile;
 use crate::api::models::profile::{
     ProfileComponentListReq, ProfileComponentManageReq, ProfileCreateReq, ProfileDeleteReq, ProfileDetailsReq,
     ProfileDetailsResp, ProfileListReq, ProfileListResp, ProfileManageReq, ProfileManageResp, ProfilePromptsListResp,
-    ProfileResourcesListResp, ProfileResp, ProfileServerManageResp, ProfileServersListResp, ProfileToolsListResp,
-    ProfileUpdateReq,
+    ProfileResourcesListResp, ProfileResourceTemplatesListResp, ProfileResp, ProfileServerManageResp,
+    ProfileServersListResp, ProfileToolsListResp, ProfileUpdateReq,
 };
 use crate::{aide_wrapper_payload, aide_wrapper_query};
 
@@ -61,6 +61,14 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         )
         .api_route(
             "/mcp/profile/resources/manage",
+            post_with(component_manage_aide, component_manage_docs),
+        )
+        .api_route(
+            "/mcp/profile/resource-templates/list",
+            get_with(resource_templates_list_aide, resource_templates_list_docs),
+        )
+        .api_route(
+            "/mcp/profile/resource-templates/manage",
             post_with(component_manage_aide, component_manage_docs),
         )
         .api_route(
@@ -139,6 +147,13 @@ aide_wrapper_query!(
     ProfileComponentListReq,
     ProfileResourcesListResp,
     "List resources in a profile"
+);
+
+aide_wrapper_query!(
+    profile::resource_templates_list,
+    ProfileComponentListReq,
+    ProfileResourceTemplatesListResp,
+    "List resource templates in a profile"
 );
 
 aide_wrapper_query!(

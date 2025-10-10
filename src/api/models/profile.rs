@@ -236,6 +236,28 @@ pub struct ProfileResourcesListData {
 }
 
 api_resp!(
+    ProfileResourceTemplatesListResp,
+    ProfileResourceTemplatesListData,
+    "Response for profile resource templates list operation"
+);
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Data for profile resource templates list operation")]
+pub struct ProfileResourceTemplatesListData {
+    #[schemars(description = "Profile identifier")]
+    pub profile_id: String,
+
+    #[schemars(description = "Profile name")]
+    pub profile_name: String,
+
+    #[schemars(description = "List of resource templates in this profile")]
+    pub templates: Vec<ProfileResourceTemplateData>,
+
+    #[schemars(description = "Total number of templates in profile")]
+    pub total: usize,
+}
+
+api_resp!(
     ProfilePromptsListResp,
     ProfilePromptsListData,
     "Response for profile prompts list operation"
@@ -434,6 +456,23 @@ pub struct ProfileResourceData {
     /// Whether the resource is enabled in this profile
     pub enabled: bool,
     /// Allowed operations on this resource
+    pub allowed_operations: Vec<String>,
+}
+
+/// Profile resource template response (reuse shape as ProfileResourceData but with uri_template)
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ProfileResourceTemplateData {
+    /// Template ID
+    pub id: String,
+    /// Server ID
+    pub server_id: String,
+    /// Server name
+    pub server_name: String,
+    /// Resource URI template (original template from upstream server)
+    pub uri_template: String,
+    /// Whether the template is enabled in this profile
+    pub enabled: bool,
+    /// Allowed operations on this template
     pub allowed_operations: Vec<String>,
 }
 

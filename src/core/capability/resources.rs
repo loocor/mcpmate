@@ -91,6 +91,25 @@ pub async fn is_resource_enabled(
                     return Ok(true);
                 }
             }
+
+            // Fallback: if any enabled resource template matches this URI, treat as enabled
+            if crate::config::profile::resource_template::resource_matches_enabled_templates(
+                pool,
+                profile_id,
+                &server_id,
+                resource_uri,
+            )
+            .await
+            .unwrap_or(false)
+            {
+                tracing::debug!(
+                    "Resource '{}' from server '{}' allowed by enabled template in profile '{}'",
+                    resource_uri,
+                    server_name,
+                    profile.name
+                );
+                return Ok(true);
+            }
         }
     }
 

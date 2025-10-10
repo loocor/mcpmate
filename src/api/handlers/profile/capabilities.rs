@@ -5,8 +5,9 @@ use super::{common::*, helpers::get_profile_or_error};
 use crate::api::models::profile::{
     ComponentOperationResult, ProfileComponentAction, ProfileComponentListReq, ProfileComponentManageReq,
     ProfilePromptData, ProfilePromptsListData, ProfilePromptsListResp, ProfileResourceData, ProfileResourcesListData,
-    ProfileResourcesListResp, ProfileServerManageData, ProfileServerManageResp, ProfileToolData, ProfileToolsListData,
-    ProfileToolsListResp,
+    ProfileResourcesListResp, ProfileResourceTemplateData, ProfileResourceTemplatesListData,
+    ProfileResourceTemplatesListResp, ProfileServerManageData, ProfileServerManageResp, ProfileToolData,
+    ProfileToolsListData, ProfileToolsListResp,
 };
 
 // Component type enumeration for type-safe operations
@@ -15,6 +16,7 @@ enum ComponentType {
     Tool,
     Resource,
     Prompt,
+    ResourceTemplate,
 }
 
 impl ComponentType {
@@ -24,6 +26,7 @@ impl ComponentType {
             s if s.starts_with("CSTOOL") => Ok(Self::Tool),
             s if s.starts_with("SRES") => Ok(Self::Resource),
             s if s.starts_with("SPMT") => Ok(Self::Prompt),
+            s if s.starts_with("SRST") => Ok(Self::ResourceTemplate),
             _ => Err(ApiError::NotFound(format!("Unknown component type for ID: {}", id))),
         }
     }
@@ -34,6 +37,7 @@ impl ComponentType {
             Self::Tool => "tool",
             Self::Resource => "resource",
             Self::Prompt => "prompt",
+            Self::ResourceTemplate => "resource_template",
         }
     }
 }
@@ -132,6 +136,96 @@ pub async fn resources_list(
     };
 
     Ok(Json(ProfileResourcesListResp::success(response)))
+}
+
+/// List resource templates in a profile (standardized version)
+///
+/// **Endpoint:** `GET /mcp/profile/resource-templates/list?profile_id={profile_id}&enabled_only={bool}`
+pub async fn resource_templates_list(
+    State(state): State<Arc<AppState>>,
+    Query(request): Query<ProfileComponentListReq>,
+) -> Result<Json<ProfileResourceTemplatesListResp>, ApiError> {
+    let db = get_database(&state).await?;
+
+    let profile = get_profile_or_error(&db, &request.profile_id).await?;
+
+    let mut template_configs =
+        crate::config::profile::get_resource_templates_for_profile(&db.pool, &request.profile_id)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to get profile resource templates: {e}")))?;
+
+    // Lazy backfill: if no templates are recorded yet, but upstream templates exist for bound servers,
+    // perform a one-time sync to populate profile_resource_template for parity with other capabilities.
+    if template_configs.is_empty() {
+        let upstream_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(1)
+            FROM server_resource_templates srt
+            WHERE srt.server_id IN (
+                SELECT server_id FROM profile_server WHERE profile_id = ?
+            )
+            "#,
+        )
+        .bind(&request.profile_id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap_or(0);
+
+        if upstream_count > 0 {
+            let server_ids: Vec<String> = sqlx::query_scalar(
+                "SELECT server_id FROM profile_server WHERE profile_id = ?",
+            )
+            .bind(&request.profile_id)
+            .fetch_all(&db.pool)
+            .await
+            .unwrap_or_default();
+
+            for sid in server_ids {
+                let _ = crate::config::profile::sync_server_capabilities(
+                    &db.pool,
+                    &request.profile_id,
+                    &sid,
+                    crate::config::profile::server::ServerCapabilityAction::Add,
+                )
+                .await;
+            }
+
+            // Re-fetch after backfill
+            template_configs =
+                crate::config::profile::get_resource_templates_for_profile(&db.pool, &request.profile_id)
+                    .await
+                    .map_err(|e| ApiError::InternalError(format!(
+                        "Failed to get profile resource templates (after backfill): {e}"
+                    )))?;
+        }
+    }
+
+    let mut templates = Vec::new();
+    for config in template_configs {
+        let allowed_operations: Vec<String> = allowed_ops(config.enabled);
+        templates.push(ProfileResourceTemplateData {
+            id: config.id.unwrap_or_default(),
+            server_id: config.server_id.clone(),
+            server_name: config.server_name.clone(),
+            uri_template: config.resource_uri.clone(),
+            enabled: config.enabled,
+            allowed_operations,
+        });
+    }
+
+    if request.enabled_only.unwrap_or(false) {
+        templates.retain(|t| t.enabled);
+    }
+
+    let total = templates.len();
+    let response = ProfileResourceTemplatesListData {
+        profile_id: request.profile_id,
+        profile_name: profile.name,
+        templates,
+        total,
+    };
+
+    Ok(Json(ProfileResourceTemplatesListResp::success(response)))
 }
 
 /// List tools in a profile (standardized version)
@@ -305,6 +399,26 @@ async fn process_single_component(
             )
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
+        }
+        ComponentType::ResourceTemplate => {
+            let (server_id, uri_template): (String, String) = sqlx::query_as(
+                "SELECT server_id, uri_template FROM profile_resource_template WHERE id = ?",
+            )
+            .bind(component_id)
+            .fetch_optional(&db.pool)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to get resource template: {e}")))?
+            .ok_or_else(|| ApiError::NotFound("Resource template not found".to_string()))?;
+
+            crate::config::profile::update_resource_template_enabled_status(
+                &db.pool,
+                profile_id,
+                &server_id,
+                &uri_template,
+                enabled,
+            )
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to update resource template status: {e}")))?;
         }
         ComponentType::Prompt => {
             crate::config::profile::update_prompt_enabled_status(&db.pool, component_id, enabled)

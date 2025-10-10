@@ -137,7 +137,7 @@ pub(super) async fn list_resource_templates(
         let pool = &server.connection_pool;
 
         let mut tasks = Vec::new();
-        for (server_id, _server_name, capabilities) in enabled_servers {
+        for (server_id, server_name, capabilities) in enabled_servers {
             if !super::supports_capability(
                 capabilities.as_deref(),
                 crate::core::capability::CapabilityType::ResourceTemplates,
@@ -154,9 +154,24 @@ pub(super) async fn list_resource_templates(
             let redb = redb.clone();
             let pool = pool.clone();
             let db = db.clone();
+            let server_name_cloned = server_name.clone();
             tasks.push(async move {
                 match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
-                    Ok(result) => result.items.into_resource_templates().unwrap_or_default(),
+                    Ok(result) => {
+                        let mut out = Vec::new();
+                        if let Some(items) = result.items.into_resource_templates() {
+                            for mut t in items {
+                                let unique = generate_unique_name(
+                                    NamingKind::ResourceTemplate,
+                                    &server_name_cloned,
+                                    &t.uri_template,
+                                );
+                                t.raw.name = unique; // carry unique name for visibility filtering
+                                out.push(t);
+                            }
+                        }
+                        out
+                    }
                     Err(_) => Vec::new(),
                 }
             });
@@ -171,10 +186,15 @@ pub(super) async fn list_resource_templates(
         }
     }
 
+    // Apply centralized profile visibility filter (resource templates)
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    let resource_templates = vis.filter_resource_templates(resource_templates).await;
+
     // Apply pagination
-    let page = server
-        .paginator
-        .paginate_resource_templates(&_request, resource_templates)?;
+    let page = server.paginator.paginate_resource_templates(&_request, resource_templates)?;
 
     tracing::info!(
         total = page.items.len(),
@@ -206,11 +226,34 @@ pub(super) async fn read_resource(
                 }
             }
             Err(err) => {
-                tracing::trace!(
-                    "Resource URI '{}' does not require unique-name resolution (resolve error: {})",
-                    request.uri,
-                    err
-                );
+                // Try scheme-based server hint: <scheme>://...
+                let mut hinted: Option<String> = None;
+                if let Some(pos) = request.uri.find("://") {
+                    let scheme = &request.uri[..pos];
+                    if let Ok(Some(sid)) = crate::core::capability::resolver::to_id(scheme).await {
+                        hinted = Some(sid);
+                    } else if let Some(db) = &server.database {
+                        // Resolve by templates: find server that owns a template using this scheme
+                        if let Ok(row) = sqlx::query_scalar::<_, String>(
+                            "SELECT sc.id FROM server_resource_templates srt JOIN server_config sc ON sc.id=srt.server_id WHERE srt.uri_template LIKE ? LIMIT 1",
+                        )
+                        .bind(format!("{}://%", scheme))
+                        .fetch_optional(&db.pool)
+                        .await
+                        {
+                            hinted = row;
+                        }
+                    }
+                }
+                if let Some(sid) = hinted {
+                    server_filter = Some(sid);
+                } else {
+                    tracing::trace!(
+                        "Resource URI '{}' not unique; resolver error: {}",
+                        request.uri,
+                        err
+                    );
+                }
             }
         }
     }

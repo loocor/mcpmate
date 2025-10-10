@@ -25,6 +25,8 @@ pub async fn initialize_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
     create_profile_tool_index(pool).await?;
     create_profile_resource_table(pool).await?;
     create_profile_resource_index(pool).await?;
+    create_profile_resource_template_table(pool).await?;
+    create_profile_resource_template_index(pool).await?;
     create_profile_prompt_table(pool).await?;
     create_profile_prompt_index(pool).await?;
 
@@ -547,6 +549,71 @@ async fn create_profile_resource_index(pool: &Pool<Sqlite>) -> Result<()> {
     Ok(())
 }
 
+/// Create profile_resource_template table if it doesn't exist
+async fn create_profile_resource_template_table(pool: &Pool<Sqlite>) -> Result<()> {
+    use crate::common::constants::database::tables;
+    tracing::debug!("Creating {} table if it doesn't exist", tables::PROFILE_RESOURCE_TEMPLATE);
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS profile_resource_template (
+            id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
+            uri_template TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (profile_id) REFERENCES profile (id) ON DELETE CASCADE,
+            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
+            UNIQUE(profile_id, server_id, uri_template)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create {} table: {}", tables::PROFILE_RESOURCE_TEMPLATE, e);
+        anyhow::anyhow!("Failed to create {} table: {}", tables::PROFILE_RESOURCE_TEMPLATE, e)
+    })?;
+
+    tracing::debug!(
+        "{} table created or already exists",
+        tables::PROFILE_RESOURCE_TEMPLATE
+    );
+    Ok(())
+}
+
+/// Create index on profile_resource_template for performance
+async fn create_profile_resource_template_index(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!(
+        "Creating index on profile_resource_template for performance"
+    );
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_profile_resource_template_lookup
+        ON profile_resource_template(profile_id, enabled)
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            "Failed to create index on profile_resource_template: {}",
+            e
+        );
+        anyhow::anyhow!(
+            "Failed to create index on profile_resource_template: {}",
+            e
+        )
+    })?;
+
+    tracing::debug!("Index on profile_resource_template created or already exists");
+    Ok(())
+}
+
 /// Create profile_prompt table if it doesn't exist
 async fn create_profile_prompt_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Creating profile_prompt table if it doesn't exist");
@@ -611,6 +678,7 @@ async fn verify_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
         tables::SERVER_RESOURCE_TEMPLATES,
         tables::PROFILE_TOOL,
         tables::PROFILE_RESOURCE,
+        tables::PROFILE_RESOURCE_TEMPLATE,
         tables::PROFILE_PROMPT,
     ] {
         sqlx::query(&format!(

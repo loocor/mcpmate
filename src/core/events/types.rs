@@ -73,6 +73,18 @@ pub enum Event {
         enabled: bool,
     },
 
+    /// Resource template enabled status changed in a profile
+    ResourceTemplateEnabledInProfileChanged {
+        /// Template ID
+        template_id: String,
+        /// Template URI pattern
+        uri_template: String,
+        /// Config profile ID
+        profile_id: String,
+        /// New enabled status
+        enabled: bool,
+    },
+
     /// Prompt enabled status changed in a profile
     PromptEnabledInProfileChanged {
         /// Prompt ID

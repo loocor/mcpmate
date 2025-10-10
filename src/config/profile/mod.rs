@@ -7,6 +7,7 @@ pub mod init;
 pub mod mgmt;
 pub mod prompt;
 pub mod resource;
+pub mod resource_template;
 pub mod server;
 pub mod tool;
 
@@ -42,6 +43,13 @@ pub use server::{
 pub use resource::{
     add_resource_to_profile, get_enabled_resources_for_profile, get_resources_for_profile,
     remove_resource_from_profile, update_resource_enabled_status,
+};
+
+// Resource template association operations
+pub use resource_template::{
+    add_resource_template_to_profile, get_enabled_resource_templates_for_profile,
+    get_resource_templates_for_profile, remove_resource_template_from_profile,
+    update_resource_template_enabled_status, build_enabled_resource_templates_query,
 };
 
 // Tool association operations

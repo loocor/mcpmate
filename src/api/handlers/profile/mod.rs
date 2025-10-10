@@ -3,7 +3,7 @@
 
 // Re-export all public functions from submodules
 pub use self::{
-    capabilities::{component_manage, prompts_list, resources_list, tools_list},
+    capabilities::{component_manage, prompts_list, resource_templates_list, resources_list, tools_list},
     helpers::{get_profile_or_error, get_tool_or_error, get_tool_with_details_or_error},
     mgmt::{profile_create, profile_delete, profile_details, profile_list, profile_manage, profile_update},
     server::{server_manage, servers_list},

@@ -221,6 +221,20 @@ impl EventHandlers {
                 }
             }
 
+            Event::ResourceTemplateEnabledInProfileChanged { .. } => {
+                // Invalidate profile cache and broadcast resources/list_changed as closest signal.
+                debug!("Resource template configuration changed: emitting resources/list_changed");
+                if let Some(profile_service) = &self.profile_service {
+                    profile_service.invalidate_cache().await;
+                }
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let count = guard.notify_resource_list_changed().await;
+                        info!("resources/list_changed notified {} client(s) (via template change)", count);
+                    }
+                }
+            }
+
             Event::CacheUpdated {
                 server_id,
                 server_name,

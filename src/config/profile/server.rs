@@ -300,18 +300,30 @@ async fn add_server_capabilities_to_profile(
     .await
     .unwrap_or(0);
 
+    let existing_templates_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM profile_resource_template
+         WHERE profile_id = ? AND server_id = ?",
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
     tracing::debug!(
-        "Capability sync status for server {} in profile {}: {} tools, {} resources, {} prompts existing",
+        "Capability sync status for server {} in profile {}: {} tools, {} resources, {} prompts, {} templates existing",
         server_id,
         profile_id,
         existing_tools_count,
         existing_resources_count,
-        existing_prompts_count
+        existing_prompts_count,
+        existing_templates_count
     );
 
     let mut tools_added = 0_u64;
     let mut resources_added = 0_u64;
     let mut prompts_added = 0_u64;
+    let mut templates_added = 0_u64;
 
     // 1. Sync Tools from server_tools (only if not already synced)
     if existing_tools_count == 0 {
@@ -417,6 +429,44 @@ async fn add_server_capabilities_to_profile(
         );
     }
 
+    // 4. Sync Resource Templates from server_resource_templates (if not already synced)
+    if existing_templates_count == 0 {
+        let server_templates_result = sqlx::query_as::<_, (String,)>(
+            "SELECT uri_template FROM server_resource_templates WHERE server_id = ? LIMIT 100",
+        )
+        .bind(server_id)
+        .fetch_all(pool)
+        .await;
+
+        if let Ok(server_templates) = server_templates_result {
+            for (uri_template,) in server_templates {
+                match crate::config::profile::add_resource_template_to_profile(
+                    pool,
+                    profile_id,
+                    server_id,
+                    &uri_template,
+                    false,
+                )
+                .await
+                {
+                    Ok(_) => templates_added += 1,
+                    Err(e) => tracing::warn!(
+                        "Failed to add resource template {} to profile {}: {}",
+                        uri_template,
+                        profile_id,
+                        e
+                    ),
+                }
+            }
+        }
+    } else {
+        tracing::debug!(
+            "Resource templates already synced for server {} in profile {}, skipping",
+            server_id,
+            profile_id
+        );
+    }
+
     tracing::info!(
         "Successfully synced capabilities for server {} to profile {}: {} tools, {} resources, {} prompts added (disabled by default)",
         server_id,
@@ -425,6 +475,15 @@ async fn add_server_capabilities_to_profile(
         resources_added,
         prompts_added
     );
+
+    if templates_added > 0 {
+        tracing::info!(
+            "Resource templates added for server {} in profile {}: {}",
+            server_id,
+            profile_id,
+            templates_added
+        );
+    }
 
     Ok(())
 }
@@ -505,17 +564,38 @@ async fn cleanup_orphan_capabilities(
     .await
     .context("Failed to delete orphaned profile prompts")?;
 
-    let total_removed =
-        orphan_tools.rows_affected() + orphan_resources.rows_affected() + orphan_prompts.rows_affected();
+    // Remove orphaned resource templates (no corresponding server association)
+    let orphan_templates = sqlx::query(
+        r#"
+        DELETE FROM profile_resource_template
+        WHERE profile_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM profile_server ps
+              WHERE ps.profile_id = profile_resource_template.profile_id
+                AND ps.server_id = profile_resource_template.server_id
+          )
+        "#,
+    )
+    .bind(profile_id)
+    .execute(pool)
+    .await
+    .context("Failed to delete orphaned profile resource templates")?;
+
+    let total_removed = orphan_tools.rows_affected()
+        + orphan_resources.rows_affected()
+        + orphan_prompts.rows_affected()
+        + orphan_templates.rows_affected();
 
     if total_removed > 0 {
         tracing::info!(
-            "Cleaned up {} orphaned capability records for profile {} ({} tools, {} resources, {} prompts)",
+            "Cleaned up {} orphaned capability records for profile {} ({} tools, {} resources, {} prompts, {} templates)",
             total_removed,
             profile_id,
             orphan_tools.rows_affected(),
             orphan_resources.rows_affected(),
-            orphan_prompts.rows_affected()
+            orphan_prompts.rows_affected(),
+            orphan_templates.rows_affected()
         );
     }
 
@@ -595,6 +675,21 @@ async fn batch_server_capabilities_operation(
             .await
             .context("Failed to update prompts enabled status")?;
 
+            // Update resource templates: direct server_id reference
+            let _templates = sqlx::query(
+                r#"
+                UPDATE profile_resource_template
+                SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE profile_id = ? AND server_id = ?
+                "#,
+            )
+            .bind(enabled)
+            .bind(profile_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to update resource templates enabled status")?;
+
             (tools, resources, prompts)
         }
         CapabilityOperation::Delete => {
@@ -638,6 +733,19 @@ async fn batch_server_capabilities_operation(
             .execute(&mut *tx)
             .await
             .context("Failed to delete prompts from profile")?;
+
+            // Delete resource templates: direct server_id reference
+            let _templates = sqlx::query(
+                r#"
+                DELETE FROM profile_resource_template
+                WHERE profile_id = ? AND server_id = ?
+                "#,
+            )
+            .bind(profile_id)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to delete resource templates from profile")?;
 
             (tools, resources, prompts)
         }
@@ -734,7 +842,29 @@ async fn server_has_enabled_capabilities(
     .await
     .context("Failed to check enabled prompts for server")?;
 
-    Ok(prompts_enabled)
+    if prompts_enabled {
+        return Ok(true);
+    }
+
+    // Check enabled resource templates
+    let templates_enabled = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM profile_resource_template
+            WHERE profile_id = ?
+              AND server_id = ?
+              AND enabled = 1
+        )
+        "#,
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .fetch_one(pool)
+    .await
+    .context("Failed to check enabled resource templates for server")?;
+
+    Ok(templates_enabled)
 }
 
 /// Ensure the server is enabled in the profile when any capability becomes active
