@@ -6,6 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 use axum::{Json, extract::State};
 
 use super::ApiError;
+use crate::api::models::system::ManagementActionResp;
 use crate::api::{
     models::system::{SystemMetricsResp, SystemStatusResp},
     routes::AppState,
@@ -157,6 +158,55 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Syst
         system_memory_total,
         config_application_status,
     }))
+}
+
+/// Management: graceful shutdown (delegates to management handlers)
+pub async fn shutdown(State(state): State<Arc<AppState>>) -> Result<Json<ManagementActionResp>, ApiError> {
+    let Some(proxy) = state.http_proxy.clone() else {
+        return Err(ApiError::InternalError("Proxy server not available".into()));
+    };
+
+    if let Err(err) = proxy.initiate_shutdown().await {
+        tracing::warn!(error = %err, "Failed to initiate proxy shutdown");
+    }
+    if let Err(err) = proxy.complete_shutdown().await {
+        tracing::warn!(error = %err, "Failed to complete proxy shutdown");
+    }
+
+    Ok(Json(ManagementActionResp::shutting_down()))
+}
+
+/// Management: restart proxy service (delegates to management handlers)
+pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<ManagementActionResp>, ApiError> {
+    use std::{net::SocketAddr, time::Duration};
+
+    let Some(proxy) = state.http_proxy.clone() else {
+        return Err(ApiError::InternalError("Proxy server not available".into()));
+    };
+
+    // Clear capabilities cache as part of restart to force fresh capability discovery
+    if let Err(e) = state.redb_cache.clear_all().await {
+        tracing::warn!(error = %e, "Failed to clear capabilities cache during restart");
+    }
+
+    if let Err(err) = proxy.initiate_shutdown().await {
+        tracing::warn!(error = %err, "Failed to initiate proxy shutdown before restart");
+    }
+    if let Err(err) = proxy.complete_shutdown().await {
+        tracing::warn!(error = %err, "Failed to complete proxy shutdown before restart");
+    }
+
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let mcp_port = crate::system::config::get_runtime_port_config().mcp_port;
+    let bind_address: SocketAddr = format!("127.0.0.1:{}", mcp_port)
+        .parse()
+        .map_err(|e| ApiError::InternalError(format!("Invalid MCP bind address: {}", e)))?;
+
+    match proxy.start_unified(bind_address).await {
+        Ok(_handle) => Ok(Json(ManagementActionResp::restarted(mcp_port, "uni"))),
+        Err(err) => Err(ApiError::InternalError(format!("Failed to restart proxy: {}", err))),
+    }
 }
 
 use std::sync::atomic::{AtomicU64, Ordering};

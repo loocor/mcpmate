@@ -98,3 +98,40 @@ pub struct ServerConnectionStatus {
     #[schemars(description = "Whether this server is enabled in active profile")]
     pub enabled_in_profile: bool,
 }
+
+// Management responses (shutdown/restart) now co-located under system models
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Response for management control actions (shutdown/restart)")]
+pub struct ManagementActionResp {
+    /// Action status label (e.g., "shutting_down", "restarted")
+    pub status: String,
+    /// Optional human-readable message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// MCP port when (re)started
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_port: Option<u16>,
+    /// Transport mode hint (e.g., "uni")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
+}
+
+impl ManagementActionResp {
+    pub fn shutting_down() -> Self {
+        Self {
+            status: "shutting_down".into(),
+            message: Some("Proxy transport cancelled and instances disconnecting".into()),
+            mcp_port: None,
+            transport: None,
+        }
+    }
+
+    pub fn restarted(mcp_port: u16, transport: &str) -> Self {
+        Self {
+            status: "restarted".into(),
+            message: Some("Proxy transport restarted".into()),
+            mcp_port: Some(mcp_port),
+            transport: Some(transport.to_string()),
+        }
+    }
+}
