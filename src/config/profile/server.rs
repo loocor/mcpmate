@@ -846,8 +846,8 @@ async fn server_has_enabled_capabilities(
         return Ok(true);
     }
 
-    // Check enabled resource templates
-    let templates_enabled = sqlx::query_scalar::<_, bool>(
+    // Check enabled resource templates; if the table doesn't exist yet, treat as no templates
+    let templates_enabled = match sqlx::query_scalar::<_, bool>(
         r#"
         SELECT EXISTS(
             SELECT 1
@@ -862,7 +862,21 @@ async fn server_has_enabled_capabilities(
     .bind(server_id)
     .fetch_one(pool)
     .await
-    .context("Failed to check enabled resource templates for server")?;
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // Gracefully degrade when the table is not present (pre‑migration or test harness schema)
+            let msg = e.to_string();
+            if msg.contains("no such table: profile_resource_template") {
+                tracing::debug!("profile_resource_template table missing; assuming no enabled templates");
+                false
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Failed to check enabled resource templates for server: {e}"
+                ));
+            }
+        }
+    };
 
     Ok(templates_enabled)
 }

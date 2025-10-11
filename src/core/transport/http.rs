@@ -2,6 +2,7 @@
 // Provides abstractions for HTTP-based transport types (SSE and Streamable HTTP)
 
 use super::TransportType;
+use crate::common::http::make_streamable_config;
 use crate::core::foundation::utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout};
 use crate::core::models::MCPServerConfig;
 use anyhow::{Context, Result};
@@ -9,7 +10,6 @@ use rmcp::{
     model::{ServerCapabilities, Tool},
     service::ServiceExt,
     transport::sse_client::SseClientConfig,
-    transport::streamable_http_client::StreamableHttpClientTransportConfig,
     transport::{SseClientTransport, StreamableHttpClientTransport},
 };
 use std::time::Duration;
@@ -201,11 +201,9 @@ pub async fn connect_http_server_with_client(
             build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
         }
         TransportType::StreamableHttp => {
-            // Create Streamable HTTP transport with injected client
-            let config = StreamableHttpClientTransportConfig {
-                uri: url.clone().into(),
-                ..Default::default()
-            };
+            // Create Streamable HTTP transport with injected client.
+            // If Authorization: Bearer ... is configured, also set the auth_header.
+            let config = make_streamable_config(url, &server_config.headers);
             let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
             build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
         }
@@ -262,10 +260,8 @@ pub async fn connect_http_server_with_client_timeouts(
             build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
         }
         TransportType::StreamableHttp => {
-            let config = StreamableHttpClientTransportConfig {
-                uri: url.clone().into(),
-                ..Default::default()
-            };
+            // Create Streamable HTTP transport with injected client and optional bearer
+            let config = make_streamable_config(url, &server_config.headers);
             let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
             build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
         }

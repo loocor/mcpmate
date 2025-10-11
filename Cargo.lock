@@ -4287,7 +4287,7 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.7.0"
+version = "0.8.1"
 dependencies = [
  "axum 0.8.4",
  "base64 0.22.1",
@@ -4318,7 +4318,7 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "0.7.0"
+version = "0.8.1"
 dependencies = [
  "darling 0.21.0",
  "proc-macro2",

@@ -126,7 +126,10 @@ impl ManagementActionResp {
         }
     }
 
-    pub fn restarted(mcp_port: u16, transport: &str) -> Self {
+    pub fn restarted(
+        mcp_port: u16,
+        transport: &str,
+    ) -> Self {
         Self {
             status: "restarted".into(),
             message: Some("Proxy transport restarted".into()),

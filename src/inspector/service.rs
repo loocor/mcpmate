@@ -765,7 +765,8 @@ fn native_mode_enabled() -> bool {
             let val_lower = val.trim().to_ascii_lowercase();
             matches!(val_lower.as_str(), "1" | "true" | "on" | "yes")
         }
-        Err(_) => true,
+        // Default to disabled unless explicitly opted in
+        Err(_) => false,
     }
 }
 

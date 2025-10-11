@@ -63,14 +63,37 @@ pub async fn tool_call(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InspectorToolCallReq>,
 ) -> Result<Json<InspectorToolCallResp>, ApiError> {
-    let outcome = service::call_tool(&state, &req).await?;
-    let data = InspectorToolCallData {
-        message: outcome.message.unwrap_or_else(|| "completed".to_string()),
-        result: outcome.result,
-        server_id: outcome.server_id,
-        elapsed_ms: Some(outcome.elapsed_ms),
-    };
-    Ok(Json(InspectorToolCallResp::success(data)))
+    // Preflight: When neither server_id nor server_name is provided, avoid hitting naming resolver
+    if req.server_id.is_none() && req.server_name.is_none() {
+        let resp = InspectorToolCallResp::error_simple("bad_request", "server_id or server_name is required");
+        return Ok(Json(resp));
+    }
+
+    // Execute and normalize errors as 200 with structured error payload (Inspector UX contract)
+    match service::call_tool(&state, &req).await {
+        Ok(outcome) => {
+            let data = InspectorToolCallData {
+                message: outcome.message.unwrap_or_else(|| "completed".to_string()),
+                result: outcome.result,
+                server_id: outcome.server_id,
+                elapsed_ms: Some(outcome.elapsed_ms),
+            };
+            Ok(Json(InspectorToolCallResp::success(data)))
+        }
+        Err(err) => {
+            // Map handler error to client model without changing HTTP status
+            let (code, message) = match &err {
+                ApiError::NotFound(m) => ("not_found", m.as_str()),
+                ApiError::BadRequest(m) => ("bad_request", m.as_str()),
+                ApiError::InternalError(m) => ("internal_error", m.as_str()),
+                ApiError::Conflict(m) => ("conflict", m.as_str()),
+                ApiError::Forbidden(m) => ("forbidden", m.as_str()),
+                ApiError::Timeout(m) => ("timeout", m.as_str()),
+            };
+            let resp = InspectorToolCallResp::error_simple(code, message);
+            Ok(Json(resp))
+        }
+    }
 }
 
 pub async fn tool_call_start(

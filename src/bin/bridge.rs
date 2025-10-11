@@ -17,9 +17,10 @@ use rmcp::{
     serve_server,
     service::{NotificationContext, RequestContext, ServiceExt},
     transport::{
-        StreamableHttpClientTransport, io,
+        StreamableHttpClientTransport,
+        io,
         sse_client::{SseClientConfig, SseClientTransport},
-        streamable_http_client::StreamableHttpClientTransportConfig,
+        // streamable_http_client::StreamableHttpClientTransportConfig (constructed via helper),
     },
 };
 use std::{
@@ -42,6 +43,11 @@ struct Args {
         default_value = "http://127.0.0.1:8000/mcp"
     )]
     upstream_url: String,
+
+    /// Upstream bearer token used for Streamable HTTP or SSE (without the 'Bearer ' prefix).
+    /// If provided with 'Bearer ' prefix, it will be stripped.
+    #[arg(long = "upstream-bearer")]
+    upstream_bearer: Option<String>,
 
     /// Log level
     #[arg(short, long, default_value = "info")]
@@ -123,6 +129,7 @@ struct BridgeRuntime {
 #[derive(Clone)]
 struct BridgeServer {
     upstream_url: String,
+    upstream_bearer: Option<String>,
     notifications: Arc<BridgeNotifications>,
     runtime: Arc<BridgeRuntimeStore>,
     server_info: Arc<RwLock<Option<ServerInfo>>>,
@@ -211,12 +218,14 @@ fn resolve_upstream_kind(url: &str) -> UpstreamKind {
 impl BridgeServer {
     fn new(
         upstream_url: String,
+        upstream_bearer: Option<String>,
         notifications: Arc<BridgeNotifications>,
         runtime: Arc<BridgeRuntimeStore>,
         server_info: Arc<RwLock<Option<ServerInfo>>>,
     ) -> Self {
         Self {
             upstream_url,
+            upstream_bearer,
             notifications,
             runtime,
             server_info,
@@ -264,13 +273,11 @@ impl BridgeServer {
         let service_result = match upstream_kind {
             UpstreamKind::Streamable(stream_url) => {
                 tracing::info!(upstream = %stream_url, "Using streamable HTTP upstream");
-                let transport = StreamableHttpClientTransport::with_client(
-                    http_client.clone(),
-                    StreamableHttpClientTransportConfig {
-                        uri: stream_url.clone().into(),
-                        ..Default::default()
-                    },
+                let cfg = mcpmate::common::http::make_streamable_config_with_bearer(
+                    &stream_url,
+                    self.upstream_bearer.as_deref(),
                 );
+                let transport = StreamableHttpClientTransport::with_client(http_client.clone(), cfg);
                 client_handler_for_streamable.serve(transport).await.map_err(|err| {
                     tracing::error!("Failed to initialize upstream MCP client (streamable): {err}");
                     McpError::internal_error(format!("Failed to initialize upstream MCP client: {err}"), None)
@@ -704,7 +711,14 @@ async fn main() -> Result<()> {
     let runtime = Arc::new(BridgeRuntimeStore::default());
     let server_info = Arc::new(RwLock::new(None));
 
-    let bridge_server = BridgeServer::new(args.upstream_url.clone(), notifications, runtime, server_info);
+    let bearer_from_env = std::env::var("MCPMATE_UPSTREAM_BEARER").ok();
+    let bridge_server = BridgeServer::new(
+        args.upstream_url.clone(),
+        args.upstream_bearer.clone().or(bearer_from_env),
+        notifications,
+        runtime,
+        server_info,
+    );
 
     tracing::info!("Connecting to upstream MCP server at {}", args.upstream_url);
     if let Err(err) = bridge_server.establish_upstream().await {
