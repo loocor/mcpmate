@@ -86,6 +86,12 @@ pub struct ClientInfo {
     pub support_url: Option<String>,
     #[schemars(description = "Configuration management mode")]
     pub config_mode: Option<String>,
+    #[schemars(description = "Preferred or resolved transport: streamable_http|sse|stdio")]
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[schemars(description = "Detected client version string")]
+    #[serde(default)]
+    pub client_version: Option<String>,
     #[schemars(description = "Format type of configuration file")]
     pub config_type: Option<ClientConfigType>,
     #[schemars(description = "ISO 8601 timestamp of last detection")]
@@ -420,6 +426,38 @@ api_resp!(
     "Client configuration import response"
 );
 api_resp!(ClientManageResp, ClientManageData, "Client management toggle response");
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Client settings update request (partial)")]
+pub struct ClientSettingsUpdateReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Management mode: hosted|transparent")]
+    #[serde(default)]
+    pub config_mode: Option<String>,
+    #[schemars(description = "Transport protocol: auto|sse|stdio|streamable_http")]
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[schemars(description = "Client version string")]
+    #[serde(default)]
+    pub client_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client settings update response body")]
+pub struct ClientSettingsUpdateData {
+    pub identifier: String,
+    pub config_mode: String,
+    pub transport: String,
+    #[serde(default)]
+    pub client_version: Option<String>,
+}
+
+api_resp!(
+    ClientSettingsUpdateResp,
+    ClientSettingsUpdateData,
+    "Client settings update response"
+);
 api_resp!(
     ClientBackupListResp,
     ClientBackupListData,

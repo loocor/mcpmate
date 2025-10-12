@@ -3,7 +3,7 @@ use crate::api::models::client::{
     ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq,
     ClientBackupPolicyResp, ClientBackupPolicySetReq, ClientCheckReq, ClientCheckResp, ClientConfigImportReq,
     ClientConfigImportResp, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientManageReq, ClientManageResp,
+    ClientConfigUpdateResp, ClientManageReq, ClientManageResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -66,6 +66,14 @@ aide_wrapper_payload!(
     "Enable or disable MCPMate management for a client"
 );
 
+    // Update client settings (config_mode/transport/client_version)
+    aide_wrapper_payload!(
+        client::update_settings,
+        ClientSettingsUpdateReq,
+        ClientSettingsUpdateResp,
+        "Update client settings (config_mode/transport/client_version)"
+    );
+
 // Backup administration
 aide_wrapper_query!(
     client::list_backups,
@@ -114,6 +122,7 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             post_with(config_import_aide, config_import_docs),
         )
         .api_route("/client/manage", post_with(manage_aide, manage_docs))
+        .api_route("/client/update", post_with(update_settings_aide, update_settings_docs))
         .api_route("/client/backups/list", get_with(list_backups_aide, list_backups_docs))
         .api_route(
             "/client/backups/delete",

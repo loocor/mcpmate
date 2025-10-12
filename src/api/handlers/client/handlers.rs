@@ -388,6 +388,62 @@ pub(crate) fn get_client_service(state: &AppState) -> Result<Arc<ClientConfigSer
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)
 }
 
+/// PATCH/POST /api/client/update - partial update client settings
+pub async fn update_settings(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<crate::api::models::client::ClientSettingsUpdateReq>,
+) -> Result<Json<crate::api::models::client::ClientSettingsUpdateResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+
+    tracing::info!(
+        client = %request.identifier,
+        config_mode = ?request.config_mode,
+        transport = ?request.transport,
+        client_version = ?request.client_version,
+        "update_settings: received request"
+    );
+
+    service
+        .set_client_settings(
+            &request.identifier,
+            request.config_mode.clone(),
+            request.transport.clone(),
+            request.client_version.clone(),
+        )
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to update client settings"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let (mode, transport, version) = service
+        .get_client_settings(&request.identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to fetch updated client settings"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .unwrap_or(("hosted".into(), "auto".into(), None));
+
+    let data = crate::api::models::client::ClientSettingsUpdateData {
+        identifier: request.identifier,
+        config_mode: mode,
+        transport,
+        client_version: version,
+    };
+
+    Ok(Json(crate::api::models::client::ClientSettingsUpdateResp::success(
+        data,
+    )))
+}
 async fn descriptor_to_client_info(
     service: &ClientConfigService,
     descriptor: ClientDescriptor,
@@ -443,7 +499,21 @@ async fn descriptor_to_client_info(
         homepage_url,
         docs_url,
         support_url,
-        config_mode: None,
+        config_mode: service
+            .get_client_settings(&template.identifier)
+            .await
+            .ok()
+            .and_then(|o| o.map(|(mode, _, _)| mode)),
+        transport: service
+            .get_client_settings(&template.identifier)
+            .await
+            .ok()
+            .map(|o| o.map(|(_, tr, _)| tr).unwrap_or_else(|| "auto".to_string())),
+        client_version: service
+            .get_client_settings(&template.identifier)
+            .await
+            .ok()
+            .and_then(|o| o.and_then(|(_, _, ver)| ver)),
         config_type,
         last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
         last_modified,

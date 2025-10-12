@@ -42,6 +42,8 @@ pub struct RenderRequest<'a> {
     pub dry_run: bool,
     pub backup_policy: &'a BackupPolicySetting,
     pub warnings: &'a mut Vec<String>,
+    /// Preferred transport when rendering managed endpoint (None = engine priority)
+    pub preferred_transport: Option<String>,
 }
 
 /// Template engine, responsible for coordinating template, renderer and storage adapter
@@ -217,7 +219,12 @@ impl TemplateEngine {
 
         let fragment = match request.mode {
             ConfigMode::Native => self.render_native_config(&template, request.servers, request.warnings)?,
-            ConfigMode::Managed => self.render_managed_config(&template, request.profile_id, request.warnings)?,
+            ConfigMode::Managed => self.render_managed_config(
+                &template,
+                request.profile_id,
+                request.preferred_transport.as_deref(),
+                request.warnings,
+            )?,
         };
 
         let existing = storage.read(&template).await?.unwrap_or_default();
@@ -248,9 +255,10 @@ impl TemplateEngine {
         &self,
         template: &ClientTemplate,
         profile_id: Option<&str>,
+        preferred_transport: Option<&str>,
         warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
-        let managed = self.build_managed_server(template, profile_id)?;
+        let managed = self.build_managed_server(template, profile_id, preferred_transport)?;
         self.render_container(template, &[managed], warnings)
     }
 
@@ -474,10 +482,20 @@ impl TemplateEngine {
         &self,
         template: &ClientTemplate,
         profile_id: Option<&str>,
+        preferred_transport: Option<&str>,
     ) -> ConfigResult<ServerTemplateInput> {
         // Derive supported transports directly from format_rules keys and
         // apply fixed global priority: streamable_http -> sse -> stdio.
         let candidates = derive_transports_by_priority(&template.config_mapping.format_rules);
+        if let Some(pref) = preferred_transport {
+            if candidates.contains(&pref) {
+                if let Some(server) =
+                    self.managed_runtime_for_transport(pref, pref, template.identifier.as_str(), profile_id)?
+                {
+                    return Ok(server);
+                }
+            }
+        }
         for transport in candidates {
             if let Some(server) =
                 self.managed_runtime_for_transport(transport, transport, template.identifier.as_str(), profile_id)?
@@ -503,7 +521,7 @@ impl TemplateEngine {
 
         match transport {
             "streamable_http" => Ok(Some(ServerTemplateInput {
-                name: "mcpmate".to_string(),
+                name: "MCPMate".to_string(),
                 display_name: Some("MCPMate Proxy".to_string()),
                 transport: effective_transport.to_string(),
                 command: None,
@@ -514,7 +532,7 @@ impl TemplateEngine {
                 metadata: HashMap::new(),
             })),
             "sse" => Ok(Some(ServerTemplateInput {
-                name: "mcpmate".to_string(),
+                name: "MCPMate".to_string(),
                 display_name: Some("MCPMate Proxy".to_string()),
                 transport: effective_transport.to_string(),
                 command: None,
@@ -538,7 +556,8 @@ impl TemplateEngine {
                     env.insert("PROFILE_ID".to_string(), pid.to_string());
                 }
 
-                let mut sse_url = runtime_config.mcp_sse_url();
+                // Prefer streamable HTTP for bridge upstream; keep query params for context
+                let mut mcp_url = runtime_config.mcp_http_url();
                 let mut query = form_urlencoded::Serializer::new(String::new());
                 query.append_pair("client_id", client_id);
                 if let Some(pid) = profile_id {
@@ -546,15 +565,16 @@ impl TemplateEngine {
                 }
                 let query = query.finish();
                 if !query.is_empty() {
-                    if sse_url.contains('?') {
-                        sse_url.push('&');
+                    if mcp_url.contains('?') {
+                        mcp_url.push('&');
                     } else {
-                        sse_url.push('?');
+                        mcp_url.push('?');
                     }
-                    sse_url.push_str(&query);
+                    mcp_url.push_str(&query);
                 }
 
-                let args = vec!["--sse-url".to_string(), sse_url];
+                // Bridge CLI expects --upstream-url (alias --sse-url kept for legacy).
+                let args = vec!["--upstream-url".to_string(), mcp_url];
 
                 Ok(Some(ServerTemplateInput {
                     name: "MCPMate".to_string(),
@@ -742,6 +762,7 @@ mod tests {
             dry_run: true,
             backup_policy: &policy,
             warnings: &mut warnings,
+            preferred_transport: None,
         };
 
         let result = engine.render_config(request).await.expect("render");
@@ -857,6 +878,7 @@ mod tests {
             dry_run: true,
             backup_policy: &policy,
             warnings: &mut warnings,
+            preferred_transport: None,
         };
 
         let result = engine.render_config(request).await.expect("render");

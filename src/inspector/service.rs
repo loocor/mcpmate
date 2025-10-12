@@ -763,10 +763,11 @@ fn native_mode_enabled() -> bool {
     match std::env::var("MCPMATE_INSPECTOR_NATIVE") {
         Ok(val) => {
             let val_lower = val.trim().to_ascii_lowercase();
-            matches!(val_lower.as_str(), "1" | "true" | "on" | "yes")
+            // Explicit "off" values disable; everything else (including unknown) enables
+            !matches!(val_lower.as_str(), "0" | "false" | "off" | "no")
         }
-        // Default to disabled unless explicitly opted in
-        Err(_) => false,
+        // Default to enabled if not set
+        Err(_) => true,
     }
 }
 
@@ -775,7 +776,7 @@ fn ensure_native_allowed() -> Result<(), ApiError> {
         Ok(())
     } else {
         Err(ApiError::Forbidden(
-            "Native inspector mode is disabled; set MCPMATE_INSPECTOR_NATIVE=on to enable".into(),
+            "Native inspector mode is disabled; set MCPMATE_INSPECTOR_NATIVE=on (or unset) to enable".into(),
         ))
     }
 }
