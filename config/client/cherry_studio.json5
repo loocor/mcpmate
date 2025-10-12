@@ -48,14 +48,41 @@
       stdio: {
         template: {
           id: "{{name}}",
-          isActive: true,
-          type: "stdio",
           name: "{{name}}",
+          type: "stdio",
+          description: "{{description}}",
+          isActive: true,
           command: "{{command}}",
           args: "{{{json args}}}",
+          env: "{{{json env}}}",
         },
         requires_type_field: false,
-      }
+      },
+      sse: {
+        template: {
+          id: "{{name}}",
+          name: "{{name}}",
+          type: "sse",
+          description: "{{description}}",
+          isActive: true,
+          longRunning: false,
+          baseUrl: "{{url}}",
+          headers: "{{{json headers}}}",
+        },
+        requires_type_field: false,
+      },
+      streamable_http: {
+        template: {
+          id: "{{name}}",
+          name: "{{name}}",
+          type: "streamableHttp",
+          description: "{{description}}",
+          isActive: true,
+          baseUrl: "{{url}}",
+          headers: "{{{json headers}}}",
+        },
+        requires_type_field: false,
+      },
     },
   },
 }

@@ -101,6 +101,7 @@ pub struct ClientRenderResult {
     pub execution: TemplateExecutionResult,
     pub target_path: Option<String>,
     pub servers: Vec<ServerTemplateInput>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -129,6 +130,17 @@ pub struct ClientConfigService {
     db_pool: Arc<SqlitePool>,
 }
 
+// Temporary probe struct for write diagnostics
+#[derive(Debug)]
+struct ProbeEntry {
+    name: String,
+    transport: String,
+    has_args: bool,
+    args_len: u32,
+    has_url: bool,
+    has_command: bool,
+}
+
 impl ClientConfigService {
     /// Bootstrap service with default template root resolution
     pub async fn bootstrap(db_pool: Arc<SqlitePool>) -> ConfigResult<Self> {
@@ -136,6 +148,8 @@ impl ClientConfigService {
         template_root.ensure_base_dirs()?;
         let official_dir = template_root.official_dir();
         seed_official_templates(&official_dir)?;
+        // Ensure keymap defaults file exists on first run
+        let _ = crate::clients::keymap::reload();
         let source = Arc::new(FileTemplateSource::bootstrap(template_root).await?);
         Self::with_source(db_pool, source).await
     }
@@ -159,7 +173,10 @@ impl ClientConfigService {
 
     /// Reload templates from disk, keeping previous index if reloading fails
     pub async fn reload_templates(&self) -> ConfigResult<()> {
-        self.template_source.reload().await
+        self.template_source.reload().await?;
+        // Reload keymap registry alongside templates
+        let _ = crate::clients::keymap::reload();
+        Ok(())
     }
 
     /// List known clients enriched with detection and filesystem information
@@ -282,6 +299,7 @@ impl ClientConfigService {
             }
         }
 
+        let mut warnings = Vec::new();
         let request = RenderRequest {
             client_id: &options.client_id,
             servers: &servers,
@@ -289,6 +307,7 @@ impl ClientConfigService {
             profile_id: options.profile_id.as_deref(),
             dry_run: options.dry_run,
             backup_policy: &backup_policy,
+            warnings: &mut warnings,
         };
 
         let execution = self.template_engine.render_config(request).await?;
@@ -298,6 +317,7 @@ impl ClientConfigService {
             execution,
             target_path,
             servers,
+            warnings,
         })
     }
 
@@ -359,6 +379,7 @@ impl ClientConfigService {
         let result = self.execute_render(options.clone()).await?;
         let mut outcome = ApplyOutcome {
             preview: Self::preview_from_execution(&result.execution),
+            warnings: result.warnings.clone(),
             ..Default::default()
         };
         if let TemplateExecutionResult::Applied { backup_path, .. } = result.execution {
@@ -376,6 +397,36 @@ impl ClientConfigService {
         let mut preview_opts = options.clone();
         preview_opts.dry_run = true;
         let preview_outcome = self.apply_or_preview(preview_opts).await?;
+
+        // Temporary: write-probe logging before actual apply
+        // Helps diagnose which transports are being generated and whether 'args' exist
+        if let Some(ref after) = preview_outcome.preview.after {
+            if let Ok(template) = self.get_client_template(&options.client_id).await {
+                let format = preview_outcome.preview.format;
+                // best-effort parse + summarize; don't fail the apply path on parse errors
+                if let Some(summary) = Self::summarize_servers_for_probe(after, format, &template) {
+                    for entry in summary.into_iter().take(5) {
+                        tracing::debug!(
+                            target: "mcpmate::client::apply_probe",
+                            client = %options.client_id,
+                            name = %entry.name,
+                            transport = %entry.transport,
+                            has_args = entry.has_args,
+                            args_len = entry.args_len,
+                            has_url = entry.has_url,
+                            has_command = entry.has_command,
+                            "write-probe: server entry"
+                        );
+                    }
+                } else {
+                    tracing::debug!(
+                        target: "mcpmate::client::apply_probe",
+                        client = %options.client_id,
+                        "write-probe: unable to summarize servers (parse skipped)"
+                    );
+                }
+            }
+        }
 
         // If the original request is a preview, return directly
         if options.dry_run {
@@ -412,6 +463,97 @@ impl ClientConfigService {
             }
             Err(e) => Err(e),
         }
+    }
+
+    fn parse_by_format(format: TemplateFormat, raw: &str) -> Option<serde_json::Value> {
+        match format {
+            TemplateFormat::Json => serde_json::from_str(raw).ok(),
+            TemplateFormat::Json5 => json5::from_str(raw).ok(),
+            TemplateFormat::Toml => toml::from_str::<toml::Value>(raw)
+                .ok()
+                .and_then(|v| serde_json::to_value(v).ok()),
+            TemplateFormat::Yaml => serde_yaml::from_str(raw).ok(),
+        }
+    }
+
+    fn summarize_servers_for_probe(
+        raw: &str,
+        format: TemplateFormat,
+        template: &ClientTemplate,
+    ) -> Option<Vec<ProbeEntry>> {
+        use serde_json::Value;
+        let doc = Self::parse_by_format(format, raw)?;
+        // Find container
+        let mut container: Option<Value> = None;
+        for key in &template.config_mapping.container_keys {
+            if let Some(v) = crate::clients::utils::get_nested_value(&doc, key) {
+                container = Some(v.clone());
+                break;
+            }
+        }
+        let container = container?;
+
+        let mut out: Vec<ProbeEntry> = Vec::new();
+        match (template.config_mapping.container_type, container) {
+            (crate::clients::models::ContainerType::ObjectMap, Value::Object(map)) => {
+                for (name, v) in map {
+                    let transport = v
+                        .get("type")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let has_args = v.get("args").is_some();
+                    let args_len = v
+                        .get("args")
+                        .and_then(|a| a.as_array())
+                        .map(|a| a.len() as u32)
+                        .unwrap_or(0);
+                    let has_url = v.get("url").is_some() || v.get("baseUrl").is_some();
+                    let has_command = v.get("command").is_some();
+                    out.push(ProbeEntry {
+                        name,
+                        transport,
+                        has_args,
+                        args_len,
+                        has_url,
+                        has_command,
+                    });
+                }
+            }
+            (crate::clients::models::ContainerType::Array, Value::Array(items)) => {
+                for v in items {
+                    let name = v
+                        .get("name")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let transport = v
+                        .get("type")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let has_args = v.get("args").is_some();
+                    let args_len = v
+                        .get("args")
+                        .and_then(|a| a.as_array())
+                        .map(|a| a.len() as u32)
+                        .unwrap_or(0);
+                    let has_url = v.get("url").is_some() || v.get("baseUrl").is_some();
+                    let has_command = v.get("command").is_some();
+                    out.push(ProbeEntry {
+                        name,
+                        transport,
+                        has_args,
+                        args_len,
+                        has_url,
+                        has_command,
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        if out.is_empty() { None } else { Some(out) }
     }
 
     async fn resolve_server_selection(

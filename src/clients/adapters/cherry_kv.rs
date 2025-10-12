@@ -218,9 +218,36 @@ impl CherryKvStorage {
         }
         let key = key.ok_or_else(|| ConfigError::FileOperationError("Cherry DB entry not found".into()))?;
         let mut json_data = outer.ok_or_else(|| ConfigError::FileOperationError("Cherry DB JSON not found".into()))?;
-        let servers: Vec<serde_json::Value> = requests.iter().map(|s| json!({
-            "id": s.id, "isActive": s.is_active, "args": s.args, "command": s.command, "type": s.server_type, "name": s.name
-        })).collect();
+            let servers: Vec<serde_json::Value> = requests
+                .iter()
+                .map(|s| {
+                    let mut obj = serde_json::json!({
+                        "id": s.id,
+                        "isActive": s.is_active,
+                        "type": s.server_type,
+                        "name": s.name,
+                    });
+                    if let Some(ref cmd) = s.command {
+                        obj["command"] = serde_json::Value::String(cmd.clone());
+                    }
+                    if let Some(ref args) = s.args {
+                        obj["args"] = serde_json::Value::Array(args.iter().cloned().map(serde_json::Value::String).collect());
+                    }
+                    if let Some(ref env) = s.env {
+                        obj["env"] = serde_json::to_value(env).unwrap_or(serde_json::json!({}));
+                    }
+                    if let Some(ref base_url) = s.base_url {
+                        obj["baseUrl"] = serde_json::Value::String(base_url.clone());
+                    }
+                    if let Some(ref headers) = s.headers {
+                        obj["headers"] = serde_json::to_value(headers).unwrap_or(serde_json::json!({}));
+                    }
+                    if let Some(lr) = s.long_running {
+                        obj["longRunning"] = serde_json::Value::Bool(lr);
+                    }
+                    obj
+                })
+                .collect();
         let updated = json!({"servers": servers});
         json_data["mcp"] = serde_json::Value::String(serde_json::to_string(&updated).map_err(ConfigError::JsonError)?);
         let encoded = Self::encode_json_to_bytes(&json_data);

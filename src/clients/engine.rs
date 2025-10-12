@@ -41,6 +41,7 @@ pub struct RenderRequest<'a> {
     pub profile_id: Option<&'a str>,
     pub dry_run: bool,
     pub backup_policy: &'a BackupPolicySetting,
+    pub warnings: &'a mut Vec<String>,
 }
 
 /// Template engine, responsible for coordinating template, renderer and storage adapter
@@ -215,8 +216,8 @@ impl TemplateEngine {
         let storage = self.resolve_storage(&template)?;
 
         let fragment = match request.mode {
-            ConfigMode::Native => self.render_native_config(&template, request.servers)?,
-            ConfigMode::Managed => self.render_managed_config(&template, request.profile_id)?,
+            ConfigMode::Native => self.render_native_config(&template, request.servers, request.warnings)?,
+            ConfigMode::Managed => self.render_managed_config(&template, request.profile_id, request.warnings)?,
         };
 
         let existing = storage.read(&template).await?.unwrap_or_default();
@@ -238,27 +239,30 @@ impl TemplateEngine {
         &self,
         template: &ClientTemplate,
         servers: &[ServerTemplateInput],
+        warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
-        self.render_container(template, servers)
+        self.render_container(template, servers, warnings)
     }
 
     fn render_managed_config(
         &self,
         template: &ClientTemplate,
         profile_id: Option<&str>,
+        warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
         let managed = self.build_managed_server(template, profile_id)?;
-        self.render_container(template, &[managed])
+        self.render_container(template, &[managed], warnings)
     }
 
     fn render_container(
         &self,
         template: &ClientTemplate,
         servers: &[ServerTemplateInput],
+        warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
         match template.config_mapping.container_type {
-            ContainerType::ObjectMap => self.render_object_map(template, servers),
-            ContainerType::Array => self.render_array(template, servers),
+            ContainerType::ObjectMap => self.render_object_map(template, servers, warnings),
+            ContainerType::Array => self.render_array(template, servers, warnings),
         }
     }
 
@@ -266,10 +270,11 @@ impl TemplateEngine {
         &self,
         template: &ClientTemplate,
         servers: &[ServerTemplateInput],
+        warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
         let mut container = Map::new();
         for server in servers {
-            let server_config = self.render_server_config(template, server)?;
+            let server_config = self.render_server_config(template, server, warnings)?;
             container.insert(server.name.clone(), server_config);
         }
         Ok(Value::Object(container))
@@ -279,10 +284,11 @@ impl TemplateEngine {
         &self,
         template: &ClientTemplate,
         servers: &[ServerTemplateInput],
+        warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
         let mut items = Vec::new();
         for server in servers {
-            let mut config = self.render_server_config(template, server)?;
+            let mut config = self.render_server_config(template, server, warnings)?;
             if let Value::Object(ref mut map) = config {
                 if !map.contains_key("name") {
                     map.insert("name".to_string(), Value::String(server.name.clone()));
@@ -297,20 +303,24 @@ impl TemplateEngine {
         &self,
         template: &ClientTemplate,
         server: &ServerTemplateInput,
+        warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
-        let format_rule = template
-            .config_mapping
-            .format_rules
-            .get(&server.transport)
-            .ok_or_else(|| {
-                ConfigError::TemplateParseError(format!(
-                    "Client {} missing format rule for transport {}",
-                    template.identifier, server.transport
-                ))
-            })?;
+        let format_rules = &template.config_mapping.format_rules;
+        let keymap = crate::clients::keymap::registry();
+        let Some(rule_key) = keymap.resolve_rule_key(format_rules, &server.transport) else {
+            return Err(ConfigError::TemplateParseError(format!(
+                "Client {} missing format rule for transport {}",
+                template.identifier, server.transport
+            )));
+        };
+        let format_rule = format_rules
+            .get(&rule_key)
+            .ok_or_else(|| ConfigError::TemplateParseError("format rule key resolved but missing".into()))?;
 
         let context = serde_json::to_value(server)?;
-        let mut rendered = self.render_value(&format_rule.template, &context)?;
+        // Render with optional-key drop policy (format_rules scope)
+        let mut rendered =
+            self.render_object_with_policy(&format_rule.template, &context, &server.transport, warnings)?;
 
         if format_rule.requires_type_field {
             if let Value::Object(ref mut obj) = rendered {
@@ -355,6 +365,108 @@ impl TemplateEngine {
                 Ok(Value::Array(rendered))
             }
             other => Ok(other.clone()),
+        }
+    }
+
+    // Render a top-level server object from format_rules with optional-key drop policy
+    fn render_object_with_policy(
+        &self,
+        template_value: &Value,
+        context: &Value,
+        transport: &str,
+        warnings: &mut Vec<String>,
+    ) -> ConfigResult<Value> {
+        use Value::*;
+        // Helper: classify handlebars strict/unknown variable errors for optional-key pruning
+        fn is_missing_var_error(e: &RenderError) -> bool {
+            // Handlebars emits different texts across versions:
+            // - "Unknown variable" / "not found"
+            // - "Failed to access variable in strict mode Some(\"key\")"
+            let msg = e.to_string().to_ascii_lowercase();
+            msg.contains("unknown")
+                || msg.contains("not found")
+                || msg.contains("strict mode")
+                || msg.contains("failed to access variable")
+        }
+        match template_value {
+            Object(map) => {
+                let mut out = serde_json::Map::new();
+                for (key, value) in map {
+                    // Special handling for metadata object: drop per-entry on unknowns
+                    if key == "metadata" {
+                        if let Object(meta) = value {
+                            let mut rendered_meta = serde_json::Map::new();
+                            for (mk, mv) in meta {
+                                match self.render_value(mv, context) {
+                                    Ok(rv) => {
+                                        rendered_meta.insert(mk.clone(), rv);
+                                    }
+                                    Err(ConfigError::HandlebarsRenderError(e)) => {
+                                        if is_missing_var_error(&e) {
+                                            warnings.push(format!(
+                                                "FR_OPTIONAL_DROPPED: metadata.{} dropped in '{}' (unknown variable)",
+                                                mk, transport
+                                            ));
+                                            continue;
+                                        }
+                                        return Err(ConfigError::HandlebarsRenderError(e));
+                                    }
+                                    Err(other) => return Err(other),
+                                }
+                            }
+                            if !rendered_meta.is_empty() {
+                                out.insert(key.clone(), Object(rendered_meta));
+                            } else {
+                                warnings.push(format!(
+                                    "FR_OPTIONAL_DROPPED: metadata dropped in '{}' (empty after pruning)",
+                                    transport
+                                ));
+                            }
+                            continue;
+                        }
+                    }
+
+                    // stdio args optional default
+                    let is_stdio_args = transport == "stdio" && key == "args";
+
+                    match self.render_value(value, context) {
+                        Ok(rv) => {
+                            out.insert(key.clone(), rv);
+                        }
+                        Err(ConfigError::HandlebarsRenderError(e)) => {
+                            if is_missing_var_error(&e) {
+                                if is_stdio_args {
+                                    // default by template position: string vs json helper
+                                    let default_value = match value {
+                                        Value::String(s) if s.contains("{{{json") => Value::Array(vec![]),
+                                        _ => Value::String(std::string::String::new()),
+                                    };
+                                    out.insert(key.clone(), default_value);
+                                    warnings
+                                        .push(format!("FR_ARGS_DEFAULTED: defaulted empty 'args' in '{}'", transport));
+                                } else if matches!(
+                                    key.as_str(),
+                                    "description" | "env" | "headers" | "longRunning" | "isActive"
+                                ) {
+                                    warnings.push(format!(
+                                        "FR_OPTIONAL_DROPPED: '{}' dropped in '{}' (unknown variable)",
+                                        key, transport
+                                    ));
+                                } else {
+                                    // Required key missing -> propagate error
+                                    return Err(ConfigError::HandlebarsRenderError(e));
+                                }
+                            } else {
+                                return Err(ConfigError::HandlebarsRenderError(e));
+                            }
+                        }
+                        Err(other) => return Err(other),
+                    }
+                }
+                Ok(Value::Object(out))
+            }
+            // Non-object templates fall back to regular rendering
+            other => self.render_value(other, context),
         }
     }
 
@@ -466,9 +578,10 @@ const TRANSPORT_PRIORITY: &[&str] = &["streamable_http", "sse", "stdio"];
 fn derive_transports_by_priority(
     format_rules: &std::collections::HashMap<String, crate::clients::models::FormatRule>
 ) -> Vec<&'static str> {
+    let map = crate::clients::keymap::registry();
     let mut list = Vec::new();
     for t in TRANSPORT_PRIORITY {
-        if format_rules.contains_key(*t) {
+        if map.has_rule(format_rules, t) {
             list.push(*t);
         }
     }
@@ -619,6 +732,8 @@ mod tests {
         }];
 
         let policy = BackupPolicySetting::default();
+        let _policy = BackupPolicySetting::default();
+        let mut warnings = Vec::new();
         let request = RenderRequest {
             client_id: "test-client",
             servers: &servers,
@@ -626,6 +741,7 @@ mod tests {
             profile_id: Some("profile-123"),
             dry_run: true,
             backup_policy: &policy,
+            warnings: &mut warnings,
         };
 
         let result = engine.render_config(request).await.expect("render");
@@ -732,6 +848,7 @@ mod tests {
         }];
 
         let policy = BackupPolicySetting::default();
+        let mut warnings = Vec::new();
         let request = RenderRequest {
             client_id: "test-client",
             servers: &servers,
@@ -739,6 +856,7 @@ mod tests {
             profile_id: None,
             dry_run: true,
             backup_policy: &policy,
+            warnings: &mut warnings,
         };
 
         let result = engine.render_config(request).await.expect("render");

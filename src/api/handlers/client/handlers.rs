@@ -155,19 +155,45 @@ pub async fn config_details(
 
 /// Handler for POST /api/client/config/apply
 /// Generates and optionally applies configuration
+#[tracing::instrument(
+    skip(app_state, request),
+    level = "debug",
+    fields(
+        client = %request.identifier,
+        mode = ?request.mode,
+        preview = %request.preview,
+        selected = ?request.selected_config
+    )
+)]
 pub async fn config_apply(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<ClientConfigUpdateReq>,
 ) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
     let template = service.get_client_template(&request.identifier).await.map_err(|err| {
-        tracing::error!("Failed to load client template {}: {}", request.identifier, err);
+        tracing::error!(
+            client = %request.identifier,
+            error = %err,
+            "Failed to load client template"
+        );
         StatusCode::NOT_FOUND
     })?;
     let options = build_render_options(&request);
-    let outcome = service.apply_with_deferred(options).await.map_err(|err| match err {
-        ConfigError::ClientDisabled { .. } => StatusCode::FORBIDDEN,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    let outcome = service.apply_with_deferred(options).await.map_err(|err| {
+        let status = match err {
+            ConfigError::ClientDisabled { .. } => StatusCode::FORBIDDEN,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        tracing::error!(
+            client = %request.identifier,
+            mode = ?request.mode,
+            preview = %request.preview,
+            selected = ?request.selected_config,
+            status = %status.as_u16(),
+            error = %err,
+            "config_apply failed"
+        );
+        status
     })?;
     let synthetic = TemplateExecutionResult::DryRun {
         diff: crate::clients::renderer::ConfigDiff {
@@ -179,7 +205,8 @@ pub async fn config_apply(
         content: outcome.preview.after.clone().unwrap_or_default(),
     };
     let preview = build_update_preview(&template, &synthetic);
-    let warnings = outcome.preview.summary.clone().into_iter().collect::<Vec<_>>();
+    let mut warnings = outcome.warnings.clone();
+    warnings.extend(outcome.preview.summary.clone().into_iter());
     let diff_format = Some(outcome.preview.format.as_str().to_string());
     let diff_before = outcome.preview.before.clone();
     let diff_after = outcome.preview.after.clone();
@@ -199,6 +226,13 @@ pub async fn config_apply(
         scheduled_reason: outcome.scheduled_reason,
     };
 
+    tracing::info!(
+        client = %request.identifier,
+        applied = outcome.applied,
+        preview = %request.preview,
+        scheduled = outcome.scheduled,
+        "config_apply succeeded"
+    );
     Ok(Json(ClientConfigUpdateResp::success(data)))
 }
 
@@ -439,7 +473,8 @@ fn extract_category(template: &ClientTemplate) -> ClientCategory {
 }
 
 fn extract_supported_transports(template: &ClientTemplate) -> Vec<String> {
-    template.config_mapping.format_rules.keys().cloned().collect()
+    let keymap = crate::clients::keymap::registry();
+    keymap.advertise_supported(&template.config_mapping.format_rules)
 }
 
 fn build_template_metadata(template: &ClientTemplate) -> ClientTemplateMetadata {

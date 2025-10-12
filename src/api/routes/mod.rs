@@ -14,8 +14,12 @@ pub mod system;
 use std::sync::Arc;
 
 use aide::{axum::ApiRouter, openapi::OpenApi};
+use axum::http::{Request, Response};
 use axum::{Router, routing::get};
+use std::time::Duration as StdDuration;
 use tokio::sync::Mutex;
+use tower_http::trace::TraceLayer;
+use tracing::Level;
 
 use crate::clients::ClientConfigService;
 use crate::{
@@ -190,4 +194,45 @@ async fn create_router_internal(
     Router::new()
         .nest("/api", api_router.merge(inspector_events))
         .merge(openapi::openapi_routes(api))
+        // Lightweight request/response logging for debugging 5xx issues
+        // Logs method, path, status, and latency. 5xx at ERROR, 4xx at WARN, others at DEBUG.
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|req: &Request<_>| {
+                    tracing::span!(
+                        Level::INFO,
+                        "http",
+                        method = %req.method(),
+                        path = %req.uri().path()
+                    )
+                })
+                .on_request(|_req: &Request<_>, _span: &tracing::Span| {
+                    // Intentionally quiet; we log on response with status and latency
+                })
+                .on_response(|res: &Response<_>, latency: StdDuration, span: &tracing::Span| {
+                    let status = res.status();
+                    if status.is_server_error() {
+                        tracing::error!(
+                            parent: span,
+                            status = %status,
+                            latency_ms = %latency.as_millis(),
+                            "HTTP response completed with 5xx"
+                        );
+                    } else if status.is_client_error() {
+                        tracing::warn!(
+                            parent: span,
+                            status = %status,
+                            latency_ms = %latency.as_millis(),
+                            "HTTP response completed with 4xx"
+                        );
+                    } else {
+                        tracing::debug!(
+                            parent: span,
+                            status = %status,
+                            latency_ms = %latency.as_millis(),
+                            "HTTP response completed"
+                        );
+                    }
+                }),
+        )
 }

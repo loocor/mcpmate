@@ -3,6 +3,7 @@ pub mod analyzer;
 pub mod detector;
 pub mod engine;
 pub mod error;
+pub mod keymap;
 pub mod models;
 pub mod renderer;
 pub mod service;
