@@ -185,27 +185,61 @@ fi
 
 cd ..
 
-# Step 2: Build backend using script/build-universal.sh
+# Step 2: Build backend using platform-specific script
 print_status "Building backend..."
 
 SCRIPT_DIR="script"
-BUILD_SCRIPT="$SCRIPT_DIR/build-universal.sh"
 
-if [ ! -f "$BUILD_SCRIPT" ]; then
-    print_error "Build script not found: $BUILD_SCRIPT"
+# Resolve platform script from target/platform
+PLATFORM_SCRIPT=""
+if [ -n "$PLATFORM" ]; then
+    case "$PLATFORM" in
+        linux|linux-x64|linux-arm64)
+            PLATFORM_SCRIPT="$SCRIPT_DIR/build-linux.sh"
+            ;;
+        windows|win64|windows-arm64)
+            PLATFORM_SCRIPT="$SCRIPT_DIR/build-windows.sh"
+            ;;
+        macos|macos-x64|macos-arm64|darwin)
+            PLATFORM_SCRIPT="$SCRIPT_DIR/build-macos.sh"
+            ;;
+        *)
+            print_error "Unknown platform: $PLATFORM"
+            show_usage
+            exit 1
+            ;;
+    esac
+elif [ -n "$TARGET" ]; then
+    case "$TARGET" in
+        *unknown-linux-gnu*) PLATFORM_SCRIPT="$SCRIPT_DIR/build-linux.sh" ;;
+        *pc-windows-*)       PLATFORM_SCRIPT="$SCRIPT_DIR/build-windows.sh" ;;
+        *apple-darwin*)      PLATFORM_SCRIPT="$SCRIPT_DIR/build-macos.sh" ;;
+        *)
+            print_error "Cannot determine platform for target: $TARGET"
+            exit 1
+            ;;
+    esac
+else
+    # Auto-detect current host
+    case "$(uname -s)" in
+        Linux)  PLATFORM_SCRIPT="$SCRIPT_DIR/build-linux.sh" ;;
+        Darwin) PLATFORM_SCRIPT="$SCRIPT_DIR/build-macos.sh" ;;
+        CYGWIN*|MINGW*|MSYS*) PLATFORM_SCRIPT="$SCRIPT_DIR/build-windows.sh" ;;
+        *) print_error "Unsupported host platform: $(uname -s)"; exit 1 ;;
+    esac
+fi
+
+if [ ! -f "$PLATFORM_SCRIPT" ]; then
+    print_error "Build script not found: $PLATFORM_SCRIPT"
     exit 1
 fi
 
-# Make sure the build script is executable
-chmod +x "$BUILD_SCRIPT"
+chmod +x "$PLATFORM_SCRIPT"
 
-# Call the universal build script with appropriate parameters
 if [ -n "$TARGET" ]; then
-    "$BUILD_SCRIPT" "$BUILD_MODE" "$TARGET"
-elif [ -n "$PLATFORM" ]; then
-    "$BUILD_SCRIPT" "$BUILD_MODE" "" "$PLATFORM"
+    "$PLATFORM_SCRIPT" "$BUILD_MODE" "$TARGET"
 else
-    "$BUILD_SCRIPT" "$BUILD_MODE"
+    "$PLATFORM_SCRIPT" "$BUILD_MODE"
 fi
 
 if [ ! -f "$BINARY_PATH" ]; then
