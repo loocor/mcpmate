@@ -421,7 +421,7 @@ impl From<rmcp::model::Icon> for ServerIcon {
         Self {
             src: icon.src,
             mime_type: icon.mime_type,
-            sizes: icon.sizes.map(|v| v.join(",")),
+            sizes: icon.sizes,
         }
     }
 }
