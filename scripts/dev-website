@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "$(cd "$(dirname "$0")" && pwd)/_lib.sh"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./scripts/dev-website
+
+Starts the website Vite dev server from website/ using bun.
+EOF
+  exit 0
+fi
+
+require_command bun
+run_in "$(project_dir website)" bun run dev

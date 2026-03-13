@@ -1,7 +1,22 @@
 .DS_Store
-.claude-trace/
-.idea/
-.venv/
-dist/
-target/
-mcpmate.db*
+*.log
+
+# Local AI/tooling state
+.claude/
+.codex/
+.opencode/
+
+# Shared build outputs
+**/target/
+**/dist/
+**/node_modules/
+**/.build/
+**/DerivedData/
+
+# Local environment files
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Root helper artifacts
+mcpmate-board-dashboard.png

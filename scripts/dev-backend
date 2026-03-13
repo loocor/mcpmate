@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "$(cd "$(dirname "$0")" && pwd)/_lib.sh"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./scripts/dev-backend [mcpmate args...]
+
+Starts the backend from backend/ using cargo run.
+Additional arguments are forwarded to the backend binary.
+EOF
+  exit 0
+fi
+
+require_command cargo
+run_in "$(project_dir backend)" cargo run -- "$@"

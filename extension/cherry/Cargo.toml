@@ -1,0 +1,23 @@
+[package]
+name = "cherry-db-manager"
+version = "0.1.0"
+edition = "2021"
+description = "A library for managing Cherry Studio LevelDB configurations"
+license = "MIT"
+repository = "https://github.com/loocor/cherry-db-manager"
+
+[lib]
+name = "cherry_db_manager"
+path = "src/lib.rs"
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[dependencies]
+rusty-leveldb = "3.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }

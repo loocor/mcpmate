@@ -1,170 +1,64 @@
 # MCPMate
 
-MCPMate is a comprehensive Model Context Protocol (MCP) management center designed to address configuration complexity, resource consumption, security risks, and other issues in the MCP ecosystem, providing users with a unified management platform.
+MCPMate is organized as a lightweight monorepo for a solo maintainer. The
+repository keeps product surfaces side by side so backend, board, website, and
+desktop changes can be developed and validated together without forcing a heavy
+workspace toolchain.
 
-## Project Background & Vision
+## Repository Layout
 
-With the rapid development of the MCP ecosystem, more and more developers and creators are using MCP services in various tools (such as Claude Desktop, Cursor, Zed, Cherry Studio, etc.) to enhance the capabilities of AI assistants. However, this decentralized usage brings significant challenges:
+- `backend/` - Rust MCP gateway, management API, bridge binary, and runtime core.
+- `board/` - React + Vite management dashboard for MCPMate.
+- `website/` - Marketing site and product-facing documentation pages.
+- `desktop/` - Desktop application work, packaging, and platform-specific shells.
+- `sdk/` - Rust MCP SDK used by MCPMate.
+- `cherry/` - Cherry Studio configuration integration library.
+- `docs/` - Product documentation workspace when used.
+- `workspace-progress.md` - Cross-project progress index.
+- `AGENTS.md` - Top-level collaboration rules for the full repository.
 
-- **Complex and repetitive configuration**: The same MCP server needs to be configured repeatedly in multiple client
-- **High context-switching cost**: Different work scenarios require frequent switching of MCP server configurations
-- **Resource consumption and management difficulties**: Running multiple MCP servers simultaneously consumes a lot of system resources
-- **Security risks and lack of monitoring**: Configuration errors or security risks are difficult to detect in time
-- **Lack of unified management**: Managing different MCP services requires switching between multiple tools
+## Working Style
 
-MCPMate aims to solve these problems through centralized configuration management, intelligent service scheduling, and enhanced security protection, greatly improving usability, reducing manual configuration burden, and providing support for team collaboration.
+This repo intentionally stays light:
 
-## Core Components
+- No Turbo/Nx/workspace-wide dependency manager.
+- Each subproject keeps its own build system.
+- Root scripts only delegate to existing subproject commands.
+- Cross-project tasks are coordinated from the repository root.
 
-### Proxy
+## Common Workflows
 
-One of the core components of the project is the `proxy`, a high-performance MCP proxy server that can:
-
-- Connect to multiple MCP servers and aggregate their tools
-- Provide a unified interface for AI client
-- Support multiple transport protocols (SSE, Streamable HTTP, or unified mode)
-- Monitor and audit MCP communication in real time
-- Detect potential security risks (such as tool poisoning)
-- Intelligently manage server resources
-- Support multi-instance management
-- Provide RESTful API for management and monitoring
-
-### Bridge
-
-`bridge` is a lightweight bridging component used to connect stdio-mode MCP client (such as Claude Desktop) to the HTTP-mode MCPMate proxy server:
-
-- Converts stdio protocol to HTTP protocol (supports SSE and Streamable HTTP) without modifying the client
-- Automatically inherits all functions and tools of the HTTP service
-- Minimalist design, only requires service address configuration
-- Suitable for client that only support stdio mode (such as Claude Desktop)
-
-### Runtime Manager
-
-`runtime` is an intelligent runtime environment management tool that provides automated installation and management of various runtime environments:
-
-- **Smart Download System**: 15-second intelligent timeout with automatic network diagnostics
-- **Progress Tracking**: Real-time progress bars with download speed and stage information
-- **Interactive Timeout Handling**: User-friendly timeout resolution with diagnostic reports
-- **Multi-Runtime Support**: Node.js, uv (Python), and Bun.js runtime management
-- **Environment Integration**: Automatic environment variable configuration for seamless MCP server usage
-- **Network Diagnostics**: DNS resolution and connection testing with troubleshooting suggestions
-
-#### Quick Start with Runtime Manager
+Run these commands from the repository root:
 
 ```bash
-# Install Node.js for JavaScript MCP servers
-runtime install node
+# Check local toolchain expectations and entrypoints
+./scripts/doctor
 
-# Install uv for Python MCP servers
-runtime install uv
+# Start the backend
+./scripts/dev-backend
 
-# Install with interactive timeout handling
-runtime install node --interactive --verbose
+# Start the board
+./scripts/dev-board
 
-# List installed runtimes
-runtime list
+# Start backend + board together
+./scripts/dev-all
 
-# Check runtime status
-runtime check node
+# Run fast validation across the main maintained projects
+./scripts/check
 ```
 
-## Configuration Management
+## Subproject Entry Points
 
-MCPMate now uses a database-driven configuration management system, centered around the concept of **Profile**. All server, tool, and profile information is stored in a local SQLite database (`config/mcpmate.db`). This enables flexible, dynamic, and persistent management of MCP servers and tools, supporting advanced features such as multi-profile activation, scenario-based switching, and team collaboration.
+- Backend details: `backend/README.md`
+- Board details: `board/README.md`
+- Website details: `website/README.md`
+- Desktop details: `desktop/README.md`
+- SDK details: `sdk/README.md`
+- Cherry details: `cherry/README.md`
 
-### Key Concepts
+## Current Monorepo Boundary
 
-- **Profile**: A profile is a collection of MCP servers and tools tailored for specific scenarios or applications. Users can create, activate, and switch between multiple profile to dynamically change the available services and tools without restarting MCPMate.
-- **Database Storage**: All configuration data is stored in structured tables (e.g., `server_config`, `server_args`, `profile`, etc.) within the SQLite database. Direct editing of the database is not recommended; use the provided APIs.
-- **API-Driven Management**: All configuration operations (create, update, enable/disable servers and tools, manage profile, etc.) are performed via RESTful APIs. See [API Documentation](./src/api/README.md) for details and examples.
-- **Legacy mcp.json**: The `mcp.json` file is now only used for initial migration or backward compatibility. On first startup, if the database is empty and `mcp.json` exists, MCPMate will automatically migrate its contents to the database. Ongoing configuration should be managed via the database and APIs.
-
-#### Example: Creating a New MCP Server via API
-
-To add a new MCP server, use the following API endpoint:
-
-```http
-POST /api/mcp/servers
-Content-Type: application/json
-
-{
-  "name": "python-server",
-  "kind": "stdio", // or "sse", "streamable_http"
-  "command": "python", // for stdio servers
-  "url": "http://example.com/sse", // for sse/streamable_http servers
-  "args": ["-m", "mcp_server"],
-  "env": { "DEBUG": "true" },
-  "enabled": true
-}
-```
-
-For more details on profile and API usage, see [Client Configuration Management](./docs/features/client_configuration_management.md) and [API Documentation](./src/api/README.md).
-
-### MCPMate Desktop
-
-MCPMate Desktop is a native desktop application that provides a comprehensive graphical interface for managing MCP servers:
-
-**Current Status**: ✅ **macOS version available** - Native SwiftUI application with full functionality
-
-**Key Features**:
-- Complete graphical interface for managing MCP servers, profile, and tools
-- Real-time monitoring and status display with live updates
-- Intelligent client detection and configuration generation
-- Native system integration with MenuBar support and notifications
-- Automated build and packaging system with DMG installer
-- FFI integration with Rust backend for optimal performance
-
-**Planned Platforms**:
-- **Windows**: Native WinUI 3 application (planned)
-- **Linux**: Native GTK 4 application (planned)
-
-### MCPMate Inspector
-
-The planned MCPMate Inspector is a security auditing component that will provide:
-
-- Real-time monitoring of MCP communication
-- Detection of security risks such as tool poisoning
-- Sensitive data detection
-- Complete log recording
-- Security alerts
-
-## API
-
-MCPMate Proxy provides a RESTful API for managing and monitoring MCP servers. See [API Documentation](./src/api/README.md) for details.
-
-## Technical Architecture
-
-MCPMate uses the following technology stack:
-
-- **Backend**: Rust with FFI support, based on [Model Context Protocol Rust SDK](https://github.com/modelcontextprotocol/rust-sdk)
-- **Desktop**: Native applications per platform (SwiftUI for macOS, WinUI 3 for Windows, GTK 4 for Linux)
-- **Data Storage**: SQLite database with structured configuration management
-- **Communication**: RESTful API + FFI integration for desktop applications
-- **Build System**: Automated build scripts with cross-platform packaging support
-
-## Authentication & Authorization Layers
-
-MCPMate relies on three distinct security tracks—keep them separated to avoid conceptual drift:
-
-- **Protocol-Scope Auth** (mandated by the MCP spec): Protects the proxy surfaces exposed to downstream clients (Cursor, VSCode, Claude Desktop, etc.) across Streamable HTTP, SSE, and stdio, and ensures outbound connections to upstream hosted services include the required bearer tokens, OAuth flows, or mTLS material. See `backend/docs/roadmap/security-audit-management.md`.
-- **Management-Scope Accounts** (control plane, planned): Centralised login, RBAC, and multi-tenant governance for operators who manage profiles, servers, and audit policies. The design remains in planning; reference `backend/docs/roadmap/multi_tenant_hosting.md` and related docs.
-- **Service Credentials** (upstream integration): Secrets that MCPMate injects when calling external APIs/MCP servers, carried via `auth_config` payloads such as API keys, OAuth tokens, or JWTs. Details live in `backend/docs/roadmap/builtin_mcp_services.md`.
-
-The immediate priority is Protocol-Scope Auth; the remaining layers will follow as cloud deployment, profile sharing, and collaboration features mature. Consult `docs/overview/auth_layers.md` for the full map and rollout notes.
-
-## Future Plans
-
-Our development roadmap includes:
-
-1. **Core proxy feature improvement**: Enhance the stability, performance, and functionality of MCPMate Proxy
-2. **Desktop application development**: Build the MCPMate Desktop app with a graphical interface
-3. **Security audit enhancement**: Develop MCPMate Inspector for more powerful security auditing
-4. **Scenario presets and intelligent switching**: Implement context-based automatic configuration switching
-5. **Team collaboration features**: Add configuration sharing, role-based access control, and other team features
-6. **Cloud sync and multi-device support**: Implement cloud sync and multi-device support for configurations
-
-## Contribution
-
-Contributions, issue reports, and suggestions are welcome. Please submit your contributions via GitHub Issues or Pull Requests.
-
-Before opening a PR, review the [Repository Guidelines](AGENTS.md) for development workflows, testing expectations, and documentation requirements.
+The repository root is the coordination layer. Subprojects remain top-level
+siblings and are not nested under `backend/`. This keeps the product easier to
+maintain while preserving clear boundaries between runtime, UI, site, and SDK
+code.

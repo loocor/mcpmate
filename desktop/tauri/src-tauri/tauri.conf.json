@@ -1,0 +1,51 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "MCPMate",
+	"version": "0.1.0",
+	"identifier": "io.mcpmate.desktop",
+	"build": {
+		"devUrl": "http://127.0.0.1:5173",
+		"frontendDist": "../../../board/dist"
+	},
+	"app": {
+		"withGlobalTauri": true,
+		"security": {
+			"csp": null
+		},
+		"windows": [
+      {
+        "label": "main",
+        "title": "MCPMate",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "create": false,
+        "dragDropEnabled": false
+      }
+		]
+	},
+	"bundle": {
+		"active": true,
+		"targets": ["app", "dmg"],
+		"icon": ["icons/icon.icns"],
+		"externalBin": ["../../../backend/target/sidecars/bridge"],
+		"macOS": {
+			"entitlements": "entitlements.plist",
+			"minimumSystemVersion": "10.15",
+			"signingIdentity": null,
+			"providerShortName": null
+		}
+	},
+	"plugins": {
+		"opener": {},
+		"updater": {
+			"active": false,
+			"dialog": true,
+			"endpoints": [],
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5QzMxNjYwNTM5OEUwNTgKUldSWTRKaFRZQmJER1h4d1ZMYVA3dnluSjdpN2RmMldJR09hUFFlZDY0SlFqckkvRUJhZDJVZXAK",
+			"windows": {
+				"installMode": "passive"
+			}
+		}
+		}
+	}

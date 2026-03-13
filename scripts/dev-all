@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "$(cd "$(dirname "$0")" && pwd)/_lib.sh"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./scripts/dev-all
+
+Starts backend and board together.
+Stop both with Ctrl+C.
+EOF
+  exit 0
+fi
+
+require_command cargo
+require_command bun
+
+cleanup() {
+  jobs -p | xargs -r kill >/dev/null 2>&1 || true
+}
+
+trap cleanup EXIT INT TERM
+
+print_section "backend"
+(cd "$(project_dir backend)" && cargo run --) &
+
+sleep 2
+
+print_section "board"
+(cd "$(project_dir board)" && bun run dev) &
+
+wait

@@ -1,0 +1,78 @@
+[
+	{
+		"version": "0.1.0 Preview",
+		"date": "2025-10-18",
+		"highlights": [
+			"Preview deadline extended; small quality-of-life updates while native apps are in focus."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Experimental API and MCP port settings are now exposed. Stability is not guaranteed; expect changes."
+			},
+			{
+				"type": "known",
+				"text": "Inline marketplace may still render a blank or garbled page in certain cases."
+			},
+			{
+				"type": "known",
+				"text": "Inspector cannot trigger tool calls yet; capability diagnostics remain limited."
+			},
+			{
+				"type": "note",
+				"text": "This build primarily extends the preview countdown while we focus efforts on native app development."
+			}
+		],
+		"tags": ["preview"]
+	},
+	{
+		"version": "0.1.0 Preview",
+		"date": "2025-10-13",
+		"highlights": [
+			"First public preview of the MCPMate desktop app for macOS, debuting the dashboard, profiles, clients, servers, market, runtime, and settings pillars needed for day-to-day MCP operations."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Dashboard delivers live status cards plus CPU / memory timelines to monitor MCPMate and host usage."
+			},
+			{
+				"type": "feat",
+				"text": "Profiles panel enables composing server/tool bundles and applying them to hosted clients for in-place switching."
+			},
+			{
+				"type": "feat",
+				"text": "Marketplace supports browsing the built-in catalog, drag-and-drop bundle imports, and pulling configurations from existing clients."
+			},
+			{
+				"type": "fix",
+				"text": "Improved client detection refresh and stabilized marketplace install flows to reduce first-run friction."
+			},
+			{
+				"type": "note",
+				"text": "Settings highlights preview WIP controls (Application Mode, language selector, Dock/Menu Bar toggles) that are still evolving."
+			},
+			{
+				"type": "note",
+				"text": "Runtime page provides one-click uv / Bun installation and repair for environments where servers fail to start."
+			},
+			{
+				"type": "note",
+				"text": "Hosted client mode supports in-place profile switching; transparent mode only writes configuration files."
+			},
+			{
+				"type": "known",
+				"text": "API / MCP port configuration is not available yet. Developers running multiple instances may encounter conflicts; the next release will add custom port settings."
+			},
+			{
+				"type": "known",
+				"text": "The inline marketplace can occasionally render a blank or garbled view. An upcoming upgrade will address these display issues."
+			},
+			{
+				"type": "known",
+				"text": "Inspector currently cannot trigger tool calls. A fix is in progress to restore capability diagnostics."
+			}
+		],
+		"tags": ["preview"]
+	}
+]

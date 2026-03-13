@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "$(cd "$(dirname "$0")" && pwd)/_lib.sh"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./scripts/doctor
+
+Prints the expected local toolchain and main monorepo entrypoints.
+EOF
+  exit 0
+fi
+
+printf 'MCPMate lightweight monorepo\n'
+printf 'Root: %s\n' "$ROOT_DIR"
+
+print_section "required commands"
+for cmd in cargo bun xcodebuild; do
+  if command -v "$cmd" >/dev/null 2>&1; then
+    printf '[ok] %s -> %s\n' "$cmd" "$(command -v "$cmd")"
+  else
+    printf '[missing] %s\n' "$cmd"
+  fi
+done
+
+print_section "main entrypoints"
+printf 'Repository guide: %s\n' "$ROOT_DIR/README.md"
+printf 'Project rules: %s\n' "$ROOT_DIR/AGENTS.md"
+printf 'Progress index: %s\n' "$ROOT_DIR/workspace-progress.md"
+printf 'Backend guide: %s\n' "$ROOT_DIR/backend/README.md"
+printf 'Board guide: %s\n' "$ROOT_DIR/board/README.md"
+printf 'Website guide: %s\n' "$ROOT_DIR/website/README.md"
+printf 'Desktop guide: %s\n' "$ROOT_DIR/desktop/README.md"
+
+print_section "common commands"
+printf './scripts/dev-backend\n'
+printf './scripts/dev-board\n'
+printf './scripts/dev-website\n'
+printf './scripts/dev-all\n'
+printf './scripts/check\n'

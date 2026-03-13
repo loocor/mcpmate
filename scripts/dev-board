@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "$(cd "$(dirname "$0")" && pwd)/_lib.sh"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./scripts/dev-board
+
+Starts the board Vite dev server from board/ using bun.
+EOF
+  exit 0
+fi
+
+require_command bun
+run_in "$(project_dir board)" bun run dev

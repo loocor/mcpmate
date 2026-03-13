@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	:root {
+		--background: 0 0% 100%;
+		--foreground: 222.2 84% 4.9%;
+		--card: 0 0% 100%;
+		--card-foreground: 222.2 84% 4.9%;
+		--popover: 0 0% 100%;
+		--popover-foreground: 222.2 84% 4.9%;
+		--primary: 222.2 47.4% 11.2%;
+		--primary-foreground: 210 40% 98%;
+		--secondary: 210 40% 96%;
+		--secondary-foreground: 222.2 84% 4.9%;
+		--muted: 210 40% 96%;
+		--muted-foreground: 215.4 16.3% 46.9%;
+		--accent: 210 40% 96%;
+		--accent-foreground: 222.2 84% 4.9%;
+		--destructive: 0 84.2% 60.2%;
+		--destructive-foreground: 210 40% 98%;
+		--border: 214.3 31.8% 91.4%;
+		--input: 214.3 31.8% 91.4%;
+		--ring: 222.2 84% 4.9%;
+		--radius: 0.5rem;
+	}
+
+	.dark {
+		--background: 222.2 84% 4.9%;
+		--foreground: 210 40% 98%;
+		--card: 222.2 84% 4.9%;
+		--card-foreground: 210 40% 98%;
+		--popover: 222.2 84% 4.9%;
+		--popover-foreground: 210 40% 98%;
+		--primary: 210 40% 98%;
+		--primary-foreground: 222.2 47.4% 11.2%;
+		--secondary: 217.2 32.6% 17.5%;
+		--secondary-foreground: 210 40% 98%;
+		--muted: 217.2 32.6% 17.5%;
+		--muted-foreground: 215 20.2% 65.1%;
+		--accent: 217.2 32.6% 17.5%;
+		--accent-foreground: 210 40% 98%;
+		--destructive: 0 62.8% 30.6%;
+		--destructive-foreground: 210 40% 98%;
+		--border: 217.2 32.6% 17.5%;
+		--input: 217.2 32.6% 17.5%;
+		--ring: 212.7 26.8% 83.9%;
+	}
+}
+
+@layer base {
+	body {
+		@apply bg-background text-foreground;
+	}
+
+	[data-vaul-drawer][data-vaul-drawer-direction="right"]::after {
+		width: min(100%, 0px);
+	}
+
+	/* When an inspector combobox is open, let pointer events pass through Drawer overlay
+       so Popover content can handle hover/click/scroll without interception. */
+	html[data-inspector-combobox-open="true"] [data-vaul-overlay] {
+		pointer-events: none !important;
+	}
+
+	/* Ensure Popover has proper z-index but don't interfere with default events */
+	[data-radix-popper-content-wrapper] {
+		z-index: 100 !important;
+		pointer-events: auto !important; /* allow hover/click to reach popper content */
+		isolation: isolate; /* create a new stacking context to sit above overlays */
+	}
+
+	/* Ensure combobox menus aren't dimmed by upstream opacity */
+	[data-radix-popper-content-wrapper] [cmdk-list],
+	[data-radix-popper-content-wrapper] [cmdk-item] {
+		opacity: 1 !important;
+	}
+
+	/* Critical: Remove pointer-events manipulation, let browser handle scroll naturally */
+	[cmdk-list] {
+		overflow-y: scroll !important;
+		overflow-x: hidden !important;
+		overscroll-behavior: contain;
+		-webkit-overflow-scrolling: touch;
+		max-height: inherit;
+		position: relative;
+		/* Force GPU acceleration for smooth scrolling */
+		transform: translateZ(0);
+		will-change: scroll-position;
+	}
+
+	/* Ensure items are clickable but don't use pointer-events manipulation */
+	[cmdk-item] {
+		cursor: pointer !important;
+		pointer-events: auto !important;
+	}
+
+	/* Ensure scroll is not blocked by touch events */
+	[cmdk-list]::-webkit-scrollbar {
+		width: 8px;
+	}
+
+	[cmdk-list]::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	[cmdk-list]::-webkit-scrollbar-thumb {
+		background: rgba(0, 0, 0, 0.2);
+		border-radius: 4px;
+	}
+
+	.dark [cmdk-list]::-webkit-scrollbar-thumb {
+		background: rgba(255, 255, 255, 0.2);
+	}
+}
