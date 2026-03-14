@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-source "$(cd "$(dirname "$0")" && pwd)/_lib.sh"
+source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
@@ -22,11 +22,8 @@ run_in "$(project_dir backend)" cargo check
 print_section "backend clippy"
 run_in "$(project_dir backend)" cargo clippy --all-targets --all-features -- -D warnings
 
-print_section "sdk clippy"
-run_in "$(project_dir sdk)" cargo clippy --all-targets --all-features -- -D warnings
-
-print_section "cherry clippy"
-run_in "$(project_dir cherry)" cargo clippy -- -D warnings
+print_section "extension/cherry clippy"
+run_in "$(project_dir extension/cherry)" cargo clippy -- -D warnings
 
 print_section "board lint"
 run_in "$(project_dir board)" bun run lint

@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+#
+# common.sh - Shared library for MCPMate development scripts
+#
+# Usage: source "$(cd "$(dirname "$0")" && pwd)/common.sh"
+#
+# Provides:
+#   - ROOT_DIR: Absolute path to monorepo root
+#   - project_dir <name>: Returns absolute path to a subproject
+#   - require_command <cmd>: Exits if command not found
+#   - run_in <dir> <cmd...>: Runs command in specified directory
+#   - print_section <title>: Prints a section header
 
 set -euo pipefail
 
