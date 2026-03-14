@@ -118,7 +118,7 @@ async fn create_router_internal(
     let inspector_sessions = Arc::new(InspectorSessionManager::new());
     inspector_service::set_call_registry(inspector_calls.clone());
 
-    // 创建统一查询适配器（可选，用于渐进式迁移）
+    // Create unified query adapter (optional, for incremental migration)
     let unified_query = if database.is_some() {
         crate::core::capability::UnifiedQueryIntegration::create_adapter(&AppState {
             connection_pool: connection_pool.clone(),
@@ -128,7 +128,7 @@ async fn create_router_internal(
             database: database.clone(),
             config_application_state: config_application_state.clone(),
             redb_cache: redb_cache.clone(),
-            unified_query: None, // 避免递归
+            unified_query: None, // avoid recursion
             client_service: None,
             inspector_calls: inspector_calls.clone(),
             inspector_sessions: inspector_sessions.clone(),

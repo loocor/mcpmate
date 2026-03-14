@@ -242,5 +242,5 @@ See the main MCPMate repository for license information.
 ## Related Projects
 
 - [MCPMate Backend](../backend/): Core proxy and management services
-- [MCPMate SDK](../sdk/): Rust SDK for MCP protocol
+- MCP Rust SDK: use official `rmcp` crates from crates.io
 - [MCPMate Desktop](../desktop/): Native desktop applications

@@ -121,11 +121,11 @@ export function ServerListPage() {
 	const [pending, setPending] = useState<Record<string, boolean>>({});
 	const [isTogglePending, setIsTogglePending] = useState(false);
 
-	// 搜索和排序状态
+	// Search and sort state
 	const [search, setSearch] = useState("");
 	const [expanded, setExpanded] = useState(false);
 
-	// 排序后的数据状态
+	// Sorted data state
 	const [sortedServers, setSortedServers] = React.useState<ServerSummary[]>([]);
 
 	const queryClient = useQueryClient();
@@ -259,7 +259,7 @@ export function ServerListPage() {
 		retry: 1, // Reduce retry count to show errors more quickly
 	});
 
-	// 当 servers 数据变化时更新 sortedServers
+	// Update sortedServers when servers data changes
 	React.useEffect(() => {
 		if (serverListResponse?.servers) {
 			setSortedServers(serverListResponse.servers);
@@ -508,7 +508,7 @@ export function ServerListPage() {
 			? `${metaDescription}${serverTypeRaw ? ` · ${serverTypeRaw}` : ""}`
 			: technicalLine;
 
-		// 第二行：关联的 profiles，使用 title case
+		// Second line: associated profiles, using title case
 	const profileNames =
 		profileRefs.length > 0
 			? profileRefs
@@ -523,7 +523,7 @@ export function ServerListPage() {
 		defaultValue: "Profiles: {{profiles}}",
 	});
 
-		// 返回两行显示的 React 元素
+		// Return React element displayed in two lines
 		return (
 			<div className="space-y-1">
 				<div
@@ -546,8 +546,8 @@ export function ServerListPage() {
 		const tags = [];
 		const serverType = server.server_type || "";
 
-		// 根据服务器类型判断连接方式
-	if (
+		// Determine connection method based on server type
+		if (
 		serverType.toLowerCase().includes("stdio") ||
 		serverType.toLowerCase().includes("process")
 	) {
@@ -595,8 +595,8 @@ export function ServerListPage() {
 		);
 	}
 
-		// 如果没有匹配到特定类型，默认显示 HTTP
-	if (tags.length === 0) {
+		// If no specific type matched, default to showing HTTP
+		if (tags.length === 0) {
 		tags.push(
 			<span
 				key="default"
@@ -869,7 +869,7 @@ export function ServerListPage() {
 		}
 	};
 
-	// 使用排序后的数据
+	// Use sorted data
 	const filteredAndSortedServers = useMemo(() => {
 		return sortedServers;
 	}, [sortedServers]);
@@ -957,7 +957,7 @@ export function ServerListPage() {
 					</div>
 				));
 
-	// 工具栏配置
+	// Toolbar config
 	type ToolbarServer = ServerSummary & { [key: string]: unknown };
 	const toolbarConfig: PageToolbarConfig<ToolbarServer> = {
 		data: (serverListResponse?.servers || []) as ToolbarServer[],
@@ -1005,26 +1005,26 @@ export function ServerListPage() {
 		},
 	};
 
-	// 工具栏状态
+	// Toolbar state
 	const toolbarState: PageToolbarState = {
 		search,
 		viewMode: defaultView,
-		sort: "name", // 添加必需的 sort 属性
+		sort: "name", // Add required sort property
 		expanded,
 	};
 
-	// 工具栏回调
+	// Toolbar callbacks
 	const toolbarCallbacks: PageToolbarCallbacks<ToolbarServer> = {
 		onSearchChange: setSearch,
 		onViewModeChange: (mode: "grid" | "list") => {
-			// 直接更新全局设置
+			// Directly update global settings
 			setDashboardSetting("defaultView", mode);
 		},
 		onSortedDataChange: (data) => setSortedServers(data as ServerSummary[]),
 		onExpandedChange: setExpanded,
 	};
 
-	// 操作按钮
+	// Action buttons
 	const actions = (
 		<div className="flex items-center gap-2">
 			{isError && enableServerDebug && (

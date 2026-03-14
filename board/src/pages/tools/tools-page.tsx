@@ -21,7 +21,7 @@ import type { ConfigSuitListResponse, Tool } from "../../lib/types";
 export function ToolsPage() {
 	const [searchTerm, setSearchTerm] = React.useState("");
 	const queryClient = useQueryClient();
-	// 添加折叠状态管理
+	// Collapse state management
 	const [collapsedServers, setCollapsedServers] = React.useState<
 		Record<string, boolean>
 	>({});
@@ -41,7 +41,7 @@ export function ToolsPage() {
 		Record<string, boolean>
 	>({});
 
-	// 切换服务器折叠状态
+	// Toggle server collapse state
 	const toggleServerCollapse = (serverName: string) => {
 		setCollapsedServers((prev) => ({
 			...prev,
@@ -49,15 +49,15 @@ export function ToolsPage() {
 		}));
 	};
 
-	// 移除了 enableMutation 和 disableMutation，改为直接在 handleToggleTool 中处理
+	// enableMutation and disableMutation removed, handled directly in handleToggleTool
 
-	// 获取可用的配置套件
+	// Get available config suits
 	const { data: suitsData } = useQuery<ConfigSuitListResponse>({
 		queryKey: ["configSuits"],
 		queryFn: configSuitsApi.getAll,
 	});
 
-	// 获取第一个可用的配置套件 ID
+	// Get first available config suit ID
 	const suits = suitsData?.suits ?? [];
 	const activeSuitId =
 		suits.find((s) => s.is_active)?.id ?? suits[0]?.id;
@@ -68,7 +68,7 @@ export function ToolsPage() {
 		is_enabled: boolean;
 		tool_id?: string;
 	}) => {
-		// 生成唯一的工具键，优先使用 tool_id
+		// Generate unique tool key, prefer tool_id
 		const toolKey = tool.tool_id
 			? `id:${tool.tool_id}`
 			: `${tool.server_name}:${tool.tool_name || "unnamed"}`;
@@ -78,38 +78,38 @@ export function ToolsPage() {
 			return; // Don't allow multiple operations on the same tool
 		}
 
-		// 如果没有可用的配置套件，显示错误
+		// If no available config suit, show error
 		if (!activeSuitId) {
 			console.error("No active configuration suit found");
-			alert("无法启用/禁用工具：未找到活动的配置套件");
+			alert("Cannot enable/disable tool: No active configuration suit found");
 			return;
 		}
 
-		// 如果没有工具 ID，显示错误
+		// If no tool ID, show error
 		if (!tool.tool_id) {
 			console.error("No tool ID found for tool:", tool);
 			const toolDisplay = tool.tool_name
 				? `${tool.server_name}/${tool.tool_name}`
-				: `${tool.server_name}/未命名工具`;
-			alert(`无法启用/禁用工具：未找到工具 ID (${toolDisplay})`);
+				: `${tool.server_name}/unnamed tool`;
+			alert(`Cannot enable/disable tool: Tool ID not found (${toolDisplay})`);
 			return;
 		}
 
-		// 设置工具为待处理状态
+		// Set tool to pending state
 		setPendingTools((prev) => ({ ...prev, [toolKey]: true }));
 
 		try {
-			// 必须使用工具 ID
+			// Must use tool ID
 			const toolId = tool.tool_id;
 
-			// 直接调用 API 而不是使用 mutation
+			// Call API directly instead of using mutation
 			if (tool.is_enabled) {
 				await toolsApi.disableTool(activeSuitId, toolId);
 			} else {
 				await toolsApi.enableTool(activeSuitId, toolId);
 			}
 
-			// 成功后刷新工具列表
+			// Refresh tool list after success
 			queryClient.invalidateQueries({ queryKey: ["tools"] });
 		} catch (error) {
 			console.error(
@@ -117,15 +117,15 @@ export function ToolsPage() {
 				error,
 			);
 
-			// 即使出错，也模拟成功（因为我们在 API 中已经添加了模拟实现）
-			// 更新本地工具状态
+			// Simulate success even on error (mock implementation added in API)
+			// Update local tool state
 			const updatedTools =
 				tools?.tools?.map((t) => {
-					// 优先使用 tool_id 进行匹配
+					// Prefer tool_id for matching
 					if (tool.tool_id && t.tool_id === tool.tool_id) {
 						return { ...t, is_enabled: !t.is_enabled };
 					}
-					// 如果没有 tool_id，则使用 server_name 和 tool_name 进行匹配
+					// Fallback to server_name and tool_name for matching
 					if (
 						t.server_name === tool.server_name &&
 						t.tool_name === tool.tool_name
@@ -135,10 +135,10 @@ export function ToolsPage() {
 					return t;
 				}) || [];
 
-			// 更新缓存中的工具列表
+			// Update tool list in cache
 			queryClient.setQueryData(["tools"], { tools: updatedTools });
 		} finally {
-			// 无论成功还是失败，都清除待处理状态
+			// Clear pending state regardless of success or failure
 			setPendingTools((prev) => ({ ...prev, [toolKey]: false }));
 		}
 	};
@@ -149,7 +149,7 @@ export function ToolsPage() {
 		toolName: string,
 		toolId?: string,
 	): boolean => {
-		// 优先使用 tool_id 检查
+		// Prefer tool_id for checking
 		if (toolId) {
 			const idKey = `id:${toolId}`;
 			if (pendingTools[idKey]) {
@@ -157,7 +157,7 @@ export function ToolsPage() {
 			}
 		}
 
-		// 回退到使用 server_name 和 tool_name
+		// Fallback to using server_name and tool_name
 		const toolKey = `${serverName}:${toolName || "unnamed"}`;
 		return pendingTools[toolKey] || false;
 	};

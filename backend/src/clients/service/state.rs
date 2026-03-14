@@ -45,10 +45,9 @@ impl ClientConfigService {
                 .await
                 .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-                return self
-                    .fetch_state(identifier)
-                    .await?
-                    .ok_or_else(|| ConfigError::DataAccessError(format!("未能更新客户端 {} 的管理状态", identifier)));
+                return self.fetch_state(identifier).await?.ok_or_else(|| {
+                    ConfigError::DataAccessError(format!("Failed to update management state for client {}", identifier))
+                });
             }
 
             return Ok(existing);
@@ -82,9 +81,9 @@ impl ClientConfigService {
             }
         }
 
-        self.fetch_state(identifier)
-            .await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!("未能创建客户端 {} 的管理状态", identifier)))
+        self.fetch_state(identifier).await?.ok_or_else(|| {
+            ConfigError::DataAccessError(format!("Failed to create management state for client {}", identifier))
+        })
     }
 
     pub(super) async fn fetch_state(

@@ -3,7 +3,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Switch } from "../components/ui/switch";
 
 export interface EntityListItemProps {
-	// 基本信息
+	// Basic info
 	id: string;
 	title: string;
 	description?: string | ReactNode;
@@ -13,7 +13,7 @@ export interface EntityListItemProps {
 		fallback: string;
 	};
 
-	// 内容区域
+	// Content area
 	titleBadges?: ReactNode[];
 	stats?: Array<{
 		label: string;
@@ -21,7 +21,7 @@ export interface EntityListItemProps {
 	}>;
 	bottomTags?: ReactNode[];
 
-	// 右侧控制
+	// Right side controls
 	statusBadge?: ReactNode;
 	enableSwitch?: {
 		checked: boolean;
@@ -30,11 +30,11 @@ export interface EntityListItemProps {
 	};
 	actionButtons?: ReactNode[];
 
-	// 交互
+	// Interaction
 	onClick?: () => void;
 	onKeyDown?: (e: React.KeyboardEvent) => void;
 
-	// 样式
+	// Styling
 	className?: string;
 }
 
@@ -55,7 +55,7 @@ export function EntityListItem({
 }: EntityListItemProps) {
 	const handleClick = (e: React.MouseEvent) => {
 		const target = e.target as HTMLElement;
-		// 阻止点击子元素中的交互组件，但不包括装饰性元素
+		// Prevent clicking interactive components in child elements, but not decorative elements
 		if (
 			target.closest(
 				"button:not([data-decorative]):not([data-list-item]), a, input, [role='switch']",
@@ -84,7 +84,7 @@ export function EntityListItem({
 			onClick={handleClick}
 			onKeyDown={handleKeyDown}
 		>
-			{/* 左侧内容 */}
+			{/* Left side content */}
 			<div className="flex items-center gap-3">
 				{/* Avatar */}
 				<Avatar className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -96,9 +96,9 @@ export function EntityListItem({
 					</AvatarFallback>
 				</Avatar>
 
-				{/* 内容区域 */}
+				{/* Content area */}
 				<div className="space-y-2">
-					{/* 标题和标题标签 */}
+					{/* Title and title badges */}
 					<div className="flex items-center gap-2">
 						<h3 className="font-medium text-sm leading-tight">{title}</h3>
 						{titleBadges.map((badge, index) => (
@@ -106,12 +106,12 @@ export function EntityListItem({
 						))}
 					</div>
 
-					{/* 描述 */}
+					{/* Description */}
 					<div className="text-sm text-slate-500 line-clamp-2 text-left">
 						{description || "N/A"}
 					</div>
 
-					{/* 统计信息 */}
+					{/* Stats */}
 					{stats.length > 0 && (
 						<div className="flex flex-wrap gap-4 text-xs text-slate-400">
 							{stats.map((stat, index) => (
@@ -122,7 +122,7 @@ export function EntityListItem({
 						</div>
 					)}
 
-					{/* 底部标签 */}
+					{/* Bottom tags */}
 					{bottomTags.length > 0 && (
 						<div className="flex flex-wrap gap-1 text-xs text-slate-500">
 							{bottomTags.map((tag, index) => (
@@ -133,12 +133,12 @@ export function EntityListItem({
 				</div>
 			</div>
 
-			{/* 右侧控制 */}
+			{/* Right side controls */}
 			<div className="flex items-center gap-2">
-				{/* 状态标签 */}
+				{/* Status badge */}
 				{statusBadge && statusBadge}
 
-				{/* 启停开关 */}
+				{/* Enable/disable switch */}
 				{enableSwitch && (
 					<Switch
 						checked={enableSwitch.checked}
@@ -148,7 +148,7 @@ export function EntityListItem({
 					/>
 				)}
 
-				{/* 扩展按钮 */}
+				{/* Action buttons */}
 				{actionButtons.map((button, index) => (
 					<div
 						key={`action-${id}-${index}`}

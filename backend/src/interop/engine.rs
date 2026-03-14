@@ -17,8 +17,8 @@ use crate::core::proxy::{Args, ProxyServer};
 
 /// MCPMate Interop Engine
 ///
-/// This is the main interface for Swift to interact with MCPMate backend.
-/// It provides minimal lifecycle management functionality.
+/// This is the main interface for cross-language integration with MCPMate backend.
+/// It provides minimal lifecycle management functionality for embedded use cases.
 pub struct MCPMateEngine {
     /// Tokio runtime for async operations
     runtime: Option<tokio::runtime::Runtime>,
@@ -542,7 +542,7 @@ impl MCPMateEngine {
 
     /// Get current startup progress
     pub fn get_startup_progress(&self) -> StartupProgress {
-        // Use blocking lock since this is called from Swift
+        // Use blocking lock since this may be called from FFI/embedded contexts
         self.runtime
             .as_ref()
             .unwrap()

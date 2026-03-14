@@ -163,7 +163,7 @@ function mapItem<T>(kind: CapabilityKind, item: T): CapabilityMapItem<T> {
 		const args = toArguments(record.arguments);
 		return {
 			title,
-			subtitle: undefined, // 去掉原始工具名称显示
+			subtitle: undefined, // Remove original tool name display
 			description,
 			server: asString(record.server_name),
 			raw: item,

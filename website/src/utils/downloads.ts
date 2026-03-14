@@ -18,7 +18,7 @@ export function getPreviewExpiry(): Date | null {
   const env = import.meta.env as Record<string, string | undefined>;
   const s = env.VITE_PREVIEW_EXPIRES_AT || '2025-11-01';
   // Interpret YYYY-MM-DD as a local-date deadline that expires at next day's 00:00 (local time).
-  // This matches product copy: “有效至当日 24:00，本地时间 00:00 次日开始失效”。
+  // This matches product copy: valid until end of that calendar day (local 00:00 next day).
   const ymd = /^\d{4}-\d{2}-\d{2}$/;
   if (ymd.test(s)) {
     const [y, m, d] = s.split('-').map((n) => parseInt(n, 10));

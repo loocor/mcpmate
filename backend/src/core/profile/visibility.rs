@@ -241,7 +241,7 @@ impl ProfileVisibilityService {
             return resources;
         }
 
-        // allowed_prefixes 已是 server_norm:/prefix 形式
+        // allowed_prefixes are already in server_norm:/prefix form
 
         let before = resources.len();
         resources.retain(|r| {

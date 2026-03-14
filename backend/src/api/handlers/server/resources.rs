@@ -191,7 +191,7 @@ async fn server_resources_core(
         }
     }
 
-    // Runtime fallback 已由 capability runtime 管线统一处理，此处不再重复抓取
+    // Runtime fallback is handled by the capability runtime pipeline; no duplicate fetch here
 
     // No offline fallback; return empty if still not available
     let response_data = create_inspect_response(Vec::new(), false, params.refresh, "none");

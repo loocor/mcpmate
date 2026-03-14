@@ -302,8 +302,8 @@ export function ServerDetailPage() {
 				error instanceof Error
 					? error.message
 					: t("detail.notifications.refreshFailed.defaultMessage", {
-							defaultValue: "Unknown error",
-						});
+						defaultValue: "Unknown error",
+					});
 			notifyError(
 				t("detail.notifications.refreshFailed.title", {
 					defaultValue: "Refresh failed",
@@ -781,11 +781,11 @@ export function ServerDetailPage() {
 								>
 									{deleteServerM.isPending
 										? t("detail.deleteDialog.pending", {
-												defaultValue: "Deleting...",
-											})
+											defaultValue: "Deleting...",
+										})
 										: t("detail.deleteDialog.confirm", {
-												defaultValue: "Delete",
-											})}
+											defaultValue: "Delete",
+										})}
 								</AlertDialogAction>
 							</AlertDialogFooter>
 						</AlertDialogContent>
@@ -856,11 +856,11 @@ export function ServerDetailPage() {
 															>
 																{serverEnabled
 																	? t("detail.overview.status.enabled", {
-																			defaultValue: "Enabled",
-																		})
+																		defaultValue: "Enabled",
+																	})
 																	: t("detail.overview.status.disabled", {
-																			defaultValue: "Disabled",
-																		})}
+																		defaultValue: "Disabled",
+																	})}
 															</Badge>
 															<span className="text-xs uppercase text-slate-500">
 																{t("detail.overview.labels.runtime", {
@@ -932,8 +932,8 @@ export function ServerDetailPage() {
 
 															{/* Default HTTP Headers (redacted) */}
 															{showDefaultHeaders &&
-															redactedHeaders &&
-															Object.keys(redactedHeaders).length ? (
+																redactedHeaders &&
+																Object.keys(redactedHeaders).length ? (
 																<>
 																	<span className="text-xs uppercase text-slate-500">
 																		{t(
@@ -1645,11 +1645,11 @@ function InspectorDebugSection({
 							)}
 							{state.fetched
 								? t("detail.inspector.actions.refresh", {
-										defaultValue: "Refresh",
-									})
+									defaultValue: "Refresh",
+								})
 								: t("detail.inspector.actions.list", {
-										defaultValue: "List",
-									})}
+									defaultValue: "List",
+								})}
 						</Button>
 					</div>
 				) : (
@@ -1698,13 +1698,13 @@ function InspectorDebugSection({
 							emptyText={
 								state.fetched
 									? t("detail.inspector.results.emptyFetched", {
-											label: title,
-											defaultValue: "No {{label}} returned.",
-										})
+										label: title,
+										defaultValue: "No {{label}} returned.",
+									})
 									: t("detail.inspector.results.emptyPrompt", {
-											label: title,
-											defaultValue: "Run {{label}} list to fetch live data.",
-										})
+										label: title,
+										defaultValue: "Run {{label}} list to fetch live data.",
+									})
 							}
 							renderAction={(_, item) => (
 								<Button
@@ -1741,18 +1741,18 @@ function InspectorDebugSection({
 										key={entry.id}
 										className="group items-start text-xs"
 									>
-										{/* 错误消息 */}
+										{/* Error message */}
 										{entry.message ? (
 											<p className="text-red-500 mb-1">{entry.message}</p>
 										) : null}
 
-										{/* 日志内容区域：悬浮信息移至文本区右下角 */}
+										{/* Log content: hover info at bottom-right of text area */}
 										{entry.payload !== undefined ? (
 											<div className="relative group w-full">
 												<pre className="bg-transparent border-0 rounded-none p-0 max-h-48 overflow-auto pr-8">
 													{safeLog(entry.payload)}
 												</pre>
-												{/* 复制按钮（右上角，悬停显示） */}
+												{/* Copy button (top-right, shown on hover) */}
 												<Button
 													size="sm"
 													variant="outline"
@@ -1763,7 +1763,7 @@ function InspectorDebugSection({
 												>
 													<Copy className="h-3 w-3" />
 												</Button>
-												{/* 右下角：时间戳、Action、Mode、Event 徽标（悬停显示） */}
+												{/* Bottom-right: timestamp, Action, Mode, Event badges (shown on hover) */}
 												<div className="absolute bottom-0 right-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
 													<Badge
 														variant="secondary"

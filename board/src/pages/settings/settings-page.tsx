@@ -1458,7 +1458,7 @@ function MarketBlacklistCard({
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="flex h-full flex-col gap-4">
-				{/* Default Market 设置项 */}
+				{/* Default Market settings */}
 				<div className="flex items-center justify-between gap-4">
 					<div className="space-y-0.5">
 						<h3 className="text-base font-medium">
@@ -1497,7 +1497,7 @@ function MarketBlacklistCard({
 					</Select>
 				</div>
 
-				{/* Enable Blacklist 设置项 */}
+				{/* Enable Blacklist settings */}
 				<div className="flex items-center justify-between gap-4">
 					<div className="space-y-0.5">
 						<h3 className="text-base font-medium">

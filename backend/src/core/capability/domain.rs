@@ -69,7 +69,7 @@ impl fmt::Display for CapabilityType {
 /// Query context - Distinguish different usage scenarios
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryContext {
-    /// API call scenario - Just get information, no后续使用 (no subsequent use)
+    /// API call scenario - Just get information, no subsequent use
     ApiCall,
     /// MCP protocol client scenario - Get information and will actually use it
     McpClient,
@@ -302,23 +302,23 @@ impl DataSource {
     }
 }
 
-/// 响应元数据
+/// Response metadata
 #[derive(Debug, Clone)]
 pub struct ResponseMetadata {
-    /// 是否缓存命中
+    /// Whether the result was a cache hit
     pub cache_hit: bool,
-    /// 数据来源
+    /// Data source
     pub source: DataSource,
-    /// 查询耗时
+    /// Query duration in ms
     pub duration_ms: u64,
-    /// 结果数量
+    /// Result count
     pub item_count: usize,
-    /// 时间戳
+    /// Timestamp
     pub timestamp: DateTime<Utc>,
 }
 
 impl ResponseMetadata {
-    /// 创建缓存命中的元数据
+    /// Create metadata for a cache hit
     pub fn cache_hit(
         source: DataSource,
         duration: std::time::Duration,
@@ -333,7 +333,7 @@ impl ResponseMetadata {
         }
     }
 
-    /// 创建运行时查询的元数据
+    /// Create metadata for a runtime query
     pub fn runtime(
         duration: std::time::Duration,
         count: usize,

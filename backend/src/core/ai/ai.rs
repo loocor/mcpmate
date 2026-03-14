@@ -471,7 +471,7 @@ Remember: ONLY return the JSON object, nothing else."#;
         }
 
         // Handle empty or "no config" responses
-        if trimmed.is_empty() || trimmed == "无MCP配置" {
+        if trimmed.is_empty() || trimmed == "No MCP config" {
             return Ok(serde_json::json!({"mcpServers": {}}));
         }
 

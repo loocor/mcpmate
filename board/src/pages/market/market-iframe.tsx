@@ -19,7 +19,7 @@ export function MarketIframe({
 			if (qp.get("market_debug") === "1") {
 				localStorage.setItem("MCPMATE_MARKET_DEBUG", "1");
 			}
-		} catch {}
+		} catch { }
 		return localStorage.getItem("MCPMATE_MARKET_DEBUG") === "1";
 	}, []);
 	const readySignalRef = useRef(false);
@@ -89,18 +89,17 @@ export function MarketIframe({
 			const data = event.data as any;
 			if (data?.type !== "mcpmate-market-log") return;
 			if (data?.payload?.portalId && data.payload.portalId !== portalId) return;
-			const line = `[${new Date().toISOString()}] ${data?.payload?.level ?? "info"}: ${
-				typeof data?.payload?.message === "string"
+			const line = `[${new Date().toISOString()}] ${data?.payload?.level ?? "info"}: ${typeof data?.payload?.message === "string"
 					? data.payload.message
 					: JSON.stringify(data.payload)
-			}`;
+				}`;
 			// Always log to console for remote debugging; optionally show overlay
 			try {
 				console[(data?.payload?.level as any) || "log"]("[market-log]", data);
 			} catch {
 				console.log("[market-log]", data);
 			}
-			// Forward to Tauri (if present) so we persist without用户操作
+			// Forward to Tauri (if present) so we persist without user action
 			try {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				const anyWindow: any = window as any;

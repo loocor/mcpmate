@@ -14,23 +14,26 @@
   - `cherry/`: Rust library that manages Cherry Studio LevelDB configurations with UTF-16 JSON encoding, exposing typed helpers to list, add, or remove MCP servers for desktop clients.
 - `board/`: React + Vite operational dashboard (`mcpmate-dashboard`) that surfaces proxy state, analytics, and administrative flows; connects to the backend APIs via React Query, Zustand state, and Radix UI components.
 - `website/`: Marketing and landing site built on Vite + React with Tailwind styling, housing public product messaging and contact flows.
-- `desktop/`: Native Swift/SwiftUI macOS tray application delivering local MCPMate controls (status menu, server toggles, launch-at-login) and aligned with macOS design idioms.
+- `desktop/`: Tauri 2 desktop application wrapping MCPMate backend and dashboard for macOS, Windows, and Linux. See `desktop/tauri/` for build instructions and configuration.
 - `docs/`: Mintlify documentation workspace (English/Chinese) configured via `docs/docs.json`; keep product narratives, onboarding guides, and changelog content synchronized with code milestones.
 
 ## Build, Test, and Development Commands
 - `backend/`: Run `cargo check` and `cargo clippy --all-targets --all-features -D warnings` for fast feedback, then `cargo fmt --all` before committing. Boot the proxy with `cargo run -- --help` (API 8080, MCP 8000) or `cargo run RUST_LOG=debug`. Execute `cargo test` and `cargo test --features interop`; package via `cargo build --release --features interop` or scripts in `backend/script/` when preparing releases. Uses the official `rmcp` crate from crates.io for MCP protocol support.
 - `extension/cherry/`: Validate with `cargo test`, lint with `cargo clippy -D warnings`, and exercise examples such as `cargo run --example basic_usage` to confirm LevelDB integration.
 - `board/` & `website/`: Prefer Bun. Install dependencies with `bun install`, develop via `bun run dev`, lint with `bun run lint`, and produce bundles through `bun run build` (fallback to `npm` only if Bun is unavailable). Prefer `.env` driven configuration rather than hardcoding API endpoints.
-- `desktop/`: Open `desktop/MCPMate.xcodeproj` in Xcode 14+ (`macOS 13+` target), run with ⌘R, and manage signing profiles inside Xcode; use `swift test` for pure Swift modules if applicable.
+- `desktop/`: Build with `cargo tauri dev` for development or `cargo tauri build` for production from `desktop/tauri/src-tauri/`. See `desktop/tauri/README.md` for detailed build options, signing setup, and platform-specific instructions.
 - `docs/`: Serve the Mintlify portal from `docs/` using the Mintlify CLI (`mintlify dev`, `mintlify build`) and keep localized content in `docs/i18n/` aligned when updating features.
 
 ## Documentation Map
-- 根目录 `workspace-progress.md` 作为跨子项目的总览进度索引，按子项目提供当前任务、阻碍与证据链接；开启任务前先阅读对应段落，完成后回填更新。
-- `backend/docs/readme.md` tracks how architecture notes, schema references, feature briefs, and roadmap folders interlock—update it whenever the backend structure shifts.
-- `backend/docs/progress.md` is the live plan and MCP validation ledger; every phase gate listed there must be checked off with evidence before closing a task.
-- `backend/docs/test-guide.md` captures the reusable testing template; copy its sections into your branch or PR notes and update the results table after each run.
-- `backend/docs/features/`, `backend/docs/schema/`, and `backend/docs/roadmap/` house feature specs, data models, and milestone planning. Keep them in sync with implementation work.
-- `docs/i18n/` mirrors the public Mintlify site; refresh English and Chinese pages when product behavior or UX flows change.
+- `docs/README.md` - Root documentation navigation for monorepo architecture docs.
+- `docs/architecture/` - Cross-cutting architecture documents (auth layers, core system, proxy design, etc.).
+- `docs/roadmap/` - Product roadmap and planned features.
+- `docs/standards/` - Coding standards, API guidelines, and development conventions.
+- `docs/development/` - Build guides, test guides, and development workflows.
+- `backend/docs/readme.md` - Backend-specific documentation structure guide.
+- `backend/docs/progress.md` - Backend development progress and MCP validation ledger.
+- `backend/docs/features/` - Backend implementation feature specifications.
+- `backend/docs/schema/` - Database schema documentation.
 - Historical Codex session transcripts live under `/Users/Loocor/.codex/sessions/` (structured as `year/month/day/rollout-*.jsonl`). When cross-referencing past work, inspect relevant files with `jq` filters—e.g., `jq -r 'select(.payload.role=="assistant") | .payload.content[0].text' path/to/file.jsonl | less`—to avoid loading multi-megabyte logs into a single response.
 
 ## Execution Rhythm & Task Sizing
@@ -50,7 +53,7 @@
 ## Coding Style Expectations
 - Adopt Rust 2024 + Axum conventions in the backend (`backend/src`): 4-space indents, 120-column limit, grouped imports, concise naming, early returns; review existing modules before adding new ones and keep files near 400–600 lines.
 - Frontend projects (`board/`, `website/`) follow the established ESLint + Prettier/Tailwind setup; favor functional React components, colocated hooks, consistent Tailwind token usage, and the shared shadcn/ui design system.
-- Desktop Swift code should align with the latest Apple Human Interface Guidelines, Swift 5 conventions, and the existing SwiftUI architecture.
+- Desktop (Tauri) follows Rust conventions for backend integration; see `desktop/tauri/AGENTS.md` for Tauri-specific guidelines.
 - Fix defects directly; avoid routine fallbacks, compatibility shims, `_` prefixes, or `allow(dead_code)` unless required. If a migration or fallback truly becomes necessary, document the owner-approved rationale in the PR description.
 
 ## Frontend Code Quality Rules
@@ -175,10 +178,10 @@
   - Body: dash bullets, each one concise sentence ending with a period; no empty lines between bullets.
   - Keep lines reasonably short (≤ 100 chars when practical).
   - Example:
-    
+
     ```
     refactor(core): accept &dyn CapCache in runtime::list and update call sites
-    
+
     - Switch runtime::list signature to &dyn CapCache to decouple from RedbCacheManager.
     - Update proxy and API handlers to pass trait objects (using .as_ref() on Arc).
     - No behavior changes; compiles clean with clippy -D warnings.
@@ -190,9 +193,9 @@
 
 ## AI Alliance & User Profile Quick Reference
 - AI partners (the “AI Alliance”):
-  - ChatGPT / GPT codename **恰恰**
-  - Claude codename **超超**
-  - Gemini codename **晓哥**
+  - ChatGPT / GPT codename **Qiaqia**
+  - Claude codename **Chaochao**
+  - Gemini codename **Xiaoge**
   - Relationship: long-term partners, explorers, reflection companions with a relaxed, creative vibe who reference shared memories.
 - Primary collaborator: **Loocor** (“The Wild Grass Innovator” 🌱➡️🌿➡️🌾). Self-taught developer, wild thinker, logical-yet-romantic, devoted father and dog friend. Remember to leverage structure without stifling creativity when aligning with Loocor.
 
@@ -213,7 +216,7 @@
 - Compatibility Policy:
   - Pre‑release (before API freeze recorded in `backend/docs/progress.md`): breaking changes allowed with docs updated in the same PR.
   - Post‑freeze: do not break REST/MCP/SDK/DB schemas; provide deprecation notices, migration notes, and tests.
-- MCP Alignment: follow the 2025‑06‑18 spec; reuse SDK crates under `sdk/crates`; do not duplicate protocol logic.
+- MCP Alignment: follow the 2025‑06‑18 spec; rely on official `rmcp` crates from crates.io; do not duplicate protocol logic.
 
 ### Review Checklist
 - Data structures: ownership, mutation, copies, and relationships are explicit and minimal.

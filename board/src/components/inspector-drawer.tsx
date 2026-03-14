@@ -341,10 +341,10 @@ export function InspectorDrawer({
 	const [name, setName] = useState<string>(
 		String(
 			currentItem?.unique_name ||
-				currentItem?.tool_name ||
-				currentItem?.prompt_name ||
-				currentItem?.name ||
-				"",
+			currentItem?.tool_name ||
+			currentItem?.prompt_name ||
+			currentItem?.name ||
+			"",
 		),
 	);
 	const [submitting, setSubmitting] = useState(false);
@@ -877,11 +877,11 @@ export function InspectorDrawer({
 					const promptName =
 						mode === "proxy"
 							? toStringValue((match as any).unique_name) ||
-								toStringValue((match as any).prompt_name) ||
-								toStringValue((match as any).name)
+							toStringValue((match as any).prompt_name) ||
+							toStringValue((match as any).name)
 							: toStringValue((match as any).prompt_name) ||
-								toStringValue((match as any).name) ||
-								toStringValue((match as any).unique_name);
+							toStringValue((match as any).name) ||
+							toStringValue((match as any).unique_name);
 					setName(promptName ?? "");
 				} else if (kind === "resource") {
 					const resourceUri =
@@ -1089,22 +1089,22 @@ export function InspectorDrawer({
 
 			try {
 				const url = inspectorApi.toolCallEventsUrl(callId);
-					// Force polyfill for Safari/WKWebView (Tauri), else prefer native.
-					const shouldForcePolyfill = (() => {
-						try {
-							const isTauri =
-								typeof window !== "undefined" && (window as any).__MCPMATE_IS_TAURI__ === true;
-							const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-							const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua) && !/Edg\//.test(ua);
-							return isTauri || isSafari;
-						} catch {
-							return false;
-						}
-					})();
-					const ES = (shouldForcePolyfill
-						? EventSourcePolyfill
-						: (NativeEventSource || EventSourcePolyfill)) as typeof EventSource;
-					const source = new ES(url, { withCredentials: true });
+				// Force polyfill for Safari/WKWebView (Tauri), else prefer native.
+				const shouldForcePolyfill = (() => {
+					try {
+						const isTauri =
+							typeof window !== "undefined" && (window as any).__MCPMATE_IS_TAURI__ === true;
+						const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+						const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua) && !/Edg\//.test(ua);
+						return isTauri || isSafari;
+					} catch {
+						return false;
+					}
+				})();
+				const ES = (shouldForcePolyfill
+					? EventSourcePolyfill
+					: (NativeEventSource || EventSourcePolyfill)) as typeof EventSource;
+				const source = new ES(url, { withCredentials: true });
 				eventSourceRef.current = source;
 
 				source.onmessage = (event) => {
@@ -1412,7 +1412,7 @@ export function InspectorDrawer({
 		(event: React.MouseEvent<HTMLDivElement>) => {
 			if (formCollapsed) return;
 			const target = event.target as HTMLElement;
-			// 排除交互控件（按钮、链接、弹层等）点击，避免误触发折叠
+			// Ignore clicks on interactive elements (buttons, links, popovers) to avoid accidental collapse
 			if (
 				target.closest("button") ||
 				target.closest("a") ||
@@ -1453,9 +1453,8 @@ export function InspectorDrawer({
 
 				<div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
 					<div
-						className={`transition-all duration-300 ease-in-out ${
-							formCollapsed ? "max-h-12 overflow-hidden" : "max-h-[800px]"
-						}`}
+						className={`transition-all duration-300 ease-in-out ${formCollapsed ? "max-h-12 overflow-hidden" : "max-h-[800px]"
+							}`}
 					>
 						{formCollapsed ? (
 							<div
@@ -1542,11 +1541,11 @@ export function InspectorDrawer({
 											placeholder={
 												kind === "resource"
 													? (t("form.selectResource", {
-															defaultValue: "Select resource",
-														}) as string)
+														defaultValue: "Select resource",
+													}) as string)
 													: (t("form.selectTemplate", {
-															defaultValue: "Select template",
-														}) as string)
+														defaultValue: "Select template",
+													}) as string)
 											}
 											getKey={(it) =>
 												computeRecordKey(it as CapabilityRecord, kind)
@@ -1589,11 +1588,11 @@ export function InspectorDrawer({
 												placeholder={
 													kind === "tool"
 														? (t("form.selectTool", {
-																defaultValue: "Select tool",
-															}) as string)
+															defaultValue: "Select tool",
+														}) as string)
 														: (t("form.selectPrompt", {
-																defaultValue: "Select prompt",
-															}) as string)
+															defaultValue: "Select prompt",
+														}) as string)
 												}
 												getKey={(it) =>
 													computeRecordKey(it as CapabilityRecord, kind)

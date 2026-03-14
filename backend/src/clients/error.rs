@@ -64,7 +64,7 @@ pub enum ConfigError {
     #[error("Data access failed: {0}")]
     DataAccessError(String),
 
-    #[error("Client {identifier} 已被禁用，不允许由 MCPMate 管理")]
+    #[error("Client {identifier} is disabled and cannot be managed by MCPMate")]
     ClientDisabled { identifier: String },
 }
 
