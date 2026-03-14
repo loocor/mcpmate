@@ -36,7 +36,7 @@ const Privacy = () => {
 							<div>
 								<h2 className="text-xl font-semibold mb-2">1. 适用范围</h2>
 								<p>
-									本政策适用于：（a）mcpmate.io
+									本政策适用于：（a）mcp.umate.ai
 									营销网站及其子页面；（b）您从本网站下载的 MCPMate
 									桌面端/代理早期访问版本。 本政策不覆盖您接入的第三方 MCP
 									服务器、AI 服务商或客户端，它们各自的政策与条款将适用。
@@ -134,9 +134,9 @@ const Privacy = () => {
 										您可联系到{" "}
 										<a
 											className="text-blue-600 dark:text-blue-400"
-											href="mailto:info@mcpmate.io"
+											href="mailto:loocor@gmail.com"
 										>
-											info@mcpmate.io
+											loocor@gmail.com
 										</a>{" "}
 										请求删除我们保留的联系记录。
 									</li>
@@ -175,9 +175,9 @@ const Privacy = () => {
 									如有问题或请求，请发送邮件至{" "}
 									<a
 										className="text-blue-600 dark:text-blue-400"
-										href="mailto:info@mcpmate.io"
+										href="mailto:loocor@gmail.com"
 									>
-										info@mcpmate.io
+										loocor@gmail.com
 									</a>
 									。
 								</p>
@@ -204,7 +204,7 @@ const Privacy = () => {
 							<div>
 								<h2 className="text-xl font-semibold mb-2">1. Scope</h2>
 								<p>
-									This policy covers: (a) the marketing site at mcpmate.io and
+									This policy covers: (a) the marketing site at mcp.umate.ai and
 									subpages; and (b) optional early‑access builds of the MCPMate
 									desktop and proxy software you download from this site. It
 									does not cover third‑party MCP servers, AI providers, or
@@ -376,9 +376,9 @@ const Privacy = () => {
 									Questions or requests? Email{" "}
 									<a
 										className="text-blue-600 dark:text-blue-400"
-										href="mailto:info@mcpmate.io"
+										href="mailto:loocor@gmail.com"
 									>
-										info@mcpmate.io
+										loocor@gmail.com
 									</a>
 									.
 								</p>

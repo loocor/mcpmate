@@ -101,17 +101,17 @@ const Footer = () => {
 								>
 								<IconDiscord />
 							</a>
-							<a
-								href="https://x.com/mcpmate"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-								aria-label="Twitter"
-							>
+<a
+									href="https://x.com/umatedotai"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+									aria-label="Twitter"
+								>
 								<Twitter size={20} />
 							</a>
 							<a
-								href="https://github.com/mcpmate"
+								href="https://github.com/loocor/mcpmate"
 								target="_blank"
 								rel="noopener noreferrer"
 								className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"

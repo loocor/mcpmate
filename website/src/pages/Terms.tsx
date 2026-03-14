@@ -224,9 +224,9 @@ const Terms = () => {
 									关于本条款的任何问题，请发送邮件至{" "}
 									<a
 										className="text-blue-600 dark:text-blue-400"
-										href="mailto:info@mcpmate.io"
+										href="mailto:loocor@gmail.com"
 									>
-										info@mcpmate.io
+										loocor@gmail.com
 									</a>
 									。
 								</p>
@@ -522,9 +522,9 @@ const Terms = () => {
 									Questions about these Terms? Email{" "}
 									<a
 										className="text-blue-600 dark:text-blue-400"
-										href="mailto:info@mcpmate.io"
+										href="mailto:loocor@gmail.com"
 									>
-										info@mcpmate.io
+										loocor@gmail.com
 									</a>
 									.
 								</p>

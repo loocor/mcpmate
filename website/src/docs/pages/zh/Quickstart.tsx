@@ -5,18 +5,27 @@ import Callout from "../../components/Callout";
 
 export default function QuickstartZH() {
 	return (
-		<DocLayout meta={{ title: "快速开始", description: "安装、配置并应用 MCPMate" }}>
-			<P>本文档将带你从下载到在客户端生效，完整体验 MCPMate 预览版。</P>
+		<DocLayout meta={{ title: "快速开始", description: "构建、配置并运行 MCPMate" }}>
+			<P>本文档将带你从源码构建到在客户端生效，完整体验 MCPMate。</P>
 
-			<H2>下载与安装</H2>
-			<Callout type="info" title="目前为 macOS 预览版">
-				暂未提供 Windows / Linux 安装包，预览阶段功能仍在完善。
+			<H2>从源码构建</H2>
+			<Callout type="info" title="开源项目">
+				MCPMate 已在 MIT 许可下开源，代码见 github.com/loocor/mcpmate
 			</Callout>
 			<Ul>
-				<Li>访问 MCPMate 官网并点击 <strong>下载</strong>。</Li>
-				<Li>打开下载得到的 DMG，将 <strong>MCPMate</strong> 拖入 <strong>应用程序</strong>。</Li>
-				<Li>首次启动时若看到安全提示，请选择继续。</Li>
-				<Li>启动后系统会自动检测已安装的 MCP 客户端（例如 Cursor、Claude Desktop、Zed）。</Li>
+				<Li>安装 Rust 1.75+ 和 Node.js 18+（或 Bun）。</Li>
+				<Li>克隆仓库：<code>git clone https://github.com/loocor/mcpmate.git</code></Li>
+				<Li>进入后端目录：<code>cd mcpmate/backend</code></Li>
+				<Li>构建并运行：<code>cargo run --release</code></Li>
+				<Li>代理启动后，REST API 在 8080 端口，MCP 端点在 8000 端口。</Li>
+			</Ul>
+
+			<H3>运行 Dashboard</H3>
+			<Ul>
+				<Li>进入前端目录：<code>cd mcpmate/board</code></Li>
+				<Li>安装依赖：<code>bun install</code></Li>
+				<Li>启动开发服务器：<code>bun run dev</code></Li>
+				<Li>打开 http://localhost:5173 访问管理界面。</Li>
 			</Ul>
 
 			<H2>安装 MCP 服务</H2>
@@ -63,9 +72,9 @@ export default function QuickstartZH() {
 				<Li>使用 <strong>安装 / 修复</strong> 按钮为 uv、Bun 等运行时一键安装依赖，必要时可清理缓存。</Li>
 			</Ul>
 
-			<H2>预览版提示</H2>
+			<H2>更新与贡献</H2>
 			<P>
-				预览阶段仍会持续修复问题与更新功能。请随时关注 <strong>更新日志</strong> 页面，了解最新功能、已修复及已知未修复的问题；若遇到未列出的异常，欢迎反馈以便我们跟进。
+				从 GitHub 拉取最新代码获取新功能和修复。如有问题或建议，欢迎提交 issue 或 pull request。
 			</P>
 		</DocLayout>
 	);

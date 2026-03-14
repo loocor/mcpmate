@@ -9,6 +9,7 @@ import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import { initGA, trackPageView } from "./utils/analytics";
 import CornerRibbon from "./components/ui/CornerRibbon";
+import DomainMigrationBanner from "./components/ui/DomainMigrationBanner";
 import { renderDocRoutes } from "./docs/DocRoutes";
 
 // page view tracking component
@@ -65,6 +66,7 @@ function AppInner() {
 				<Analytics />
 				<ScrollTopOnDocs />
 				<div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-50">
+					<DomainMigrationBanner />
 					<Navbar />
 					<main
 						className={`flex-1 transition-opacity duration-300 ${isLoaded ? "opacity-100" : "opacity-0"}`}

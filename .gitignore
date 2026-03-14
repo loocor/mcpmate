@@ -6,6 +6,9 @@
 .codex/
 .opencode/
 
+# Cloudflare Wrangler cache
+.wrangler/
+
 # Shared build outputs
 **/target/
 **/dist/

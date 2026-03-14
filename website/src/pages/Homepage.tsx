@@ -4,9 +4,9 @@ import { useLanguage } from "../components/LanguageProvider";
 import Architecture from "../components/sections/Architecture";
 import ContactSection from "../components/sections/Contact";
 import DownloadSection from "../components/sections/Download";
+import FAQSection from "../components/sections/FAQ";
 import Features from "../components/sections/Features";
 import Hero from "../components/sections/Hero";
-import PricingSection from "../components/sections/Pricing";
 import ValueProposition from "../components/sections/ValueProposition";
 
 const Homepage = () => {
@@ -18,7 +18,6 @@ const Homepage = () => {
 		document.title = t("site.title");
 	}, [language, t]);
 
-	// Handle cross-route section scrolls from navbar/footer
 	useEffect(() => {
 		const params = new URLSearchParams(location.search);
 		const section = params.get("section");
@@ -32,9 +31,7 @@ const Homepage = () => {
 					window.scrollTo({ top, behavior: "smooth" });
 				}
 			};
-			// Wait one tick to ensure sections are rendered
 			setTimeout(scroll, 0);
-			// Clean the query to avoid repeated scrolling on re-renders
 			navigate("/", { replace: true });
 		}
 	}, [location.search, navigate]);
@@ -49,7 +46,7 @@ const Homepage = () => {
 			<div id="download">
 				<DownloadSection />
 			</div>
-			<PricingSection />
+			<FAQSection />
 			<Architecture />
 			<div id="contact">
 				<ContactSection />

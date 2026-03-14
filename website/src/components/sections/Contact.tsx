@@ -195,11 +195,11 @@ const ContactSection = () => {
                       {t('contact.email.desc')}
                     </p>
                     <a
-                      href="mailto:info@mcpmate.io"
+                      href="mailto:loocor@gmail.com"
                       className="text-blue-600 dark:text-blue-400 hover:underline"
-                      onClick={() => trackMCPMateEvents.externalLinkClick('mailto:info@mcpmate.io')}
+                      onClick={() => trackMCPMateEvents.externalLinkClick('mailto:loocor@gmail.com')}
                     >
-                      info@mcpmate.io
+                      loocor@gmail.com
                     </a>
                   </div>
                 </div>
@@ -220,13 +220,13 @@ const ContactSection = () => {
                       {t('contact.github.desc')}
                     </p>
                     <a
-                      href="https://github.com"
+                      href="https://github.com/loocor/mcpmate"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 dark:text-blue-400 hover:underline"
-                      onClick={() => trackMCPMateEvents.externalLinkClick('github.com/mcpmate')}
+                      onClick={() => trackMCPMateEvents.externalLinkClick('github.com/loocor/mcpmate')}
                     >
-                      github.com/mcpmate
+                      github.com/loocor/mcpmate
                     </a>
                   </div>
                 </div>

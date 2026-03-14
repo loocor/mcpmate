@@ -6,23 +6,31 @@ import Callout from "../../components/Callout";
 export default function Quickstart() {
 	return (
 		<DocLayout
-			meta={{ title: "Quick Start", description: "Install, configure, and apply MCPMate" }}
+			meta={{ title: "Quick Start", description: "Build, configure, and run MCPMate" }}
 		>
 			<P>
-				This guide walks you through installing the desktop preview of MCPMate on macOS, adding
+				This guide walks you through building MCPMate from source, adding
 				servers, preparing profiles, and applying them inside your MCP clients.
 			</P>
 
-			<H2>Download and install</H2>
-			<Callout type="info" title="Preview availability">
-				MCPMate is currently offered as a macOS preview build. Windows and Linux packages are not
-				available yet.
+			<H2>Build from source</H2>
+			<Callout type="info" title="Open Source">
+				MCPMate is open source under the MIT license. Clone the repo at github.com/loocor/mcpmate
 			</Callout>
 			<Ul>
-				<Li>Visit the MCPMate website and choose <strong>Download</strong>.</Li>
-				<Li>Open the downloaded DMG and drag <strong>MCPMate</strong> into <strong>Applications</strong>.</Li>
-				<Li>Launch MCPMate. macOS may prompt you to confirm opening an app from an identified developer.</Li>
-				<Li>On first launch, MCPMate scans for supported clients such as Cursor, Claude Desktop, and Zed.</Li>
+				<Li>Install Rust 1.75+ and Node.js 18+ (or Bun) on your system.</Li>
+				<Li>Clone the repository: <code>git clone https://github.com/loocor/mcpmate.git</code></Li>
+				<Li>Navigate to backend: <code>cd mcpmate/backend</code></Li>
+				<Li>Build and run: <code>cargo run --release</code></Li>
+				<Li>The proxy starts with REST API on port 8080 and MCP endpoint on port 8000.</Li>
+			</Ul>
+
+			<H3>Run the Dashboard</H3>
+			<Ul>
+				<Li>Navigate to board: <code>cd mcpmate/board</code></Li>
+				<Li>Install dependencies: <code>bun install</code></Li>
+				<Li>Start dev server: <code>bun run dev</code></Li>
+				<Li>Open http://localhost:5173 to access the management dashboard.</Li>
 			</Ul>
 
 			<H2>Install MCP servers</H2>
@@ -78,11 +86,10 @@ export default function Quickstart() {
 				<Li>Clear caches from the same page if you suspect stale data.</Li>
 			</Ul>
 
-			<H2>Preview limitations and updates</H2>
+			<H2>Updates and contributions</H2>
 			<P>
-				This preview build is still evolving. Review the <strong>Changelog</strong> page for the latest features,
-				bug fixes, and known issues before adopting new releases. If you encounter problems not listed there,
-				please let us know so we can include them in upcoming fixes.
+				Pull the latest changes from GitHub to get new features and bug fixes.
+				If you encounter issues or have suggestions, please open an issue or submit a pull request.
 			</P>
 		</DocLayout>
 	);

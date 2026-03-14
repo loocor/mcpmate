@@ -56,11 +56,12 @@ const Navbar = () => {
 
 	return (
 		<header
-			className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+			className={`fixed left-0 right-0 z-50 transition-all duration-300 ${
 				scrolled
 					? "py-3 bg-white/90 dark:bg-slate-900/95 shadow-md backdrop-blur-md"
 					: "py-5 bg-transparent"
 			}`}
+			style={{ top: "var(--banner-height, 0px)" }}
 		>
 			<div className="container mx-auto px-4 md:px-0">
 				<div className="flex items-center justify-between">
@@ -97,12 +98,6 @@ const Navbar = () => {
                     >
                         {t("nav.documentation")}
                     </button>
-						<button
-							onClick={() => scrollToSection("pricing")}
-							className="text-sm font-medium transition-colors hover:text-blue-600 dark:hover:text-blue-400"
-						>
-							{t("nav.pricing")}
-						</button>
 						<button
 							onClick={() => scrollToSection("faq")}
 							className="text-sm font-medium transition-colors hover:text-blue-600 dark:hover:text-blue-400"
@@ -152,12 +147,6 @@ const Navbar = () => {
 						className="p-3 rounded-lg text-center font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
 					>
 						{t("nav.features")}
-					</button>
-					<button
-						onClick={() => scrollToSection("pricing")}
-						className="p-3 rounded-lg text-center font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
-					>
-						{t("nav.pricing")}
 					</button>
 					<button
 						onClick={() => scrollToSection("faq")}

@@ -6,22 +6,21 @@ const en = {
 	"nav.home": "Home",
 	"nav.features": "Features",
 	"nav.documentation": "Documentation",
-	"nav.pricing": "Pricing",
 	"nav.contact": "Contact",
 	"nav.waitlist": "Join Waitlist",
-	"nav.preview": "Download Preview",
-	"nav.download": "Download",
+	"nav.preview": "Quick Start",
+	"nav.download": "Quick Start",
 	"nav.why": "Why MCPMate?",
 	"nav.faq": "FAQ",
 
 	// Hero
-	"hero.early_access": "Now in Preview",
+	"hero.early_access": "Now Open Source",
 	"hero.title": "Your MCP Assistant",
 	"hero.subtitle": "One configuration. Multiple services. Maximum efficiency.",
 	"hero.description":
 		"MCPMate handles MCP complexity so you can focus on building and creating.",
 	"hero.cta.waitlist": "Join Waitlist",
-	"hero.cta.download": "Download Preview",
+	"hero.cta.download": "View on GitHub",
 	"hero.cta.learn": "Learn More",
 	"hero.stats.config": "Less Configuration",
 	"hero.stats.resource": "Resource Reduction",
@@ -29,11 +28,11 @@ const en = {
 	"hero.dashboard": "MCPMate Dashboard",
 
 	// Download
-	"download.title": "Download MCPMate Preview",
+	"download.title": "Quick Start",
 	"download.expired": "Public preview is paused while we finish the refactor.",
 	"download.expires_in": "Preview expires in",
 	"download.subtitle":
-		"Available for macOS (Apple Silicon, Intel). Windows and Linux builds coming soon.",
+		"Build from source with Rust. Available for macOS, Windows, and Linux.",
 	"download.for": "Download for",
 	"download.version": "Version",
 	"download.early_access": "(Preview)",
@@ -145,67 +144,6 @@ const en = {
 		"Clear boundaries between upstream/downstream tools",
 	"arch.values.security.p3": "Audit trails and policy hooks",
 
-	// Pricing
-	"pricing.title": "Simple, Transparent Pricing",
-	"pricing.subtitle": "From individuals to organizations, choose what fits you",
-	"pricing.notice.pending":
-		"Preview is free. Pricing will be finalized before GA.",
-	"pricing.billing.monthly": "Monthly",
-	"pricing.billing.annual": "Annual",
-	"pricing.per_month": "/ month",
-	"pricing.billed_annually": "billed annually",
-	"pricing.billed_monthly": "billed monthly",
-	"pricing.starter": "Starter",
-	"pricing.starter.desc":
-		"Personal use with real control — no server/client caps",
-	"pricing.starter.price": "Free",
-	"pricing.starter.feature1":
-		"Default + up to 3 custom profiles (capability control enabled)",
-	"pricing.starter.feature2":
-		"Unified proxy, connection pool, and notifications",
-	"pricing.starter.feature3":
-		"Built‑in MCP server: list, view, switch profiles",
-	"pricing.starter.feature4": "Official client templates with atomic backups",
-	"pricing.starter.feature5": "Uni‑Import and MCP Bundle; inline marketplace",
-	"pricing.starter.feature6": "Runtime manager (uv/Bun) and capability cache",
-	"pricing.professional": "Professional",
-	"pricing.professional.desc": "Unlimited governance with built‑in Inspector",
-	"pricing.professional.price": "TBD",
-    "pricing.price.professional.monthly": "TBD",
-    "pricing.price.professional.annual_per_month": "TBD",
-	"pricing.professional.includes": "Includes everything in Starter, plus:",
-	"pricing.professional.feature1": "Unlimited profiles and full governance",
-	"pricing.professional.feature2":
-		"Inspector (Express/Expert), proxy/native modes",
-	"pricing.professional.feature3":
-		"Built‑in MCP server: create profiles and more",
-	"pricing.professional.feature4": "Batch import with preflight and preview",
-	"pricing.professional.feature5":
-		"Audit & logs with query/export and reporting",
-	"pricing.professional.feature6": "Connection pool & lifecycle management",
-	"pricing.professional.feature7": "Standard support (business days)",
-	"pricing.advanced": "Advanced",
-	"pricing.advanced.desc": "Audit, automation, and distribution at scale",
-	"pricing.advanced.price": "Contact Us",
-	"pricing.advanced.includes": "Includes everything in Professional, plus:",
-	"pricing.advanced.feature1": "REST API tokens for external automation",
-	"pricing.advanced.feature2":
-		"Client template overrides (user/community), hot reload",
-	"pricing.advanced.feature3":
-		"Template behavior controls (Auto Run/Keep Alive/Auto Approve)",
-	"pricing.advanced.feature4":
-		"Prompt override management with version control",
-	"pricing.advanced.feature5": "Cost tracking & analytics across services",
-	"pricing.advanced.feature6": "Marketplace governance (allow/deny lists)",
-	"pricing.advanced.feature7":
-		"Priority support, preview access & multi-tenant roadmap",
-	"pricing.month": "/ month",
-	"pricing.custom": "Need a custom solution?",
-	"pricing.contact": "Contact Us",
-	"pricing.whats_included": "What's included",
-	"pricing.popular": "Popular",
-	"pricing.contact_sales": "Contact Sales",
-
 	// Contact
 	"contact.title": "Get in Touch",
 	"contact.subtitle":
@@ -244,18 +182,12 @@ const en = {
 
 	// FAQ
 	"faq.title": "Frequently Asked Questions",
-	"faq.when.title": "When will MCPMate be available?",
-	"faq.when.answer":
-		"MCPMate is currently in preview. You can download the preview today.",
 	"faq.opensource.title": "Is MCPMate open source?",
 	"faq.opensource.answer":
-		"Not for now. We are focused on quality and stability first, and may consider open sourcing parts of the project in the future.",
-	"faq.free.title": "Is MCPMate free?",
-	"faq.free.answer":
-		"During preview, all features are free. After GA, we plan to keep a free personal edition. Exact pricing will be finalized closer to launch.",
+		"Yes! MCPMate is open source under the MIT license. Check out the code at github.com/loocor/mcpmate",
 	"faq.expiry.title": "What happens when the preview expires?",
 	"faq.expiry.answer":
-    "This preview build expires on Oct 25, 2025. The app will stop running and prompt you to download the latest build from this website.",
+    	"Pull the latest changes from GitHub and rebuild to get the newest version.",
 	"faq.platforms.title": "Which platforms are supported?",
 	"faq.platforms.answer":
 		"macOS (Apple Silicon, Intel) is available now. Windows and Linux builds are planned.",
@@ -267,16 +199,13 @@ const en = {
 		"Your MCP configurations run locally; MCPMate does not send tool content to our servers. Optional, privacy‑respecting crash and usage metrics may be added before GA with clear disclosure.",
 	"faq.updates.title": "How do I update MCPMate?",
 	"faq.updates.answer":
-		"Until in‑app updates ship, please download the latest preview from this website when notified.",
+		"Pull the latest changes from GitHub and rebuild with `cargo build --release`.",
 	"faq.different.title": "What makes MCPMate different from other solutions?",
 	"faq.different.answer":
 		"MCPMate is built with Rust for maximum performance and reliability. Our AI-driven configuration management and themed tool groups make it easier than ever to manage your MCP ecosystem.",
 	"faq.compatible.title": "Can I use MCPMate with my existing MCP tools?",
 	"faq.compatible.answer":
 		"Yes! MCPMate works with any MCP-compatible tools and clients, including Claude Desktop, Cherry Studio, Cursor, VSCode, Windsurf, Zed, and more.",
-	"faq.upgrade.title": "Can I upgrade my plan later?",
-	"faq.upgrade.answer":
-		"Yes, you can upgrade from Starter to Professional or Advanced. Your configurations and settings will be preserved during the upgrade.",
 
 	// Notice ribbon (site updating)
 	"notice.construction.ribbon": "Updating",

@@ -41,7 +41,7 @@ export function getCountdown(expiry: Date, now: Date = new Date()): { days: numb
 
 export function getDocsUrl(): string {
   const env = import.meta.env as Record<string, string | undefined>;
-  return env.VITE_DOCS_URL || 'https://docs.mcpmate.io';
+  return env.VITE_DOCS_URL || 'https://mcp.umate.ai/docs';
 }
 
 export function getInstallScriptUrl(): string | null {
