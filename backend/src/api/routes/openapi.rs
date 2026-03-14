@@ -185,7 +185,7 @@ pub async fn serve_docs() -> Html<String> {
 /// - If env `MCPMATE_OPENAPI_PASSWORD` is set (non-empty), requires either:
 ///   - `Authorization: Basic base64("openapi:<password>")`, or
 ///   - header `X-OpenAPI-Password: <password>`.
-///   On failure, returns 401 with `WWW-Authenticate: Basic` to indicate lock.
+///     On failure, returns 401 with `WWW-Authenticate: Basic` to indicate lock.
 /// - Otherwise, returns the OpenAPI JSON body.
 async fn openapi_json_guarded(headers: HeaderMap) -> impl IntoResponse {
     // Global enable/disable gate

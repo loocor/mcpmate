@@ -172,7 +172,11 @@ export const buildPortalUrlWithLocale = (
     if (strategy === "path-prefix") {
       // Remove legacy query param if present
       if (localeParam.key) {
-        try { target.searchParams.delete(localeParam.key); } catch {}
+        try {
+          target.searchParams.delete(localeParam.key);
+        } catch {
+          // URL manipulation may fail for certain URL schemes
+        }
       }
       // Compute insertion point and rebuild pathname as /<prefix><locale>/<rest>
       const proxyPrefix = ensureTrailingSlash(portal.proxyPath);

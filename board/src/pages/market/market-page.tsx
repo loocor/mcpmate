@@ -334,9 +334,9 @@ export function MarketPage() {
 					remote.search = localUrl.search;
 					remote.hash = localUrl.hash;
 					return remote.toString();
-				} catch (_error) {
-					return value;
-				}
+			} catch {
+				return value;
+			}
 			};
 
 			setDrawerServer(null);

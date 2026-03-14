@@ -72,8 +72,8 @@ export const ServerInstallManualForm = forwardRef<
 		}: ServerInstallManualFormProps,
 		ref,
 	) => {
-		usePageTranslations("servers");
-		const { t, i18n } = useTranslation("servers");
+	usePageTranslations("servers");
+	const { t } = useTranslation("servers");
 		const isEditMode = mode === "edit";
 		const isMarketMode = mode === "market";
 		const jsonEditingEnabled = allowJsonEditing ?? !isEditMode;

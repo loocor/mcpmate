@@ -39,7 +39,7 @@ export function ClientsPage() {
         setDashboardSetting: state.setDashboardSetting,
     }));
 
-    const { data, isLoading, isRefetching, refetch, error, isError } = useQuery({
+	const { data, isLoading, isRefetching, refetch } = useQuery({
 		queryKey: ["clients"],
 		queryFn: async () => {
 			const resp = await clientsApi.list(false);

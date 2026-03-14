@@ -111,9 +111,10 @@ impl Default for ServiceInfo {
 }
 
 /// Service status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceStatus {
     /// Service is not initialized
+    #[default]
     Unknown,
     /// Service is starting up
     Starting,
@@ -125,12 +126,6 @@ pub enum ServiceStatus {
     Stopped,
     /// Service encountered an error
     Error,
-}
-
-impl Default for ServiceStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl ServiceStatus {

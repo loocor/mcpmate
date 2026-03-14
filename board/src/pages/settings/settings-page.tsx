@@ -226,7 +226,9 @@ export function SettingsPage() {
 					setMcpPort(Number(cachedMcp));
 					hadCached = true;
 				}
-			} catch {}
+			} catch {
+				// Cache read is best-effort
+			}
 			if (isTauriEnvironmentSync()) {
 				const { invoke } = await import("@tauri-apps/api/core");
 				const resp = (await invoke("mcp_shell_read_runtime_ports")) as {
@@ -250,7 +252,9 @@ export function SettingsPage() {
 							"mcpmate.system.mcp_port",
 							String(resp.mcp_port),
 						);
-					} catch {}
+					} catch {
+						// LocalStorage write is best-effort
+					}
 				}
 				if (resp.api_url && !API_BASE_URL.includes(`:${resp.api_port}`)) {
 					setApiBaseUrl(resp.api_url);
@@ -272,7 +276,9 @@ export function SettingsPage() {
 								"mcpmate.system.api_port",
 								String(d.api_port),
 							);
-						} catch {}
+						} catch {
+							// LocalStorage write is best-effort
+						}
 					}
 					if (typeof d?.mcp_port === "number") {
 						setMcpPort(d.mcp_port);
@@ -281,7 +287,9 @@ export function SettingsPage() {
 								"mcpmate.system.mcp_port",
 								String(d.mcp_port),
 							);
-						} catch {}
+						} catch {
+							// LocalStorage write is best-effort
+						}
 					}
 				}
 			}
@@ -1126,7 +1134,9 @@ export function SettingsPage() {
 																"mcpmate.system.mcp_port",
 																String(mcpPort),
 															);
-														} catch {}
+			} catch {
+				// Cache read is best-effort
+			}
 													} finally {
 														setApplyBusy(false);
 													}
@@ -1142,7 +1152,9 @@ export function SettingsPage() {
 															"mcpmate.system.mcp_port",
 															String(mcpPort),
 														);
-													} catch {}
+													} catch {
+														// LocalStorage write is best-effort
+													}
 													setWebDialogOpen(true);
 												}
 											}}
@@ -1204,7 +1216,9 @@ export function SettingsPage() {
 													: "/api/system/shutdown";
 												try {
 													await fetch(url, { method: "POST" });
-												} catch {}
+												} catch {
+													// Shutdown request is fire-and-forget
+												}
 											}}
 										>
 											{t("settings:system.stopCurrent", {

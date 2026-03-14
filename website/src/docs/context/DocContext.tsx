@@ -38,7 +38,6 @@ export function DocProvider({ children }: { children: React.ReactNode }) {
 			if (ids.current.has(h.id)) return prev;
 			ids.current.add(h.id);
 			const next = [...prev, h];
-			// Keep stable order by DOM appearance when possible
 			return next.sort(
 				(a, b) => a.level - b.level || a.text.localeCompare(b.text),
 			);

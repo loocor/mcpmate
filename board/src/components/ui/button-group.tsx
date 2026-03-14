@@ -41,7 +41,7 @@ const ButtonGroupSeparator = React.forwardRef<
 	React.HTMLAttributes<HTMLDivElement> & {
 		orientation?: "horizontal" | "vertical";
 	}
->(({ className, orientation = "vertical", ...props }, ref) => (
+>(({ orientation = "vertical", ...props }, ref) => (
 	<div
 		ref={ref}
 		role="separator"

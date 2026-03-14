@@ -51,7 +51,7 @@ export default function DocLayout({ meta, children }: Props) {
 		calc();
 		window.addEventListener("resize", calc, { passive: true });
 		return () => {
-			window.removeEventListener("resize", calc as any);
+			window.removeEventListener("resize", calc, { passive: true });
 		};
 	}, []);
 

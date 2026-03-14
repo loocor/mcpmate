@@ -7,7 +7,7 @@ export type DocPage = {
 	summary?: string;
 	keywords?: string[];
 	// Lazy component import to keep first load small
-	component: () => Promise<{ default: React.ComponentType<any> }>;
+	component: () => Promise<{ default: React.ComponentType<Record<string, unknown>> }>;
 };
 
 export type DocGroup = { group: string; pages: (DocPage | DocGroup)[] };
@@ -351,10 +351,10 @@ export function flattenPages(nav: DocNav): DocPage[] {
 	const out: DocPage[] = [];
 	for (const g of nav.groups) {
 		const walk = (node: DocGroup | DocPage) => {
-			if ((node as any).path) {
-				out.push(node as DocPage);
+			if ("path" in node) {
+				out.push(node);
 			} else {
-				(node as DocGroup).pages.forEach(walk);
+				node.pages.forEach(walk);
 			}
 		};
 		g.pages.forEach(walk);

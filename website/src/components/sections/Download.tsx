@@ -15,7 +15,6 @@ import {
 	getMacVariantSha256,
 	getMacVariantUrl,
 	getPreviewExpiry,
-	getPreviewVersion,
 	isPreviewSuspended,
 	type MacVariant,
 } from "../../utils/downloads";
@@ -31,7 +30,6 @@ const DownloadSection = () => {
 	const [selectedPlatform] = useState(() => detectPlatform());
 	const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-	const version = useMemo(() => getPreviewVersion(), []);
 	const installUrl = useMemo(() => getInstallScriptUrl(), []);
 	const expiry = useMemo(() => getPreviewExpiry(), []);
 	const previewSuspended = useMemo(() => isPreviewSuspended(), []);
@@ -124,6 +122,7 @@ const DownloadSection = () => {
 													{t("download.sha256")}: {sha}
 												</span>
 												<button
+													type="button"
 													className="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
 													onClick={async () => {
 														try {

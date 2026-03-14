@@ -2,19 +2,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Operating mode for Inspector endpoints.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum InspectorMode {
     /// Aggregate/managed view: unique naming, profile-aware (recommended)
+    #[default]
     Proxy,
     /// Direct upstream view: single server/instance, no unique naming
     Native,
-}
-
-impl Default for InspectorMode {
-    fn default() -> Self {
-        Self::Proxy
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

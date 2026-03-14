@@ -1,16 +1,14 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-
-type Theme = 'dark' | 'light';
-type ThemeMode = 'dark' | 'light' | 'system';
+import { getResolvedTheme, applyThemeToDocument, type ThemeMode, type Theme } from '../utils/theme-utils';
 
 interface ThemeContextType {
   mode: ThemeMode;
-  theme: Theme; // resolved theme applied to document
+  theme: Theme;
   setMode: (mode: ThemeMode) => void;
-  toggleTheme: () => void; // cycles light/dark (keeps system if currently set)
+  toggleTheme: () => void;
 }
 
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+export const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<ThemeMode>(() => {
@@ -21,47 +19,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return 'system';
   });
 
-  const resolvedTheme: Theme = (() => {
-    if (mode === 'system') {
-      if (typeof window !== 'undefined') {
-        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-      }
-      return 'light';
-    }
-    return mode;
-  })();
+  const resolvedTheme: Theme = getResolvedTheme(mode);
 
   useEffect(() => {
-    const root = window.document.documentElement;
-    
-    // Remove both classes first to ensure clean state
-    root.classList.remove('light', 'dark');
-    
-    // Add the current theme class
-    root.classList.add(resolvedTheme);
-    
-    // Update meta theme-color for mobile browsers
-    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
-    if (metaThemeColor) {
-      metaThemeColor.setAttribute(
-        'content',
-        resolvedTheme === 'dark' ? '#0f172a' : '#ffffff'
-      );
-    }
-    
-    // Store the preference
+    applyThemeToDocument(resolvedTheme);
     localStorage.setItem('theme', mode);
     localStorage.setItem('themeMode', mode);
   }, [mode, resolvedTheme]);
 
   useEffect(() => {
-    // Listen for system theme changes
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     
     const handleChange = () => {
       const saved = (localStorage.getItem('theme') || localStorage.getItem('themeMode')) as ThemeMode | null;
       if (!saved || saved === 'system') {
-        // trigger re-render to apply new system theme
         setMode('system');
       }
     };

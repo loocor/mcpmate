@@ -134,7 +134,8 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		// Install pipeline (prefer external shared instance to keep state in sync with parent page)
-		const installPipeline = externalPipeline ?? useServerInstallPipeline();
+		const internalPipeline = useServerInstallPipeline();
+		const installPipeline = externalPipeline ?? internalPipeline;
 		const currentStep = installPipeline.state.currentStep ?? "form";
 		const navigate = useNavigate();
 
@@ -949,7 +950,9 @@ export const ServerInstallWizard = forwardRef(
 					},
 				};
 				void handleIngestPayload({ text: JSON.stringify(payload) });
-			} catch {}
+			} catch {
+				// Draft parsing is best-effort; ignore failures
+			}
 			// eslint-disable-next-line react-hooks/exhaustive-deps
 		}, [draftKey, isOpen]);
 
@@ -1448,9 +1451,8 @@ export const ServerInstallWizard = forwardRef(
 			setExpanded((e) => ({ ...e, [name]: !e[name] }));
 
 		const renderPreviewStep = () => {
-			const { state } = installPipeline;
-			const { drafts, previewState, previewError, isPreviewLoading, source } =
-				state;
+		const { state } = installPipeline;
+		const { drafts, previewState, previewError, isPreviewLoading } = state;
 
 			// Capability rendering helper
 			const renderCapabilitySection = (
@@ -1840,16 +1842,16 @@ export const ServerInstallWizard = forwardRef(
 									})}
 								</div>
 							) : (
-								<div className="rounded-lg border p-4 space-y-4">
-									{(() => {
-										let badgeColor = "bg-green-500";
-										let statusTitle = t("wizard.result.validatedTitle", {
-											defaultValue: "Import Validated",
-										});
-										let detailMessage: string | null = null;
-										let detailTone: "error" | "warning" | "muted" = "muted";
-										if (dryRunError) {
-											badgeColor = "bg-red-500";
+							<div className="rounded-lg border p-4 space-y-4">
+								{(() => {
+									let _badgeColor = "bg-green-500";
+									let statusTitle = t("wizard.result.validatedTitle", {
+										defaultValue: "Import Validated",
+									});
+									let detailMessage: string | null = null;
+									let detailTone: "error" | "warning" | "muted" = "muted";
+									if (dryRunError) {
+										_badgeColor = "bg-red-500";
 											statusTitle = t("wizard.result.validationFailedTitle", {
 												defaultValue: "Import Validation Failed",
 											});
@@ -1857,7 +1859,7 @@ export const ServerInstallWizard = forwardRef(
 											detailTone = "error";
 										} else if (canProceedWithImport) {
 											if (dryRunWarning) {
-												badgeColor = "bg-amber-500";
+												_badgeColor = "bg-amber-500";
 												statusTitle = t(
 													"wizard.result.validatedWithWarningsTitle",
 													{
@@ -1867,9 +1869,9 @@ export const ServerInstallWizard = forwardRef(
 												detailMessage = dryRunWarning;
 												detailTone = "warning";
 											}
-										} else {
-											badgeColor = "bg-amber-500";
-											statusTitle = t("wizard.result.alreadyInstalledTitle", {
+									} else {
+										_badgeColor = "bg-amber-500";
+										statusTitle = t("wizard.result.alreadyInstalledTitle", {
 												defaultValue: "Already Installed",
 											});
 											detailMessage = dryRunWarning;

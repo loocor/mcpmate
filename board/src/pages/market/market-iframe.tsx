@@ -19,7 +19,9 @@ export function MarketIframe({
 			if (qp.get("market_debug") === "1") {
 				localStorage.setItem("MCPMATE_MARKET_DEBUG", "1");
 			}
-		} catch { }
+		} catch {
+			// URLSearchParams may fail in restricted contexts
+		}
 		return localStorage.getItem("MCPMATE_MARKET_DEBUG") === "1";
 	}, []);
 	const readySignalRef = useRef(false);

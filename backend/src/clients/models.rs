@@ -264,17 +264,12 @@ impl ClientTemplate {
 }
 
 /// MCP configuration mode
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigMode {
     Native,
+    #[default]
     Managed,
-}
-
-impl Default for ConfigMode {
-    fn default() -> Self {
-        Self::Managed
-    }
 }
 
 /// Server context input to template rendering

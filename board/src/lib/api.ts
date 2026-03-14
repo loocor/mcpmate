@@ -125,7 +125,9 @@ export function setApiBaseUrl(newBase: string | null | undefined) {
 	// Clear override and recompute
 	try {
 		window.localStorage?.removeItem(API_BASE_OVERRIDE_KEY);
-	} catch {}
+	} catch {
+		// LocalStorage access may fail in restricted environments
+	}
 	API_BASE_URL = resolveApiBaseUrl();
 }
 

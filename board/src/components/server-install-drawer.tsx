@@ -81,9 +81,9 @@ export function ServerInstallDrawer({
 	}, [previewState]);
 
 	// Track preview timestamp for "Last preview" text
-	const [previewAt, setPreviewAt] = useState<number | null>(null);
+	const [_previewAt, _setPreviewAt] = useState<number | null>(null);
 	useEffect(() => {
-		if (previewState && !isPreviewLoading) setPreviewAt(Date.now());
+		if (previewState && !isPreviewLoading) _setPreviewAt(Date.now());
 	}, [previewState, isPreviewLoading]);
 
 	// Expand/collapse details per draft

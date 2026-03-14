@@ -375,7 +375,9 @@ const buildDraft = (
 			} else {
 				url = url.split("?")[0];
 			}
-		} catch {}
+		} catch {
+			// URL parsing is best-effort; continue with original url
+		}
 	}
 	// Merge explicit url params fields
 	const explicitParams =
@@ -503,10 +505,14 @@ export const extractJsonFromText = (
 	// 1) Direct parse (JSON → JSON5)
 	try {
 		return JSON.parse(trimmed);
-	} catch {}
+	} catch {
+		// Not valid JSON, try JSON5 next
+	}
 	try {
 		return JSON5.parse(trimmed);
-	} catch {}
+	} catch {
+		// Not valid JSON5 either, try other formats
+	}
 
 	// 2) Fenced code block: ```json ... ```
 	const fenceMatch =
@@ -541,7 +547,9 @@ export const extractJsonFromText = (
 						);
 					return isDictOfObjects ? { mcpServers: parsed } : parsed;
 				}
-			} catch {}
+			} catch {
+				// JSON parse failed for candidate, try JSON5
+			}
 			try {
 				const parsed5 = JSON5.parse(cand);
 				if (parsed5 && typeof parsed5 === "object" && !Array.isArray(parsed5)) {
@@ -553,7 +561,9 @@ export const extractJsonFromText = (
 						);
 					return isDictOfObjects ? { mcpServers: parsed5 } : parsed5;
 				}
-			} catch {}
+			} catch {
+				// JSON5 parse failed for candidate, try next
+			}
 		}
 	}
 

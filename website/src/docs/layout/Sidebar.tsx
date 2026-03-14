@@ -1,12 +1,11 @@
 import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { type DocNav, docsNav, findRouteByPath, flattenPages } from "../nav";
+import { type DocNav, type DocPage, type DocGroup, docsNav, findRouteByPath, flattenPages } from "../nav";
 import {
 	Sidebar as UISidebar,
 	SidebarContent,
 	SidebarGroup,
 	SidebarGroupContent,
-	SidebarGroupLabel,
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
@@ -33,7 +32,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 		[locale],
 	);
 	const navigate = useNavigate();
-	const [isPending, startTransition] = React.useTransition();
+	const [, startTransition] = React.useTransition();
 	const [query, setQuery] = React.useState("");
 
 	const flat = React.useMemo(() => (nav ? flattenPages(nav) : []), [nav]);
@@ -70,13 +69,13 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 					for (const group of nav.groups) {
 						if (group.group && group.group.trim() !== "") {
 							// Check if current page is in this group
-							const isInGroup = group.pages.some((p: any) => {
-								if (p.path) {
+							const isInGroup = group.pages.some((p: DocPage | DocGroup) => {
+								if ("path" in p) {
 									return p.path === current.path;
 								}
 								// Check sub-groups
-								if (p.group) {
-									return p.pages.some((sp: any) => sp.path === current.path);
+								if ("group" in p) {
+									return p.pages.some((sp: DocPage) => sp.path === current.path);
 								}
 								return false;
 							});
@@ -138,8 +137,8 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 		window.addEventListener("resize", calc, { passive: true });
 		window.addEventListener("scroll", calc, { passive: true });
 		return () => {
-			window.removeEventListener("resize", calc as any);
-			window.removeEventListener("scroll", calc as any);
+			window.removeEventListener("resize", calc, { passive: true });
+			window.removeEventListener("scroll", calc, { passive: true });
 		};
 	}, []);
 
@@ -220,24 +219,26 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 									return (
 										<SidebarGroup key={g.group || "__root"}>
 											<SidebarMenu>
-												{g.pages.map((p: any) => (
-													<SidebarMenuItem key={p.path}>
-														<Link to={p.path}>
-															<SidebarMenuButton
-																active={current?.path === p.path}
-																onClick={() => {
-																	// Collapse all collapsible menu items when clicking root-level items
-																	setOpenGroup(null);
-																}}
-																onMouseEnter={() => {
-																	// Preload the component on hover
-																	p.component();
-																}}
-															>
-																{renderMenuLabel(p.title)}
-															</SidebarMenuButton>
-														</Link>
-													</SidebarMenuItem>
+												{g.pages.map((p: DocPage | DocGroup) => (
+													"path" in p ? (
+														<SidebarMenuItem key={p.path}>
+															<Link to={p.path}>
+																<SidebarMenuButton
+																	active={current?.path === p.path}
+																	onClick={() => {
+																		// Collapse all collapsible menu items when clicking root-level items
+																		setOpenGroup(null);
+																	}}
+																	onMouseEnter={() => {
+																		// Preload the component on hover
+																		p.component();
+																	}}
+																>
+																	{renderMenuLabel(p.title)}
+																</SidebarMenuButton>
+															</Link>
+														</SidebarMenuItem>
+													) : null
 												))}
 											</SidebarMenu>
 										</SidebarGroup>
@@ -275,11 +276,8 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 											>
 												<SidebarMenu>
 													{g.pages.map((p) => {
-														if ((p as any).group) {
-															const sg = p as any as {
-																group: string;
-																pages: any[];
-															};
+														if ("group" in p) {
+															const sg: DocGroup = p;
 															const key = `${g.group}/${sg.group}`;
 															const opened = openGroup === key;
 															return (
@@ -308,7 +306,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 																	</button>
 																	{opened && (
 																		<div className="mt-1">
-																			{sg.pages.map((sp: any) => (
+																			{sg.pages.map((sp: DocPage) => (
 																				<SidebarMenuItem key={sp.path}>
 																					<Link to={sp.path}>
 																					<SidebarMenuButton
@@ -328,7 +326,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 																</div>
 															);
 														}
-														const sp = p as any;
+														const sp: DocPage = p as DocPage;
 														return (
 															<SidebarMenuItem key={sp.path}>
 																<Link to={sp.path}>

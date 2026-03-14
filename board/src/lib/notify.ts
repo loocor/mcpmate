@@ -38,7 +38,7 @@ function genId() {
 
 export const useNotify = create<NotifyState>()(
 	persist(
-		(set, get) => ({
+		(set) => ({
 			items: [],
 			unread: 0,
 			isOpen: false,

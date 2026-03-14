@@ -41,10 +41,11 @@ impl ClientConfigService {
                     true
                 };
                 // Check if transport is explicitly set (not "auto")
-                if transport != "auto" {
-                    if supported.contains(&transport.as_str()) && allows(transport.as_str()) {
-                        chosen_transport = Some(transport.clone());
-                    }
+                if transport != "auto"
+                    && supported.contains(&transport.as_str())
+                    && allows(transport.as_str())
+                {
+                    chosen_transport = Some(transport.clone());
                 }
                 // If still not chosen (either "auto" or unsupported), auto-select
                 if chosen_transport.is_none() {

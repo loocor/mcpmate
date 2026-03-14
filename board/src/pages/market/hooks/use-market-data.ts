@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useCursorPagination } from "../../../hooks/use-cursor-pagination";
 import { fetchRegistryServers, getOfficialMeta } from "../../../lib/registry";
 import { useAppStore } from "../../../lib/store";

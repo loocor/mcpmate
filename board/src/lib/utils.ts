@@ -63,7 +63,7 @@ export function formatRelativeTime(timestamp: string, locale?: string) {
 			addSuffix: true,
 			locale: dateLocale,
 		});
-	} catch (error) {
+	} catch {
 		return "Invalid date";
 	}
 }

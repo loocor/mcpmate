@@ -195,11 +195,12 @@ impl<'r> Decode<'r, Sqlite> for ServerType {
 }
 
 /// Transport type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum TransportType {
     /// Streamable HTTP transport
     StreamableHttp,
     /// Server-Sent Events transport
+    #[default]
     Sse,
     /// Standard input/output transport
     Stdio,
@@ -344,11 +345,5 @@ impl<'r> Decode<'r, Sqlite> for TransportType {
     fn decode(value: SqliteValueRef<'r>) -> Result<Self, BoxDynError> {
         let s = <String as Decode<Sqlite>>::decode(value)?;
         TransportType::from_str(&s).map_err(|e| Box::new(e) as BoxDynError)
-    }
-}
-
-impl Default for TransportType {
-    fn default() -> Self {
-        Self::Sse
     }
 }

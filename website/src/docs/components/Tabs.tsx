@@ -7,6 +7,13 @@ type TabsContextValue = {
 
 const TabsContext = React.createContext<TabsContextValue | null>(null);
 
+type TabProps = {
+	label: React.ReactNode;
+	value: string;
+	_isTabTrigger?: boolean;
+	ctx?: TabsContextValue;
+};
+
 export function Tabs({
 	defaultValue,
 	children,
@@ -28,7 +35,7 @@ export function TabList({ children }: { children: React.ReactNode }) {
 		<div className="not-prose flex items-center gap-2 border-b border-slate-200 dark:border-slate-700 mb-3">
 			{React.Children.map(children, (child, idx) => {
 				if (!React.isValidElement(child)) return child;
-				return React.cloneElement(child as any, {
+				return React.cloneElement(child as React.ReactElement<TabProps>, {
 					value: String(idx),
 					_isTabTrigger: true,
 					ctx,
@@ -38,13 +45,14 @@ export function TabList({ children }: { children: React.ReactNode }) {
 	);
 }
 
-export function Tab({ label, value, _isTabTrigger, ctx }: any) {
+export function Tab({ label, value, _isTabTrigger, ctx }: TabProps) {
 	if (!_isTabTrigger) return null;
-	const active = ctx.value === value;
+	const active = ctx!.value === value;
 	return (
 		<button
+			type="button"
 			className={`px-3 py-2 text-sm -mb-px border-b-2 ${active ? "border-blue-600 text-blue-600 dark:text-blue-400" : "border-transparent text-slate-600 dark:text-slate-300"}`}
-			onClick={() => ctx.setValue(value)}
+			onClick={() => ctx!.setValue(value)}
 		>
 			{label}
 		</button>

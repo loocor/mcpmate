@@ -12,7 +12,7 @@ pub(crate) fn decode_utf16_le_bytes(bytes: &[u8]) -> Result<Value> {
 
     // Skip the header byte (0x00) and convert remaining bytes to u16
     let utf16_bytes = &bytes[1..];
-    if utf16_bytes.len() % 2 != 0 {
+    if !utf16_bytes.len().is_multiple_of(2) {
         return Err(CherryDbError::EncodingError(
             "Invalid UTF-16 data length".to_string(),
         ));

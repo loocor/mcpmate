@@ -9,8 +9,6 @@ function cleanupBodyLocks() {
 	// No-op; rely on Vaul/Radix internals
 }
 
-function hasAnyOpenLayer() { return true; }
-
 function ensureBodyInteractive() { /* no-op */ }
 
 function setAppInert(_inert: boolean) { /* no-op */ }
