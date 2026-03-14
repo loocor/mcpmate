@@ -4,16 +4,21 @@ import { useLanguage } from "../LanguageProvider";
 
 export default function DomainMigrationBanner() {
   const [isVisible, setIsVisible] = useState(true);
+  const [showBanner, setShowBanner] = useState(false);
   const { language } = useLanguage();
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--banner-height", isVisible ? "36px" : "0px");
+    setShowBanner(window.location.hostname === "mcpmate.io");
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--banner-height", isVisible && showBanner ? "36px" : "0px");
     return () => {
       document.documentElement.style.setProperty("--banner-height", "0px");
     };
-  }, [isVisible]);
+  }, [isVisible, showBanner]);
 
-  if (!isVisible) return null;
+  if (!isVisible || !showBanner) return null;
 
   const message = language === "zh"
     ? "域名迁移通知：mcpmate.io 即将停用，请使用新域名 "
@@ -32,6 +37,7 @@ export default function DomainMigrationBanner() {
           </a>
         </span>
         <button
+          type="button"
           onClick={() => setIsVisible(false)}
           className="ml-2 p-1 rounded hover:bg-amber-600 transition-colors"
           aria-label="Close notification"
