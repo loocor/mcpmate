@@ -8,20 +8,19 @@ export default function Marketplace() {
 			meta={{
 				title: "Inline Marketplace",
 				description:
-					"Built-in official registry and mcpmarket.cn - discover servers without leaving the app",
+					"Built-in official MCP registry - discover servers without leaving the app",
 			}}
 		>
 			<P>
-				MCPMate includes an integrated marketplace that provides access to both
-				the official MCP registry and mcpmarket.cn. Discover, install, and
-				configure new MCP servers without ever leaving the application.
+			MCPMate includes an integrated marketplace that provides access to the
+			official MCP registry. Discover, install, and
+			configure new MCP servers without ever leaving the application.
 			</P>
 
 			<h2>Features</h2>
 			<ul>
 				<li>
-					<strong>Unified Search:</strong> Search across multiple registries
-					simultaneously
+					<strong>Unified Search:</strong> Search the official registry
 				</li>
 				<li>
 					<strong>One-Click Install:</strong> Install servers directly from the
@@ -46,10 +45,6 @@ export default function Marketplace() {
 				<li>
 					<strong>Official MCP Registry:</strong> Anthropic's official server
 					collection
-				</li>
-				<li>
-					<strong>mcpmarket.cn:</strong> Community-curated Chinese MCP server
-					marketplace
 				</li>
 			</ul>
 

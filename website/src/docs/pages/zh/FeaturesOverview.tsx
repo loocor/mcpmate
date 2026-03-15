@@ -60,7 +60,7 @@ export default function FeaturesOverview() {
 			<h3>生态系统</h3>
 			<ul>
 				<li>
-					<strong>内联商城：</strong>内建官方注册中心与 mcpmarket.cn 集成
+					<strong>内联商城：</strong>内建官方 MCP 注册中心，无需离开应用即可发现和安装服务器
 				</li>
 			</ul>
 

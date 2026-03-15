@@ -1,13 +1,5 @@
 import { create } from "zustand";
 import { isTauriEnvironmentSync } from "./platform";
-import type {
-	MarketPortalDefinition,
-	MarketPortalId,
-} from "../pages/market/portal-registry";
-import {
-	MARKET_PORTAL_MAP,
-	mergePortalOverrides,
-} from "../pages/market/portal-registry";
 import type { Theme } from "./types";
 
 export type DashboardDefaultView = "list" | "grid";
@@ -17,133 +9,7 @@ export type ClientDefaultMode = "hosted" | "transparent";
 export type ClientListDefaultFilter = "all" | "detected" | "managed";
 export type ClientBackupStrategy = "keep_n" | "keep_last" | "none";
 export type MenuBarIconMode = "runtime" | "hidden";
-export type DefaultMarket = "official" | MarketPortalId;
-
-export type MarketPortalMeta = MarketPortalDefinition;
-
-export const DEFAULT_MARKET_PORTALS: Readonly<
-	Record<string, MarketPortalMeta>
-> = Object.freeze(mergePortalOverrides());
-
-function cloneMarketPortals(
-	portals: Record<string, MarketPortalMeta>,
-): Record<string, MarketPortalMeta> {
-	return Object.fromEntries(
-		Object.entries(portals).map(([key, meta]) => [key, { ...meta }]),
-	);
-}
-
-function sanitizeMarketPortalMeta(
-	id: string,
-	value: unknown,
-	fallback?: MarketPortalMeta,
-): MarketPortalMeta | null {
-	if (!value || typeof value !== "object") return null;
-	const input = value as Partial<MarketPortalMeta>;
-	const targetId =
-		typeof input.id === "string" && input.id.trim() ? input.id.trim() : id;
-	const canonical = MARKET_PORTAL_MAP[targetId];
-	if (!canonical) return null;
-
-	const label =
-		typeof input.label === "string" && input.label.trim()
-			? input.label.trim()
-			: (fallback?.label ?? canonical.label);
-	const remoteOrigin =
-		typeof (input as Partial<MarketPortalDefinition>).remoteOrigin ===
-			"string" &&
-		(input as Partial<MarketPortalDefinition>).remoteOrigin?.trim()
-			? (input as Partial<MarketPortalDefinition>).remoteOrigin.trim()
-			: (fallback?.remoteOrigin ?? canonical.remoteOrigin);
-	const proxyPathRaw =
-		typeof input.proxyPath === "string" && input.proxyPath.trim()
-			? input.proxyPath.trim()
-			: (fallback?.proxyPath ?? canonical.proxyPath);
-	if (!label || !proxyPathRaw) return null;
-	const proxyPath = proxyPathRaw.endsWith("/")
-		? proxyPathRaw
-		: `${proxyPathRaw}/`;
-	const favicon =
-		typeof input.favicon === "string" && input.favicon.trim()
-			? input.favicon.trim()
-			: (fallback?.favicon ?? canonical.favicon);
-	const proxyFavicon =
-		typeof input.proxyFavicon === "string" && input.proxyFavicon.trim()
-			? input.proxyFavicon.trim()
-			: (fallback?.proxyFavicon ?? canonical.proxyFavicon);
-	const adapter =
-		typeof (input as Partial<MarketPortalDefinition>).adapter === "string" &&
-		(input as Partial<MarketPortalDefinition>).adapter?.trim()
-			? (input as Partial<MarketPortalDefinition>).adapter!.trim()
-			: (fallback?.adapter ?? canonical.adapter ?? "default");
-	const locales =
-		Array.isArray((input as Partial<MarketPortalDefinition>).locales) &&
-		((input as Partial<MarketPortalDefinition>).locales?.length ?? 0) > 0
-			? ((input as Partial<MarketPortalDefinition>).locales ?? []).filter(
-					(locale): locale is string =>
-						typeof locale === "string" && locale.trim().length > 0,
-				)
-			: (fallback?.locales ?? canonical.locales);
-  const localeParamInput =
-		(input as Partial<MarketPortalDefinition>).localeParam ??
-		fallback?.localeParam ??
-		canonical.localeParam;
-  let localeParam: MarketPortalDefinition["localeParam"] | undefined;
-  if (localeParamInput && typeof localeParamInput === "object") {
-		const keyRaw = (localeParamInput as { key?: unknown }).key;
-		const key =
-			typeof keyRaw === "string" && keyRaw.trim().length > 0
-				? keyRaw.trim()
-				: undefined;
-		const strategyRaw = (localeParamInput as { strategy?: unknown }).strategy;
-		const strategy =
-			strategyRaw === "path-prefix" || strategyRaw === "query"
-				? (strategyRaw as "path-prefix" | "query")
-				: undefined;
-		const mappingRaw = (localeParamInput as { mapping?: unknown }).mapping;
-		const mapping =
-			mappingRaw && typeof mappingRaw === "object"
-				? Object.fromEntries(
-						Object.entries(mappingRaw as Record<string, unknown>).reduce(
-								(acc, [mapKey, mapValue]) => {
-									if (typeof mapKey !== "string") return acc;
-									const trimmedKey = mapKey.trim().toLowerCase();
-									if (!trimmedKey) return acc;
-									if (typeof mapValue !== "string") return acc;
-									const trimmedValue = mapValue.trim();
-									if (!trimmedValue) return acc;
-									acc.push([trimmedKey, trimmedValue]);
-									return acc;
-								}, [] as Array<[string, string]>),
-					)
-				: undefined;
-		const fallbackLocale =
-			typeof (localeParamInput as { fallback?: unknown }).fallback === "string"
-				? ((localeParamInput as { fallback?: string }).fallback ?? "").trim()
-				: undefined;
-		if (key || strategy) {
-			localeParam = {
-				// Keep key for backward compatibility even if using path-prefix
-				...(key ? { key } : {}),
-				...(strategy ? { strategy } : {}),
-				...(mapping ? { mapping } : {}),
-				...(fallbackLocale ? { fallback: fallbackLocale } : {}),
-			};
-		}
-  }
-
-	return {
-		id: targetId,
-		label,
-		remoteOrigin,
-		proxyPath,
-		favicon,
-		proxyFavicon,
-		adapter,
-		...(locales ? { locales } : {}),
-		...(localeParam ? { localeParam } : {}),
-	};
-}
+export type DefaultMarket = "official";
 
 export interface DashboardSettings {
 	defaultView: DashboardDefaultView;
@@ -154,12 +20,10 @@ export interface DashboardSettings {
 	enableServerDebug: boolean;
 	openDebugInNewWindow: boolean;
 	showRawCapabilityJson: boolean;
-	// Developer: show default HTTP headers (redacted) in Server Details
 	showDefaultHeaders: boolean;
 	menuBarIconMode: MenuBarIconMode;
 	showDockIcon: boolean;
 	clientDefaultMode: ClientDefaultMode;
-	// Default filter applied to Clients list page
 	clientListDefaultFilter: ClientListDefaultFilter;
 	clientBackupStrategy: ClientBackupStrategy;
 	clientBackupLimit: number;
@@ -167,7 +31,6 @@ export interface DashboardSettings {
 	enableMarketBlacklist: boolean;
 	showApiDocsMenu: boolean;
 	defaultMarket: DefaultMarket;
-	marketPortals: Record<string, MarketPortalMeta>;
 }
 
 export interface MarketBlacklistEntry {
@@ -216,8 +79,7 @@ const defaultDashboardSettings: DashboardSettings = {
 	marketBlacklist: [],
 	enableMarketBlacklist: false,
 	showApiDocsMenu: false,
-	defaultMarket: "mcpmarket",
-	marketPortals: cloneMarketPortals(DEFAULT_MARKET_PORTALS),
+	defaultMarket: "official",
 };
 
 function normalizeDashboardSettings(

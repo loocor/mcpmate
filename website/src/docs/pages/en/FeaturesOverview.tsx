@@ -69,8 +69,8 @@ export default function FeaturesOverview() {
 			<h3>Ecosystem</h3>
 			<ul>
 				<li>
-					<strong>Inline Marketplace:</strong> Built-in official registry and
-					mcpmarket.cn integration
+					<strong>Inline Marketplace:</strong> Built-in official MCP registry —
+					discover and install servers without leaving the app
 				</li>
 			</ul>
 

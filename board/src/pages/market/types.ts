@@ -86,7 +86,6 @@ export interface MarketTabsProps {
 export interface MarketIframeProps {
 	url: string;
 	title: string;
-	portalId: string;
 	proxyPath: string;
 	className?: string;
 	refreshKey?: number;

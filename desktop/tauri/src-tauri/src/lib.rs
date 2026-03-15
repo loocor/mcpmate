@@ -29,8 +29,6 @@ use time::format_description::parse as parse_format;
 use time::Date;
 use mcpmate::common::constants::branding::WEBSITE_URL;
 
-mod market_proxy;
-mod market_stream;
 mod shell;
 use shell::{ShellPreferences, ShellState};
 use tauri_plugin_opener::OpenerExt;
@@ -51,8 +49,6 @@ mod openapi_lock {
 const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
 const MENU_ABOUT_ID: &str = "menu.help.about";
-const MENU_TOGGLE_DIAG_ID: &str = "menu.help.toggle_market_diag";
-const MENU_EXPORT_DIAG_ID: &str = "menu.help.export_market_diag";
 
 #[derive(Clone, Default)]
 struct BackendState {
@@ -124,11 +120,6 @@ impl BackendRuntime {
 }
 
 pub fn run() -> Result<()> {
-    // Enable diagnostics by default in special diag builds
-    #[cfg(market_diag_default)]
-    unsafe {
-        std::env::set_var("MCPMATE_MARKET_DIAG", "1");
-    }
     // Early expiry gate before Tauri bootstraps anything
     if is_time_limited_preview_expired() {
         // Blocking native dialog (cross-platform) to inform users, then open website and exit.
@@ -186,97 +177,6 @@ pub fn run() -> Result<()> {
             });
         } else if event.id.as_ref() == MENU_ABOUT_ID {
             show_about_dialog(app_handle);
-        } else if event.id.as_ref() == MENU_TOGGLE_DIAG_ID {
-            let handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                let enabled = std::env::var("MCPMATE_MARKET_DIAG")
-                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
-                let new_val = if enabled { "0" } else { "1" };
-                unsafe { std::env::set_var("MCPMATE_MARKET_DIAG", new_val) };
-
-                // Write a marker line so users can export immediately
-                use std::io::Write as _;
-                let mut path = std::env::temp_dir();
-                path.push("mcpmate-market-diag.log");
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .and_then(|mut f| {
-                        let line = format!(
-                            "[{}] [shell] diagnostics {} via menu\n",
-                            time::OffsetDateTime::now_utc().format(
-                                &time::format_description::well_known::Rfc3339
-                            ).unwrap_or_else(|_| "now".to_string()),
-                            if new_val == "1" { "enabled" } else { "disabled" }
-                        );
-                        f.write_all(line.as_bytes())
-                    });
-
-                let (title, message) = if new_val == "1" {
-                    (
-                        "Market Diagnostics Enabled".to_string(),
-                        format!(
-                            "Diagnostics are now ON. Reproduce the issue, then use 'Export Market Diagnostics…'.\nLog file: {}",
-                            path.display()
-                        ),
-                    )
-                } else {
-                    (
-                        "Market Diagnostics Disabled".to_string(),
-                        "Diagnostics are now OFF.".to_string(),
-                    )
-                };
-
-                handle
-                    .dialog()
-                    .message(message)
-                    .title(title)
-                    .buttons(MessageDialogButtons::Ok)
-                    .show(|_| {});
-            });
-        } else if event.id.as_ref() == MENU_EXPORT_DIAG_ID {
-            // Export diagnostic log to Desktop for easy sharing
-            let handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                use std::fs;
-                let tmp_dir = std::env::temp_dir();
-                let src = tmp_dir.join("mcpmate-market-diag.log");
-                let desktop = std::env::var("HOME")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
-                    .join("Desktop");
-                let ts = time::OffsetDateTime::now_local()
-                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_else(|_| "now".to_string())
-                    .replace(':', "-");
-                let dest = desktop.join(format!("mcpmate-market-diag-{}.log", ts));
-                let (title, message) = if src.exists() {
-                    match fs::copy(&src, &dest) {
-                        Ok(_) => (
-                            "Diagnostics Exported".to_string(),
-                            format!("Saved market diagnostics to:\n{}", dest.display()),
-                        ),
-                        Err(err) => (
-                            "Export Failed".to_string(),
-                            format!("Could not copy diagnostics: {}", err),
-                        ),
-                    }
-                } else {
-                    (
-                        "No Diagnostics Yet".to_string(),
-                        "No market diagnostics were found. Reproduce the issue first, then try again.".to_string(),
-                    )
-                };
-                handle
-                    .dialog()
-                    .message(message)
-                    .title(title)
-                    .buttons(MessageDialogButtons::Ok)
-                    .show(|_| {});
-            });
         }
     });
 
@@ -307,15 +207,6 @@ pub fn run() -> Result<()> {
             let shell_state = ShellState::new(shell_prefs.clone(), prefs_path);
             shell::apply_activation_policy(app.handle(), &shell_prefs)?;
             app.manage(shell_state.clone());
-
-            // Start streaming proxy for mcp.so (Next.js) and inject base for Board
-            if let Ok((handle, port)) =
-                tauri::async_runtime::block_on(async { market_stream::start_streaming_proxy().await })
-            {
-                app.manage(handle);
-                let base = format!("http://127.0.0.1:{}/market-proxy", port);
-                app.manage::<String>(base);
-            }
 
             let open_main_item =
                 MenuItem::with_id(app, shell::MENU_OPEN_MAIN, "Open MCPMate", true, None::<&str>)?;
@@ -439,13 +330,9 @@ pub fn run() -> Result<()> {
             Ok(())
         });
 
-    // Register custom URI scheme for Market proxy in desktop shell
-    let builder = crate::market_proxy::register(builder);
-
     let builder = builder.invoke_handler(tauri::generate_handler![
         mcp_shell_apply_preferences,
         mcp_shell_read_preferences,
-        mcp_market_diag_log,
         mcp_shell_read_runtime_ports,
         mcp_shell_restart_backend_with_ports
     ]);
@@ -638,20 +525,6 @@ fn initialize_menu(app: &mut tauri::App) -> Result<()> {
     let menu = Menu::default(app_handle)?;
 
     let about_item = MenuItem::with_id(app, MENU_ABOUT_ID, "About MCPMate", true, None::<&str>)?;
-    let toggle_diag_item = MenuItem::with_id(
-        app,
-        MENU_TOGGLE_DIAG_ID,
-        "Enable Market Diagnostics",
-        true,
-        None::<&str>,
-    )?;
-    let export_diag_item = MenuItem::with_id(
-        app,
-        MENU_EXPORT_DIAG_ID,
-        "Export Market Diagnostics…",
-        true,
-        None::<&str>,
-    )?;
     let check_updates_item = MenuItem::with_id(
         app,
         MENU_CHECK_UPDATES_ID,
@@ -664,8 +537,6 @@ fn initialize_menu(app: &mut tauri::App) -> Result<()> {
         let existing_items = help_menu.items()?.len();
         help_menu.insert(&check_updates_item, 0)?;
         help_menu.insert(&about_item, 0)?;
-        help_menu.insert(&export_diag_item, 0)?;
-        help_menu.insert(&toggle_diag_item, 0)?;
         if existing_items > 0 {
             let separator = PredefinedMenuItem::separator(app)?;
             help_menu.insert(&separator, 2)?;
@@ -676,7 +547,7 @@ fn initialize_menu(app: &mut tauri::App) -> Result<()> {
             HELP_SUBMENU_ID,
             "Help",
             true,
-            &[&about_item, &check_updates_item, &toggle_diag_item, &export_diag_item],
+            &[&about_item, &check_updates_item],
         )?;
         menu.append(&help_menu)?;
     }
@@ -701,25 +572,6 @@ fn show_about_dialog(app_handle: &tauri::AppHandle) {
         .title("About MCPMate")
         .buttons(MessageDialogButtons::Ok)
         .show(|_| {});
-}
-
-#[tauri::command]
-async fn mcp_market_diag_log(line: String) -> Result<(), String> {
-    use std::io::Write as _;
-    let mut path = std::env::temp_dir();
-    path.push("mcpmate-market-diag.log");
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .and_then(|mut f| {
-            let ts = time::OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_else(|_| "now".to_string());
-            let payload = format!("[{}] [front] {}\n", ts, line);
-            f.write_all(payload.as_bytes())
-        })
-        .map_err(|e| e.to_string())
 }
 
 pub(crate) fn spawn_main_window<M>(manager: &M) -> Result<()>
@@ -751,7 +603,7 @@ where
             .hidden_title(true);
     }
 
-    // Compose initialization script: disable context menu + expose native shell marker/inject streaming base if available
+    // Compose initialization script: disable context menu + expose native shell marker
     let mut init_script = String::from(
         r#"window.addEventListener('contextmenu', (event) => {
             if (event.metaKey || event.ctrlKey) {
@@ -763,13 +615,6 @@ where
         window.__MCPMATE_PREVIEW_BADGE__ = true;
         "#,
     );
-    // Pass streaming proxy base to the webview if present
-    if let Some(base) = manager.try_state::<String>() {
-        init_script.push_str(&format!(
-            "window.__MCPMATE_STREAM_PROXY_BASE__='{}';",
-            base.as_str()
-        ));
-    }
     builder = builder.initialization_script(&init_script);
 
     let builder = builder.on_new_window(move |url, _features| {

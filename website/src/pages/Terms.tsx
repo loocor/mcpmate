@@ -112,16 +112,7 @@ const Terms = () => {
 										>
 											MCP Official Registry
 										</a>
-										（依据开源许可接入）与
-										<a
-											className="text-blue-600 dark:text-blue-400 hover:underline"
-											href="https://mcpmarket.cn/"
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											MCPMarket.cn
-										</a>
-										（经官方授权接入）。两个数据源的内容完整性与正确性由各自网站负责，我们不作任何保证；使用前须接受相应许可/条款，若不同意而仍使用，由此产生的责任由您自行承担。
+									（依据开源许可接入）。数据源的内容完整性与正确性由各自网站负责，我们不作任何保证；使用前须接受相应许可/条款，若不同意而仍使用，由此产生的责任由您自行承担。
 									</li>
 								</ul>
 							</div>
@@ -169,16 +160,7 @@ const Terms = () => {
 									>
 										MCP Official Registry
 									</a>
-									与
-									<a
-										className="text-blue-600 dark:text-blue-400 hover:underline"
-										href="https://mcpmarket.cn/"
-										target="_blank"
-										rel="noopener noreferrer"
-									>
-										MCPMarket.cn
-									</a>
-									中的清单、描述、版本与许可元数据，我们不保证其准确性、完整性或适用性；如需使用，您应核对来源网站并遵循其许可要求。
+								中的清单、描述、版本与许可元数据，我们不保证其准确性、完整性或适用性；如需使用，您应核对来源网站并遵循其许可要求。
 								</p>
 								<p className="text-slate-600 dark:text-slate-400">
 									上述链接仅作为外链展示与索引，不构成对任何第三方的背书或保证；我们不对其内容进行修改或筛选，可能存在变更或同步延迟。
@@ -367,16 +349,7 @@ const Terms = () => {
 										>
 											MCP Official Registry
 										</a>
-										(ingested under open‑source licenses) and{" "}
-										<a
-											className="text-blue-600 dark:text-blue-400 hover:underline"
-											href="https://mcpmarket.cn/"
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											MCPMarket.cn
-										</a>
-										(integrated under official authorization). The completeness
+										(ingested under open‑source licenses). The completeness
 										and correctness of listings are the responsibility of the
 										respective sites, and we make no warranties. You must accept
 										applicable licenses/terms before use; if you choose to use
@@ -445,18 +418,9 @@ const Terms = () => {
 									>
 										MCP Official Registry
 									</a>{" "}
-									and{" "}
-									<a
-										className="text-blue-600 dark:text-blue-400 hover:underline"
-										href="https://mcpmarket.cn/"
-										target="_blank"
-										rel="noopener noreferrer"
-									>
-										MCPMarket.cn
-									</a>
-									, we do not guarantee accuracy, completeness, or suitability;
-									verify details with the source sites and comply with their
-									licenses.
+								, we do not guarantee accuracy, completeness, or suitability;
+								verify details with the source sites and comply with their
+								licenses.
 								</p>
 								<p className="text-slate-600 dark:text-slate-400">
 									These links are provided as external references only and do

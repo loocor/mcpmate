@@ -84,7 +84,7 @@ const en = {
 		"Connect stdio-based clients to SSE services without modifying the client.",
 	"features.marketplace": "Inline Marketplace",
 	"features.marketplace.desc":
-		"Official registry + mcpmarket.cn — find tools without hunting.",
+		"Official MCP registry — find tools without hunting.",
 	"features.templates": "Granular Controls",
 	"features.templates.desc":
 		"Toggle capabilities per tool/profile with fine‑grained switches.",

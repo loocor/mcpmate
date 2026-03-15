@@ -5,7 +5,6 @@ import type { MarketIframeProps } from "./types";
 export function MarketIframe({
 	url,
 	title,
-	portalId,
 	proxyPath,
 	className,
 	refreshKey = 0,
@@ -74,10 +73,8 @@ export function MarketIframe({
 			if (!event || typeof event.data !== "object") return;
 			const data = event.data as {
 				type?: string;
-				payload?: { portalId?: string };
 			};
 			if (data.type !== "mcpmate-market-ready") return;
-			if (data.payload?.portalId !== portalId) return;
 			readySignalRef.current = true;
 			if (loadTimeoutRef.current !== null) {
 				window.clearTimeout(loadTimeoutRef.current);
@@ -90,7 +87,6 @@ export function MarketIframe({
 			if (!event || typeof event.data !== "object") return;
 			const data = event.data as any;
 			if (data?.type !== "mcpmate-market-log") return;
-			if (data?.payload?.portalId && data.payload.portalId !== portalId) return;
 			const line = `[${new Date().toISOString()}] ${data?.payload?.level ?? "info"}: ${typeof data?.payload?.message === "string"
 					? data.payload.message
 					: JSON.stringify(data.payload)
@@ -128,7 +124,7 @@ export function MarketIframe({
 			window.removeEventListener("message", handleMessage);
 			window.removeEventListener("message", handleLog);
 		};
-	}, [portalId]);
+	}, []);
 
 	useEffect(() => {
 		const selector = `iframe[src^="${proxyPath}"]`;
@@ -138,14 +134,14 @@ export function MarketIframe({
 					iframeRef.current ||
 					(document.querySelector(selector) as HTMLIFrameElement | null);
 				if (el) {
-					el.dataset.portalId = portalId;
+					// Ready for future portal expansion
 				}
 			} catch {
 				/* noop */
 			}
 		}, 2000);
 		return () => window.clearInterval(timer);
-	}, [portalId, proxyPath]);
+	}, [proxyPath]);
 
 	return (
 		<div className="relative rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">

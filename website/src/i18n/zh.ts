@@ -78,7 +78,7 @@ const zh = {
 		"无需修改客户端即可将基于 stdio 的客户端连接到 SSE 服务",
 	"features.marketplace": "内联商城",
 	"features.marketplace.desc":
-		"内建官方注册中心与 mcpmarket.cn，不用东奔西走找服务",
+		"内建官方 MCP 注册中心，不用东奔西走找服务",
 	"features.templates": "精细控制",
 	"features.templates.desc": "逐项开关每个能力，按需启用/禁用",
 	"features.autodiscovery": "自动发现与导入",
