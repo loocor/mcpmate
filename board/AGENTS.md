@@ -10,7 +10,7 @@
 ## Project Structure & Module Organization (this repo)
 - Frontend app built with Vite + React 18 + TypeScript + Tailwind + shadcn/ui.
 - Development proxy is configured in `vite.config.ts` to forward `/api` and `/ws` to `http://localhost:8080`.
-- Market dev proxy: Vite registers middleware under `/market-proxy/*` for remote portals (mcpmarket.cn / mcp.so). On Tauri desktop builds this is re-implemented via a custom URI scheme `mcpmate://localhost/market-proxy/*` so the Market pages work without Vite.
+- Market dev proxy: Vite registers middleware under `/market-proxy/*` for remote portals (e.g., mcp.so). On Tauri desktop builds this is re-implemented via a custom URI scheme `mcpmate://localhost/market-proxy/*` so the Market pages work without Vite.
 - Key folders and files:
   - `src/App.tsx` – routes and top-level layout wiring.
   - `src/components/` – reusable UI (status badge, forms, layout, shadcn/ui wrappers).

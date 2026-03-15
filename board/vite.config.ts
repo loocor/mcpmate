@@ -18,7 +18,7 @@ function marketProxyPlugin(): Plugin {
 	return {
 		name: "mcpmate-market-proxy",
 		configureServer(_server: ViteDevServer) {
-			// Portal proxy disabled - mcpmarket.cn support removed
+			// Portal proxy disabled - third-party market support removed
 			// Kept as a placeholder for potential future third-party market support
 		},
 	};

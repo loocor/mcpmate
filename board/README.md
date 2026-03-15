@@ -45,7 +45,7 @@ MCPBoard serves as the frontend application for the MCPMate ecosystem, offering 
 - **Environment Integration**: Automatic environment variable configuration for seamless MCP server usage
 
 ### MCP Market Integration
-- **Market Discovery**: Browse and discover MCP servers from integrated marketplaces (mcpmarket.cn, mcp.so)
+- **Market Discovery**: Browse and discover MCP servers from integrated marketplaces (e.g., mcp.so)
 - **Server Installation**: One-click installation of servers from market listings
 - **Market Proxy**: Seamless integration with remote market portals through built-in proxy middleware
 - **Search and Filter**: Find servers by category, tags, and keywords
@@ -95,7 +95,7 @@ npm run dev
 The development server will start on `http://localhost:5173` (or 5174 if 5173 is occupied). The Vite dev server automatically proxies:
 - `/api/*` → `http://localhost:8080/api/*`
 - `/ws` → `ws://localhost:8080/ws`
-- `/market-proxy/*` → Remote market portals (mcpmarket.cn, mcp.so)
+- `/market-proxy/*` → Remote market portals (e.g., mcp.so)
 
 ### Building for Production
 
