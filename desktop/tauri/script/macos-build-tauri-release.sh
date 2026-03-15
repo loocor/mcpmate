@@ -547,15 +547,4 @@ if [[ -n "$X64_SHA256" ]]; then
   set_env_var "$WEBSITE_ENV" VITE_MAC_X64_SHA256 "$X64_SHA256"
 fi
 
-# Sync preview expiry date to website if provided via Tauri env.
-if [[ -n "${MCPMATE_TAURI_PREVIEW_EXPIRY_DATE:-}" ]]; then
-  # Basic sanity: must look like YYYY-MM-DD.
-  if [[ "$MCPMATE_TAURI_PREVIEW_EXPIRY_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    set_env_var "$WEBSITE_ENV" VITE_PREVIEW_EXPIRES_AT "$MCPMATE_TAURI_PREVIEW_EXPIRY_DATE"
-    log "updated VITE_PREVIEW_EXPIRES_AT in website/.env to ${MCPMATE_TAURI_PREVIEW_EXPIRY_DATE}"
-  else
-    log "warning: MCPMATE_TAURI_PREVIEW_EXPIRY_DATE not in YYYY-MM-DD; skipping website env update"
-  fi
-fi
-
 log "updated checksums in website/.env"

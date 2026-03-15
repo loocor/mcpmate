@@ -3641,16 +3641,6 @@ dependencies = [
  "hf-hub",
  "json5",
  "lru",
- "mcpmate-api",
- "mcpmate-capability",
- "mcpmate-inspector",
- "mcpmate-macros",
- "mcpmate-mcper",
- "mcpmate-observability",
- "mcpmate-runtime",
- "mcpmate-storage",
- "mcpmate-system",
- "mcpmate-types",
  "nanoid",
  "num_cpus",
  "once_cell",
@@ -3690,128 +3680,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcpmate-api"
-version = "0.1.0"
-dependencies = [
- "aide",
- "axum",
- "tracing",
-]
-
-[[package]]
-name = "mcpmate-capability"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "futures",
- "mcpmate-types",
- "once_cell",
- "rmcp",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "mcpmate-inspector"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures",
- "mcpmate-capability",
- "mcpmate-types",
- "nanoid",
- "rmcp",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "mcpmate-macros"
-version = "0.1.0"
-dependencies = [
- "nanoid",
- "schemars 0.9.0",
- "serde",
-]
-
-[[package]]
-name = "mcpmate-mcper"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "rmcp",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "mcpmate-observability"
-version = "0.1.0"
-dependencies = [
- "http",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "mcpmate-runtime"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "reqwest",
- "tokio",
- "tracing",
- "walkdir",
-]
-
-[[package]]
-name = "mcpmate-storage"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bincode",
- "chrono",
- "mcpmate-types",
- "redb",
- "rmcp",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tracing",
-]
-
-[[package]]
-name = "mcpmate-system"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "dirs 5.0.1",
- "mcpmate-types",
- "nanoid",
- "once_cell",
- "serde",
- "sysinfo",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "mcpmate-tauri"
 version = "0.1.0"
 dependencies = [
@@ -3824,7 +3692,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "mcpmate",
- "mcpmate-system",
  "once_cell",
  "regex",
  "reqwest",
@@ -3845,22 +3712,6 @@ dependencies = [
  "twoway",
  "url",
  "webbrowser",
-]
-
-[[package]]
-name = "mcpmate-types"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bincode",
- "chrono",
- "mcpmate-macros",
- "redb",
- "rmcp",
- "schemars 0.9.0",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -5761,7 +5612,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.8.1"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5947688160b56fb6c827e3c20a72c90392a1d7e9dec74749197aa1780ac42ca"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -5792,7 +5645,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "0.8.1"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01263441d3f8635c628e33856c468b96ebbce1af2d3699ea712ca71432d4ee7a"
 dependencies = [
  "darling 0.21.3",
  "proc-macro2",

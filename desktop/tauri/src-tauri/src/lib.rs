@@ -12,7 +12,7 @@ use mcpmate::{
         },
     },
 };
-use mcpmate_system::config::init_port_config;
+use mcpmate::system::config::init_port_config;
 use serde_json::json;
 use tauri::{
     Emitter, Manager, RunEvent, WindowEvent, Wry,
@@ -120,20 +120,6 @@ impl BackendRuntime {
 }
 
 pub fn run() -> Result<()> {
-    // Early expiry gate before Tauri bootstraps anything
-    if is_time_limited_preview_expired() {
-        // Blocking native dialog (cross-platform) to inform users, then open website and exit.
-        let _ = rfd::MessageDialog::new()
-            .set_title("MCPMate Preview Expired")
-            .set_description(
-                "This preview build has expired (valid through Oct 25, 2025, 24:00).\nPlease download the latest version from the official website.",
-            )
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
-        let _ = webbrowser::open(WEBSITE_URL);
-        std::process::exit(0);
-    }
-
     let backend_state = BackendState::default();
 
     let mut builder = tauri::Builder::default();
@@ -357,40 +343,6 @@ pub fn run() -> Result<()> {
         });
 
     Ok(())
-}
-
-/// Returns true if local calendar date is after 2025-10-25 (i.e., past Oct 25 24:00).
-fn is_time_limited_preview_expired() -> bool {
-    // Allow developers to bypass locally (e.g., CI or debugging) by setting this variable.
-    if std::env::var("MCPMATE_TAURI_DISABLE_TIME_LIMIT")
-        .map(|v| matches_ignore_case(&v, ["1", "true", "yes"]))
-        .unwrap_or(false)
-    {
-        return false;
-    }
-
-    // Prefer an environment-provided expiry date in YYYY-MM-DD, otherwise default.
-    // The environment may be injected at compile-time via build.rs (option_env!).
-    let expiry_last_valid_date: Date = if let Some(raw) = option_env!("MCPMATE_TAURI_PREVIEW_EXPIRY_DATE") {
-        parse_preview_expiry(raw).unwrap_or_else(|| date!(2025 - 10 - 25))
-    } else if let Ok(raw_rt) = std::env::var("MCPMATE_TAURI_PREVIEW_EXPIRY_DATE") {
-        parse_preview_expiry(&raw_rt).unwrap_or_else(|| date!(2025 - 10 - 25))
-    } else {
-        date!(2025 - 10 - 25)
-    };
-    match time::OffsetDateTime::now_local() {
-        Ok(now_local) => now_local.date() > expiry_last_valid_date,
-        // If local time can't be obtained, fall back to UTC date comparison.
-        Err(_) => time::OffsetDateTime::now_utc().date() > expiry_last_valid_date,
-    }
-}
-
-fn parse_preview_expiry(s: &str) -> Option<Date> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() { return None; }
-    // Accept YYYY-MM-DD
-    let fmt = parse_format("[year]-[month]-[day]").ok()?;
-    Date::parse(trimmed, &fmt).ok()
 }
 
 #[tauri::command]
@@ -860,7 +812,7 @@ struct RuntimePorts {
 
 #[tauri::command]
 async fn mcp_shell_read_runtime_ports() -> Result<RuntimePorts, String> {
-    let cfg = mcpmate_system::config::get_runtime_port_config();
+    let cfg = mcpmate::system::config::get_runtime_port_config();
     Ok(RuntimePorts {
         api_port: cfg.api_port,
         mcp_port: cfg.mcp_port,
