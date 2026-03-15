@@ -187,6 +187,10 @@ async fn create_router_internal(
             "/mcp/inspector/tool/call/events",
             get(crate::api::handlers::inspector::tool_call_events),
         )
+        .route(
+            "/mcp/inspector/tool/call/events/ws",
+            get(crate::api::handlers::inspector::tool_call_events_ws),
+        )
         .with_state(state.clone());
 
     // Create main router with API routes, docs, and board static files

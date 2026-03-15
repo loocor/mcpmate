@@ -3,13 +3,15 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Query, State, ws::{Message, WebSocket, WebSocketUpgrade}},
     response::sse::{Event, KeepAlive, Sse},
+    response::IntoResponse,
 };
-use futures::StreamExt;
+use futures::{StreamExt, SinkExt};
 use serde_json::{Value, json};
 use std::{convert::Infallible, time::Duration};
 use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use crate::api::handlers::ApiError;
 // use crate::api::models::inspector::InspectorMode;
@@ -207,6 +209,90 @@ pub async fn tool_call_events(
     );
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive")))
+}
+
+/// WebSocket handler for inspector tool call events.
+/// This provides a more reliable alternative to SSE for Tauri/WKWebView environments.
+pub async fn tool_call_events_ws(
+    State(state): State<Arc<AppState>>,
+    ws: WebSocketUpgrade,
+    Query(query): Query<InspectorCallEventsQuery>,
+) -> impl IntoResponse {
+    tracing::info!(
+        call_id = %query.call_id,
+        "WebSocket connection request received for inspector call"
+    );
+
+    let call_id = query.call_id.clone();
+    let subscription = state.inspector_calls.subscribe(&query.call_id).await;
+
+    match subscription {
+        Some(sub) => {
+            tracing::info!(call_id = %call_id, "WebSocket subscription established");
+            ws.on_upgrade(move |socket| handle_ws_events(socket, call_id, sub))
+        }
+        None => {
+            tracing::warn!(
+                call_id = %query.call_id,
+                "Inspector call not found for WebSocket subscription"
+            );
+            ws.on_upgrade(move |mut socket| async move {
+                let _ = socket.close().await;
+            })
+        }
+    }
+}
+
+/// Handle WebSocket events for a specific call_id
+async fn handle_ws_events(
+    socket: WebSocket,
+    call_id: String,
+    subscription: crate::inspector::calls::CallSubscription,
+) {
+    use tokio::sync::broadcast;
+
+    let (mut sender, _receiver) = socket.split();
+
+    // Subscribe to broadcast channel based on subscription type
+    let rx: broadcast::Receiver<crate::inspector::calls::InspectorEvent> = match subscription {
+        CallSubscription::Active(rx) => rx,
+        CallSubscription::Completed(event) => {
+            // Send the completed event immediately and close
+            if let Ok(json) = serde_json::to_string(&event) {
+                let _ = sender.send(Message::Text(json.into())).await;
+            }
+            let _ = sender.close().await;
+            return;
+        }
+    };
+
+    // Use BroadcastStream to convert broadcast to Stream
+    let mut stream = BroadcastStream::new(rx);
+
+    // Send events from broadcast channel to WebSocket
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(event) => {
+                match serde_json::to_string(&event) {
+                    Ok(json) => {
+                        if sender.send(Message::Text(json.into())).await.is_err() {
+                            // Client disconnected
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to serialize inspector event for WS");
+                    }
+                }
+            }
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
+                // Skip lagged messages
+                continue;
+            }
+        }
+    }
+
+    tracing::info!(call_id = %call_id, "WebSocket connection closed");
 }
 
 pub async fn tool_call_cancel(

@@ -354,6 +354,7 @@ export function InspectorDrawer({
 	const eventsEndRef = useRef<HTMLDivElement | null>(null);
 	const [session, setSession] = useState<InspectorSessionOpenData | null>(null);
 	const eventSourceRef = useRef<EventSource | null>(null);
+	const wsRef = useRef<WebSocket | null>(null);
 	const [activeCallId, setActiveCallId] = useState<string | null>(null);
 	const activeCallIdRef = useRef<string | null>(null);
 	const lastSessionParams = useRef<{
@@ -404,6 +405,10 @@ export function InspectorDrawer({
 				eventSourceRef.current.close();
 				eventSourceRef.current = null;
 			}
+			if (wsRef.current) {
+				wsRef.current.close();
+				wsRef.current = null;
+			}
 		}
 		wasOpenRef.current = open;
 	}, [open]);
@@ -422,6 +427,10 @@ export function InspectorDrawer({
 		if (eventSourceRef.current) {
 			eventSourceRef.current.close();
 			eventSourceRef.current = null;
+		}
+		if (wsRef.current) {
+			wsRef.current.close();
+			wsRef.current = null;
 		}
 		setFormCollapsed(false);
 	}, [open, currentItemKey, mode, kind]);
@@ -593,6 +602,10 @@ export function InspectorDrawer({
 				eventSourceRef.current.close();
 				eventSourceRef.current = null;
 			}
+			if (wsRef.current) {
+				wsRef.current.close();
+				wsRef.current = null;
+			}
 			if (session) {
 				void inspectorApi
 					.sessionClose({ session_id: session.session_id })
@@ -607,6 +620,10 @@ export function InspectorDrawer({
 		if (!open && eventSourceRef.current) {
 			eventSourceRef.current.close();
 			eventSourceRef.current = null;
+		}
+		if (!open && wsRef.current) {
+			wsRef.current.close();
+			wsRef.current = null;
 		}
 	}, [open]);
 
@@ -1025,6 +1042,10 @@ export function InspectorDrawer({
 						eventSourceRef.current.close();
 						eventSourceRef.current = null;
 					}
+					if (wsRef.current) {
+						wsRef.current.close();
+						wsRef.current = null;
+					}
 					setActiveCallId(null);
 					activeCallIdRef.current = null;
 					break;
@@ -1046,6 +1067,10 @@ export function InspectorDrawer({
 					if (eventSourceRef.current) {
 						eventSourceRef.current.close();
 						eventSourceRef.current = null;
+					}
+					if (wsRef.current) {
+						wsRef.current.close();
+						wsRef.current = null;
 					}
 					setActiveCallId(null);
 					activeCallIdRef.current = null;
@@ -1072,6 +1097,10 @@ export function InspectorDrawer({
 						eventSourceRef.current.close();
 						eventSourceRef.current = null;
 					}
+					if (wsRef.current) {
+						wsRef.current.close();
+						wsRef.current = null;
+					}
 					setActiveCallId(null);
 					activeCallIdRef.current = null;
 					break;
@@ -1082,32 +1111,25 @@ export function InspectorDrawer({
 
 	const subscribeToCall = useCallback(
 		(callId: string) => {
+			// Close existing connections
 			if (eventSourceRef.current) {
 				eventSourceRef.current.close();
 				eventSourceRef.current = null;
 			}
+			if (wsRef.current) {
+				wsRef.current.close();
+				wsRef.current = null;
+			}
 
 			try {
-				const url = inspectorApi.toolCallEventsUrl(callId);
-				// Force polyfill for Safari/WKWebView (Tauri), else prefer native.
-				const shouldForcePolyfill = (() => {
-					try {
-						const isTauri =
-							typeof window !== "undefined" && (window as any).__MCPMATE_IS_TAURI__ === true;
-						const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-						const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua) && !/Edg\//.test(ua);
-						return isTauri || isSafari;
-					} catch {
-						return false;
-					}
-				})();
-				const ES = (shouldForcePolyfill
-					? EventSourcePolyfill
-					: (NativeEventSource || EventSourcePolyfill)) as typeof EventSource;
-				const source = new ES(url, { withCredentials: true });
-				eventSourceRef.current = source;
+				const url = inspectorApi.toolCallEventsWsUrl(callId);
+				const ws = new WebSocket(url);
 
-				source.onmessage = (event) => {
+				ws.onopen = () => {
+					console.log("WebSocket connected for inspector events");
+				};
+
+				ws.onmessage = (event) => {
 					try {
 						const data: InspectorSseEvent = JSON.parse(event.data);
 						handleInspectorEvent(data);
@@ -1116,11 +1138,17 @@ export function InspectorDrawer({
 					}
 				};
 
-				source.onerror = () => {
-					source.close();
-					eventSourceRef.current = null;
+				ws.onerror = (error) => {
+					console.warn("WebSocket error for inspector events:", error);
+				};
+
+				ws.onclose = (event) => {
+					console.log(`WebSocket closed: ${event.code} ${event.reason}`);
+					wsRef.current = null;
 					setSubmitting(false);
 				};
+
+				wsRef.current = ws;
 			} catch (error) {
 				console.warn("Failed to subscribe to inspector events", error);
 				setSubmitting(false);
