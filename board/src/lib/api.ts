@@ -1123,8 +1123,6 @@ export const inspectorApi = {
 				body: JSON.stringify(req),
 			},
 		),
-	toolCallEventsUrl: (callId: string) =>
-		`${API_BASE_URL}/api/mcp/inspector/tool/call/events?call_id=${encodeURIComponent(callId)}`,
 	toolCallEventsWsUrl: (callId: string) => {
 		const wsBase = resolveWebSocketUrl();
 		return `${wsBase}/api/mcp/inspector/tool/call/events/ws?call_id=${encodeURIComponent(callId)}`;

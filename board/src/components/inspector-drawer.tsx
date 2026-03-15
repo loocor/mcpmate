@@ -1,4 +1,3 @@
-import { EventSourcePolyfill, NativeEventSource } from "event-source-polyfill";
 import {
 	AlertCircle,
 	CheckCircle2,
@@ -353,7 +352,6 @@ export function InspectorDrawer({
 	const [events, setEvents] = useState<InspectorEventEntry[]>([]);
 	const eventsEndRef = useRef<HTMLDivElement | null>(null);
 	const [session, setSession] = useState<InspectorSessionOpenData | null>(null);
-	const eventSourceRef = useRef<EventSource | null>(null);
 	const wsRef = useRef<WebSocket | null>(null);
 	const [activeCallId, setActiveCallId] = useState<string | null>(null);
 	const activeCallIdRef = useRef<string | null>(null);
@@ -401,10 +399,6 @@ export function InspectorDrawer({
 			activeCallIdRef.current = null;
 			setSubmitting(false);
 			setCancelling(false);
-			if (eventSourceRef.current) {
-				eventSourceRef.current.close();
-				eventSourceRef.current = null;
-			}
 			if (wsRef.current) {
 				wsRef.current.close();
 				wsRef.current = null;
@@ -424,10 +418,6 @@ export function InspectorDrawer({
 		setCancelling(false);
 		setActiveCallId(null);
 		activeCallIdRef.current = null;
-		if (eventSourceRef.current) {
-			eventSourceRef.current.close();
-			eventSourceRef.current = null;
-		}
 		if (wsRef.current) {
 			wsRef.current.close();
 			wsRef.current = null;
@@ -598,10 +588,6 @@ export function InspectorDrawer({
 
 	useEffect(() => {
 		return () => {
-			if (eventSourceRef.current) {
-				eventSourceRef.current.close();
-				eventSourceRef.current = null;
-			}
 			if (wsRef.current) {
 				wsRef.current.close();
 				wsRef.current = null;
@@ -617,10 +603,6 @@ export function InspectorDrawer({
 	}, [session]);
 
 	useEffect(() => {
-		if (!open && eventSourceRef.current) {
-			eventSourceRef.current.close();
-			eventSourceRef.current = null;
-		}
 		if (!open && wsRef.current) {
 			wsRef.current.close();
 			wsRef.current = null;
@@ -1038,10 +1020,6 @@ export function InspectorDrawer({
 						t("notifications.executed"),
 						t("notifications.executedMessage"),
 					);
-					if (eventSourceRef.current) {
-						eventSourceRef.current.close();
-						eventSourceRef.current = null;
-					}
 					if (wsRef.current) {
 						wsRef.current.close();
 						wsRef.current = null;
@@ -1064,10 +1042,6 @@ export function InspectorDrawer({
 						payload,
 					});
 					notifyError(t("notifications.failed"), payload.message);
-					if (eventSourceRef.current) {
-						eventSourceRef.current.close();
-						eventSourceRef.current = null;
-					}
 					if (wsRef.current) {
 						wsRef.current.close();
 						wsRef.current = null;
@@ -1093,10 +1067,6 @@ export function InspectorDrawer({
 						t("notifications.cancelled"),
 						payload.reason ?? t("notifications.cancelledMessage"),
 					);
-					if (eventSourceRef.current) {
-						eventSourceRef.current.close();
-						eventSourceRef.current = null;
-					}
 					if (wsRef.current) {
 						wsRef.current.close();
 						wsRef.current = null;
@@ -1112,10 +1082,6 @@ export function InspectorDrawer({
 	const subscribeToCall = useCallback(
 		(callId: string) => {
 			// Close existing connections
-			if (eventSourceRef.current) {
-				eventSourceRef.current.close();
-				eventSourceRef.current = null;
-			}
 			if (wsRef.current) {
 				wsRef.current.close();
 				wsRef.current = null;
