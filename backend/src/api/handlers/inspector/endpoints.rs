@@ -1,17 +1,13 @@
-// no StreamExt needed in this module
 use std::sync::Arc;
 
 use axum::{
     Json,
     extract::{Query, State, ws::{Message, WebSocket, WebSocketUpgrade}},
-    response::sse::{Event, KeepAlive, Sse},
     response::IntoResponse,
 };
 use futures::{StreamExt, SinkExt};
 use serde_json::{Value, json};
-use std::{convert::Infallible, time::Duration};
 use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use crate::api::handlers::ApiError;
 // use crate::api::models::inspector::InspectorMode;
@@ -130,89 +126,6 @@ pub async fn tool_call_start(
     Ok(Json(InspectorToolCallStartResp::success(data)))
 }
 
-pub async fn tool_call_events(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<InspectorCallEventsQuery>,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    tracing::info!(
-        call_id = %query.call_id,
-        "SSE connection request received for inspector call"
-    );
-
-    let subscription = state.inspector_calls.subscribe(&query.call_id).await.ok_or_else(|| {
-        tracing::warn!(
-            call_id = %query.call_id,
-            "Inspector call not found for SSE subscription"
-        );
-        ApiError::NotFound(format!("Inspector call '{}' not found", query.call_id))
-    })?;
-
-    let call_id_clone = query.call_id.clone();
-    let stream: futures::stream::BoxStream<'static, Result<Event, Infallible>> = match subscription {
-        CallSubscription::Active(receiver) => {
-            tracing::info!(
-                call_id = %call_id_clone,
-                "SSE subscription established with Active receiver"
-            );
-            BroadcastStream::new(receiver)
-                .filter_map(move |msg| {
-                    let call_id = call_id_clone.clone();
-                    async move {
-                        match msg {
-                            Ok(event) => {
-                                tracing::info!(
-                                    call_id = %call_id,
-                                    event = ?event,
-                                    "SSE broadcasting inspector event"
-                                );
-                                match Event::default().json_data(&event) {
-                                    Ok(ev) => Some(Ok::<Event, Infallible>(ev)),
-                                    Err(err) => {
-                                        tracing::warn!(error = %err, "Failed to serialize inspector event");
-                                        None
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                tracing::warn!(
-                                    call_id = %call_id,
-                                    error = ?err,
-                                    "Inspector events stream lagged"
-                                );
-                                None
-                            }
-                        }
-                    }
-                })
-                .boxed()
-        }
-        CallSubscription::Completed(event) => {
-            tracing::info!(
-                call_id = %query.call_id,
-                event = ?event,
-                "SSE subscription for already completed call, sending terminal event"
-            );
-            let event_opt = match Event::default().json_data(&event) {
-                Ok(ev) => Some(ev),
-                Err(err) => {
-                    tracing::warn!(error = %err, "Failed to serialize inspector terminal event");
-                    None
-                }
-            };
-            futures::stream::iter(event_opt.into_iter().map(Ok::<Event, Infallible>)).boxed()
-        }
-    };
-
-    tracing::info!(
-        call_id = %query.call_id,
-        "SSE stream created, returning to client"
-    );
-
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive")))
-}
-
-/// WebSocket handler for inspector tool call events.
-/// This provides a more reliable alternative to SSE for Tauri/WKWebView environments.
 pub async fn tool_call_events_ws(
     State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,

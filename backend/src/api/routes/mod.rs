@@ -182,21 +182,16 @@ async fn create_router_internal(
         .finish_api_with(&mut api, openapi::api_docs)
         .layer(axum::middleware::from_fn(crate::common::env::origin_guard_middleware));
 
-    let inspector_events = Router::new()
+    let inspector_ws = Router::new()
         .route(
-            "/mcp/inspector/tool/call/events",
-            get(crate::api::handlers::inspector::tool_call_events),
-        )
-        .route(
-            "/mcp/inspector/tool/call/events/ws",
+            "/inspector/events",
             get(crate::api::handlers::inspector::tool_call_events_ws),
         )
         .with_state(state.clone());
 
-    // Create main router with API routes, docs, and board static files
-    // Note: API routes must come first to avoid being intercepted by board fallback
     Router::new()
-        .nest("/api", api_router.merge(inspector_events))
+        .nest("/api", api_router)
+        .nest("/ws", inspector_ws)
         .merge(openapi::openapi_routes(api))
         // Lightweight request/response logging for debugging 5xx issues
         // Logs method, path, status, and latency. 5xx at ERROR, 4xx at WARN, others at DEBUG.

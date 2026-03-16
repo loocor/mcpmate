@@ -1125,7 +1125,7 @@ export const inspectorApi = {
 		),
 	toolCallEventsWsUrl: (callId: string) => {
 		const wsBase = resolveWebSocketUrl();
-		return `${wsBase}/api/mcp/inspector/tool/call/events/ws?call_id=${encodeURIComponent(callId)}`;
+		return `${wsBase}/inspector/events?call_id=${encodeURIComponent(callId)}`;
 	},
 	resourcesList: (q: {
 		server_id?: string;

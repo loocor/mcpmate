@@ -32,7 +32,6 @@
         "date-fns": "^3.3.1",
         "esbuild": "^0.25.10",
         "esbuild-register": "^3.6.0",
-        "event-source-polyfill": "^1.0.31",
         "i18next": "^25.5.3",
         "i18next-browser-languagedetector": "^8.2.0",
         "json5": "^2.2.3",
@@ -553,8 +552,6 @@
     "estraverse": ["estraverse@5.3.0", "", {}, "sha512-MMdARuVEQziNTeJD8DgMqmhwR11BRQ/cBP+pLtYdSTnf3MIO8fFeiINEbX36ZdNlfU/7A9f3gUw49B3oQsvwBA=="],
 
     "esutils": ["esutils@2.0.3", "", {}, "sha512-kVscqXk4OCp68SZ0dkgEKVi6/8ij300KBWTJq32P/dYeWTSwK41WyTxalN1eRmA5Z9UU/LX9D7FWSmV9SAYx6g=="],
-
-    "event-source-polyfill": ["event-source-polyfill@1.0.31", "https://registry.npmmirror.com/event-source-polyfill/-/event-source-polyfill-1.0.31.tgz", {}, "sha512-4IJSItgS/41IxN5UVAVuAyczwZF7ZIEsM1XAoUzIHA6A+xzusEZUutdXz2Nr+MQPLxfTiCvqE79/C8HT8fKFvA=="],
 
     "eventemitter3": ["eventemitter3@4.0.7", "", {}, "sha512-8guHBZCwKnFhYdHr2ysuRWErTwhoN2X8XELRlrRwpmfeY2jjuUN4taQMsULKUVo1K4DvZl+0pgfyoysHxvmvEw=="],
 
