@@ -171,8 +171,8 @@ export function ServerListPage() {
 				return;
 			}
 			setAddDragActive(false);
-	},
-	[],
+		},
+		[],
 	);
 
 	const handleAddDragEnd = useCallback(() => {
@@ -214,8 +214,8 @@ export function ServerListPage() {
 			requestAnimationFrame(() => {
 				manualRef.current?.ingest(payload);
 			});
-	},
-	[t],
+		},
+		[t],
 	);
 
 	// View mode and developer toggles
@@ -228,6 +228,9 @@ export function ServerListPage() {
 	);
 	const openDebugInNewWindow = useAppStore(
 		(state) => state.dashboardSettings.openDebugInNewWindow,
+	);
+	const syncServerStateToClients = useAppStore(
+		(state) => state.dashboardSettings.syncServerStateToClients,
 	);
 
 	const {
@@ -308,45 +311,48 @@ export function ServerListPage() {
 		sync?: boolean,
 	) {
 		setPending((p) => ({ ...p, [serverId]: true }));
-	try {
-		if (enable) await serversApi.enableServer(serverId, sync);
-		else await serversApi.disableServer(serverId, sync);
-		const successTitle = enable
-			? t("notifications.toggle.enabledTitle", {
-				defaultValue: "Server enabled",
-			})
-			: t("notifications.toggle.disabledTitle", {
-				defaultValue: "Server disabled",
+		try {
+			if (enable) {
+				await serversApi.enableServer(serverId, sync);
+			} else {
+				await serversApi.disableServer(serverId, sync);
+			}
+			const successTitle = enable
+				? t("notifications.toggle.enabledTitle", {
+					defaultValue: "Server enabled",
+				})
+				: t("notifications.toggle.disabledTitle", {
+					defaultValue: "Server disabled",
+				});
+			const successMessage = t("notifications.toggle.message", {
+				serverId,
+				defaultValue: "Server {{serverId}}",
 			});
-		const successMessage = t("notifications.toggle.message", {
-			serverId,
-			defaultValue: "Server {{serverId}}",
-		});
-		notifySuccess(successTitle, successMessage);
-		queryClient.invalidateQueries({ queryKey: ["servers"] });
-		setTimeout(
-			() => queryClient.invalidateQueries({ queryKey: ["servers"] }),
-			1000,
-		);
-	} catch (error) {
-		const actionLabel = enable
-			? t("notifications.toggle.enableAction", { defaultValue: "enable" })
-			: t("notifications.toggle.disableAction", { defaultValue: "disable" });
-		const errorMessage = error instanceof Error ? error.message : String(error);
-		notifyError(
-			t("notifications.genericError.title", {
-				defaultValue: "Operation failed",
-			}),
-			t("notifications.toggle.error", {
-				action: actionLabel,
-				message: errorMessage,
-				defaultValue: "Unable to {{action}} server: {{message}}",
-			}),
-		);
-	} finally {
-		setPending((p) => ({ ...p, [serverId]: false }));
+			notifySuccess(successTitle, successMessage);
+			queryClient.invalidateQueries({ queryKey: ["servers"] });
+			setTimeout(
+				() => queryClient.invalidateQueries({ queryKey: ["servers"] }),
+				1000,
+			);
+		} catch (error) {
+			const actionLabel = enable
+				? t("notifications.toggle.enableAction", { defaultValue: "enable" })
+				: t("notifications.toggle.disableAction", { defaultValue: "disable" });
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			notifyError(
+				t("notifications.genericError.title", {
+					defaultValue: "Operation failed",
+				}),
+				t("notifications.toggle.error", {
+					action: actionLabel,
+					message: errorMessage,
+					defaultValue: "Unable to {{action}} server: {{message}}",
+				}),
+			);
+		} finally {
+			setPending((p) => ({ ...p, [serverId]: false }));
+		}
 	}
-}
 
 	// Note: Reconnect functionality is moved to instance-level pages
 
@@ -413,75 +419,75 @@ export function ServerListPage() {
 		setIsDeleteLoading(true);
 		setDeleteError(null);
 
-	try {
-		await serversApi.deleteServer(deletingServer);
-		notifySuccess(
-			t("notifications.delete.title", {
-				defaultValue: "Server deleted",
-			}),
-			t("notifications.delete.message", {
-				serverId: deletingServer,
-				defaultValue: "Server {{serverId}}",
-			}),
-		);
-		queryClient.invalidateQueries({ queryKey: ["servers"] });
-		setIsDeleteConfirmOpen(false);
-		setDeletingServer(null);
-	} catch (error) {
-		setDeleteError(
-			error instanceof Error
-				? error.message
-				: t("notifications.delete.errorFallback", {
-					defaultValue: "Error deleting server",
+		try {
+			await serversApi.deleteServer(deletingServer);
+			notifySuccess(
+				t("notifications.delete.title", {
+					defaultValue: "Server deleted",
 				}),
-		);
-	} finally {
-		setIsDeleteLoading(false);
-	}
-};
+				t("notifications.delete.message", {
+					serverId: deletingServer,
+					defaultValue: "Server {{serverId}}",
+				}),
+			);
+			queryClient.invalidateQueries({ queryKey: ["servers"] });
+			setIsDeleteConfirmOpen(false);
+			setDeletingServer(null);
+		} catch (error) {
+			setDeleteError(
+				error instanceof Error
+					? error.message
+					: t("notifications.delete.errorFallback", {
+						defaultValue: "Error deleting server",
+					}),
+			);
+		} finally {
+			setIsDeleteLoading(false);
+		}
+	};
 
 	const handleServerToggle = async (serverId: string, enabled: boolean) => {
 		setIsTogglePending(true);
-	try {
-		if (enabled) {
-			await serversApi.enableServer(serverId);
-			notifySuccess(
-				t("notifications.toggle.enabledTitle", {
-					defaultValue: "Server enabled",
+		try {
+			if (enabled) {
+				await serversApi.enableServer(serverId, syncServerStateToClients);
+				notifySuccess(
+					t("notifications.toggle.enabledTitle", {
+						defaultValue: "Server enabled",
+					}),
+					t("notifications.toggle.enabledDetail", {
+						serverId,
+						defaultValue: "Server {{serverId}} has been enabled",
+					}),
+				);
+			} else {
+				await serversApi.disableServer(serverId, syncServerStateToClients);
+				notifySuccess(
+					t("notifications.toggle.disabledTitle", {
+						defaultValue: "Server disabled",
+					}),
+					t("notifications.toggle.disabledDetail", {
+						serverId,
+						defaultValue: "Server {{serverId}} has been disabled",
+					}),
+				);
+			}
+			queryClient.invalidateQueries({ queryKey: ["servers"] });
+		} catch (error) {
+			notifyError(
+				t("notifications.toggle.failedTitle", {
+					defaultValue: "Failed to toggle server",
 				}),
-				t("notifications.toggle.enabledDetail", {
-					serverId,
-					defaultValue: "Server {{serverId}} has been enabled",
-				}),
+				error instanceof Error
+					? error.message
+					: t("notifications.genericError.unknown", {
+						defaultValue: "Unknown error",
+					}),
 			);
-		} else {
-			await serversApi.disableServer(serverId);
-			notifySuccess(
-				t("notifications.toggle.disabledTitle", {
-					defaultValue: "Server disabled",
-				}),
-				t("notifications.toggle.disabledDetail", {
-					serverId,
-					defaultValue: "Server {{serverId}} has been disabled",
-				}),
-			);
+		} finally {
+			setIsTogglePending(false);
 		}
-		queryClient.invalidateQueries({ queryKey: ["servers"] });
-	} catch (error) {
-		notifyError(
-			t("notifications.toggle.failedTitle", {
-				defaultValue: "Failed to toggle server",
-			}),
-			error instanceof Error
-				? error.message
-				: t("notifications.genericError.unknown", {
-					defaultValue: "Unknown error",
-				}),
-		);
-	} finally {
-		setIsTogglePending(false);
-	}
-};
+	};
 
 	const getServerDescription = (server: ServerSummary) => {
 		const profileRefs = profileUsage?.[server.id] ?? [];
@@ -496,12 +502,12 @@ export function ServerListPage() {
 			technicalLine = `http://localhost:3000/${server.id}`;
 		} else if (serverType.includes("sse")) {
 			technicalLine = `sse://localhost:3000/${server.id}`;
-	} else {
-		technicalLine = t("entity.description.serverLabel", {
-			name: server.name || server.id,
-			defaultValue: "Server: {{name}}",
-		});
-	}
+		} else {
+			technicalLine = t("entity.description.serverLabel", {
+				name: server.name || server.id,
+				defaultValue: "Server: {{name}}",
+			});
+		}
 
 		const metaDescription = server.meta?.description?.trim();
 		const firstLine = metaDescription
@@ -509,19 +515,19 @@ export function ServerListPage() {
 			: technicalLine;
 
 		// Second line: associated profiles, using title case
-	const profileNames =
-		profileRefs.length > 0
-			? profileRefs
+		const profileNames =
+			profileRefs.length > 0
+				? profileRefs
 					.map(
 						(name) =>
 							name.charAt(0).toUpperCase() + name.slice(1).toLowerCase(),
 					)
 					.join(", ")
-			: t("entity.description.profilesNone", { defaultValue: "-" });
-	const secondLine = t("entity.description.profilesLabel", {
-		profiles: profileNames,
-		defaultValue: "Profiles: {{profiles}}",
-	});
+				: t("entity.description.profilesNone", { defaultValue: "-" });
+		const secondLine = t("entity.description.profilesLabel", {
+			profiles: profileNames,
+			defaultValue: "Profiles: {{profiles}}",
+		});
 
 		// Return React element displayed in two lines
 		return (
@@ -548,66 +554,66 @@ export function ServerListPage() {
 
 		// Determine connection method based on server type
 		if (
-		serverType.toLowerCase().includes("stdio") ||
-		serverType.toLowerCase().includes("process")
-	) {
-		tags.push(
-			<span
-				key="stdio"
-				className="flex items-center gap-1 text-xs"
-				data-decorative
-			>
-				<Plug className="h-3 w-3" />
-				{t("entity.connectionTags.stdio", { defaultValue: "STDIO" })}
-			</span>,
-		);
-	}
+			serverType.toLowerCase().includes("stdio") ||
+			serverType.toLowerCase().includes("process")
+		) {
+			tags.push(
+				<span
+					key="stdio"
+					className="flex items-center gap-1 text-xs"
+					data-decorative
+				>
+					<Plug className="h-3 w-3" />
+					{t("entity.connectionTags.stdio", { defaultValue: "STDIO" })}
+				</span>,
+			);
+		}
 
-	if (
-		serverType.toLowerCase().includes("http") ||
-		serverType.toLowerCase().includes("rest")
-	) {
-		tags.push(
-			<span
-				key="http"
-				className="flex items-center gap-1 text-xs"
-				data-decorative
-			>
-				<Plug className="h-3 w-3" />
-				{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
-			</span>,
-		);
-	}
+		if (
+			serverType.toLowerCase().includes("http") ||
+			serverType.toLowerCase().includes("rest")
+		) {
+			tags.push(
+				<span
+					key="http"
+					className="flex items-center gap-1 text-xs"
+					data-decorative
+				>
+					<Plug className="h-3 w-3" />
+					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
+				</span>,
+			);
+		}
 
-	if (
-		serverType.toLowerCase().includes("sse") ||
-		serverType.toLowerCase().includes("stream")
-	) {
-		tags.push(
-			<span
-				key="sse"
-				className="flex items-center gap-1 text-xs"
-				data-decorative
-			>
-				<Plug className="h-3 w-3" />
-				{t("entity.connectionTags.sse", { defaultValue: "SSE" })}
-			</span>,
-		);
-	}
+		if (
+			serverType.toLowerCase().includes("sse") ||
+			serverType.toLowerCase().includes("stream")
+		) {
+			tags.push(
+				<span
+					key="sse"
+					className="flex items-center gap-1 text-xs"
+					data-decorative
+				>
+					<Plug className="h-3 w-3" />
+					{t("entity.connectionTags.sse", { defaultValue: "SSE" })}
+				</span>,
+			);
+		}
 
 		// If no specific type matched, default to showing HTTP
 		if (tags.length === 0) {
-		tags.push(
-			<span
-				key="default"
-				className="flex items-center gap-1 text-xs"
-				data-decorative
-			>
-				<Plug className="h-3 w-3" />
-				{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
-			</span>,
-		);
-	}
+			tags.push(
+				<span
+					key="default"
+					className="flex items-center gap-1 text-xs"
+					data-decorative
+				>
+					<Plug className="h-3 w-3" />
+					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
+				</span>,
+			);
+		}
 
 		return tags;
 	};
@@ -627,51 +633,51 @@ export function ServerListPage() {
 		const capabilitySummary = getCapabilitySummary(server);
 		const capabilityStats = capabilitySummary
 			? [
-					{
-						label: t("entity.stats.tools", { defaultValue: "Tools" }),
-						value: capabilitySummary.tools_count,
-					},
-					{
-						label: t("entity.stats.prompts", {
-							defaultValue: "Prompts",
-						}),
-						value: capabilitySummary.prompts_count,
-					},
-					{
-						label: t("entity.stats.resources", {
-							defaultValue: "Resources",
-						}),
-						value: capabilitySummary.resources_count,
-					},
-					{
-						label: t("entity.stats.templates", {
-							defaultValue: "Templates",
-						}),
-						value: capabilitySummary.resource_templates_count,
-					},
-				]
+				{
+					label: t("entity.stats.tools", { defaultValue: "Tools" }),
+					value: capabilitySummary.tools_count,
+				},
+				{
+					label: t("entity.stats.prompts", {
+						defaultValue: "Prompts",
+					}),
+					value: capabilitySummary.prompts_count,
+				},
+				{
+					label: t("entity.stats.resources", {
+						defaultValue: "Resources",
+					}),
+					value: capabilitySummary.resources_count,
+				},
+				{
+					label: t("entity.stats.templates", {
+						defaultValue: "Templates",
+					}),
+					value: capabilitySummary.resource_templates_count,
+				},
+			]
 			: [
-					{
-						label: t("entity.stats.tools", { defaultValue: "Tools" }),
-						value: 0,
-					},
-					{
-						label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
-						value: 0,
-					},
-					{
-						label: t("entity.stats.resources", {
-							defaultValue: "Resources",
-						}),
-						value: 0,
-					},
-					{
-						label: t("entity.stats.templates", {
-							defaultValue: "Templates",
-						}),
-						value: 0,
-					},
-				];
+				{
+					label: t("entity.stats.tools", { defaultValue: "Tools" }),
+					value: 0,
+				},
+				{
+					label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
+					value: 0,
+				},
+				{
+					label: t("entity.stats.resources", {
+						defaultValue: "Resources",
+					}),
+					value: 0,
+				},
+				{
+					label: t("entity.stats.templates", {
+						defaultValue: "Templates",
+					}),
+					value: 0,
+				},
+			];
 
 		return (
 			<EntityListItem
@@ -690,19 +696,19 @@ export function ServerListPage() {
 				}}
 				titleBadges={[]}
 				stats={capabilityStats}
-			bottomTags={[
-				<span key="profiles">
-					{t("entity.bottomTags.profiles", {
-						profiles:
-							profileRefs.length > 0
-								? profileRefs.join(", ")
-								: t("entity.description.profilesNone", {
-									defaultValue: "-",
-								}),
-						defaultValue: "Profiles: {{profiles}}",
-					})}
-				</span>,
-			]}
+				bottomTags={[
+					<span key="profiles">
+						{t("entity.bottomTags.profiles", {
+							profiles:
+								profileRefs.length > 0
+									? profileRefs.join(", ")
+									: t("entity.description.profilesNone", {
+										defaultValue: "-",
+									}),
+							defaultValue: "Profiles: {{profiles}}",
+						})}
+					</span>,
+				]}
 				statusBadge={
 					<StatusBadge
 						status={server.status}
@@ -722,31 +728,31 @@ export function ServerListPage() {
 				actionButtons={
 					enableServerDebug
 						? [
-								<Button
-									key="debug"
-									size="sm"
-									variant="outline"
-									className="p-2"
-									onClick={(ev) => {
-										ev.stopPropagation();
-										const targetChannel =
-											profileRefs.length > 0 ? "proxy" : "native";
-										const url = `/servers/${encodeURIComponent(server.id)}?view=debug&channel=${targetChannel}`;
-										if (openDebugInNewWindow) {
-											if (typeof window !== "undefined") {
-												window.open(url, "_blank", "noopener,noreferrer");
-											}
-											return;
+							<Button
+								key="debug"
+								size="sm"
+								variant="outline"
+								className="p-2"
+								onClick={(ev) => {
+									ev.stopPropagation();
+									const targetChannel =
+										profileRefs.length > 0 ? "proxy" : "native";
+									const url = `/servers/${encodeURIComponent(server.id)}?view=debug&channel=${targetChannel}`;
+									if (openDebugInNewWindow) {
+										if (typeof window !== "undefined") {
+											window.open(url, "_blank", "noopener,noreferrer");
 										}
-										navigate(url);
-									}}
-									title={t("actions.debug.open", {
-										defaultValue: "Open inspect view",
-									})}
-								>
-									<Bug className="h-4 w-4" />
-								</Button>,
-							]
+										return;
+									}
+									navigate(url);
+								}}
+								title={t("actions.debug.open", {
+									defaultValue: "Open inspect view",
+								})}
+							>
+								<Bug className="h-4 w-4" />
+							</Button>,
+						]
 						: []
 				}
 				onClick={() => navigate(`/servers/${encodeURIComponent(server.id)}`)}
@@ -768,49 +774,49 @@ export function ServerListPage() {
 		const capabilitySummary = getCapabilitySummary(server);
 		const cardStats = capabilitySummary
 			? [
-					{
-						label: t("entity.stats.tools", { defaultValue: "Tools" }),
-						value: capabilitySummary.tools_count,
-					},
-					{
-						label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
-						value: capabilitySummary.prompts_count,
-					},
-					{
-						label: t("entity.stats.resources", {
-							defaultValue: "Resources",
-						}),
-						value: capabilitySummary.resources_count,
-					},
-					{
-						label: t("entity.stats.templates", {
-							defaultValue: "Templates",
-						}),
-						value: capabilitySummary.resource_templates_count,
-					},
-				]
+				{
+					label: t("entity.stats.tools", { defaultValue: "Tools" }),
+					value: capabilitySummary.tools_count,
+				},
+				{
+					label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
+					value: capabilitySummary.prompts_count,
+				},
+				{
+					label: t("entity.stats.resources", {
+						defaultValue: "Resources",
+					}),
+					value: capabilitySummary.resources_count,
+				},
+				{
+					label: t("entity.stats.templates", {
+						defaultValue: "Templates",
+					}),
+					value: capabilitySummary.resource_templates_count,
+				},
+			]
 			: [
-					{
-						label: t("entity.stats.tools", { defaultValue: "Tools" }),
-						value: 0,
-					},
-					{
-						label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
-						value: 0,
-					},
-					{
-						label: t("entity.stats.resources", {
-							defaultValue: "Resources",
-						}),
-						value: 0,
-					},
-					{
-						label: t("entity.stats.templates", {
-							defaultValue: "Templates",
-						}),
-						value: 0,
-					},
-				];
+				{
+					label: t("entity.stats.tools", { defaultValue: "Tools" }),
+					value: 0,
+				},
+				{
+					label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
+					value: 0,
+				},
+				{
+					label: t("entity.stats.resources", {
+						defaultValue: "Resources",
+					}),
+					value: 0,
+				},
+				{
+					label: t("entity.stats.templates", {
+						defaultValue: "Templates",
+					}),
+					value: 0,
+				},
+			];
 
 		return (
 			<EntityCard
@@ -842,7 +848,7 @@ export function ServerListPage() {
 							toggleServerAsync(
 								server.id,
 								checked,
-								false, // TODO: Add sync to all clients
+								syncServerStateToClients,
 							);
 						}}
 						disabled={!!pending[server.id]}
@@ -859,12 +865,12 @@ export function ServerListPage() {
 		if (debugInfo) {
 			setDebugInfo(null);
 		} else {
-            const debugLines = [
-                `${t("debug.info.baseUrl", { defaultValue: "API Base URL" })}: ${window.location.origin}`,
-                `${t("debug.info.currentTime", { defaultValue: "Current Time" })}: ${new Date().toLocaleString()}`,
-                `${t("debug.info.error", { defaultValue: "Error" })}: ${error instanceof Error ? error.message : String(error)}`,
-                `${t("debug.info.data", { defaultValue: "Servers Data" })}: ${JSON.stringify(serverListResponse, null, 2)}`,
-            ];
+			const debugLines = [
+				`${t("debug.info.baseUrl", { defaultValue: "API Base URL" })}: ${window.location.origin}`,
+				`${t("debug.info.currentTime", { defaultValue: "Current Time" })}: ${new Date().toLocaleString()}`,
+				`${t("debug.info.error", { defaultValue: "Error" })}: ${error instanceof Error ? error.message : String(error)}`,
+				`${t("debug.info.data", { defaultValue: "Servers Data" })}: ${JSON.stringify(serverListResponse, null, 2)}`,
+			];
 			setDebugInfo(debugLines.join("\n"));
 		}
 	};
@@ -925,37 +931,37 @@ export function ServerListPage() {
 	const loadingSkeleton =
 		defaultView === "grid"
 			? Array.from({ length: 6 }, (_, index) => (
-					<Card
-						key={`loading-grid-skeleton-${Date.now()}-${index}`}
-						className="overflow-hidden"
-					>
-						<CardHeader className="p-4">
-							<div className="h-6 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-							<div className="h-4 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-						</CardHeader>
-						<CardContent className="p-4 pt-0">
-							<div className="mt-2 flex justify-between">
-								<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-								<div className="h-9 w-20 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-							</div>
-						</CardContent>
-					</Card>
-				))
-			: Array.from({ length: 3 }, (_, index) => (
-					<div
-						key={`loading-list-skeleton-${Date.now()}-${index}`}
-						className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950"
-					>
-						<div className="flex items-center gap-3">
-							<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800"></div>
-							<div className="space-y-2">
-								<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-								<div className="h-4 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-							</div>
+				<Card
+					key={`loading-grid-skeleton-${Date.now()}-${index}`}
+					className="overflow-hidden"
+				>
+					<CardHeader className="p-4">
+						<div className="h-6 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+						<div className="h-4 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+					</CardHeader>
+					<CardContent className="p-4 pt-0">
+						<div className="mt-2 flex justify-between">
+							<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+							<div className="h-9 w-20 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
 						</div>
-						<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+					</CardContent>
+				</Card>
+			))
+			: Array.from({ length: 3 }, (_, index) => (
+				<div
+					key={`loading-list-skeleton-${Date.now()}-${index}`}
+					className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950"
+				>
+					<div className="flex items-center gap-3">
+						<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800"></div>
+						<div className="space-y-2">
+							<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+							<div className="h-4 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+						</div>
 					</div>
-				));
+					<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+				</div>
+			));
 
 	// Toolbar config
 	type ToolbarServer = ServerSummary & { [key: string]: unknown };
@@ -1056,17 +1062,15 @@ export function ServerListPage() {
 				onDragLeave={handleAddDragLeave}
 				onDrop={handleAddDrop}
 				onDragEnd={handleAddDragEnd}
-				className={`rounded-md ${
-					isAddDragActive ? "ring-2 ring-slate-300 dark:ring-slate-600" : ""
-				}`}
+				className={`rounded-md ${isAddDragActive ? "ring-2 ring-slate-300 dark:ring-slate-600" : ""
+					}`}
 			>
 				<Button
 					size="icon"
-					className={`h-9 w-9 transition-colors ${
-						isAddDragActive
+					className={`h-9 w-9 transition-colors ${isAddDragActive
 							? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
 							: ""
-					}`}
+						}`}
 					title={t("actions.add.title", { defaultValue: "Add Server" })}
 					onClick={() => setManualOpen(true)}
 				>

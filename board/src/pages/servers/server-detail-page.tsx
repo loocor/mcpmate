@@ -172,6 +172,9 @@ export function ServerDetailPage() {
 	const enableServerDebug = useAppStore(
 		(state) => state.dashboardSettings.enableServerDebug,
 	);
+	const syncServerStateToClients = useAppStore(
+		(state) => state.dashboardSettings.syncServerStateToClients,
+	);
 
 	const initialChannel = useMemo(() => getInitialInspectorChannel(), []);
 	const [requestedChannel, setRequestedChannel] =
@@ -207,8 +210,8 @@ export function ServerDetailPage() {
 		mutationFn: async (enable: boolean) => {
 			if (!serverId) throw new Error("Server ID is required");
 			return enable
-				? serversApi.enableServer(serverId)
-				: serversApi.disableServer(serverId);
+				? serversApi.enableServer(serverId, syncServerStateToClients)
+				: serversApi.disableServer(serverId, syncServerStateToClients);
 		},
 		onSuccess: (_, enable) => {
 			const titleKey = enable

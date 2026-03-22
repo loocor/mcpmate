@@ -28,6 +28,16 @@ en: {
             copy: "Copy",
             stopCurrent: "Stop current backend",
             close: "Close",
+            restartButtonBusy: "Restarting…",
+            restartProgressHint:
+                "Stopping and starting the embedded backend. API requests may fail briefly; please wait.",
+            restartSuccessTitle: "Backend restarted",
+            restartSuccessDescription:
+                "API on port {{apiPort}}, MCP on port {{mcpPort}}. Ports are saved for the next app launch.",
+            restartFailedTitle: "Could not restart backend",
+            portsReloadFailedTitle: "Could not load ports from shell",
+            portsReloadFailedDescription:
+                "Showing cached values if any. Check the desktop app is healthy and try Reload again.",
         },
 		general: {
 			title: "General",
@@ -207,6 +217,16 @@ en: {
             copy: "复制",
             stopCurrent: "停止当前后端",
             close: "关闭",
+            restartButtonBusy: "正在重启…",
+            restartProgressHint:
+                "正在停止并启动内嵌后端，期间 API 可能短暂失败，请稍候。",
+            restartSuccessTitle: "后端已重启",
+            restartSuccessDescription:
+                "API 端口 {{apiPort}}，MCP 端口 {{mcpPort}}。端口已保存，下次启动将沿用。",
+            restartFailedTitle: "无法重启后端",
+            portsReloadFailedTitle: "无法从桌面壳读取端口",
+            portsReloadFailedDescription:
+                "如有缓存将显示缓存值。请确认应用正常后再次点击重新加载。",
         },
 		general: {
 			title: "通用",
@@ -349,11 +369,45 @@ en: {
 		tabs: {
 			general: "一般",
 			appearance: "外観",
+			system: "システム",
 			serverControls: "サーバー",
 			clientDefaults: "クライアント",
 			market: "MCP マーケット",
 			developer: "開発者",
 			about: "情報とライセンス",
+		},
+		system: {
+			title: "システム",
+			description:
+				"ローカル MCP プロキシと API が使用するバックエンドポートを設定します。",
+			apiPortTitle: "バックエンド API ポート",
+			apiPortDescription: "REST とダッシュボード用ポート（既定 8080）。",
+			mcpPortTitle: "バックエンド MCP サーバーポート",
+			mcpPortDescription:
+				"MCP トランスポート用ポート（/mcp は HTTP、/sse は SSE、既定 8000）。",
+			apply: "適用して再起動",
+			helperTauri:
+				"Tauri：ポートを適用してバックエンドをその場で再起動します。",
+			helperWeb:
+				"Web：ポート変更後に外部でバックエンドを再起動してください。",
+			webDialogTitle: "Web 環境での適用と再起動",
+			webDialogDesc:
+				"ブラウザからバックエンドは再起動できません。以下のコマンドを選択したポートで実行してください。",
+			optionCargoTitle: "方法 A — cargo run（開発）",
+			optionBinaryTitle: "方法 B — バイナリ（リリース）",
+			copy: "コピー",
+			stopCurrent: "現在のバックエンドを停止",
+			close: "閉じる",
+			restartButtonBusy: "再起動中…",
+			restartProgressHint:
+				"埋め込みバックエンドを停止・起動しています。数秒間 API が失敗することがあります。",
+			restartSuccessTitle: "バックエンドを再起動しました",
+			restartSuccessDescription:
+				"API ポート {{apiPort}}、MCP ポート {{mcpPort}}。次回起動用に保存しました。",
+			restartFailedTitle: "バックエンドを再起動できませんでした",
+			portsReloadFailedTitle: "シェルからポートを読み込めませんでした",
+			portsReloadFailedDescription:
+				"キャッシュがあればそれを表示します。アプリの状態を確認のうえ、再読み込みを試してください。",
 		},
 		general: {
 			title: "一般",
@@ -500,35 +554,5 @@ en: {
 			dockHidden:
 				"Dock／タスクバーからの表示をオフにしました。トレイアイコンは残るため、そこから MCPMate を開き直せます。",
 		},
-    },
-    ja: {
-        tabs: {
-            general: "一般",
-            appearance: "外観",
-            system: "システム",
-            serverControls: "サーバー",
-            clientDefaults: "クライアント",
-            market: "MCP マーケット",
-            developer: "開発者",
-            about: "概要",
-        },
-        system: {
-            title: "システム",
-            description: "ローカル MCP プロキシと API が使用するバックエンドポートを設定します。",
-            apiPortTitle: "バックエンド API ポート",
-            apiPortDescription: "REST とダッシュボード用ポート（既定 8080）。",
-            mcpPortTitle: "バックエンド MCP サーバーポート",
-            mcpPortDescription: "MCP トランスポート用ポート（/mcp は HTTP、/sse は SSE、既定 8000）。",
-            apply: "適用して再起動",
-            helperTauri: "Tauri：ポートを適用してバックエンドをその場で再起動します。",
-            helperWeb: "Web：ポート変更後に外部でバックエンドを再起動してください。",
-            webDialogTitle: "Web 環境での適用と再起動",
-            webDialogDesc: "ブラウザからバックエンドは再起動できません。以下のコマンドを選択したポートで実行してください。",
-            optionCargoTitle: "方法 A — cargo run（開発）",
-            optionBinaryTitle: "方法 B — バイナリ（リリース）",
-            copy: "コピー",
-            stopCurrent: "現在のバックエンドを停止",
-            close: "閉じる",
-        },
-    },
+	},
 } as const;

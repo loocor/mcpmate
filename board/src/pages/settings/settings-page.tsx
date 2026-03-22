@@ -40,6 +40,11 @@ import {
 	notificationsService,
 	setApiBaseUrl,
 } from "../../lib/api";
+import {
+	notifyError,
+	notifySuccess,
+	stringifyError,
+} from "../../lib/notify";
 import { SUPPORTED_LANGUAGES } from "../../lib/i18n/index";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import {
@@ -207,6 +212,22 @@ export function SettingsPage() {
 	const [loadingPorts, setLoadingPorts] = useState(false);
 	const [applyBusy, setApplyBusy] = useState(false);
 	const [webDialogOpen, setWebDialogOpen] = useState(false);
+
+	const wireDashboardToSystemPorts = useCallback(
+		async (api: number, mcp: number) => {
+			setApiBaseUrl(`http://127.0.0.1:${api}`);
+			notificationsService.reconnectAfterApiBaseChanged();
+			await queryClient.invalidateQueries({ predicate: () => true });
+			try {
+				window.localStorage?.setItem("mcpmate.system.api_port", String(api));
+				window.localStorage?.setItem("mcpmate.system.mcp_port", String(mcp));
+			} catch {
+				// LocalStorage write is best-effort
+			}
+		},
+		[queryClient],
+	);
+
 	const devUrl =
 		typeof window !== "undefined" && window.location?.origin?.includes(":")
 			? window.location.origin
@@ -280,6 +301,15 @@ export function SettingsPage() {
 					}
 				} catch {
 					seedFromLocalStorage();
+					notifyError(
+						t("settings:system.portsReloadFailedTitle", {
+							defaultValue: "Could not load ports from shell",
+						}),
+						t("settings:system.portsReloadFailedDescription", {
+							defaultValue:
+								"Showing cached values if any. Check the desktop app is healthy and try Reload again.",
+						}),
+					);
 				}
 				return;
 			}
@@ -313,7 +343,7 @@ export function SettingsPage() {
 			setLoadingPorts(false);
 		}
 		// API_BASE_URL is a live module binding; reads inside this async fn stay current without listing it in deps.
-	}, []);
+	}, [t]);
 
 	const tabTriggerClass =
 		"justify-start px-3 py-2 text-left text-sm font-medium text-slate-600 data-[state=active]:text-emerald-700 dark:text-slate-300";
@@ -1091,99 +1121,111 @@ export function SettingsPage() {
 								</div>
 
 								{/* Bottom actions */}
-								<div className="mt-1 flex items-center justify-between">
-									<p className="text-xs text-slate-500">
-										{isTauriShell
-											? t("settings:system.helperTauri", {
-												defaultValue:
-													"Tauri: Apply ports and restart backend in-place.",
-											})
-											: t("settings:system.helperWeb", {
-												defaultValue:
-													"Web: Change ports then restart the backend process externally.",
-											})}
-									</p>
-									<div className="space-x-2">
-										<Button
-											variant="secondary"
-											onClick={() => loadRuntimePorts()}
-											disabled={loadingPorts}
-										>
-											{loadingPorts
-												? t("loading", { defaultValue: "Loading…" })
-												: t("reload", { defaultValue: "Reload" })}
-										</Button>
-										<Button
-											variant="default"
-											disabled={
-												applyBusy ||
-												typeof apiPort !== "number" ||
-												typeof mcpPort !== "number" ||
-												apiPort <= 0 ||
-												mcpPort <= 0 ||
-												apiPort === mcpPort
-											}
-											onClick={async () => {
-												if (isTauriShell) {
-													try {
-														setApplyBusy(true);
-														const { invoke } = await import(
-															"@tauri-apps/api/core"
-														);
-														await invoke(
-															"mcp_shell_restart_backend_with_ports",
-															{ api_port: apiPort, mcp_port: mcpPort },
-														);
-														setApiBaseUrl(`http://127.0.0.1:${apiPort}`);
-														notificationsService.reconnectAfterApiBaseChanged();
-														await queryClient.invalidateQueries({
-															predicate: () => true,
-														});
-														try {
-															window.localStorage?.setItem(
-																"mcpmate.system.api_port",
-																String(apiPort),
-															);
-															window.localStorage?.setItem(
-																"mcpmate.system.mcp_port",
-																String(mcpPort),
-															);
-														} catch {
-															// LocalStorage write is best-effort
-														}
-													} finally {
-														setApplyBusy(false);
-													}
-												} else {
-													// In web mode, switch dashboard to use the new API port immediately
-													setApiBaseUrl(`http://127.0.0.1:${apiPort}`);
-													notificationsService.reconnectAfterApiBaseChanged();
-													void queryClient.invalidateQueries({
-														predicate: () => true,
-													});
-													try {
-														window.localStorage?.setItem(
-															"mcpmate.system.api_port",
-															String(apiPort),
-														);
-														window.localStorage?.setItem(
-															"mcpmate.system.mcp_port",
-															String(mcpPort),
-														);
-													} catch {
-														// LocalStorage write is best-effort
-													}
-													setWebDialogOpen(true);
-												}
-											}}
-										>
-											{applyBusy
-												? "Restarting…"
-												: t("settings:system.apply", {
-													defaultValue: "Apply & Restart",
+								<div className="mt-1 space-y-2">
+									<div className="flex items-center justify-between gap-4">
+										<p className="text-xs text-slate-500">
+											{isTauriShell
+												? t("settings:system.helperTauri", {
+													defaultValue:
+														"Tauri: Apply ports and restart backend in-place.",
+												})
+												: t("settings:system.helperWeb", {
+													defaultValue:
+														"Web: Change ports then restart the backend process externally.",
 												})}
-										</Button>
+										</p>
+										<div className="flex shrink-0 flex-wrap justify-end gap-2">
+											<Button
+												variant="secondary"
+												onClick={() => loadRuntimePorts()}
+												disabled={loadingPorts || applyBusy}
+											>
+												{loadingPorts
+													? t("loading", { defaultValue: "Loading…" })
+													: t("reload", { defaultValue: "Reload" })}
+											</Button>
+											<Button
+												variant="default"
+												disabled={
+													applyBusy ||
+													typeof apiPort !== "number" ||
+													typeof mcpPort !== "number" ||
+													apiPort <= 0 ||
+													mcpPort <= 0 ||
+													apiPort === mcpPort
+												}
+												onClick={async () => {
+													if (
+														typeof apiPort !== "number" ||
+														typeof mcpPort !== "number"
+													) {
+														return;
+													}
+													if (isTauriShell) {
+														try {
+															setApplyBusy(true);
+															const { invoke } = await import(
+																"@tauri-apps/api/core"
+															);
+															await invoke(
+																"mcp_shell_restart_backend_with_ports",
+																{
+																	apiPort,
+																	mcpPort,
+																},
+															);
+															await wireDashboardToSystemPorts(
+																apiPort,
+																mcpPort,
+															);
+															notifySuccess(
+																t("settings:system.restartSuccessTitle", {
+																	defaultValue: "Backend restarted",
+																}),
+																t("settings:system.restartSuccessDescription", {
+																	apiPort,
+																	mcpPort,
+																	defaultValue:
+																		"API on port {{apiPort}}, MCP on port {{mcpPort}}. Ports are saved for the next app launch.",
+																}),
+															);
+														} catch (err) {
+															notifyError(
+																t("settings:system.restartFailedTitle", {
+																	defaultValue: "Could not restart backend",
+																}),
+																stringifyError(err),
+															);
+														} finally {
+															setApplyBusy(false);
+														}
+													} else {
+														void wireDashboardToSystemPorts(
+															apiPort,
+															mcpPort,
+														);
+														setWebDialogOpen(true);
+													}
+												}}
+											>
+												{applyBusy
+													? t("settings:system.restartButtonBusy", {
+														defaultValue: "Restarting…",
+													})
+													: t("settings:system.apply", {
+														defaultValue: "Apply & Restart",
+													})}
+											</Button>
+										</div>
 									</div>
+									{applyBusy && isTauriShell ? (
+										<p className="text-xs text-amber-700 dark:text-amber-400/90">
+											{t("settings:system.restartProgressHint", {
+												defaultValue:
+													"Stopping and starting the embedded backend. API requests may fail briefly; please wait.",
+											})}
+										</p>
+									) : null}
 								</div>
 							</CardContent>
 						</Card>
