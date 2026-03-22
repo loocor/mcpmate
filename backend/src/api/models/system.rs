@@ -18,6 +18,22 @@ pub struct SystemStatusResp {
     pub connected_servers: usize,
 }
 
+/// Active REST and MCP listener ports (from runtime configuration).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Runtime API and MCP proxy ports")]
+pub struct SystemPortsResp {
+    #[schemars(description = "REST API port")]
+    pub api_port: u16,
+    #[schemars(description = "MCP proxy port")]
+    pub mcp_port: u16,
+    #[schemars(description = "Base URL for the REST API")]
+    pub api_url: String,
+    #[schemars(description = "MCP Streamable HTTP endpoint URL")]
+    pub mcp_http_url: String,
+    #[schemars(description = "MCP SSE endpoint URL")]
+    pub mcp_sse_url: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "System metrics response")]
 pub struct SystemMetricsResp {

@@ -8,9 +8,10 @@ use axum::{Json, extract::State};
 use super::ApiError;
 use crate::api::models::system::ManagementActionResp;
 use crate::api::{
-    models::system::{SystemMetricsResp, SystemStatusResp},
+    models::system::{SystemMetricsResp, SystemPortsResp, SystemStatusResp},
     routes::AppState,
 };
+use crate::system::config::get_runtime_port_config;
 
 /// Get system status
 pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<SystemStatusResp>, ApiError> {
@@ -53,6 +54,18 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Syste
         uptime: get_uptime_seconds(),
         total_servers,
         connected_servers,
+    }))
+}
+
+/// Runtime API and MCP ports (for dashboard Settings and dev tooling).
+pub async fn get_ports(State(_state): State<Arc<AppState>>) -> Result<Json<SystemPortsResp>, ApiError> {
+    let cfg = get_runtime_port_config();
+    Ok(Json(SystemPortsResp {
+        api_port: cfg.api_port,
+        mcp_port: cfg.mcp_port,
+        api_url: cfg.api_url(),
+        mcp_http_url: cfg.mcp_http_url(),
+        mcp_sse_url: cfg.mcp_sse_url(),
     }))
 }
 
@@ -198,7 +211,7 @@ pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<Manageme
 
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let mcp_port = crate::system::config::get_runtime_port_config().mcp_port;
+    let mcp_port = get_runtime_port_config().mcp_port;
     let bind_address: SocketAddr = format!("127.0.0.1:{}", mcp_port)
         .parse()
         .map_err(|e| ApiError::InternalError(format!("Invalid MCP bind address: {}", e)))?;

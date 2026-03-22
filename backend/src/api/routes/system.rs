@@ -12,7 +12,7 @@ use super::AppState;
 use crate::aide_wrapper;
 use crate::api::handlers::system;
 use crate::api::models::system::ManagementActionResp;
-use crate::api::models::system::{SystemMetricsResp, SystemStatusResp};
+use crate::api::models::system::{SystemMetricsResp, SystemPortsResp, SystemStatusResp};
 
 // Generate aide-compatible wrappers for system handlers
 aide_wrapper!(
@@ -25,6 +25,12 @@ aide_wrapper!(
     system::get_metrics,
     SystemMetricsResp,
     "Get detailed system metrics including CPU, memory, and instance counts"
+);
+
+aide_wrapper!(
+    system::get_ports,
+    SystemPortsResp,
+    "Get runtime REST and MCP listener ports"
 );
 
 // Management controls under system group for consistency
@@ -44,6 +50,7 @@ aide_wrapper!(
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/system/status", get_with(get_status_aide, get_status_docs))
+        .api_route("/system/ports", get_with(get_ports_aide, get_ports_docs))
         .api_route("/system/metrics", get_with(get_metrics_aide, get_metrics_docs))
         .api_route("/system/shutdown", post_with(shutdown_aide, shutdown_docs))
         .api_route("/system/restart", post_with(restart_aide, restart_docs))

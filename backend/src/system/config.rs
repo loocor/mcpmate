@@ -4,7 +4,7 @@
 //! command line arguments and accessed throughout the application.
 
 use crate::common::constants::ports;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 /// Global runtime port configuration
 #[derive(Debug, Clone)]
@@ -49,38 +49,45 @@ impl Default for RuntimePortConfig {
     }
 }
 
-/// Global runtime port configuration instance
-static RUNTIME_PORT_CONFIG: OnceLock<RuntimePortConfig> = OnceLock::new();
+static RUNTIME_PORT_STORAGE: OnceLock<RwLock<RuntimePortConfig>> = OnceLock::new();
 
-/// Initialize the global runtime port configuration
+fn runtime_ports() -> &'static RwLock<RuntimePortConfig> {
+    RUNTIME_PORT_STORAGE.get_or_init(|| RwLock::new(RuntimePortConfig::default()))
+}
+
+/// Set (or update) the global runtime port configuration.
+///
+/// Safe to call on every embedded backend start (e.g. Tauri in-process restart): values always match
+/// the current listener ports.
 pub fn init_port_config(
     api_port: u16,
     mcp_port: u16,
 ) {
     let config = RuntimePortConfig::new(api_port, mcp_port);
-
-    if RUNTIME_PORT_CONFIG.set(config.clone()).is_err() {
-        tracing::warn!("Runtime port config was already initialized, ignoring new values");
-    } else {
+    let mut guard = runtime_ports().write().expect("runtime port config RwLock poisoned");
+    let changed = guard.api_port != config.api_port || guard.mcp_port != config.mcp_port;
+    *guard = config;
+    if changed {
         tracing::info!(
-            "Runtime port config initialized: API={}, MCP={}",
-            config.api_port,
-            config.mcp_port
+            "Runtime port config set: API={}, MCP={}",
+            guard.api_port,
+            guard.mcp_port
         );
     }
 }
 
-/// Get the global runtime port configuration
-pub fn get_runtime_port_config() -> &'static RuntimePortConfig {
-    RUNTIME_PORT_CONFIG.get_or_init(|| {
-        tracing::warn!("Runtime port config not initialized, using defaults");
-        RuntimePortConfig::default()
-    })
+/// Snapshot of the global runtime port configuration.
+pub fn get_runtime_port_config() -> RuntimePortConfig {
+    runtime_ports()
+        .read()
+        .expect("runtime port config RwLock poisoned")
+        .clone()
 }
 
-/// Check if runtime port configuration has been initialized
+/// Whether the port storage has been allocated (after any call to [`init_port_config`] or
+/// [`get_runtime_port_config`]).
 pub fn is_runtime_port_config_initialized() -> bool {
-    RUNTIME_PORT_CONFIG.get().is_some()
+    RUNTIME_PORT_STORAGE.get().is_some()
 }
 
 #[cfg(test)]
@@ -102,5 +109,22 @@ mod tests {
 
         assert_eq!(config.api_port, 8080);
         assert_eq!(config.mcp_port, 8000);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn init_port_config_updates_on_second_call() {
+        init_port_config(18080, 18000);
+        let first = get_runtime_port_config();
+        assert_eq!(first.api_port, 18080);
+        assert_eq!(first.mcp_port, 18000);
+
+        init_port_config(28080, 28000);
+        let second = get_runtime_port_config();
+        assert_eq!(second.api_port, 28080);
+        assert_eq!(second.mcp_port, 28000);
+
+        // Restore defaults so other tests in the same binary see consistent state.
+        init_port_config(ports::API_PORT, ports::MCP_PORT);
     }
 }
