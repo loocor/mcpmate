@@ -23,3 +23,6 @@
 
 # Root helper artifacts
 mcpmate-board-dashboard.png
+
+# Auth backend
+auth/
