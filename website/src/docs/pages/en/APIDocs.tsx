@@ -26,8 +26,10 @@ export default function APIDocsEN() {
 					<em>API Docs</em> link near Settings.
 				</Li>
 				<Li>
-					If you changed the backend ports (Settings → Developer → Runtime Ports),
-					update the API base URL so the shortcut targets the correct host.
+					If you changed the backend ports under <strong>Settings → System</strong>
+					, restart the proxy with the copied command; the sidebar link continues
+					to target <code>http://127.0.0.1:8080/docs</code> on the default API
+					port, so adjust your bookmark or URL if you use non-default ports.
 				</Li>
 				<Li>
 					Clicking the link opens the docs in a new tab. You can also visit the

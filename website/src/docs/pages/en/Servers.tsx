@@ -44,8 +44,16 @@ export default function Servers() {
 			</P>
 			<Ul>
 				<Li>
-					Click the card to open <code>/servers/:id</code> for deep inspection:
-					instance health, capability lists, logs, and marketplace metadata.
+					Click the card to open <code>/servers/:serverId</code> for deep
+					inspection: overview and instances on the first tab, then nested{" "}
+					<strong>Capabilities</strong> tabs for Tools, Resources, Prompts, and
+					Resource templates (the top-level sidebar no longer lists Tools as its
+					own page).
+				</Li>
+				<Li>
+					Instance-specific URLs use{" "}
+					<code>/servers/:serverId/instances/:instanceId</code> when you need to
+					bookmark a single transport.
 				</Li>
 				<Li>
 					If debug tooling is enabled in Settings, an extra button appears to

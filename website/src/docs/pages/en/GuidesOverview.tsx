@@ -12,24 +12,71 @@ export default function GuidesOverview() {
 			}}
 		>
 			<P>
-				This section mirrors the navigation inside the MCPMate dashboard web
-				app (the <code>board/</code> project). Each guide explains the intent of
-				that screen, the data sources it reads from the proxy, and the common
-				workflows we exercise during validation.
+				This section mirrors the MCPMate operational dashboard (the{" "}
+				<code>board/</code> React app shipped with the desktop bundle or run
+				against a local proxy). Each guide explains that screen&apos;s purpose,
+				the proxy APIs it uses, and workflows we rely on during validation.
 			</P>
 
 			<Callout type="info" title="How these guides map to the product">
-				The Dashboard, Profiles, Clients, Servers, Market, Runtime, API Docs,
-				and Settings articles follow the exact order of the sidebar links in the
-				app. When you explore a page in this documentation, keep the dashboard
-				open in another tab so you can try the steps in real time.
+				The Dashboard, Profiles, Clients, Servers, Market, and Runtime articles
+				match the main sidebar order. API Docs appears at the bottom only after
+				you enable it in Settings → Developer. Account and Settings sit below
+				that. Open the dashboard in another tab while reading so you can follow
+				along.
 			</Callout>
+
+			<H2>Board layout: sidebar and header</H2>
+			<H3>Sidebar</H3>
+			<Ul>
+				<Li>
+					<strong>MAIN</strong> links, top to bottom: Dashboard, Profiles,
+					Clients, Servers, Market, Runtime. There is no separate{" "}
+					<strong>Tools</strong> entry; tools, prompts, resources, and templates
+					are managed per server on the server detail page.
+				</Li>
+				<Li>
+					At the bottom: optional <strong>API Docs</strong> (opens{" "}
+					<code>http://127.0.0.1:8080/docs</code> when the proxy uses default
+					ports), <strong>Account</strong> (desktop sign-in; see below), and{" "}
+					<strong>Settings</strong>.
+				</Li>
+			</Ul>
+			<H3>Top bar</H3>
+			<Ul>
+				<Li>
+					Page title on primary routes, or a <strong>Back</strong> control on
+					nested detail pages.
+				</Li>
+				<Li>
+					<strong>Feedback</strong> opens a prefilled email to the team.
+				</Li>
+				<Li>
+					<strong>Documentation</strong> opens the public guides on{" "}
+					<code>mcp.umate.ai</code> in a new tab, choosing the article that best
+					matches the screen you are on.
+				</Li>
+				<Li>
+					<strong>Theme</strong> toggles light/dark; <strong>Notifications</strong>{" "}
+					lists recent in-app toasts (success, warnings, errors) so you can review
+					messages after they dismiss.
+				</Li>
+			</Ul>
+			<H3>Account (desktop)</H3>
+			<P>
+				In the Tauri desktop app on macOS, <strong>Account</strong> can link a
+				GitHub identity for upcoming cloud-backed features. The web dashboard
+				shows the same entry point but sign-in is only available inside the
+				packaged app; terms and privacy links point at{" "}
+				<code>mcp.umate.ai</code>.
+			</P>
 
 			<H2>Primary navigation pillars</H2>
 			<Ul>
 				<Li>
-					<strong>Dashboard</strong> &mdash; live health, active profile counts,
-					and CPU / memory timelines refreshed every 10 seconds.
+					<strong>Dashboard</strong> &mdash; summary cards for system status,
+					profiles, servers, and clients (polled about every 30 seconds), plus a
+					CPU / memory chart sampled about every 10 seconds.
 				</Li>
 				<Li>
 					<strong>Profiles</strong> &mdash; curate reusable suit bundles with
@@ -54,12 +101,14 @@ export default function GuidesOverview() {
 					reset caches, and view capability cache statistics.
 				</Li>
 				<Li>
-					<strong>API Docs</strong> &mdash; open the generated REST and MCP schema
-					reference once the proxy is running locally.
+					<strong>API Docs</strong> &mdash; optional sidebar link to the
+					proxy&apos;s interactive OpenAPI UI at <code>/docs</code> (default{" "}
+					<code>http://127.0.0.1:8080/docs</code>).
 				</Li>
 				<Li>
-					<strong>Settings</strong> &mdash; adjust appearance, localization,
-					default list views, developer options, and marketplace preferences.
+					<strong>Settings</strong> &mdash; appearance, language (English,
+					Chinese, Japanese), default list views, client and market defaults,
+					developer toggles, and system ports.
 				</Li>
 			</Ul>
 

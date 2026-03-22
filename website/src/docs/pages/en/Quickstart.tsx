@@ -33,6 +33,27 @@ export default function Quickstart() {
 				<Li>Open http://localhost:5173 to access the management dashboard.</Li>
 			</Ul>
 
+			<H2>Web dashboard vs desktop app</H2>
+			<P>
+				The same Board UI ships in two shells. Pick whichever matches how you run
+				the proxy.
+			</P>
+			<Ul>
+				<Li>
+					<strong>Browser + dev proxy</strong> &mdash; Vite serves the UI; API
+					calls go to <code>http://127.0.0.1:8080</code> (or your overridden
+					base). Best for contributors iterating on frontend or backend
+					separately.
+				</Li>
+				<Li>
+					<strong>Tauri desktop (macOS, Windows, Linux)</strong> &mdash; bundles
+					the dashboard with the local proxy. The sidebar <strong>Account</strong>{" "}
+					entry supports optional GitHub sign-in on macOS for future cloud-backed
+					features; the in-app <strong>Documentation</strong> button opens guides
+					on <code>mcp.umate.ai</code> for the page you are viewing.
+				</Li>
+			</Ul>
+
 			<H2>Install MCP servers</H2>
 			<P>Pick the approach that matches the services you want to use.</P>
 			<H3>Browse the built-in marketplace</H3>

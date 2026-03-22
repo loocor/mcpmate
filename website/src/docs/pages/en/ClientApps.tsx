@@ -55,9 +55,30 @@ export default function ClientApps() {
 
 			<H3>Client details</H3>
 			<P>
-				Click a card to open <code>/clients/:identifier</code> for a detailed
-				view. You can inspect detected MCP servers, version metadata, download
-				links, and quick actions such as opening the configuration folder.
+				Click a card to open <code>/clients/:identifier</code>. The detail layout
+				uses three tabs:
+			</P>
+			<Ul>
+				<Li>
+					<strong>Overview</strong> &mdash; detection status, managed mode,
+					profile apply actions, and shortcuts (for example open the
+					client&apos;s MCP config folder).
+				</Li>
+				<Li>
+					<strong>Configuration</strong> &mdash; live view of MCP servers MCPMate
+					would write for this client, import-from-client flows, and hosted vs.
+					transparent behavior hints.
+				</Li>
+				<Li>
+					<strong>Backups</strong> &mdash; rotating snapshots created when you
+					apply profiles or imports. Restore a snapshot to roll back, delete
+					selected backups, or refresh the list after a successful apply.
+				</Li>
+			</Ul>
+			<P>
+				Backup retention limits and default filters come from{" "}
+				<strong>Settings → Client Defaults</strong>, so tune those before large
+				rollouts.
 			</P>
 
 			<Callout type="warning" title="When a client stays undetected">

@@ -32,7 +32,10 @@ export default function ProfileZH() {
 
 			<H3>详情页</H3>
 			<P>
-				选择套件卡片会跳转至 <code>/profiles/:id</code>，在该页可查看服务器、工具、资源、提示词的明细与开关，并附带返回面包屑。
+				选择套件卡片会进入 <code>/profiles/:profileId</code>，可查看该配置集下的服务器、工具、资源、提示词及各自开关，并可通过面包屑返回列表。
+			</P>
+			<P>
+				内置模板走 <code>/profiles/presets/:presetId</code> 路由，适合作为只读参考：浏览预置服务与能力后，如需可编辑副本再克隆或新建配置集。
 			</P>
 
 			<H2>激活流程</H2>

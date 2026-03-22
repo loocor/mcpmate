@@ -30,8 +30,21 @@ export default function ClientAppsZH() {
 			</P>
 
 			<H3>详情页</H3>
+			<P>点击卡片进入 <code>/clients/:identifier</code>，详情分为三个标签：</P>
+			<Ul>
+				<Li>
+					<strong>概览</strong>：检测状态、托管开关、应用配置集等操作，以及打开 MCP 配置目录等快捷入口。
+				</Li>
+				<Li>
+					<strong>配置</strong>：展示 MCPMate 将为该客户端写入的 MCP 服务、从客户端导入配置，以及托管/透明模式相关说明。
+				</Li>
+				<Li>
+					<strong>备份</strong>：应用配置集或导入时生成的轮转快照；可恢复、批量删除，或在成功后刷新列表。
+				</Li>
+			</Ul>
 			<P>
-				点击卡片跳转至 <code>/clients/:identifier</code>，可查看 MCP 服务器绑定、版本信息、下载链接以及打开配置目录等快捷操作。
+				备份保留数量与客户端页默认过滤器由 <strong>设置 → 客户端默认值</strong>{" "}
+				控制，大规模推广前建议先调整好。
 			</P>
 
 			<Callout type="warning" title="长期未检测到客户端的处理">

@@ -28,6 +28,20 @@ export default function QuickstartZH() {
 				<Li>打开 http://localhost:5173 访问管理界面。</Li>
 			</Ul>
 
+			<H2>Web 控制台与桌面版</H2>
+			<P>同一套 Board 界面有两种常见运行方式，可按你如何启动代理来选择。</P>
+			<Ul>
+				<Li>
+					<strong>浏览器 + 开发代理</strong>：Vite 提供前端，接口默认指向{" "}
+					<code>http://127.0.0.1:8080</code>（或你覆盖的 API 基址）。适合前后端分别迭代开发。
+				</Li>
+				<Li>
+					<strong>Tauri 桌面应用（macOS / Windows / Linux）</strong>：将控制台与本地代理打包在一起。侧栏{" "}
+					<strong>账户</strong> 在 macOS 上可关联 GitHub，为后续云端相关能力预留身份；顶栏{" "}
+					<strong>文档</strong> 会在新标签打开 <code>mcp.umate.ai</code> 上与本页面对应的指南章节。
+				</Li>
+			</Ul>
+
 			<H2>安装 MCP 服务</H2>
 			<P>可以根据需求选择以下任意方式。</P>
 			<H3>浏览内置商城</H3>

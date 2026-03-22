@@ -22,7 +22,14 @@ export default function ServersZH() {
 				每张卡片都会显示能力统计（工具、提示词、资源、模板）、传输类型徽章以及实时状态指示。右下角开关用于启停服务器，状态将同步到后端。
 			</P>
 			<Ul>
-				<Li>点击卡片跳转 <code>/servers/:id</code> 查看实例详情、日志以及市场来源信息。</Li>
+				<Li>
+					点击卡片进入 <code>/servers/:serverId</code>：首屏为概览与实例；在{" "}
+					<strong>能力（Capabilities）</strong> 下分标签查看工具、资源、提示词与资源模板（侧栏已不再单独提供「工具」入口）。
+				</Li>
+				<Li>
+					需要固定某一传输时，可使用{" "}
+					<code>/servers/:serverId/instances/:instanceId</code> 路径。
+				</Li>
 				<Li>在设置 → 开发者中开启“服务器调试”后，会出现 Inspect 按钮，可在当前页或新窗口中查看原始数据。</Li>
 				<Li>当服务器状态异常（error/unhealthy 等）时，状态徽章会闪烁提醒。</Li>
 			</Ul>

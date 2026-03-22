@@ -23,7 +23,7 @@ export default function Settings() {
 				<Li>
 					<strong>General</strong> &mdash; set the default list/grid view,
 					pick the app mode (Express vs. Expert), and choose the dashboard
-					language (work-in-progress).
+					language (English, Simplified Chinese, or Japanese).
 				</Li>
 				<Li>
 					<strong>Appearance</strong> &mdash; switch between light/dark/system

@@ -52,10 +52,16 @@ export default function Profile() {
 
 			<H3>Detail pages</H3>
 			<P>
-				Selecting a suit card navigates to <code>/profiles/:id</code>, where you
-				can inspect servers, tools, prompts, and resources assigned to that suit.
-				The detail view exposes per-capability toggles and activity logs while
-				preserving a breadcrumb back to the catalog.
+				Selecting a suit card navigates to <code>/profiles/:profileId</code>,
+				where you inspect servers, tools, prompts, and resources assigned to that
+				suit. The detail view exposes per-capability toggles and activity logs
+				while preserving a breadcrumb back to the catalog.
+			</P>
+			<P>
+				Built-in templates open under <code>/profiles/presets/:presetId</code>.
+				They behave like read-optimized starting points: review the bundled
+				servers and capabilities, then clone or customize into a full profile when
+				you need editable copies.
 			</P>
 
 			<H2>Activation workflow</H2>
