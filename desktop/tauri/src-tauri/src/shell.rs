@@ -20,19 +20,14 @@ pub const MENU_QUIT: &str = "mcpmate.tray.quit";
 pub const EVENT_OPEN_MAIN: &str = "mcpmate://open-main";
 pub const EVENT_OPEN_SETTINGS: &str = "mcpmate://open-settings";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MenuBarIconMode {
     /// Show the menu bar icon while the backend is running.
+    #[default]
     Runtime,
     /// Hide the menu bar icon completely (unless forced by other settings).
     Hidden,
-}
-
-impl Default for MenuBarIconMode {
-    fn default() -> Self {
-        Self::Runtime
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

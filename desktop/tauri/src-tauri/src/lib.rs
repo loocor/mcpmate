@@ -24,10 +24,6 @@ use tauri::{
     webview::{NewWindowResponse, WebviewWindowBuilder},
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-use time::macros::date;
-use time::format_description::parse as parse_format;
-use time::Date;
-use mcpmate::common::constants::branding::WEBSITE_URL;
 
 mod shell;
 use shell::{ShellPreferences, ShellState};
@@ -556,7 +552,7 @@ where
     }
 
     // Compose initialization script: disable context menu + expose native shell marker
-    let mut init_script = String::from(
+    let init_script = String::from(
         r#"window.addEventListener('contextmenu', (event) => {
             if (event.metaKey || event.ctrlKey) {
                 return;
@@ -716,14 +712,12 @@ async fn start_backend(args: Args) -> Result<BackendRuntime> {
     }
     #[cfg(not(has_openapi_lock))]
     {
-        if let Ok(v) = std::env::var("MCPMATE_TAURI_OPENAPI_PASSWORD") {
-            if !v.trim().is_empty() {
-                unsafe { std::env::set_var("MCPMATE_OPENAPI_PASSWORD", v) };
-            }
-        }
-        if let Ok(v) = std::env::var("MCPMATE_TAURI_OPENAPI_ENABLED") {
-            if !v.trim().is_empty() {
-                unsafe { std::env::set_var("MCPMATE_OPENAPI_ENABLED", v) };
+        for (from, to) in [
+            ("MCPMATE_TAURI_OPENAPI_PASSWORD", "MCPMATE_OPENAPI_PASSWORD"),
+            ("MCPMATE_TAURI_OPENAPI_ENABLED", "MCPMATE_OPENAPI_ENABLED"),
+        ] {
+            if let Ok(v) = std::env::var(from) && !v.trim().is_empty() {
+                unsafe { std::env::set_var(to, v) };
             }
         }
     }

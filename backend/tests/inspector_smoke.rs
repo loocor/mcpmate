@@ -2,10 +2,13 @@ use std::sync::Arc;
 
 use axum::body::to_bytes;
 use axum::routing::{Router, get, post};
+use futures_util::StreamExt;
 use hyper::{Request, StatusCode};
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tower::ServiceExt; // for `oneshot`
-// bring crate types into scope
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tower::ServiceExt;
+
 use mcpmate::api::handlers::inspector;
 use mcpmate::api::routes::AppState;
 use mcpmate::core::cache::RedbCacheManager;
@@ -16,6 +19,25 @@ use mcpmate::inspector::{
     calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager,
 };
 use mcpmate::system::metrics::MetricsCollector;
+
+struct EnvVarGuard {
+    key: &'static str,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        // SAFETY: mutates process environment; native-off test uses `serial_test::serial` for this key.
+        unsafe { std::env::set_var(key, value) };
+        Self { key }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        // SAFETY: pairs with `set`; same `serial` scope as above.
+        unsafe { std::env::remove_var(self.key) };
+    }
+}
 
 fn build_test_state() -> Arc<AppState> {
     let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
@@ -80,7 +102,9 @@ async fn inspector_tool_call_inline_error_or_accept() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn inspector_native_mode_disabled_returns_forbidden() {
+    let _native_off = EnvVarGuard::set("MCPMATE_INSPECTOR_NATIVE", "0");
     let state = build_test_state();
     let app = Router::new()
         .route("/api/mcp/inspector/tool/list", get(inspector::tools_list))
@@ -94,4 +118,45 @@ async fn inspector_native_mode_disabled_returns_forbidden() {
 
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
+}
+
+/// Unknown `call_id`: server completes WebSocket handshake then closes (no SSE; stable path for Tauri/WKWebView).
+#[tokio::test]
+async fn inspector_tool_call_events_ws_unknown_call_closes() {
+    let state = build_test_state();
+    let app = Router::new()
+        .route("/ws/inspector/events", get(inspector::tool_call_events_ws))
+        .with_state(state);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+
+    let url = format!(
+        "ws://127.0.0.1:{}/ws/inspector/events?call_id=no-such-call-id",
+        addr.port()
+    );
+    let (mut ws, response) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("websocket connect");
+    assert_eq!(
+        response.status().as_u16(),
+        101,
+        "expected 101 Switching Protocols"
+    );
+
+    let first = ws
+        .next()
+        .await
+        .expect("stream item")
+        .expect("ws message");
+    assert!(
+        matches!(first, WsMessage::Close(_)),
+        "expected server to close immediately for unknown call_id, got {first:?}"
+    );
+
+    let _ = ws.close(None).await;
+    server.abort();
 }

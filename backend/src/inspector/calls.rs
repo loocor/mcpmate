@@ -18,7 +18,8 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot};
 
 use crate::api::models::inspector::InspectorMode;
 
-const BROADCAST_BUFFER: usize = 64;
+/// Capacity for inspector progress/log broadcasts. Large enough for chatty MCP tools (e.g. browser automation) before WebSocket consumers lag.
+const BROADCAST_BUFFER: usize = 256;
 const CANCEL_BUFFER: usize = 4;
 
 fn logging_level_to_str(level: &rmcp::model::LoggingLevel) -> &'static str {

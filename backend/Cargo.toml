@@ -30,6 +30,8 @@ serial_test = "2.0"
 tower = { version = "0.5", features = ["util"] }
 hyper = { version = "1.6", features = ["full"] }
 axum-test = "15.0"
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
 
 [dependencies]
 anyhow = "1.0"
