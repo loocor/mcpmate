@@ -26,6 +26,7 @@ use tauri::{
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 mod account;
+mod runtime_ports;
 mod shell;
 use shell::{ShellPreferences, ShellState};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -799,9 +800,18 @@ async fn start_backend(args: Args) -> Result<BackendRuntime> {
 
 fn resolve_args() -> Args {
     use mcpmate::common::constants::ports;
+    use mcpmate::common::global_paths;
 
-    let api_port = read_port_env("MCPMATE_TAURI_API_PORT").unwrap_or(ports::API_PORT);
-    let mcp_port = read_port_env("MCPMATE_TAURI_MCP_PORT").unwrap_or(ports::MCP_PORT);
+    let env_api = read_port_env("MCPMATE_TAURI_API_PORT");
+    let env_mcp = read_port_env("MCPMATE_TAURI_MCP_PORT");
+    let file = runtime_ports::PersistedRuntimePorts::load(global_paths());
+
+    let api_port = env_api
+        .or_else(|| file.as_ref().map(|p| p.api_port))
+        .unwrap_or(ports::API_PORT);
+    let mcp_port = env_mcp
+        .or_else(|| file.as_ref().map(|p| p.mcp_port))
+        .unwrap_or(ports::MCP_PORT);
 
     let log_level = clean_env_string("MCPMATE_TAURI_LOG").unwrap_or_else(|| "info".to_string());
 
@@ -914,6 +924,12 @@ async fn mcp_shell_restart_backend_with_ports(
             backend_state.set(runtime).await;
             if let Err(err) = shell_state.update_backend_running(true).await {
                 warn!(error = %err, "Failed to mark backend running after restart");
+            }
+            let persisted = runtime_ports::PersistedRuntimePorts { api_port, mcp_port };
+            if let Err(err) =
+                runtime_ports::PersistedRuntimePorts::save(mcpmate::common::global_paths(), &persisted)
+            {
+                warn!(error = %err, "Failed to persist runtime ports for next launch");
             }
             // Notify frontend that ports changed
             let payload = serde_json::json!({
