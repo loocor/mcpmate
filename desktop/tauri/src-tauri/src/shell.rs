@@ -7,9 +7,7 @@ use std::{
 use anyhow::{Context, Result};
 use mcpmate::common::MCPMatePaths;
 use serde::{Deserialize, Serialize};
-use tauri::{
-    AppHandle, Manager, Wry, image::Image, menu::MenuItem, tray::TrayIcon,
-};
+use tauri::{AppHandle, Manager, Wry, image::Image, menu::MenuItem, tray::TrayIcon};
 use tokio::sync::Mutex as AsyncMutex;
 
 /// tray-icon resets `NSImage.template` to off on every [`TrayIcon::set_icon`] on macOS; re-enable

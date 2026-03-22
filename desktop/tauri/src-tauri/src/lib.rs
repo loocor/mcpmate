@@ -1,7 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Error, Result};
+use mcpmate::system::config::init_port_config;
 use mcpmate::{
+    clients::ClientConfigService,
     common::{MCPMatePaths, global_paths, set_global_paths},
     core::{
         foundation::monitor,
@@ -12,7 +14,6 @@ use mcpmate::{
         },
     },
 };
-use mcpmate::system::config::init_port_config;
 use serde_json::json;
 use tauri::{
     Emitter, Manager, RunEvent, WindowEvent, Wry,
@@ -495,7 +496,9 @@ fn configure_tauri_environment() {
         ];
         let py_shim_paths = [bin_dir.join("python3"), bin_dir.join("python")];
         for shim in &py_shim_paths {
-            if !shim.exists() && let Ok(mut file) = fs::File::create(shim) {
+            if !shim.exists()
+                && let Ok(mut file) = fs::File::create(shim)
+            {
                 let mut found = None;
                 for c in &python3_candidates {
                     if std::path::Path::new(c).exists() {
@@ -765,7 +768,9 @@ async fn start_backend(args: Args) -> Result<BackendRuntime> {
         ("MCPMATE_TAURI_OPENAPI_PASSWORD", "MCPMATE_OPENAPI_PASSWORD"),
         ("MCPMATE_TAURI_OPENAPI_ENABLED", "MCPMATE_OPENAPI_ENABLED"),
     ] {
-        if let Ok(v) = std::env::var(from) && !v.trim().is_empty() {
+        if let Ok(v) = std::env::var(from)
+            && !v.trim().is_empty()
+        {
             unsafe { std::env::set_var(to, v) };
         }
     }
@@ -861,6 +866,63 @@ struct RuntimePorts {
     mcp_sse_url: String,
 }
 
+async fn reapply_hosted_clients_if_mcp_port_changed(
+    runtime: &BackendRuntime,
+    previous_mcp_port: u16,
+    mcp_port: u16,
+) {
+    if mcp_port == previous_mcp_port {
+        return;
+    }
+
+    let Some(db) = runtime.proxy.database.as_ref() else {
+        warn!("No database on proxy; skipping hosted client reapply after MCP port change");
+        return;
+    };
+
+    let pool = Arc::new(db.pool.clone());
+    let service = match ClientConfigService::bootstrap(pool).await {
+        Ok(s) => s,
+        Err(err) => {
+            warn!(
+                error = %err,
+                "Could not bootstrap client service for hosted reapply after MCP port change"
+            );
+            return;
+        }
+    };
+
+    match service
+        .reapply_hosted_managed_clients_after_mcp_port_change()
+        .await
+    {
+        Ok(summary) => {
+            info!(
+                attempted = summary.attempted,
+                applied = summary.applied,
+                scheduled = summary.scheduled,
+                failed = summary.failures.len(),
+                previous_mcp_port,
+                mcp_port,
+                "Reapplied hosted client configs after MCP port change"
+            );
+            for (client_id, err) in &summary.failures {
+                warn!(
+                    client = %client_id,
+                    error = %err,
+                    "Hosted client config reapply failed after MCP port change"
+                );
+            }
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "Hosted client batch reapply failed after MCP port change"
+            );
+        }
+    }
+}
+
 #[tauri::command]
 async fn mcp_shell_read_runtime_ports() -> Result<RuntimePorts, String> {
     let cfg = mcpmate::system::config::get_runtime_port_config();
@@ -884,6 +946,8 @@ async fn mcp_shell_restart_backend_with_ports(
     if api_port == 0 || mcp_port == 0 || api_port == mcp_port {
         return Err("invalid port values".into());
     }
+
+    let previous_mcp_port = mcpmate::system::config::get_runtime_port_config().mcp_port;
 
     // Stop current backend if running
     if let Some(runtime) = backend_state.take().await {
@@ -921,14 +985,17 @@ async fn mcp_shell_restart_backend_with_ports(
 
     match start_backend(args).await {
         Ok(runtime) => {
+            reapply_hosted_clients_if_mcp_port_changed(&runtime, previous_mcp_port, mcp_port).await;
+
             backend_state.set(runtime).await;
             if let Err(err) = shell_state.update_backend_running(true).await {
                 warn!(error = %err, "Failed to mark backend running after restart");
             }
             let persisted = runtime_ports::PersistedRuntimePorts { api_port, mcp_port };
-            if let Err(err) =
-                runtime_ports::PersistedRuntimePorts::save(mcpmate::common::global_paths(), &persisted)
-            {
+            if let Err(err) = runtime_ports::PersistedRuntimePorts::save(
+                mcpmate::common::global_paths(),
+                &persisted,
+            ) {
                 warn!(error = %err, "Failed to persist runtime ports for next launch");
             }
             // Notify frontend that ports changed
