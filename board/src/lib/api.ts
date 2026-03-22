@@ -13,7 +13,6 @@ import type {
 	ClientCheckResp,
 	ClientConfigImportData,
 	ClientConfigImportReq,
-	ClientConfigImportResp,
 	ClientConfigResp,
 	ClientConfigRestoreReq,
 	ClientConfigUpdateReq,
@@ -23,14 +22,21 @@ import type {
 	ConfigPreset,
 	ConfigSuit,
 	ConfigSuitListResponse,
+	ConfigSuitPrompt,
 	ConfigSuitPromptsResponse,
+	ConfigSuitResource,
+	ConfigSuitResourceTemplate,
+	ConfigSuitResourceTemplatesResponse,
 	ConfigSuitResourcesResponse,
 	ConfigSuitServer,
 	ConfigSuitServersResponse,
 	ConfigSuitTool,
 	ConfigSuitToolsResponse,
-	ConfigSuitResourceTemplatesResponse,
 	CreateConfigSuitRequest,
+	InspectorSessionCloseData,
+	InspectorSessionOpenData,
+	InspectorToolCallCancelData,
+	InspectorToolCallStartData,
 	InstallResponse,
 	InstallRuntimeRequest,
 	InstanceDetail,
@@ -61,10 +67,6 @@ import type {
 	SystemStatus,
 	ToolDetail,
 	UpdateConfigSuitRequest,
-	InspectorToolCallStartData,
-	InspectorToolCallCancelData,
-	InspectorSessionOpenData,
-	InspectorSessionCloseData,
 } from "./types";
 
 // Base API configuration
@@ -171,6 +173,60 @@ interface SuitTool {
 	is_enabled?: boolean;
 }
 
+/** Tools/resources/prompts list payloads from server capability endpoints */
+type CapabilityListResult = {
+	items: unknown[];
+	meta?: unknown;
+	state?: string;
+};
+
+/** Row shape from `/api/mcp/profile/list` */
+interface ProfileApiRow {
+	id: string;
+	name: string;
+	description?: string | null;
+	profile_type?: string;
+	multi_select?: boolean;
+	priority?: number;
+	is_active?: boolean;
+	is_default?: boolean;
+	role?: string | null;
+	allowed_operations?: string[];
+}
+
+function profileRowToConfigSuit(p: ProfileApiRow): ConfigSuit {
+	return {
+		id: p.id,
+		name: p.name,
+		description: p.description ?? undefined,
+		suit_type: p.profile_type ?? "",
+		multi_select: p.multi_select ?? false,
+		priority: p.priority ?? 0,
+		is_active: p.is_active ?? false,
+		is_default: p.is_default ?? false,
+		role: p.role ?? undefined,
+		allowed_operations: p.allowed_operations ?? [],
+	};
+}
+
+function asOptionalString(v: unknown): string | undefined {
+	return typeof v === "string" ? v : undefined;
+}
+
+function asStringOrNull(v: unknown): string | null | undefined {
+	if (v === null) return null;
+	return typeof v === "string" ? v : undefined;
+}
+
+/** Single server entry for import fallback JSON */
+interface McpImportServerEntry {
+	type: string;
+	command?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	url?: string;
+}
+
 interface NotificationData {
 	[key: string]: unknown;
 	event?: string;
@@ -199,26 +255,27 @@ const toTrimmedString = (value: unknown): string | undefined => {
 	return trimmed.length > 0 ? trimmed : undefined;
 };
 
-const normalizeServerIcon = (icon: any): ServerIcon | null => {
+const normalizeServerIcon = (icon: unknown): ServerIcon | null => {
 	if (!icon || typeof icon !== "object") return null;
+	const o = icon as Record<string, unknown>;
 	const src =
-		toTrimmedString(icon.src) ||
-		toTrimmedString(icon.url) ||
-		toTrimmedString(icon.href);
+		toTrimmedString(o.src) ||
+		toTrimmedString(o.url) ||
+		toTrimmedString(o.href);
 	if (!src) return null;
 	const mimeType =
-		toTrimmedString(icon.mime_type) ||
-		toTrimmedString(icon.mimeType) ||
+		toTrimmedString(o.mime_type) ||
+		toTrimmedString(o.mimeType) ||
 		undefined;
 	const sizes =
-		toTrimmedString(icon.sizes) || toTrimmedString(icon.size) || undefined;
+		toTrimmedString(o.sizes) || toTrimmedString(o.size) || undefined;
 	const normalized: ServerIcon = { src };
 	if (mimeType) normalized.mimeType = mimeType;
 	if (sizes) normalized.sizes = sizes;
 	return normalized;
 };
 
-const normalizeServerIconList = (icons: any): ServerIcon[] => {
+const normalizeServerIconList = (icons: unknown): ServerIcon[] => {
 	if (!icons) return [];
 	const array = Array.isArray(icons) ? icons : [icons];
 	return array
@@ -226,18 +283,19 @@ const normalizeServerIconList = (icons: any): ServerIcon[] => {
 		.filter((icon): icon is ServerIcon => Boolean(icon));
 };
 
-const normalizeRepositoryInfo = (repo: any): RegistryRepositoryInfo | null => {
+const normalizeRepositoryInfo = (repo: unknown): RegistryRepositoryInfo | null => {
 	if (!repo) return null;
 	if (typeof repo === "string") {
 		const url = toTrimmedString(repo);
 		return url ? { url } : null;
 	}
 	if (typeof repo !== "object") return null;
+	const r = repo as Record<string, unknown>;
 	const info: RegistryRepositoryInfo = {};
-	const url = toTrimmedString(repo.url);
-	const source = toTrimmedString(repo.source);
-	const subfolder = toTrimmedString(repo.subfolder);
-	const id = toTrimmedString(repo.id);
+	const url = toTrimmedString(r.url);
+	const source = toTrimmedString(r.source);
+	const subfolder = toTrimmedString(r.subfolder);
+	const id = toTrimmedString(r.id);
 	if (url) info.url = url;
 	if (source) info.source = source;
 	if (subfolder) info.subfolder = subfolder;
@@ -245,17 +303,18 @@ const normalizeRepositoryInfo = (repo: any): RegistryRepositoryInfo | null => {
 	return Object.keys(info).length > 0 ? info : null;
 };
 
-export const normalizeServerMeta = (meta: any): ServerMetaInfo | undefined => {
+export const normalizeServerMeta = (meta: unknown): ServerMetaInfo | undefined => {
 	if (!meta || typeof meta !== "object") return undefined;
+	const m = meta as Record<string, unknown>;
 	const normalized: ServerMetaInfo = {};
-	const description = toTrimmedString(meta.description);
-	const version = toTrimmedString(meta.version);
+	const description = toTrimmedString(m.description);
+	const version = toTrimmedString(m.version);
 	const websiteUrl =
-		toTrimmedString(meta.websiteUrl) ||
-		toTrimmedString(meta.website_url) ||
-		toTrimmedString(meta.website);
-	const repository = normalizeRepositoryInfo(meta.repository);
-	const icons = normalizeServerIconList(meta.icons);
+		toTrimmedString(m.websiteUrl) ||
+		toTrimmedString(m.website_url) ||
+		toTrimmedString(m.website);
+	const repository = normalizeRepositoryInfo(m.repository);
+	const icons = normalizeServerIconList(m.icons);
 
 	if (description) normalized.description = description;
 	if (version) normalized.version = version;
@@ -263,16 +322,21 @@ export const normalizeServerMeta = (meta: any): ServerMetaInfo | undefined => {
 	if (repository) normalized.repository = repository;
 	if (icons.length) normalized.icons = icons;
 
-	if (meta._meta && typeof meta._meta === "object") {
-		normalized._meta = meta._meta as RegistryMetaPayload;
+	if (m._meta && typeof m._meta === "object") {
+		normalized._meta = m._meta as RegistryMetaPayload;
 	}
 
-	if (meta.extras && typeof meta.extras === "object") {
-		normalized.extras = meta.extras as Record<string, unknown>;
+	if (m.extras && typeof m.extras === "object") {
+		normalized.extras = m.extras as Record<string, unknown>;
 	}
 
-	// Preserve legacy fields if present
-	const legacy = meta.legacy || (meta.extras && (meta.extras as any).legacy);
+	const extrasObj =
+		m.extras && typeof m.extras === "object"
+			? (m.extras as Record<string, unknown>)
+			: undefined;
+	const legacyFromExtras =
+		extrasObj && "legacy" in extrasObj ? extrasObj.legacy : undefined;
+	const legacy = m.legacy ?? legacyFromExtras;
 	if (!normalized.extras && legacy && typeof legacy === "object") {
 		normalized.extras = { legacy };
 	}
@@ -354,7 +418,7 @@ const toCount = (value: unknown): number => {
 };
 
 const normalizeCapabilitySummary = (
-	capability: any,
+	capability: unknown,
 ): ServerCapabilitySummary | undefined => {
 	if (!capability || typeof capability !== "object") return undefined;
 
@@ -402,8 +466,8 @@ const uniqBySrc = (icons: ServerIcon[]): ServerIcon[] => {
 	return result;
 };
 
-const enrichServerRecord = <T extends Record<string, any>>(server: T) => {
-	const base: Record<string, any> = { ...server };
+const enrichServerRecord = <T extends Record<string, unknown>>(server: T) => {
+	const base: Record<string, unknown> = { ...server };
 	const meta = normalizeServerMeta(server.meta);
 	const directIcons = normalizeServerIconList(server.icons);
 	const combinedIcons = uniqBySrc([...(meta?.icons ?? []), ...directIcons]);
@@ -526,13 +590,18 @@ export const serversApi = {
 			const rawServers = Array.isArray(resp?.data?.servers)
 				? resp.data.servers
 				: [];
-			const servers = rawServers.map((server: any) => {
-				const enhanced = enrichServerRecord(server);
+			const servers = rawServers.map((server): ServerSummary => {
+				const rec = server as unknown as Record<string, unknown>;
+				const enhanced = enrichServerRecord(rec);
+				const er = enhanced as Record<string, unknown>;
 				const registryServerId =
-					enhanced?.registry_server_id ?? enhanced?.registryServerId ?? null;
+					(er.registry_server_id as string | null | undefined) ??
+					(er.registryServerId as string | null | undefined) ??
+					null;
 				const serverType =
-					(enhanced?.server_type as string | undefined) ||
-					(enhanced as any)?.kind;
+					toTrimmedString(er.server_type as string | undefined) ??
+					toTrimmedString(er.serverType as string | undefined) ??
+					toTrimmedString(er.kind as string | undefined);
 				return {
 					...enhanced,
 					server_type: serverType,
@@ -552,7 +621,7 @@ export const serversApi = {
 			const resp = await fetchApi<ServerDetailsResp>(
 				`/api/mcp/servers/details?${q}`,
 			);
-			const data = resp?.data ?? {};
+			const data = (resp?.data ?? {}) as Record<string, unknown>;
 			const enhanced = enrichServerRecord(data);
 			const enabledValue =
 				typeof enhanced?.enabled === "boolean"
@@ -565,11 +634,15 @@ export const serversApi = {
 				? (enhanced.instances as InstanceSummary[])
 				: [];
 
+			const metaRecord =
+				enhanced.meta && typeof enhanced.meta === "object"
+					? (enhanced.meta as Record<string, unknown>)
+					: undefined;
 			const rawStatus = (
-				enhanced?.status ??
-				enhanced?.state ??
-				enhanced?.runtime_status ??
-				(enhanced?.meta as any)?.state ??
+				enhanced.status ??
+				enhanced.state ??
+				enhanced.runtime_status ??
+				metaRecord?.state ??
 				""
 			)
 				.toString()
@@ -625,16 +698,20 @@ export const serversApi = {
 				else normalizedStatus = enabledValue ? "idle" : "disabled";
 			}
 
-			const registryServerId =
-				enhanced?.registry_server_id ?? enhanced?.registryServerId ?? null;
+			const erDetail = enhanced as unknown as Record<string, unknown>;
+			const registryServerId = asStringOrNull(
+				erDetail.registry_server_id ?? erDetail.registryServerId,
+			);
 
 			const serverType =
-				(enhanced?.server_type as string | undefined) ||
-				(enhanced as any)?.kind;
+				toTrimmedString(erDetail.server_type as string | undefined) ??
+				toTrimmedString(erDetail.kind as string | undefined);
+
+			const displayName = asOptionalString(erDetail.name) ?? id;
 
 			return {
-				id: (enhanced?.id as string) ?? id,
-				name: enhanced?.name ?? id,
+				id: asOptionalString(erDetail.id) ?? id,
+				name: displayName,
 				status: normalizedStatus,
 				server_type: serverType,
 				registry_server_id: registryServerId,
@@ -652,7 +729,7 @@ export const serversApi = {
 						? enhanced.enabled_in_profile
 						: undefined,
 				instances,
-				command: enhanced?.command,
+				command: asOptionalString(erDetail.command),
 				args: Array.isArray(enhanced?.args)
 					? (enhanced.args as string[])
 					: undefined,
@@ -670,7 +747,13 @@ export const serversApi = {
 			};
 		} catch (error) {
 			console.error(`Error fetching server details for ${id}:`, error);
-			return { id, name: id, status: "error", kind: "unknown", instances: [] };
+			return {
+				id,
+				name: id,
+				status: "error",
+				server_type: "unknown",
+				instances: [],
+			};
 		}
 	},
 
@@ -832,8 +915,9 @@ export const serversApi = {
 				)
 			) {
 				const name = String(serverConfig.name || "").trim();
-				const importBody: any = { mcpServers: {} as Record<string, any> };
-				const cfg: any = { type: serverType };
+				const importBody: { mcpServers: Record<string, McpImportServerEntry> } =
+					{ mcpServers: {} };
+				const cfg: McpImportServerEntry = { type: serverType };
 				if (serverType === "stdio") {
 					if (serverConfig.command) cfg.command = serverConfig.command;
 					if (Array.isArray(serverConfig.args)) cfg.args = serverConfig.args;
@@ -843,7 +927,7 @@ export const serversApi = {
 					else if (serverConfig.command) cfg.url = serverConfig.command;
 				}
 				importBody.mcpServers[name] = cfg;
-				await fetchApi<ServersImportResp>("/api/mcp/servers/import", {
+				await fetchApi<ApiWrapper<ServersImportData>>("/api/mcp/servers/import", {
 					method: "POST",
 					body: JSON.stringify(importBody),
 				});
@@ -854,11 +938,11 @@ export const serversApi = {
 						id: name,
 						name,
 						status: "unknown",
-						kind: serverType as any,
+						server_type: serverType,
 						instances: [],
 						command: serverConfig.command,
 						args: serverConfig.args,
-						env: serverConfig.env as any,
+						env: serverConfig.env,
 					},
 					error: null,
 				} as unknown as ServerDetailsResp;
@@ -909,55 +993,55 @@ export const serversApi = {
 	listTools: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<{ items: any[]; meta?: any; state?: string }> => {
+	): Promise<CapabilityListResult> => {
 		const q = new URLSearchParams({ id: serverId, refresh });
 		const resp = await fetchApi<{
 			success: boolean;
-			data?: { items: any[]; meta?: any; state?: string } | null;
+			data?: CapabilityListResult | null;
 			error?: unknown | null;
 		}>(`/api/mcp/servers/tools?${q}`);
-		return (resp?.data as any) || { items: [] };
+		return resp?.data ?? { items: [] };
 	},
 	listResources: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<{ items: any[]; meta?: any; state?: string }> => {
+	): Promise<CapabilityListResult> => {
 		const q = new URLSearchParams({ id: serverId, refresh });
 		const resp = await fetchApi<{
 			success: boolean;
-			data?: { items: any[]; meta?: any; state?: string } | null;
+			data?: CapabilityListResult | null;
 			error?: unknown | null;
 		}>(`/api/mcp/servers/resources?${q}`);
-		return (resp?.data as any) || { items: [] };
+		return resp?.data ?? { items: [] };
 	},
 	listPrompts: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<{ items: any[]; meta?: any; state?: string }> => {
+	): Promise<CapabilityListResult> => {
 		const q = new URLSearchParams({ id: serverId, refresh });
 		const resp = await fetchApi<{
 			success: boolean;
-			data?: { items: any[]; meta?: any; state?: string } | null;
+			data?: CapabilityListResult | null;
 			error?: unknown | null;
 		}>(`/api/mcp/servers/prompts?${q}`);
-		return (resp?.data as any) || { items: [] };
+		return resp?.data ?? { items: [] };
 	},
 	listResourceTemplates: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<{ items: any[]; meta?: any; state?: string }> => {
+	): Promise<CapabilityListResult> => {
 		const q = new URLSearchParams({ id: serverId, refresh });
 		const resp = await fetchApi<{
 			success: boolean;
-			data?: { items: any[]; meta?: any; state?: string } | null;
+			data?: CapabilityListResult | null;
 			error?: unknown | null;
 		}>(`/api/mcp/servers/resources/templates?${q}`);
-		return (resp?.data as any) || { items: [] };
+		return resp?.data ?? { items: [] };
 	},
 
 	// Import servers from JSON-like configuration object
 	importServers: async (payload: {
-		mcpServers: Record<string, any>;
+		mcpServers: Record<string, unknown>;
 		target_profile_id?: string | null;
 		dry_run?: boolean;
 	}): Promise<ApiWrapper<ServersImportData>> => {
@@ -981,7 +1065,7 @@ export const serversApi = {
 		}>;
 	}): Promise<{
 		success: boolean;
-		data?: { items: any[] } | null;
+		data?: { items: unknown[] } | null;
 		error?: unknown | null;
 	}> => {
 		return await fetchApi(`/api/mcp/servers/preview`, {
@@ -1071,7 +1155,7 @@ export const inspectorApi = {
 		tool: string;
 		server_id?: string;
 		server_name?: string;
-		arguments?: Record<string, any>;
+		arguments?: Record<string, unknown>;
 		mode?: "proxy" | "native";
 		timeout_ms?: number;
 	}) =>
@@ -1083,7 +1167,7 @@ export const inspectorApi = {
 		tool: string;
 		server_id?: string;
 		server_name?: string;
-		arguments?: Record<string, any>;
+		arguments?: Record<string, unknown>;
 		mode?: "proxy" | "native";
 		timeout_ms?: number;
 		session_id?: string;
@@ -1169,7 +1253,7 @@ export const inspectorApi = {
 		name: string;
 		server_id?: string;
 		server_name?: string;
-		arguments?: Record<string, any>;
+		arguments?: Record<string, unknown>;
 		mode?: "proxy" | "native";
 	}) =>
 		fetchApi(`/api/mcp/inspector/prompt/get`, {
@@ -1210,13 +1294,12 @@ export const toolsApi = {
 					>(`/api/mcp/profile/tools/list?${q}`);
 					const data = extractApiData(resp);
 					if (data?.tools) {
-						const tools = data.tools.map((tool) => ({
+						const tools = data.tools.map((tool: SuitTool) => ({
 							tool_name: tool.tool_name || tool.name || "",
 							server_name: tool.server_name || "",
-							is_enabled:
-								(tool as any).is_enabled ?? (tool as any).enabled ?? true,
-							description: (tool as any).description || "",
-							tool_id: (tool as any).id || "",
+							is_enabled: tool.is_enabled ?? tool.enabled ?? true,
+							description: tool.description || "",
+							tool_id: tool.id || "",
 						}));
 						return { tools };
 					}
@@ -1526,21 +1609,14 @@ export const configSuitsApi = {
 	getAll: async (): Promise<ConfigSuitListResponse> => {
 		try {
 			const response = await fetchApi<
-				ApiWrapper<{ profile: any[]; total: number; timestamp: string }>
+				ApiWrapper<{
+					profile: ProfileApiRow[];
+					total: number;
+					timestamp: string;
+				}>
 			>("/api/mcp/profile/list");
 			const data = extractApiData(response);
-			const suits: ConfigSuit[] = (data.profile || []).map((p: any) => ({
-				id: p.id,
-				name: p.name,
-				description: p.description ?? undefined,
-				suit_type: p.profile_type,
-				multi_select: p.multi_select,
-				priority: p.priority,
-				is_active: p.is_active,
-				is_default: p.is_default,
-				role: p.role ?? undefined,
-				allowed_operations: p.allowed_operations || [],
-			}));
+			const suits: ConfigSuit[] = (data.profile || []).map(profileRowToConfigSuit);
 			return { suits };
 		} catch (error) {
 			console.error("Failed to fetch config suits:", error);
@@ -1592,23 +1668,14 @@ export const configSuitsApi = {
 
 	getSuit: async (id: string): Promise<ConfigSuit> => {
 		const q = new URLSearchParams({ id });
-		const response = await fetchApi<ApiWrapper<{ profile: any }>>(
+		const response = await fetchApi<ApiWrapper<{ profile: ProfileApiRow }>>(
 			`/api/mcp/profile/details?${q}`,
 		);
 		const data = extractApiData(response);
-		const p = (data as any).profile;
-		return {
-			id: p.id,
-			name: p.name,
-			description: p.description ?? undefined,
-			suit_type: p.profile_type,
-			multi_select: p.multi_select,
-			priority: p.priority,
-			is_active: p.is_active,
-			is_default: p.is_default,
-			role: p.role ?? undefined,
-			allowed_operations: p.allowed_operations || [],
-		} as ConfigSuit;
+		if (!data.profile) {
+			throw new Error("Profile details response missing profile");
+		}
+		return profileRowToConfigSuit(data.profile);
 	},
 
 	createSuit: async (
@@ -1624,7 +1691,7 @@ export const configSuitsApi = {
 			is_default: data.is_default ?? null,
 			clone_from_id: data.clone_from_id ?? null,
 		};
-		const response = await fetchApi<ApiWrapper<any>>(
+		const response = await fetchApi<ApiWrapper<ProfileApiRow>>(
 			"/api/mcp/profile/create",
 			{
 				method: "POST",
@@ -1632,18 +1699,7 @@ export const configSuitsApi = {
 			},
 		);
 		const p = extractApiData(response);
-		const result: ConfigSuit = {
-			id: p.id,
-			name: p.name,
-			description: p.description ?? undefined,
-			suit_type: p.profile_type,
-			multi_select: p.multi_select,
-			priority: p.priority,
-			is_active: p.is_active,
-			is_default: p.is_default,
-			role: p.role ?? undefined,
-			allowed_operations: p.allowed_operations || [],
-		};
+		const result = profileRowToConfigSuit(p);
 		return { status: "success", message: "Profile created", data: result };
 	},
 
@@ -1655,13 +1711,13 @@ export const configSuitsApi = {
 			id,
 			name: data.name ?? null,
 			description: data.description ?? null,
-			profile_type: (data as any).suit_type ?? null,
+			profile_type: data.suit_type ?? null,
 			multi_select: data.multi_select ?? null,
 			priority: data.priority ?? null,
 			is_active: data.is_active ?? null,
 			is_default: data.is_default ?? null,
 		};
-		const response = await fetchApi<ApiWrapper<any>>(
+		const response = await fetchApi<ApiWrapper<ProfileApiRow>>(
 			`/api/mcp/profile/update`,
 			{
 				method: "POST",
@@ -1669,18 +1725,7 @@ export const configSuitsApi = {
 			},
 		);
 		const p = extractApiData(response);
-		const result: ConfigSuit = {
-			id: p.id,
-			name: p.name,
-			description: p.description ?? undefined,
-			suit_type: p.profile_type,
-			multi_select: p.multi_select,
-			priority: p.priority,
-			is_active: p.is_active,
-			is_default: p.is_default,
-			role: p.role ?? undefined,
-			allowed_operations: p.allowed_operations || [],
-		};
+		const result = profileRowToConfigSuit(p);
 		return { status: "success", message: "Profile updated", data: result };
 	},
 
@@ -1737,9 +1782,9 @@ export const configSuitsApi = {
 		>(`/api/mcp/profile/servers/list?${q}`);
 		const data = extractApiData(response);
 		return {
-			suit_id: (data as any).profile_id,
-			suit_name: (data as any).profile_name,
-			servers: (data as any).servers || [],
+			suit_id: data.profile_id,
+			suit_name: data.profile_name,
+			servers: data.servers || [],
 		};
 	},
 
@@ -1754,9 +1799,9 @@ export const configSuitsApi = {
 		>(`/api/mcp/profile/tools/list?${q}`);
 		const data = extractApiData(response);
 		return {
-			suit_id: (data as any).profile_id,
-			suit_name: (data as any).profile_name,
-			tools: (data as any).tools || [],
+			suit_id: data.profile_id,
+			suit_name: data.profile_name,
+			tools: data.tools || [],
 		};
 	},
 
@@ -1768,14 +1813,14 @@ export const configSuitsApi = {
 			ApiWrapper<{
 				profile_id: string;
 				profile_name: string;
-				resources: any[];
+				resources: ConfigSuitResource[];
 			}>
 		>(`/api/mcp/profile/resources/list?${q}`);
 		const data = extractApiData(response);
 		return {
-			suit_id: (data as any).profile_id,
-			suit_name: (data as any).profile_name,
-			resources: (data as any).resources || [],
+			suit_id: data.profile_id,
+			suit_name: data.profile_name,
+			resources: data.resources || [],
 		};
 	},
 
@@ -1785,14 +1830,14 @@ export const configSuitsApi = {
 			ApiWrapper<{
 				profile_id: string;
 				profile_name: string;
-				prompts: any[];
+				prompts: ConfigSuitPrompt[];
 			}>
 		>(`/api/mcp/profile/prompts/list?${q}`);
 		const data = extractApiData(response);
 		return {
-			suit_id: (data as any).profile_id,
-			suit_name: (data as any).profile_name,
-			prompts: (data as any).prompts || [],
+			suit_id: data.profile_id,
+			suit_name: data.profile_name,
+			prompts: data.prompts || [],
 		};
 	},
 
@@ -1804,14 +1849,14 @@ export const configSuitsApi = {
 			ApiWrapper<{
 				profile_id: string;
 				profile_name: string;
-				templates: any[];
+				templates: ConfigSuitResourceTemplate[];
 			}>
 		>(`/api/mcp/profile/resource-templates/list?${q}`);
 		const data = extractApiData(response);
 		return {
-			suit_id: (data as any).profile_id,
-			suit_name: (data as any).profile_name,
-			templates: (data as any).templates || [],
+			suit_id: data.profile_id,
+			suit_name: data.profile_name,
+			templates: data.templates || [],
 		};
 	},
 
@@ -1910,6 +1955,8 @@ export class NotificationsService {
 	private reconnectAttempts = 0;
 	private readonly maxReconnectAttempts = 5;
 	private readonly reconnectDelay = 5000;
+	/** When true, the next `onclose` reconnects immediately to the current `API_BASE_URL` (no backoff). */
+	private reconnectToNewBasePending = false;
 
 	connect() {
 		if (this.ws) return;
@@ -1952,6 +1999,13 @@ export class NotificationsService {
 					`WebSocket connection closed: ${event.code} ${event.reason}`,
 				);
 				this.ws = null;
+
+				if (this.reconnectToNewBasePending) {
+					this.reconnectToNewBasePending = false;
+					this.reconnectAttempts = 0;
+					queueMicrotask(() => this.connect());
+					return;
+				}
 
 				if (this.reconnectAttempts < this.maxReconnectAttempts) {
 					const delay = this.reconnectDelay * 1.5 ** this.reconnectAttempts;
@@ -1998,6 +2052,20 @@ export class NotificationsService {
 			this.ws = null;
 		}
 	}
+
+	/**
+	 * Use after `setApiBaseUrl` (e.g. desktop Settings port change) so notifications use the new host
+	 * without waiting for reconnect backoff or being blocked by `if (this.ws) return`.
+	 */
+	reconnectAfterApiBaseChanged() {
+		if (this.ws) {
+			this.reconnectToNewBasePending = true;
+			this.ws.close();
+			return;
+		}
+		this.reconnectAttempts = 0;
+		this.connect();
+	}
 }
 
 export const notificationsService = new NotificationsService();
@@ -2018,29 +2086,28 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 
-    configDetails: async (identifier: string, doImport = false) => {
+	configDetails: async (identifier: string, doImport = false) => {
 		const q = new URLSearchParams({ identifier, import: String(doImport) });
 		const resp = await fetchApi<ClientConfigResp>(
 			`/api/client/config/details?${q}`,
 		);
 		return extractApiData(resp);
-    },
+	},
 
-    update: async (payload: {
-        identifier: string;
-        config_mode?: string;
-        transport?: string;
-        client_version?: string;
-    }) => {
-        const resp = await fetchApi<{ success: boolean } & ApiWrapper<any>>(
-            `/api/client/update`,
-            {
-                method: "POST",
-                body: JSON.stringify(payload),
-            },
-        );
-        return resp;
-    },
+	update: async (payload: {
+		identifier: string;
+		config_mode?: string;
+		transport?: string;
+		client_version?: string;
+	}) => {
+		const resp = await fetchApi<
+			{ success: boolean } & ApiWrapper<Record<string, unknown>>
+		>(`/api/client/update`, {
+			method: "POST",
+			body: JSON.stringify(payload),
+		});
+		return resp;
+	},
 
 	applyConfig: async (payload: ClientConfigUpdateReq) => {
 		const resp = await fetchApi<ClientConfigUpdateResp>(
@@ -2115,7 +2182,7 @@ export const clientsApi = {
 		if (options && "profile_id" in options) {
 			body.profile_id = options.profile_id ?? null;
 		}
-		const resp = await fetchApi<ClientConfigImportResp>(
+		const resp = await fetchApi<ApiWrapper<ClientConfigImportData>>(
 			`/api/client/config/import`,
 			{
 				method: "POST",

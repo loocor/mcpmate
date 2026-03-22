@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Moon, RotateCcw, Sun } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -34,7 +35,11 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { API_BASE_URL, setApiBaseUrl } from "../../lib/api";
+import {
+	API_BASE_URL,
+	notificationsService,
+	setApiBaseUrl,
+} from "../../lib/api";
 import { SUPPORTED_LANGUAGES } from "../../lib/i18n/index";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import {
@@ -173,6 +178,7 @@ const MENU_BAR_ICON_OPTIONS: ReadonlyArray<{
 
 export function SettingsPage() {
 	usePageTranslations("settings");
+	const queryClient = useQueryClient();
 	const languageId = useId();
 	const backupLimitId = useId();
 	const menuBarSelectId = useId();
@@ -212,55 +218,68 @@ export function SettingsPage() {
 	const loadRuntimePorts = useCallback(async () => {
 		setLoadingPorts(true);
 		try {
-			// seed from local persistence if available
-			let hadCached = false;
-			try {
-				const cachedApi = window.localStorage?.getItem(
-					"mcpmate.system.api_port",
-				);
-				const cachedMcp = window.localStorage?.getItem(
-					"mcpmate.system.mcp_port",
-				);
-				if (cachedApi) {
-					setApiPort(Number(cachedApi));
-					hadCached = true;
+			const persistPortsLocal = (api: number, mcp: number) => {
+				try {
+					window.localStorage?.setItem(
+						"mcpmate.system.api_port",
+						String(api),
+					);
+					window.localStorage?.setItem(
+						"mcpmate.system.mcp_port",
+						String(mcp),
+					);
+				} catch {
+					// LocalStorage write is best-effort
 				}
-				if (cachedMcp) {
-					setMcpPort(Number(cachedMcp));
-					hadCached = true;
-				}
-			} catch {
-				// Cache read is best-effort
-			}
-			if (isTauriEnvironmentSync()) {
-				const { invoke } = await import("@tauri-apps/api/core");
-				const resp = (await invoke("mcp_shell_read_runtime_ports")) as {
-					api_port: number;
-					mcp_port: number;
-					api_url: string;
-					mcp_http_url: string;
-					mcp_sse_url: string;
-				};
-				// In web mode, if user has configured ports (cached), keep them visible.
-				// Only initialize from backend when there is no cached value.
-				if (!hadCached) {
-					setApiPort(resp.api_port);
-					setMcpPort(resp.mcp_port);
-					try {
-						window.localStorage?.setItem(
-							"mcpmate.system.api_port",
-							String(resp.api_port),
-						);
-						window.localStorage?.setItem(
-							"mcpmate.system.mcp_port",
-							String(resp.mcp_port),
-						);
-					} catch {
-						// LocalStorage write is best-effort
+			};
+
+			const seedFromLocalStorage = () => {
+				try {
+					const cachedApi = window.localStorage?.getItem(
+						"mcpmate.system.api_port",
+					);
+					const cachedMcp = window.localStorage?.getItem(
+						"mcpmate.system.mcp_port",
+					);
+					const parsePositivePort = (raw: string | null | undefined) => {
+						if (!raw) return undefined;
+						const n = Number(raw);
+						return !Number.isNaN(n) && n > 0 ? n : undefined;
+					};
+					const apiN = parsePositivePort(cachedApi);
+					const mcpN = parsePositivePort(cachedMcp);
+					if (apiN !== undefined) {
+						setApiPort(apiN);
+						setApiBaseUrl(`http://127.0.0.1:${apiN}`);
 					}
+					if (mcpN !== undefined) setMcpPort(mcpN);
+				} catch {
+					// Cache read is best-effort
 				}
-				if (resp.api_url && !API_BASE_URL.includes(`:${resp.api_port}`)) {
-					setApiBaseUrl(resp.api_url);
+			};
+
+			const applyAuthorityPorts = (api: number, mcp: number) => {
+				setApiPort(api);
+				setMcpPort(mcp);
+				persistPortsLocal(api, mcp);
+				setApiBaseUrl(`http://127.0.0.1:${api}`);
+			};
+
+			if (isTauriEnvironmentSync()) {
+				try {
+					const { invoke } = await import("@tauri-apps/api/core");
+					const resp = (await invoke("mcp_shell_read_runtime_ports")) as {
+						api_port: number;
+						mcp_port: number;
+					};
+					if (
+						typeof resp.api_port === "number" &&
+						typeof resp.mcp_port === "number"
+					) {
+						applyAuthorityPorts(resp.api_port, resp.mcp_port);
+					}
+				} catch {
+					seedFromLocalStorage();
 				}
 				return;
 			}
@@ -269,36 +288,31 @@ export function SettingsPage() {
 			const url = apiBase ? `${apiBase}/api/system/ports` : `/api/system/ports`;
 			const response = await fetch(url, { cache: "no-store" });
 			if (response.ok) {
-				const data = await response.json();
-				const d = data?.data ?? data;
-				if (!hadCached) {
-					if (typeof d?.api_port === "number") {
-						setApiPort(d.api_port);
-						try {
-							window.localStorage?.setItem(
-								"mcpmate.system.api_port",
-								String(d.api_port),
-							);
-						} catch {
-							// LocalStorage write is best-effort
-						}
-					}
-					if (typeof d?.mcp_port === "number") {
-						setMcpPort(d.mcp_port);
-						try {
-							window.localStorage?.setItem(
-								"mcpmate.system.mcp_port",
-								String(d.mcp_port),
-							);
-						} catch {
-							// LocalStorage write is best-effort
-						}
-					}
+				const data = (await response.json()) as unknown;
+				let raw: unknown = data;
+				if (
+					data &&
+					typeof data === "object" &&
+					"data" in data &&
+					(data as { data?: unknown }).data !== undefined
+				) {
+					raw = (data as { data: unknown }).data;
+				}
+				const d = raw as { api_port?: unknown; mcp_port?: unknown };
+				if (
+					typeof d?.api_port === "number" &&
+					typeof d?.mcp_port === "number"
+				) {
+					applyAuthorityPorts(d.api_port, d.mcp_port);
+					return;
 				}
 			}
+
+			seedFromLocalStorage();
 		} finally {
 			setLoadingPorts(false);
 		}
+		// API_BASE_URL is a live module binding; reads inside this async fn stay current without listing it in deps.
 	}, []);
 
 	const tabTriggerClass =
@@ -1113,7 +1127,6 @@ export function SettingsPage() {
 												if (isTauriShell) {
 													try {
 														setApplyBusy(true);
-														setApiBaseUrl(`http://127.0.0.1:${apiPort}`);
 														const { invoke } = await import(
 															"@tauri-apps/api/core"
 														);
@@ -1121,6 +1134,11 @@ export function SettingsPage() {
 															"mcp_shell_restart_backend_with_ports",
 															{ api_port: apiPort, mcp_port: mcpPort },
 														);
+														setApiBaseUrl(`http://127.0.0.1:${apiPort}`);
+														notificationsService.reconnectAfterApiBaseChanged();
+														await queryClient.invalidateQueries({
+															predicate: () => true,
+														});
 														try {
 															window.localStorage?.setItem(
 																"mcpmate.system.api_port",
@@ -1139,6 +1157,10 @@ export function SettingsPage() {
 												} else {
 													// In web mode, switch dashboard to use the new API port immediately
 													setApiBaseUrl(`http://127.0.0.1:${apiPort}`);
+													notificationsService.reconnectAfterApiBaseChanged();
+													void queryClient.invalidateQueries({
+														predicate: () => true,
+													});
 													try {
 														window.localStorage?.setItem(
 															"mcpmate.system.api_port",
