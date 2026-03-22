@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function RuntimeEN() {
 	return (
@@ -17,6 +18,12 @@ export default function RuntimeEN() {
 				it to confirm installations, clear caches, and reset capability state
 				when testing new transports or server upgrades.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/runtime-light.png"
+				darkSrc="/screenshot/runtime-dark.png"
+				alt="Runtime page with uv, Bun, and capabilities cache stats"
+			/>
 
 			<H2>Runtime status cards</H2>
 			<Ul>

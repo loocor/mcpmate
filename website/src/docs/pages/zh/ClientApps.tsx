@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function ClientAppsZH() {
 	return (
@@ -9,6 +10,12 @@ export default function ClientAppsZH() {
 			<P>
 				客户端页面用于管理能够连接 MCPMate 的桌面应用（如 Cursor、Claude Desktop、Zed 等）。页面集成自动发现、托管开关与配置位置信息，帮助你随时掌握编辑器与代理的协同状态。
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/clients-light.png"
+				darkSrc="/screenshot/clients-dark.png"
+				alt="客户端网格：检测状态与托管开关"
+			/>
 
 			<H2>统计与筛选</H2>
 			<Ul>
@@ -31,6 +38,13 @@ export default function ClientAppsZH() {
 
 			<H3>详情页</H3>
 			<P>点击卡片进入 <code>/clients/:identifier</code>，详情分为三个标签：</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/client-detail-light.png"
+				darkSrc="/screenshot/client-detail-dark.png"
+				alt="客户端详情：配置路径与当前服务器"
+			/>
+
 			<Ul>
 				<Li>
 					<strong>概览</strong>：检测状态、托管开关、应用配置集等操作，以及打开 MCP 配置目录等快捷入口。

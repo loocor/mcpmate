@@ -1,6 +1,7 @@
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function ClientApps() {
 	return (
@@ -16,6 +17,12 @@ export default function ClientApps() {
 				management toggles, and configuration hints so you can keep editor
 				integration in sync with the proxy.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/clients-light.png"
+				darkSrc="/screenshot/clients-dark.png"
+				alt="Clients grid with detection and managed toggles"
+			/>
 
 			<H2>Stats & filters</H2>
 			<Ul>
@@ -58,6 +65,13 @@ export default function ClientApps() {
 				Click a card to open <code>/clients/:identifier</code>. The detail layout
 				uses three tabs:
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/client-detail-light.png"
+				darkSrc="/screenshot/client-detail-dark.png"
+				alt="Client detail overview with config path and current servers"
+			/>
+
 			<Ul>
 				<Li>
 					<strong>Overview</strong> &mdash; detection status, managed mode,

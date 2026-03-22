@@ -26,6 +26,11 @@ const zh = {
 	"hero.stats.resource": "资源占用降低",
 	"hero.stats.integration": "集成率提升",
 	"hero.dashboard": "MCPMate 控制台",
+	"hero.slide.dashboard": "控制台 — 系统健康与资源指标",
+	"hero.slide.profiles": "配置集 — 切换能力组合",
+	"hero.slide.servers": "服务器 — 连接与监控 MCP 服务",
+	"hero.slide.clients": "客户端 — 管理编辑器集成",
+	"hero.slide.market": "市场 — 浏览官方 MCP 注册中心",
 
 	"download.title": "快速开始",
 	"download.expired": "预览通道暂未开放，敬请期待。",

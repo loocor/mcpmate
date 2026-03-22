@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function Settings() {
 	return (
@@ -17,6 +18,12 @@ export default function Settings() {
 				tune appearance, default behaviors, marketplace sources, developer
 				toggles, and backend connectivity without leaving the app.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/settings-general-light.png"
+				darkSrc="/screenshot/settings-general-dark.png"
+				alt="Settings General tab with default view and language"
+			/>
 
 			<H2>Tab overview</H2>
 			<Ul>

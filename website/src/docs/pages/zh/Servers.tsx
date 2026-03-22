@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function ServersZH() {
 	return (
@@ -9,6 +10,12 @@ export default function ServersZH() {
 			<P>
 				服务器页面集中展示所有 MCP 服务器，包含连接状态、能力统计、启停开关以及导入流程。无需手动编辑配置文件，就能完成安装与维护。
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/servers-light.png"
+				darkSrc="/screenshot/servers-dark.png"
+				alt="服务器列表：传输类型与状态"
+			/>
 
 			<H2>统计卡与工具栏</H2>
 			<Ul>
@@ -33,6 +40,12 @@ export default function ServersZH() {
 				<Li>在设置 → 开发者中开启“服务器调试”后，会出现 Inspect 按钮，可在当前页或新窗口中查看原始数据。</Li>
 				<Li>当服务器状态异常（error/unhealthy 等）时，状态徽章会闪烁提醒。</Li>
 			</Ul>
+
+			<DocScreenshot
+				lightSrc="/screenshot/server-detail-light.png"
+				darkSrc="/screenshot/server-detail-dark.png"
+				alt="服务器详情：概览、实例与能力标签"
+			/>
 
 			<H2>导入与编辑</H2>
 			<H3>Uni-Import 流程</H3>

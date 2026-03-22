@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function Servers() {
 	return (
@@ -17,6 +18,12 @@ export default function Servers() {
 				it to enable or pause capabilities without touching configuration files
 				by hand.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/servers-light.png"
+				darkSrc="/screenshot/servers-dark.png"
+				alt="Servers grid with transport badges and status"
+			/>
 
 			<H2>Stats cards & toolbar</H2>
 			<Ul>
@@ -65,6 +72,12 @@ export default function Servers() {
 					out immediately.
 				</Li>
 			</Ul>
+
+			<DocScreenshot
+				lightSrc="/screenshot/server-detail-light.png"
+				darkSrc="/screenshot/server-detail-dark.png"
+				alt="Server detail overview with instances and capability tabs"
+			/>
 
 			<H2>Adding and editing servers</H2>
 			<H3>Uni-Import pipeline</H3>

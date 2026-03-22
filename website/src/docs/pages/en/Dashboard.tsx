@@ -1,6 +1,7 @@
 import { H2, H3, Li, P, Ul } from "../../components/Headings";
 import DocLayout from "../../layout/DocLayout";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function Dashboard() {
 	return (
@@ -16,6 +17,12 @@ export default function Dashboard() {
 				counts, and time-series resource telemetry so you can decide what to
 				investigate next before diving into the management views.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/dashboard-light.png"
+				darkSrc="/screenshot/dashboard-dark.png"
+				alt="MCPMate dashboard with status cards and metrics chart"
+			/>
 
 			<Callout type="info" title="Refresh cadence">
 				System status, profile, server, and client summaries poll the proxy every

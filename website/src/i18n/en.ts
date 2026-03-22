@@ -26,6 +26,11 @@ const en = {
 	"hero.stats.resource": "Resource Reduction",
 	"hero.stats.integration": "Integration Rate",
 	"hero.dashboard": "MCPMate Dashboard",
+	"hero.slide.dashboard": "Dashboard — system health and metrics",
+	"hero.slide.profiles": "Profiles — switch capability sets",
+	"hero.slide.servers": "Servers — connect and monitor MCP servers",
+	"hero.slide.clients": "Clients — manage editor integrations",
+	"hero.slide.market": "Market — browse the official MCP registry",
 
 	// Download
 	"download.title": "Quick Start",

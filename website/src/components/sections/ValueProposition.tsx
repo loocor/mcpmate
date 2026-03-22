@@ -21,18 +21,26 @@ const ValueProposition = () => {
                 <li>{t('value.creators.p3')}</li>
               </ul>
             </div>
-            <Card hoverEffect className="md:col-span-2 order-1 md:order-2 p-0">
-              <div className="aspect-video bg-slate-200 dark:bg-slate-700 rounded-lg flex items-center justify-center">
-                <span className="text-slate-400 dark:text-slate-500 text-sm">{t('value.creators.diagram')}</span>
+            <Card hoverEffect className="md:col-span-2 order-1 md:order-2 p-0 overflow-hidden">
+              <div className="aspect-video rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-800">
+                <img
+                  src="/why-creator-flow.jpg"
+                  alt={t('value.creators.diagram')}
+                  className="h-full w-full object-cover"
+                />
               </div>
             </Card>
           </div>
 
           {/* Team Leads */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-8 items-start">
-            <Card hoverEffect className="md:col-span-2 p-0">
-              <div className="aspect-video bg-slate-200 dark:bg-slate-700 rounded-lg flex items-center justify-center">
-                <span className="text-slate-400 dark:text-slate-500 text-sm">{t('value.managers.diagram')}</span>
+            <Card hoverEffect className="md:col-span-2 p-0 overflow-hidden">
+              <div className="aspect-video rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-800">
+                <img
+                  src="/why-team-consistency.jpg"
+                  alt={t('value.managers.diagram')}
+                  className="h-full w-full object-cover"
+                />
               </div>
             </Card>
             <div className="md:col-span-3">
@@ -55,9 +63,13 @@ const ValueProposition = () => {
                 <li>{t('value.owners.p3')}</li>
               </ul>
             </div>
-            <Card hoverEffect className="md:col-span-2 order-1 md:order-2 p-0">
-              <div className="aspect-video bg-slate-200 dark:bg-slate-700 rounded-lg flex items-center justify-center">
-                <span className="text-slate-400 dark:text-slate-500 text-sm">{t('value.owners.diagram')}</span>
+            <Card hoverEffect className="md:col-span-2 order-1 md:order-2 p-0 overflow-hidden">
+              <div className="aspect-video rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-800">
+                <img
+                  src="/why-enterprise-governance.jpg"
+                  alt={t('value.owners.diagram')}
+                  className="h-full w-full object-cover"
+                />
               </div>
             </Card>
           </div>

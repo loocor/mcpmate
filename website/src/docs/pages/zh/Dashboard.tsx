@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function DashboardZH() {
 	return (
@@ -9,6 +10,12 @@ export default function DashboardZH() {
 			<P>
 				控制台是进入 MCPMate 控制台后的默认页面，用于快速了解代理健康度、活跃的配置集、连通的服务器与客户端，以及 CPU/内存趋势，帮助你决定下一步的排查方向。
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/dashboard-light.png"
+				darkSrc="/screenshot/dashboard-dark.png"
+				alt="MCPMate 控制台：状态卡片与资源指标"
+			/>
 
 			<Callout type="info" title="刷新节奏">
 				系统状态、配置集、服务器、客户端卡片以 30 秒为周期轮询；底部资源图表每 10 秒采样一次，并将最近 60

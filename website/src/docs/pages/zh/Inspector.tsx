@@ -1,6 +1,7 @@
 import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { P } from "../../components/Headings";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function Inspector() {
 	return (
@@ -15,6 +16,12 @@ export default function Inspector() {
 				服务器。实时了解服务器行为，检查日志，诊断问题——所有这些都可以在
 				MCPMate 控制台内完成。
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/inspector-tool-call-light.png"
+				darkSrc="/screenshot/inspector-tool-call-dark.png"
+				alt="检视器：针对服务器能力发起工具调用"
+			/>
 
 			<h2>功能特性</h2>
 			<ul>

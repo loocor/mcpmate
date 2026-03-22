@@ -1,6 +1,7 @@
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function Profile() {
 	return (
@@ -16,6 +17,12 @@ export default function Profile() {
 				the dashboard provides a searchable catalog of every suit, quick stats,
 				and activation toggles that sync directly with the proxy.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/profiles-light.png"
+				darkSrc="/screenshot/profiles-dark.png"
+				alt="Profiles list with stats and default profile card"
+			/>
 
 			<Callout type="info" title="Default anchor suits">
 				Suits tagged with the <code>default_anchor</code> role are pinned to the

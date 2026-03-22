@@ -1,6 +1,7 @@
 import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { P } from "../../components/Headings";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function Inspector() {
 	return (
@@ -14,8 +15,14 @@ export default function Inspector() {
 			<P>
 				The MCPMate Inspector provides a powerful interface for monitoring and
 				debugging your MCP servers. Get real-time insights into server behavior,
-				examine logs, and diagnose issues—all from within the MCPMate console.
+				examine logs, and diagnose issues—all from within the 				MCPMate console.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/inspector-tool-call-light.png"
+				darkSrc="/screenshot/inspector-tool-call-dark.png"
+				alt="Inspector tool call panel against server capabilities"
+			/>
 
 			<h2>Features</h2>
 			<ul>

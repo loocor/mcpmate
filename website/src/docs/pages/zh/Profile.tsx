@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function ProfileZH() {
 	return (
@@ -11,6 +12,12 @@ export default function ProfileZH() {
 			<P>
 				配置集（内部称作 <em>suit</em>）用于把 MCP 服务器、工具、资源、提示词组合成命名预设。页面提供检索、统计、抽屉式编辑与启停按钮，所有操作都会立即同步到代理。
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/profiles-light.png"
+				darkSrc="/screenshot/profiles-dark.png"
+				alt="配置集列表与默认配置集卡片"
+			/>
 
 			<Callout type="info" title="默认锚点套件">
 				角色为 <code>default_anchor</code> 的套件会固定在列表顶部且不可停用，用于保证基础能力始终可用。

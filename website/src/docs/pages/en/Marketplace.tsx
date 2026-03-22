@@ -1,6 +1,7 @@
 import React from "react";
 import DocLayout from "../../layout/DocLayout";
-import { P } from "../../components/Headings";
+import { H3, P } from "../../components/Headings";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function Marketplace() {
 	return (
@@ -12,10 +13,16 @@ export default function Marketplace() {
 			}}
 		>
 			<P>
-			MCPMate includes an integrated marketplace that provides access to the
-			official MCP registry. Discover, install, and
-			configure new MCP servers without ever leaving the application.
+				MCPMate includes an integrated marketplace that provides access to the
+				official MCP registry. Discover, install, and
+				configure new MCP servers without ever leaving the 			application.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/market-light.png"
+				darkSrc="/screenshot/market-dark.png"
+				alt="Inline marketplace browsing the official MCP registry"
+			/>
 
 			<h2>Features</h2>
 			<ul>
@@ -55,7 +62,16 @@ export default function Marketplace() {
 				marketplace streamlines the entire process into a few clicks.
 			</P>
 
-			<P>Content coming soon with marketplace usage guide and screenshots.</P>
+			<H3>Add MCP Server wizard</H3>
+			<P>
+				Installing from a registry card opens the guided flow: configure transport,
+				preview the normalized manifest, then import into the desired profile.
+			</P>
+			<DocScreenshot
+				lightSrc="/screenshot/market-add-server-light.png"
+				darkSrc="/screenshot/market-add-server-dark.png"
+				alt="Add MCP Server stepper with core configuration form"
+			/>
 		</DocLayout>
 	);
 }

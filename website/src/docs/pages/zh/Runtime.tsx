@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function RuntimeZH() {
 	return (
@@ -10,6 +11,12 @@ export default function RuntimeZH() {
 				运行时页面展示 MCPMate 所管理的嵌入式环境（目前涵盖 <strong>uv</strong> 与{" "}
 				<strong>Bun</strong>）。可在此确认安装情况、清理缓存，并在测试新服务器或传输协议时重置能力缓存。
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/runtime-light.png"
+				darkSrc="/screenshot/runtime-dark.png"
+				alt="运行时：uv、Bun 与能力缓存统计"
+			/>
 
 			<H2>运行时卡片</H2>
 			<Ul>

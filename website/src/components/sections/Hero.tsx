@@ -1,30 +1,48 @@
 import { ArrowRight } from 'lucide-react';
 import { useLanguage } from '../LanguageProvider';
+import { useTheme } from '../ThemeProvider';
 import Button from '../ui/Button';
-import BrowserFrame from '../ui/BrowserFrame';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 const Hero = () => {
-  const carouselItems = [
-    {
-      id: 'servers',
-      title: 'Server Management',
-      image: '/hero-servers.png',
-      url: 'localhost:5173/servers'
-    },
-    {
-      id: 'client',
-      title: 'Client Configuration',
-      image: '/hero-client.png',
-      url: 'localhost:5173/clients/cursor'
-    },
-    {
-      id: 'profile',
-      title: 'Profile Overview',
-      image: '/hero-profile.png',
-      url: 'localhost:5173/profiles'
-    }
-  ];
+  const { theme } = useTheme();
+  const { t } = useLanguage();
+
+  const carouselItems = useMemo(
+    () => [
+      {
+        id: 'dashboard',
+        titleKey: 'hero.slide.dashboard' as const,
+        imageLight: '/screenshot/dashboard-light.png',
+        imageDark: '/screenshot/dashboard-dark.png',
+      },
+      {
+        id: 'profiles',
+        titleKey: 'hero.slide.profiles' as const,
+        imageLight: '/screenshot/profiles-light.png',
+        imageDark: '/screenshot/profiles-dark.png',
+      },
+      {
+        id: 'servers',
+        titleKey: 'hero.slide.servers' as const,
+        imageLight: '/screenshot/servers-light.png',
+        imageDark: '/screenshot/servers-dark.png',
+      },
+      {
+        id: 'clients',
+        titleKey: 'hero.slide.clients' as const,
+        imageLight: '/screenshot/clients-light.png',
+        imageDark: '/screenshot/clients-dark.png',
+      },
+      {
+        id: 'market',
+        titleKey: 'hero.slide.market' as const,
+        imageLight: '/screenshot/market-light.png',
+        imageDark: '/screenshot/market-dark.png',
+      },
+    ],
+    [],
+  );
 
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -44,12 +62,14 @@ const Hero = () => {
 
       window.scrollTo({
         top: offsetPosition,
-        behavior: 'smooth'
+        behavior: 'smooth',
       });
     }
   };
 
-  const { t } = useLanguage();
+  const active = carouselItems[activeIndex];
+  const slideAlt = t(active.titleKey);
+
   return (
     <div className="pt-24 md:pt-32 pb-16 md:pb-24 px-4 md:px-6">
       <div className="container mx-auto relative z-10">
@@ -100,26 +120,25 @@ const Hero = () => {
 
           <div className="relative">
             <div className="aspect-square max-w-xl mx-auto md:ml-auto rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 opacity-10 dark:opacity-20 blur-3xl absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-0"></div>
-            <div className="relative z-10">
-              <BrowserFrame 
-                url={carouselItems[activeIndex].url}
-                className="w-full md:max-w-[120%] md:-mr-8 transition-all duration-500"
-              >
+            <div className="relative z-10 w-full md:max-w-[120%] md:-mr-8 transition-all duration-500">
+              <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50 shadow-2xl ring-1 ring-slate-900/5 dark:border-slate-700 dark:bg-slate-950 dark:ring-white/10">
                 <img
-                  key={carouselItems[activeIndex].id}
-                  src={carouselItems[activeIndex].image}
-                  alt={carouselItems[activeIndex].title}
-                  className="w-full h-auto object-cover"
+                  key={`${active.id}-${theme}`}
+                  src={theme === 'dark' ? active.imageDark : active.imageLight}
+                  alt={slideAlt}
+                  className="w-full h-auto object-cover object-top"
                 />
-              </BrowserFrame>
+              </div>
 
-              <div className="flex justify-center mt-4 gap-2">
+              <div className="flex justify-center mt-4 gap-2 flex-wrap">
                 {carouselItems.map((item, index) => (
                   <button
                     key={item.id}
+                    type="button"
                     onClick={() => setActiveIndex(index)}
                     className={`h-2 rounded-full transition-all ${activeIndex === index ? 'w-6 bg-blue-500' : 'w-2 bg-slate-300 dark:bg-slate-600'}`}
-                    aria-label={`Go to slide ${index + 1}`}
+                    aria-label={t(item.titleKey)}
+                    aria-current={activeIndex === index ? 'true' : undefined}
                   />
                 ))}
               </div>

@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function SettingsZH() {
 	return (
@@ -9,6 +10,12 @@ export default function SettingsZH() {
 			<P>
 				设置页面集中管理控制台的外观、默认行为、市场来源、开发者开关以及后端端口。通过左右分栏的标签切换，可在不离开页面的情况下完成所有参数调整。
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/settings-general-light.png"
+				darkSrc="/screenshot/settings-general-dark.png"
+				alt="设置：通用标签与默认视图"
+			/>
 
 			<H2>标签概览</H2>
 			<Ul>
