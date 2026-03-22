@@ -3,7 +3,7 @@
 [中文](./README_CN.md) | **English**
 
 <p align="center">
-  <img src="./docs/assets/servers.png" alt="MCPMate Dashboard" width="100%">
+  <img src="./docs/assets/dashboard.png" alt="MCPMate dashboard (light)" width="100%">
 </p>
 
 > **One management center for all your MCP servers and AI clients.**
@@ -91,7 +91,11 @@ Cross-platform desktop application built with Tauri 2:
 
 ### Dashboard Overview
 
-![Dashboard](./docs/assets/dashboard.png)
+Light and dark themes use the same layout; status cards and the metrics chart adapt to the selected appearance.
+
+| Light                                           | Dark                                                |
+| ----------------------------------------------- | --------------------------------------------------- |
+| ![Dashboard light](./docs/assets/dashboard.png) | ![Dashboard dark](./docs/assets/dashboard-dark.png) |
 
 ### Server Management
 
@@ -126,6 +130,18 @@ Enable or disable individual tools within a profile.
 Configure management mode and capability source for each AI client.
 
 ![Client Configuration](./docs/assets/client-configuration.png)
+
+### MCP Market
+
+Browse the official MCP registry and install servers without leaving the app.
+
+![MCP Market](./docs/assets/market.png)
+
+### Tool Inspector
+
+Run quick tool calls against a connected server and inspect structured responses from the console.
+
+![Tool Inspector](./docs/assets/inspector-tool-call.png)
 
 ## Quick Start
 

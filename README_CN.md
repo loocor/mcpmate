@@ -3,7 +3,7 @@
 **中文** | [English](./README.md)
 
 <p align="center">
-  <img src="./docs/assets/servers.png" alt="MCPMate Dashboard" width="100%">
+  <img src="./docs/assets/dashboard.png" alt="MCPMate 控制台（浅色）" width="100%">
 </p>
 
 > **一个管理所有 MCP 服务器和 AI 客户端的中心。**
@@ -91,7 +91,11 @@ runtime list
 
 ### Dashboard 概览
 
-![Dashboard](./docs/assets/dashboard.png)
+浅色与深色主题布局一致；状态卡片与资源图表会随主题切换配色。
+
+| 浅色                                            | 深色                                                |
+| ----------------------------------------------- | --------------------------------------------------- |
+| ![Dashboard light](./docs/assets/dashboard.png) | ![Dashboard dark](./docs/assets/dashboard-dark.png) |
 
 ### 服务器管理
 
@@ -126,6 +130,18 @@ runtime list
 为每个 AI 客户端配置管理模式和能力来源。
 
 ![Client Configuration](./docs/assets/client-configuration.png)
+
+### MCP 市场
+
+在应用内浏览官方 MCP 注册中心并安装服务器。
+
+![MCP Market](./docs/assets/market.png)
+
+### 工具检视器
+
+针对已连接服务器快速发起工具调用，并在控制台查看结构化返回。
+
+![Tool Inspector](./docs/assets/inspector-tool-call.png)
 
 ## 快速开始
 
