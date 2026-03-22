@@ -4,7 +4,6 @@
 use super::common::get_database;
 use crate::{
     api::handlers::ApiError,
-    clients::{ClientRenderOptions, ConfigMode},
     config::{
         database::Database,
         models::{Profile, ProfileTool},
@@ -103,54 +102,10 @@ pub async fn sync_client_configurations(
         .cloned()
         .ok_or_else(|| ApiError::InternalError("Client configuration service unavailable".to_string()))?;
 
-    let descriptors = client_service
-        .list_clients(false)
+    client_service
+        .sync_native_profile_to_transparent_clients(&profile_id)
         .await
-        .map_err(|err| ApiError::InternalError(format!("Failed to enumerate clients: {}", err)))?;
-
-    let mut successes = Vec::new();
-    let mut failures = std::collections::HashMap::new();
-
-    for descriptor in descriptors {
-        let client_id = descriptor.template.identifier.clone();
-        let options = ClientRenderOptions {
-            client_id: client_id.clone(),
-            mode: ConfigMode::Native,
-            profile_id: Some(profile_id.clone()),
-            server_ids: None,
-            dry_run: false,
-        };
-
-        match client_service.execute_render(options).await {
-            Ok(result) => {
-                tracing::debug!("Applied configuration for client {}", client_id);
-                if let crate::clients::TemplateExecutionResult::Applied {
-                    backup_path: Some(path),
-                    ..
-                } = result.execution
-                {
-                    tracing::debug!("Created backup for {} at {}", client_id, path);
-                }
-                successes.push(client_id);
-            }
-            Err(err) => {
-                tracing::warn!("Failed to apply configuration for client {}: {}", client_id, err);
-                failures.insert(client_id, err.to_string());
-            }
-        }
-    }
-
-    tracing::info!(
-        "Synced configurations to {} clients, {} failed",
-        successes.len(),
-        failures.len()
-    );
-
-    if !failures.is_empty() {
-        for (client, error) in failures.iter() {
-            tracing::warn!("Client sync failure: {} => {}", client, error);
-        }
-    }
+        .map_err(|err| ApiError::InternalError(format!("Failed to sync transparent client configurations: {err}")))?;
 
     Ok(())
 }
