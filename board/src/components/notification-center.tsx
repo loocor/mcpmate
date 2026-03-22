@@ -15,6 +15,11 @@ import {
 	XCircle,
 } from "lucide-react";
 import { Badge } from "./ui/badge";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "./ui/tooltip";
 import { useNotify } from "../lib/notify";
 
 export function NotificationCenter() {
@@ -35,27 +40,36 @@ export function NotificationCenter() {
 		}
 	}
 
+	const notificationsLabel = t("notifications.title");
+
 	return (
 		<DropdownMenu open={isOpen} onOpenChange={setOpen}>
-			<DropdownMenuTrigger asChild>
-				<button
-					type="button"
-					className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-					aria-label={t("notifications.title")}
-				>
-					<div className="relative">
-						<BellRing size={20} />
-						{unreadCount > 0 ? (
-							<Badge
-								className="absolute -top-1 -right-1 h-4 min-w-4 px-1 p-0 flex items-center justify-center"
-								variant="destructive"
-							>
-								{unreadCount > 9 ? "9+" : unreadCount}
-							</Badge>
-						) : null}
-					</div>
-				</button>
-			</DropdownMenuTrigger>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<DropdownMenuTrigger asChild>
+						<button
+							type="button"
+							className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+							aria-label={notificationsLabel}
+						>
+							<div className="relative">
+								<BellRing size={20} />
+								{unreadCount > 0 ? (
+									<Badge
+										className="absolute -top-1 -right-1 h-4 min-w-4 px-1 p-0 flex items-center justify-center"
+										variant="destructive"
+									>
+										{unreadCount > 9 ? "9+" : unreadCount}
+									</Badge>
+								) : null}
+							</div>
+						</button>
+					</DropdownMenuTrigger>
+				</TooltipTrigger>
+				<TooltipContent side="bottom" align="end">
+					{notificationsLabel}
+				</TooltipContent>
+			</Tooltip>
 			<DropdownMenuContent
 				align="end"
 				className="w-[360px] max-h-[60vh] overflow-auto p-0"

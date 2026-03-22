@@ -2,16 +2,16 @@ import { ArrowLeft, BookOpen, MessageSquare, Moon, Sun } from "lucide-react";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
+import { openFeedbackEmail } from "../../lib/feedback-email";
 import { useAppStore } from "../../lib/store";
 import { websiteDocsLocale } from "../../lib/website-lang";
 import { NotificationCenter } from "../notification-center";
-
-const FEEDBACK_EMAIL = "MCPMate Team <info@mcpmate.io>";
-const FEEDBACK_SUBJECT = encodeURIComponent("MCPMate preview feedback");
-const FEEDBACK_BODY = encodeURIComponent(
-	"Hi MCPMate team,\n\nDescribe your feedback here:\n\n\n\n— Sent from MCPMate preview\n",
-);
-const FEEDBACK_MAILTO = `mailto:${FEEDBACK_EMAIL}?subject=${FEEDBACK_SUBJECT}&body=${FEEDBACK_BODY}`;
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "../ui/tooltip";
 
 /** Public marketing site; doc paths mirror `website/src/docs/nav.ts` (`/docs/:locale/:page`). */
 const WEBSITE_DOCS_ORIGIN = "https://mcp.umate.ai";
@@ -79,20 +79,7 @@ export function Header() {
 		setTheme(theme === "dark" ? "light" : "dark");
 	}, [theme, setTheme]);
 
-	const handleFeedbackClick = useCallback(async () => {
-		try {
-			if (typeof window !== "undefined" && "__TAURI__" in window) {
-				const opener = await import("@tauri-apps/plugin-opener");
-				await opener.openUrl(FEEDBACK_MAILTO);
-				return;
-			}
-		} catch (error) {
-			console.error("Failed to open feedback email", error);
-		}
-		if (typeof window !== "undefined") {
-			window.open(FEEDBACK_MAILTO, "_blank", "noopener,noreferrer");
-		}
-	}, []);
+	const handleFeedbackClick = useCallback(() => openFeedbackEmail(), []);
 
 	const handleDocsClick = useCallback(() => {
 		const locale = websiteDocsLocale(i18n.language);
@@ -114,6 +101,16 @@ export function Header() {
 	const handleBack = () => {
 		navigate(-1);
 	};
+
+	const feedbackLabel = t("header.sendFeedback", {
+		defaultValue: "Send feedback via email",
+	});
+	const docsLabel = t("header.openDocs", {
+		defaultValue: "Open documentation",
+	});
+	const themeLabel = t("header.toggleTheme", {
+		defaultValue: "Toggle theme",
+	});
 
 	return (
 		<header
@@ -141,42 +138,51 @@ export function Header() {
 				</div>
 
 				{/* Right side: Theme toggle + Notification center */}
-				<div className="flex items-center space-x-4">
-					<button
-						type="button"
-						onClick={handleFeedbackClick}
-						className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-						aria-label={t("header.sendFeedback", {
-							defaultValue: "Send feedback via email",
-						})}
-					>
-						<MessageSquare size={20} />
-					</button>
-					<button
-						type="button"
-						onClick={handleDocsClick}
-						className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-						aria-label={t("header.openDocs", {
-							defaultValue: "Open documentation",
-						})}
-					>
-						<BookOpen size={20} />
-					</button>
-					{/* Theme toggle button */}
-					<button
-						type="button"
-						onClick={toggleTheme}
-						aria-label={t("header.toggleTheme", {
-							defaultValue: "Toggle theme",
-						})}
-						className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-					>
-						{theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
-					</button>
+				<TooltipProvider delayDuration={400}>
+					<div className="flex items-center space-x-4">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={handleFeedbackClick}
+									className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+									aria-label={feedbackLabel}
+								>
+									<MessageSquare size={20} />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">{feedbackLabel}</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={handleDocsClick}
+									className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+									aria-label={docsLabel}
+								>
+									<BookOpen size={20} />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">{docsLabel}</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									onClick={toggleTheme}
+									aria-label={themeLabel}
+									className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+								>
+									{theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">{themeLabel}</TooltipContent>
+						</Tooltip>
 
-					{/* Notification center */}
-					<NotificationCenter />
-				</div>
+						<NotificationCenter />
+					</div>
+				</TooltipProvider>
 			</div>
 		</header>
 	);

@@ -58,8 +58,8 @@ const Roadmap = () => {
         />
 
         <RoadmapItem
-          title="MCPMate Desktop - Alpha"
-          description="First alpha release of the cross-platform desktop application with basic server management capabilities."
+          title="MCPMate Desktop - Beta"
+          description="First beta release of the cross-platform desktop application with basic server management capabilities."
           date="Q3 2025 - In Progress"
         />
 

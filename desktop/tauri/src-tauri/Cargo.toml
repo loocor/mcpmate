@@ -2,7 +2,7 @@
 name = "mcpmate-tauri"
 version = "0.1.0"
 edition = "2024"
-description = "MCPMate desktop alpha shell built with Tauri"
+description = "MCPMate desktop beta shell built with Tauri"
 authors = ["Loocor <loocor@gmail.com>"]
 default-run = "mcpmate"
 

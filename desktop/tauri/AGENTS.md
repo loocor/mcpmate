@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MCPMate Desktop (Tauri) is a cross-platform desktop application that wraps the MCPMate backend and dashboard. It serves as an alpha shell for Windows and Linux before fully native clients ship. The key innovation is a streaming reverse proxy for third-party market portals (like https://mcp.so) embedded in an iframe.
+MCPMate Desktop (Tauri) is a cross-platform desktop application that wraps the MCPMate backend and dashboard. It serves as a beta shell for Windows and Linux before fully native clients ship. The key innovation is a streaming reverse proxy for third-party market portals (like https://mcp.so) embedded in an iframe.
 
 ## Architecture
 

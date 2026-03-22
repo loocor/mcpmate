@@ -1,4 +1,4 @@
-# MCPMate Desktop Alpha (Tauri Shell)
+# MCPMate Desktop Beta (Tauri Shell)
 
 This crate provides an early Tauri wrapper around the existing MCPMate backend so that we can validate desktop data-directory handling, network permissions, and database access on Windows and Linux before the fully native clients ship.
 

@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Outlet, useNavigate } from "react-router-dom";
+import { openFeedbackEmail } from "../../lib/feedback-email";
 import { isTauriEnvironmentSync } from "../../lib/platform";
 import { useAppStore } from "../../lib/store";
 import { websiteLangParam } from "../../lib/website-lang";
@@ -130,6 +131,10 @@ export function Layout() {
 	const termsHref = `https://mcp.umate.ai/terms?lang=${langParam}`;
 	const privacyHref = `https://mcp.umate.ai/privacy?lang=${langParam}`;
 
+	const handleFooterFeedbackClick = useCallback(() => {
+		void openFeedbackEmail();
+	}, []);
+
 	return (
 		<div className="min-h-screen">
 			<Sidebar />
@@ -152,7 +157,7 @@ export function Layout() {
 								rel="noreferrer"
 							>
 								{t("layout.copyright", {
-									defaultValue: "© 2025 MCPMate",
+									defaultValue: "© 2026 MCPMate",
 								})}
 							</a>
 							<div className="flex items-center gap-3">
@@ -176,26 +181,23 @@ export function Layout() {
 							</div>
 						</div>
 						<div className="flex items-center gap-2">
-							<a
-								className="inline-flex items-center gap-1 hover:underline"
-								href="https://forms.gle/zbZxTEJVpoVhpRE58"
-								target="_blank"
-								rel="noreferrer"
-								aria-label={t("layout.feedback", {
-									defaultValue: "Feedback Survey",
+							<button
+								type="button"
+								className="inline-flex items-center gap-1 hover:underline text-inherit p-0 border-0 bg-transparent cursor-pointer"
+								onClick={handleFooterFeedbackClick}
+								aria-label={t("header.sendFeedback", {
+									defaultValue: "Send feedback via email",
 								})}
-								title={t("layout.feedback", {
-									defaultValue: "Feedback Survey",
+								title={t("header.sendFeedback", {
+									defaultValue: "Send feedback via email",
 								})}
 							>
 								{/* Fallback emoji icon to avoid extra imports */}
 								<span role="img" aria-hidden="true">
 									💬
 								</span>
-								<span>
-									{t("layout.feedback", { defaultValue: "Feedback Survey" })}
-								</span>
-							</a>
+								<span>{t("layout.feedback", { defaultValue: "Feedback" })}</span>
+							</button>
 						</div>
 					</footer>
 				</div>

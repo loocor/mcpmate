@@ -573,7 +573,7 @@ fn show_about_dialog(app_handle: &tauri::AppHandle) {
     let version = pkg.version.to_string();
     let tauri_version = tauri::VERSION;
     let message = format!(
-        "MCPMate Desktop Alpha\n\nVersion: {}\nTauri: {}\n\nAuto-update will activate once CDN hosting & signing pipeline are live.",
+        "MCPMate Desktop Beta\n\nVersion: {}\nTauri: {}\n\nAuto-update will activate once CDN hosting & signing pipeline are live.",
         version, tauri_version
     );
 

@@ -109,7 +109,7 @@ export function Sidebar() {
 						<span className="font-bold text-xl dark:text-white">
 							{t("layout.brand", { defaultValue: "MCPMate" })}{" "}
 							<sup className="text-[9px] text-red-500">
-								{t("layout.alpha", { defaultValue: "Alpha" })}
+								{t("layout.alpha", { defaultValue: "Beta" })}
 							</sup>
 						</span>
 					)}
