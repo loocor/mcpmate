@@ -1,19 +1,18 @@
 import i18n from "i18next";
 import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
-// 导入所有翻译文件
+import { inspectorTranslations } from "../../components/i18n/inspector";
+import { accountTranslations } from "../../pages/account/i18n";
 import { clientsTranslations } from "../../pages/clients/i18n";
 import { dashboardTranslations } from "../../pages/dashboard/i18n";
 import { marketTranslations } from "../../pages/market/i18n";
 import { profilesTranslations } from "../../pages/profiles/i18n";
 import { runtimeTranslations } from "../../pages/runtime/i18n";
-import { settingsTranslations } from "../../pages/settings/i18n";
 import { serversTranslations } from "../../pages/servers/i18n";
-import { inspectorTranslations } from "../../components/i18n/inspector";
+import { settingsTranslations } from "../../pages/settings/i18n";
 import { commonTranslations } from "./common";
 import { navigationTranslations } from "./navigation";
 
-// 基础翻译资源
 const baseResources = {
 	en: {
 		translation: {
@@ -35,16 +34,18 @@ const baseResources = {
 	},
 };
 
-// 动态加载翻译文件的函数
-export const loadTranslations = (namespace: string, translations: any) => {
-	// 为每种语言添加翻译
+/** Per-language resource trees merged into an i18next namespace. */
+export type LazyTranslationModule = Record<string, Record<string, unknown>>;
+
+export const loadTranslations = (
+	namespace: string,
+	translations: LazyTranslationModule,
+) => {
 	Object.keys(translations).forEach((lang) => {
-		// 始终添加/更新资源束，deep=true, overwrite=true 确保正确合并
 		i18n.addResourceBundle(lang, namespace, translations[lang], true, true);
 	});
 };
 
-// 页面特定的翻译加载器
 export const loadPageTranslations = {
 	dashboard: () => {
 		loadTranslations("dashboard", dashboardTranslations);
@@ -54,6 +55,9 @@ export const loadPageTranslations = {
 	},
 	settings: () => {
 		loadTranslations("settings", settingsTranslations);
+	},
+	account: () => {
+		loadTranslations("account", accountTranslations);
 	},
 	market: () => {
 		loadTranslations("market", marketTranslations);
@@ -72,7 +76,6 @@ export const loadPageTranslations = {
 	},
 };
 
-// 初始化 i18n
 i18n
 	.use(LanguageDetector)
 	.use(initReactI18next)
@@ -89,7 +92,6 @@ i18n
 		},
 	});
 
-// 导出语言支持相关的类型和常量
 export type SupportedI18nCode = "en" | "zh-CN" | "ja-JP";
 
 export const SUPPORTED_LANGUAGES = [

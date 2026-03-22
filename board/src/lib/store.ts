@@ -1,6 +1,71 @@
 import { create } from "zustand";
+import {
+	MARKET_PORTAL_MAP,
+	type MarketPortalDefinition,
+} from "../pages/market/portal-registry";
 import { isTauriEnvironmentSync } from "./platform";
 import type { Theme } from "./types";
+
+/** Persisted third-party market portal metadata (re-export shape for market UI). */
+export type MarketPortalMeta = MarketPortalDefinition;
+
+const DEFAULT_MARKET_PORTALS: Record<string, MarketPortalMeta> = {};
+
+function cloneMarketPortals(
+	portals: Record<string, MarketPortalMeta>,
+): Record<string, MarketPortalMeta> {
+	const out: Record<string, MarketPortalMeta> = {};
+	for (const [k, v] of Object.entries(portals)) {
+		out[k] = { ...v };
+	}
+	return out;
+}
+
+function sanitizeMarketPortalMeta(
+	rawId: string,
+	value: unknown,
+	fallback: MarketPortalMeta | undefined,
+): MarketPortalMeta | null {
+	if (value === null || value === undefined) {
+		return fallback ? { ...fallback } : null;
+	}
+	if (typeof value !== "object") {
+		return fallback ? { ...fallback } : null;
+	}
+	const o = value as Record<string, unknown>;
+	const id = typeof o.id === "string" ? o.id : rawId;
+	const label =
+		typeof o.label === "string" ? o.label : (fallback?.label ?? id);
+	const remoteOrigin =
+		typeof o.remoteOrigin === "string"
+			? o.remoteOrigin
+			: (fallback?.remoteOrigin ?? "");
+	const proxyPath =
+		typeof o.proxyPath === "string"
+			? o.proxyPath
+			: (fallback?.proxyPath ?? "");
+	const adapter =
+		typeof o.adapter === "string"
+			? o.adapter
+			: (fallback?.adapter ?? "iframe");
+	if (!remoteOrigin || !proxyPath) {
+		return fallback ? { ...fallback, id } : null;
+	}
+	const meta: MarketPortalMeta = {
+		id,
+		label,
+		remoteOrigin,
+		proxyPath,
+		adapter,
+	};
+	if (typeof o.favicon === "string") {
+		meta.favicon = o.favicon;
+	}
+	if (typeof o.proxyFavicon === "string") {
+		meta.proxyFavicon = o.proxyFavicon;
+	}
+	return meta;
+}
 
 export type DashboardDefaultView = "list" | "grid";
 export type DashboardAppMode = "express" | "expert";
@@ -9,7 +74,8 @@ export type ClientDefaultMode = "hosted" | "transparent";
 export type ClientListDefaultFilter = "all" | "detected" | "managed";
 export type ClientBackupStrategy = "keep_n" | "keep_last" | "none";
 export type MenuBarIconMode = "runtime" | "hidden";
-export type DefaultMarket = "official";
+/** Default MCP Market portal selection (`official` or a registered third-party id). */
+export type DefaultMarket = string;
 
 export interface DashboardSettings {
 	defaultView: DashboardDefaultView;
@@ -31,6 +97,7 @@ export interface DashboardSettings {
 	enableMarketBlacklist: boolean;
 	showApiDocsMenu: boolean;
 	defaultMarket: DefaultMarket;
+	marketPortals: Record<string, MarketPortalMeta>;
 }
 
 export interface MarketBlacklistEntry {
@@ -78,8 +145,9 @@ const defaultDashboardSettings: DashboardSettings = {
 	clientBackupLimit: 5,
 	marketBlacklist: [],
 	enableMarketBlacklist: false,
-	showApiDocsMenu: false,
+	showApiDocsMenu: true,
 	defaultMarket: "official",
+	marketPortals: {},
 };
 
 function normalizeDashboardSettings(
@@ -161,12 +229,30 @@ function normalizeDashboardSettings(
 		next.enableMarketBlacklist = patch.enableMarketBlacklist;
 	}
 
-	// Accept any known portal id (built-in or merged) in addition to "official"
+	if (patch.marketPortals && typeof patch.marketPortals === "object") {
+		const merged = cloneMarketPortals(next.marketPortals);
+		for (const [rawId, value] of Object.entries(patch.marketPortals)) {
+			const fallback = merged[rawId] ?? DEFAULT_MARKET_PORTALS[rawId];
+			const sanitized = sanitizeMarketPortalMeta(rawId, value, fallback);
+			if (!sanitized) {
+				continue;
+			}
+			if (sanitized.id !== rawId) {
+				delete merged[rawId];
+			}
+			merged[sanitized.id] = sanitized;
+		}
+		next.marketPortals = merged;
+	}
+
 	if (patch.defaultMarket) {
 		if (patch.defaultMarket === "official") {
 			next.defaultMarket = "official";
-		} else if (MARKET_PORTAL_MAP[patch.defaultMarket as string]) {
-			next.defaultMarket = patch.defaultMarket as any;
+		} else if (
+			MARKET_PORTAL_MAP[patch.defaultMarket] ||
+			next.marketPortals[patch.defaultMarket]
+		) {
+			next.defaultMarket = patch.defaultMarket;
 		}
 	}
 
@@ -223,20 +309,6 @@ function normalizeDashboardSettings(
 		next.marketBlacklist = Array.from(unique.values()).sort(
 			(a, b) => b.hiddenAt - a.hiddenAt,
 		);
-	}
-
-	if (patch.marketPortals && typeof patch.marketPortals === "object") {
-		const merged = cloneMarketPortals(next.marketPortals);
-		for (const [rawId, value] of Object.entries(patch.marketPortals)) {
-			const fallback = merged[rawId] ?? DEFAULT_MARKET_PORTALS[rawId];
-			const sanitized = sanitizeMarketPortalMeta(rawId, value, fallback);
-			if (!sanitized) continue;
-			if (sanitized.id !== rawId) {
-				delete merged[rawId];
-			}
-			merged[sanitized.id] = sanitized;
-		}
-		next.marketPortals = merged;
 	}
 
 	return next;

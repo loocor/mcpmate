@@ -76,6 +76,7 @@ function App() {
 						<Route path="clients" element={<ClientsPage />} />
 						<Route path="clients/:identifier" element={<ClientDetailPage />} />
 						<Route path="runtime" element={<RuntimePage />} />
+						<Route path="account" element={<Navigate to="/" replace />} />
 						<Route path="settings" element={<SettingsPage />} />
 
 						<Route path="404" element={<NotFoundPage />} />

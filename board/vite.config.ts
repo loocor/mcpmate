@@ -1,8 +1,4 @@
-import type {
-	ClientRequest,
-	IncomingMessage,
-	ServerResponse,
-} from "node:http";
+import type { ClientRequest } from "node:http";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
 import type { Plugin, ViteDevServer } from "vite";

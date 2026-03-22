@@ -16,6 +16,7 @@ import { NavLink } from "react-router-dom";
 import { useAppStore } from "../../lib/store";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { AccountSessionDialog } from "./account-session-dialog";
 
 interface SidebarLinkProps {
 	to: string;
@@ -120,11 +121,11 @@ export function Sidebar() {
 						aria-label={
 							sidebarOpen
 								? t("layout.collapseSidebar", {
-										defaultValue: "Collapse sidebar",
-									})
+									defaultValue: "Collapse sidebar",
+								})
 								: t("layout.expandSidebar", {
-										defaultValue: "Expand sidebar",
-									})
+									defaultValue: "Expand sidebar",
+								})
 						}
 					>
 						{sidebarOpen ? (
@@ -182,6 +183,8 @@ export function Sidebar() {
 								t("nav.apiDocs", { defaultValue: "API Docs" })}
 						</ExternalSidebarLink>
 					)}
+
+					<AccountSessionDialog sidebarOpen={sidebarOpen} />
 
 					<SidebarLink to="/settings" icon={<Settings size={20} />}>
 						{sidebarOpen &&

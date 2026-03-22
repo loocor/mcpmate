@@ -9,6 +9,7 @@ export const navigationTranslations = {
 			market: "Market",
 			runtime: "Runtime",
 			settings: "Settings",
+			account: "Account",
 			apiDocs: "API Docs",
 		},
 		layout: {
@@ -36,6 +37,7 @@ export const navigationTranslations = {
 				runtime: "Runtime",
 				system: "System",
 				settings: "Settings",
+				account: "Account",
 			},
 		},
 		notifications: {
@@ -55,6 +57,7 @@ export const navigationTranslations = {
 			market: "服务源",
 			runtime: "运行时",
 			settings: "偏好设置",
+			account: "账户",
 			apiDocs: "API 文档",
 		},
 		layout: {
@@ -82,6 +85,7 @@ export const navigationTranslations = {
 				runtime: "运行时",
 				system: "系统",
 				settings: "偏好设置",
+				account: "账户",
 			},
 		},
 		notifications: {
@@ -101,6 +105,7 @@ export const navigationTranslations = {
 			market: "マーケット",
 			runtime: "ランタイム",
 			settings: "設定",
+			account: "アカウント",
 			apiDocs: "API ドキュメント",
 		},
 		layout: {
@@ -128,6 +133,7 @@ export const navigationTranslations = {
 				runtime: "ランタイム",
 				system: "システム",
 				settings: "設定",
+				account: "アカウント",
 			},
 		},
 		notifications: {

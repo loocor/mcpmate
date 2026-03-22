@@ -3,13 +3,14 @@ import { useTranslation } from "react-i18next";
 import { Outlet, useNavigate } from "react-router-dom";
 import { isTauriEnvironmentSync } from "../../lib/platform";
 import { useAppStore } from "../../lib/store";
+import { websiteLangParam } from "../../lib/website-lang";
 import { Header } from "./header";
 import { Sidebar } from "./sidebar";
 
 export function Layout() {
 	const { sidebarOpen, theme, setSidebarOpen } = useAppStore();
 	const navigate = useNavigate();
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 
 	// Apply theme and react to changes (system/manual)
 	React.useEffect(() => {
@@ -123,27 +124,19 @@ export function Layout() {
 		return () => window.removeEventListener("resize", handler);
 	}, [sidebarOpen, setSidebarOpen]);
 
-	// Footer labels (Terms / Privacy) localized inline
-	const { i18n } = useTranslation();
-	const lang = (i18n.language || "").toLowerCase();
 	const termsLabel = t("layout.terms", { defaultValue: "Terms" });
 	const privacyLabel = t("layout.privacy", { defaultValue: "Privacy" });
-	const langParam = lang.startsWith("zh")
-		? "zh"
-		: lang.startsWith("ja")
-			? "ja"
-			: "en";
-	const termsHref = `https://mcpmate.io/terms?lang=${langParam}`;
-	const privacyHref = `https://mcpmate.io/privacy?lang=${langParam}`;
+	const langParam = websiteLangParam(i18n.language);
+	const termsHref = `https://mcp.umate.ai/terms?lang=${langParam}`;
+	const privacyHref = `https://mcp.umate.ai/privacy?lang=${langParam}`;
 
 	return (
 		<div className="min-h-screen">
 			<Sidebar />
 			<Header />
 			<main
-				className={`pt-16 transition-all duration-300 ease-in-out ${
-					sidebarOpen ? "ml-64" : "ml-16"
-				}`}
+				className={`pt-16 transition-all duration-300 ease-in-out ${sidebarOpen ? "ml-64" : "ml-16"
+					}`}
 			>
 				{/* Make main area a flex column that occupies viewport height minus header, so footer can stick to bottom when content is short */}
 				<div className="w-full p-4 min-h-[calc(100vh-4rem)] flex flex-col">
@@ -154,7 +147,7 @@ export function Layout() {
 						<div className="flex items-center gap-4 flex-wrap">
 							<a
 								className="hover:underline"
-								href="https://mcpmate.io"
+								href="https://mcp.umate.ai"
 								target="_blank"
 								rel="noreferrer"
 							>

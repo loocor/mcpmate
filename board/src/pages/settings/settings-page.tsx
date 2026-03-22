@@ -150,8 +150,8 @@ const BACKUP_STRATEGY_CONFIG = [
 ];
 
 interface ShellPreferencesResponse {
-	menu_bar_icon_mode: MenuBarIconMode;
-	show_dock_icon: boolean;
+	menuBarIconMode: MenuBarIconMode;
+	showDockIcon: boolean;
 }
 
 const MENU_BAR_ICON_OPTIONS: ReadonlyArray<{
@@ -159,17 +159,17 @@ const MENU_BAR_ICON_OPTIONS: ReadonlyArray<{
 	labelKey: string;
 	fallback: string;
 }> = [
-	{
-		value: "runtime",
-		labelKey: "settings:options.menuBar.runtime",
-		fallback: "Visible When Running",
-	},
-	{
-		value: "hidden",
-		labelKey: "settings:options.menuBar.hidden",
-		fallback: "Hidden",
-	},
-];
+		{
+			value: "runtime",
+			labelKey: "settings:options.menuBar.runtime",
+			fallback: "Visible When Running",
+		},
+		{
+			value: "hidden",
+			labelKey: "settings:options.menuBar.hidden",
+			fallback: "Hidden",
+		},
+	];
 
 export function SettingsPage() {
 	usePageTranslations("settings");
@@ -205,6 +205,9 @@ export function SettingsPage() {
 		typeof window !== "undefined" && window.location?.origin?.includes(":")
 			? window.location.origin
 			: "http://localhost:5173";
+
+	const effectiveApiPort = typeof apiPort === "number" ? apiPort : 8080;
+	const effectiveMcpPort = typeof mcpPort === "number" ? mcpPort : 8000;
 
 	const loadRuntimePorts = useCallback(async () => {
 		setLoadingPorts(true);
@@ -460,8 +463,8 @@ export function SettingsPage() {
 					)) ?? null;
 				if (!cancelled && prefs) {
 					updateDashboardSettings({
-						menuBarIconMode: prefs.menu_bar_icon_mode,
-						showDockIcon: prefs.show_dock_icon,
+						menuBarIconMode: prefs.menuBarIconMode,
+						showDockIcon: prefs.showDockIcon,
 					});
 				}
 			} catch (error) {
@@ -716,8 +719,7 @@ export function SettingsPage() {
 													<h3 className="text-base font-medium">
 														{t("settings:appearance.menuBarTitle", {
 															defaultValue: "Menu Bar Icon",
-														})}{" "}
-														<sup>{t("wipTag", { defaultValue: "(WIP)" })}</sup>
+														})}
 													</h3>
 													<p className="text-sm text-slate-500">
 														{t("settings:appearance.menuBarDescription", {
@@ -760,14 +762,13 @@ export function SettingsPage() {
 												<div className="space-y-0.5">
 													<h3 className="text-base font-medium">
 														{t("settings:appearance.dockTitle", {
-															defaultValue: "Dock Icon",
-														})}{" "}
-														<sup>{t("wipTag", { defaultValue: "(WIP)" })}</sup>
+															defaultValue: "Dock / Taskbar Icon",
+														})}
 													</h3>
 													<p className="text-sm text-slate-500">
 														{t("settings:appearance.dockDescription", {
 															defaultValue:
-																"Display MCPMate in the macOS Dock or run silently from the menu bar.",
+																"Show MCPMate in the Dock (macOS), taskbar (Windows/Linux), or run from the tray or menu bar only.",
 														})}
 													</p>
 												</div>
@@ -783,7 +784,7 @@ export function SettingsPage() {
 												<p className="text-xs leading-relaxed text-slate-500">
 													{t("settings:appearance.dockHiddenNotice", {
 														defaultValue:
-															"The Dock icon is hidden. The menu bar icon will remain visible so you can reopen MCPMate.",
+															"The Dock or taskbar entry is hidden. The tray icon stays visible so you can reopen MCPMate.",
 													})}
 												</p>
 											)}
@@ -876,7 +877,6 @@ export function SettingsPage() {
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-4">
-								{/* {t("settings:clients.modeTitle", { defaultValue: "Client Application Mode" })} */}
 								<div className="flex items-center justify-between gap-4">
 									<div className="space-y-0.5">
 										<h3 className="text-base font-medium">
@@ -906,8 +906,6 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								{/* {t("settings:clients.backupStrategyTitle", { defaultValue: "Client Backup Strategy" })} */}
-								{/* Default Client Visibility */}
 								<div className="flex items-center justify-between gap-4">
 									<div className="space-y-0.5">
 										<h3 className="text-base font-medium">
@@ -937,7 +935,6 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								{/* {t("settings:clients.backupStrategyTitle", { defaultValue: "Client Backup Strategy" })} */}
 								<div className="flex items-center justify-between gap-4">
 									<div className="space-y-0.5">
 										<h3 className="text-base font-medium">
@@ -967,7 +964,6 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								{/* {t("settings:clients.backupLimitTitle", { defaultValue: "Maximum Backup Copies" })} */}
 								<div className="flex items-center justify-between gap-4">
 									<div className="space-y-0.5">
 										<h3 className="text-base font-medium">
@@ -1085,13 +1081,13 @@ export function SettingsPage() {
 									<p className="text-xs text-slate-500">
 										{isTauriShell
 											? t("settings:system.helperTauri", {
-													defaultValue:
-														"Tauri: Apply ports and restart backend in-place.",
-												})
+												defaultValue:
+													"Tauri: Apply ports and restart backend in-place.",
+											})
 											: t("settings:system.helperWeb", {
-													defaultValue:
-														"Web: Change ports then restart the backend process externally.",
-												})}
+												defaultValue:
+													"Web: Change ports then restart the backend process externally.",
+											})}
 									</p>
 									<div className="space-x-2">
 										<Button
@@ -1134,9 +1130,9 @@ export function SettingsPage() {
 																"mcpmate.system.mcp_port",
 																String(mcpPort),
 															);
-			} catch {
-				// Cache read is best-effort
-			}
+														} catch {
+															// LocalStorage write is best-effort
+														}
 													} finally {
 														setApplyBusy(false);
 													}
@@ -1162,8 +1158,8 @@ export function SettingsPage() {
 											{applyBusy
 												? "Restarting…"
 												: t("settings:system.apply", {
-														defaultValue: "Apply & Restart",
-													})}
+													defaultValue: "Apply & Restart",
+												})}
 										</Button>
 									</div>
 								</div>
@@ -1195,14 +1191,14 @@ export function SettingsPage() {
 										})}
 									</p>
 									<div className="rounded-md bg-slate-950/90 p-3 font-mono text-xs text-slate-100">
-										{`MCPMATE_API_PORT=${typeof apiPort === "number" ? apiPort : 8080} MCPMATE_MCP_PORT=${typeof mcpPort === "number" ? mcpPort : 8000} MCPMATE_ALLOWED_ORIGINS=${devUrl} cargo run -p app-mcpmate`}
+										{`MCPMATE_API_PORT=${effectiveApiPort} MCPMATE_MCP_PORT=${effectiveMcpPort} MCPMATE_ALLOWED_ORIGINS=${devUrl} cargo run -p app-mcpmate`}
 									</div>
 									<div className="mt-2 flex gap-2">
 										<Button
 											variant="secondary"
 											onClick={() =>
 												navigator.clipboard.writeText(
-													`MCPMATE_API_PORT=${typeof apiPort === "number" ? apiPort : 8080} MCPMATE_MCP_PORT=${typeof mcpPort === "number" ? mcpPort : 8000} MCPMATE_ALLOWED_ORIGINS=${devUrl} cargo run -p app-mcpmate`,
+													`MCPMATE_API_PORT=${effectiveApiPort} MCPMATE_MCP_PORT=${effectiveMcpPort} MCPMATE_ALLOWED_ORIGINS=${devUrl} cargo run -p app-mcpmate`,
 												)
 											}
 										>
@@ -1234,14 +1230,14 @@ export function SettingsPage() {
 										})}
 									</p>
 									<div className="rounded-md bg-slate-950/90 p-3 font-mono text-xs text-slate-100">
-										{`./app-mcpmate --api-port ${typeof apiPort === "number" ? apiPort : 8080} --mcp-port ${typeof mcpPort === "number" ? mcpPort : 8000}`}
+										{`./app-mcpmate --api-port ${effectiveApiPort} --mcp-port ${effectiveMcpPort}`}
 									</div>
 									<div className="mt-2">
 										<Button
 											variant="secondary"
 											onClick={() =>
 												navigator.clipboard.writeText(
-													`./app-mcpmate --api-port ${typeof apiPort === "number" ? apiPort : 8080} --mcp-port ${typeof mcpPort === "number" ? mcpPort : 8000}`,
+													`./app-mcpmate --api-port ${effectiveApiPort} --mcp-port ${effectiveMcpPort}`,
 												)
 											}
 										>
@@ -1441,11 +1437,11 @@ function MarketBlacklistCard({
 		const query = searchTerm.trim().toLowerCase();
 		const list = query
 			? entries.filter(
-					(entry) =>
-						entry.label.toLowerCase().includes(query) ||
-						entry.serverId.toLowerCase().includes(query) ||
-						(entry.description?.toLowerCase() ?? "").includes(query),
-				)
+				(entry) =>
+					entry.label.toLowerCase().includes(query) ||
+					entry.serverId.toLowerCase().includes(query) ||
+					(entry.description?.toLowerCase() ?? "").includes(query),
+			)
 			: entries;
 
 		return [...list].sort((a, b) => {
@@ -1538,7 +1534,7 @@ function MarketBlacklistCard({
 				<div className="flex flex-col gap-3 md:flex-row md:items-center">
 					<div className="flex w-full flex-col gap-2 md:flex-row md:items-center md:gap-3">
 						<div className="grow">
-							<Label htmlFor="market-blacklist-search" className="sr-only">
+							<Label htmlFor={searchId} className="sr-only">
 								{t("settings:market.searchHiddenServers", {
 									defaultValue: "Search hidden servers",
 								})}
@@ -1553,7 +1549,7 @@ function MarketBlacklistCard({
 							/>
 						</div>
 						<div className="w-full md:ml-auto md:w-52">
-							<Label htmlFor="market-blacklist-sort" className="sr-only">
+							<Label htmlFor={sortId} className="sr-only">
 								{t("settings:market.sortHiddenServers", {
 									defaultValue: "Sort hidden servers",
 								})}

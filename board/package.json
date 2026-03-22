@@ -7,6 +7,7 @@
 		"dev": "vite",
 		"build": "vite build",
 		"lint": "eslint .",
+		"biome": "bunx @biomejs/biome check .",
 		"preview": "vite preview"
 	},
 	"dependencies": {

@@ -51,12 +51,12 @@ en: {
 			menuBarTitle: "Menu Bar Icon",
 			menuBarDescription: "Control the visibility of the menu bar icon.",
 			menuBarIconTitle: "Menu Bar Icon Mode",
-			dockTitle: "Dock Icon",
+			dockTitle: "Dock / Taskbar Icon",
 			dockDescription:
-				"Display MCPMate in the macOS Dock or run silently from the menu bar.",
+				"Show MCPMate in the Dock (macOS), taskbar (Windows/Linux), or run from the tray or menu bar only.",
 			dockIconTitle: "Dock Icon Mode",
 			dockHiddenNotice:
-				"The Dock icon is hidden. The menu bar icon will remain visible so you can reopen MCPMate.",
+				"The Dock or taskbar entry is hidden. The tray icon stays visible so you can reopen MCPMate.",
 			menuBarPlaceholder: "Select menu bar icon mode",
 			wipLabel: "Work in Progress",
 			defaultMarketPlaceholder: "Select default market",
@@ -175,7 +175,7 @@ en: {
 		},
     notices: {
 			dockHidden:
-				"The Dock icon is hidden. The menu bar icon will remain visible so you can reopen MCPMate.",
+				"The Dock or taskbar entry is hidden. The tray icon stays visible so you can reopen MCPMate.",
 		},
 	},
 "zh-CN": {
@@ -229,11 +229,12 @@ en: {
 			menuBarTitle: "菜单栏图标",
 			menuBarDescription: "控制菜单栏图标的可见性。",
 			menuBarIconTitle: "菜单栏图标模式",
-			dockTitle: "Dock 图标",
-			dockDescription: "在 macOS Dock 中显示 MCPMate 或从菜单栏静默运行。",
+			dockTitle: "Dock / 任务栏图标",
+			dockDescription:
+				"在 macOS Dock 或 Windows/Linux 任务栏中显示 MCPMate，或仅从托盘或菜单栏运行。",
 			dockIconTitle: "Dock 图标模式",
 			dockHiddenNotice:
-				"Dock 图标已隐藏，菜单栏图标会保持可见以便重新打开 MCPMate。",
+				"Dock 或任务栏入口已隐藏，托盘图标保持可见以便重新打开 MCPMate。",
 			menuBarPlaceholder: "选择菜单栏图标模式",
 			wipLabel: "开发中",
 			defaultMarketPlaceholder: "选择默认市场",
@@ -339,7 +340,8 @@ en: {
 			noPackages: "在最新更新期间未检测到第三方包。",
 		},
 		notices: {
-			dockHidden: "Dock 图标已隐藏，菜单栏图标会保持可见以便重新打开 MCPMate。",
+			dockHidden:
+				"Dock 或任务栏入口已隐藏，托盘图标保持可见以便重新打开 MCPMate。",
 		},
 	},
 "ja-JP": {
@@ -375,12 +377,12 @@ en: {
 			menuBarTitle: "メニューバーアイコン",
 			menuBarDescription: "メニューバーアイコンの表示を制御します。",
 			menuBarIconTitle: "メニューバーアイコンモード",
-			dockTitle: "Dock アイコン",
+			dockTitle: "Dock / タスクバーアイコン",
 			dockDescription:
-				"macOS Dock で MCPMate を表示するか、メニューバーからサイレントに実行します。",
+				"macOS の Dock、Windows/Linux のタスクバーに表示するか、トレイ／メニューバーのみで実行します。",
 			dockIconTitle: "Dock アイコンモード",
 			dockHiddenNotice:
-				"Dock アイコンは非表示です。メニューアイコンは引き続き表示され、MCPMate を開き直せます。",
+				"Dock／タスクバーからの表示をオフにしました。トレイアイコンは残るため、そこから MCPMate を開き直せます。",
 			menuBarPlaceholder: "メニューバーアイコンモードを選択",
 			wipLabel: "開発中",
 			defaultMarketPlaceholder: "デフォルトマーケットを選択",
@@ -496,7 +498,7 @@ en: {
 		},
 		notices: {
 			dockHidden:
-				"Dock アイコンは非表示です。メニューアイコンは引き続き表示され、MCPMate を開き直せます。",
+				"Dock／タスクバーからの表示をオフにしました。トレイアイコンは残るため、そこから MCPMate を開き直せます。",
 		},
     },
     ja: {
