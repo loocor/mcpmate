@@ -66,13 +66,13 @@ aide_wrapper_payload!(
     "Enable or disable MCPMate management for a client"
 );
 
-    // Update client settings (config_mode/transport/client_version)
-    aide_wrapper_payload!(
-        client::update_settings,
-        ClientSettingsUpdateReq,
-        ClientSettingsUpdateResp,
-        "Update client settings (config_mode/transport/client_version)"
-    );
+// Update client settings (config_mode/transport/client_version)
+aide_wrapper_payload!(
+    client::update_settings,
+    ClientSettingsUpdateReq,
+    ClientSettingsUpdateResp,
+    "Update client settings (config_mode/transport/client_version)"
+);
 
 // Backup administration
 aide_wrapper_query!(

@@ -226,7 +226,11 @@ async fn openapi_json_guarded(headers: HeaderMap) -> impl IntoResponse {
                 if let Ok(decoded) = base64::prelude::BASE64_STANDARD.decode(encoded) {
                     if let Ok(pair) = String::from_utf8(decoded) {
                         if let Some((_, pw)) = pair.split_once(':') {
-                            let ok = if !guard_hash.is_empty() { verify_hash(pw, &guard_hash) } else { pw == guard };
+                            let ok = if !guard_hash.is_empty() {
+                                verify_hash(pw, &guard_hash)
+                            } else {
+                                pw == guard
+                            };
                             if ok {
                                 return ([(header::CONTENT_TYPE, "application/json")], json.as_str().to_owned())
                                     .into_response();
@@ -245,9 +249,14 @@ async fn openapi_json_guarded(headers: HeaderMap) -> impl IntoResponse {
                 let kv = part.trim();
                 if let Some((k, v)) = kv.split_once('=') {
                     if k == "MCPMATE_OPENAPI_PW" {
-                        let ok = if !guard_hash.is_empty() { verify_hash(v, &guard_hash) } else { v == guard };
+                        let ok = if !guard_hash.is_empty() {
+                            verify_hash(v, &guard_hash)
+                        } else {
+                            v == guard
+                        };
                         if ok {
-                            return ([(header::CONTENT_TYPE, "application/json")], json.as_str().to_owned()).into_response();
+                            return ([(header::CONTENT_TYPE, "application/json")], json.as_str().to_owned())
+                                .into_response();
                         }
                     }
                 }
@@ -265,7 +274,10 @@ async fn openapi_json_guarded(headers: HeaderMap) -> impl IntoResponse {
         .into_response()
 }
 
-fn verify_hash(pw: &str, encoded: &str) -> bool {
+fn verify_hash(
+    pw: &str,
+    encoded: &str,
+) -> bool {
     if let Some(expect_hex) = encoded.strip_prefix("sha256:") {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();

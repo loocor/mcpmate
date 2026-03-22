@@ -25,7 +25,10 @@ struct EnvVarGuard {
 }
 
 impl EnvVarGuard {
-    fn set(key: &'static str, value: &str) -> Self {
+    fn set(
+        key: &'static str,
+        value: &str,
+    ) -> Self {
         // SAFETY: mutates process environment; native-off test uses `serial_test::serial` for this key.
         unsafe { std::env::set_var(key, value) };
         Self { key }
@@ -138,20 +141,10 @@ async fn inspector_tool_call_events_ws_unknown_call_closes() {
         "ws://127.0.0.1:{}/ws/inspector/events?call_id=no-such-call-id",
         addr.port()
     );
-    let (mut ws, response) = tokio_tungstenite::connect_async(url)
-        .await
-        .expect("websocket connect");
-    assert_eq!(
-        response.status().as_u16(),
-        101,
-        "expected 101 Switching Protocols"
-    );
+    let (mut ws, response) = tokio_tungstenite::connect_async(url).await.expect("websocket connect");
+    assert_eq!(response.status().as_u16(), 101, "expected 101 Switching Protocols");
 
-    let first = ws
-        .next()
-        .await
-        .expect("stream item")
-        .expect("ws message");
+    let first = ws.next().await.expect("stream item").expect("ws message");
     assert!(
         matches!(first, WsMessage::Close(_)),
         "expected server to close immediately for unknown call_id, got {first:?}"

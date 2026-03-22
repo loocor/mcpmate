@@ -2,10 +2,13 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Query, State, ws::{Message, WebSocket, WebSocketUpgrade}},
+    extract::{
+        Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     response::IntoResponse,
 };
-use futures::{StreamExt, SinkExt};
+use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_stream::wrappers::BroadcastStream;
 
