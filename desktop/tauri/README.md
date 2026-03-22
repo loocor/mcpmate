@@ -10,7 +10,20 @@ This crate provides an early Tauri wrapper around the existing MCPMate backend s
 
 ## Building the Dashboard Assets
 
-The desktop shell loads the compiled dashboard bundle. Build it once before `tauri dev` or `tauri build`:
+The desktop shell loads the compiled dashboard bundle. `tauri.conf.json` runs **`beforeDevCommand` / `beforeBuildCommand`** from `board/` (prefers **Bun**, falls back to **npm**).
+
+For a **packaged** macOS build, the **bridge sidecar** must exist at `backend/target/sidecars/bridge` (`tauri.conf.json` `externalBin`). Use the release script (board + notices + bridge + Tauri in one go):
+
+```bash
+cd desktop/tauri
+./script/macos-build-tauri-release.sh --targets aarch64-apple-darwin --skip-notarize
+```
+
+Adjust `--targets` for Intel (`x86_64-apple-darwin`) or both. Signing/notarization can wait; see the same script when you enable them.
+
+**OAuth acceptance (Mac app + Worker logs):** see `auth/README.md` → *QA acceptance: macOS OAuth + Worker visibility*.
+
+Manual board build (optional):
 
 ```bash
 npm --prefix ../../board run build

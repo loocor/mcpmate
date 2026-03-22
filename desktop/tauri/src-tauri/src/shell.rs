@@ -1,14 +1,47 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use anyhow::{Context, Result};
 use mcpmate::common::MCPMatePaths;
 use serde::{Deserialize, Serialize};
-use tauri::{App, AppHandle, Manager, Wry, image::Image, menu::MenuItem, tray::TrayIcon};
+use tauri::{
+    AppHandle, Manager, Wry, image::Image, menu::MenuItem, tray::TrayIcon,
+};
 use tokio::sync::Mutex as AsyncMutex;
+
+/// tray-icon resets `NSImage.template` to off on every [`TrayIcon::set_icon`] on macOS; re-enable
+/// so the menu bar follows effective appearance (wallpaper tint, light/dark, etc.).
+fn set_tray_icon_with_template(tray: &TrayIcon<Wry>, icon: Image<'static>) -> Result<()> {
+    tray.set_icon(Some(icon))
+        .map_err(|e| anyhow::anyhow!(e))
+        .context("failed to set tray icon")?;
+    #[cfg(target_os = "macos")]
+    {
+        tray.set_icon_as_template(true)
+            .map_err(|e| anyhow::anyhow!(e))
+            .context("failed to set tray icon as template")?;
+    }
+    Ok(())
+}
+
+/// Monochrome glyph on transparency (typically black on alpha). On macOS, pair with
+/// `TrayIconBuilder::icon_as_template(true)` so the system tints it for light/dark menu bar.
+const TRAY_TEMPLATE_ICON_BYTES: &[u8] = include_bytes!("../icons/icon_tray.png");
+
+static TRAY_TEMPLATE_ICON: OnceLock<Image<'static>> = OnceLock::new();
+
+pub fn tray_template_icon() -> Image<'static> {
+    TRAY_TEMPLATE_ICON
+        .get_or_init(|| {
+            Image::from_bytes(TRAY_TEMPLATE_ICON_BYTES).unwrap_or_else(|e| {
+                panic!("failed to decode icons/icon_tray.png for tray: {e}");
+            })
+        })
+        .clone()
+}
 
 pub const TRAY_ID: &str = "mcpmate.tray.main";
 pub const MENU_OPEN_MAIN: &str = "mcpmate.tray.open_main";
@@ -139,10 +172,9 @@ impl ShellState {
 
             let visible = Self::should_show_icon(&prefs, backend_running);
             if visible {
-                if let Some(icon) = tray.app_handle().default_window_icon().cloned() {
-                    tray.set_icon(Some(icon))
-                        .context("failed to set tray icon during registration")?;
-                }
+                let icon = tray_template_icon();
+                set_tray_icon_with_template(&tray, icon)
+                    .context("failed to set tray icon during registration")?;
                 tray.set_visible(true)
                     .context("failed to show tray icon during registration")?;
             } else {
@@ -175,7 +207,7 @@ impl ShellState {
         apply_activation_policy(app_handle, &prefs)?;
 
         if let Some(tray) = tray {
-            Self::apply_tray_visibility(&tray, app_handle, &prefs, backend_running)?;
+            Self::apply_tray_visibility(&tray, &prefs, backend_running)?;
         }
 
         ShellPreferences::save_to_path(&path, &prefs)?;
@@ -198,7 +230,7 @@ impl ShellState {
         }
 
         if let Some(tray) = tray {
-            Self::apply_tray_visibility(&tray, tray.app_handle(), &prefs, running)?;
+            Self::apply_tray_visibility(&tray, &prefs, running)?;
         }
 
         Ok(())
@@ -217,16 +249,14 @@ impl ShellState {
 
     fn apply_tray_visibility(
         tray: &TrayIcon<Wry>,
-        app_handle: &AppHandle<Wry>,
         prefs: &ShellPreferences,
         backend_running: bool,
     ) -> Result<()> {
         let visible = Self::should_show_icon(prefs, backend_running);
         if visible {
-            if let Some(icon) = app_handle.default_window_icon().cloned() {
-                tray.set_icon(Some(icon))
-                    .context("failed to set tray icon when enabling menu bar icon")?;
-            }
+            let icon = tray_template_icon();
+            set_tray_icon_with_template(tray, icon)
+                .context("failed to set tray icon when enabling menu bar icon")?;
             tray.set_visible(true).context("failed to show tray icon")?;
         } else {
             tray.set_icon(None)
@@ -286,14 +316,4 @@ where
     }
 
     super::spawn_main_window(manager)
-}
-
-pub fn tray_icon_image(app: &App) -> Result<Image<'static>> {
-    if let Some(icon) = app.default_window_icon() {
-        Ok(icon.clone().to_owned())
-    } else {
-        Err(anyhow::anyhow!(
-            "desktop bundle missing default window icon"
-        ))
-    }
 }

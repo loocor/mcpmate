@@ -2,10 +2,19 @@
 	"$schema": "https://schema.tauri.app/config/2",
 	"productName": "MCPMate",
 	"version": "0.1.0",
-	"identifier": "io.mcpmate.desktop",
+	"identifier": "desktop.mcp.umate.ai",
 	"build": {
 		"devUrl": "http://127.0.0.1:5173",
-		"frontendDist": "../../../board/dist"
+		"frontendDist": "../../../board/dist",
+		"beforeDevCommand": {
+			"cwd": "../../../board",
+			"script": "(command -v bun >/dev/null 2>&1 && bun run dev -- --host 127.0.0.1 --port 5173 || npm run dev -- --host 127.0.0.1 --port 5173)",
+			"wait": true
+		},
+		"beforeBuildCommand": {
+			"cwd": "../../../board",
+			"script": "(command -v bun >/dev/null 2>&1 && bun run build || npm run build)"
+		}
 	},
 	"app": {
 		"withGlobalTauri": true,
@@ -13,15 +22,15 @@
 			"csp": null
 		},
 		"windows": [
-      {
-        "label": "main",
-        "title": "MCPMate",
-        "width": 1280,
-        "height": 800,
-        "resizable": true,
-        "create": false,
-        "dragDropEnabled": false
-      }
+			{
+				"label": "main",
+				"title": "MCPMate",
+				"width": 1280,
+				"height": 800,
+				"resizable": true,
+				"create": false,
+				"dragDropEnabled": false
+			}
 		]
 	},
 	"bundle": {
@@ -38,6 +47,11 @@
 	},
 	"plugins": {
 		"opener": {},
+		"deep-link": {
+			"desktop": {
+				"schemes": ["mcpmate"]
+			}
+		},
 		"updater": {
 			"active": false,
 			"dialog": true,
@@ -47,5 +61,5 @@
 				"installMode": "passive"
 			}
 		}
-		}
 	}
+}

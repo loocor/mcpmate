@@ -91,14 +91,14 @@ If `website/.env` does not exist, it will be created (preferring `.env.example` 
 
 Environment variables (optional):
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `MCPMATE_TAURI_API_PORT` | REST API port | 8080 |
-| `MCPMATE_TAURI_MCP_PORT` | MCP server port | 8000 |
-| `MCPMATE_TAURI_LOG` | Log level | info |
-| `MCPMATE_TAURI_TRANSPORT` | MCP transport mode | uni |
-| `MCPMATE_TAURI_PROFILE` | Comma-delimited profile IDs to preload | (empty) |
-| `MCPMATE_TAURI_MINIMAL` | Set to `true`/`1` to skip profile loading | false |
+| Variable                  | Purpose                                   | Default |
+| ------------------------- | ----------------------------------------- | ------- |
+| `MCPMATE_TAURI_API_PORT`  | REST API port                             | 8080    |
+| `MCPMATE_TAURI_MCP_PORT`  | MCP server port                           | 8000    |
+| `MCPMATE_TAURI_LOG`       | Log level                                 | info    |
+| `MCPMATE_TAURI_TRANSPORT` | MCP transport mode                        | uni     |
+| `MCPMATE_TAURI_PROFILE`   | Comma-delimited profile IDs to preload    | (empty) |
+| `MCPMATE_TAURI_MINIMAL`   | Set to `true`/`1` to skip profile loading | false   |
 
 ## Key Files
 
@@ -127,7 +127,7 @@ src-tauri/
 
 - Backend logs appear in the Dashboard page console
 - Check port conflicts: `lsof -i :8080` or `lsof -i :8000`
-- Verify data directory: `~/Library/Application Support/io.mcpmate.desktop/` (macOS)
+- Verify data directory: `~/Library/Application Support/desktop.mcp.umate.ai/` (macOS)
 
 ### Updating Dependencies
 

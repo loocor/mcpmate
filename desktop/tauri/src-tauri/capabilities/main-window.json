@@ -3,13 +3,14 @@
 	"identifier": "main-window",
 	"description": "Default capability for the main window to run the MCPMate dashboard",
 	"windows": ["main"],
- "permissions": [
-   "core:default",
-   "opener:default",
-    "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text",
-    {
-      "identifier": "opener:allow-default-urls"
-    }
-  ]
+	"permissions": [
+		"core:default",
+		"opener:default",
+		"deep-link:default",
+		"clipboard-manager:allow-read-text",
+		"clipboard-manager:allow-write-text",
+		{
+			"identifier": "opener:allow-default-urls"
+		}
+	]
 }

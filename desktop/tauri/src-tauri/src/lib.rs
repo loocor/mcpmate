@@ -25,22 +25,16 @@ use tauri::{
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
+mod account;
 mod shell;
 use shell::{ShellPreferences, ShellState};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::Builder as UpdaterPluginBuilder;
 use tauri_plugin_updater::UpdaterExt;
 use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
-
-// When present, this module is generated at build time based on desktop/tauri/.env
-// and embedded into the signed binary to lock OpenAPI access in release builds.
-#[cfg(has_openapi_lock)]
-#[allow(dead_code)]
-mod openapi_lock {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/gen/openapi_lock.rs"));
-}
 
 const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
@@ -71,9 +65,28 @@ struct BackendRuntime {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ShellPreferencesPayload {
+    #[serde(alias = "menu_bar_icon_mode")]
+    menu_bar_icon_mode: shell::MenuBarIconMode,
+    #[serde(alias = "show_dock_icon")]
+    show_dock_icon: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellPreferencesView {
     menu_bar_icon_mode: shell::MenuBarIconMode,
     show_dock_icon: bool,
+}
+
+impl From<ShellPreferences> for ShellPreferencesView {
+    fn from(value: ShellPreferences) -> Self {
+        Self {
+            menu_bar_icon_mode: value.menu_bar_icon_mode,
+            show_dock_icon: value.show_dock_icon,
+        }
+    }
 }
 
 impl BackendRuntime {
@@ -177,6 +190,7 @@ pub fn run() -> Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(updater_plugin)
         .setup(move |app| {
             initialize_paths(app)?;
@@ -224,7 +238,7 @@ pub fn run() -> Result<()> {
             let backend_state_for_tray = backend_state.clone();
             let shell_state_for_tray = shell_state.clone();
 
-            let tray_icon_image = shell::tray_icon_image(app)?;
+            let tray_icon_image = shell::tray_template_icon();
 
             let mut tray_builder = TrayIconBuilder::with_id(shell::TRAY_ID)
                 .menu(&tray_menu)
@@ -294,7 +308,7 @@ pub fn run() -> Result<()> {
 
             #[cfg(target_os = "macos")]
             {
-                tray_builder = tray_builder.icon_as_template(false);
+                tray_builder = tray_builder.icon_as_template(true);
             }
 
             let tray_icon = tray_builder.build(app)?;
@@ -302,6 +316,25 @@ pub fn run() -> Result<()> {
 
             bootstrap_backend(backend_state.clone(), shell_state.clone())?;
             spawn_main_window(app)?;
+
+            {
+                let handle = app.handle().clone();
+                let _ = app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        if let Err(err) = account::handle_oauth_url(&handle, url.as_str()) {
+                            warn!(error = %err, "Failed to handle OAuth deep link");
+                        }
+                    }
+                });
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    let handle = app.handle().clone();
+                    for url in urls {
+                        if let Err(err) = account::handle_oauth_url(&handle, url.as_str()) {
+                            warn!(error = %err, "Failed to handle startup OAuth deep link");
+                        }
+                    }
+                }
+            }
 
             if !shell_prefs.show_dock_icon
                 && let Some(window) = app.get_webview_window("main")
@@ -316,7 +349,10 @@ pub fn run() -> Result<()> {
         mcp_shell_apply_preferences,
         mcp_shell_read_preferences,
         mcp_shell_read_runtime_ports,
-        mcp_shell_restart_backend_with_ports
+        mcp_shell_restart_backend_with_ports,
+        mcp_account_start_github_login,
+        mcp_account_get_status,
+        mcp_account_logout
     ]);
 
     builder
@@ -347,6 +383,12 @@ async fn mcp_shell_apply_preferences(
     state: tauri::State<'_, ShellState>,
     payload: ShellPreferencesPayload,
 ) -> Result<(), String> {
+    let prev_show_dock_icon = state
+        .inner()
+        .clone()
+        .current_preferences()
+        .await
+        .show_dock_icon;
     let prefs = ShellPreferences {
         menu_bar_icon_mode: payload.menu_bar_icon_mode,
         show_dock_icon: payload.show_dock_icon,
@@ -358,7 +400,11 @@ async fn mcp_shell_apply_preferences(
         .await
         .map_err(|err| err.to_string())?;
 
-    if let Some(window) = app.get_webview_window("main") {
+    // Only sync main window visibility when the Dock toggle actually changes. Otherwise every
+    // settings sync (e.g. navigating to Settings) would hide the window while in accessory mode.
+    if prev_show_dock_icon != prefs.show_dock_icon
+        && let Some(window) = app.get_webview_window("main")
+    {
         if prefs.show_dock_icon {
             let _ = window.show();
         } else {
@@ -372,8 +418,25 @@ async fn mcp_shell_apply_preferences(
 #[tauri::command]
 async fn mcp_shell_read_preferences(
     state: tauri::State<'_, ShellState>,
-) -> Result<ShellPreferences, String> {
-    Ok(state.inner().clone().current_preferences().await)
+) -> Result<ShellPreferencesView, String> {
+    Ok(ShellPreferencesView::from(
+        state.inner().clone().current_preferences().await,
+    ))
+}
+
+#[tauri::command]
+fn mcp_account_start_github_login(app: tauri::AppHandle) -> Result<(), String> {
+    account::start_github_login(&app)
+}
+
+#[tauri::command]
+fn mcp_account_get_status(app: tauri::AppHandle) -> Result<account::AccountStatus, String> {
+    account::get_status(&app)
+}
+
+#[tauri::command]
+fn mcp_account_logout() -> Result<(), String> {
+    account::logout()
 }
 
 fn configure_tauri_environment() {
@@ -560,7 +623,6 @@ where
             event.preventDefault();
         });
         window.__MCPMATE_IS_TAURI__ = true;
-        window.__MCPMATE_PREVIEW_BADGE__ = true;
         "#,
     );
     builder = builder.initialization_script(&init_script);
@@ -578,7 +640,7 @@ where
                 }
                 NewWindowResponse::Deny
             }
-            "tauri" | "app" | "about" | "" => NewWindowResponse::Allow,
+            "tauri" | "app" | "about" | "mcpmate" | "" => NewWindowResponse::Allow,
             other => {
                 warn!(target_url = %url, scheme = other, "Blocked unsupported window.open URL scheme");
                 NewWindowResponse::Deny
@@ -697,28 +759,13 @@ async fn launch_backend(state: BackendState, shell_state: ShellState, args: Args
 }
 
 async fn start_backend(args: Args) -> Result<BackendRuntime> {
-    // Configure OpenAPI protection for backend.
-    // Priority order (highest first):
-    // 1) Embedded compile-time lock (release builds) via openapi_lock.rs
-    // 2) Tauri env passthrough (dev runs): MCPMATE_TAURI_OPENAPI_PASSWORD / _ENABLED
-    #[cfg(has_openapi_lock)]
-    {
-        // Safety: executed during startup before spawning background tasks.
-        unsafe {
-            std::env::set_var("MCPMATE_OPENAPI_ENABLED", "true");
-            // Provide hash to backend instead of plaintext.
-            std::env::set_var("MCPMATE_OPENAPI_PASSWORD_HASH", openapi_lock::OPENAPI_LOCK_HASH);
-        }
-    }
-    #[cfg(not(has_openapi_lock))]
-    {
-        for (from, to) in [
-            ("MCPMATE_TAURI_OPENAPI_PASSWORD", "MCPMATE_OPENAPI_PASSWORD"),
-            ("MCPMATE_TAURI_OPENAPI_ENABLED", "MCPMATE_OPENAPI_ENABLED"),
-        ] {
-            if let Ok(v) = std::env::var(from) && !v.trim().is_empty() {
-                unsafe { std::env::set_var(to, v) };
-            }
+    // Optional OpenAPI password lock for local experiments (open-source builds stay unlocked by default).
+    for (from, to) in [
+        ("MCPMATE_TAURI_OPENAPI_PASSWORD", "MCPMATE_OPENAPI_PASSWORD"),
+        ("MCPMATE_TAURI_OPENAPI_ENABLED", "MCPMATE_OPENAPI_ENABLED"),
+    ] {
+        if let Ok(v) = std::env::var(from) && !v.trim().is_empty() {
+            unsafe { std::env::set_var(to, v) };
         }
     }
 

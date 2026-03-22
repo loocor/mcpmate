@@ -66,6 +66,7 @@ Options:
   --apple-api-issuer <UUID>   App Store Connect API issuer ID (sets APPLE_API_ISSUER)
   --apple-api-key-path <p>    Path to .p8 API key file (sets APPLE_API_KEY_PATH)
   --skip-notarize             Do not attempt notarization even if credentials are present
+                              (alias: --skip-notariz)
   -h, --help                  Show this help message
 
 Examples:
@@ -76,6 +77,8 @@ Examples:
 Notes:
   * Windows targets must be built on Windows with the MSVC toolchain available.
   * Set CI=true in the environment on macOS 26+ to skip Finder AppleScript during DMG creation.
+  * Signing/notarization logs hide team id, API issuer, and identity strings by default; set
+    MCPMATE_BUILD_LOG_SIGNING_DETAILS=1 for the previous verbose output (avoid in public CI).
 USAGE
 }
 
@@ -140,7 +143,7 @@ while [[ $# -gt 0 ]]; do
       APPLE_API_KEY_PATH_OPT="$2"
       shift 2
       ;;
-    --skip-notarize)
+    --skip-notarize|--skip-notariz)
       SKIP_NOTARIZE=1
       shift 1
       ;;
@@ -167,6 +170,12 @@ SIDECAR_OUTPUT_DIR="$BACKEND_DIR/target/sidecars"
 export CI
 
 log() { echo "[macos-build-tauri-release] $*"; }
+
+# When set to 1/true, print signing identity strings, Team ID, and API issuer (verbose; avoid in shared CI logs).
+signing_details_enabled() {
+  local v="${MCPMATE_BUILD_LOG_SIGNING_DETAILS:-}"
+  [[ "$v" == "1" || "$v" == "true" || "$v" == "TRUE" ]]
+}
 
 # Prepare codesign identity and notarization environment if provided.
 preflight_signing() {
@@ -196,15 +205,25 @@ preflight_signing() {
     log "notarization disabled by --skip-notarize"
   fi
 
-  # Human-friendly summary.
+  # Human-friendly summary (default: no org/team/identity strings in logs).
   if command -v security >/dev/null 2>&1; then
-    local id_summary
-    id_summary=$(security find-identity -v -p codesigning 2>/dev/null | sed -n '1,5p' || true)
-    log "available code signing identities (first few):\n${id_summary:-<none>}"
+    if signing_details_enabled; then
+      local id_summary
+      id_summary=$(security find-identity -v -p codesigning 2>/dev/null | sed -n '1,5p' || true)
+      log "available code signing identities (first few):\n${id_summary:-<none>}"
+    else
+      local id_count
+      id_count=$(security find-identity -v -p codesigning 2>/dev/null | grep -E -c '^[[:space:]]+[0-9]+\)' || true)
+      log "code signing: ${id_count:-0} matching keychain identity line(s) (set MCPMATE_BUILD_LOG_SIGNING_DETAILS=1 to list names)"
+    fi
   fi
 
   if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-    log "using codesign identity: ${APPLE_SIGNING_IDENTITY}"
+    if signing_details_enabled; then
+      log "using codesign identity: ${APPLE_SIGNING_IDENTITY}"
+    else
+      log "code signing: APPLE_SIGNING_IDENTITY is set (value hidden; MCPMATE_BUILD_LOG_SIGNING_DETAILS=1 to print)"
+    fi
   else
     log "no APPLE_SIGNING_IDENTITY provided; Tauri will choose a default or ad-hoc sign (development)."
   fi
@@ -214,9 +233,17 @@ preflight_signing() {
     if [[ -n "${APPLE_ID:-}" || -n "${APPLE_PASSWORD:-}" || -n "${APPLE_TEAM_ID:-}" ]]; then
       unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
     fi
-    log "notarization via API key enabled (issuer=${APPLE_API_ISSUER})"
+    if signing_details_enabled; then
+      log "notarization via API key enabled (issuer=${APPLE_API_ISSUER})"
+    else
+      log "notarization via App Store Connect API key (issuer hidden)"
+    fi
   elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
-    log "notarization via Apple ID enabled (team=${APPLE_TEAM_ID})"
+    if signing_details_enabled; then
+      log "notarization via Apple ID enabled (team=${APPLE_TEAM_ID})"
+    else
+      log "notarization via Apple ID + app-specific password (team id hidden)"
+    fi
   else
     log "no notarization credentials detected; artifact will NOT be notarized."
   fi
@@ -381,7 +408,7 @@ build_bridge_sidecar() {
   echo "[macos-build-tauri-release] building bridge sidecar for $target"
   cargo build \
     --manifest-path "$BACKEND_DIR/Cargo.toml" \
-    -p mcpmate-bridge \
+    -p mcpmate \
     ${cargo_profile_flags} \
     --bin bridge \
     --target "$target"
