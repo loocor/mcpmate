@@ -1,6 +1,5 @@
-import React from "react";
-import DocLayout from "../../layout/DocLayout";
 import { P } from "../../components/Headings";
+import DocLayout from "../../layout/DocLayout";
 
 export default function ProtocolBridging() {
 	return (
@@ -8,12 +7,12 @@ export default function ProtocolBridging() {
 			meta={{
 				title: "Protocol Bridging",
 				description:
-					"Connect stdio-based clients to SSE services without client modification",
+					"Connect stdio-based clients to Streamable HTTP services without client modification",
 			}}
 		>
 			<P>
 				MCPMate's protocol bridging capability allows stdio-based MCP clients to
-				connect to Server-Sent Events (SSE) based services without any
+				connect to Streamable HTTP based services without any
 				modification to the client code. This enables greater flexibility in how
 				you deploy and use MCP servers.
 			</P>
@@ -22,8 +21,10 @@ export default function ProtocolBridging() {
 			<P>
 				MCPMate acts as a transparent bridge between different transport
 				protocols. When a stdio-based client connects to MCPMate, it can
-				communicate with SSE servers as if they were native stdio servers. The
-				protocol translation happens seamlessly in the background.
+				communicate with Streamable HTTP servers as if they were native stdio
+				servers. The protocol translation happens seamlessly in the background.
+				Legacy SSE-style configurations are accepted at import boundaries and
+				normalized to Streamable HTTP.
 			</P>
 
 			<h2>Use Cases</h2>
@@ -41,8 +42,8 @@ export default function ProtocolBridging() {
 					older stdio-only clients
 				</li>
 				<li>
-					<strong>Service Migration:</strong> Gradually migrate from stdio to SSE
-					without client disruption
+					<strong>Service Migration:</strong> Gradually migrate from stdio to
+					Streamable HTTP without client disruption
 				</li>
 			</ul>
 

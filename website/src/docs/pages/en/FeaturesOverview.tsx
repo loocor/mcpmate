@@ -1,6 +1,5 @@
-import React from "react";
-import DocLayout from "../../layout/DocLayout";
 import { P } from "../../components/Headings";
+import DocLayout from "../../layout/DocLayout";
 
 export default function FeaturesOverview() {
 	return (
@@ -45,8 +44,8 @@ export default function FeaturesOverview() {
 					management for better performance
 				</li>
 				<li>
-					<strong>Protocol Bridging:</strong> Connect stdio-based clients to SSE
-					services without modification
+					<strong>Protocol Bridging:</strong> Connect stdio-based clients to
+					Streamable HTTP services without modification
 				</li>
 			</ul>
 

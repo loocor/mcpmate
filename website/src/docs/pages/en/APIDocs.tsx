@@ -1,7 +1,6 @@
-import React from "react";
-import DocLayout from "../../layout/DocLayout";
-import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import { H2, H3, Li, P, Ul } from "../../components/Headings";
+import DocLayout from "../../layout/DocLayout";
 
 export default function APIDocsEN() {
 	return (
@@ -45,11 +44,13 @@ export default function APIDocsEN() {
 				request/response schemas and issue test calls using the Try It button.
 			</P>
 
-			<H3>MCP & SSE endpoints</H3>
+			<H3>MCP transport endpoints</H3>
 			<P>
-				The documentation also references the MCP transport endpoints (HTTP SSE
-				and WebSocket bridges). Use these summaries to verify headers, payload
-				keys, and auth expectations when writing client integrations.
+				The documentation also references the MCP transport endpoint (
+				<code>/mcp</code> for Streamable HTTP). Use these summaries to verify
+				headers, payload keys, and auth expectations when writing client
+				integrations. Legacy SSE-style configurations are normalized during
+				import and should be represented as Streamable HTTP in active configs.
 			</P>
 
 			<H2>Best practices</H2>

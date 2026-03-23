@@ -86,7 +86,7 @@ const en = {
 		"Switch between different work scenarios with instant configuration changes.",
 	"features.bridge": "Protocol Bridging",
 	"features.bridge.desc":
-		"Connect stdio-based clients to SSE services without modifying the client.",
+		"Connect stdio-based clients to Streamable HTTP services without modifying the client.",
 	"features.marketplace": "Inline Marketplace",
 	"features.marketplace.desc":
 		"Official MCP registry — find tools without hunting.",

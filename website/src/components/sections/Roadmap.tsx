@@ -52,7 +52,7 @@ const Roadmap = () => {
 
         <RoadmapItem
           title="Bridge Component"
-          description="Lightweight bridge component to connect stdio-based MCP clients to SSE-based MCPMate proxy servers."
+          description="Lightweight bridge component to connect stdio-based MCP clients to the Streamable HTTP MCPMate proxy endpoint."
           completed={true}
           date="Q2 2025 - Completed"
         />

@@ -80,7 +80,7 @@ const zh = {
 	"features.context.desc": "通过即时配置更改在不同工作场景之间切换",
 	"features.bridge": "协议桥接",
 	"features.bridge.desc":
-		"无需修改客户端即可将基于 stdio 的客户端连接到 SSE 服务",
+		"无需修改客户端即可将基于 stdio 的客户端连接到 Streamable HTTP 服务",
 	"features.marketplace": "内联商城",
 	"features.marketplace.desc":
 		"内建官方 MCP 注册中心，不用东奔西走找服务",

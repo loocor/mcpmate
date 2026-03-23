@@ -1,6 +1,5 @@
-import React from "react";
-import DocLayout from "../../layout/DocLayout";
 import { P } from "../../components/Headings";
+import DocLayout from "../../layout/DocLayout";
 
 export default function FeaturesOverview() {
 	return (
@@ -39,8 +38,8 @@ export default function FeaturesOverview() {
 					<strong>资源优化：</strong>智能的服务器资源管理，带来更好的性能
 				</li>
 				<li>
-					<strong>协议桥接：</strong>无需修改即可将基于 stdio 的客户端连接到 SSE
-					服务
+					<strong>协议桥接：</strong>无需修改即可将基于 stdio 的客户端连接到
+					Streamable HTTP 服务
 				</li>
 			</ul>
 

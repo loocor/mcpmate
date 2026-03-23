@@ -1,7 +1,6 @@
-import React from "react";
-import DocLayout from "../../layout/DocLayout";
-import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import { H2, H3, Li, P, Ul } from "../../components/Headings";
+import DocLayout from "../../layout/DocLayout";
 
 export default function APIDocsZH() {
 	return (
@@ -26,7 +25,8 @@ export default function APIDocsZH() {
 
 			<H3>MCP 相关端点</H3>
 			<P>
-				文档同样列出 MCP 传输端点（HTTP SSE、WebSocket 桥接），用于核对头信息、载荷字段与认证要求，方便编写客户端。
+				文档同样列出 MCP 传输端点（<code>/mcp</code>，即 Streamable HTTP），用于核对头信息、载荷字段与认证要求，方便编写客户端。历史 SSE 风格配置会在导入阶段被归一化为
+				Streamable HTTP。
 			</P>
 
 			<H2>使用建议</H2>
