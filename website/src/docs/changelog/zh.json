@@ -1,9 +1,80 @@
 [
 	{
-		"version": "0.1.0 预览版",
+		"version": "0.1.4",
+		"date": "2026-03-24",
+		"highlights": [
+			"完成 rmcp 同步后的传输栈对齐，并明确下游协议口径。"
+		],
+		"changes": [
+			{
+				"type": "refactor",
+				"text": "后端传输层升级到 rmcp 1.2，并移除下游 SSE 运行时路径；下游 MCP 传输聚焦为 stdio 与 Streamable HTTP。"
+			},
+			{
+				"type": "feat",
+				"text": "控制台安装/导入流程现可接收历史 SSE 风格输入，并在持久化时自动归一化为 streamable_http。"
+			},
+			{
+				"type": "feat",
+				"text": "Inspector 列表接口新增 elapsed_ms，prompt 查询在未指定 server 时可跨服务解析。"
+			},
+			{
+				"type": "chore",
+				"text": "将生成的开源许可证公告纳入前端静态资源，保证分发一致性。"
+			},
+			{
+				"type": "note",
+				"text": "迁移提示：若你此前使用下游 SSE 路径，请切换到 Streamable HTTP 端点（/mcp）。"
+			}
+		]
+	},
+	{
+		"version": "0.1.3",
+		"date": "2026-03-23",
+		"highlights": [
+			"桌面端与控制台围绕端口、重连与配置回写的协同能力显著增强。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "补齐后端/控制台/桌面的 API 与 MCP 端口管理链路，支持持久化、重连与配置重应用。"
+			},
+			{
+				"type": "feat",
+				"text": "优化高并发和锁竞争场景下的 server list 与轮询行为，退化更平滑且元数据保持完整。"
+			},
+			{
+				"type": "feat",
+				"text": "完善设置导航、通知交互与 Hosted 客户端同步等桌面端体验细节。"
+			},
+			{
+				"type": "docs",
+				"text": "同步更新网站与架构文档截图，统一开源化后的产品叙事。"
+			}
+		]
+	},
+	{
+		"version": "0.1.2",
+		"date": "2026-03-16",
+		"highlights": [
+			"Inspector 事件流从 SSE 迁移到 WebSocket，改善 Tauri/macOS 稳定性。"
+		],
+		"changes": [
+			{
+				"type": "refactor",
+				"text": "Inspector 工具调用事件传输改为 WebSocket，并清理历史 SSE 相关死代码。"
+			},
+			{
+				"type": "fix",
+				"text": "提升桌面运行时（尤其 macOS）下工具调用事件链路的稳定性。"
+			}
+		]
+	},
+	{
+		"version": "0.1.1",
 		"date": "2025-10-18",
 		"highlights": [
-			"延长期限的小版本，原生应用研发优先推进中。"
+			"延长发布窗口的小版本，原生应用研发优先推进中。"
 		],
 		"changes": [
 			{
@@ -20,16 +91,15 @@
 			},
 			{
 				"type": "note",
-				"text": "本次打包主要用于延长可用性倒计时，精力集中在原生应用开发。"
+				"text": "本次打包主要用于延长可用窗口，精力集中在原生应用开发。"
 			}
-		],
-		"tags": ["preview"]
+		]
 	},
 	{
-		"version": "0.1.0 预览版",
+		"version": "0.1.0",
 		"date": "2025-10-13",
 		"highlights": [
-			"MCPMate 桌面应用（macOS）预览版首次对外开放，首批提供控制台、配置集、客户端、服务器、市场、运行时与设置等核心页面，满足日常 MCP 管理需求。"
+			"MCPMate 桌面应用（macOS）首次对外发布，首批提供控制台、配置集、客户端、服务器、市场、运行时与设置等核心页面，满足日常 MCP 管理需求。"
 		],
 		"changes": [
 			{
@@ -72,7 +142,6 @@
 				"type": "known",
 				"text": "Inspector 当前无法直接调用工具，我们正在准备升级以恢复能力调试。"
 			}
-		],
-		"tags": ["preview"]
+		]
 	}
 ]

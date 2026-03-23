@@ -1,9 +1,80 @@
 [
 	{
-		"version": "0.1.0 Preview",
+		"version": "0.1.4",
+		"date": "2026-03-24",
+		"highlights": [
+			"Aligned transport/runtime behavior with the latest rmcp stack and clarified downstream protocol expectations."
+		],
+		"changes": [
+			{
+				"type": "refactor",
+				"text": "Upgraded backend transport integration to rmcp 1.2 and removed downstream SSE runtime handling; downstream MCP transport now focuses on stdio and Streamable HTTP."
+			},
+			{
+				"type": "feat",
+				"text": "Dashboard install/import flows now accept legacy SSE-style inputs and normalize them to streamable_http during persistence."
+			},
+			{
+				"type": "feat",
+				"text": "Inspector list endpoints now return elapsed_ms, and prompt lookup can resolve across servers when no explicit server hint is supplied."
+			},
+			{
+				"type": "chore",
+				"text": "Tracked generated open-source notices in the dashboard public assets for consistent distribution."
+			},
+			{
+				"type": "note",
+				"text": "Migration tip: if you previously bookmarked downstream SSE paths, move to the Streamable HTTP endpoint (/mcp)."
+			}
+		]
+	},
+	{
+		"version": "0.1.3",
+		"date": "2026-03-23",
+		"highlights": [
+			"Improved desktop-board coordination for ports, client reapply flows, and runtime stability under load."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Added runtime API/MCP port management across backend, board, and desktop, with persisted values and reconnect/reapply flows."
+			},
+			{
+				"type": "feat",
+				"text": "Enhanced server list and polling behavior to degrade gracefully during lock contention while preserving metadata quality."
+			},
+			{
+				"type": "feat",
+				"text": "Expanded desktop and board UX polish around settings navigation, notification interactions, and hosted client synchronization."
+			},
+			{
+				"type": "docs",
+				"text": "Refreshed website and architecture docs/screenshots to reflect open-source positioning and updated workflows."
+			}
+		]
+	},
+	{
+		"version": "0.1.2",
+		"date": "2026-03-16",
+		"highlights": [
+			"Inspector event streaming moved from SSE to WebSocket for better Tauri/macOS stability."
+		],
+		"changes": [
+			{
+				"type": "refactor",
+				"text": "Replaced Inspector SSE event transport with WebSocket and removed obsolete SSE pipeline code."
+			},
+			{
+				"type": "fix",
+				"text": "Improved tool-call event reliability for desktop runtime scenarios on macOS."
+			}
+		]
+	},
+	{
+		"version": "0.1.1",
 		"date": "2025-10-18",
 		"highlights": [
-			"Preview deadline extended; small quality-of-life updates while native apps are in focus."
+			"Extended release window with small quality-of-life updates while native app work remained in focus."
 		],
 		"changes": [
 			{
@@ -20,16 +91,15 @@
 			},
 			{
 				"type": "note",
-				"text": "This build primarily extends the preview countdown while we focus efforts on native app development."
+				"text": "This build primarily extends the release window while we focus efforts on native app development."
 			}
-		],
-		"tags": ["preview"]
+		]
 	},
 	{
-		"version": "0.1.0 Preview",
+		"version": "0.1.0",
 		"date": "2025-10-13",
 		"highlights": [
-			"First public preview of the MCPMate desktop app for macOS, debuting the dashboard, profiles, clients, servers, market, runtime, and settings pillars needed for day-to-day MCP operations."
+			"First public release of the MCPMate desktop app for macOS, debuting the dashboard, profiles, clients, servers, market, runtime, and settings pillars needed for day-to-day MCP operations."
 		],
 		"changes": [
 			{
@@ -50,7 +120,7 @@
 			},
 			{
 				"type": "note",
-				"text": "Settings highlights preview WIP controls (Application Mode, language selector, Dock/Menu Bar toggles) that are still evolving."
+				"text": "Settings highlights WIP controls (Application Mode, language selector, Dock/Menu Bar toggles) that are still evolving."
 			},
 			{
 				"type": "note",
@@ -72,7 +142,6 @@
 				"type": "known",
 				"text": "Inspector currently cannot trigger tool calls. A fix is in progress to restore capability diagnostics."
 			}
-		],
-		"tags": ["preview"]
+		]
 	}
 ]
