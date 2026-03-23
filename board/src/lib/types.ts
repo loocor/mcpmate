@@ -384,24 +384,21 @@ export interface MCPConfig {
 }
 
 /**
- * MCP服务器配置接口
+ * MCP server configuration used by direct CRUD flows.
  *
- * 服务器类型必须严格使用以下标准格式：
- * - "stdio": 标准输入输出服务器
- * - "sse": 服务器发送事件服务器
- * - "streamable_http": 流式HTTP服务器
+ * Supported server types:
+ * - "stdio": process-backed server
+ * - "streamable_http": HTTP-based server
+ *
+ * Legacy "sse" inputs are normalized earlier in import/install flows and
+ * should not be authored in this contract.
  */
 export interface MCPServerConfig {
-	/** 服务器名称 */
+	/** Server name */
 	name: string;
 
-	/**
-	 * 服务器类型
-	 *
-	 * 严格格式要求：只接受 "stdio" | "sse" | "streamable_http"
-	 * 不接受任何变体格式
-	 */
-	kind: "stdio" | "sse" | "streamable_http";
+	/** Direct server type accepted by the backend CRUD API. */
+	kind: "stdio" | "streamable_http";
 
 	/** 启动命令（stdio类型必填） */
 	command?: string;
@@ -409,7 +406,7 @@ export interface MCPServerConfig {
 	/** 命令路径 */
 	command_path?: string;
 
-	/** HTTP/SSE endpoint URL (non-stdio servers) */
+	/** HTTP endpoint URL (non-stdio servers) */
 	url?: string;
 
 	/** 命令参数 */
@@ -460,8 +457,8 @@ export interface RetryPolicy {
  */
 export function validateServerType(
 	kind: string,
-): kind is "stdio" | "sse" | "streamable_http" {
-	const validTypes = ["stdio", "sse", "streamable_http"] as const;
+): kind is "stdio" | "streamable_http" {
+	const validTypes = ["stdio", "streamable_http"] as const;
 	return validTypes.includes(kind as any);
 }
 
@@ -472,14 +469,13 @@ export function validateServerType(
  * @returns 详细的错误提示信息
  */
 export function getServerTypeErrorMessage(invalidKind: string): string {
-	return `无效的服务器类型 '${invalidKind}'。
+	return `Invalid server type '${invalidKind}'.
 
-正确的格式要求：
-- 使用 "stdio" (不是 "Stdio" 或其他变体)
-- 使用 "sse" (不是 "SSE" 或其他变体)
-- 使用 "streamable_http" (不是 "http"、"streamable-http" 或 "streamableHttp")
+Correct format requirements:
+- Use "stdio" (not "Stdio" or other variants)
+- Use "streamable_http" (not "http", "streamable-http", or "streamableHttp")
 
-请检查您的输入并使用正确的标准格式。`;
+Legacy "sse" inputs are normalized only during import.`;
 }
 
 // Config Suits Types

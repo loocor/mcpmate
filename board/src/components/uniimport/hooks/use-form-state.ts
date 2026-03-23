@@ -35,7 +35,6 @@ export function useFormState() {
 				icons: [],
 			},
 			stdio: { command: "", args: [], env: [] },
-			sse: { url: "", headers: [] },
 			streamable_http: { url: "", headers: [] },
 		}),
 		[],
@@ -69,10 +68,6 @@ export function useFormState() {
 				base.command = state.stdio.command ?? "";
 				base.args = cloneArgs(state.stdio.args);
 				base.env = cloneKeyValuePairs(state.stdio.env);
-			} else if (state.kind === "sse") {
-				base.url = state.sse.url ?? "";
-				base.headers = cloneKeyValuePairs(state.sse.headers);
-				(base as any).urlParams = cloneKeyValuePairs(state.sse.urlParams);
 			} else {
 				base.url = state.streamable_http.url ?? "";
 				base.headers = cloneKeyValuePairs(state.streamable_http.headers);

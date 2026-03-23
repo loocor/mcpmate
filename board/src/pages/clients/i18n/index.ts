@@ -207,6 +207,11 @@ export const clientsTranslations = {
 					resources: "Resources",
 					prompts: "Prompts",
 				},
+				transportOptions: {
+					stdio: "STDIO",
+					streamableHttp: "Streamable HTTP",
+					sseLegacy: "SSE (Legacy)",
+				},
 			},
 			backups: {
 				title: "Backups",
@@ -559,6 +564,11 @@ export const clientsTranslations = {
 					resources: "资源",
 					prompts: "提示",
 				},
+				transportOptions: {
+					stdio: "STDIO",
+					streamableHttp: "Streamable HTTP",
+					sseLegacy: "SSE（旧版兼容）",
+				},
 			},
 			backups: {
 				title: "备份",
@@ -906,6 +916,11 @@ export const clientsTranslations = {
 					tools: "ツール",
 					resources: "リソース",
 					prompts: "プロンプト",
+				},
+				transportOptions: {
+					stdio: "STDIO",
+					streamableHttp: "ストリーミング HTTP",
+					sseLegacy: "SSE（レガシー互換）",
 				},
 			},
 			backups: {

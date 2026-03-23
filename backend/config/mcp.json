@@ -49,7 +49,7 @@
 		},
 		"Gitmcp": {
 			"url": "https://gitmcp.io/modelcontextprotocol/rust-sdk",
-			"type": "sse"
+			"type": "streamable_http"
 		},
 		"Playwright": {
 			"args": [

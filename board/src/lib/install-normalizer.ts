@@ -18,7 +18,7 @@ const normalizeKind = (value: unknown): ServerInstallDraft["kind"] => {
 			return "stdio";
 		case "sse":
 		case "server-sent-events":
-			return "sse";
+			return "streamable_http";
 		case "streamable_http":
 		case "streamable-http":
 		case "http":
@@ -437,12 +437,7 @@ const buildDraft = (
 };
 
 const generateServerName = (kind: ServerInstallDraft["kind"]): string => {
-	const base =
-		kind === "stdio"
-			? "stdio-server"
-			: kind === "sse"
-				? "sse-server"
-				: "http-server";
+	const base = kind === "stdio" ? "stdio-server" : "http-server";
 	return `${base}-${Math.random().toString(36).slice(2, 8)}`;
 };
 

@@ -43,7 +43,8 @@ MCPMate 通过集中化的配置管理、智能化的服务调度和增强的安
 
 - 连接多个 MCP 服务器并聚合它们的工具
 - 为 AI 客户端提供统一接口
-- 支持多种传输协议（SSE、Streamable HTTP、stdio）
+- 实现 stdio 和 Streamable HTTP 传输协议（符合 MCP 2025-06-18 规范）
+- 接受旧版 SSE 配置的服务器，并自动归一化为 Streamable HTTP 以保持向后兼容
 - 实时监控和审计 MCP 通信
 - 检测潜在安全风险（如工具投毒）
 - 智能管理服务器资源
@@ -53,7 +54,7 @@ MCPMate 通过集中化的配置管理、智能化的服务调度和增强的安
 
 轻量级桥接组件，将 stdio 模式的 MCP 客户端（如 Claude Desktop）连接到 HTTP 模式的 MCPMate 代理：
 
-- 将 stdio 协议转换为 HTTP（SSE 或 Streamable HTTP），无需修改客户端
+- 将 stdio 协议转换为 HTTP 传输，无需修改客户端
 - 自动继承 HTTP 服务的所有功能和工具
 - 极简配置 — 只需服务地址
 

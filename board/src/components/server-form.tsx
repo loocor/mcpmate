@@ -31,7 +31,7 @@ const serverFormSchema = z.object({
 		.string()
 		.min(1, "Server name cannot be empty")
 		.max(50, "Server name cannot exceed 50 characters"),
-	kind: z.enum(["stdio", "sse", "streamable_http"], {
+	kind: z.enum(["stdio", "streamable_http", "sse"], {
 		required_error: "Please select a server type",
 	}),
 	command: z.string().optional(),
@@ -100,9 +100,10 @@ export function ServerForm({
 
 		try {
 			// Convert form data to server configuration
+			// Normalize legacy "sse" to "streamable_http" for backend
 			const serverConfig: Partial<MCPServerConfig> = {
 				name: data.name,
-				kind: data.kind,
+				kind: data.kind === "sse" ? "streamable_http" : data.kind,
 				command: data.command || undefined,
 				command_path: data.command_path || undefined,
 				args: data.args ? data.args.split(" ").filter(Boolean) : undefined,
@@ -186,9 +187,11 @@ export function ServerForm({
 									<SelectItem value="stdio">
 										Standard Input/Output (stdio)
 									</SelectItem>
-									<SelectItem value="sse">Server-Sent Events (SSE)</SelectItem>
 									<SelectItem value="streamable_http">
 										HTTP Stream (Streamable HTTP)
+									</SelectItem>
+									<SelectItem value="sse">
+										Server-Sent Events (SSE - Legacy)
 									</SelectItem>
 								</SelectContent>
 							</Select>
@@ -229,7 +232,7 @@ export function ServerForm({
 						</>
 					)}
 
-					{(serverType === "sse" || serverType === "streamable_http") && (
+					{(serverType === "streamable_http" || serverType === "sse") && (
 						<div className="space-y-2">
 							<Label htmlFor="command">URL</Label>
 							<Input

@@ -934,10 +934,27 @@ export function ClientDetailPage() {
 															[]) as string[];
 													// Show selector only when there are 2+ concrete transports
 													if (!supported || supported.length < 2) return null;
-													const optionLabel = (v: string) =>
-														v === "streamable_http"
-															? "Streamable HTTP"
-															: v.toUpperCase();
+													const optionLabel = (v: string) => {
+														switch (v) {
+															case "streamable_http":
+																return t(
+																	"detail.configuration.transportOptions.streamableHttp",
+																	{ defaultValue: "Streamable HTTP" },
+																);
+															case "sse":
+																return t(
+																	"detail.configuration.transportOptions.sseLegacy",
+																	{ defaultValue: "SSE (Legacy)" },
+																);
+															case "stdio":
+																return t(
+																	"detail.configuration.transportOptions.stdio",
+																	{ defaultValue: "STDIO" },
+																);
+															default:
+																return v.toUpperCase();
+														}
+													};
 													const allowed = new Set(supported);
 													const options = [
 														"stdio",

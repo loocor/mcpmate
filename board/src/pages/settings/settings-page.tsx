@@ -1127,7 +1127,7 @@ export function SettingsPage() {
 										<p className="text-xs text-slate-500">
 											{t("settings:system.mcpPortDescription", {
 												defaultValue:
-													"Port for MCP transports (/mcp for HTTP, /sse for SSE). Default 8000.",
+													"Port for MCP proxy endpoint (/mcp). Default 8000.",
 											})}
 										</p>
 									</div>

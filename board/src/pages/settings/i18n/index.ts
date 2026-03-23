@@ -17,7 +17,7 @@ en: {
             apiPortTitle: "Backend API Port",
             apiPortDescription: "Port for REST and dashboard access (default 8080).",
             mcpPortTitle: "Backend MCP Server Port",
-            mcpPortDescription: "Port for MCP transports (/mcp for HTTP, /sse for SSE). Default 8000.",
+            mcpPortDescription: "Port for MCP proxy endpoint (/mcp). Default 8000.",
             apply: "Apply & Restart",
             helperTauri: "Tauri: Apply ports and restart backend in-place.",
             helperWeb: "Web: Change ports then restart the backend process externally.",
@@ -206,7 +206,7 @@ en: {
             apiPortTitle: "后端 API 端口",
             apiPortDescription: "用于 REST 与控制台访问的端口（默认 8080）。",
             mcpPortTitle: "后端 MCP 服务端口",
-            mcpPortDescription: "用于 MCP 传输（/mcp HTTP、/sse SSE）的端口（默认 8000）。",
+            mcpPortDescription: "用于 MCP 代理端点的端口（/mcp），默认 8000。",
             apply: "应用并重启",
             helperTauri: "Tauri：就地应用端口并重启后端。",
             helperWeb: "Web：修改端口后，请在外部重启后端进程。",
@@ -384,7 +384,7 @@ en: {
 			apiPortDescription: "REST とダッシュボード用ポート（既定 8080）。",
 			mcpPortTitle: "バックエンド MCP サーバーポート",
 			mcpPortDescription:
-				"MCP トランスポート用ポート（/mcp は HTTP、/sse は SSE、既定 8000）。",
+				"MCP プロキシエンドポート用ポート（/mcp）、既定 8000。",
 			apply: "適用して再起動",
 			helperTauri:
 				"Tauri：ポートを適用してバックエンドをその場で再起動します。",

@@ -94,16 +94,11 @@ export function useFormSync({
 		formStateRef.current.stdio.env = cloneKeyValuePairs(watchedEnv || []);
 	}, [kind, watchedCommand, watchedArgs, watchedEnv, formStateRef, isRestoringRef]);
 
-	// Batch update HTTP-based transport fields (sse & streamable_http)
+	// Batch update HTTP-based transport fields
 	useEffect(() => {
-		if (isRestoringRef.current) return;
-		if (kind === "sse") {
-			formStateRef.current.sse.url = watchedUrl || "";
-			formStateRef.current.sse.headers = cloneKeyValuePairs(watchedHeaders || []);
-		} else if (kind === "streamable_http") {
-			formStateRef.current.streamable_http.url = watchedUrl || "";
-			formStateRef.current.streamable_http.headers = cloneKeyValuePairs(watchedHeaders || []);
-		}
+		if (isRestoringRef.current || kind !== "streamable_http") return;
+		formStateRef.current.streamable_http.url = watchedUrl || "";
+		formStateRef.current.streamable_http.headers = cloneKeyValuePairs(watchedHeaders || []);
 	}, [kind, watchedUrl, watchedHeaders, formStateRef, isRestoringRef]);
 
 	const saveTypeSnapshot = useCallback(
@@ -125,12 +120,6 @@ export function useFormSync({
 					command: values.command ?? "",
 					args: cloneArgs(values.args),
 					env: cloneKeyValuePairs(values.env),
-				};
-			} else if (currentKind === "sse") {
-				formStateRef.current.sse = {
-					url: values.url ?? "",
-					headers: cloneKeyValuePairs(values.headers),
-					urlParams: cloneKeyValuePairs(values.urlParams),
 				};
 			} else {
 				formStateRef.current.streamable_http = {

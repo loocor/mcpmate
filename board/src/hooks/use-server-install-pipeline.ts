@@ -15,7 +15,7 @@ export type WizardStep = "form" | "preview" | "result";
 
 export interface ServerInstallDraft {
 	name: string;
-	kind: "stdio" | "sse" | "streamable_http";
+	kind: "stdio" | "streamable_http";
 	command?: string;
 	args?: string[];
 	env?: Record<string, string>;

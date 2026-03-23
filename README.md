@@ -43,7 +43,8 @@ A high-performance MCP proxy server that:
 
 - Connects to multiple MCP servers and aggregates their tools
 - Provides a unified interface for AI clients
-- Supports multiple transport protocols (SSE, Streamable HTTP, stdio)
+- Implements stdio and Streamable HTTP transport protocols (aligned with MCP 2025-06-18 specification)
+- Accepts legacy SSE-configured servers and automatically normalizes them to Streamable HTTP for backward compatibility
 - Monitors and audits MCP communication in real time
 - Detects potential security risks (e.g., tool poisoning)
 - Intelligently manages server resources
@@ -53,7 +54,7 @@ A high-performance MCP proxy server that:
 
 A lightweight bridging component that connects stdio-mode MCP clients (like Claude Desktop) to the HTTP-mode MCPMate proxy:
 
-- Converts stdio protocol to HTTP (SSE or Streamable HTTP) without modifying the client
+- Converts stdio protocol to HTTP transport without modifying the client
 - Automatically inherits all functions and tools from the HTTP service
 - Minimal configuration — only requires service address
 

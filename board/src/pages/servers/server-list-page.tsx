@@ -515,10 +515,8 @@ export function ServerListPage() {
 		let technicalLine = "";
 		if (serverType.includes("stdio") || serverType.includes("process")) {
 			technicalLine = `stdio://${server.name || server.id}`;
-		} else if (serverType.includes("http")) {
+		} else if (serverType.includes("http") || serverType.includes("sse")) {
 			technicalLine = `http://localhost:3000/${server.id}`;
-		} else if (serverType.includes("sse")) {
-			technicalLine = `sse://localhost:3000/${server.id}`;
 		} else {
 			technicalLine = t("entity.description.serverLabel", {
 				name: server.name || server.id,
@@ -602,18 +600,17 @@ export function ServerListPage() {
 			);
 		}
 
-		if (
-			serverType.toLowerCase().includes("sse") ||
-			serverType.toLowerCase().includes("stream")
-		) {
+		if (serverType.toLowerCase().includes("stream")) {
 			tags.push(
 				<span
-					key="sse"
+					key="streamable_http"
 					className="flex items-center gap-1 text-xs"
 					data-decorative
 				>
 					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.sse", { defaultValue: "SSE" })}
+					{t("entity.connectionTags.streamableHttp", {
+						defaultValue: "Streamable HTTP",
+					})}
 				</span>,
 			);
 		}

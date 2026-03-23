@@ -89,7 +89,6 @@ export function useIngest({
 					icons: [],
 				},
 				stdio: { command: "", args: [], env: [] },
-				sse: { url: "", headers: [] },
 				streamable_http: { url: "", headers: [] },
 			};
 
@@ -125,17 +124,6 @@ export function useIngest({
 						key,
 						value,
 					})),
-				};
-			} else if (draft.kind === "sse") {
-				nextState.sse = {
-					url: draft.url ?? "",
-					headers: Object.entries(draft.headers || {}).map(([key, value]) => ({
-						key,
-						value,
-					})),
-					urlParams: Object.entries((draft as any)?.urlParams || {}).map(
-						([key, value]) => ({ key, value: String(value ?? "") }),
-					),
 				};
 			} else {
 				nextState.streamable_http = {

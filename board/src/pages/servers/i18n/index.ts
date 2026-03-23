@@ -113,7 +113,7 @@ export const serversTranslations = {
 			connectionTags: {
 				stdio: "STDIO",
 				http: "HTTP",
-				sse: "SSE",
+				streamableHttp: "Streamable HTTP",
 			},
 			iconAlt: {
 				named: "{{name}} icon",
@@ -387,8 +387,8 @@ export const serversTranslations = {
 					label: "Type",
 					options: {
 						stdio: "Stdio",
-						sse: "SSE",
 						streamable_http: "Streamable HTTP",
+						sse: "SSE (Legacy)",
 					},
 				},
 				command: {
@@ -724,7 +724,7 @@ export const serversTranslations = {
 			connectionTags: {
 				stdio: "STDIO",
 				http: "HTTP",
-				sse: "SSE",
+				streamableHttp: "Streamable HTTP",
 			},
 			iconAlt: {
 				named: "{{name}} 图标",
@@ -994,8 +994,8 @@ export const serversTranslations = {
 					label: "类型",
 					options: {
 						stdio: "Stdio",
-						sse: "SSE",
 						streamable_http: "Streamable HTTP",
+						sse: "SSE（旧版）",
 					},
 				},
 				command: {
@@ -1310,7 +1310,7 @@ export const serversTranslations = {
 			connectionTags: {
 				stdio: "STDIO",
 				http: "HTTP",
-				sse: "SSE",
+				streamableHttp: "Streamable HTTP",
 			},
 			iconAlt: {
 				named: "{{name}} のアイコン",
@@ -1589,8 +1589,8 @@ export const serversTranslations = {
 					label: "種別",
 					options: {
 						stdio: "Stdio",
-						sse: "SSE",
 						streamable_http: "ストリーミング HTTP",
+						sse: "SSE（レガシー）",
 					},
 				},
 				command: {

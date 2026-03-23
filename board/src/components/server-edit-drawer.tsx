@@ -123,7 +123,7 @@ const inferKind = (serverType?: string | null): ServerInstallDraft["kind"] => {
 	const kind = serverType?.toLowerCase() ?? "";
 	if (kind.includes("streamable")) return "streamable_http";
 	if (kind.includes("http")) return "streamable_http";
-	if (kind.includes("sse")) return "sse";
+	if (kind.includes("sse")) return "streamable_http";
 	return "stdio";
 };
 

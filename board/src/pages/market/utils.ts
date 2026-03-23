@@ -50,7 +50,7 @@ export function getRegistryIdentity(server: RegistryServerEntry): string {
 export function normalizeRemoteKind(value?: string | null): string | null {
 	if (!value) return null;
 	const lower = value.toLowerCase();
-	if (lower === "sse") return "sse";
+	if (lower === "sse") return "streamable_http";
 	if (lower === "stdio") return "stdio";
 	if (
 		lower === "streamable-http" ||
@@ -68,7 +68,7 @@ export function normalizeRemoteKind(value?: string | null): string | null {
 export function getRemoteTypeLabel(type: string): string {
 	switch (type.toLowerCase()) {
 		case "sse":
-			return "SSE";
+			return "SSE (Legacy)";
 		case "streamable_http":
 		case "streamable-http":
 			return "Streamable HTTP";
@@ -129,7 +129,7 @@ export function buildDraftFromRemoteOption(
 
 		return {
 			name: fallbackName,
-			kind: option.kind as "stdio" | "sse" | "streamable_http",
+			kind: option.kind as "stdio" | "streamable_http",
 			url: undefined,
 			command,
 			args,
@@ -139,7 +139,7 @@ export function buildDraftFromRemoteOption(
 
 	return {
 		name: fallbackName,
-		kind: option.kind as "stdio" | "sse" | "streamable_http",
+		kind: option.kind as "stdio" | "streamable_http",
 		url: option.url || "",
 		command: "",
 		args: [],

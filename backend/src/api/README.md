@@ -460,7 +460,7 @@ curl -X POST http://localhost:8000/api/mcp/servers/import \
         "args": ["server.js"]
       },
       "openai-server": {
-        "type": "sse",
+        "type": "streamable_http",
         "url": "https://api.openai.com/v1/mcp"
       }
     }

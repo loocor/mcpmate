@@ -161,11 +161,7 @@ export const ServerInstallManualForm = forwardRef<
 					...option,
 					label: t(`manual.fields.type.options.${option.value}`, {
 						defaultValue:
-							option.value === "stdio"
-								? "Stdio"
-								: option.value === "sse"
-									? "SSE"
-									: "Streamable HTTP",
+							option.value === "stdio" ? "Stdio" : "Streamable HTTP",
 					}),
 				})),
 			[t],

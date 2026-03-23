@@ -1506,8 +1506,8 @@ export const configApi = {
 					config.servers = serversResponse.servers.map((server) => ({
 						name: server.name,
 						kind:
-							server.server_type === "stdio" || server.server_type === "sse"
-								? (server.server_type as MCPServerConfig["kind"])
+							server.server_type === "stdio"
+								? "stdio"
 								: "streamable_http",
 						command: "",
 						command_path: undefined,
