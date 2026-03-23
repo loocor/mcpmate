@@ -51,11 +51,13 @@ pub async fn tools_list(
         .and_then(|v| v.as_u64())
         .unwrap_or(tools.len() as u64) as usize;
     let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
+    let elapsed_ms = data_value.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
     let data = InspectorToolsListData {
         mode,
         tools,
         total,
         meta,
+        elapsed_ms,
     };
     Ok(Json(InspectorToolsListResp::success(data)))
 }
@@ -267,11 +269,13 @@ pub async fn prompts_list(
         .and_then(|v| v.as_u64())
         .unwrap_or(prompts.len() as u64) as usize;
     let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
+    let elapsed_ms = data_value.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
     let data = InspectorPromptsListData {
         mode,
         prompts,
         total,
         meta,
+        elapsed_ms,
     };
     Ok(Json(InspectorPromptsListResp::success(data)))
     // legacy code kept in VCS history
@@ -364,11 +368,13 @@ pub async fn prompt_get(
 ) -> Result<Json<InspectorPromptGetResp>, ApiError> {
     let v = service::prompt_get(&state, &req).await?;
     let result: Value = v.get("result").cloned().unwrap_or_else(|| json!({}));
-    let server_id = v
-        .get("server_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
+    let server_id = v.get("server_id").cloned().and_then(|vv| {
+        if vv.is_null() {
+            None
+        } else {
+            vv.as_str().map(|s| s.to_string())
+        }
+    });
     let elapsed_ms = v.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
     Ok(Json(InspectorPromptGetResp::success(InspectorPromptGetData {
         result,
@@ -396,11 +402,13 @@ pub async fn resources_list(
         .and_then(|v| v.as_u64())
         .unwrap_or(resources.len() as u64) as usize;
     let meta = v.get("meta").and_then(|v| v.as_array()).cloned();
+    let elapsed_ms = v.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
     Ok(Json(InspectorResourcesListResp::success(InspectorResourcesListData {
         mode,
         resources,
         total,
         meta,
+        elapsed_ms,
     })))
 }
 
@@ -448,11 +456,13 @@ pub async fn templates_list(
         .and_then(|v| v.as_u64())
         .unwrap_or(templates.len() as u64) as usize;
     let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
+    let elapsed_ms = data_value.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
     let data = InspectorTemplatesListData {
         mode,
         templates,
         total,
         meta,
+        elapsed_ms,
     };
     Ok(Json(InspectorTemplatesListResp::success(data)))
 }

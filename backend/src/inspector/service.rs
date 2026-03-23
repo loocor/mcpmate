@@ -125,7 +125,8 @@ pub async fn prompt_get(
     let start = Instant::now();
     match req.mode {
         InspectorMode::Proxy => {
-            let (server_id, upstream_name) = if let Ok((server_name, upstream)) =
+            // Try to resolve unique name first (e.g., "server_name::prompt_name")
+            let (server_filter, upstream_name) = if let Ok((server_name, upstream)) =
                 capability::naming::resolve_unique_name(capability::naming::NamingKind::Prompt, &req.name).await
             {
                 let sid = resolver::to_id(&server_name)
@@ -133,10 +134,14 @@ pub async fn prompt_get(
                     .ok()
                     .flatten()
                     .ok_or_else(|| ApiError::BadRequest(format!("Server '{}' not found", server_name)))?;
-                (sid, upstream)
-            } else {
+                (Some(sid), upstream)
+            } else if req.server_id.is_some() || req.server_name.is_some() {
+                // If server is explicitly provided, use it
                 let sid = resolve_server(&req.server_id, &req.server_name).await?;
-                (sid, req.name.clone())
+                (Some(sid), req.name.clone())
+            } else {
+                // No server specified, let facade search across all servers
+                (None, req.name.clone())
             };
 
             let mapping = capability::facade::build_prompt_mapping(&state.connection_pool).await;
@@ -145,13 +150,14 @@ pub async fn prompt_get(
                 &mapping,
                 &upstream_name,
                 req.arguments.clone(),
-                Some(&server_id),
+                server_filter.as_deref(),
             )
             .await
             .map_err(map_anyhow)?;
+
             Ok(json!({
                 "result": res,
-                "server_id": server_id,
+                "server_id": server_filter,
                 "elapsed_ms": start.elapsed().as_millis() as u64,
             }))
         }
@@ -541,12 +547,14 @@ async fn list_capability_response(
     query: &InspectorListQuery,
     kind: CapabilityKind,
 ) -> Result<Value, ApiError> {
+    let start = Instant::now();
     let payload = list_capability_payload(state, query, kind).await?;
     Ok(json!({
         "mode": payload.mode,
         kind.response_key(): payload.items,
         "total": payload.items.len(),
         "meta": payload.meta,
+        "elapsed_ms": start.elapsed().as_millis() as u64,
     }))
 }
 

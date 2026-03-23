@@ -68,6 +68,7 @@ pub struct InspectorToolsListData {
     pub total: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Vec<serde_json::Value>>,
+    pub elapsed_ms: u64,
 }
 api_resp!(
     InspectorToolsListResp,
@@ -82,6 +83,7 @@ pub struct InspectorPromptsListData {
     pub total: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Vec<serde_json::Value>>,
+    pub elapsed_ms: u64,
 }
 api_resp!(
     InspectorPromptsListResp,
@@ -96,6 +98,7 @@ pub struct InspectorResourcesListData {
     pub total: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Vec<serde_json::Value>>,
+    pub elapsed_ms: u64,
 }
 api_resp!(
     InspectorResourcesListResp,
@@ -110,6 +113,7 @@ pub struct InspectorTemplatesListData {
     pub total: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Vec<serde_json::Value>>,
+    pub elapsed_ms: u64,
 }
 api_resp!(
     InspectorTemplatesListResp,
@@ -120,7 +124,8 @@ api_resp!(
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorPromptGetData {
     pub result: serde_json::Value,
-    pub server_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
     pub elapsed_ms: u64,
 }
 api_resp!(
