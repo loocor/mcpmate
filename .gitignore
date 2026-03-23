@@ -1,6 +1,10 @@
 .DS_Store
 *.log
 
+# Node.js compile cache and temp files
+node-compile-cache/
+*.hm
+
 # Local AI/tooling state
 .claude/
 .codex/
