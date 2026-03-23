@@ -3,7 +3,7 @@ use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{
-    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParam, ReadResourceRequestParam,
+    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams,
     ReadResourceResult,
 };
 use rmcp::service::RequestContext;
@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 pub(super) async fn list_resources(
     server: &ProxyServer,
-    _request: Option<PaginatedRequestParam>,
+    _request: Option<PaginatedRequestParams>,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourcesResult, McpError> {
     let mut resources: Vec<rmcp::model::Resource> = Vec::new();
@@ -100,12 +100,13 @@ pub(super) async fn list_resources(
     Ok(ListResourcesResult {
         resources: page.items,
         next_cursor: page.next_cursor,
+        ..Default::default()
     })
 }
 
 pub(super) async fn list_resource_templates(
     server: &ProxyServer,
-    _request: Option<PaginatedRequestParam>,
+    _request: Option<PaginatedRequestParams>,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourceTemplatesResult, McpError> {
     let Some(_db) = &server.database else {
@@ -113,6 +114,7 @@ pub(super) async fn list_resource_templates(
         return Ok(ListResourceTemplatesResult {
             resource_templates: Vec::new(),
             next_cursor: None,
+            ..Default::default()
         });
     };
 
@@ -207,12 +209,13 @@ pub(super) async fn list_resource_templates(
     Ok(ListResourceTemplatesResult {
         resource_templates: page.items,
         next_cursor: page.next_cursor,
+        ..Default::default()
     })
 }
 
 pub(super) async fn read_resource(
     server: &ProxyServer,
-    request: ReadResourceRequestParam,
+    request: ReadResourceRequestParams,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ReadResourceResult, McpError> {
     tracing::debug!("Reading resource: {}", request.uri);

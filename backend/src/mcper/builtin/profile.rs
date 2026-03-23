@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use rmcp::model::{CallToolRequestParam, CallToolResult, Tool};
+use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -329,7 +329,7 @@ impl BuiltinService for ProfileService {
 
     async fn call_tool(
         &self,
-        request: &CallToolRequestParam,
+        request: &CallToolRequestParams,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
             "mcpmate_profile_list" => self.profile_list().await,

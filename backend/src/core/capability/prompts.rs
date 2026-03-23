@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use futures::{StreamExt, future::BoxFuture};
-use rmcp::model::{GetPromptRequestParam, GetPromptResult, PaginatedRequestParam, Prompt};
+use rmcp::model::{GetPromptRequestParams, GetPromptResult, PaginatedRequestParams, Prompt};
 use serde_json::Value as JsonValue;
 use sqlx::{Pool, Sqlite};
 use tokio::sync::Mutex;
@@ -197,7 +197,9 @@ pub async fn build_prompt_mapping_filtered(
                           cursor: Option<String>|
                           -> BoxFuture<'static, anyhow::Result<(Vec<Prompt>, Option<String>)>> {
                         Box::pin(async move {
-                            let result = p.list_prompts(Some(PaginatedRequestParam { cursor })).await?;
+                            let result = p
+                                .list_prompts(Some(PaginatedRequestParams::default().with_cursor(cursor)))
+                                .await?;
                             Ok((result.prompts, result.next_cursor))
                         })
                     };
@@ -282,7 +284,9 @@ pub async fn build_prompt_template_mapping(
                           cursor: Option<String>|
                           -> BoxFuture<'static, anyhow::Result<(Vec<Prompt>, Option<String>)>> {
                         Box::pin(async move {
-                            let result = p.list_prompts(Some(PaginatedRequestParam { cursor })).await?;
+                            let result = p
+                                .list_prompts(Some(PaginatedRequestParams::default().with_cursor(cursor)))
+                                .await?;
                             Ok((result.prompts, result.next_cursor))
                         })
                     };
@@ -418,10 +422,10 @@ pub async fn get_upstream_prompt(
         (service, upstream_name_owned)
     };
 
-    let request_params = GetPromptRequestParam {
-        name: upstream_prompt_name,
-        arguments,
-    };
+    let mut request_params = GetPromptRequestParams::new(upstream_prompt_name);
+    if let Some(arguments) = arguments {
+        request_params = request_params.with_arguments(arguments);
+    }
 
     let result = service
         .get_prompt(request_params)
@@ -459,10 +463,10 @@ pub async fn get_upstream_prompt_direct(
         return Err(anyhow!("Connection is not ready (status: {})", connection.status));
     }
 
-    let request_params = GetPromptRequestParam {
-        name: prompt_name.to_string(),
-        arguments,
-    };
+    let mut request_params = GetPromptRequestParams::new(prompt_name.to_string());
+    if let Some(arguments) = arguments {
+        request_params = request_params.with_arguments(arguments);
+    }
 
     let result = service
         .get_prompt(request_params)

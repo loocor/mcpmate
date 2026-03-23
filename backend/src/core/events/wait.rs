@@ -94,8 +94,7 @@ pub fn needs_transport_ready_wait(
     transport_type: TransportType,
 ) -> bool {
     match (server_type, transport_type) {
-        // SSE and StreamableHttp type servers need to wait for the transport layer to be ready
-        (ServerType::Sse, TransportType::Sse) => true,
+        // Streamable HTTP servers need to wait for the transport layer to be ready
         (ServerType::StreamableHttp, TransportType::StreamableHttp) => true,
         // Other types do not need to wait
         _ => false,

@@ -44,10 +44,7 @@ pub fn make_streamable_config(
     url: &str,
     headers: &Option<HashMap<String, String>>,
 ) -> StreamableHttpClientTransportConfig {
-    let mut cfg = StreamableHttpClientTransportConfig {
-        uri: url.to_string().into(),
-        ..Default::default()
-    };
+    let mut cfg = StreamableHttpClientTransportConfig::with_uri(url);
     if let Some(token) = extract_bearer_token(headers) {
         cfg = cfg.auth_header(token);
     }
@@ -59,10 +56,7 @@ pub fn make_streamable_config_with_bearer(
     url: &str,
     bearer: Option<&str>,
 ) -> StreamableHttpClientTransportConfig {
-    let mut cfg = StreamableHttpClientTransportConfig {
-        uri: url.to_string().into(),
-        ..Default::default()
-    };
+    let mut cfg = StreamableHttpClientTransportConfig::with_uri(url);
     if let Some(token) = bearer {
         let trimmed = trim_bearer_prefix(token);
         if !trimmed.is_empty() {

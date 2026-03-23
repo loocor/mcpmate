@@ -28,7 +28,7 @@ pub struct Config {
 /// MCP server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MCPServerConfig {
-    /// Type of the server (stdio, sse, streamable_http)
+    /// Type of the server (stdio, streamable_http)
     #[serde(rename = "type")]
     pub kind: ServerType,
     /// Command to execute (for stdio servers)
@@ -50,7 +50,6 @@ impl MCPServerConfig {
         // Infer strictly from the 'kind' field
         match self.kind {
             ServerType::Stdio => TransportType::Stdio,
-            ServerType::Sse => TransportType::Sse,
             ServerType::StreamableHttp => TransportType::StreamableHttp,
         }
     }

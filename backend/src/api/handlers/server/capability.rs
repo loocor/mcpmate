@@ -686,7 +686,7 @@ pub async fn extract_resource_templates_capability(
     // Paginated resource template collection
     loop {
         let list_result = service
-            .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
+            .list_resource_templates(Some(rmcp::model::PaginatedRequestParams::default().with_cursor(cursor)))
             .await
             .map_err(|_| ApiError::InternalError("Failed to list resource templates".to_string()))?;
 

@@ -6,7 +6,7 @@
 //! following the MCP specification 2025-03-26.
 
 use rmcp::ErrorData as McpError;
-use rmcp::model::{Cursor, PaginatedRequestParam};
+use rmcp::model::{Cursor, PaginatedRequestParams};
 use serde::{Deserialize, Serialize};
 
 /// pagination behavior configuration
@@ -79,7 +79,7 @@ impl ProxyPaginator {
     /// parse cursor from request parameters
     fn parse_cursor(
         &self,
-        request: &Option<PaginatedRequestParam>,
+        request: &Option<PaginatedRequestParams>,
     ) -> Result<usize, McpError> {
         let Some(request) = request else {
             return Ok(0);
@@ -144,7 +144,7 @@ impl ProxyPaginator {
     /// paginate tools
     pub fn paginate_tools(
         &self,
-        request: &Option<PaginatedRequestParam>,
+        request: &Option<PaginatedRequestParams>,
         mut all_tools: Vec<rmcp::model::Tool>,
     ) -> Result<PaginationResult<rmcp::model::Tool>, McpError> {
         tracing::debug!(
@@ -195,7 +195,7 @@ impl ProxyPaginator {
     /// paginate prompts
     pub fn paginate_prompts(
         &self,
-        request: &Option<PaginatedRequestParam>,
+        request: &Option<PaginatedRequestParams>,
         mut all_prompts: Vec<rmcp::model::Prompt>,
     ) -> Result<PaginationResult<rmcp::model::Prompt>, McpError> {
         // sort prompts by name using natural sort (correctly handle numbers)
@@ -218,7 +218,7 @@ impl ProxyPaginator {
     /// paginate resources
     pub fn paginate_resources(
         &self,
-        request: &Option<PaginatedRequestParam>,
+        request: &Option<PaginatedRequestParams>,
         mut all_resources: Vec<rmcp::model::Resource>,
     ) -> Result<PaginationResult<rmcp::model::Resource>, McpError> {
         // sort resources by URI using natural sort (correctly handle numbers)
@@ -241,7 +241,7 @@ impl ProxyPaginator {
     /// paginate resource templates
     pub fn paginate_resource_templates(
         &self,
-        request: &Option<PaginatedRequestParam>,
+        request: &Option<PaginatedRequestParams>,
         mut all_templates: Vec<rmcp::model::ResourceTemplate>,
     ) -> Result<PaginationResult<rmcp::model::ResourceTemplate>, McpError> {
         // sort resource templates by URI template using natural sort (correctly handle numbers)

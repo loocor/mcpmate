@@ -33,10 +33,6 @@ pub async fn connect_server(
 
             Ok(result)
         }
-        ServerType::Sse => {
-            let (service, tools, capabilities) = http::connect_sse_server(server_name, server_config).await?;
-            Ok((service, tools, capabilities, None))
-        }
         ServerType::StreamableHttp => {
             let (service, tools, capabilities) =
                 http::connect_http_server(server_name, server_config, transport_type).await?;

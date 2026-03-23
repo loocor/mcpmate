@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
-use rmcp::model::{PaginatedRequestParam, Tool};
+use rmcp::model::{PaginatedRequestParams, Tool};
 use tokio::sync::Mutex;
 use tracing;
 
@@ -206,7 +206,10 @@ async fn collect_tools_from_instance_peer(
     let mut raw_tools: Vec<Tool> = Vec::new();
     let mut cursor = None;
     loop {
-        match peer.list_tools(Some(PaginatedRequestParam { cursor })).await {
+        match peer
+            .list_tools(Some(PaginatedRequestParams::default().with_cursor(cursor)))
+            .await
+        {
             Ok(result) => {
                 for tool in result.tools {
                     raw_tools.push(tool);

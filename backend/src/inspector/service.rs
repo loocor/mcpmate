@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use futures::StreamExt;
 use rmcp::RoleClient;
 use rmcp::model::{
-    CallToolRequest, CallToolRequestParam, ClientRequest, LoggingMessageNotificationParam, ProgressNotificationParam,
+    CallToolRequest, CallToolRequestParams, ClientRequest, LoggingMessageNotificationParam, ProgressNotificationParam,
     ProgressToken, RequestId,
 };
 use rmcp::service::{Peer, PeerRequestOptions};
@@ -468,14 +468,9 @@ async fn start_tool_call_internal(
         }
     };
 
-    let request = ClientRequest::CallToolRequest(CallToolRequest {
-        method: Default::default(),
-        params: CallToolRequestParam {
-            name: upstream_tool_name.into(),
-            arguments: req.arguments.clone().or_else(|| Some(serde_json::Map::new())),
-        },
-        extensions: Default::default(),
-    });
+    let params =
+        CallToolRequestParams::new(upstream_tool_name).with_arguments(req.arguments.clone().unwrap_or_default());
+    let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
 
     let options = PeerRequestOptions {
         timeout: Some(timeout),

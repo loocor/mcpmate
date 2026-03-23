@@ -127,12 +127,12 @@ fn parse_transport_type(transport: &str) -> TransportType {
     use crate::common::constants::transport;
 
     match transport {
-        t if t == transport::SSE => TransportType::Sse,
+        t if t == transport::SSE => TransportType::StreamableHttp,
         t if t == transport::STREAMABLE_HTTP => TransportType::StreamableHttp,
         t if t == transport::STDIO => TransportType::Stdio,
         _ => {
-            tracing::warn!("Unknown transport type: {}, defaulting to SSE", transport);
-            TransportType::Sse
+            tracing::warn!("Unknown transport type: {}, defaulting to Streamable HTTP", transport);
+            TransportType::StreamableHttp
         }
     }
 }
@@ -141,8 +141,7 @@ fn parse_transport_type(transport: &str) -> TransportType {
 fn get_transport_path(transport_type: &TransportType) -> &'static str {
     match transport_type {
         TransportType::StreamableHttp => "/mcp",
-        TransportType::Sse => "/sse",
-        _ => "/sse",
+        TransportType::Stdio => "/mcp",
     }
 }
 

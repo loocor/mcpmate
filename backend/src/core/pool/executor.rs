@@ -24,10 +24,7 @@ use crate::{
             ConnectionOperation, // action to perform on the connection
             ConnectionStatus,    // status of the connection
         },
-        transport::{
-            connect_http_server, // connect to an HTTP server
-            connect_sse_server,  // connect to an SSE server
-        },
+        transport::connect_http_server,
     },
 };
 
@@ -320,7 +317,6 @@ impl UpstreamConnectionPool {
         // Connect based on server type using enum matching (strict type safety)
         let result = match server_config.kind {
             ServerType::Stdio => self.connect_stdio(server_id, instance_id).await,
-            ServerType::Sse => self.connect_sse(server_id, instance_id).await,
             ServerType::StreamableHttp => self.connect_http(server_id, instance_id).await,
         };
 
@@ -406,96 +402,6 @@ impl UpstreamConnectionPool {
         }
 
         Ok(())
-    }
-
-    /// Connect to SSE server
-    async fn connect_sse(
-        &mut self,
-        server_id: &str,
-        instance_id: &str,
-    ) -> Result<()> {
-        // Prepare optional shared client
-        let client_opt = if let Some(reg) = &self.http_clients {
-            if let Some(url) = self.config.mcp_servers.get(server_id).and_then(|c| c.url.as_ref()) {
-                if let Some(origin) = crate::core::pool::connection::HttpClientRegistry::origin_key(url) {
-                    Some(reg.get_or_create(&origin).await)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some(client) = &client_opt {
-            if let Some(url) = self.config.mcp_servers.get(server_id).and_then(|c| c.url.as_ref()) {
-                if let Some(origin) = crate::core::pool::connection::HttpClientRegistry::origin_key(url) {
-                    tracing::debug!(
-                        "[HTTP CLIENT][reuse] server_id={} origin={} client={:p}",
-                        server_id,
-                        origin,
-                        client
-                    );
-                }
-            }
-        } else {
-            tracing::debug!("[HTTP CLIENT][no-reuse] server_id={} (SSE)", server_id);
-        }
-
-        self.connect_with_transport(server_id, instance_id, move |label, config| {
-            let client_opt = client_opt.clone();
-            async move {
-                // If server has default headers, use a per-server client with those headers
-                if let Some(h) = config.headers.as_ref() {
-                    if !h.is_empty() {
-                        let mut header_map = reqwest::header::HeaderMap::new();
-                        for (k, v) in h.iter() {
-                            if let (Ok(name), Ok(value)) = (
-                                reqwest::header::HeaderName::from_bytes(k.as_bytes()),
-                                reqwest::header::HeaderValue::from_str(v),
-                            ) {
-                                let controlled = matches!(
-                                    name.as_str().to_ascii_lowercase().as_str(),
-                                    "accept"
-                                        | "content-length"
-                                        | "host"
-                                        | "connection"
-                                        | "transfer-encoding"
-                                        | "mcp-protocol-version"
-                                );
-                                if controlled {
-                                    continue;
-                                }
-                                header_map.insert(name, value);
-                            }
-                        }
-                        let client = reqwest::Client::builder().default_headers(header_map).build()?;
-                        return crate::core::transport::http::connect_http_server_with_client(
-                            &label,
-                            &config,
-                            client,
-                            crate::common::server::TransportType::Sse,
-                        )
-                        .await;
-                    }
-                }
-                // else fall back to shared client or plain connection
-                if let Some(client) = client_opt {
-                    crate::core::transport::http::connect_http_server_with_client(
-                        &label,
-                        &config,
-                        client,
-                        crate::common::server::TransportType::Sse,
-                    )
-                    .await
-                } else {
-                    connect_sse_server(&label, &config).await
-                }
-            }
-        })
-        .await
     }
 
     /// Wrapper for scheduler to trigger connection using the single executor

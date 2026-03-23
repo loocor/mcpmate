@@ -65,7 +65,6 @@ pub async fn get_ports(State(_state): State<Arc<AppState>>) -> Result<Json<Syste
         mcp_port: cfg.mcp_port,
         api_url: cfg.api_url(),
         mcp_http_url: cfg.mcp_http_url(),
-        mcp_sse_url: cfg.mcp_sse_url(),
     }))
 }
 

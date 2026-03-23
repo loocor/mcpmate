@@ -462,7 +462,7 @@ async fn fetch_runtime_items(
                       -> BoxFuture<'static, anyhow::Result<(Vec<rmcp::model::Tool>, Option<String>)>> {
                     Box::pin(async move {
                         let result = p
-                            .list_tools(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                            .list_tools(Some(rmcp::model::PaginatedRequestParams::default().with_cursor(cursor)))
                             .await?;
                         Ok((result.tools, result.next_cursor))
                     })
@@ -491,7 +491,7 @@ async fn fetch_runtime_items(
             > {
                 Box::pin(async move {
                     let result = p
-                        .list_prompts(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                        .list_prompts(Some(rmcp::model::PaginatedRequestParams::default().with_cursor(cursor)))
                         .await?;
                     Ok((result.prompts, result.next_cursor))
                 })
@@ -522,7 +522,7 @@ async fn fetch_runtime_items(
             > {
                 Box::pin(async move {
                     let result = p
-                        .list_resources(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                        .list_resources(Some(rmcp::model::PaginatedRequestParams::default().with_cursor(cursor)))
                         .await?;
                     Ok((result.resources, result.next_cursor))
                 })
@@ -553,7 +553,9 @@ async fn fetch_runtime_items(
             > {
                 Box::pin(async move {
                     let result = p
-                        .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                        .list_resource_templates(Some(
+                            rmcp::model::PaginatedRequestParams::default().with_cursor(cursor),
+                        ))
                         .await?;
                     Ok((result.resource_templates, result.next_cursor))
                 })
@@ -637,10 +639,13 @@ async fn call_tool_impl(
     let arguments = ctx.arguments.clone();
     let fut = async move {
         tracing::debug!(server_id = %ctx.server_id, tool = %ctx.tool_name, timeout_secs = %timeout.as_secs(), "[CALL] sending to upstream");
-        peer.call_tool(rmcp::model::CallToolRequestParam {
-            name: tool_name.into(),
-            arguments,
-        })
+        {
+            let mut params = rmcp::model::CallToolRequestParams::new(tool_name);
+            if let Some(arguments) = arguments {
+                params = params.with_arguments(arguments);
+            }
+            peer.call_tool(params)
+        }
         .await
     };
     match tokio::time::timeout(timeout, fut).await {
@@ -723,22 +728,22 @@ fn convert_cached_prompt(cached: CachedPromptInfo) -> rmcp::model::Prompt {
             cached
                 .arguments
                 .into_iter()
-                .map(|arg| rmcp::model::PromptArgument {
-                    name: arg.name,
-                    title: None,
-                    description: arg.description,
-                    required: Some(arg.required),
+                .map(|arg| {
+                    let mut prompt_argument = rmcp::model::PromptArgument::new(arg.name);
+                    if let Some(description) = arg.description {
+                        prompt_argument = prompt_argument.with_description(description);
+                    }
+                    prompt_argument.with_required(arg.required)
                 })
                 .collect(),
         )
     };
-    rmcp::model::Prompt {
-        name: cached.name,
-        title: None,
-        description: cached.description,
-        arguments,
-        icons: cached.icons,
+
+    let mut prompt = rmcp::model::Prompt::new(cached.name, cached.description, arguments);
+    if let Some(icons) = cached.icons {
+        prompt = prompt.with_icons(icons);
     }
+    prompt
 }
 
 fn convert_cached_resource(cached: CachedResourceInfo) -> Option<rmcp::model::Resource> {
@@ -758,13 +763,13 @@ fn convert_cached_resource_template(cached: CachedResourceTemplateInfo) -> Optio
         .name
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| cached.uri_template.clone());
-    let raw = rmcp::model::RawResourceTemplate {
-        uri_template: cached.uri_template,
-        name: resolved_name,
-        title: None,
-        description: cached.description,
-        mime_type: cached.mime_type,
-    };
+    let mut raw = rmcp::model::RawResourceTemplate::new(cached.uri_template, resolved_name);
+    if let Some(description) = cached.description {
+        raw = raw.with_description(description);
+    }
+    if let Some(mime_type) = cached.mime_type {
+        raw = raw.with_mime_type(mime_type);
+    }
     Some(rmcp::model::ResourceTemplate { raw, annotations: None })
 }
 
@@ -778,15 +783,19 @@ fn convert_cached_tool(
         .unique_name
         .clone()
         .unwrap_or_else(|| generate_unique_name(NamingKind::Tool, server_name, &cached.name));
-    Some(rmcp::model::Tool {
-        name: std::borrow::Cow::Owned(unique_name),
-        title: None,
-        description: cached.description.map(std::borrow::Cow::Owned),
-        input_schema: Arc::new(schema_object),
-        output_schema: None,
-        annotations: None,
-        icons: cached.icons,
-    })
+    let mut tool = if let Some(description) = cached.description.map(std::borrow::Cow::Owned) {
+        rmcp::model::Tool::new(
+            std::borrow::Cow::Owned(unique_name),
+            description,
+            Arc::new(schema_object),
+        )
+    } else {
+        rmcp::model::Tool::new_with_raw(std::borrow::Cow::Owned(unique_name), None, Arc::new(schema_object))
+    };
+    if let Some(icons) = cached.icons {
+        tool = tool.with_icons(icons);
+    }
+    Some(tool)
 }
 
 async fn ensure_tool_unique_names(

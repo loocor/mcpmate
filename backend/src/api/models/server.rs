@@ -46,7 +46,7 @@ pub struct ServerListReq {
     pub enabled: Option<bool>,
 
     #[serde(default)]
-    #[schemars(description = "Filter by server type: stdio|sse|streamable_http")]
+    #[schemars(description = "Filter by server type: stdio|streamable_http")]
     pub server_type: Option<String>,
 
     #[serde(default)]
@@ -292,17 +292,17 @@ pub struct ServerDetailsData {
     pub globally_enabled: bool,
     /// Is enabled in any active profile (profile_server.enabled)
     pub enabled_in_profile: bool,
-    /// Server type (stdio, sse, streamable_http)
+    /// Server type (stdio, streamable_http)
     pub server_type: ServerType,
     /// Command to execute (for stdio servers)
     pub command: Option<String>,
-    /// URL (for sse and streamable_http servers)
+    /// URL (for streamable_http servers)
     pub url: Option<String>,
     /// Arguments to pass to the command (for stdio servers)
     pub args: Option<Vec<String>>,
     /// Environment variables to set (for stdio servers)
     pub env: Option<HashMap<String, String>>,
-    /// Default HTTP headers for SSE/Streamable HTTP (sensitive keys may be redacted)
+    /// Default HTTP headers for HTTP (sensitive keys may be redacted)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
     /// Server metadata
@@ -487,7 +487,7 @@ pub struct InstanceDetails {
     pub tools_count: usize,
     /// Error message if status is Error
     pub error_message: Option<String>,
-    /// Server type (stdio, sse, etc.)
+    /// Server type (stdio or streamable_http)
     pub server_type: ServerType,
     /// Process ID
     pub process_id: Option<u32>,
@@ -657,12 +657,11 @@ pub struct ServerCreateReq {
     ///
     /// **Strict format requirements**: Only accepts the following three standard formats
     /// - `"stdio"`: Standard input/output server, started by command line
-    /// - `"sse"`: Server-Sent Events server, connected by HTTP SSE
     /// - `"streamable_http"`: Streamable HTTP server, connected by HTTP stream
     ///
     /// **Note**: The system will reject any variant formats, such as "http", "streamableHttp", etc.
-    #[schemars(description = "Server type, must be stdio, sse, or streamable_http")]
-    #[schemars(regex(pattern = r"^(stdio|sse|streamable_http)$"))]
+    #[schemars(description = "Server type, must be stdio or streamable_http")]
+    #[schemars(regex(pattern = r"^(stdio|streamable_http)$"))]
     pub server_type: String,
 
     /// Startup command (only used for stdio type)
@@ -671,10 +670,10 @@ pub struct ServerCreateReq {
     #[schemars(description = "Server startup command (required for stdio type)")]
     pub command: Option<String>,
 
-    /// Server URL (only used for sse and streamable_http types)
+    /// Server URL (only used for streamable_http types)
     ///
-    /// Required when the server type is "sse" or "streamable_http"
-    #[schemars(description = "Server URL (required for sse and streamable_http types)")]
+    /// Required when the server type is "streamable_http"
+    #[schemars(description = "Server URL (required for streamable_http types)")]
     pub url: Option<String>,
 
     /// Command arguments (only used for stdio type)
@@ -684,7 +683,7 @@ pub struct ServerCreateReq {
     /// Environment variables (only used for stdio type)
     #[schemars(description = "Environment variables to set (optional for stdio type)")]
     pub env: Option<HashMap<String, String>>,
-    /// Default HTTP headers for SSE/Streamable HTTP
+    /// Default HTTP headers for HTTP
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
 
@@ -722,12 +721,11 @@ pub struct ServerUpdateReq {
     ///
     /// **Strict format requirements**: If provided, only accepts the following three standard formats
     /// - `"stdio"`: Standard input/output server
-    /// - `"sse"`: Server-Sent Events server
     /// - `"streamable_http"`: Streamable HTTP server
     ///
     /// **Important**: Any non-standard format will be rejected and return a 400 error
-    #[schemars(description = "Server type, if provided must be stdio, sse, or streamable_http")]
-    #[schemars(regex(pattern = r"^(stdio|sse|streamable_http)$"))]
+    #[schemars(description = "Server type, if provided must be stdio or streamable_http")]
+    #[schemars(regex(pattern = r"^(stdio|streamable_http)$"))]
     pub kind: Option<String>,
 
     /// Launch command (optional update)
@@ -745,7 +743,7 @@ pub struct ServerUpdateReq {
     /// Environment variables (optional update)
     #[schemars(description = "Environment variables to set")]
     pub env: Option<HashMap<String, String>>,
-    /// Default HTTP headers for SSE/Streamable HTTP (replace semantics)
+    /// Default HTTP headers for HTTP (replace semantics)
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
 
@@ -787,18 +785,18 @@ pub struct ServersImportReq {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Import server configuration")]
 pub struct ServersImportConfig {
-    /// Type of the server (stdio, sse, streamable_http)
+    /// Type of the server (stdio, streamable_http)
     #[serde(rename = "type")]
     pub kind: String,
     /// Command to execute (for stdio servers)
     pub command: Option<String>,
     /// Arguments to pass to the command (for stdio servers)
     pub args: Option<Vec<String>>,
-    /// URL (for sse and streamable_http servers)
+    /// URL (for streamable_http servers)
     pub url: Option<String>,
     /// Environment variables to set (for stdio servers)
     pub env: Option<HashMap<String, String>>,
-    /// Default HTTP headers for SSE/Streamable HTTP
+    /// Default HTTP headers for HTTP
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
 
@@ -890,7 +888,7 @@ api_resp!(
 #[schemars(description = "Single server preview item request")]
 pub struct ServerPreviewItemReq {
     pub name: String,
-    pub kind: String, // stdio|sse|streamable_http
+    pub kind: String, // stdio|streamable_http
     #[serde(default)]
     pub command: Option<String>,
     #[serde(default)]
@@ -899,7 +897,7 @@ pub struct ServerPreviewItemReq {
     pub args: Option<Vec<String>>,
     #[serde(default)]
     pub env: Option<std::collections::HashMap<String, String>>,
-    /// Optional HTTP headers for SSE/streamable_http preview
+    /// Optional HTTP headers for streamable_http preview
     #[serde(default)]
     pub headers: Option<std::collections::HashMap<String, String>>,
 }

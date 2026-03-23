@@ -30,8 +30,6 @@ pub struct SystemPortsResp {
     pub api_url: String,
     #[schemars(description = "MCP Streamable HTTP endpoint URL")]
     pub mcp_http_url: String,
-    #[schemars(description = "MCP SSE endpoint URL")]
-    pub mcp_sse_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

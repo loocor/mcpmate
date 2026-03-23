@@ -19,9 +19,9 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
             -- Management mode: hosted|transparent
             config_mode TEXT NOT NULL DEFAULT 'hosted' CHECK (config_mode IN ('hosted','transparent')),
-            -- Transport protocol: auto|sse|stdio|streamable_http (default: auto)
+            -- Transport protocol: auto|stdio|streamable_http (default: auto)
             transport TEXT NOT NULL DEFAULT 'auto' CHECK (
-                transport IN ('auto', 'sse', 'stdio', 'streamable_http')
+                transport IN ('auto', 'stdio', 'streamable_http')
             ),
             -- Client version string (optional)
             client_version TEXT,

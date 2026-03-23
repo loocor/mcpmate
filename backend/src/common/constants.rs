@@ -257,22 +257,15 @@ pub mod branding {
         // Some upstream MCP servers still expect the icon sizes field to follow the
         // pre-2025-06 list-based schema. Until the SDK migrates fully, omit it to
         // stay compatible while keeping the icon metadata available.
-        rmcp::model::Icon {
-            src: LOGO_URL.to_string(),
-            mime_type: Some(LOGO_MIME_TYPE.to_string()),
-            sizes: None,
-        }
+        rmcp::model::Icon::new(LOGO_URL).with_mime_type(LOGO_MIME_TYPE)
     }
 
     /// Create MCPMate Implementation for RMCP server info
     pub fn create_implementation() -> rmcp::model::Implementation {
-        rmcp::model::Implementation {
-            name: PRODUCT_NAME.to_string(),
-            title: Some(DISPLAY_TITLE.to_string()),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            icons: Some(vec![create_logo_icon()]),
-            website_url: Some(WEBSITE_URL.to_string()),
-        }
+        rmcp::model::Implementation::new(PRODUCT_NAME, env!("CARGO_PKG_VERSION"))
+            .with_title(DISPLAY_TITLE)
+            .with_icons(vec![create_logo_icon()])
+            .with_website_url(WEBSITE_URL)
     }
 
     /// Bridge-specific constants
@@ -291,13 +284,10 @@ pub mod branding {
 
         /// Create bridge Implementation with specified name
         fn create_implementation(name: String) -> rmcp::model::Implementation {
-            rmcp::model::Implementation {
-                name,
-                title: Some(DISPLAY_TITLE.to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                icons: Some(vec![super::create_logo_icon()]),
-                website_url: Some(super::WEBSITE_URL.to_string()),
-            }
+            rmcp::model::Implementation::new(name, env!("CARGO_PKG_VERSION"))
+                .with_title(DISPLAY_TITLE)
+                .with_icons(vec![super::create_logo_icon()])
+                .with_website_url(super::WEBSITE_URL)
         }
 
         /// Create bridge client Implementation with dynamic appid

@@ -20,7 +20,7 @@ use sqlx::{
 use crate::common::constants::transport;
 
 /// Transport priority order for hosted mode selection
-pub const TRANSPORT_PRIORITY: &[&str] = &[transport::STREAMABLE_HTTP, transport::SSE, transport::STDIO];
+pub const TRANSPORT_PRIORITY: &[&str] = &[transport::STREAMABLE_HTTP, transport::STDIO];
 
 /// Server identity (id + name)
 ///
@@ -46,8 +46,6 @@ impl ServerIdentity {
 pub enum ServerType {
     /// Standard input/output server
     Stdio,
-    /// Server-Sent Events server
-    Sse,
     /// Streamable HTTP server
     StreamableHttp,
 }
@@ -57,7 +55,6 @@ impl ServerType {
     pub fn as_str(&self) -> &'static str {
         match self {
             ServerType::Stdio => "stdio",
-            ServerType::Sse => "sse",
             ServerType::StreamableHttp => "streamable_http",
         }
     }
@@ -66,7 +63,6 @@ impl ServerType {
     pub fn client_format(&self) -> &'static str {
         match self {
             ServerType::Stdio => transport::STDIO,
-            ServerType::Sse => transport::SSE,
             ServerType::StreamableHttp => transport::STREAMABLE_HTTP,
         }
     }
@@ -76,7 +72,7 @@ impl ServerType {
         let lc = s.to_ascii_lowercase();
         match lc.as_str() {
             x if x == transport::STDIO => Ok(ServerType::Stdio),
-            x if x == transport::SSE => Ok(ServerType::Sse),
+            x if x == transport::SSE => Ok(ServerType::StreamableHttp),
             x if x == transport::STREAMABLE_HTTP => Ok(ServerType::StreamableHttp),
             _ => Err(ParseServerTypeError),
         }
@@ -114,11 +110,11 @@ impl FromStr for ServerType {
         let lc = s.to_ascii_lowercase();
         match lc.as_str() {
             "stdio" => Ok(ServerType::Stdio),
-            "sse" => Ok(ServerType::Sse),
+            "sse" => Ok(ServerType::StreamableHttp),
             "streamable_http" => Ok(ServerType::StreamableHttp),
             _ => {
                 tracing::error!(
-                    "Invalid server type '{}'. Allowed: 'stdio'|'sse'|'streamable_http' (case-insensitive)",
+                    "Invalid server type '{}'. Allowed: 'stdio'|'streamable_http' (case-insensitive; legacy 'sse' normalizes to 'streamable_http')",
                     s
                 );
                 Err(ParseServerTypeError)
@@ -198,10 +194,8 @@ impl<'r> Decode<'r, Sqlite> for ServerType {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum TransportType {
     /// Streamable HTTP transport
-    StreamableHttp,
-    /// Server-Sent Events transport
     #[default]
-    Sse,
+    StreamableHttp,
     /// Standard input/output transport
     Stdio,
 }
@@ -211,7 +205,6 @@ impl TransportType {
     pub fn as_str(&self) -> &'static str {
         match self {
             TransportType::StreamableHttp => transport::STREAMABLE_HTTP,
-            TransportType::Sse => transport::SSE,
             TransportType::Stdio => transport::STDIO,
         }
     }
@@ -220,7 +213,6 @@ impl TransportType {
     pub fn client_format(&self) -> &'static str {
         match self {
             TransportType::Stdio => transport::STDIO,
-            TransportType::Sse => transport::SSE,
             TransportType::StreamableHttp => transport::STREAMABLE_HTTP,
         }
     }
@@ -230,7 +222,7 @@ impl TransportType {
         let lc = s.to_ascii_lowercase();
         match lc.as_str() {
             x if x == transport::STDIO => Ok(TransportType::Stdio),
-            x if x == transport::SSE => Ok(TransportType::Sse),
+            x if x == transport::SSE => Ok(TransportType::StreamableHttp),
             x if x == transport::STREAMABLE_HTTP => Ok(TransportType::StreamableHttp),
             _ => Err(ParseTransportTypeError),
         }
@@ -268,11 +260,11 @@ impl FromStr for TransportType {
         let lc = s.to_ascii_lowercase();
         match lc.as_str() {
             "streamablehttp" | "streamable_http" => Ok(TransportType::StreamableHttp),
-            "sse" => Ok(TransportType::Sse),
+            "sse" => Ok(TransportType::StreamableHttp),
             "stdio" => Ok(TransportType::Stdio),
             _ => {
                 tracing::error!(
-                    "Invalid transport type '{}'. Allowed: 'Stdio'|'Sse'|'StreamableHttp' (case-insensitive)",
+                    "Invalid transport type '{}'. Allowed: 'stdio'|'streamable_http' (case-insensitive; legacy 'sse' normalizes to 'streamable_http')",
                     s
                 );
                 Err(ParseTransportTypeError)

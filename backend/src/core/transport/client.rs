@@ -30,24 +30,18 @@ impl UpstreamClientHandler {
 
     fn build_client_impl() -> Implementation {
         // Build a client identity for upstream initialize
-        Implementation {
-            name: "mcpmate-proxy".to_string(),
-            title: Some("MCPMate Proxy Client".to_string()),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            icons: Some(vec![crate::common::constants::branding::create_logo_icon()]),
-            website_url: Some(crate::common::constants::branding::WEBSITE_URL.to_string()),
-        }
+        Implementation::new("mcpmate-proxy", env!("CARGO_PKG_VERSION"))
+            .with_title("MCPMate Proxy Client")
+            .with_icons(vec![crate::common::constants::branding::create_logo_icon()])
+            .with_website_url(crate::common::constants::branding::WEBSITE_URL)
     }
 }
 
 impl ClientHandler for UpstreamClientHandler {
     fn get_info(&self) -> ClientInfo {
-        ClientInfo {
-            // Use widely supported version for upstream compatibility; headers handle 2025-06-18 at proxy edge
-            protocol_version: ProtocolVersion::V_2025_03_26,
-            capabilities: ClientCapabilities::default(),
-            client_info: Self::build_client_impl(),
-        }
+        // Use widely supported version for upstream compatibility; headers handle 2025-06-18 at proxy edge
+        ClientInfo::new(ClientCapabilities::default(), Self::build_client_impl())
+            .with_protocol_version(ProtocolVersion::V_2025_03_26)
     }
 
     async fn on_progress(

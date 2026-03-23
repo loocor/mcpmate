@@ -447,14 +447,10 @@ async fn call_worker(
                 None => None,
             };
 
-            let cancel_notification = CancelledNotification {
-                params: CancelledNotificationParam {
-                    request_id: request_id.clone(),
-                    reason: reason.clone(),
-                },
-                method: rmcp::model::CancelledNotificationMethod,
-                extensions: Default::default(),
-            };
+            let cancel_notification = CancelledNotification::new(CancelledNotificationParam {
+                request_id: request_id.clone(),
+                reason: reason.clone(),
+            });
             let _ = peer.send_notification(cancel_notification.into()).await;
 
             InspectorTerminal::Cancelled { reason, server_id }

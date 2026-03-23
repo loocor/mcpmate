@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result as AnyhowResult};
 use chrono::Utc;
-use rmcp::model::{PaginatedRequestParam, ResourceTemplate, Tool};
+use rmcp::model::{PaginatedRequestParams, ResourceTemplate, Tool};
 use std::sync::Arc;
 use tracing;
 
@@ -105,7 +105,7 @@ impl UpstreamConnectionPool {
 
         loop {
             match service
-                .list_tools(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                .list_tools(Some(rmcp::model::PaginatedRequestParams::default().with_cursor(cursor)))
                 .await
             {
                 Ok(result) => {
@@ -518,7 +518,7 @@ impl UpstreamConnectionPool {
 
         loop {
             let result = service
-                .list_prompts(Some(rmcp::model::PaginatedRequestParam { cursor }))
+                .list_prompts(Some(rmcp::model::PaginatedRequestParams::default().with_cursor(cursor)))
                 .await
                 .context(format!(
                     "Failed to list prompts from upstream server '{}' instance '{}'",
@@ -567,7 +567,11 @@ impl UpstreamConnectionPool {
 
         loop {
             let response = service
-                .list_resource_templates(cursor.clone().map(|c| PaginatedRequestParam { cursor: Some(c) }))
+                .list_resource_templates(
+                    cursor
+                        .clone()
+                        .map(|c| PaginatedRequestParams::default().with_cursor(Some(c))),
+                )
                 .await
                 .with_context(|| {
                     format!(

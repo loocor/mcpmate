@@ -37,10 +37,7 @@ async fn preview_one(
     // Call preview (no side effects)
     // Build optional HTTP client with default headers if provided
     let mut client: Option<reqwest::Client> = None;
-    if matches!(
-        kind,
-        crate::common::server::ServerType::Sse | crate::common::server::ServerType::StreamableHttp
-    ) {
+    if matches!(kind, crate::common::server::ServerType::StreamableHttp) {
         if let Some(headers) = item.headers.as_ref() {
             let mut header_map = reqwest::header::HeaderMap::new();
             for (k, v) in headers.iter() {

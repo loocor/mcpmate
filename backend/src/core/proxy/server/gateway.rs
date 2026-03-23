@@ -6,9 +6,9 @@ use crate::{
 use anyhow::Context;
 use once_cell::sync::OnceCell;
 use rmcp::model::{
-    CallToolRequestParam, CallToolResult, GetPromptRequestParam, GetPromptResult, InitializeRequestParam,
-    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParam,
-    ReadResourceResult, ResourceUpdatedNotificationParam, ServerInfo, SubscribeRequestParam, UnsubscribeRequestParam,
+    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, InitializeRequestParams,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParams,
+    ReadResourceResult, ResourceUpdatedNotificationParam, ServerInfo, SubscribeRequestParams, UnsubscribeRequestParams,
 };
 use rmcp::{ServerHandler, service::RequestContext};
 use std::{net::SocketAddr, sync::Arc};
@@ -99,7 +99,7 @@ impl ProxyServer {
         context: &RequestContext<rmcp::RoleServer>,
     ) -> Result<(), rmcp::ErrorData> {
         if !self.is_streamable_http(context) {
-            return Ok(()); // SSE/stdio path: no HTTP parts
+            return Ok(());
         }
         let parts = match context.extensions.get::<axum::http::request::Parts>() {
             Some(p) => p,
@@ -207,7 +207,6 @@ impl ProxyServer {
     ) -> anyhow::Result<()> {
         tracing::info!("Starting proxy server with transport type: {:?}", transport_type);
         match transport_type {
-            TransportType::Sse => self.start_sse_server(bind_address, "/sse").await,
             TransportType::StreamableHttp => self.start_streamable_http_server(bind_address, "/mcp").await,
             TransportType::Stdio => Err(anyhow::anyhow!("Stdio transport not supported for proxy server")),
         }
@@ -223,8 +222,6 @@ impl ProxyServer {
         let config = super::common::UnifiedHttpServerConfig {
             bind_address,
             streamable_http_path: "/mcp".to_string(),
-            sse_path: "/sse".to_string(),
-            sse_message_path: "/message".to_string(),
             keep_alive_interval: Some(std::time::Duration::from_secs(15)),
             cancellation_token: self.cancellation_token.clone(),
         };
@@ -232,10 +229,6 @@ impl ProxyServer {
         let server_handle = tokio::spawn(async move { server.start(factory).await });
         crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
             transport_type: TransportType::StreamableHttp,
-            ready: true,
-        });
-        crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
-            transport_type: TransportType::Sse,
             ready: true,
         });
         tracing::info!("Unified proxy server started successfully");
@@ -252,33 +245,6 @@ impl ProxyServer {
         Ok(())
     }
 
-    async fn start_sse_server(
-        &self,
-        bind_address: SocketAddr,
-        sse_path: &str,
-    ) -> anyhow::Result<()> {
-        tracing::info!("Starting SSE server on {} at path {}", bind_address, sse_path);
-        let server_config = rmcp::transport::sse_server::SseServerConfig {
-            bind: bind_address,
-            sse_path: sse_path.to_string(),
-            post_path: "/message".to_string(),
-            ct: tokio_util::sync::CancellationToken::new(),
-            sse_keep_alive: Some(std::time::Duration::from_secs(15)),
-        };
-        let server_clone = self.clone();
-        let factory = move || server_clone.clone();
-        let server = rmcp::transport::sse_server::SseServer::serve_with_config(server_config)
-            .await
-            .context("Failed to start SSE server")?;
-        server.with_service(factory);
-        crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
-            transport_type: TransportType::Sse,
-            ready: true,
-        });
-        tracing::info!("SSE server started successfully");
-        Ok(())
-    }
-
     async fn start_streamable_http_server(
         &self,
         bind_address: SocketAddr,
@@ -289,7 +255,10 @@ impl ProxyServer {
         let factory = move || Ok(server_clone.clone());
         let server_config = rmcp::transport::StreamableHttpServerConfig {
             sse_keep_alive: Some(std::time::Duration::from_secs(15)),
+            sse_retry: Some(std::time::Duration::from_secs(3)),
             stateful_mode: true,
+            json_response: false,
+            cancellation_token: self.cancellation_token.clone(),
         };
         let session_manager = std::sync::Arc::new(
             rmcp::transport::streamable_http_server::session::local::LocalSessionManager::default(),
@@ -510,7 +479,7 @@ impl ProxyServer {
 impl ServerHandler for ProxyServer {
     async fn initialize(
         &self,
-        request: InitializeRequestParam,
+        request: InitializeRequestParams,
         context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ServerInfo, rmcp::ErrorData> {
         // Origin check (if header present)
@@ -557,7 +526,7 @@ impl ServerHandler for ProxyServer {
 
     async fn subscribe(
         &self,
-        request: SubscribeRequestParam,
+        request: SubscribeRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<(), rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
@@ -592,7 +561,7 @@ impl ServerHandler for ProxyServer {
 
     async fn unsubscribe(
         &self,
-        request: UnsubscribeRequestParam,
+        request: UnsubscribeRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<(), rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
@@ -617,17 +586,15 @@ impl ServerHandler for ProxyServer {
             .enable_resources_list_changed()
             .enable_resources_subscribe()
             .build();
-        ServerInfo {
-            protocol_version: rmcp::model::ProtocolVersion::LATEST,
-            capabilities,
-            server_info: crate::common::constants::branding::create_implementation(),
-            instructions: Some(crate::common::constants::branding::DESCRIPTION.to_string()),
-        }
+        ServerInfo::new(capabilities)
+            .with_protocol_version(rmcp::model::ProtocolVersion::LATEST)
+            .with_server_info(crate::common::constants::branding::create_implementation())
+            .with_instructions(crate::common::constants::branding::DESCRIPTION.to_string())
     }
 
     async fn list_tools(
         &self,
-        _request: Option<rmcp::model::PaginatedRequestParam>,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
@@ -637,7 +604,7 @@ impl ServerHandler for ProxyServer {
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
@@ -649,7 +616,7 @@ impl ServerHandler for ProxyServer {
 
     async fn list_resources(
         &self,
-        _request: Option<rmcp::model::PaginatedRequestParam>,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourcesResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
@@ -659,7 +626,7 @@ impl ServerHandler for ProxyServer {
 
     async fn list_resource_templates(
         &self,
-        _request: Option<rmcp::model::PaginatedRequestParam>,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourceTemplatesResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
@@ -669,7 +636,7 @@ impl ServerHandler for ProxyServer {
 
     async fn read_resource(
         &self,
-        request: ReadResourceRequestParam,
+        request: ReadResourceRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ReadResourceResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
@@ -681,7 +648,7 @@ impl ServerHandler for ProxyServer {
 
     async fn list_prompts(
         &self,
-        _request: Option<rmcp::model::PaginatedRequestParam>,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListPromptsResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;
@@ -691,7 +658,7 @@ impl ServerHandler for ProxyServer {
 
     async fn get_prompt(
         &self,
-        request: GetPromptRequestParam,
+        request: GetPromptRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<GetPromptResult, rmcp::ErrorData> {
         self.enforce_mcp_protocol_header(&_context)?;

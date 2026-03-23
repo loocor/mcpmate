@@ -2,13 +2,13 @@ use super::*;
 use crate::core::capability::naming::{NamingKind, resolve_unique_name};
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
-use rmcp::model::{CallToolRequest, CallToolRequestParam, CallToolResult, ClientRequest, PaginatedRequestParam};
+use rmcp::model::{CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, PaginatedRequestParams};
 use rmcp::service::PeerRequestOptions;
 use rmcp::service::RequestContext;
 
 pub(super) async fn list_tools(
     server: &ProxyServer,
-    _request: Option<PaginatedRequestParam>,
+    _request: Option<PaginatedRequestParams>,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<rmcp::model::ListToolsResult, McpError> {
     let mut tools: Vec<rmcp::model::Tool> = Vec::new();
@@ -86,12 +86,13 @@ pub(super) async fn list_tools(
     Ok(rmcp::model::ListToolsResult {
         tools: page.items,
         next_cursor: page.next_cursor,
+        ..Default::default()
     })
 }
 
 pub(super) async fn call_tool(
     server: &ProxyServer,
-    request: CallToolRequestParam,
+    request: CallToolRequestParams,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<CallToolResult, McpError> {
     let call_id = crate::generate_id!("tcall");
@@ -224,14 +225,11 @@ pub(super) async fn call_tool(
     };
 
     // Build cancellable request to capture progress token & request id
-    let req = ClientRequest::CallToolRequest(CallToolRequest {
-        method: Default::default(),
-        params: CallToolRequestParam {
-            name: original_tool_name.clone().into(),
-            arguments: request.arguments.clone(),
-        },
-        extensions: Default::default(),
-    });
+    let mut params = CallToolRequestParams::new(original_tool_name.clone());
+    if let Some(arguments) = request.arguments.clone() {
+        params = params.with_arguments(arguments);
+    }
+    let req = ClientRequest::CallToolRequest(CallToolRequest::new(params));
     let options = PeerRequestOptions {
         timeout: Some(std::time::Duration::from_secs(call_timeout_secs)),
         meta: None,

@@ -18,5 +18,4 @@ pub use crate::common::server::TransportType;
 pub use http::connect_http_server;
 pub use http::connect_http_server_with_client;
 pub use http::connect_http_server_with_client_timeouts;
-pub use http::connect_sse_server;
 pub use unified::{connect_server, connect_server_simple};

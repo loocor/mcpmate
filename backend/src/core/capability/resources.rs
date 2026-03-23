@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use futures::{StreamExt, future::BoxFuture};
-use rmcp::model::{PaginatedRequestParam, ReadResourceRequestParam, ReadResourceResult, Resource, ResourceTemplate};
+use rmcp::model::{PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceTemplate};
 use sqlx::{Pool, Sqlite};
 use tokio::sync::Mutex;
 use tracing;
@@ -221,7 +221,9 @@ pub async fn build_resource_mapping_filtered(
                     anyhow::Result<(Vec<rmcp::model::Resource>, Option<String>)>,
                 > {
                     Box::pin(async move {
-                        let result = p.list_resources(Some(PaginatedRequestParam { cursor })).await?;
+                        let result = p
+                            .list_resources(Some(PaginatedRequestParams::default().with_cursor(cursor)))
+                            .await?;
                         Ok((result.resources, result.next_cursor))
                     })
                 };
@@ -325,7 +327,7 @@ pub async fn build_resource_template_mapping(
                 > {
                     Box::pin(async move {
                         let result = p
-                            .list_resource_templates(Some(PaginatedRequestParam { cursor }))
+                            .list_resource_templates(Some(PaginatedRequestParams::default().with_cursor(cursor)))
                             .await?;
                         Ok((result.resource_templates, result.next_cursor))
                     })
@@ -453,9 +455,7 @@ pub async fn read_upstream_resource(
     };
 
     let result = service
-        .read_resource(ReadResourceRequestParam {
-            uri: upstream_resource_uri,
-        })
+        .read_resource(ReadResourceRequestParams::new(upstream_resource_uri))
         .await
         .context("Failed to read resource from upstream server")?;
 
@@ -508,7 +508,7 @@ pub async fn read_upstream_resource_direct(
     }
 
     let result = service
-        .read_resource(ReadResourceRequestParam { uri: uri.to_string() })
+        .read_resource(ReadResourceRequestParams::new(uri.to_string()))
         .await
         .context("Failed to read resource from upstream server")?;
 

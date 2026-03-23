@@ -29,11 +29,6 @@ impl RuntimePortConfig {
         format!("http://localhost:{}", self.api_port)
     }
 
-    /// Get the MCP SSE endpoint URL
-    pub fn mcp_sse_url(&self) -> String {
-        format!("http://localhost:{}/sse", self.mcp_port)
-    }
-
     /// Get the MCP HTTP endpoint URL
     pub fn mcp_http_url(&self) -> String {
         format!("http://localhost:{}/mcp", self.mcp_port)
@@ -99,7 +94,6 @@ mod tests {
         let config = RuntimePortConfig::new(9080, 9000);
 
         assert_eq!(config.api_url(), "http://localhost:9080");
-        assert_eq!(config.mcp_sse_url(), "http://localhost:9000/sse");
         assert_eq!(config.mcp_http_url(), "http://localhost:9000/mcp");
     }
 

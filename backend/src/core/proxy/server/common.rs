@@ -2,8 +2,7 @@ use anyhow::{Context, Result};
 use rmcp::{
     RoleServer, Service,
     transport::{
-        StreamableHttpServerConfig, StreamableHttpService, sse_server::SseServerConfig,
-        streamable_http_server::session::local::LocalSessionManager,
+        StreamableHttpServerConfig, StreamableHttpService, streamable_http_server::session::local::LocalSessionManager,
     },
 };
 
@@ -30,8 +29,6 @@ pub fn supports_capability(
 pub struct UnifiedHttpServerConfig {
     pub bind_address: std::net::SocketAddr,
     pub streamable_http_path: String,
-    pub sse_path: String,
-    pub sse_message_path: String,
     pub keep_alive_interval: Option<std::time::Duration>,
     pub cancellation_token: tokio_util::sync::CancellationToken,
 }
@@ -42,15 +39,13 @@ impl Default for UnifiedHttpServerConfig {
         Self {
             bind_address: format!("127.0.0.1:{}", ports::MCP_PORT).parse().unwrap(),
             streamable_http_path: "/mcp".to_string(),
-            sse_path: "/sse".to_string(),
-            sse_message_path: "/message".to_string(),
             keep_alive_interval: Some(std::time::Duration::from_secs(15)),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 }
 
-/// Unified HTTP server that supports both Streamable HTTP and SSE
+/// Unified HTTP server that exposes only the streamable HTTP endpoint
 pub struct UnifiedHttpServer {
     pub config: UnifiedHttpServerConfig,
 }
@@ -72,7 +67,7 @@ impl UnifiedHttpServer {
         Self { config }
     }
 
-    /// Start the unified HTTP server with both Streamable HTTP and SSE endpoints
+    /// Start the unified HTTP server with the streamable HTTP endpoint
     pub async fn start<F, S>(
         &self,
         service_factory: F,
@@ -82,23 +77,17 @@ impl UnifiedHttpServer {
         S: Service<RoleServer> + Send + Sync + 'static,
     {
         tracing::info!(
-            "Starting unified HTTP server on {} with Streamable HTTP at {} and SSE at {}",
+            "Starting unified HTTP server on {} with Streamable HTTP at {}",
             self.config.bind_address,
             self.config.streamable_http_path,
-            self.config.sse_path
         );
 
         let streamable_http_config = StreamableHttpServerConfig {
             sse_keep_alive: self.config.keep_alive_interval,
+            sse_retry: Some(std::time::Duration::from_secs(3)),
             stateful_mode: true,
-        };
-
-        let sse_config = SseServerConfig {
-            bind: self.config.bind_address,
-            sse_path: self.config.sse_path.clone(),
-            post_path: self.config.sse_message_path.clone(),
-            ct: self.config.cancellation_token.clone(),
-            sse_keep_alive: self.config.keep_alive_interval,
+            json_response: false,
+            cancellation_token: self.config.cancellation_token.clone(),
         };
 
         let session_manager = std::sync::Arc::new(LocalSessionManager::default());
@@ -110,11 +99,8 @@ impl UnifiedHttpServer {
             streamable_http_config,
         );
 
-        let (sse_server, sse_router) = rmcp::transport::sse_server::SseServer::new(sse_config);
-
-        let combined_router = axum::Router::new()
-            .route_service(&self.config.streamable_http_path, streamable_http_service)
-            .merge(sse_router);
+        let combined_router =
+            axum::Router::new().route_service(&self.config.streamable_http_path, streamable_http_service);
 
         let listener = tokio::net::TcpListener::bind(self.config.bind_address)
             .await
@@ -127,8 +113,7 @@ impl UnifiedHttpServer {
             tracing::info!("Unified HTTP server cancelled");
         });
 
-        tracing::info!("Registering service with SSE server");
-        sse_server.with_service(service_factory);
+        let _ = service_factory;
 
         tokio::spawn(async move {
             if let Err(e) = server.await {
@@ -136,17 +121,11 @@ impl UnifiedHttpServer {
             }
         });
 
-        tracing::info!("Unified HTTP server started successfully with the following endpoints:");
+        tracing::info!("Unified HTTP server started successfully with the following endpoint:");
         tracing::info!(
             "  - Streamable HTTP: {}{}",
             self.config.bind_address,
             self.config.streamable_http_path
-        );
-        tracing::info!("  - SSE: {}{}", self.config.bind_address, self.config.sse_path);
-        tracing::info!(
-            "  - SSE Message: {}{}",
-            self.config.bind_address,
-            self.config.sse_message_path
         );
 
         Ok(())

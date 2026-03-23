@@ -8,18 +8,17 @@ use reqwest::{
 use rmcp::{
     ClientHandler, ErrorData as McpError, RoleClient, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParam, CallToolResult, CancelledNotificationParam, ClientCapabilities, ClientInfo,
-        CompleteRequestParam, CompleteResult, GetPromptRequestParam, GetPromptResult, InitializeRequestParam,
+        CallToolRequestParams, CallToolResult, CancelledNotificationParam, ClientCapabilities, ClientInfo,
+        CompleteRequestParams, CompleteResult, GetPromptRequestParams, GetPromptResult, InitializeRequestParams,
         InitializeResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
-        PaginatedRequestParam, ProtocolVersion, ReadResourceRequestParam, ReadResourceResult, ServerCapabilities,
-        ServerInfo, SetLevelRequestParam, SubscribeRequestParam, UnsubscribeRequestParam,
+        PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, ServerCapabilities,
+        ServerInfo, SetLevelRequestParams, SubscribeRequestParams, UnsubscribeRequestParams,
     },
     serve_server,
     service::{NotificationContext, RequestContext, ServiceExt},
     transport::{
         StreamableHttpClientTransport,
         io,
-        sse_client::{SseClientConfig, SseClientTransport},
         // streamable_http_client::StreamableHttpClientTransportConfig (constructed via helper),
     },
 };
@@ -44,7 +43,7 @@ struct Args {
     )]
     upstream_url: String,
 
-    /// Upstream bearer token used for Streamable HTTP or SSE (without the 'Bearer ' prefix).
+    /// Upstream bearer token used for streamable HTTP (without the 'Bearer ' prefix).
     /// If provided with 'Bearer ' prefix, it will be stripped.
     #[arg(long = "upstream-bearer")]
     upstream_bearer: Option<String>,
@@ -177,7 +176,6 @@ impl BridgeRuntimeStore {
 
 enum UpstreamKind {
     Streamable(String),
-    Sse(String),
 }
 
 fn remap_sse_to_mcp(url: &str) -> Option<String> {
@@ -211,7 +209,7 @@ fn resolve_upstream_kind(url: &str) -> UpstreamKind {
     if let Some(remapped) = remap_sse_to_mcp(url) {
         UpstreamKind::Streamable(remapped)
     } else {
-        UpstreamKind::Sse(url.to_string())
+        UpstreamKind::Streamable(url.to_string())
     }
 }
 
@@ -280,25 +278,6 @@ impl BridgeServer {
                 let transport = StreamableHttpClientTransport::with_client(http_client.clone(), cfg);
                 client_handler_for_streamable.serve(transport).await.map_err(|err| {
                     tracing::error!("Failed to initialize upstream MCP client (streamable): {err}");
-                    McpError::internal_error(format!("Failed to initialize upstream MCP client: {err}"), None)
-                })
-            }
-            UpstreamKind::Sse(sse_url) => {
-                tracing::info!(upstream = %sse_url, "Using SSE upstream");
-                let transport = SseClientTransport::start_with_client(
-                    http_client.clone(),
-                    SseClientConfig {
-                        sse_endpoint: sse_url.clone().into(),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(|err| {
-                    tracing::error!("Failed to create SSE transport: {err}");
-                    McpError::internal_error(format!("Failed to initialize upstream MCP client: {err}"), None)
-                })?;
-                client_handler.serve(transport).await.map_err(|err| {
-                    tracing::error!("Failed to initialize upstream MCP client (sse): {err}");
                     McpError::internal_error(format!("Failed to initialize upstream MCP client: {err}"), None)
                 })
             }
@@ -393,12 +372,10 @@ impl BridgeServer {
         if let Some(info) = self.server_info.read().expect("server_info poisoned").clone() {
             info
         } else {
-            ServerInfo {
-                server_info: branding::bridge::create_server_implementation(),
-                capabilities: ServerCapabilities::builder().build(),
-                instructions: Some(branding::bridge::DESCRIPTION.to_string()),
-                protocol_version: ProtocolVersion::LATEST,
-            }
+            ServerInfo::new(ServerCapabilities::builder().build())
+                .with_server_info(branding::bridge::create_server_implementation())
+                .with_instructions(branding::bridge::DESCRIPTION.to_string())
+                .with_protocol_version(ProtocolVersion::LATEST)
         }
     }
 }
@@ -418,11 +395,11 @@ impl BridgeClient {
 impl ClientHandler for BridgeClient {
     fn get_info(&self) -> ClientInfo {
         let appid = std::env::var("APPID").unwrap_or_default();
-        ClientInfo {
-            protocol_version: ProtocolVersion::LATEST,
-            capabilities: ClientCapabilities::default(),
-            client_info: branding::bridge::create_client_implementation(&appid),
-        }
+        ClientInfo::new(
+            ClientCapabilities::default(),
+            branding::bridge::create_client_implementation(&appid),
+        )
+        .with_protocol_version(ProtocolVersion::LATEST)
     }
 
     async fn on_tool_list_changed(
@@ -488,7 +465,7 @@ impl ServerHandler for BridgeServer {
 
     fn initialize(
         &self,
-        request: InitializeRequestParam,
+        request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
         async move {
@@ -502,7 +479,7 @@ impl ServerHandler for BridgeServer {
 
     fn list_prompts(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListPromptsResult, McpError>> + Send + '_ {
         async move {
@@ -516,7 +493,7 @@ impl ServerHandler for BridgeServer {
 
     fn list_tools(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         async move {
@@ -530,7 +507,7 @@ impl ServerHandler for BridgeServer {
 
     fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
         async move {
@@ -544,7 +521,7 @@ impl ServerHandler for BridgeServer {
 
     fn list_resources(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
         async move {
@@ -558,7 +535,7 @@ impl ServerHandler for BridgeServer {
 
     fn list_resource_templates(
         &self,
-        request: Option<PaginatedRequestParam>,
+        request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_ {
         async move {
@@ -572,7 +549,7 @@ impl ServerHandler for BridgeServer {
 
     fn read_resource(
         &self,
-        request: ReadResourceRequestParam,
+        request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         async move {
@@ -586,7 +563,7 @@ impl ServerHandler for BridgeServer {
 
     fn subscribe(
         &self,
-        request: SubscribeRequestParam,
+        request: SubscribeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
         async move {
@@ -600,7 +577,7 @@ impl ServerHandler for BridgeServer {
 
     fn unsubscribe(
         &self,
-        request: UnsubscribeRequestParam,
+        request: UnsubscribeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
         async move {
@@ -614,7 +591,7 @@ impl ServerHandler for BridgeServer {
 
     fn get_prompt(
         &self,
-        request: GetPromptRequestParam,
+        request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<GetPromptResult, McpError>> + Send + '_ {
         async move {
@@ -628,7 +605,7 @@ impl ServerHandler for BridgeServer {
 
     fn complete(
         &self,
-        request: CompleteRequestParam,
+        request: CompleteRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<CompleteResult, McpError>> + Send + '_ {
         async move {
@@ -642,7 +619,7 @@ impl ServerHandler for BridgeServer {
 
     fn set_level(
         &self,
-        request: SetLevelRequestParam,
+        request: SetLevelRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
         async move {

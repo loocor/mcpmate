@@ -485,7 +485,7 @@ impl TemplateEngine {
         preferred_transport: Option<&str>,
     ) -> ConfigResult<ServerTemplateInput> {
         // Derive supported transports directly from format_rules keys and
-        // apply fixed global priority: streamable_http -> sse -> stdio.
+        // apply fixed global priority: streamable_http -> stdio.
         let candidates = derive_transports_by_priority(&template.config_mapping.format_rules);
         if let Some(pref) = preferred_transport {
             if candidates.contains(&pref) {
@@ -528,17 +528,6 @@ impl TemplateEngine {
                 args: Vec::new(),
                 env: HashMap::new(),
                 url: Some(runtime_config.mcp_http_url()),
-                headers: HashMap::new(),
-                metadata: HashMap::new(),
-            })),
-            "sse" => Ok(Some(ServerTemplateInput {
-                name: "MCPMate".to_string(),
-                display_name: Some("MCPMate Proxy".to_string()),
-                transport: effective_transport.to_string(),
-                command: None,
-                args: Vec::new(),
-                env: HashMap::new(),
-                url: Some(runtime_config.mcp_sse_url()),
                 headers: HashMap::new(),
                 metadata: HashMap::new(),
             })),
@@ -593,7 +582,7 @@ impl TemplateEngine {
     }
 }
 
-const TRANSPORT_PRIORITY: &[&str] = &["streamable_http", "sse", "stdio"];
+const TRANSPORT_PRIORITY: &[&str] = &["streamable_http", "stdio"];
 
 fn derive_transports_by_priority(
     format_rules: &std::collections::HashMap<String, crate::clients::models::FormatRule>

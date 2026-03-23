@@ -259,20 +259,22 @@ async fn server_list_core(
 }
 
 async fn snapshot_runtime_state(
-    state: &Arc<AppState>,
+    state: &Arc<AppState>
 ) -> (HashMap<String, Vec<InstanceSummary>>, HashMap<String, Option<String>>) {
     let pool = match state.connection_pool.try_lock() {
         Ok(pool) => pool,
-        Err(_) => match tokio::time::timeout(SERVER_LIST_RUNTIME_SNAPSHOT_TIMEOUT, state.connection_pool.lock()).await {
-            Ok(pool) => pool,
-            Err(_) => {
-                tracing::warn!(
-                    timeout_ms = SERVER_LIST_RUNTIME_SNAPSHOT_TIMEOUT.as_millis(),
-                    "Connection pool busy; skipping runtime snapshot for server list"
-                );
-                return (HashMap::new(), HashMap::new());
+        Err(_) => {
+            match tokio::time::timeout(SERVER_LIST_RUNTIME_SNAPSHOT_TIMEOUT, state.connection_pool.lock()).await {
+                Ok(pool) => pool,
+                Err(_) => {
+                    tracing::warn!(
+                        timeout_ms = SERVER_LIST_RUNTIME_SNAPSHOT_TIMEOUT.as_millis(),
+                        "Connection pool busy; skipping runtime snapshot for server list"
+                    );
+                    return (HashMap::new(), HashMap::new());
+                }
             }
-        },
+        }
     };
 
     let now = std::time::SystemTime::now();
@@ -415,12 +417,18 @@ async fn load_server_capabilities(
         }
     })
     .await;
-    merge_capability_counts(pool, &mut summaries, "server_resources", server_ids, |summary, count| {
-        summary.resources_count = count;
-        if count > 0 {
-            summary.supports_resources = true;
-        }
-    })
+    merge_capability_counts(
+        pool,
+        &mut summaries,
+        "server_resources",
+        server_ids,
+        |summary, count| {
+            summary.resources_count = count;
+            if count > 0 {
+                summary.supports_resources = true;
+            }
+        },
+    )
     .await;
     merge_capability_counts(
         pool,
@@ -626,7 +634,11 @@ async fn load_cached_protocol_versions(
     mut protocol_versions: HashMap<String, Option<String>>,
 ) -> HashMap<String, Option<String>> {
     for server_id in server_ids {
-        if protocol_versions.get(server_id).and_then(|version| version.clone()).is_some() {
+        if protocol_versions
+            .get(server_id)
+            .and_then(|version| version.clone())
+            .is_some()
+        {
             continue;
         }
 
@@ -750,7 +762,7 @@ mod tests {
             profile, server,
         },
         core::{
-            cache::{manager::CacheConfig, RedbCacheManager},
+            cache::{RedbCacheManager, manager::CacheConfig},
             models::Config,
             pool::{UpstreamConnection, UpstreamConnectionPool},
             profile::ConfigApplicationStateManager,
@@ -792,7 +804,10 @@ mod tests {
         assert!(response.success);
         let data = response.data.expect("server list data");
         assert_eq!(data.servers.len(), 24);
-        assert!(elapsed < Duration::from_secs(2), "server list should not wait for API lock timeout: {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "server list should not wait for API lock timeout: {elapsed:?}"
+        );
         assert!(data.servers.iter().all(|server| server.instances.is_empty()));
         assert!(data.servers.iter().all(|server| server.protocol_version.is_none()));
     }
@@ -800,7 +815,11 @@ mod tests {
     #[tokio::test]
     async fn server_list_waits_briefly_for_runtime_snapshot_before_degrading() {
         let context = create_test_context().await;
-        let server_id = seed_servers(&context.db_pool, 1).await.into_iter().next().expect("server id");
+        let server_id = seed_servers(&context.db_pool, 1)
+            .await
+            .into_iter()
+            .next()
+            .expect("server id");
         seed_runtime_instance(&context.app_state, &server_id).await;
 
         let request = ServerListReq {
@@ -829,15 +848,25 @@ mod tests {
         assert!(response.success);
         let data = response.data.expect("server list data");
         assert_eq!(data.servers.len(), 1);
-        assert!(elapsed >= Duration::from_millis(40), "server list should wait briefly for runtime snapshot: {elapsed:?}");
-        assert!(elapsed < Duration::from_secs(1), "server list should not wait for full API lock timeout: {elapsed:?}");
+        assert!(
+            elapsed >= Duration::from_millis(40),
+            "server list should wait briefly for runtime snapshot: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "server list should not wait for full API lock timeout: {elapsed:?}"
+        );
         assert_eq!(data.servers[0].instances.len(), 1);
     }
 
     #[tokio::test]
     async fn server_list_preserves_list_metadata_without_full_details() {
         let context = create_test_context().await;
-        let server_id = seed_servers(&context.db_pool, 1).await.into_iter().next().expect("server id");
+        let server_id = seed_servers(&context.db_pool, 1)
+            .await
+            .into_iter()
+            .next()
+            .expect("server id");
         seed_server_meta(&context.db_pool, &server_id).await;
         seed_server_capabilities(&context.db_pool, &server_id).await;
         seed_profile_enablement(&context.db_pool, &server_id).await;
@@ -866,8 +895,18 @@ mod tests {
         assert_eq!(server.instances[0].status, "Ready");
         assert_eq!(server.capability.as_ref().map(|summary| summary.tools_count), Some(1));
         assert_eq!(server.capability.as_ref().map(|summary| summary.prompts_count), Some(1));
-        assert_eq!(server.meta.as_ref().and_then(|meta| meta.description.as_deref()), Some("Server description"));
-        assert_eq!(server.meta.as_ref().and_then(|meta| meta.icons.as_ref()).map(|icons| icons.len()), Some(1));
+        assert_eq!(
+            server.meta.as_ref().and_then(|meta| meta.description.as_deref()),
+            Some("Server description")
+        );
+        assert_eq!(
+            server
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.icons.as_ref())
+                .map(|icons| icons.len()),
+            Some(1)
+        );
     }
 
     async fn create_test_context() -> TestContext {
@@ -897,9 +936,7 @@ mod tests {
         });
 
         let cache_path = temp_dir.path().join("capability.redb");
-        let redb_cache = Arc::new(
-            RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"),
-        );
+        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
 
         let app_state = Arc::new(AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(

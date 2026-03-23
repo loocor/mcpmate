@@ -867,7 +867,6 @@ struct RuntimePorts {
     mcp_port: u16,
     api_url: String,
     mcp_http_url: String,
-    mcp_sse_url: String,
 }
 
 async fn reapply_hosted_clients_if_mcp_port_changed(
@@ -935,7 +934,6 @@ async fn mcp_shell_read_runtime_ports() -> Result<RuntimePorts, String> {
         mcp_port: cfg.mcp_port,
         api_url: cfg.api_url(),
         mcp_http_url: cfg.mcp_http_url(),
-        mcp_sse_url: cfg.mcp_sse_url(),
     })
 }
 

@@ -86,7 +86,7 @@ pub struct ClientInfo {
     pub support_url: Option<String>,
     #[schemars(description = "Configuration management mode")]
     pub config_mode: Option<String>,
-    #[schemars(description = "Preferred or resolved transport: streamable_http|sse|stdio")]
+    #[schemars(description = "Preferred or resolved transport: streamable_http|stdio")]
     #[serde(default)]
     pub transport: Option<String>,
     #[schemars(description = "Detected client version string")]
@@ -382,9 +382,9 @@ pub struct ClientImportedServer {
     pub args: Vec<String>,
     #[schemars(description = "Environment variables")]
     pub env: std::collections::HashMap<String, String>,
-    #[schemars(description = "Server type (stdio|sse|streamable_http)")]
+    #[schemars(description = "Server type reported by the client import (stdio|streamable_http, legacy sse may be normalized during import)")]
     pub server_type: String,
-    #[schemars(description = "Endpoint URL for HTTP/SSE servers")]
+    #[schemars(description = "Endpoint URL for HTTP-based servers, including legacy SSE-compatible endpoints")]
     #[serde(default)]
     pub url: Option<String>,
 }
@@ -435,7 +435,7 @@ pub struct ClientSettingsUpdateReq {
     #[schemars(description = "Management mode: hosted|transparent")]
     #[serde(default)]
     pub config_mode: Option<String>,
-    #[schemars(description = "Transport protocol: auto|sse|stdio|streamable_http")]
+    #[schemars(description = "Transport protocol: auto|sse|stdio|streamable_http (sse remains for legacy client compatibility)")]
     #[serde(default)]
     pub transport: Option<String>,
     #[schemars(description = "Client version string")]

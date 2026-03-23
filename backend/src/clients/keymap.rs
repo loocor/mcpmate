@@ -34,9 +34,14 @@ impl KeyMapRegistry {
             transports: HashMap::from([
                 (
                     "streamable_http".into(),
-                    vec!["streamableHttp".into(), "http".into(), "HTTP".into()],
+                    vec![
+                        "streamableHttp".into(),
+                        "http".into(),
+                        "HTTP".into(),
+                        "sse".into(),
+                        "SSE".into(),
+                    ],
                 ),
-                ("sse".into(), vec!["SSE".into()]),
                 ("stdio".into(), vec!["STDIO".into(), "Stdio".into()]),
             ]),
         };
@@ -89,7 +94,7 @@ impl KeyMapRegistry {
         format_rules: &HashMap<String, crate::clients::models::FormatRule>,
     ) -> Vec<String> {
         let mut out = Vec::new();
-        for t in ["streamable_http", "sse", "stdio"] {
+        for t in ["streamable_http", "stdio"] {
             if self.has_rule(format_rules, t) {
                 out.push(t.to_string());
             }
@@ -115,8 +120,7 @@ pub fn reload() -> ConfigResult<()> {
         let content = r#"{
   "version": "2025-10-11",
   "transports": {
-    "streamable_http": ["streamableHttp", "http", "HTTP"],
-    "sse": ["SSE"],
+    "streamable_http": ["streamableHttp", "http", "HTTP", "sse", "SSE"],
     "stdio": ["STDIO", "Stdio"]
   }
 }

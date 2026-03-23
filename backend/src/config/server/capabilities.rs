@@ -29,7 +29,7 @@ mod discovery_helpers {
             .list_prompts(
                 cursor
                     .clone()
-                    .map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }),
+                    .map(|c| rmcp::model::PaginatedRequestParams::default().with_cursor(Some(c))),
             )
             .await
         {
@@ -68,7 +68,7 @@ mod discovery_helpers {
             .list_resources(
                 cursor
                     .clone()
-                    .map(|c| rmcp::model::PaginatedRequestParam { cursor: Some(c) }),
+                    .map(|c| rmcp::model::PaginatedRequestParams::default().with_cursor(Some(c))),
             )
             .await
         {
@@ -97,7 +97,7 @@ mod discovery_helpers {
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         while let Ok(result) = service
-            .list_resource_templates(Some(rmcp::model::PaginatedRequestParam { cursor }))
+            .list_resource_templates(Some(rmcp::model::PaginatedRequestParams::default().with_cursor(cursor)))
             .await
         {
             for t in result.resource_templates {
@@ -237,9 +237,6 @@ pub async fn discover_from_config(
         crate::common::server::ServerType::Stdio => {
             connect_server_simple(server_name, server_config, server_type, TransportType::Stdio).await?
         }
-        crate::common::server::ServerType::Sse => connect_http_server(server_name, server_config, TransportType::Sse)
-            .await
-            .map(|(s, t, c)| (s, t, c, None))?,
         crate::common::server::ServerType::StreamableHttp => {
             connect_http_server(server_name, server_config, TransportType::StreamableHttp)
                 .await
@@ -313,30 +310,6 @@ pub async fn discover_from_config_preview(
                 fut.await?
             };
             (svc, tools, caps, pid)
-        }
-        crate::common::server::ServerType::Sse => {
-            if let Some(client) = http_client {
-                if let Some((c_to, s_to, t_to)) = http_timeouts {
-                    let (s, t, c) = connect_http_server_with_client_timeouts(
-                        server_name,
-                        server_config,
-                        client,
-                        TransportType::Sse,
-                        c_to,
-                        s_to,
-                        t_to,
-                    )
-                    .await?;
-                    (s, t, c, None)
-                } else {
-                    let (s, t, c) =
-                        connect_http_server_with_client(server_name, server_config, client, TransportType::Sse).await?;
-                    (s, t, c, None)
-                }
-            } else {
-                let (s, t, c) = connect_http_server(server_name, server_config, TransportType::Sse).await?;
-                (s, t, c, None)
-            }
         }
         crate::common::server::ServerType::StreamableHttp => {
             if let Some(client) = http_client {

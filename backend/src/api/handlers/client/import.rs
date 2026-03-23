@@ -8,7 +8,6 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ParsedTransport {
     Stdio,
-    Sse,
     StreamableHttp,
 }
 
@@ -28,7 +27,6 @@ pub fn build_import_payload_from_value(config: &Value) -> HashMap<String, Server
         for (name, sc) in map.into_iter() {
             let (kind, command, url) = match sc.transport {
                 ParsedTransport::Stdio => ("stdio".to_string(), sc.command, None),
-                ParsedTransport::Sse => ("sse".to_string(), None, sc.url),
                 ParsedTransport::StreamableHttp => ("streamable_http".to_string(), None, sc.url),
             };
             out.insert(
@@ -89,8 +87,8 @@ fn parse_server_config(config: &Value) -> Option<ServerConfigParsed> {
 
     let transport = match (command.as_ref(), url.as_ref(), hint.as_deref()) {
         (Some(_), _, _) => ParsedTransport::Stdio,
-        (None, Some(_), Some("streamable_http" | "http" | "streamablehttp")) => ParsedTransport::StreamableHttp,
-        (None, Some(_), _) => ParsedTransport::Sse,
+        (None, Some(_), Some("streamable_http" | "http" | "streamablehttp" | "sse")) => ParsedTransport::StreamableHttp,
+        (None, Some(_), _) => ParsedTransport::StreamableHttp,
         _ => return None,
     };
 

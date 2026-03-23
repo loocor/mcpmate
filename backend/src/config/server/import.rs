@@ -102,9 +102,13 @@ pub async fn import_batch(
 
     for (name, cfg) in items.into_iter() {
         // Validate and normalize
-        let server_type = ServerType::from_client_format(cfg.kind.as_str())
+        let normalized_kind = match cfg.kind.to_ascii_lowercase() {
+            kind if kind == "sse" => "streamable_http".to_string(),
+            kind => kind,
+        };
+        let server_type = ServerType::from_client_format(&normalized_kind)
             .map_err(|_| anyhow::anyhow!(format!("Invalid server type '{}'", cfg.kind)))?;
-        validate_server_config(&cfg.kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        validate_server_config(&normalized_kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         // Compute fingerprint
         let mut url_signature: Option<fingerprint::UrlSignature> = None;
@@ -113,7 +117,7 @@ pub async fn import_batch(
                 cfg.command.as_deref().unwrap_or_default(),
                 cfg.args.as_deref().unwrap_or(&[]),
             ),
-            ServerType::Sse | ServerType::StreamableHttp => {
+            ServerType::StreamableHttp => {
                 let sig = fingerprint::url_signature(cfg.url.as_deref().unwrap_or_default());
                 let key = sig.fingerprint.clone();
                 url_signature = Some(sig);
@@ -193,7 +197,7 @@ pub async fn import_batch(
                 command: cfg.command.clone(),
                 args: cfg.args.clone().unwrap_or_default(),
                 env: cfg.env.clone().unwrap_or_default(),
-                server_type: cfg.kind.clone(),
+                server_type: normalized_kind.to_string(),
                 url: cfg.url.clone(),
             });
             continue;
@@ -208,7 +212,6 @@ pub async fn import_batch(
         // Apply: upsert server, args, env, headers
         let mut server = match server_type {
             ServerType::Stdio => Server::new_stdio(name.clone(), cfg.command.clone()),
-            ServerType::Sse => Server::new_sse(name.clone(), cfg.url.clone()),
             ServerType::StreamableHttp => Server::new_streamable_http(name.clone(), cfg.url.clone()),
         };
         server.registry_server_id = cfg.registry_server_id.clone();
@@ -506,8 +509,8 @@ fn validate_server_config(
 ) -> Result<(), &'static str> {
     match kind {
         "stdio" if command.is_none() => Err("Command is required for stdio servers"),
-        "sse" | "streamable_http" if url.is_none() => Err("URL is required for sse/streamable_http servers"),
-        "stdio" | "sse" | "streamable_http" => Ok(()),
+        "streamable_http" if url.is_none() => Err("URL is required for streamable_http servers"),
+        "stdio" | "streamable_http" => Ok(()),
         _ => Err("Invalid server type"),
     }
 }

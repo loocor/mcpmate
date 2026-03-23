@@ -1,5 +1,5 @@
 // HTTP transport implementation for core
-// Provides abstractions for HTTP-based transport types (SSE and Streamable HTTP)
+// Provides abstractions for streamable HTTP transport
 
 use super::TransportType;
 use crate::common::http::make_streamable_config;
@@ -9,13 +9,12 @@ use anyhow::{Context, Result};
 use rmcp::{
     model::{ServerCapabilities, Tool},
     service::ServiceExt,
-    transport::sse_client::SseClientConfig,
-    transport::{SseClientTransport, StreamableHttpClientTransport},
+    transport::StreamableHttpClientTransport,
 };
 use std::time::Duration;
 use tokio::time::timeout;
 
-/// Internal helper used by both SSE and Streamable HTTP connections
+/// Internal helper used by streamable HTTP connections
 async fn connect_http_internal(
     server_name: &str,
     server_config: &MCPServerConfig,
@@ -45,18 +44,8 @@ async fn connect_http_internal(
         tools_timeout.as_secs()
     );
 
-    // Branch per transport type to build service and tools
     let (service, tools, capabilities) = match transport_type {
-        TransportType::Sse => {
-            let transport = timeout(connection_timeout, SseClientTransport::start(url.as_str()))
-                .await
-                .map_err(|_| anyhow::anyhow!(format!("Timeout creating SSE transport for server '{server_name}'")))?
-                .map_err(|e| anyhow::anyhow!(format!("Failed to create SSE transport: {e}")))?;
-
-            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
-        }
         TransportType::StreamableHttp => {
-            // Create transport immediately (no async connect needed)
             let transport = StreamableHttpClientTransport::<reqwest::Client>::from_uri(url.as_str());
             build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
         }
@@ -108,7 +97,7 @@ where
     Ok((service, tools, capabilities))
 }
 
-/// Connect to an HTTP-based server (SSE or Streamable HTTP) with timeout
+/// Connect to a streamable HTTP server with timeout
 pub async fn connect_http_server(
     server_name: &str,
     server_config: &MCPServerConfig,
@@ -162,7 +151,7 @@ pub async fn connect_http_server(
     res
 }
 
-/// Connect to an HTTP-based server (SSE or Streamable HTTP) with provided reqwest client
+/// Connect to a streamable HTTP server with provided reqwest client
 pub async fn connect_http_server_with_client(
     server_name: &str,
     server_config: &MCPServerConfig,
@@ -179,30 +168,11 @@ pub async fn connect_http_server_with_client(
         .as_ref()
         .context("URL not specified for HTTP server")?;
 
-    let connection_timeout = get_sse_connection_timeout();
     let service_timeout = get_sse_service_timeout();
     let tools_timeout = get_sse_tools_timeout();
 
     let (service, tools, capabilities) = match transport_type {
-        TransportType::Sse => {
-            // Start SSE with injected client
-            let transport = tokio::time::timeout(connection_timeout, async move {
-                SseClientTransport::start_with_client(
-                    client,
-                    SseClientConfig {
-                        sse_endpoint: url.clone().into(),
-                        ..Default::default()
-                    },
-                )
-                .await
-            })
-            .await
-            .map_err(|_| anyhow::anyhow!(format!("Timeout creating SSE transport for server '{server_name}'")))??;
-            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
-        }
         TransportType::StreamableHttp => {
-            // Create Streamable HTTP transport with injected client.
-            // If Authorization: Bearer ... is configured, also set the auth_header.
             let config = make_streamable_config(url, &server_config.headers);
             let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
             build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
@@ -223,13 +193,13 @@ pub async fn connect_http_server_with_client(
     Ok((service, tools, capabilities))
 }
 
-/// Connect to an HTTP-based server (SSE or Streamable HTTP) with custom timeouts
+/// Connect to a streamable HTTP server with custom timeouts
 pub async fn connect_http_server_with_client_timeouts(
     server_name: &str,
     server_config: &MCPServerConfig,
     client: reqwest::Client,
     transport_type: TransportType,
-    connection_timeout: Duration,
+    _connection_timeout: Duration,
     service_timeout: Duration,
     tools_timeout: Duration,
 ) -> Result<(
@@ -244,23 +214,7 @@ pub async fn connect_http_server_with_client_timeouts(
         .context("URL not specified for HTTP server")?;
 
     let (service, tools, capabilities) = match transport_type {
-        TransportType::Sse => {
-            let transport = tokio::time::timeout(connection_timeout, async move {
-                SseClientTransport::start_with_client(
-                    client,
-                    SseClientConfig {
-                        sse_endpoint: url.clone().into(),
-                        ..Default::default()
-                    },
-                )
-                .await
-            })
-            .await
-            .map_err(|_| anyhow::anyhow!(format!("Timeout creating SSE transport for server '{server_name}'")))??;
-            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
-        }
         TransportType::StreamableHttp => {
-            // Create Streamable HTTP transport with injected client and optional bearer
             let config = make_streamable_config(url, &server_config.headers);
             let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
             build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
@@ -278,16 +232,4 @@ pub async fn connect_http_server_with_client_timeouts(
     );
 
     Ok((service, tools, capabilities))
-}
-
-/// Connect specifically to an SSE server – maintained for backward compatibility
-pub async fn connect_sse_server(
-    server_name: &str,
-    server_config: &MCPServerConfig,
-) -> Result<(
-    crate::core::transport::ClientService,
-    Vec<Tool>,
-    Option<ServerCapabilities>,
-)> {
-    connect_http_internal(server_name, server_config, TransportType::Sse).await
 }

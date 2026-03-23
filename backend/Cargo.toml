@@ -36,17 +36,19 @@ futures-util = "0.3"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-atty = "0.2"
+is-terminal = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "5.0"
 flate2 = "1.0"
 futures = "0.3"
 json5 = "0.4"
-reqwest = { version = "0.12", features = [
+reqwest = { version = "0.13", features = [
+  "json",
+  "query",
   "stream",
-  "rustls-tls",
+  "rustls",
 ], default-features = false }
-rmcp = { version = "0.8.1", features = [
+rmcp = { version = "1.2.0", features = [
   "__reqwest",
   "client",
   "macros",
@@ -54,9 +56,6 @@ rmcp = { version = "0.8.1", features = [
   "server",
   "transport-child-process",
   "transport-io",
-  "transport-sse-client",
-  "transport-sse-client-reqwest",
-  "transport-sse-server",
   "transport-streamable-http-client",
   "transport-streamable-http-client-reqwest",
   "transport-streamable-http-server",

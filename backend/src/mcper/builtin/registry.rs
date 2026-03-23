@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rmcp::model::{CallToolRequestParam, CallToolResult, Tool};
+use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -17,7 +17,7 @@ pub trait BuiltinService: Send + Sync {
 
     async fn call_tool(
         &self,
-        request: &CallToolRequestParam,
+        request: &CallToolRequestParams,
     ) -> Result<CallToolResult>;
 }
 
@@ -56,7 +56,7 @@ impl BuiltinServiceRegistry {
 
     pub async fn call_tool(
         &self,
-        request: &CallToolRequestParam,
+        request: &CallToolRequestParams,
     ) -> Option<Result<CallToolResult>> {
         for service in &self.services {
             let tools = service.tools();

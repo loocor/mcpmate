@@ -27,7 +27,7 @@ impl ClientConfigService {
                 let supported = {
                     let keymap = crate::clients::keymap::registry();
                     let mut list: Vec<&'static str> = Vec::new();
-                    for t in ["streamable_http", "sse", "stdio"] {
+                    for t in ["streamable_http", "stdio"] {
                         if keymap.has_rule(&template.config_mapping.format_rules, t) {
                             list.push(t);
                         }
@@ -57,7 +57,7 @@ impl ClientConfigService {
             } else {
                 // No settings row yet: pick by priority
                 let keymap = crate::clients::keymap::registry();
-                for t in ["streamable_http", "sse", "stdio"] {
+                for t in ["streamable_http", "stdio"] {
                     if keymap.has_rule(&template.config_mapping.format_rules, t) {
                         chosen_transport = Some(t.to_string());
                         auto_selected = true;

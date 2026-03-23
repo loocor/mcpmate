@@ -2,13 +2,13 @@ use super::*;
 use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
-use rmcp::model::{GetPromptRequestParam, GetPromptResult, ListPromptsResult, PaginatedRequestParam};
+use rmcp::model::{GetPromptRequestParams, GetPromptResult, ListPromptsResult, PaginatedRequestParams};
 use rmcp::service::RequestContext;
 use std::collections::HashSet;
 
 pub(super) async fn list_prompts(
     server: &ProxyServer,
-    _request: Option<PaginatedRequestParam>,
+    _request: Option<PaginatedRequestParams>,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListPromptsResult, McpError> {
     let mut prompts: Vec<rmcp::model::Prompt> = Vec::new();
@@ -97,12 +97,13 @@ pub(super) async fn list_prompts(
     Ok(ListPromptsResult {
         prompts: page.items,
         next_cursor: page.next_cursor,
+        ..Default::default()
     })
 }
 
 pub(super) async fn get_prompt(
     server: &ProxyServer,
-    request: GetPromptRequestParam,
+    request: GetPromptRequestParams,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<GetPromptResult, McpError> {
     tracing::debug!("Getting prompt: {}", request.name);
