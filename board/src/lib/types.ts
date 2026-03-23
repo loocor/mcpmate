@@ -313,10 +313,12 @@ export interface ToolDetail extends Tool {
 
 export interface SystemStatus {
 	status: "running" | "degraded" | "stopped" | "error";
-	version: string;
 	uptime: number;
-	active_mcp_servers: number;
-	aggregated_tools_count: number;
+	version?: string;
+	total_servers?: number;
+	connected_servers?: number;
+	active_mcp_servers?: number;
+	aggregated_tools_count?: number;
 }
 
 export interface SystemMetrics {

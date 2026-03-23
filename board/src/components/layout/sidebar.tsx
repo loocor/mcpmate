@@ -11,8 +11,11 @@ import {
 	Store,
 } from "lucide-react";
 import type React from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink } from "react-router-dom";
+import { API_BASE_CHANGED_EVENT, API_BASE_URL } from "../../lib/api";
+import { APP_VERSION_LABEL } from "../../lib/app-version";
 import { useAppStore } from "../../lib/store";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -79,12 +82,35 @@ export function Sidebar() {
 		(state) => state.dashboardSettings.showApiDocsMenu,
 	);
 	const { t } = useTranslation();
+	const [apiDocsHref, setApiDocsHref] = useState(() => {
+		const base = API_BASE_URL || window.location.origin;
+		try {
+			return new URL("/docs", base).toString();
+		} catch {
+			return "http://127.0.0.1:8080/docs";
+		}
+	});
+
+	useEffect(() => {
+		const updateApiDocsHref = () => {
+			const base = API_BASE_URL || window.location.origin;
+			try {
+				setApiDocsHref(new URL("/docs", base).toString());
+			} catch {
+				setApiDocsHref("http://127.0.0.1:8080/docs");
+			}
+		};
+
+		updateApiDocsHref();
+		window.addEventListener(API_BASE_CHANGED_EVENT, updateApiDocsHref);
+		return () => window.removeEventListener(API_BASE_CHANGED_EVENT, updateApiDocsHref);
+	}, []);
 
 	return (
 		<div
 			className={cn(
 				"fixed inset-y-0 left-0 z-40 flex flex-col transition-all duration-300 ease-in-out",
-				"border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950",
+				"border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900",
 				sidebarOpen ? "w-64" : "w-16",
 			)}
 		>
@@ -97,7 +123,7 @@ export function Sidebar() {
 				>
 					{/* Brand: show logo + title when expanded; only logo when collapsed */}
 					<img
-						src="https://mcpmate.io/logo.svg"
+						src="https://mcp.umate.ai/logo.svg"
 						alt="MCPMate"
 						className={cn(
 							"h-6 w-6 object-contain transition",
@@ -108,9 +134,11 @@ export function Sidebar() {
 					{sidebarOpen && (
 						<span className="font-bold text-xl dark:text-white">
 							{t("layout.brand", { defaultValue: "MCPMate" })}{" "}
-							<sup className="text-[9px] text-red-500">
-								{t("layout.alpha", { defaultValue: "Beta" })}
-							</sup>
+							{APP_VERSION_LABEL ? (
+								<sup className="text-[9px] text-slate-500 dark:text-slate-400">
+									{APP_VERSION_LABEL}
+								</sup>
+							) : null}
 						</span>
 					)}
 					<Button
@@ -175,10 +203,7 @@ export function Sidebar() {
 
 				<div className="mt-auto">
 					{showApiDocsMenu && (
-						<ExternalSidebarLink
-							href="http://127.0.0.1:8080/docs"
-							icon={<Bug size={20} />}
-						>
+						<ExternalSidebarLink href={apiDocsHref} icon={<Bug size={20} />}>
 							{sidebarOpen &&
 								t("nav.apiDocs", { defaultValue: "API Docs" })}
 						</ExternalSidebarLink>

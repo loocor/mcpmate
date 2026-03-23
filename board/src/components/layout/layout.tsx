@@ -23,7 +23,7 @@ export function Layout() {
 			document.documentElement.classList.toggle("dark", isDark);
 
 			// Set background color based on theme
-			document.body.style.backgroundColor = isDark ? "#0f0f0f" : "#f2f2f2";
+			document.body.style.backgroundColor = isDark ? "#111827" : "#f2f2f2";
 		};
 
 		apply();
@@ -33,7 +33,7 @@ export function Layout() {
 			if (theme === "system") {
 				document.documentElement.classList.toggle("dark", e.matches);
 				// Update background color when system theme changes
-				document.body.style.backgroundColor = e.matches ? "#0f0f0f" : "#f2f2f2";
+				document.body.style.backgroundColor = e.matches ? "#111827" : "#f2f2f2";
 			}
 		};
 		if (theme === "system") {
@@ -63,9 +63,17 @@ export function Layout() {
 				unlistenMain = await listen("mcpmate://open-main", () => {
 					navigate("/");
 				});
-				unlistenSettings = await listen("mcpmate://open-settings", () => {
-					navigate("/settings");
-				});
+				unlistenSettings = await listen(
+					"mcpmate://open-settings",
+					(event) => {
+						const payload =
+							event.payload && typeof event.payload === "object"
+								? (event.payload as { tab?: string })
+								: undefined;
+						const target = payload?.tab ? `/settings?tab=${payload.tab}` : "/settings";
+						navigate(target);
+					},
+				);
 			} catch (error) {
 				if (import.meta.env.DEV) {
 					console.warn("[Layout] Failed to bind desktop shell events", error);
@@ -148,7 +156,7 @@ export function Layout() {
 					<div className="flex-1">
 						<Outlet />
 					</div>
-					<footer className="mt-6 text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-900 pt-2 pb-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+					<footer className="mt-6 text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-700 pt-2 pb-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
 						<div className="flex items-center gap-4 flex-wrap">
 							<a
 								className="hover:underline"

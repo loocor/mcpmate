@@ -40,18 +40,24 @@ export function RuntimePage() {
 		queryKey: ["runtimeStatus"],
 		queryFn: runtimeApi.getStatus,
 		refetchInterval: 60_000,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	const runtimeCacheQ = useQuery({
 		queryKey: ["runtimeCache"],
 		queryFn: runtimeApi.getCache,
 		refetchInterval: 60_000,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	const capabilitiesStatsQ = useQuery({
 		queryKey: ["capabilities", "stats"],
 		queryFn: capabilitiesApi.getStats,
 		refetchInterval: 60_000,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	// Mutations
@@ -140,7 +146,7 @@ export function RuntimePage() {
 					{[0, 1].map((i) => (
 						<div
 							key={i}
-							className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950"
+							className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
 						>
 							{/* Status badge only */}
 							<div className="flex justify-end mb-4">
@@ -177,7 +183,7 @@ export function RuntimePage() {
 						return (
 							<div
 								key={key}
-								className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:border-primary/40 hover:shadow-md dark:border-slate-800 dark:bg-slate-950"
+								className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:border-primary/40 hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
 							>
 								<div className="flex items-center justify-between mb-2">
 									<div className="flex items-center gap-2">

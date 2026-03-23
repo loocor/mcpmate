@@ -4,6 +4,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { APP_VERSION_LABEL } from "../../lib/app-version";
 import type { LegendProps, TooltipProps } from "recharts";
 import {
 	CartesianGrid,
@@ -90,6 +91,8 @@ function useMetricsHistory() {
 		queryKey: ["systemMetrics"],
 		queryFn: systemApi.getMetrics,
 		refetchInterval: 10000,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	React.useEffect(() => {
@@ -323,12 +326,16 @@ export function DashboardPage() {
 		queryKey: ["systemStatus"],
 		queryFn: systemApi.getStatus,
 		refetchInterval: 30000,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	const { data: servers, isLoading: isLoadingServers } = useQuery({
 		queryKey: ["servers"],
 		queryFn: serversApi.getAll,
 		refetchInterval: 30000,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	const { data: clientsData, isLoading: isLoadingClients } =
@@ -336,6 +343,8 @@ export function DashboardPage() {
 			queryKey: ["clients", "dashboard"],
 			queryFn: () => clientsApi.list(false),
 			refetchInterval: 30000,
+			retry: false,
+			refetchOnWindowFocus: false,
 		});
 
 	// Runtime card removed on Dashboard
@@ -405,7 +414,8 @@ export function DashboardPage() {
 		queryKey: ["configSuits", "dashboard"],
 		queryFn: configSuitsApi.getAll,
 		refetchInterval: 30000,
-		retry: 1,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	const suitsList = suitsResponse?.suits ?? [];
@@ -464,7 +474,7 @@ export function DashboardPage() {
 										<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
 									) : (
 										<span className="text-sm font-medium">
-											{systemStatus?.version || "alpha"}
+											{APP_VERSION_LABEL || "—"}
 										</span>
 									)}
 								</div>

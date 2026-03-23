@@ -1,6 +1,25 @@
-import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { systemApi } from "../../lib/api";
+import {
+	Cpu,
+	Database,
+	Gauge,
+	MemoryStick as Memory,
+	Network,
+	RefreshCw,
+} from "lucide-react";
+import { useTranslation } from "react-i18next";
+import {
+	Area,
+	AreaChart,
+	CartesianGrid,
+	Line,
+	LineChart,
+	ResponsiveContainer,
+	Tooltip,
+	XAxis,
+	YAxis,
+} from "recharts";
+import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
 import {
 	Card,
@@ -9,29 +28,11 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../../components/ui/card";
-import {
-	RefreshCw,
-	Cpu,
-	MemoryStick as Memory,
-	Network,
-	Database,
-	Gauge,
-} from "lucide-react";
-import { StatusBadge } from "../../components/status-badge";
+import { systemApi } from "../../lib/api";
+import { APP_VERSION_LABEL } from "../../lib/app-version";
+import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { formatBytes, formatUptime } from "../../lib/utils";
-import {
-	LineChart,
-	Line,
-	XAxis,
-	YAxis,
-	CartesianGrid,
-	Tooltip,
-	ResponsiveContainer,
-	AreaChart,
-	Area,
-} from "recharts";
 
-// Mock data for charts
 const mockCpuMemoryData = Array.from({ length: 50 }, (_, i) => ({
 	time: i,
 	cpu: Math.min(
@@ -59,6 +60,9 @@ const mockRequestsData = Array.from({ length: 24 }, (_, i) => ({
 }));
 
 export function SystemPage() {
+	usePageTranslations("system");
+	const { t } = useTranslation();
+	const versionLabel = APP_VERSION_LABEL || "—";
 	const {
 		data: systemStatus,
 		isLoading: isLoadingStatus,
@@ -68,18 +72,24 @@ export function SystemPage() {
 		queryKey: ["systemStatus"],
 		queryFn: systemApi.getStatus,
 		refetchInterval: 30000,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	const { data: metrics, isLoading: isLoadingMetrics } = useQuery({
 		queryKey: ["systemMetrics"],
 		queryFn: systemApi.getMetrics,
 		refetchInterval: 10000,
+		retry: false,
+		refetchOnWindowFocus: false,
 	});
 
 	return (
 		<div className="space-y-4">
 			<div className="flex items-center justify-between">
-				<h2 className="text-3xl font-bold tracking-tight">System</h2>
+				<h2 className="text-3xl font-bold tracking-tight">
+					{t("system:title", { defaultValue: "System" })}
+				</h2>
 				<Button
 					onClick={() => refetch()}
 					disabled={isRefetching}
@@ -89,14 +99,16 @@ export function SystemPage() {
 					<RefreshCw
 						className={`mr-2 h-4 w-4 ${isRefetching ? "animate-spin" : ""}`}
 					/>
-					Refresh
+					{t("system:actions.refresh", { defaultValue: "Refresh" })}
 				</Button>
 			</div>
 
 			<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 				<Card>
 					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">Status</CardTitle>
+						<CardTitle className="text-sm font-medium">
+							{t("system:status.title", { defaultValue: "Status" })}
+						</CardTitle>
 						<Gauge className="h-4 w-4 text-slate-500" />
 					</CardHeader>
 					<CardContent>
@@ -105,9 +117,7 @@ export function SystemPage() {
 						) : (
 							<div className="flex flex-col gap-1">
 								<StatusBadge status={systemStatus?.status || "unknown"} />
-								<p className="text-xs text-slate-500">
-									{systemStatus?.version || "Unknown version"}
-								</p>
+								<p className="text-xs text-slate-500">{versionLabel}</p>
 							</div>
 						)}
 					</CardContent>
@@ -115,7 +125,9 @@ export function SystemPage() {
 
 				<Card>
 					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">CPU</CardTitle>
+						<CardTitle className="text-sm font-medium">
+							{t("system:cpu.title", { defaultValue: "CPU" })}
+						</CardTitle>
 						<Cpu className="h-4 w-4 text-slate-500" />
 					</CardHeader>
 					<CardContent>
@@ -129,7 +141,11 @@ export function SystemPage() {
 										: "0.0"}
 									%
 								</span>
-								<p className="text-xs text-slate-500">Current CPU Usage</p>
+								<p className="text-xs text-slate-500">
+									{t("system:cpu.description", {
+										defaultValue: "Current CPU Usage",
+									})}
+								</p>
 							</div>
 						)}
 					</CardContent>
@@ -137,7 +153,9 @@ export function SystemPage() {
 
 				<Card>
 					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">Memory</CardTitle>
+						<CardTitle className="text-sm font-medium">
+							{t("system:memory.title", { defaultValue: "Memory" })}
+						</CardTitle>
 						<Memory className="h-4 w-4 text-slate-500" />
 					</CardHeader>
 					<CardContent>
@@ -148,7 +166,11 @@ export function SystemPage() {
 								<span className="text-2xl font-bold">
 									{formatBytes(metrics?.memory_usage_bytes || 0)}
 								</span>
-								<p className="text-xs text-slate-500">Current Memory Usage</p>
+								<p className="text-xs text-slate-500">
+									{t("system:memory.description", {
+										defaultValue: "Current Memory Usage",
+									})}
+								</p>
 							</div>
 						)}
 					</CardContent>
@@ -156,7 +178,9 @@ export function SystemPage() {
 
 				<Card>
 					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-						<CardTitle className="text-sm font-medium">Uptime</CardTitle>
+						<CardTitle className="text-sm font-medium">
+							{t("system:uptime.title", { defaultValue: "Uptime" })}
+						</CardTitle>
 						<Network className="h-4 w-4 text-slate-500" />
 					</CardHeader>
 					<CardContent>
@@ -167,7 +191,11 @@ export function SystemPage() {
 								<span className="text-2xl font-bold">
 									{formatUptime(systemStatus?.uptime || 0)}
 								</span>
-								<p className="text-xs text-slate-500">System Running Time</p>
+								<p className="text-xs text-slate-500">
+									{t("system:uptime.description", {
+										defaultValue: "System Running Time",
+									})}
+								</p>
 							</div>
 						)}
 					</CardContent>
@@ -177,9 +205,15 @@ export function SystemPage() {
 			<div className="grid gap-4 md:grid-cols-2">
 				<Card className="col-span-1 md:col-span-2">
 					<CardHeader>
-						<CardTitle>CPU & Memory Usage</CardTitle>
+						<CardTitle>
+							{t("system:resourceChart.title", {
+								defaultValue: "CPU & Memory Usage",
+							})}
+						</CardTitle>
 						<CardDescription>
-							System resource utilization over time
+							{t("system:resourceChart.description", {
+								defaultValue: "System resource utilization over time",
+							})}
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -195,7 +229,9 @@ export function SystemPage() {
 										stroke="#9ca3af"
 										fontSize={12}
 										label={{
-											value: "Time (minutes)",
+											value: t("system:resourceChart.timeAxis", {
+												defaultValue: "Time (minutes)",
+											}),
 											position: "insideBottomRight",
 											offset: -10,
 										}}
@@ -205,7 +241,9 @@ export function SystemPage() {
 										fontSize={12}
 										domain={[0, 100]}
 										label={{
-											value: "Usage %",
+											value: t("system:resourceChart.usageAxis", {
+												defaultValue: "Usage %",
+											}),
 											angle: -90,
 											position: "insideLeft",
 										}}
@@ -217,13 +255,19 @@ export function SystemPage() {
 											borderRadius: "6px",
 											color: "#e5e7eb",
 										}}
-										formatter={(value) => [`${value.toFixed(1)}%`]}
+										formatter={(value) =>
+											typeof value === "number"
+												? `${value.toFixed(1)}%`
+												: String(value)
+										}
 									/>
 									<Line
 										type="monotone"
 										dataKey="cpu"
 										stroke="#3b82f6"
-										name="CPU"
+										name={t("system:resourceChart.cpuSeries", {
+											defaultValue: "CPU",
+										})}
 										strokeWidth={2}
 										dot={false}
 										activeDot={{ r: 6 }}
@@ -232,7 +276,9 @@ export function SystemPage() {
 										type="monotone"
 										dataKey="memory"
 										stroke="#10b981"
-										name="Memory"
+										name={t("system:resourceChart.memorySeries", {
+											defaultValue: "Memory",
+										})}
 										strokeWidth={2}
 										dot={false}
 										activeDot={{ r: 6 }}
@@ -245,9 +291,15 @@ export function SystemPage() {
 
 				<Card>
 					<CardHeader>
-						<CardTitle>Network Traffic</CardTitle>
+						<CardTitle>
+							{t("system:networkChart.title", {
+								defaultValue: "Network Traffic",
+							})}
+						</CardTitle>
 						<CardDescription>
-							Inbound and outbound network traffic
+							{t("system:networkChart.description", {
+								defaultValue: "Inbound and outbound network traffic",
+							})}
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -263,7 +315,9 @@ export function SystemPage() {
 										stroke="#9ca3af"
 										fontSize={12}
 										label={{
-											value: "Time (minutes)",
+											value: t("system:networkChart.timeAxis", {
+												defaultValue: "Time (minutes)",
+											}),
 											position: "insideBottomRight",
 											offset: -10,
 										}}
@@ -272,7 +326,9 @@ export function SystemPage() {
 										stroke="#9ca3af"
 										fontSize={12}
 										label={{
-											value: "KB/s",
+											value: t("system:networkChart.throughputAxis", {
+												defaultValue: "KB/s",
+											}),
 											angle: -90,
 											position: "insideLeft",
 										}}
@@ -284,7 +340,11 @@ export function SystemPage() {
 											borderRadius: "6px",
 											color: "#e5e7eb",
 										}}
-										formatter={(value) => [`${value.toFixed(1)} KB/s`]}
+										formatter={(value) =>
+											typeof value === "number"
+												? `${value.toFixed(1)} KB/s`
+												: String(value)
+										}
 									/>
 									<Area
 										type="monotone"
@@ -292,7 +352,9 @@ export function SystemPage() {
 										stackId="1"
 										stroke="#3b82f6"
 										fill="#3b82f6"
-										name="Inbound"
+										name={t("system:networkChart.inboundSeries", {
+											defaultValue: "Inbound",
+										})}
 										fillOpacity={0.3}
 									/>
 									<Area
@@ -301,7 +363,9 @@ export function SystemPage() {
 										stackId="1"
 										stroke="#f59e0b"
 										fill="#f59e0b"
-										name="Outbound"
+										name={t("system:networkChart.outboundSeries", {
+											defaultValue: "Outbound",
+										})}
 										fillOpacity={0.3}
 									/>
 								</AreaChart>
@@ -312,8 +376,16 @@ export function SystemPage() {
 
 				<Card>
 					<CardHeader>
-						<CardTitle>API Requests</CardTitle>
-						<CardDescription>Request volume and error rate</CardDescription>
+						<CardTitle>
+							{t("system:apiChart.title", {
+								defaultValue: "API Requests",
+							})}
+						</CardTitle>
+						<CardDescription>
+							{t("system:apiChart.description", {
+								defaultValue: "Request volume and error rate",
+							})}
+						</CardDescription>
 					</CardHeader>
 					<CardContent>
 						<div className="h-[250px]">
@@ -328,7 +400,9 @@ export function SystemPage() {
 										stroke="#9ca3af"
 										fontSize={12}
 										label={{
-											value: "Hour",
+											value: t("system:apiChart.hourAxis", {
+												defaultValue: "Hour",
+											}),
 											position: "insideBottomRight",
 											offset: -10,
 										}}
@@ -337,7 +411,9 @@ export function SystemPage() {
 										stroke="#9ca3af"
 										fontSize={12}
 										label={{
-											value: "Count",
+											value: t("system:apiChart.countAxis", {
+												defaultValue: "Count",
+											}),
 											angle: -90,
 											position: "insideLeft",
 										}}
@@ -355,7 +431,9 @@ export function SystemPage() {
 										dataKey="requests"
 										stroke="#10b981"
 										fill="#10b981"
-										name="Requests"
+										name={t("system:apiChart.requestsSeries", {
+											defaultValue: "Requests",
+										})}
 										fillOpacity={0.3}
 									/>
 									<Area
@@ -363,7 +441,9 @@ export function SystemPage() {
 										dataKey="errors"
 										stroke="#ef4444"
 										fill="#ef4444"
-										name="Errors"
+										name={t("system:apiChart.errorsSeries", {
+											defaultValue: "Errors",
+										})}
 										fillOpacity={0.3}
 									/>
 								</AreaChart>
@@ -375,9 +455,15 @@ export function SystemPage() {
 
 			<Card>
 				<CardHeader>
-					<CardTitle>Active Connections</CardTitle>
+					<CardTitle>
+						{t("system:connections.title", {
+							defaultValue: "Active Connections",
+						})}
+					</CardTitle>
 					<CardDescription>
-						Current active connections to the MCPMate Proxy
+						{t("system:connections.description", {
+							defaultValue: "Current active connections to the MCPMate Proxy",
+						})}
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
@@ -393,7 +479,11 @@ export function SystemPage() {
 									)}
 								</span>
 							</div>
-							<p className="mt-2 text-sm text-slate-500">Active connections</p>
+							<p className="mt-2 text-sm text-slate-500">
+								{t("system:connections.valueLabel", {
+									defaultValue: "Active connections",
+								})}
+							</p>
 						</div>
 					</div>
 				</CardContent>

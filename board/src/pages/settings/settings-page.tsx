@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Moon, RotateCcw, Sun } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/button";
 import {
 	Card,
@@ -188,6 +189,7 @@ export function SettingsPage() {
 	const backupLimitId = useId();
 	const menuBarSelectId = useId();
 	const { t, i18n } = useTranslation();
+	const [searchParams, setSearchParams] = useSearchParams();
 
 	const theme = useAppStore((state) => state.theme);
 	const setTheme = useAppStore((state) => state.setTheme);
@@ -343,7 +345,7 @@ export function SettingsPage() {
 			setLoadingPorts(false);
 		}
 		// API_BASE_URL is a live module binding; reads inside this async fn stay current without listing it in deps.
-	}, [t]);
+	}, [t, i18n.language]);
 
 	const tabTriggerClass =
 		"justify-start px-3 py-2 text-left text-sm font-medium text-slate-600 data-[state=active]:text-emerald-700 dark:text-slate-300";
@@ -528,6 +530,32 @@ export function SettingsPage() {
 	}, [isTauriShell, updateDashboardSettings]);
 
 	const showLicenseTab = licenseLoaded && licenseDocument !== null;
+	const requestedTab = searchParams.get("tab");
+	const [activeTab, setActiveTab] = useState("general");
+
+	useEffect(() => {
+		if (requestedTab === "about" && showLicenseTab) {
+			setActiveTab("about");
+			return;
+		}
+		if (activeTab === "about" && !showLicenseTab) {
+			setActiveTab("general");
+		}
+	}, [activeTab, requestedTab, showLicenseTab]);
+
+	const handleTabChange = useCallback(
+		(value: string) => {
+			setActiveTab(value);
+			const next = new URLSearchParams(searchParams);
+			if (value === "about") {
+				next.set("tab", "about");
+			} else {
+				next.delete("tab");
+			}
+			setSearchParams(next, { replace: true });
+		},
+		[searchParams, setSearchParams],
+	);
 
 	return (
 		<div className="space-y-4">
@@ -538,7 +566,8 @@ export function SettingsPage() {
 			</div>
 
 			<Tabs
-				defaultValue="general"
+				value={activeTab}
+				onValueChange={handleTabChange}
 				orientation="vertical"
 				className="flex flex-col gap-4 xl:flex-row xl:items-start"
 			>
@@ -656,13 +685,11 @@ export function SettingsPage() {
 										<h3 className="text-base font-medium">
 											{t("settings:general.language", {
 												defaultValue: "Language",
-											})}{" "}
-											<sup>{t("wipTag", { defaultValue: "(WIP)" })}</sup>
+											})}
 										</h3>
 										<p className="text-sm text-slate-500">
 											{t("settings:general.languageDescription", {
-												defaultValue:
-													"Multi-language support is currently in development.",
+												defaultValue: "Select the dashboard language.",
 											})}
 										</p>
 									</div>
@@ -757,7 +784,7 @@ export function SettingsPage() {
 									</div>
 
 									{isTauriShell && (
-										<div className="space-y-4 dark:border-slate-800">
+										<div className="space-y-4">
 											<div className="flex items-center justify-between gap-4">
 												<div className="space-y-0.5">
 													<h3 className="text-base font-medium">
@@ -1647,7 +1674,7 @@ function MarketBlacklistCard({
 				</div>
 
 				{filteredEntries.length === 0 ? (
-					<div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+					<div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
 						<p>
 							{t("settings:market.emptyTitle", {
 								defaultValue: "No hidden servers currently.",
@@ -1670,7 +1697,7 @@ function MarketBlacklistCard({
 							return (
 								<div
 									key={entry.serverId}
-									className="flex items-center justify-between gap-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+									className="flex items-center justify-between gap-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
 								>
 									<div className="flex flex-col gap-1">
 										<p className="text-sm font-semibold text-slate-900 dark:text-slate-100">

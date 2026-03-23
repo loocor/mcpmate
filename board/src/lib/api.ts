@@ -73,6 +73,7 @@ import type {
 // Prefer VITE_API_BASE_URL; otherwise infer from runtime context with sane fallbacks.
 // For desktop (Tauri), allow runtime override so Settings can change ports without full reload.
 const API_BASE_OVERRIDE_KEY = "mcpmate.api_base_override";
+export const API_BASE_CHANGED_EVENT = "mcpmate:api-base-changed";
 
 const resolveApiBaseUrl = (): string => {
 	const envBase =
@@ -119,6 +120,9 @@ export function setApiBaseUrl(newBase: string | null | undefined) {
 		API_BASE_URL = candidate;
 		try {
 			window.localStorage?.setItem(API_BASE_OVERRIDE_KEY, candidate);
+			window.dispatchEvent(
+				new CustomEvent(API_BASE_CHANGED_EVENT, { detail: { apiBaseUrl: candidate } }),
+			);
 		} catch {
 			// ignore persistence errors
 		}
@@ -131,6 +135,15 @@ export function setApiBaseUrl(newBase: string | null | undefined) {
 		// LocalStorage access may fail in restricted environments
 	}
 	API_BASE_URL = resolveApiBaseUrl();
+	try {
+		window.dispatchEvent(
+			new CustomEvent(API_BASE_CHANGED_EVENT, {
+				detail: { apiBaseUrl: API_BASE_URL },
+			}),
+		);
+	} catch {
+		// ignore event dispatch errors
+	}
 }
 
 const resolveWebSocketUrl = (): string => {

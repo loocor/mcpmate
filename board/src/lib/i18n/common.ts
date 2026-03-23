@@ -4,6 +4,8 @@ export const commonTranslations = {
 		wipTag: "(WIP)",
 		yes: "Yes",
 		no: "No",
+		loading: "Loading…",
+		reload: "Reload",
 		user: "User",
 		roles: {
 			user: "User",
@@ -44,6 +46,8 @@ export const commonTranslations = {
 		wipTag: "(开发中)",
 		yes: "是",
 		no: "否",
+		loading: "加载中…",
+		reload: "重新加载",
 		user: "用户",
 		roles: {
 			user: "用户",
@@ -84,6 +88,8 @@ export const commonTranslations = {
 		wipTag: "(開発中)",
 		yes: "はい",
 		no: "いいえ",
+		loading: "読み込み中…",
+		reload: "再読み込み",
 		user: "ユーザー",
 		roles: {
 			user: "ユーザー",
