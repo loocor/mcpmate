@@ -50,7 +50,17 @@ import type {
 	ServerSummary,
 } from "../../lib/types";
 
-// (Removed) isServerActive helper was unused; layout simplified
+const TRANSITIONAL_SERVER_STATUSES = new Set([
+	"initializing",
+	"starting",
+	"connecting",
+	"busy",
+	"stopping",
+]);
+
+function isTransitionalServerStatus(status: string | undefined): boolean {
+	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
+}
 
 // Helper function to get the instance count for a server
 function getCapabilitySummary(server: ServerSummary) {
@@ -258,7 +268,14 @@ export function ServerListPage() {
 				throw err;
 			}
 		},
-		refetchInterval: 30000,
+		refetchInterval: (query) => {
+			const servers = query.state.data?.servers ?? [];
+			const hasTransitionalServer = servers.some((server) =>
+				isTransitionalServerStatus(server.status),
+			);
+			return hasTransitionalServer ? 5000 : 30000;
+		},
+		refetchIntervalInBackground: true,
 		retry: 1, // Reduce retry count to show errors more quickly
 	});
 
@@ -950,7 +967,7 @@ export function ServerListPage() {
 			: Array.from({ length: 3 }, (_, index) => (
 				<div
 					key={`loading-list-skeleton-${Date.now()}-${index}`}
-					className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950"
+					className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
 				>
 					<div className="flex items-center gap-3">
 						<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800"></div>

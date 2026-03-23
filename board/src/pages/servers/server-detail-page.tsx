@@ -36,11 +36,7 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
-import {
-	Avatar,
-	AvatarFallback,
-	AvatarImage,
-} from "../../components/ui/avatar";
+import { CachedAvatar } from "../../components/cached-avatar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ButtonGroup } from "../../components/ui/button-group";
@@ -81,6 +77,18 @@ const readLegacyString = (
 	const value = (server as unknown as Record<string, unknown>)[key];
 	return typeof value === "string" ? value : undefined;
 };
+
+const TRANSITIONAL_SERVER_STATUSES = new Set([
+	"initializing",
+	"starting",
+	"connecting",
+	"busy",
+	"stopping",
+]);
+
+function isTransitionalServerStatus(status: string | undefined): boolean {
+	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
+}
 
 interface InspectorListResponse {
 	success?: boolean;
@@ -200,10 +208,16 @@ export function ServerDetailPage() {
 		data: server,
 		isLoading,
 		isRefetching,
+		isFetched,
 	} = useQuery({
 		queryKey: ["server", serverId],
 		queryFn: () => serversApi.getServer(serverId || ""),
 		enabled: !!serverId,
+		refetchInterval: (query) => {
+			const currentServer = query.state.data;
+			if (!currentServer || query.state.error) return false;
+			return isTransitionalServerStatus(currentServer.status) ? 5000 : false;
+		},
 	});
 
 	const toggleServerM = useMutation({
@@ -688,6 +702,7 @@ export function ServerDetailPage() {
 		for (const [k, v] of Object.entries(src)) out[k] = maskHeaderValue(k, v);
 		return out;
 	}, [server?.headers]);
+	const isServerPending = !server && (isLoading || !isFetched || isRefetching);
 
 	if (!serverId) {
 		return (
@@ -695,6 +710,31 @@ export function ServerDetailPage() {
 				{t("detail.errors.noServerId", {
 					defaultValue: "No server ID provided",
 				})}
+			</div>
+		);
+	}
+
+	if (isServerPending) {
+		return (
+			<div className="space-y-4">
+				<Card>
+					<CardContent className="flex min-h-[240px] flex-col items-center justify-center gap-3 p-6 text-center">
+						<Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+						<div className="space-y-1">
+							<p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+								{t("detail.loading.title", {
+									defaultValue: "Loading server details",
+								})}
+							</p>
+							<p className="text-sm text-slate-500 dark:text-slate-400">
+								{t("detail.loading.description", {
+									defaultValue:
+										"The service is responding, but its detail snapshot is still warming up.",
+								})}
+							</p>
+						</div>
+					</CardContent>
+				</Card>
 			</div>
 		);
 	}
@@ -833,18 +873,12 @@ export function ServerDetailPage() {
 											<div className="flex flex-col gap-4">
 												<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
 													<div className="flex flex-wrap items-start gap-4">
-														<Avatar className="text-sm">
-															{primaryIconSrc ? (
-																<AvatarImage
-																	src={primaryIconSrc}
-																	alt={primaryIconAlt}
-																/>
-															) : null}
-															<AvatarFallback>
-																{serverDisplayName?.slice(0, 1).toUpperCase() ??
-																	"?"}
-															</AvatarFallback>
-														</Avatar>
+														<CachedAvatar
+															src={primaryIconSrc}
+															alt={primaryIconAlt}
+															fallback={serverDisplayName || "?"}
+															className="text-sm"
+														/>
 														<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
 															<span className="text-xs uppercase text-slate-500">
 																{t("detail.overview.labels.service", {
@@ -1240,7 +1274,7 @@ function ServerCapabilityTabsHeader({
 	const resourcesCount = resQ.data?.items?.length ?? 0;
 	const promptsCount = prmQ.data?.items?.length ?? 0;
 	const templatesCount = tmpQ.data?.items?.length ?? 0;
-	const disableEmpty = true;
+	const disableEmpty = false;
 
 	return (
 		<TabsList className="flex flex-wrap gap-2">

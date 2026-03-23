@@ -153,6 +153,10 @@ export const serversTranslations = {
 			errors: {
 				noServerId: "No server ID provided",
 			},
+			loading: {
+				title: "Loading server details",
+				description: "The service is responding, but its detail snapshot is still warming up.",
+			},
 			viewModes: {
 				browse: "Browse",
 				debug: "Inspect",
@@ -760,6 +764,10 @@ export const serversTranslations = {
 			errors: {
 				noServerId: "未提供服务器 ID。",
 			},
+			loading: {
+				title: "正在加载服务详情",
+				description: "服务已开始响应，但详情快照仍在准备中。",
+			},
 			viewModes: {
 				browse: "浏览",
 				debug: "检视",
@@ -1341,6 +1349,10 @@ export const serversTranslations = {
 		detail: {
 			errors: {
 				noServerId: "サーバー ID が指定されていません。",
+			},
+			loading: {
+				title: "サーバー詳細を読み込み中",
+				description: "サービスは応答していますが、詳細スナップショットの準備に少し時間がかかっています。",
 			},
 			viewModes: {
 				browse: "閲覧",
