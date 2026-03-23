@@ -1,288 +1,1361 @@
 {
-  "generatedAt": "2026-03-23T16:16:35.624Z",
+  "generatedAt": "2026-03-23T16:50:05Z",
   "sections": [
     {
       "id": "backend",
-      "label": "Backend (Rust)",
+      "label": "Backend (Rust workspace)",
       "packages": [
+        {
+          "name": "aide",
+          "version": "0.15.1",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/tamasfe/aide",
+          "homepage": "",
+          "description": "A code-first API documentation library",
+          "author": "tamasfe",
+          "licenseFile": ""
+        },
         {
           "name": "anyhow",
           "version": "1.0.98",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/dtolnay/anyhow",
-          "description": "Flexible concrete Error type built on std::error::Error"
+          "homepage": "",
+          "description": "Flexible concrete Error type built on std::error::Error",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "arc-swap",
+          "version": "1.7.1",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/vorner/arc-swap",
+          "homepage": "",
+          "description": "Atomically swappable Arc",
+          "author": "Michal 'vorner' Vaner <vorner@vorner.cz>",
+          "licenseFile": ""
+        },
+        {
+          "name": "async-trait",
+          "version": "0.1.89",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/async-trait",
+          "homepage": "",
+          "description": "Type erasure for async trait methods",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
         },
         {
           "name": "axum",
           "version": "0.8.4",
           "license": "MIT",
           "repository": "https://github.com/tokio-rs/axum",
-          "description": "Web framework that focuses on ergonomics and modularity"
+          "homepage": "https://github.com/tokio-rs/axum",
+          "description": "Web framework that focuses on ergonomics and modularity",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "base64",
+          "version": "0.22.1",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/marshallpierce/rust-base64",
+          "homepage": "",
+          "description": "encodes and decodes base64 as bytes or utf8",
+          "author": "Marshall Pierce <marshall@mpierce.org>",
+          "licenseFile": ""
+        },
+        {
+          "name": "bincode",
+          "version": "1.3.3",
+          "license": "MIT",
+          "repository": "https://github.com/servo/bincode",
+          "homepage": "",
+          "description": "A binary serialization / deserialization strategy that uses Serde for transforming structs into bytes and vice versa!",
+          "author": "Ty Overby <ty@pre-alpha.com>, Francesco Mazzoli <f@mazzo.li>, David Tolnay <dtolnay@gmail.com>, Zoey Riordan <zoey@dos.cafe>",
+          "licenseFile": ""
+        },
+        {
+          "name": "candle-core",
+          "version": "0.8.4",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/huggingface/candle",
+          "homepage": "",
+          "description": "Minimalist ML framework.",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "candle-nn",
+          "version": "0.8.4",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/huggingface/candle",
+          "homepage": "",
+          "description": "Minimalist ML framework.",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "candle-transformers",
+          "version": "0.8.4",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/huggingface/candle",
+          "homepage": "",
+          "description": "Minimalist ML framework.",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "cherry-db-manager",
+          "version": "0.1.0",
+          "license": "MIT",
+          "repository": "https://github.com/loocor/cherry-db-manager",
+          "homepage": "",
+          "description": "A library for managing Cherry Studio LevelDB configurations",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "chrono",
-          "version": "0.4",
+          "version": "0.4.41",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/chronotope/chrono",
-          "description": "Date and time library for Rust"
+          "homepage": "https://github.com/chronotope/chrono",
+          "description": "Date and time library for Rust",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "clap",
-          "version": "4.5",
+          "version": "4.5.41",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/clap-rs/clap",
-          "description": "A full featured, fast Command Line Argument Parser"
+          "homepage": "",
+          "description": "A simple to use, efficient, and full-featured Command Line Argument Parser",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "dashmap",
+          "version": "6.1.0",
+          "license": "MIT",
+          "repository": "https://github.com/xacrimon/dashmap",
+          "homepage": "https://github.com/xacrimon/dashmap",
+          "description": "Blazing fast concurrent HashMap for Rust.",
+          "author": "Acrimon <joel.wejdenstal@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "dirs",
+          "version": "5.0.1",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/soc/dirs-rs",
+          "homepage": "",
+          "description": "A tiny low-level library that provides platform-specific standard locations of directories for config, cache and other data on Linux, Windows, macOS and Redox by leveraging the mechanisms defined by the XDG base/user directory specifications on Linux, the Known Folder API on Windows, and the Standard Directory guidelines on macOS.",
+          "author": "Simon Ochsenreither <simon@ochsenreither.de>",
+          "licenseFile": ""
+        },
+        {
+          "name": "flate2",
+          "version": "1.1.2",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/rust-lang/flate2-rs",
+          "homepage": "https://github.com/rust-lang/flate2-rs",
+          "description": "DEFLATE compression and decompression exposed as Read/BufRead/Write streams.\nSupports miniz_oxide and multiple zlib implementations. Supports zlib, gzip,\nand raw deflate streams.\n",
+          "author": "Alex Crichton <alex@alexcrichton.com>, Josh Triplett <josh@joshtriplett.org>",
+          "licenseFile": ""
+        },
+        {
+          "name": "futures",
+          "version": "0.3.31",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/rust-lang/futures-rs",
+          "homepage": "https://rust-lang.github.io/futures-rs",
+          "description": "An implementation of futures and streams featuring zero allocations,\ncomposability, and iterator-like interfaces.\n",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "handlebars",
-          "version": "5.1",
+          "version": "5.1.2",
           "license": "MIT",
           "repository": "https://github.com/sunng87/handlebars-rust",
-          "description": "Handlebars templating language implemented in Rust"
+          "homepage": "https://github.com/sunng87/handlebars-rust",
+          "description": "Handlebars templating implemented in Rust.",
+          "author": "Ning Sun <sunng@pm.me>",
+          "licenseFile": ""
+        },
+        {
+          "name": "hf-hub",
+          "version": "0.3.2",
+          "license": "Apache-2.0",
+          "repository": "https://github.com/huggingface/hf-hub",
+          "homepage": "https://github.com/huggingface/hf-hub",
+          "description": "This crates aims ease the interaction with [huggingface](https://huggingface.co/) \nIt aims to be compatible with [huggingface_hub](https://github.com/huggingface/huggingface_hub/) python package, but only implements a smaller subset of functions.\n",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "is-terminal",
           "version": "0.4.17",
           "license": "MIT",
           "repository": "https://github.com/sunfishcode/is-terminal",
-          "description": "Test whether a given stream is a terminal"
+          "homepage": "",
+          "description": "Test whether a given stream is a terminal",
+          "author": "softprops <d.tangren@gmail.com>, Dan Gohman <dev@sunfishcode.online>",
+          "licenseFile": ""
         },
         {
           "name": "json5",
-          "version": "0.4",
-          "license": "MIT OR Apache-2.0",
+          "version": "0.4.1",
+          "license": "ISC",
           "repository": "https://github.com/callum-oakley/json5-rs",
-          "description": "A Rust JSON5 serializer and deserializer"
+          "homepage": "",
+          "description": "A Rust JSON5 serializer and deserializer which speaks Serde.",
+          "author": "Callum Oakley <hello@callumoakley.net>",
+          "licenseFile": ""
+        },
+        {
+          "name": "lru",
+          "version": "0.12.5",
+          "license": "MIT",
+          "repository": "https://github.com/jeromefroe/lru-rs.git",
+          "homepage": "https://github.com/jeromefroe/lru-rs",
+          "description": "A LRU cache implementation",
+          "author": "Jerome Froelich <jeromefroelic@hotmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "nanoid",
+          "version": "0.4.0",
+          "license": "MIT",
+          "repository": "https://github.com/nikolay-govorov/nanoid.git",
+          "homepage": "https://github.com/nikolay-govorov/nanoid",
+          "description": "A tiny, secure, URL-friendly, unique string ID generator for Rust.",
+          "author": "Nikolay Govorov <nikolay_govorov@bk.ru>",
+          "licenseFile": ""
+        },
+        {
+          "name": "num_cpus",
+          "version": "1.17.0",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/seanmonstar/num_cpus",
+          "homepage": "",
+          "description": "Get the number of CPUs on a machine.",
+          "author": "Sean McArthur <sean@seanmonstar.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "once_cell",
+          "version": "1.21.3",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/matklad/once_cell",
+          "homepage": "",
+          "description": "Single assignment cells and lazy values.",
+          "author": "Aleksey Kladov <aleksey.kladov@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "paste",
+          "version": "1.0.15",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/paste",
+          "homepage": "",
+          "description": "Macros for all your token pasting needs",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "proc-macro2",
+          "version": "1.0.95",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/proc-macro2",
+          "homepage": "",
+          "description": "A substitute implementation of the compiler's `proc_macro` API to decouple token-based libraries from the procedural macro use case.",
+          "author": "David Tolnay <dtolnay@gmail.com>, Alex Crichton <alex@alexcrichton.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "quote",
+          "version": "1.0.40",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/quote",
+          "homepage": "",
+          "description": "Quasi-quoting macro quote!(...)",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "redb",
+          "version": "2.6.1",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/cberner/redb",
+          "homepage": "https://www.redb.org",
+          "description": "Rust Embedded DataBase",
+          "author": "Christopher Berner <me@cberner.com>",
+          "licenseFile": ""
         },
         {
           "name": "reqwest",
           "version": "0.13.2",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/seanmonstar/reqwest",
-          "description": "Higher level HTTP client library"
+          "homepage": "",
+          "description": "higher level HTTP client library",
+          "author": "Sean McArthur <sean@seanmonstar.com>",
+          "licenseFile": ""
         },
         {
           "name": "rmcp",
           "version": "1.2.0",
+          "license": "Apache-2.0",
+          "repository": "https://github.com/modelcontextprotocol/rust-sdk/",
+          "homepage": "https://github.com/modelcontextprotocol/rust-sdk",
+          "description": "Rust SDK for Model Context Protocol",
+          "author": "",
+          "licenseFile": "LICENSE"
+        },
+        {
+          "name": "rusty-leveldb",
+          "version": "3.0.3",
+          "license": "MIT",
+          "repository": "https://github.com/dermesser/leveldb-rs",
+          "homepage": "https://github.com/dermesser/leveldb-rs",
+          "description": "A compatible re-implementation of LevelDB in Rust",
+          "author": "Lewin Bormann <lbo@spheniscida.de>",
+          "licenseFile": ""
+        },
+        {
+          "name": "schemars",
+          "version": "0.9.0",
+          "license": "MIT",
+          "repository": "https://github.com/GREsau/schemars",
+          "homepage": "https://graham.cool/schemars/",
+          "description": "Generate JSON Schemas from Rust code",
+          "author": "Graham Esau <gesau@hotmail.co.uk>",
+          "licenseFile": ""
+        },
+        {
+          "name": "semver",
+          "version": "1.0.26",
           "license": "MIT OR Apache-2.0",
-          "repository": "https://github.com/modelcontextprotocol/rust-sdk",
-          "description": "Rust SDK for Model Context Protocol"
+          "repository": "https://github.com/dtolnay/semver",
+          "homepage": "",
+          "description": "Parser and evaluator for Cargo's flavor of Semantic Versioning",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
         },
         {
           "name": "serde",
           "version": "1.0.228",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/serde-rs/serde",
-          "description": "A generic serialization/deserialization framework"
+          "homepage": "https://serde.rs",
+          "description": "A generic serialization/deserialization framework",
+          "author": "Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
         },
         {
           "name": "serde_json",
-          "version": "1.0",
+          "version": "1.0.140",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/serde-rs/json",
-          "description": "A JSON serialization file format"
+          "homepage": "",
+          "description": "A JSON serialization file format",
+          "author": "Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
         },
         {
           "name": "serde_yaml",
-          "version": "0.9",
+          "version": "0.9.34+deprecated",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/dtolnay/serde-yaml",
-          "description": "YAML data format for Serde"
+          "homepage": "",
+          "description": "YAML data format for Serde",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "sha2",
+          "version": "0.10.9",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/RustCrypto/hashes",
+          "homepage": "",
+          "description": "Pure Rust implementation of the SHA-2 hash function family\nincluding SHA-224, SHA-256, SHA-384, and SHA-512.\n",
+          "author": "RustCrypto Developers",
+          "licenseFile": ""
+        },
+        {
+          "name": "sqlx",
+          "version": "0.8.6",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/launchbadge/sqlx",
+          "homepage": "",
+          "description": "🧰 The Rust SQL Toolkit. An async, pure Rust SQL crate featuring compile-time checked queries without a DSL. Supports PostgreSQL, MySQL, and SQLite.",
+          "author": "Ryan Leckey <leckey.ryan@gmail.com>, Austin Bonander <austin.bonander@gmail.com>, Chloe Ross <orangesnowfox@gmail.com>, Daniel Akhterov <akhterovd@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "syn",
+          "version": "2.0.117",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/syn",
+          "homepage": "",
+          "description": "Parser for Rust source code",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
         },
         {
           "name": "sysinfo",
-          "version": "0.30.5",
+          "version": "0.30.13",
           "license": "MIT",
           "repository": "https://github.com/GuillaumeGomez/sysinfo",
-          "description": "Library to get system information"
+          "homepage": "",
+          "description": "Library to get system information such as processes, CPUs, disks, components and networks",
+          "author": "Guillaume Gomez <guillaume1.gomez@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tar",
+          "version": "0.4.44",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/alexcrichton/tar-rs",
+          "homepage": "https://github.com/alexcrichton/tar-rs",
+          "description": "A Rust implementation of a TAR file reader and writer. This library does not\ncurrently handle compression, but it is abstract over all I/O readers and\nwriters. Additionally, great lengths are taken to ensure that the entire\ncontents are never required to be entirely resident in memory all at once.\n",
+          "author": "Alex Crichton <alex@alexcrichton.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "terminal_size",
+          "version": "0.3.0",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/eminence/terminal-size",
+          "homepage": "",
+          "description": "Gets the size of your Linux or Windows terminal",
+          "author": "Andrew Chin <achin@eminence32.net>",
+          "licenseFile": ""
+        },
+        {
+          "name": "thiserror",
+          "version": "1.0.69",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/thiserror",
+          "homepage": "",
+          "description": "derive(Error)",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tokenizers",
+          "version": "0.15.2",
+          "license": "Apache-2.0",
+          "repository": "https://github.com/huggingface/tokenizers",
+          "homepage": "https://github.com/huggingface/tokenizers",
+          "description": "Provides an implementation of today's most used tokenizers,\nwith a focus on performances and versatility.\n",
+          "author": "Anthony MOI <m.anthony.moi@gmail.com>, Nicolas Patry <patry.nicolas@protonmail.com>",
+          "licenseFile": ""
         },
         {
           "name": "tokio",
           "version": "1.46.1",
           "license": "MIT",
           "repository": "https://github.com/tokio-rs/tokio",
-          "description": "An event-driven, non-blocking I/O platform"
+          "homepage": "https://tokio.rs",
+          "description": "An event-driven, non-blocking I/O platform for writing asynchronous I/O\nbacked applications.\n",
+          "author": "Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tokio-stream",
+          "version": "0.1.18",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tokio",
+          "homepage": "https://tokio.rs",
+          "description": "Utilities to work with `Stream` and `tokio`.\n",
+          "author": "Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tokio-util",
+          "version": "0.7.15",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tokio",
+          "homepage": "https://tokio.rs",
+          "description": "Additional utilities for working with Tokio.\n",
+          "author": "Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
         },
         {
           "name": "toml",
-          "version": "0.8",
+          "version": "0.8.23",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/toml-rs/toml",
-          "description": "A native Rust encoder and decoder of TOML-formatted files"
+          "homepage": "",
+          "description": "A native Rust encoder and decoder of TOML-formatted files and streams. Provides\nimplementations of the standard Serialize/Deserialize traits for TOML data to\nfacilitate deserializing and serializing Rust structures.\n",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "tower",
+          "version": "0.5.2",
+          "license": "MIT",
+          "repository": "https://github.com/tower-rs/tower",
+          "homepage": "https://github.com/tower-rs/tower",
+          "description": "Tower is a library of modular and reusable components for building robust\nclients and servers.\n",
+          "author": "Tower Maintainers <team@tower-rs.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tower-http",
+          "version": "0.6.8",
+          "license": "MIT",
+          "repository": "https://github.com/tower-rs/tower-http",
+          "homepage": "https://github.com/tower-rs/tower-http",
+          "description": "Tower middleware and utilities for HTTP clients and servers",
+          "author": "Tower Maintainers <team@tower-rs.com>",
+          "licenseFile": ""
         },
         {
           "name": "tracing",
           "version": "0.1.41",
           "license": "MIT",
           "repository": "https://github.com/tokio-rs/tracing",
-          "description": "Application-level tracing for Rust"
+          "homepage": "https://tokio.rs",
+          "description": "Application-level tracing for Rust.\n",
+          "author": "Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
         },
         {
           "name": "tracing-subscriber",
-          "version": "0.3",
+          "version": "0.3.19",
           "license": "MIT",
           "repository": "https://github.com/tokio-rs/tracing",
-          "description": "Utilities for implementing and composing tracing subscribers"
+          "homepage": "https://tokio.rs",
+          "description": "Utilities for implementing and composing `tracing` subscribers.\n",
+          "author": "Eliza Weisman <eliza@buoyant.io>, David Barsky <me@davidbarsky.com>, Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "url",
+          "version": "2.5.4",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/servo/rust-url",
+          "homepage": "",
+          "description": "URL library for Rust, based on the WHATWG URL Standard",
+          "author": "The rust-url developers",
+          "licenseFile": ""
+        },
+        {
+          "name": "uuid",
+          "version": "1.17.0",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/uuid-rs/uuid",
+          "homepage": "https://github.com/uuid-rs/uuid",
+          "description": "A library to generate and parse UUIDs.",
+          "author": "Ashley Mannix<ashleymannix@live.com.au>, Dylan DPC<dylan.dpc@gmail.com>, Hunar Roop Kahlon<hunar.roop@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "walkdir",
+          "version": "2.5.0",
+          "license": "Unlicense/MIT",
+          "repository": "https://github.com/BurntSushi/walkdir",
+          "homepage": "https://github.com/BurntSushi/walkdir",
+          "description": "Recursively walk a directory.",
+          "author": "Andrew Gallant <jamslam@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "which",
+          "version": "6.0.3",
+          "license": "MIT",
+          "repository": "https://github.com/harryfei/which-rs.git",
+          "homepage": "",
+          "description": "A Rust equivalent of Unix command \"which\". Locate installed executable in cross platforms.",
+          "author": "Harry Fei <tiziyuanfang@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "zip",
+          "version": "2.4.2",
+          "license": "MIT",
+          "repository": "https://github.com/zip-rs/zip2.git",
+          "homepage": "",
+          "description": "Library to support the reading and writing of zip files.\n",
+          "author": "Mathijs van de Nes <git@mathijs.vd-nes.nl>, Marli Frost <marli@frost.red>, Ryan Levick <ryan.levick@gmail.com>, Chris Hennick <hennickc@amazon.com>",
+          "licenseFile": ""
         }
       ]
     },
     {
-      "id": "frontend",
-      "label": "Frontend (TypeScript/React)",
+      "id": "tauri",
+      "label": "Desktop Shell (Tauri)",
       "packages": [
         {
-          "name": "@radix-ui/react-dialog",
-          "version": "1.1.13",
+          "name": "anyhow",
+          "version": "1.0.100",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/anyhow",
+          "homepage": "",
+          "description": "Flexible concrete Error type built on std::error::Error",
+          "author": "David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "async-stream",
+          "version": "0.3.6",
           "license": "MIT",
-          "repository": "https://github.com/radix-ui/primitives",
-          "description": "Radix UI Dialog component"
+          "repository": "https://github.com/tokio-rs/async-stream",
+          "homepage": "",
+          "description": "Asynchronous streams using async & await notation",
+          "author": "Carl Lerche <me@carllerche.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "bytes",
+          "version": "1.10.1",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/bytes",
+          "homepage": "",
+          "description": "Types and traits for working with bytes",
+          "author": "Carl Lerche <me@carllerche.com>, Sean McArthur <sean@seanmonstar.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "futures-util",
+          "version": "0.3.31",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/rust-lang/futures-rs",
+          "homepage": "https://rust-lang.github.io/futures-rs",
+          "description": "Common utilities and extension traits for the futures-rs library.\n",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "hostname",
+          "version": "0.4.2",
+          "license": "MIT",
+          "repository": "https://github.com/djc/hostname",
+          "homepage": "",
+          "description": "Cross-platform system's host name functions",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "http",
+          "version": "1.3.1",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/hyperium/http",
+          "homepage": "",
+          "description": "A set of types for representing HTTP requests and responses.\n",
+          "author": "Alex Crichton <alex@alexcrichton.com>, Carl Lerche <me@carllerche.com>, Sean McArthur <sean@seanmonstar.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "http-body-util",
+          "version": "0.1.3",
+          "license": "MIT",
+          "repository": "https://github.com/hyperium/http-body",
+          "homepage": "",
+          "description": "Combinators and adapters for HTTP request or response bodies.\n",
+          "author": "Carl Lerche <me@carllerche.com>, Lucio Franco <luciofranco14@gmail.com>, Sean McArthur <sean@seanmonstar.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "hyper",
+          "version": "1.7.0",
+          "license": "MIT",
+          "repository": "https://github.com/hyperium/hyper",
+          "homepage": "https://hyper.rs",
+          "description": "A protective and efficient HTTP library for all.",
+          "author": "Sean McArthur <sean@seanmonstar.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "hyper-util",
+          "version": "0.1.17",
+          "license": "MIT",
+          "repository": "https://github.com/hyperium/hyper-util",
+          "homepage": "https://hyper.rs",
+          "description": "hyper utilities",
+          "author": "Sean McArthur <sean@seanmonstar.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "keyring",
+          "version": "3.6.3",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/hwchen/keyring-rs.git",
+          "homepage": "https://github.com/hwchen/keyring-rs",
+          "description": "Cross-platform library for managing passwords/credentials",
+          "author": "Walther Chen <walther.chen@gmail.com>, Daniel Brotsky <dev@brotsky.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "mcpmate",
+          "version": "0.1.0",
+          "license": "UNKNOWN",
+          "repository": "",
+          "homepage": "",
+          "description": "MCPMate - A comprehensive management center for Model Context Protocol (MCP) servers",
+          "author": "Loocor <loocor@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "once_cell",
+          "version": "1.21.3",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/matklad/once_cell",
+          "homepage": "",
+          "description": "Single assignment cells and lazy values.",
+          "author": "Aleksey Kladov <aleksey.kladov@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "regex",
+          "version": "1.11.3",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/rust-lang/regex",
+          "homepage": "https://github.com/rust-lang/regex",
+          "description": "An implementation of regular expressions for Rust. This implementation uses\nfinite automata and guarantees linear time matching on all inputs.\n",
+          "author": "The Rust Project Developers, Andrew Gallant <jamslam@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "reqwest",
+          "version": "0.12.23",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/seanmonstar/reqwest",
+          "homepage": "",
+          "description": "higher level HTTP client library",
+          "author": "Sean McArthur <sean@seanmonstar.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "rfd",
+          "version": "0.14.1",
+          "license": "MIT",
+          "repository": "https://github.com/PolyMeilex/rfd",
+          "homepage": "",
+          "description": "Rusty File Dialog",
+          "author": "Poly <marynczak.bartlomiej@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "serde",
+          "version": "1.0.227",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/serde-rs/serde",
+          "homepage": "https://serde.rs",
+          "description": "A generic serialization/deserialization framework",
+          "author": "Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "serde_json",
+          "version": "1.0.145",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/serde-rs/json",
+          "homepage": "",
+          "description": "A JSON serialization file format",
+          "author": "Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tauri",
+          "version": "2.8.5",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/tauri-apps/tauri",
+          "homepage": "https://tauri.app/",
+          "description": "Make tiny, secure apps for all desktop platforms with Tauri",
+          "author": "Tauri Programme within The Commons Conservancy",
+          "licenseFile": ""
+        },
+        {
+          "name": "tauri-plugin-clipboard-manager",
+          "version": "2.3.0",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/tauri-apps/plugins-workspace",
+          "homepage": "",
+          "description": "Read and write to the system clipboard.",
+          "author": "Tauri Programme within The Commons Conservancy",
+          "licenseFile": ""
+        },
+        {
+          "name": "tauri-plugin-deep-link",
+          "version": "2.4.5",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/tauri-apps/plugins-workspace",
+          "homepage": "",
+          "description": "Set your Tauri application as the default handler for an URL",
+          "author": "Tauri Programme within The Commons Conservancy",
+          "licenseFile": ""
+        },
+        {
+          "name": "tauri-plugin-dialog",
+          "version": "2.4.0",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/tauri-apps/plugins-workspace",
+          "homepage": "",
+          "description": "Native system dialogs for opening and saving files along with message dialogs on your Tauri application.",
+          "author": "Tauri Programme within The Commons Conservancy",
+          "licenseFile": ""
+        },
+        {
+          "name": "tauri-plugin-opener",
+          "version": "2.5.0",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/tauri-apps/plugins-workspace",
+          "homepage": "",
+          "description": "Open files and URLs using their default application.",
+          "author": "Tauri Programme within The Commons Conservancy",
+          "licenseFile": ""
+        },
+        {
+          "name": "tauri-plugin-updater",
+          "version": "2.9.0",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/tauri-apps/plugins-workspace",
+          "homepage": "",
+          "description": "In-app updates for Tauri applications.",
+          "author": "Tauri Programme within The Commons Conservancy",
+          "licenseFile": ""
+        },
+        {
+          "name": "time",
+          "version": "0.3.44",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/time-rs/time",
+          "homepage": "https://time-rs.github.io",
+          "description": "Date and time library. Fully interoperable with the standard library. Mostly compatible with #![no_std].",
+          "author": "Jacob Pratt <open-source@jhpratt.dev>, Time contributors",
+          "licenseFile": ""
+        },
+        {
+          "name": "tokio",
+          "version": "1.47.1",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tokio",
+          "homepage": "https://tokio.rs",
+          "description": "An event-driven, non-blocking I/O platform for writing asynchronous I/O\nbacked applications.\n",
+          "author": "Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tokio-stream",
+          "version": "0.1.18",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tokio",
+          "homepage": "https://tokio.rs",
+          "description": "Utilities to work with `Stream` and `tokio`.\n",
+          "author": "Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tokio-util",
+          "version": "0.7.16",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tokio",
+          "homepage": "https://tokio.rs",
+          "description": "Additional utilities for working with Tokio.\n",
+          "author": "Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tracing",
+          "version": "0.1.41",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tracing",
+          "homepage": "https://tokio.rs",
+          "description": "Application-level tracing for Rust.\n",
+          "author": "Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "twoway",
+          "version": "0.2.2",
+          "license": "MIT/Apache-2.0",
+          "repository": "https://github.com/bluss/twoway",
+          "homepage": "",
+          "description": "(Deprecated - use crate memchr instead.) Fast substring search for strings and byte strings. Optional SSE4.2 acceleration (if detected at runtime) using pcmpestri. Memchr is the only mandatory dependency. The two way algorithm is also used by rust's libstd itself, but here it is exposed both for byte strings, using memchr, and optionally using a SSE4.2 accelerated version.",
+          "author": "bluss",
+          "licenseFile": ""
+        },
+        {
+          "name": "url",
+          "version": "2.5.7",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/servo/rust-url",
+          "homepage": "",
+          "description": "URL library for Rust, based on the WHATWG URL Standard",
+          "author": "The rust-url developers",
+          "licenseFile": ""
+        },
+        {
+          "name": "uuid",
+          "version": "1.22.0",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/uuid-rs/uuid",
+          "homepage": "https://github.com/uuid-rs/uuid",
+          "description": "A library to generate and parse UUIDs.",
+          "author": "Ashley Mannix<ashleymannix@live.com.au>, Dylan DPC<dylan.dpc@gmail.com>, Hunar Roop Kahlon<hunar.roop@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "webbrowser",
+          "version": "0.8.15",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/amodm/webbrowser-rs",
+          "homepage": "https://github.com/amodm/webbrowser-rs",
+          "description": "Open URLs in web browsers available on a platform",
+          "author": "Amod Malviya @amodm",
+          "licenseFile": ""
+        }
+      ]
+    },
+    {
+      "id": "board",
+      "label": "Dashboard (Web)",
+      "packages": [
+        {
+          "name": "@hookform/resolvers",
+          "version": "5.0.1",
+          "license": "MIT",
+          "repository": "git+https://github.com/react-hook-form/resolvers.git",
+          "homepage": "https://react-hook-form.com",
+          "description": "React Hook Form validation resolvers: Yup, Joi, Superstruct, Zod, Vest, Class Validator, io-ts, Nope, computed-types, TypeBox, arktype, Typanion, Effect-TS and VineJS",
+          "author": "bluebill1049 <bluebill1049@hotmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-accordion",
+          "version": "1.2.12",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-alert-dialog",
+          "version": "1.1.15",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-avatar",
+          "version": "1.1.9",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-dialog",
+          "version": "1.1.15",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "@radix-ui/react-dropdown-menu",
           "version": "2.1.16",
           "license": "MIT",
-          "repository": "https://github.com/radix-ui/primitives",
-          "description": "Radix UI Dropdown Menu component"
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-label",
+          "version": "2.1.6",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-popover",
+          "version": "1.1.15",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-scroll-area",
+          "version": "1.2.10",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "@radix-ui/react-select",
           "version": "2.2.4",
           "license": "MIT",
-          "repository": "https://github.com/radix-ui/primitives",
-          "description": "Radix UI Select component"
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-slot",
+          "version": "1.2.2",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-switch",
+          "version": "1.2.4",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "@radix-ui/react-tabs",
-          "version": "1.0.4",
+          "version": "1.1.11",
           "license": "MIT",
-          "repository": "https://github.com/radix-ui/primitives",
-          "description": "Radix UI Tabs component"
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "@radix-ui/react-toast",
-          "version": "1.1.5",
+          "version": "1.2.13",
           "license": "MIT",
-          "repository": "https://github.com/radix-ui/primitives",
-          "description": "Radix UI Toast component"
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@radix-ui/react-tooltip",
+          "version": "1.2.6",
+          "license": "MIT",
+          "repository": "git+https://github.com/radix-ui/primitives.git",
+          "homepage": "https://radix-ui.com/primitives",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "@tanstack/react-query",
-          "version": "5.25.0",
+          "version": "5.75.7",
           "license": "MIT",
-          "repository": "https://github.com/TanStack/query",
-          "description": "Hooks for fetching, caching and updating asynchronous data in React"
+          "repository": "https://github.com/TanStack/query.git",
+          "homepage": "https://tanstack.com/query",
+          "description": "Hooks for managing, caching and syncing asynchronous and remote data in React",
+          "author": "tannerlinsley",
+          "licenseFile": ""
         },
         {
           "name": "@tanstack/react-table",
-          "version": "8.11.2",
+          "version": "8.21.3",
           "license": "MIT",
-          "repository": "https://github.com/TanStack/table",
-          "description": "Headless UI for building powerful tables & datagrids"
+          "repository": "https://github.com/TanStack/table.git",
+          "homepage": "https://tanstack.com/table",
+          "description": "Headless UI for building powerful tables & datagrids for React.",
+          "author": "Tanner Linsley",
+          "licenseFile": ""
         },
         {
           "name": "@tauri-apps/api",
-          "version": "2.0.4",
+          "version": "2.8.0",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "git+https://github.com/tauri-apps/tauri.git",
+          "homepage": "https://github.com/tauri-apps/tauri#readme",
+          "description": "Tauri API definitions",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@tauri-apps/plugin-clipboard-manager",
+          "version": "2.3.0",
           "license": "MIT OR Apache-2.0",
-          "repository": "https://github.com/tauri-apps/tauri",
-          "description": "Tauri API bindings for JavaScript"
+          "repository": "https://github.com/tauri-apps/plugins-workspace",
+          "homepage": "",
+          "description": "",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "@tauri-apps/plugin-opener",
+          "version": "2.5.0",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/tauri-apps/plugins-workspace",
+          "homepage": "",
+          "description": "Open files and URLs using their default application.",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "acorn",
+          "version": "8.15.0",
+          "license": "MIT",
+          "repository": "git+https://github.com/acornjs/acorn.git",
+          "homepage": "https://github.com/acornjs/acorn",
+          "description": "ECMAScript parser",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "class-variance-authority",
+          "version": "0.7.1",
+          "license": "Apache-2.0",
+          "repository": "https://github.com/joe-bell/cva.git",
+          "homepage": "https://github.com/joe-bell/cva#readme",
+          "description": "Class Variance Authority 🧬",
+          "author": "Joe Bell (https://joebell.co.uk)",
+          "licenseFile": ""
+        },
+        {
+          "name": "clsx",
+          "version": "2.1.1",
+          "license": "MIT",
+          "repository": "lukeed/clsx",
+          "homepage": "",
+          "description": "A tiny (239B) utility for constructing className strings conditionally.",
+          "author": "Luke Edwards <luke.edwards05@gmail.com>",
+          "licenseFile": ""
         },
         {
           "name": "cmdk",
           "version": "1.1.1",
           "license": "MIT",
-          "repository": "https://github.com/pacocoursey/cmdk",
-          "description": "Fast, composable, unstyled command menu for React"
+          "repository": "git+https://github.com/pacocoursey/cmdk.git",
+          "homepage": "https://github.com/pacocoursey/cmdk#readme",
+          "description": "",
+          "author": "Paco",
+          "licenseFile": ""
+        },
+        {
+          "name": "date-fns",
+          "version": "3.6.0",
+          "license": "MIT",
+          "repository": "https://github.com/date-fns/date-fns",
+          "homepage": "",
+          "description": "Modern JavaScript date utility library",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "esbuild",
+          "version": "0.25.10",
+          "license": "MIT",
+          "repository": "git+https://github.com/evanw/esbuild.git",
+          "homepage": "",
+          "description": "An extremely fast JavaScript and CSS bundler and minifier.",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "esbuild-register",
+          "version": "3.6.0",
+          "license": "MIT",
+          "repository": "",
+          "homepage": "",
+          "description": "Transpile JSX, TypeScript and esnext features on the fly with esbuild",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "i18next",
           "version": "25.5.3",
           "license": "MIT",
-          "repository": "https://github.com/i18next/i18next",
-          "description": "i18next internationalization framework"
+          "repository": "https://github.com/i18next/i18next.git",
+          "homepage": "https://www.i18next.com",
+          "description": "i18next internationalization framework",
+          "author": "Jan Mühlemann <jan.muehlemann@gmail.com> (https://github.com/jamuhl)",
+          "licenseFile": ""
+        },
+        {
+          "name": "i18next-browser-languagedetector",
+          "version": "8.2.0",
+          "license": "MIT",
+          "repository": "https://github.com/i18next/i18next-browser-languageDetector.git",
+          "homepage": "https://github.com/i18next/i18next-browser-languageDetector",
+          "description": "language detector used in browser environment for i18next",
+          "author": "Jan Mühlemann <jan.muehlemann@gmail.com> (https://github.com/jamuhl)",
+          "licenseFile": ""
+        },
+        {
+          "name": "json5",
+          "version": "2.2.3",
+          "license": "MIT",
+          "repository": "git+https://github.com/json5/json5.git",
+          "homepage": "http://json5.org/",
+          "description": "JSON for Humans",
+          "author": "Aseem Kishore <aseem.kishore@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "jszip",
+          "version": "3.10.1",
+          "license": "(MIT OR GPL-3.0-or-later)",
+          "repository": "https://github.com/Stuk/jszip.git",
+          "homepage": "",
+          "description": "Create, read and edit .zip files with JavaScript http://stuartk.com/jszip",
+          "author": "Stuart Knightley <stuart@stuartk.com>",
+          "licenseFile": ""
         },
         {
           "name": "lucide-react",
           "version": "0.344.0",
           "license": "ISC",
-          "repository": "https://github.com/lucide-icons/lucide",
-          "description": "Beautiful & consistent icon toolkit made by the community"
+          "repository": "https://github.com/lucide-icons/lucide.git",
+          "homepage": "https://lucide.dev",
+          "description": "A Lucide icon library package for React applications",
+          "author": "Eric Fennis",
+          "licenseFile": ""
         },
         {
           "name": "react",
           "version": "18.3.1",
           "license": "MIT",
-          "repository": "https://github.com/facebook/react",
-          "description": "A JavaScript library for building user interfaces"
+          "repository": "https://github.com/facebook/react.git",
+          "homepage": "https://reactjs.org/",
+          "description": "React is a JavaScript library for building user interfaces.",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "react-dom",
           "version": "18.3.1",
           "license": "MIT",
-          "repository": "https://github.com/facebook/react",
-          "description": "React package for working with the DOM"
+          "repository": "https://github.com/facebook/react.git",
+          "homepage": "https://reactjs.org/",
+          "description": "React package for working with the DOM.",
+          "author": "",
+          "licenseFile": ""
         },
         {
           "name": "react-hook-form",
           "version": "7.56.3",
           "license": "MIT",
           "repository": "https://github.com/react-hook-form/react-hook-form",
-          "description": "Performant, flexible and extensible forms with easy to use validation"
+          "homepage": "https://www.react-hook-form.com",
+          "description": "Performant, flexible and extensible forms library for React Hooks",
+          "author": "Beier(Bill) Luo <bluebill1049@hotmail.com>",
+          "licenseFile": ""
         },
         {
           "name": "react-i18next",
           "version": "16.0.0",
           "license": "MIT",
-          "repository": "https://github.com/i18next/react-i18next",
-          "description": "Internationalization for react done right"
+          "repository": "https://github.com/i18next/react-i18next.git",
+          "homepage": "https://github.com/i18next/react-i18next",
+          "description": "Internationalization for react done right. Using the i18next i18n ecosystem.",
+          "author": "Jan Mühlemann <jan.muehlemann@gmail.com> (https://github.com/jamuhl)",
+          "licenseFile": ""
         },
         {
           "name": "react-router-dom",
-          "version": "6.22.2",
+          "version": "6.30.0",
           "license": "MIT",
           "repository": "https://github.com/remix-run/react-router",
-          "description": "Declarative routing for React web applications"
+          "homepage": "",
+          "description": "Declarative routing for React web applications",
+          "author": "Remix Software <hello@remix.run>",
+          "licenseFile": ""
         },
         {
           "name": "recharts",
-          "version": "2.12.2",
+          "version": "2.15.3",
           "license": "MIT",
-          "repository": "https://github.com/recharts/recharts",
-          "description": "Redefined chart library built with React and D3"
+          "repository": "git+https://github.com/recharts/recharts.git",
+          "homepage": "https://github.com/recharts/recharts",
+          "description": "React charts",
+          "author": "recharts group",
+          "licenseFile": ""
         },
         {
-          "name": "tailwindcss",
-          "version": "3.4.1",
+          "name": "tailwind-merge",
+          "version": "2.6.0",
           "license": "MIT",
-          "repository": "https://github.com/tailwindlabs/tailwindcss",
-          "description": "A utility-first CSS framework"
+          "repository": "https://github.com/dcastil/tailwind-merge.git",
+          "homepage": "https://github.com/dcastil/tailwind-merge",
+          "description": "Merge Tailwind CSS classes without style conflicts",
+          "author": "Dany Castillo",
+          "licenseFile": ""
         },
         {
-          "name": "typescript",
-          "version": "5.5.3",
-          "license": "Apache-2.0",
-          "repository": "https://github.com/microsoft/TypeScript",
-          "description": "TypeScript is a language for application scale JavaScript development"
+          "name": "tailwindcss-animate",
+          "version": "1.0.7",
+          "license": "MIT",
+          "repository": "",
+          "homepage": "",
+          "description": "A Tailwind CSS plugin for creating beautiful animations.",
+          "author": "Jamie Kyle <me@thejameskyle.com>",
+          "licenseFile": ""
         },
         {
-          "name": "vite",
-          "version": "5.4.2",
+          "name": "toml",
+          "version": "3.0.0",
           "license": "MIT",
-          "repository": "https://github.com/vitejs/vite",
-          "description": "Next generation frontend tooling"
+          "repository": "git://github.com/BinaryMuse/toml-node.git",
+          "homepage": "",
+          "description": "TOML parser for Node.js (parses TOML spec v0.4.0)",
+          "author": "Michelle Tilley <michelle@michelletilley.net>",
+          "licenseFile": ""
+        },
+        {
+          "name": "vaul",
+          "version": "1.1.2",
+          "license": "MIT",
+          "repository": "https://github.com/emilkowalski/vaul.git",
+          "homepage": "https://vaul.emilkowal.ski/",
+          "description": "Drawer component for React.",
+          "author": "Emil Kowalski <e@emilkowal.ski>",
+          "licenseFile": ""
         },
         {
           "name": "zod",
           "version": "3.24.4",
           "license": "MIT",
-          "repository": "https://github.com/colinhacks/zod",
-          "description": "TypeScript-first schema validation with static type inference"
+          "repository": "git+https://github.com/colinhacks/zod.git",
+          "homepage": "https://zod.dev",
+          "description": "TypeScript-first schema declaration and validation library with static type inference",
+          "author": "Colin McDonnell <colin@colinhacks.com>",
+          "licenseFile": ""
         },
         {
           "name": "zustand",
-          "version": "4.5.2",
+          "version": "4.5.6",
           "license": "MIT",
-          "repository": "https://github.com/pmndrs/zustand",
-          "description": "Bear necessities for state management in React"
+          "repository": "git+https://github.com/pmndrs/zustand.git",
+          "homepage": "https://github.com/pmndrs/zustand",
+          "description": "🐻 Bear necessities for state management in React",
+          "author": "Paul Henschel",
+          "licenseFile": ""
         }
       ]
     }
