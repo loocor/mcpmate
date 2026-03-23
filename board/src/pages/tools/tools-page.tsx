@@ -218,7 +218,7 @@ export function ToolsPage() {
 					placeholder="Search tools..."
 					value={searchTerm}
 					onChange={(e) => setSearchTerm(e.target.value)}
-					className="w-full rounded-md border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:placeholder:text-slate-400 dark:focus:ring-slate-600"
+					className="w-full rounded-md border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-400 dark:focus:ring-slate-600"
 				/>
 			</div>
 

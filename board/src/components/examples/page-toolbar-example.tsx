@@ -136,7 +136,7 @@ export function PageToolbarExample() {
 				{filteredData.map((item) => (
 					<div
 						key={item.id}
-						className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+						className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
 					>
 						<div className="flex items-center justify-between">
 							<h3 className="font-semibold">{item.name}</h3>
@@ -162,7 +162,7 @@ export function PageToolbarExample() {
 			</div>
 
 			{/* 检视信息 */}
-			<div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+			<div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
 				<h4 className="font-semibold">Inspect Details:</h4>
 				<pre className="mt-2 text-xs">
 					{JSON.stringify(

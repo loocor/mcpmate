@@ -85,18 +85,29 @@ export function MarketIframe({
 
 		const handleLog = (event: MessageEvent) => {
 			if (!event || typeof event.data !== "object") return;
-			const data = event.data as any;
-			if (data?.type !== "mcpmate-market-log") return;
-			const line = `[${new Date().toISOString()}] ${data?.payload?.level ?? "info"}: ${typeof data?.payload?.message === "string"
+			const data = event.data as {
+				type?: string;
+				payload?: {
+					level?: string;
+					message?: unknown;
+				};
+			};
+			if (data.type !== "mcpmate-market-log") return;
+			const level = data.payload?.level;
+			const consoleMethod =
+				level === "debug" ||
+				level === "info" ||
+				level === "log" ||
+				level === "warn" ||
+				level === "error"
+					? level
+					: "log";
+			const line = `[${new Date().toISOString()}] ${level ?? "info"}: ${typeof data.payload?.message === "string"
 					? data.payload.message
 					: JSON.stringify(data.payload)
 				}`;
 			// Always log to console for remote debugging; optionally show overlay
-			try {
-				console[(data?.payload?.level as any) || "log"]("[market-log]", data);
-			} catch {
-				console.log("[market-log]", data);
-			}
+			console[consoleMethod]("[market-log]", data);
 			// Forward to Tauri (if present) so we persist without user action
 			try {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,9 +155,9 @@ export function MarketIframe({
 	}, [proxyPath]);
 
 	return (
-		<div className="relative rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+		<div className="relative rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
 			{isLoading ? (
-				<div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/80 backdrop-blur-sm dark:bg-slate-950/70">
+				<div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/80 backdrop-blur-sm dark:bg-slate-900/70">
 					<Spinner size="lg" />
 				</div>
 			) : null}

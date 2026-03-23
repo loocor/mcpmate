@@ -114,7 +114,7 @@ export function Header() {
 
 	return (
 		<header
-			className={`fixed top-0 right-0 z-30 flex h-16 items-center border-b border-slate-200 bg-white px-4 dark:border-slate-800 dark:bg-slate-950 ${sidebarOpen ? "left-64" : "left-16"
+			className={`fixed top-0 right-0 z-30 flex h-16 items-center border-b border-slate-200 bg-white px-4 dark:border-slate-700 dark:bg-slate-900 ${sidebarOpen ? "left-64" : "left-16"
 				} transition-all duration-300 ease-in-out`}
 		>
 			<div className="flex w-full items-center justify-between">

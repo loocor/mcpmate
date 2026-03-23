@@ -24,11 +24,7 @@ import {
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
 import { ConfirmDialog } from "../../components/confirm-dialog";
-import {
-	Avatar,
-	AvatarFallback,
-	AvatarImage,
-} from "../../components/ui/avatar";
+import { CachedAvatar } from "../../components/cached-avatar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "../../components/ui/button-group";
@@ -798,19 +794,12 @@ export function ClientDetailPage() {
 									<div className="flex flex-col gap-4">
 										<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
 											<div className="flex flex-wrap items-start gap-4">
-												<Avatar className="text-sm">
-													{configDetails.logo_url ? (
-														<AvatarImage
-															src={configDetails.logo_url}
-															alt={displayName || identifier}
-														/>
-													) : null}
-													<AvatarFallback>
-														{(displayName || identifier || "C")
-															.slice(0, 1)
-															.toUpperCase()}
-													</AvatarFallback>
-												</Avatar>
+												<CachedAvatar
+													src={configDetails.logo_url ?? undefined}
+													alt={displayName || identifier}
+													fallback={displayName || identifier || "C"}
+													className="text-sm"
+												/>
 												<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
 													<span className="text-xs uppercase text-slate-500">
 														{t("detail.overview.labels.configPath", {
@@ -1323,7 +1312,7 @@ export function ClientDetailPage() {
 													))}
 												</div>
 											) : mode === "none" ? (
-												<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+												<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
 													{t(
 														"detail.configuration.sections.profiles.modeNone",
 														{
@@ -1840,9 +1829,9 @@ export function ClientDetailPage() {
 									{filteredLogs.map((entry) => (
 										<div
 											key={entry.id}
-											className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950"
+											className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900"
 										>
-											<div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 text-xs text-slate-500 dark:border-slate-800">
+											<div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 text-xs text-slate-500 dark:border-slate-700">
 												<span>
 													{new Date(entry.timestamp).toLocaleTimeString()}
 												</span>
@@ -1859,7 +1848,7 @@ export function ClientDetailPage() {
 									))}
 								</div>
 							) : (
-								<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+								<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
 									{t("detail.logs.empty", {
 										defaultValue:
 											"No log entries recorded for this client yet.",

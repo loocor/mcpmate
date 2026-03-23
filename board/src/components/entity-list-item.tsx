@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
+import { CachedAvatar } from "./cached-avatar";
 import { Switch } from "../components/ui/switch";
 
 export interface EntityListItemProps {
@@ -80,21 +80,19 @@ export function EntityListItem({
 			role="button"
 			tabIndex={0}
 			data-list-item
-			className={`w-full flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 cursor-pointer shadow-[0_4px_12px_-10px_rgba(15,23,42,0.2)] transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-800 dark:bg-slate-950 dark:shadow-[0_4px_12px_-10px_rgba(15,23,42,0.5)] focus:outline-none focus:ring-2 focus:ring-primary/20 ${className}`}
+			className={`w-full flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 cursor-pointer shadow-[0_4px_12px_-10px_rgba(15,23,42,0.2)] transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_10px_30px_-18px_rgba(2,6,23,0.65)] focus:outline-none focus:ring-2 focus:ring-primary/20 ${className}`}
 			onClick={handleClick}
 			onKeyDown={handleKeyDown}
 		>
 			{/* Left side content */}
 			<div className="flex items-center gap-3">
 				{/* Avatar */}
-				<Avatar className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-					{avatar?.src && (
-						<AvatarImage src={avatar.src} alt={avatar.alt || title} />
-					)}
-					<AvatarFallback>
-						{avatar?.fallback || title.charAt(0).toUpperCase()}
-					</AvatarFallback>
-				</Avatar>
+				<CachedAvatar
+					src={avatar?.src}
+					alt={avatar?.alt || title}
+					fallback={avatar?.fallback || title}
+					className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+				/>
 
 				{/* Content area */}
 				<div className="space-y-2">

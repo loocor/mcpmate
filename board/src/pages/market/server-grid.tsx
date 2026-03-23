@@ -28,7 +28,7 @@ export function ServerGrid({
 						return (
 							<Card
 								key={uniqueKey}
-								className="group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-800"
+								className="group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700"
 							>
 								<CardHeader className="p-4">
 									<div className="grid grid-cols-1 grid-rows-1">
@@ -63,7 +63,7 @@ export function ServerGrid({
 
 			{/* Empty State */}
 			{isEmpty ? (
-				<div className="rounded-xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
+				<div className="rounded-xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
 					{t("market:emptyState.noEntriesMatched", {
 						defaultValue:
 							"No entries matched your filters. Try another name or clear the search above.",
@@ -75,7 +75,7 @@ export function ServerGrid({
 			{!isInitialLoading && !isEmpty ? (
 				<div className="relative">
 					{isPageLoading ? (
-						<div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-slate-950/80">
+						<div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
 							<div className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 shadow-lg dark:bg-slate-800">
 								<Loader2 className="h-4 w-4 animate-spin" />
 								<span className="text-sm font-medium">

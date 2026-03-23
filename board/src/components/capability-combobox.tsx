@@ -133,7 +133,7 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
                     }}
                   >
                     <div className="flex min-w-0 flex-col">
-                      <span className="truncate font-medium text-slate-900 dark:text-slate-100 group-hover:text-accent-foreground group-[aria-selected=true]:text-accent-foreground">
+                      <span className="truncate font-medium text-slate-900 dark:text-slate-100 group-hover:text-accent-foreground group-aria-selected:text-accent-foreground">
                         {label}
                       </span>
                       {desc ? (

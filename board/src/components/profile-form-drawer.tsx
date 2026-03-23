@@ -1155,7 +1155,7 @@ export function ProfileFormDrawer({
 
 								<div className="flex-1 flex">
 									{isServersStepLoading ? (
-										<div className="flex-1 flex items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-muted-foreground dark:border-slate-800">
+										<div className="flex-1 flex items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-muted-foreground dark:border-slate-700">
 											<div className="flex items-center gap-2">
 												<Loader2 className="h-4 w-4 animate-spin" />
 												{t("profiles:form.serverSelection.loading", {
@@ -1164,7 +1164,7 @@ export function ProfileFormDrawer({
 											</div>
 										</div>
 									) : totalServerCount === 0 ? (
-										<div className="flex-1 flex items-center justify-center rounded-lg border border-dashed border-slate-200 text-center text-sm text-muted-foreground dark:border-slate-800">
+										<div className="flex-1 flex items-center justify-center rounded-lg border border-dashed border-slate-200 text-center text-sm text-muted-foreground dark:border-slate-700">
 											{t("profiles:form.serverSelection.noAvailable", {
 												defaultValue: "No available servers",
 											})}

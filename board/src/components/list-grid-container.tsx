@@ -66,7 +66,7 @@ export function EntityListItem({
 	return (
 		<button
 			type="button"
-			className={`flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 cursor-pointer shadow-[0_4px_12px_-10px_rgba(15,23,42,0.2)] transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-800 dark:bg-slate-950 dark:shadow-[0_4px_12px_-10px_rgba(15,23,42,0.5)] ${className}`}
+			className={`flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 cursor-pointer shadow-[0_4px_12px_-10px_rgba(15,23,42,0.2)] transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_4px_12px_-10px_rgba(15,23,42,0.5)] ${className}`}
 			onClick={onClick}
 			onKeyDown={onKeyDown}
 		>

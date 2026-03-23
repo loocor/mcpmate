@@ -237,7 +237,7 @@ export function PageToolbar<T extends Entity = Entity>({
 							value={search}
 							onChange={(e) => onSearchChange(e.target.value)}
 							placeholder={searchConfig.placeholder || "Search..."}
-							className="h-9 w-full rounded-md border border-slate-200 bg-white px-4 py-2 pl-10 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:placeholder:text-slate-400 dark:focus:ring-slate-600"
+							className="h-9 w-full rounded-md border border-slate-200 bg-white px-4 py-2 pl-10 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-400 dark:focus:ring-slate-600"
 						/>
 					</div>
 				</div>
@@ -250,7 +250,7 @@ export function PageToolbar<T extends Entity = Entity>({
 		if (!viewModeConfig?.enabled || !isExpanded) return null;
 
 		return (
-			<div className="flex items-center rounded-md border border-slate-200 dark:border-slate-800 h-9">
+			<div className="flex items-center rounded-md border border-slate-200 dark:border-slate-700 h-9">
 				<Button
 					variant={viewMode === "grid" ? "default" : "ghost"}
 					size="sm"
@@ -304,13 +304,13 @@ export function PageToolbar<T extends Entity = Entity>({
 		const currentLabel = currentOption?.label || "Sort";
 
 		return (
-			<div className="flex items-center rounded-md border border-slate-200 dark:border-slate-800 h-9">
+			<div className="flex items-center rounded-md border border-slate-200 dark:border-slate-700 h-9">
 				{/* 排序方向切换按钮 - 在左侧 */}
 				<Button
 					variant="outline"
 					size="sm"
 					onClick={handleSortDirectionToggle}
-					className="h-9 w-9 p-0 shrink-0 rounded-r-none border-r border-slate-200 dark:border-slate-800"
+					className="h-9 w-9 p-0 shrink-0 rounded-r-none border-r border-slate-200 dark:border-slate-700"
 					title={`Sort ${currentDirection === "asc" ? "Descending" : "Ascending"}`}
 				>
 					{currentDirection === "asc" ? (

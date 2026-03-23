@@ -73,7 +73,7 @@ export function MarketCard({
 				}
 			}}
 			className={cn(
-				"group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-800",
+				"group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700",
 				supportsPreview ? "cursor-pointer" : "cursor-not-allowed opacity-95",
 			)}
 		>

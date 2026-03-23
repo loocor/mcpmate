@@ -549,12 +549,11 @@ export function MarketPage() {
 					dashboardLanguage,
 				)}
 				title={currentPortal.label}
-				portalId={currentPortal.id}
 				proxyPath={currentPortal.proxyPath}
 				refreshKey={portalRefreshKey}
 			/>
 		) : (
-							<div className="rounded-xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
+							<div className="rounded-xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
 								<div className="space-y-2">
 									<h3 className="text-lg font-medium text-slate-900 dark:text-slate-100">
 										{currentTab?.label ||

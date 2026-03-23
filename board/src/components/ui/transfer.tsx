@@ -101,9 +101,9 @@ const TransferPanel: React.FC<TransferPanelProps> = ({
 	const isIndeterminate = selectedKeys.length > 0 && !isAllSelected;
 
 	return (
-		<div className="flex flex-1 flex-col rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+		<div className="flex flex-1 flex-col rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
 			{/* Header */}
-			<div className="flex items-center justify-between border-b border-slate-200 p-3 dark:border-slate-800">
+			<div className="flex items-center justify-between border-b border-slate-200 p-3 dark:border-slate-700">
 				<div className="flex items-center gap-2">
 					<input
 						type="checkbox"
@@ -154,12 +154,12 @@ const TransferPanel: React.FC<TransferPanelProps> = ({
 									type="button"
 									className={`flex items-center gap-2 p-2 w-full text-left cursor-pointer transition-colors border-b ${
 										isEven
-											? "bg-white dark:bg-slate-950"
+											? "bg-white dark:bg-slate-900"
 											: "bg-slate-50 dark:bg-slate-900/30"
 									} hover:bg-slate-100 dark:hover:bg-slate-800/50 ${
 										isSelected
 											? "ring-primary/50 bg-primary/5 border-primary/10"
-											: "border-slate-100 dark:border-slate-800/30"
+											: "border-slate-100 dark:border-slate-700/30"
 									} ${index === items.length - 1 ? "border-b-0" : ""}`}
 									onClick={() => handleItemClick(item.id)}
 									disabled={disabled || loading || item.disabled}

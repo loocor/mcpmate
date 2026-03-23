@@ -222,7 +222,7 @@ function computeRecordKey(
 
 function formatEventLabel(
 	entry: InspectorEventEntry,
-	t: (key: string) => string,
+	t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
 	switch (entry.data.event) {
 		case "started":
@@ -240,7 +240,7 @@ function formatEventLabel(
 		case "cancelled":
 			return t("eventLabels.cancelled");
 		default:
-			return entry.data.event;
+			return t("eventLabels.unknown", { defaultValue: "Unknown" });
 	}
 }
 
@@ -1310,9 +1310,6 @@ export function InspectorDrawer({
 					t("notifications.executedMessage"),
 				);
 			}
-			if (kind !== "tool") {
-				setSubmitting(false);
-			}
 		} catch (e) {
 			onLog?.({
 				id: newLogId(),
@@ -1461,7 +1458,7 @@ export function InspectorDrawer({
 									}
 								}}
 								tabIndex={0}
-								className="flex h-10 cursor-pointer items-center justify-between rounded-md border border-dashed border-slate-200 px-3 text-sm text-slate-600 transition hover:border-slate-300 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-300 dark:hover:border-slate-700 dark:hover:bg-slate-900/40"
+								className="flex h-10 cursor-pointer items-center justify-between rounded-md border border-dashed border-slate-200 px-3 text-sm text-slate-600 transition hover:border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-900/40"
 							>
 								<span>
 									{t("form.parametersCollapsedHint", {
@@ -1727,7 +1724,7 @@ export function InspectorDrawer({
 							<div className="flex items-center justify-between gap-2 text-sm mb-2">
 								<Label>{t("tabs.response")}</Label>
 							</div>
-							<div className="group relative max-h-[40vh] overflow-auto rounded border border-slate-200 bg-white font-mono text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-200">
+							<div className="group relative max-h-[40vh] overflow-auto rounded border border-slate-200 bg-white font-mono text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200">
 								{result ? (
 									<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
 										<ButtonGroup className="pointer-events-auto bg-white/95 backdrop-blur-sm opacity-0 shadow-sm transition-opacity group-hover:opacity-100 dark:bg-slate-900/95">
@@ -1778,7 +1775,7 @@ export function InspectorDrawer({
 								<Label>{t("events.title")}</Label>
 							</div>
 							{events.length === 0 ? (
-								<div className="rounded border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300">
+								<div className="rounded border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
 									{t("events.placeholder")}
 								</div>
 							) : (
@@ -1791,7 +1788,7 @@ export function InspectorDrawer({
 											return (
 												<li
 													key={key}
-													className="rounded border border-slate-200 bg-white p-3 text-xs shadow-sm dark:border-slate-800 dark:bg-slate-900/50"
+													className="rounded border border-slate-200 bg-white p-3 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/50"
 												>
 													<div className="flex items-center justify-between gap-2">
 														<div className="flex items-center gap-2">

@@ -73,7 +73,7 @@ export function EntityCard({
 	return (
 		<Card
 			key={id}
-			className={`group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-800 ${className}`}
+			className={`group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700 ${className}`}
 			role="button"
 			tabIndex={0}
 			onClick={handleClick}

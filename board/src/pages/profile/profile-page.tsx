@@ -672,7 +672,7 @@ export function ProfilePage() {
 					return (
 						<Card
 							key={cardId}
-							className="animate-pulse border border-slate-200 dark:border-slate-800"
+							className="animate-pulse border border-slate-200 dark:border-slate-700"
 						>
 							<CardHeader className="space-y-2">
 								<div className="h-5 w-32 rounded bg-slate-200 dark:bg-slate-800"></div>
@@ -700,7 +700,7 @@ export function ProfilePage() {
 									})}
 								</div>
 							</CardContent>
-							<CardFooter className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 dark:border-slate-800">
+							<CardFooter className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 dark:border-slate-700">
 								<div className="h-5 w-20 rounded-full bg-slate-200 dark:bg-slate-800"></div>
 								<div className="flex items-center gap-2">
 									<div className="h-3 w-14 rounded bg-slate-200 dark:bg-slate-800"></div>
@@ -715,7 +715,7 @@ export function ProfilePage() {
 					return (
 						<div
 							key={suitId}
-							className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950"
+							className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
 						>
 							<div className="space-y-1">
 								<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>

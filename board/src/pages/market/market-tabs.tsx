@@ -40,13 +40,11 @@ export function MarketTabs({
 							<button
 								type="button"
 								onClick={() => onTabChange(tab.id)}
-								className={`flex items-center gap-2 py-2 pr-6 text-sm font-medium border-b-2 transition-colors ${
-									index === 0 ? "pl-0" : "pl-1"
-								} ${
-									activeTab === tab.id
+								className={`flex items-center gap-2 py-2 pr-6 text-sm font-medium border-b-2 transition-colors ${index === 0 ? "pl-0" : "pl-1"
+									} ${activeTab === tab.id
 										? "border-primary text-primary"
 										: "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-300"
-								}`}
+									}`}
 							>
 								{tab.icon ? (
 									<img
@@ -92,7 +90,7 @@ export function MarketTabs({
 							>
 								<span className="flex h-5 w-5 items-center justify-center">
 									<img
-										src="https://mcpmate.io/logo.svg"
+										src="https://mcp.umate.ai/logo.svg"
 										alt=""
 										className="h-4 w-4 rounded border border-slate-200 object-contain dark:border-slate-700 dark:invert"
 										loading="lazy"

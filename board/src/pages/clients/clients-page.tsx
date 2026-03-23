@@ -411,7 +411,7 @@ export function ClientsPage() {
 			: Array.from({ length: 3 }, (_, index) => (
 					<div
 						key={`client-skeleton-list-${index}`}
-						className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950"
+						className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 dark:border-slate-700 dark:bg-slate-900"
 					>
 						<div className="flex items-center gap-3">
 							<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800" />
