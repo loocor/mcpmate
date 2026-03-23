@@ -793,7 +793,7 @@ mod tests {
         );
 
         let args = bridge_entry.get("args").and_then(Value::as_array).expect("args array");
-        assert_eq!(args[0].as_str().unwrap(), "--sse-url");
+        assert_eq!(args[0].as_str().unwrap(), "--upstream-url");
         assert!(args[1].as_str().unwrap().contains("client_id=test-client"));
 
         let env = bridge_entry.get("env").and_then(Value::as_object).expect("env object");

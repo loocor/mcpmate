@@ -241,10 +241,10 @@ pub mod branding {
     pub const DISPLAY_TITLE: &str = "MCPMate";
 
     /// MCPMate official website URL
-    pub const WEBSITE_URL: &str = "https://mcpmate.io";
+    pub const WEBSITE_URL: &str = "https://mcp.umate.ai";
 
     /// MCPMate logo URL (SVG format)
-    pub const LOGO_URL: &str = "https://mcpmate.io/logo.svg";
+    pub const LOGO_URL: &str = "https://mcp.umate.ai/logo.svg";
 
     /// MCPMate logo MIME type
     pub const LOGO_MIME_TYPE: &str = "image/svg+xml";

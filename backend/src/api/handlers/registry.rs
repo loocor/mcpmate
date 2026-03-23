@@ -21,7 +21,7 @@ pub async fn list_servers(
 ) -> Result<Json<Value>, ApiError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        .user_agent("MCPMate/0.1.0 (+https://mcpmate.io)")
+        .user_agent("MCPMate/0.1.0 (+https://mcp.umate.ai)")
         .build()
         .map_err(|err| ApiError::InternalError(format!("Failed to init HTTP client: {err}")))?;
 

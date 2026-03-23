@@ -105,7 +105,7 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let (t, p, r) = guard.notify_all_list_changed().await;
-                        info!(
+                        debug!(
                             "Profile change: list_changed notified (tools={}, prompts={}, resources={})",
                             t, p, r
                         );
@@ -145,7 +145,7 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let (t, p, r) = guard.notify_all_list_changed().await;
-                        info!(
+                        debug!(
                             "Server enabled change: list_changed notified (tools={}, prompts={}, resources={})",
                             t, p, r
                         );
@@ -174,7 +174,7 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let (t, p, r) = guard.notify_all_list_changed().await;
-                        info!(
+                        debug!(
                             "Server sync event: list_changed notified (tools={}, prompts={}, resources={})",
                             t, p, r
                         );
@@ -192,7 +192,7 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let count = guard.notify_tool_list_changed().await;
-                        info!("tools/list_changed notified {} client(s)", count);
+                        debug!("tools/list_changed notified {} client(s)", count);
                     }
                 }
             }
@@ -204,7 +204,7 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let count = guard.notify_prompt_list_changed().await;
-                        info!("prompts/list_changed notified {} client(s)", count);
+                        debug!("prompts/list_changed notified {} client(s)", count);
                     }
                 }
             }
@@ -216,7 +216,7 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let count = guard.notify_resource_list_changed().await;
-                        info!("resources/list_changed notified {} client(s)", count);
+                        debug!("resources/list_changed notified {} client(s)", count);
                     }
                 }
             }
@@ -230,7 +230,7 @@ impl EventHandlers {
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
                         let count = guard.notify_resource_list_changed().await;
-                        info!(
+                        debug!(
                             "resources/list_changed notified {} client(s) (via template change)",
                             count
                         );

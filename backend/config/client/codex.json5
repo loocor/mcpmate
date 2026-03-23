@@ -45,6 +45,13 @@
         },
         requires_type_field: false,
       },
+      streamable_http: {
+        template: {
+          url: "{{url}}",
+          http_headers: "{{{json headers}}}",
+        },
+        requires_type_field: false,
+      },
     },
   },
 }
