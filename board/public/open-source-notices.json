@@ -1,0 +1,290 @@
+{
+  "generatedAt": "2026-03-23T16:16:35.624Z",
+  "sections": [
+    {
+      "id": "backend",
+      "label": "Backend (Rust)",
+      "packages": [
+        {
+          "name": "anyhow",
+          "version": "1.0.98",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/anyhow",
+          "description": "Flexible concrete Error type built on std::error::Error"
+        },
+        {
+          "name": "axum",
+          "version": "0.8.4",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/axum",
+          "description": "Web framework that focuses on ergonomics and modularity"
+        },
+        {
+          "name": "chrono",
+          "version": "0.4",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/chronotope/chrono",
+          "description": "Date and time library for Rust"
+        },
+        {
+          "name": "clap",
+          "version": "4.5",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/clap-rs/clap",
+          "description": "A full featured, fast Command Line Argument Parser"
+        },
+        {
+          "name": "handlebars",
+          "version": "5.1",
+          "license": "MIT",
+          "repository": "https://github.com/sunng87/handlebars-rust",
+          "description": "Handlebars templating language implemented in Rust"
+        },
+        {
+          "name": "is-terminal",
+          "version": "0.4.17",
+          "license": "MIT",
+          "repository": "https://github.com/sunfishcode/is-terminal",
+          "description": "Test whether a given stream is a terminal"
+        },
+        {
+          "name": "json5",
+          "version": "0.4",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/callum-oakley/json5-rs",
+          "description": "A Rust JSON5 serializer and deserializer"
+        },
+        {
+          "name": "reqwest",
+          "version": "0.13.2",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/seanmonstar/reqwest",
+          "description": "Higher level HTTP client library"
+        },
+        {
+          "name": "rmcp",
+          "version": "1.2.0",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/modelcontextprotocol/rust-sdk",
+          "description": "Rust SDK for Model Context Protocol"
+        },
+        {
+          "name": "serde",
+          "version": "1.0.228",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/serde-rs/serde",
+          "description": "A generic serialization/deserialization framework"
+        },
+        {
+          "name": "serde_json",
+          "version": "1.0",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/serde-rs/json",
+          "description": "A JSON serialization file format"
+        },
+        {
+          "name": "serde_yaml",
+          "version": "0.9",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/dtolnay/serde-yaml",
+          "description": "YAML data format for Serde"
+        },
+        {
+          "name": "sysinfo",
+          "version": "0.30.5",
+          "license": "MIT",
+          "repository": "https://github.com/GuillaumeGomez/sysinfo",
+          "description": "Library to get system information"
+        },
+        {
+          "name": "tokio",
+          "version": "1.46.1",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tokio",
+          "description": "An event-driven, non-blocking I/O platform"
+        },
+        {
+          "name": "toml",
+          "version": "0.8",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/toml-rs/toml",
+          "description": "A native Rust encoder and decoder of TOML-formatted files"
+        },
+        {
+          "name": "tracing",
+          "version": "0.1.41",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tracing",
+          "description": "Application-level tracing for Rust"
+        },
+        {
+          "name": "tracing-subscriber",
+          "version": "0.3",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tracing",
+          "description": "Utilities for implementing and composing tracing subscribers"
+        }
+      ]
+    },
+    {
+      "id": "frontend",
+      "label": "Frontend (TypeScript/React)",
+      "packages": [
+        {
+          "name": "@radix-ui/react-dialog",
+          "version": "1.1.13",
+          "license": "MIT",
+          "repository": "https://github.com/radix-ui/primitives",
+          "description": "Radix UI Dialog component"
+        },
+        {
+          "name": "@radix-ui/react-dropdown-menu",
+          "version": "2.1.16",
+          "license": "MIT",
+          "repository": "https://github.com/radix-ui/primitives",
+          "description": "Radix UI Dropdown Menu component"
+        },
+        {
+          "name": "@radix-ui/react-select",
+          "version": "2.2.4",
+          "license": "MIT",
+          "repository": "https://github.com/radix-ui/primitives",
+          "description": "Radix UI Select component"
+        },
+        {
+          "name": "@radix-ui/react-tabs",
+          "version": "1.0.4",
+          "license": "MIT",
+          "repository": "https://github.com/radix-ui/primitives",
+          "description": "Radix UI Tabs component"
+        },
+        {
+          "name": "@radix-ui/react-toast",
+          "version": "1.1.5",
+          "license": "MIT",
+          "repository": "https://github.com/radix-ui/primitives",
+          "description": "Radix UI Toast component"
+        },
+        {
+          "name": "@tanstack/react-query",
+          "version": "5.25.0",
+          "license": "MIT",
+          "repository": "https://github.com/TanStack/query",
+          "description": "Hooks for fetching, caching and updating asynchronous data in React"
+        },
+        {
+          "name": "@tanstack/react-table",
+          "version": "8.11.2",
+          "license": "MIT",
+          "repository": "https://github.com/TanStack/table",
+          "description": "Headless UI for building powerful tables & datagrids"
+        },
+        {
+          "name": "@tauri-apps/api",
+          "version": "2.0.4",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/tauri-apps/tauri",
+          "description": "Tauri API bindings for JavaScript"
+        },
+        {
+          "name": "cmdk",
+          "version": "1.1.1",
+          "license": "MIT",
+          "repository": "https://github.com/pacocoursey/cmdk",
+          "description": "Fast, composable, unstyled command menu for React"
+        },
+        {
+          "name": "i18next",
+          "version": "25.5.3",
+          "license": "MIT",
+          "repository": "https://github.com/i18next/i18next",
+          "description": "i18next internationalization framework"
+        },
+        {
+          "name": "lucide-react",
+          "version": "0.344.0",
+          "license": "ISC",
+          "repository": "https://github.com/lucide-icons/lucide",
+          "description": "Beautiful & consistent icon toolkit made by the community"
+        },
+        {
+          "name": "react",
+          "version": "18.3.1",
+          "license": "MIT",
+          "repository": "https://github.com/facebook/react",
+          "description": "A JavaScript library for building user interfaces"
+        },
+        {
+          "name": "react-dom",
+          "version": "18.3.1",
+          "license": "MIT",
+          "repository": "https://github.com/facebook/react",
+          "description": "React package for working with the DOM"
+        },
+        {
+          "name": "react-hook-form",
+          "version": "7.56.3",
+          "license": "MIT",
+          "repository": "https://github.com/react-hook-form/react-hook-form",
+          "description": "Performant, flexible and extensible forms with easy to use validation"
+        },
+        {
+          "name": "react-i18next",
+          "version": "16.0.0",
+          "license": "MIT",
+          "repository": "https://github.com/i18next/react-i18next",
+          "description": "Internationalization for react done right"
+        },
+        {
+          "name": "react-router-dom",
+          "version": "6.22.2",
+          "license": "MIT",
+          "repository": "https://github.com/remix-run/react-router",
+          "description": "Declarative routing for React web applications"
+        },
+        {
+          "name": "recharts",
+          "version": "2.12.2",
+          "license": "MIT",
+          "repository": "https://github.com/recharts/recharts",
+          "description": "Redefined chart library built with React and D3"
+        },
+        {
+          "name": "tailwindcss",
+          "version": "3.4.1",
+          "license": "MIT",
+          "repository": "https://github.com/tailwindlabs/tailwindcss",
+          "description": "A utility-first CSS framework"
+        },
+        {
+          "name": "typescript",
+          "version": "5.5.3",
+          "license": "Apache-2.0",
+          "repository": "https://github.com/microsoft/TypeScript",
+          "description": "TypeScript is a language for application scale JavaScript development"
+        },
+        {
+          "name": "vite",
+          "version": "5.4.2",
+          "license": "MIT",
+          "repository": "https://github.com/vitejs/vite",
+          "description": "Next generation frontend tooling"
+        },
+        {
+          "name": "zod",
+          "version": "3.24.4",
+          "license": "MIT",
+          "repository": "https://github.com/colinhacks/zod",
+          "description": "TypeScript-first schema validation with static type inference"
+        },
+        {
+          "name": "zustand",
+          "version": "4.5.2",
+          "license": "MIT",
+          "repository": "https://github.com/pmndrs/zustand",
+          "description": "Bear necessities for state management in React"
+        }
+      ]
+    }
+  ]
+}
