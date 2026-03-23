@@ -192,17 +192,21 @@ impl ShellState {
     ) -> Result<()> {
         prefs.apply_constraints();
 
-        let (path, tray, backend_running) = {
+        let (path, tray, backend_running, prev_show_dock_icon) = {
             let mut guard = self.inner.lock().await;
+            let prev_show_dock_icon = guard.preferences.show_dock_icon;
             guard.preferences = prefs.clone();
             (
                 guard.prefs_path.clone(),
                 guard.tray.clone(),
                 guard.backend_running,
+                prev_show_dock_icon,
             )
         };
 
-        apply_activation_policy(app_handle, &prefs)?;
+        if prev_show_dock_icon != prefs.show_dock_icon {
+            apply_activation_policy(app_handle, &prefs)?;
+        }
 
         if let Some(tray) = tray {
             Self::apply_tray_visibility(&tray, &prefs, backend_running)?;
