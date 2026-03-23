@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "$(cd "$(dirname "$0")" && pwd)/common.sh"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./scripts/dev-desktop [cargo tauri dev args...]
+
+Builds board/dist first, then starts the MCPMate Tauri desktop app in dev mode.
+The script enables inspector and debug logging, and keeps all logs in the current terminal.
+Additional arguments are forwarded to cargo tauri dev.
+EOF
+  exit 0
+fi
+
+require_command cargo
+require_command bun
+
+BOARD_DIR="$(project_dir board)"
+TAURI_DIR="$(project_dir desktop/tauri)"
+
+print_section "board build"
+run_in "$BOARD_DIR" bun run build
+
+print_section "desktop tauri dev"
+printf 'MCPMATE_TAURI_ENABLE_INSPECTOR=%s\n' "${MCPMATE_TAURI_ENABLE_INSPECTOR:-1}"
+printf 'MCPMATE_TAURI_LOG=%s\n' "${MCPMATE_TAURI_LOG:-debug}"
+printf 'RUST_LOG=%s\n' "${RUST_LOG:-mcpmate=debug,mcpmate_tauri=debug,tauri=info}"
+
+run_in "$TAURI_DIR" env \
+  MCPMATE_TAURI_ENABLE_INSPECTOR="${MCPMATE_TAURI_ENABLE_INSPECTOR:-1}" \
+  MCPMATE_TAURI_LOG="${MCPMATE_TAURI_LOG:-debug}" \
+  RUST_LOG="${RUST_LOG:-mcpmate=debug,mcpmate_tauri=debug,tauri=info}" \
+  cargo tauri dev --verbose "$@"

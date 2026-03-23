@@ -24,5 +24,6 @@
 # Root helper artifacts
 mcpmate-board-dashboard.png
 
-# Auth backend
+# Auth backend & rmcp sdk
 auth/
+rmcp/

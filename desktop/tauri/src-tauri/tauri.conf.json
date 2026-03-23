@@ -9,7 +9,7 @@
 		"beforeDevCommand": {
 			"cwd": "../../../board",
 			"script": "(command -v bun >/dev/null 2>&1 && bun run dev -- --host 127.0.0.1 --port 5173 || npm run dev -- --host 127.0.0.1 --port 5173)",
-			"wait": true
+			"wait": false
 		},
 		"beforeBuildCommand": {
 			"cwd": "../../../board",

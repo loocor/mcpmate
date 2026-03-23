@@ -173,7 +173,15 @@ pub fn run() -> Result<()> {
                     .show(|_| {});
             });
         } else if event.id.as_ref() == MENU_ABOUT_ID {
-            show_about_dialog(app_handle);
+            let handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = shell::ensure_window_visibility(&handle) {
+                    warn!(error = %err, "Failed to show main window for about navigation");
+                }
+                if let Err(err) = handle.emit(shell::EVENT_OPEN_SETTINGS, json!({ "tab": "about" })) {
+                    warn!(error = %err, "Failed to emit open-settings event for about navigation");
+                }
+            });
         }
     });
 
@@ -271,7 +279,15 @@ pub fn run() -> Result<()> {
                             });
                         }
                         shell::MENU_SHOW_ABOUT => {
-                            show_about_dialog(app_handle);
+                            let handle = app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(err) = shell::ensure_window_visibility(&handle) {
+                                    warn!(error = %err, "Failed to show main window for about navigation");
+                                }
+                                if let Err(err) = handle.emit(shell::EVENT_OPEN_SETTINGS, json!({ "tab": "about" })) {
+                                    warn!(error = %err, "Failed to emit open-settings event for about navigation");
+                                }
+                            });
                         }
                         shell::MENU_QUIT => {
                             app_handle.exit(0);
@@ -572,22 +588,6 @@ fn initialize_menu(app: &mut tauri::App) -> Result<()> {
     Ok(())
 }
 
-fn show_about_dialog(app_handle: &tauri::AppHandle) {
-    let pkg = app_handle.package_info();
-    let version = pkg.version.to_string();
-    let tauri_version = tauri::VERSION;
-    let message = format!(
-        "MCPMate Desktop Beta\n\nVersion: {}\nTauri: {}\n\nAuto-update will activate once CDN hosting & signing pipeline are live.",
-        version, tauri_version
-    );
-
-    app_handle
-        .dialog()
-        .message(message)
-        .title("About MCPMate")
-        .buttons(MessageDialogButtons::Ok)
-        .show(|_| {});
-}
 
 pub(crate) fn spawn_main_window<M>(manager: &M) -> Result<()>
 where
@@ -652,7 +652,11 @@ where
         }
     });
 
-    builder.build()?;
+    let window = builder.build()?;
+
+    let _ = manager.app_handle().show();
+    let _ = window.show();
+    let _ = window.set_focus();
 
     Ok(())
 }
