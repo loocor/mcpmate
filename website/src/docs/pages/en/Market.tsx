@@ -17,19 +17,18 @@ export default function MarketEN() {
 				metadata, and send candidates straight into the install wizard.
 			</P>
 
-			<H2>Tabs & data sources</H2>
+			<H2>Registry & data</H2>
 			<Ul>
 				<Li>
-					<strong>Official</strong> tab lists the MCPMate registry. Search (with
-					debounced input) and sorting (Recent, Popular, Alphabetical) run
-					client-side against cached pages while the app streams additional pages
-					on demand.
+					The Market lists the official MCPMate registry. Search (with debounced
+					input) and sorting (Recent, Alphabetical) run client-side against
+					cached pages while the app streams additional pages on demand.
 				</Li>
 				<Li>
-					<strong>Portal</strong> tabs render inside an iframe so third-party
-					portals can expose their own UI. Add new portals from Settings →
-					Marketplace. Switching languages forces a soft refresh to request
-					translated catalogues when available.
+					To import server snippets from arbitrary websites, use the{" "}
+					<strong>MCPMate Server Import</strong> Chrome extension (
+					<code>extension/chrome</code>) which opens{" "}
+					<code>mcpmate://import/server</code> on the desktop app.
 				</Li>
 				<Li>
 					Remote connectors surface under <em>Remote</em> options; they represent
@@ -54,26 +53,15 @@ export default function MarketEN() {
 				from Settings → Marketplace should you need them later.
 			</P>
 
-			<H2>Portal management tips</H2>
-			<Ul>
-				<Li>
-					Set a <strong>Default Market</strong> in Settings so the dashboard
-					opens your preferred portal on load.
-				</Li>
-				<Li>
-					Use the <em>Open Portal</em> button (top-right of the tabs) to launch
-					the portal in a new window while keeping the dashboard view available
-					for installation.
-				</Li>
-				<Li>
-					When a portal requires authentication headers, define them in Settings
-					so the iframe and install pipeline receive the same credentials.
-				</Li>
-			</Ul>
+			<H2>Blacklist</H2>
+			<P>
+				Manage hidden registry entries under Settings → MCP Market. Restoring an
+				entry returns it to the grid.
+			</P>
 
 			<Callout type="info" title="Relationship with Servers page">
 				Every installation flows through the same <strong>Server Install
-				Wizard</strong> used for drag-and-drop imports. Anything you add from the
+					Wizard</strong> used for drag-and-drop imports. Anything you add from the
 				Market immediately appears in the Servers list, where you can enable it
 				per profile and monitor connectivity.
 			</Callout>

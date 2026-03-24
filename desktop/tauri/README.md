@@ -93,22 +93,11 @@ You can override runtime ports or modes without recompiling by exporting the fol
 
 - The existing `cargo test` suite still reports doctest failures that predate this integration (`aide_wrapper_*` macros). Track and resolve separately.
 - Icon assets are placeholders; replace `src-tauri/icons/icon.png` before branding.
- - Market pages in the dashboard are served via a custom URI scheme `mcpmate://localhost/market-proxy/*` implemented in `src-tauri/src/market_proxy.rs`. This replaces Vite's dev-time middleware so the Market (MCP Market / MCP.so) works in the packaged app without a local dev server. If remote portals change their HTML significantly, adjust the lightweight HTML rewriter and the injected shim accordingly.
+- Market shows the official registry in-dashboard. Snippet import from the open web uses `mcpmate://import/server` (see `src-tauri/src/deep_link.rs` and `extension/chrome/`).
 
-## Diagnostics (Market pages)
+## Diagnostics (optional)
 
-To help diagnose white screen/garbled text cases when embedding third‑party portals, the desktop shell
-provides built‑in diagnostics covering both the network proxy and the in‑page runtime:
-
-- Help → Enable Market Diagnostics: toggles diagnostics at runtime.
-- Help → Export Market Diagnostics…: copies the log file to your Desktop.
-- Log file path: `/tmp/mcpmate-market-diag.log` (macOS; `std::env::temp_dir()` on other OSes).
-
-Build‑time default (for zero‑touch debug builds):
-
-- Set env `MCPMATE_TAURI_MARKET_DIAG_DEFAULT=1` or pass `--diag-default` to the release script
-  to ship a build where diagnostics are enabled on launch. The front‑end will also forward
-  runtime events (e.g., `market-ready`, errors, unhandled rejections) into the same log.
+Some Help menu diagnostics for legacy market embedding may still be present; prefer standard logging and DevTools when debugging the official Market grid and Uni-Import flows.
 
 ## Release & Update Resources
 

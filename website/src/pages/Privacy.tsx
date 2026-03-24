@@ -45,6 +45,30 @@ const Privacy = () => {
 
 							<div>
 								<h2 className="text-xl font-semibold mb-2">
+									1.1 MCPMate Server Import Chrome 扩展隐私说明
+								</h2>
+								<ul className="list-disc pl-6 space-y-2">
+									<li>
+										该扩展不会收集、存储或出售您的个人数据，也不会将数据上传到 MCPMate 云端服务。
+									</li>
+									<li>
+										扩展仅在浏览器本地读取当前页面代码块文本，用于识别 MCP 配置片段。
+									</li>
+									<li>
+										仅当您主动点击 “Add to MCPMate” 时，才会触发片段导入。
+									</li>
+									<li>
+										导入通过本机协议 <code>mcpmate://</code>{" "}
+										将内容发送到本地 MCPMate 桌面应用，不会转发给第三方服务。
+									</li>
+									<li>
+										扩展不使用远程代码（remote code），也不进行广告跟踪或跨站画像。
+									</li>
+								</ul>
+							</div>
+
+							<div>
+								<h2 className="text-xl font-semibold mb-2">
 									2. 我们不收集的内容
 								</h2>
 								<ul className="list-disc pl-6 space-y-2">
@@ -210,6 +234,35 @@ const Privacy = () => {
 									does not cover third‑party MCP servers, AI providers, or
 									client apps; their policies apply.
 								</p>
+							</div>
+
+							<div>
+								<h2 className="text-xl font-semibold mb-2">
+									1.1 MCPMate Server Import Chrome Extension Privacy
+								</h2>
+								<ul className="list-disc pl-6 space-y-2">
+									<li>
+										The extension does not collect, store, or sell personal data
+										and does not upload data to MCPMate cloud services.
+									</li>
+									<li>
+										It reads code-block text locally in the browser only to detect
+										MCP configuration snippets.
+									</li>
+									<li>
+										Snippet transfer is user-triggered only, when you click{" "}
+										<strong>Add to MCPMate</strong>.
+									</li>
+									<li>
+										Transfer is local-to-device via the <code>mcpmate://</code>{" "}
+										protocol to the MCPMate desktop app, not to third-party
+										servers.
+									</li>
+									<li>
+										The extension does not use remote code and does not perform ad
+										tracking or cross-site profiling.
+									</li>
+								</ul>
 							</div>
 
 							<div>

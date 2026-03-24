@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MCPMate Desktop (Tauri) is a cross-platform desktop application that wraps the MCPMate backend and dashboard. It serves as a beta shell for Windows and Linux before fully native clients ship. The key innovation is a streaming reverse proxy for third-party market portals (like https://mcp.so) embedded in an iframe.
+MCPMate Desktop (Tauri) is a cross-platform desktop application that wraps the MCPMate backend and dashboard. It serves as a beta shell for Windows and Linux before fully native clients ship. The dashboard Market is official-registry only; third-party portal iframes and market proxy have been removed in favor of the Chrome extension (`extension/chrome`) plus `mcpmate://import/server`.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ MCPMate Desktop (Tauri) is a cross-platform desktop application that wraps the M
 - **Dashboard UI**: Loads the pre-built React dashboard from `board/dist` or dev server
 - **Market Proxy**: Streaming reverse proxy for Next.js SSR/RSC apps (e.g., mcp.so)
   - `market_stream.rs`: HTTP streaming proxy with HTML injection
-  - `market_proxy.rs`: Custom URI scheme handler (`mcpmate://localhost/market-proxy/*`)
+  - `deep_link.rs`: Routes `mcpmate://` URLs (`auth`, `import/server`).
 - **Data Isolation**: Uses Tauri's `app_data_dir()` to avoid REDB/SQLite contention with CLI
 
 ### Streaming Proxy Design
@@ -107,21 +107,19 @@ src-tauri/
 ├── src/
 │   ├── lib.rs              # Main app setup, window creation, backend bootstrap
 │   ├── main.rs             # Entry point
-│   ├── market_stream.rs    # Streaming HTTP proxy for Next.js SSR/RSC
-│   └── market_proxy.rs     # Custom URI scheme (mcpmate://) for static assets
+│   ├── account.rs          # GitHub OAuth + JWT (macOS)
+│   └── deep_link.rs        # mcpmate:// routing (auth, import/server)
 ├── tauri.conf.json         # Tauri config (window, bundle, updater)
 └── Cargo.toml              # Dependencies (includes backend workspace)
 ```
 
 ## Common Tasks
 
-### Testing Market Proxy Streaming
+### Testing Market + import deep link
 
 1. Launch dev build: `cargo tauri dev`
-2. Navigate to Market tab in dashboard
-3. Click on mcp.so portal
-4. Verify page loads without blocking (streaming works if initial content appears before full load)
-5. Check DevTools console for injection markers (`mcpmate-market-config`, `mcpmate-market-shim`)
+2. Open Market → confirm official registry loads
+3. From a browser with `extension/chrome` loaded, trigger `mcpmate://import/server?p=...` and confirm the Servers Uni-Import drawer opens
 
 ### Debugging Backend Issues
 
@@ -165,20 +163,6 @@ See `docs/desktop-release-guide.md` for full details. Key steps:
 
 ## Important Notes
 
-### Market Proxy Implementation
+### `mcpmate://` deep links
 
-The streaming proxy (`market_stream.rs`) is critical for Next.js apps like mcp.so that use:
-- Server-Side Rendering (SSR)
-- React Server Components (RSC)
-- Streaming HTML responses
-
-**Do not** replace streaming logic with buffered HTML rewrites. This breaks hydration timing and causes blank pages or React errors.
-
-### Custom URI Scheme
-
-The `mcpmate://` scheme (`market_proxy.rs`) handles:
-- Static assets that escape absolute paths (`/_next/`, `/static/`)
-- Embedded market assets (`/scripts/market/*`)
-- Fallback for non-streaming content
-
-Both proxies work together: streaming for HTML, URI scheme for assets.
+`deep_link.rs` dispatches `mcpmate://auth` (OAuth callback) and `mcpmate://import/server` (base64 JSON payload with server snippet text). Keep URL contracts stable for the Chrome extension and any external integrators.

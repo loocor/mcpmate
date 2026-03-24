@@ -95,7 +95,6 @@ npm run dev
 The development server will start on `http://localhost:5173` (or 5174 if 5173 is occupied). The Vite dev server automatically proxies:
 - `/api/*` → `http://localhost:8080/api/*`
 - `/ws` → `ws://localhost:8080/ws`
-- `/market-proxy/*` → Remote market portals (e.g., mcp.so)
 
 ### Building for Production
 
@@ -195,7 +194,7 @@ Theme preference is stored in `localStorage.mcp_theme` and applied early to avoi
 ## Desktop Application Support
 
 MCPBoard is designed to work both as a web application and as a desktop application through Tauri integration. When running in Tauri:
-- Custom URI scheme `mcpmate://localhost/market-proxy/*` is used for market portals
+- Registered `mcpmate://` deep links include OAuth (`mcpmate://auth`) and server import (`mcpmate://import/server`) used by the Chrome extension under `extension/chrome/`
 - API base URL can be configured at runtime via Settings
 - Native system integration features are available
 

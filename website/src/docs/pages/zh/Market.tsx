@@ -6,19 +6,18 @@ export default function MarketZH() {
 	return (
 		<DocLayout meta={{ title: "服务源", description: "浏览与管理社区服务器" }}>
 			<P>
-				服务源承载 MCPMate
-				的服务器目录，可浏览官方仓库、接入自建门户、查看元数据并将候选项直接送往安装向导。
+				服务源展示 MCPMate 官方注册表，可搜索、排序并将候选项送往安装向导。
 			</P>
 
-			<H2>标签页与数据源</H2>
+			<H2>数据与导入</H2>
 			<Ul>
 				<Li>
-					<strong>官方</strong> 标签展示 MCPMate 官方注册表，支持实时搜索（带
-					300ms 防抖）与多种排序（最近、热门、字母序），翻页时会追加加载列表。
+					<strong>官方</strong> 注册表支持搜索（带 300ms 防抖）与排序（最近、字母序），翻页追加加载。
 				</Li>
 				<Li>
-					<strong>门户</strong> 标签以 iframe 方式加载第三方市场。可在设置 → MCP
-					市场添加或移除门户；切换语言时会自动刷新请求翻译后的目录。
+					在任意网页导入 MCP 配置片段可使用 Chrome 扩展（仓库内{" "}
+					<code>extension/chrome</code>），通过{" "}
+					<code>mcpmate://import/server</code> 唤起桌面端。
 				</Li>
 				<Li>
 					远程连接器会显示在“Remote”区域，通常是预先配置好的 URL/Git
@@ -40,19 +39,10 @@ export default function MarketZH() {
 				市场搜索并恢复这些条目。
 			</P>
 
-			<H2>门户管理技巧</H2>
-			<Ul>
-				<Li>
-					在设置中指定 <strong>默认市场</strong>
-					，控制台会自动打开该标签且无法关闭。
-				</Li>
-				<Li>
-					使用“打开门户”按钮在新窗口访问外部界面，同时保留当前面板用于安装。
-				</Li>
-				<Li>
-					如门户需要认证头或自定义变量，可在设置里配置，导入流程会自动复用。
-				</Li>
-			</Ul>
+			<H2>黑名单</H2>
+			<P>
+				在设置 → MCP 市场管理已隐藏的条目，可随时恢复并重新显示在列表中。
+			</P>
 
 			<Callout type="info" title="与服务器页面的联动">
 				所有在市场完成的导入都会经过相同的服务器安装向导，并立即出现在服务器列表中，随后即可针对配置集启用或禁用、查看连接状态。

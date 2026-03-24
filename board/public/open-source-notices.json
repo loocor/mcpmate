@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-23T16:50:05Z",
+  "generatedAt": "2026-03-24T06:21:47Z",
   "sections": [
     {
       "id": "backend",
@@ -609,6 +609,16 @@
           "homepage": "",
           "description": "Asynchronous streams using async & await notation",
           "author": "Carl Lerche <me@carllerche.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "base64",
+          "version": "0.22.1",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/marshallpierce/rust-base64",
+          "homepage": "",
+          "description": "encodes and decodes base64 as bytes or utf8",
+          "author": "Marshall Pierce <marshall@mpierce.org>",
           "licenseFile": ""
         },
         {
