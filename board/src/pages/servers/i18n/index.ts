@@ -46,6 +46,11 @@ export const serversTranslations = {
 				message:
 					"We could not detect any usable configuration from the dropped content.",
 			},
+			deepLinkImport: {
+				title: "Configuration received",
+				message:
+					"Review the imported server snippet in the drawer before saving.",
+			},
 			toggle: {
 				enabledTitle: "Server enabled",
 				disabledTitle: "Server disabled",
@@ -657,6 +662,10 @@ export const serversTranslations = {
 				title: "没有可导入的内容",
 				message: "无法从拖放的内容中检测到可用的配置。",
 			},
+			deepLinkImport: {
+				title: "已收到配置",
+				message: "请在抽屉中核对导入的服务器配置后再保存。",
+			},
 			toggle: {
 				enabledTitle: "服务器已启用",
 				disabledTitle: "服务器已禁用",
@@ -1242,6 +1251,11 @@ export const serversTranslations = {
 			importEmpty: {
 				title: "インポートできる内容がありません",
 				message: "ドロップされた内容から利用可能な設定を検出できませんでした。",
+			},
+			deepLinkImport: {
+				title: "設定を受け取りました",
+				message:
+					"保存前にドロワーでインポートしたサーバー設定を確認してください。",
 			},
 			toggle: {
 				enabledTitle: "サーバーを有効化しました",

@@ -41,7 +41,7 @@ import { Switch } from "../../components/ui/switch";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { configSuitsApi, serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
-import { notifyError, notifySuccess } from "../../lib/notify";
+import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type {
 	MCPServerConfig,
@@ -189,6 +189,54 @@ export function ServerListPage() {
 		setAddDragActive(false);
 	}, []);
 
+	// View mode and developer toggles
+	const defaultView = useAppStore(
+		(state) => state.dashboardSettings.defaultView,
+	);
+	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
+	const pendingServerDeepLinkImport = useAppStore(
+		(state) => state.pendingServerDeepLinkImport,
+	);
+	const setPendingServerDeepLinkImport = useAppStore(
+		(state) => state.setPendingServerDeepLinkImport,
+	);
+	const enableServerDebug = useAppStore(
+		(state) => state.dashboardSettings.enableServerDebug,
+	);
+	const openDebugInNewWindow = useAppStore(
+		(state) => state.dashboardSettings.openDebugInNewWindow,
+	);
+	const syncServerStateToClients = useAppStore(
+		(state) => state.dashboardSettings.syncServerStateToClients,
+	);
+
+	React.useEffect(() => {
+		if (!pendingServerDeepLinkImport) {
+			return;
+		}
+		const { text, format } = pendingServerDeepLinkImport;
+		setPendingServerDeepLinkImport(null);
+		const fileName =
+			format === "json"
+				? "snippet.json"
+				: format === "toml"
+					? "snippet.toml"
+					: "snippet.txt";
+		setManualOpen(true);
+		requestAnimationFrame(() => {
+			manualRef.current?.ingest({ text, fileName });
+		});
+		notifyInfo(
+			t("notifications.deepLinkImport.title", {
+				defaultValue: "Configuration received",
+			}),
+			t("notifications.deepLinkImport.message", {
+				defaultValue:
+					"Review the imported server snippet in the drawer before saving.",
+			}),
+		);
+	}, [pendingServerDeepLinkImport, setPendingServerDeepLinkImport, t]);
+
 	const handleAddDrop = useCallback(
 		async (event: React.DragEvent<HTMLDivElement>) => {
 			event.preventDefault();
@@ -226,21 +274,6 @@ export function ServerListPage() {
 			});
 		},
 		[t],
-	);
-
-	// View mode and developer toggles
-	const defaultView = useAppStore(
-		(state) => state.dashboardSettings.defaultView,
-	);
-	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
-	const enableServerDebug = useAppStore(
-		(state) => state.dashboardSettings.enableServerDebug,
-	);
-	const openDebugInNewWindow = useAppStore(
-		(state) => state.dashboardSettings.openDebugInNewWindow,
-	);
-	const syncServerStateToClients = useAppStore(
-		(state) => state.dashboardSettings.syncServerStateToClients,
 	);
 
 	const {
@@ -1082,8 +1115,8 @@ export function ServerListPage() {
 				<Button
 					size="icon"
 					className={`h-9 w-9 transition-colors ${isAddDragActive
-							? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-							: ""
+						? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+						: ""
 						}`}
 					title={t("actions.add.title", { defaultValue: "Add Server" })}
 					onClick={() => setManualOpen(true)}

@@ -27,8 +27,10 @@ use tauri::{
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 mod account;
+mod deep_link;
 mod runtime_ports;
 mod shell;
+use deep_link::ImportServerDeepLinkPayload;
 use shell::{ShellPreferences, ShellState};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
@@ -64,6 +66,23 @@ struct BackendRuntime {
     api_task: JoinHandle<()>,
     api_cancel: CancellationToken,
     mcp_handle: Option<JoinHandle<Result<(), anyhow::Error>>>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct DeepLinkState {
+    pending_server_import: Arc<AsyncMutex<Option<ImportServerDeepLinkPayload>>>,
+}
+
+impl DeepLinkState {
+    async fn set_pending_server_import(&self, payload: ImportServerDeepLinkPayload) {
+        let mut guard = self.pending_server_import.lock().await;
+        *guard = Some(payload);
+    }
+
+    async fn take_pending_server_import(&self) -> Option<ImportServerDeepLinkPayload> {
+        let mut guard = self.pending_server_import.lock().await;
+        guard.take()
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -132,10 +151,12 @@ impl BackendRuntime {
 
 pub fn run() -> Result<()> {
     let backend_state = BackendState::default();
+    let deep_link_state = DeepLinkState::default();
 
     let mut builder = tauri::Builder::default();
 
     builder = builder.manage(backend_state.clone());
+    builder = builder.manage(deep_link_state);
 
     builder = builder.on_menu_event(|app_handle, event| {
         if event.id.as_ref() == MENU_CHECK_UPDATES_ID {
@@ -339,16 +360,16 @@ pub fn run() -> Result<()> {
                 let handle = app.handle().clone();
                 let _ = app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
-                        if let Err(err) = account::handle_oauth_url(&handle, url.as_str()) {
-                            warn!(error = %err, "Failed to handle OAuth deep link");
+                        if let Err(err) = deep_link::route_mcpmate_deep_link(&handle, url.as_str()) {
+                            warn!(error = %err, "Failed to handle mcpmate deep link");
                         }
                     }
                 });
                 if let Ok(Some(urls)) = app.deep_link().get_current() {
                     let handle = app.handle().clone();
                     for url in urls {
-                        if let Err(err) = account::handle_oauth_url(&handle, url.as_str()) {
-                            warn!(error = %err, "Failed to handle startup OAuth deep link");
+                        if let Err(err) = deep_link::route_mcpmate_deep_link(&handle, url.as_str()) {
+                            warn!(error = %err, "Failed to handle startup mcpmate deep link");
                         }
                     }
                 }
@@ -368,6 +389,7 @@ pub fn run() -> Result<()> {
         mcp_shell_read_preferences,
         mcp_shell_read_runtime_ports,
         mcp_shell_restart_backend_with_ports,
+        mcp_deep_link_take_pending_server_import,
         mcp_account_start_github_login,
         mcp_account_get_status,
         mcp_account_logout
@@ -377,18 +399,30 @@ pub fn run() -> Result<()> {
         .build(tauri::generate_context!())
         .map_err(Error::new)?
         .run(move |app_handle, event| {
-            if let RunEvent::Exit = event {
-                if let Some(state) = app_handle.try_state::<BackendState>()
-                    && let Some(runtime) = tauri::async_runtime::block_on(state.take())
-                {
-                    tauri::async_runtime::block_on(runtime.shutdown());
+            match event {
+                #[cfg(target_os = "macos")]
+                RunEvent::Reopen { .. } => {
+                    if let Err(err) = shell::ensure_window_visibility(app_handle) {
+                        warn!(error = %err, "Failed to restore main window on app reopen");
+                    }
+                    if let Err(err) = app_handle.emit(shell::EVENT_OPEN_MAIN, json!({})) {
+                        warn!(error = %err, "Failed to emit open-main on app reopen");
+                    }
                 }
-                if let Some(shell_state) = app_handle.try_state::<ShellState>()
-                    && let Err(err) =
-                        tauri::async_runtime::block_on(shell_state.update_backend_running(false))
-                {
-                    warn!(error = %err, "Failed to mark backend stopped during exit");
+                RunEvent::Exit => {
+                    if let Some(state) = app_handle.try_state::<BackendState>()
+                        && let Some(runtime) = tauri::async_runtime::block_on(state.take())
+                    {
+                        tauri::async_runtime::block_on(runtime.shutdown());
+                    }
+                    if let Some(shell_state) = app_handle.try_state::<ShellState>()
+                        && let Err(err) =
+                            tauri::async_runtime::block_on(shell_state.update_backend_running(false))
+                    {
+                        warn!(error = %err, "Failed to mark backend stopped during exit");
+                    }
                 }
+                _ => {}
             }
         });
 
@@ -440,6 +474,13 @@ async fn mcp_shell_read_preferences(
     Ok(ShellPreferencesView::from(
         state.inner().clone().current_preferences().await,
     ))
+}
+
+#[tauri::command]
+async fn mcp_deep_link_take_pending_server_import(
+    state: tauri::State<'_, DeepLinkState>,
+) -> Result<Option<ImportServerDeepLinkPayload>, String> {
+    Ok(state.take_pending_server_import().await)
 }
 
 #[tauri::command]

@@ -3854,6 +3854,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "base64 0.22.1",
  "bytes",
  "futures-util",
  "hostname",

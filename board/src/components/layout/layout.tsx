@@ -8,6 +8,26 @@ import { websiteLangParam } from "../../lib/website-lang";
 import { Header } from "./header";
 import { Sidebar } from "./sidebar";
 
+function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw: unknown): void {
+	if (!raw || typeof raw !== "object") {
+		return;
+	}
+	const payload = raw as Record<string, unknown>;
+	const text = typeof payload.text === "string" ? payload.text : "";
+	if (!text.trim()) {
+		return;
+	}
+
+	const format = typeof payload.format === "string" ? payload.format : undefined;
+	const source = typeof payload.source === "string" ? payload.source : undefined;
+	useAppStore.getState().setPendingServerDeepLinkImport({
+		text,
+		format,
+		source,
+	});
+	navigate("/servers");
+}
+
 export function Layout() {
 	const { sidebarOpen, theme, setSidebarOpen } = useAppStore();
 	const navigate = useNavigate();
@@ -49,6 +69,7 @@ export function Layout() {
 	React.useEffect(() => {
 		let unlistenMain: (() => void) | undefined;
 		let unlistenSettings: (() => void) | undefined;
+		let unlistenImportServer: (() => void) | undefined;
 		let cancelled = false;
 
 		const bind = async () => {
@@ -57,6 +78,7 @@ export function Layout() {
 			}
 			try {
 				const { listen } = await import("@tauri-apps/api/event");
+				const { invoke } = await import("@tauri-apps/api/core");
 				if (cancelled) {
 					return;
 				}
@@ -74,6 +96,14 @@ export function Layout() {
 						navigate(target);
 					},
 				);
+				unlistenImportServer = await listen("mcp-import/server", (event) => {
+					handleImportServerPayload(navigate, event.payload);
+				});
+
+				const pending = await invoke<unknown>(
+					"mcp_deep_link_take_pending_server_import",
+				);
+				handleImportServerPayload(navigate, pending);
 			} catch (error) {
 				if (import.meta.env.DEV) {
 					console.warn("[Layout] Failed to bind desktop shell events", error);
@@ -89,6 +119,9 @@ export function Layout() {
 			}
 			if (unlistenSettings) {
 				void unlistenSettings();
+			}
+			if (unlistenImportServer) {
+				void unlistenImportServer();
 			}
 		};
 	}, [navigate]);
