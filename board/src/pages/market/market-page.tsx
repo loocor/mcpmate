@@ -1,23 +1,19 @@
-import { ArrowUp, Loader2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ErrorDisplay } from "../../components/error-display";
 import { Button } from "../../components/ui/button";
 import { ServerInstallWizard } from "../../components/uniimport/server-install-wizard";
-import type { ServerInstallManualFormHandle } from "../../components/uniimport/types";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
-import { parseJsonDrafts, parseTomlDrafts } from "../../lib/install-normalizer";
-import { notifyError, notifyInfo } from "../../lib/notify";
+import { notifyInfo } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { RegistryServerEntry } from "../../lib/types";
-import { useMarketData, useMarketTabs } from "./hooks";
-import { MarketIframe } from "./market-iframe";
+import { useMarketData } from "./hooks/use-market-data";
 import { MarketSearch } from "./market-search";
-import { MarketTabs } from "./market-tabs";
 import { ServerGrid } from "./server-grid";
-import type { SortOption } from "./types";
+import type { RemoteOption, SortOption } from "./types";
 import {
 	buildDraftFromRemoteOption,
 	formatServerName,
@@ -27,65 +23,15 @@ import {
 	slugifyForConfig,
 	useDebouncedValue,
 } from "./utils";
-import { buildPortalUrlWithLocale } from "./portal-registry";
-
-// Market mode types and interfaces
-interface RemoteOption {
-	id: string;
-	label: string;
-	kind: string;
-	source: "remote" | "package";
-	url: string | null;
-	headers: Array<{
-		name: string;
-		isRequired?: boolean;
-		description?: string;
-	}> | null;
-	envVars: Array<{
-		name: string;
-		isRequired?: boolean;
-		description?: string;
-	}> | null;
-	packageIdentifier: string | null;
-	packageMeta: unknown;
-}
 
 export function MarketPage() {
 	const { t } = useTranslation();
 	usePageTranslations("market");
-	// Use custom hooks for data and tab management
-	const {
-		tabs,
-		activeTab,
-		setActiveTab,
-		availablePortals,
-		addPortalTab,
-		addOfficialTab,
-		closeTab,
-		portalMap,
-	} = useMarketTabs(t);
 
-	const currentTab = useMemo(
-		() => tabs.find((tab) => tab.id === activeTab),
-		[tabs, activeTab],
-	);
-	const currentPortal = useMemo(() => {
-		if (!currentTab?.portalId) return undefined;
-		return portalMap[currentTab.portalId];
-	}, [currentTab, portalMap]);
-	const isOfficialTab = currentTab?.type === "official";
-	const currentPortalId = currentPortal?.id ?? null;
-
-	const dashboardLanguage = useAppStore(
-		(state) => state.dashboardSettings.language,
-	);
-
-	// Search and sort state (only for official tab)
 	const [search, setSearch] = useState("");
 	const [sort, setSort] = useState<SortOption>("recent");
 	const debouncedSearch = useDebouncedValue(search.trim(), 300);
 
-	// Get market data using custom hook
 	const {
 		servers,
 		isInitialLoading,
@@ -98,7 +44,6 @@ export function MarketPage() {
 		onRefresh,
 	} = useMarketData(debouncedSearch, sort);
 
-	// Get app store values
 	const addToMarketBlacklist = useAppStore(
 		(state) => state.addToMarketBlacklist,
 	);
@@ -106,7 +51,6 @@ export function MarketPage() {
 		(state) => state.dashboardSettings.enableMarketBlacklist,
 	);
 
-	// UI state
 	const [showScrollTop, setShowScrollTop] = useState(false);
 	const [drawerServer, setDrawerServer] = useState<RegistryServerEntry | null>(
 		null,
@@ -114,52 +58,14 @@ export function MarketPage() {
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [selectedTransportId, setSelectedTransportId] = useState<string>("");
 
-	// Market mode state
 	const [remoteOptions, setRemoteOptions] = useState<RemoteOption[]>([]);
 	const [selectedRemote, setSelectedRemote] = useState<RemoteOption | null>(
 		null,
 	);
-	const formRef = useRef<ServerInstallManualFormHandle>(null);
-	const pendingImportRef = useRef<{
-		text: string;
-		fileName: string;
-		sourceUrl: string;
-		parsedDraft?: ServerInstallDraft | null;
-		portalId?: string;
-		adapterId?: string;
-	} | null>(null);
-	const [pendingImportTick, setPendingImportTick] = useState(0);
-	const [portalRefreshMap, setPortalRefreshMap] = useState<
-		Record<string, number>
-	>({});
-
-	const portalRefreshKey = currentPortalId
-		? portalRefreshMap[currentPortalId] ?? 0
-		: 0;
-
-	useEffect(() => {
-		if (isOfficialTab) return;
-		if (!currentPortalId) return;
-		setPortalRefreshMap((prev) => ({
-			...prev,
-			[currentPortalId]: (prev[currentPortalId] ?? 0) + 1,
-		}));
-	}, [dashboardLanguage, currentPortalId, isOfficialTab]);
-
 	const handleRefreshClick = useCallback(() => {
-		if (isOfficialTab) {
-			onRefresh();
-			return;
-		}
-		if (currentPortal) {
-			setPortalRefreshMap((prev) => ({
-				...prev,
-				[currentPortal.id]: (prev[currentPortal.id] ?? 0) + 1,
-			}));
-		}
-	}, [isOfficialTab, onRefresh, currentPortal]);
+		onRefresh();
+	}, [onRefresh]);
 
-	// Event handlers
 	const handleHideServer = (entry: RegistryServerEntry) => {
 		const identity = getRegistryIdentity(entry);
 		const label = formatServerName(entry.name);
@@ -179,31 +85,24 @@ export function MarketPage() {
 		setDrawerOpen(true);
 	};
 
-	const handleDrawerChange = useCallback(
-		(open: boolean) => {
-			setDrawerOpen(open);
-			if (!open) {
-				setDrawerServer(null);
-			}
-		},
-		[notifyError, portalMap],
-	);
+	const handleDrawerChange = useCallback((open: boolean) => {
+		setDrawerOpen(open);
+		if (!open) {
+			setDrawerServer(null);
+		}
+	}, []);
 
 	const scrollToTop = () => {
 		window.scrollTo({ top: 0, behavior: "smooth" });
 	};
 
-	// Install pipeline for preview and import
 	const installPipeline = useServerInstallPipeline({
 		onImported: () => {
-			// Refresh the market data after successful import
-			// Close both drawers and return to market page
 			setDrawerOpen(false);
 			setDrawerServer(null);
 		},
 	});
 
-	// Build transport options for official registry entries
 	useEffect(() => {
 		if (!drawerServer) {
 			setRemoteOptions([]);
@@ -276,11 +175,11 @@ export function MarketPage() {
 				websiteUrl: drawerServer.websiteUrl || "",
 				repository: drawerServer.repository
 					? {
-							url: drawerServer.repository.url || "",
-							source: "",
-							subfolder: "",
-							id: "",
-						}
+						url: drawerServer.repository.url || "",
+						source: "",
+						subfolder: "",
+						id: "",
+					}
 					: undefined,
 			},
 		};
@@ -288,172 +187,6 @@ export function MarketPage() {
 		return draftWithMeta;
 	}, [selectedRemote, drawerServer]);
 
-	// Receive configuration snippets from third-party market iframes
-	useEffect(() => {
-		const handleMarketImportMessage = (event: MessageEvent) => {
-			const data = event.data;
-			if (!data || typeof data !== "object") return;
-			if (data.type !== "mcpmate-market-import") return;
-			const rawText = String(data.payload?.text ?? "").trim();
-			if (!rawText) {
-				notifyError("Import failed", "Received empty configuration snippet.");
-				return;
-			}
-
-			const portalId =
-				typeof data.payload?.portalId === "string" &&
-				data.payload.portalId.trim()
-					? data.payload.portalId.trim()
-					: undefined;
-			const adapterFromMessage =
-				typeof data.payload?.adapter === "string" && data.payload.adapter.trim()
-					? data.payload.adapter.trim()
-					: undefined;
-			const portalMeta = portalId ? portalMap[portalId] : undefined;
-
-			const translateProxiedUrl = (value: string): string => {
-				if (!portalMeta) return value;
-				try {
-					const baseWithSlash = portalMeta.proxyPath.endsWith("/")
-						? portalMeta.proxyPath
-						: `${portalMeta.proxyPath}/`;
-					const baseWithoutSlash = baseWithSlash.slice(0, -1);
-					const localUrl = new URL(value, window.location.origin);
-					const localPath = localUrl.pathname;
-					let remainder: string | null = null;
-					if (localPath === baseWithoutSlash) {
-						remainder = "/";
-					} else if (localPath.startsWith(baseWithSlash)) {
-						const raw = localPath.slice(baseWithSlash.length);
-						remainder = raw ? (raw.startsWith("/") ? raw : `/${raw}`) : "/";
-					}
-					if (remainder === null) {
-						return value;
-					}
-					const remote = new URL(remainder, portalMeta.remoteOrigin);
-					remote.search = localUrl.search;
-					remote.hash = localUrl.hash;
-					return remote.toString();
-			} catch {
-				return value;
-			}
-			};
-
-			setDrawerServer(null);
-			setRemoteOptions([]);
-			setSelectedRemote(null);
-			setSelectedTransportId("");
-			setDrawerOpen(true);
-
-			const format =
-				typeof data.payload?.format === "string"
-					? data.payload.format
-					: "unknown";
-			const fileName =
-				format === "json"
-					? "snippet.json"
-					: format === "toml"
-						? "snippet.toml"
-						: "snippet.txt";
-
-			let parsedDraft: ServerInstallDraft | null = null;
-			try {
-				if (format === "json") {
-					parsedDraft = parseJsonDrafts(rawText)[0] ?? null;
-				} else if (format === "toml") {
-					parsedDraft = parseTomlDrafts(rawText)[0] ?? null;
-				} else {
-					parsedDraft =
-						parseJsonDrafts(rawText)[0] ?? parseTomlDrafts(rawText)[0] ?? null;
-				}
-			} catch {
-				parsedDraft = null;
-			}
-
-			const rawSource =
-				typeof data.payload?.source === "string"
-					? data.payload.source
-					: window.location.href;
-			const sourceUrl = translateProxiedUrl(rawSource);
-
-			pendingImportRef.current = {
-				text: rawText,
-				fileName,
-				sourceUrl,
-				parsedDraft,
-				portalId,
-				adapterId: adapterFromMessage,
-			};
-		};
-
-		window.addEventListener("message", handleMarketImportMessage);
-		return () =>
-			window.removeEventListener("message", handleMarketImportMessage);
-	}, []);
-
-	useEffect(() => {
-		if (!drawerOpen) return;
-		const snippet = pendingImportRef.current;
-		if (!snippet) return;
-		const ingest = formRef.current?.ingest;
-		if (typeof ingest !== "function") return;
-		pendingImportRef.current = null;
-
-		void (async () => {
-			try {
-				await ingest({ text: snippet.text, fileName: snippet.fileName });
-				const currentDraft = formRef.current?.getCurrentDraft();
-				if (currentDraft) {
-					const draftMeta = { ...(snippet.parsedDraft?.meta ?? {}) };
-					const mergedMeta: ServerInstallDraft["meta"] = {
-						...draftMeta,
-						...(currentDraft.meta ?? {}),
-					};
-					const mergedRepo = {
-						...(draftMeta.repository ?? {}),
-						...(currentDraft.meta?.repository ?? {}),
-					};
-					if (!mergedMeta.description) {
-						mergedMeta.description = `Imported from ${snippet.sourceUrl}`;
-					}
-					if (!mergedMeta.websiteUrl && draftMeta.websiteUrl) {
-						mergedMeta.websiteUrl = draftMeta.websiteUrl;
-					}
-					if (!mergedRepo.url && draftMeta.repository?.url) {
-						mergedRepo.url = draftMeta.repository.url;
-					}
-					if (Object.keys(mergedRepo).length) {
-						mergedMeta.repository = mergedRepo;
-					}
-					formRef.current?.loadDraft({ ...currentDraft, meta: mergedMeta });
-				}
-				notifyInfo(
-					t("market:notifications.configurationDetected", {
-						defaultValue: "Configuration detected",
-					}),
-					t("market:notifications.reviewImportedSnippet", {
-						defaultValue:
-							"Review the imported snippet before completing the setup.",
-					}),
-				);
-			} catch (error) {
-				pendingImportRef.current = { ...snippet };
-				setPendingImportTick((tick) => tick + 1);
-				notifyError(
-					t("market:notifications.importFailed", {
-						defaultValue: "Import failed",
-					}),
-					String(
-						error instanceof Error ? error.message : (error ?? "Unknown error"),
-					),
-				);
-			}
-		})();
-	}, [drawerOpen, pendingImportTick]);
-
-	// (preview/import handlers are now managed inside ServerInstallWizard via shared pipeline)
-
-	// Scroll to top effect
 	useEffect(() => {
 		const handler = () => {
 			setShowScrollTop(window.scrollY > 400);
@@ -467,118 +200,42 @@ export function MarketPage() {
 		<>
 			<div className="space-y-4">
 				<div className="sticky top-0 z-10 -mx-1 rounded-b-xl px-1 backdrop-blur">
-					{/* Header: single-line description + right controls */}
 					<div className="flex items-center gap-2 min-w-0">
 						<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
 							{t("market:title", { defaultValue: "Market" })}
 						</p>
 
-						{/* Search, Sort, and Refresh Controls */}
-						{isOfficialTab ? (
-							<MarketSearch
-								search={search}
-								onSearchChange={setSearch}
-								sort={sort}
-								onSortChange={setSort}
-								onRefresh={handleRefreshClick}
-								isLoading={isPageLoading}
-							/>
-						) : (
-							<div className="flex justify-end flex-shrink-0">
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={handleRefreshClick}
-									className="gap-2"
-									disabled={isPageLoading}
-								>
-									<Loader2
-										className={`h-4 w-4 ${isPageLoading ? "animate-spin" : ""}`}
-									/>
-									{t("market:buttons.refresh", { defaultValue: "Refresh" })}
-								</Button>
-							</div>
-						)}
+						<MarketSearch
+							search={search}
+							onSearchChange={setSearch}
+							sort={sort}
+							onSortChange={setSort}
+							onRefresh={handleRefreshClick}
+							isLoading={isPageLoading}
+						/>
 					</div>
-
-					{/* Tab Bar */}
-					<MarketTabs
-						tabs={tabs}
-						activeTab={activeTab}
-						onTabChange={setActiveTab}
-						onCloseTab={closeTab}
-						onAddOfficial={addOfficialTab}
-						availablePortals={availablePortals}
-						onAddPortal={addPortalTab}
-					/>
 				</div>
 
-				{/* Content based on active tab */}
-				{isOfficialTab ? (
-					<>
-						<ErrorDisplay
-							title={t("market:errors.failedToLoadRegistry", {
-								defaultValue: "Failed to load registry",
-							})}
-							error={fetchError ?? null}
-							onRetry={handleRefreshClick}
-						/>
+				<ErrorDisplay
+					title={t("market:errors.failedToLoadRegistry", {
+						defaultValue: "Failed to load registry",
+					})}
+					error={fetchError ?? null}
+					onRetry={handleRefreshClick}
+				/>
 
-						<ServerGrid
-							servers={servers}
-							isInitialLoading={isInitialLoading}
-							isPageLoading={isPageLoading}
-							isEmpty={isEmpty}
-							pagination={pagination}
-							onServerPreview={handleOpenDrawer}
-							onServerHide={handleHideServer}
-							enableBlacklist={enableMarketBlacklist}
-							onNextPage={onNextPage}
-							onPreviousPage={onPreviousPage}
-						/>
-					</>
-				) : (
-					/* Third-party portal content */
-					<div className="mt-6 flex flex-col">
-		{currentPortal ? (
-			<MarketIframe
-				key={`${currentPortal.id}-${portalRefreshKey}`}
-				url={buildPortalUrlWithLocale(
-					currentPortal,
-					currentTab?.url ?? currentPortal.proxyPath,
-					dashboardLanguage,
-				)}
-				title={currentPortal.label}
-				proxyPath={currentPortal.proxyPath}
-				refreshKey={portalRefreshKey}
-			/>
-		) : (
-							<div className="rounded-xl border border-dashed border-slate-200 bg-white py-12 text-center text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-								<div className="space-y-2">
-									<h3 className="text-lg font-medium text-slate-900 dark:text-slate-100">
-										{currentTab?.label ||
-											t("market:thirdParty.portal", {
-												defaultValue: "Third-Party Portal",
-											})}
-									</h3>
-									<p>
-										{t("market:thirdParty.contentWillDisplay", {
-											defaultValue:
-												"Third-party portal content will be displayed here",
-										})}
-									</p>
-									<p className="text-xs text-slate-400">
-										URL:{" "}
-										{currentTab?.url ||
-											t("market:thirdParty.urlNotConfigured", {
-												defaultValue: "Not configured",
-											})}
-									</p>
-								</div>
-							</div>
-						)}
-					</div>
-				)}
+				<ServerGrid
+					servers={servers}
+					isInitialLoading={isInitialLoading}
+					isPageLoading={isPageLoading}
+					isEmpty={isEmpty}
+					pagination={pagination}
+					onServerPreview={handleOpenDrawer}
+					onServerHide={handleHideServer}
+					enableBlacklist={enableMarketBlacklist}
+					onNextPage={onNextPage}
+					onPreviousPage={onPreviousPage}
+				/>
 
 				{showScrollTop ? (
 					<Button
@@ -593,7 +250,6 @@ export function MarketPage() {
 				) : null}
 			</div>
 
-			{/* Transport Options Selector for Market Mode */}
 			{drawerOpen && remoteOptions.length > 1 && (
 				<div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
 					<button
@@ -622,21 +278,20 @@ export function MarketPage() {
 										setSelectedTransportId(option.id);
 										handleDrawerChange(false);
 									}}
-									className={`w-full text-left p-3 rounded-lg border transition-colors ${
-										selectedTransportId === option.id
+									className={`w-full text-left p-3 rounded-lg border transition-colors ${selectedTransportId === option.id
 											? "border-primary bg-primary/5"
 											: "border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600"
-									}`}
+										}`}
 								>
 									<div className="font-medium">{option.label}</div>
 									<div className="text-sm text-slate-500 dark:text-slate-400">
 										{option.source === "remote"
 											? t("market:transport.remoteEndpoint", {
-													defaultValue: "Remote endpoint",
-												})
+												defaultValue: "Remote endpoint",
+											})
 											: t("market:transport.packageInstallation", {
-													defaultValue: "Package installation",
-												})}
+												defaultValue: "Package installation",
+											})}
 									</div>
 								</button>
 							))}
@@ -646,7 +301,6 @@ export function MarketPage() {
 			)}
 
 			<ServerInstallWizard
-				ref={formRef}
 				isOpen={drawerOpen}
 				onClose={() => handleDrawerChange(false)}
 				mode="import"

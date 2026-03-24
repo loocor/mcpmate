@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
-import type { Plugin, ViteDevServer } from "vite";
 import { defineConfig } from "vite";
 
 const packageJson = JSON.parse(
@@ -51,21 +50,11 @@ function attachBackendStartupProxyHandler(proxy: HttpProxyServer): void {
 	});
 }
 
-function marketProxyPlugin(): Plugin {
-	return {
-		name: "mcpmate-market-proxy",
-		configureServer(_server: ViteDevServer) {
-			// Portal proxy disabled - third-party market support removed
-			// Kept as a placeholder for potential future third-party market support
-		},
-	};
-}
-
 export default defineConfig({
 	define: {
 		"import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
 	},
-	plugins: [react(), marketProxyPlugin()],
+	plugins: [react()],
 	resolve: {
 		alias: {
 			"@": path.resolve(__dirname, "./src"),

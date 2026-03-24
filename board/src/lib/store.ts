@@ -157,13 +157,14 @@ function normalizeDashboardSettings(
 	if (!patch || typeof patch !== "object") {
 		return {
 			...base,
-			marketPortals: cloneMarketPortals(base.marketPortals),
+			defaultMarket: "official",
+			marketPortals: {},
 		};
 	}
 
 	const next: DashboardSettings = {
 		...base,
-		marketPortals: cloneMarketPortals(base.marketPortals),
+		marketPortals: {},
 	};
 
 	if (patch.defaultView === "list" || patch.defaultView === "grid") {

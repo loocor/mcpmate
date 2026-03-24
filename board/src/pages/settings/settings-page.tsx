@@ -60,13 +60,11 @@ import {
 	type DashboardDefaultView,
 	type DashboardLanguage,
 	type DashboardSettings,
-	type DefaultMarket,
 	type MarketBlacklistEntry,
 	type MenuBarIconMode,
 	useAppStore,
 } from "../../lib/store";
 import type { OpenSourceDocument } from "../../types/open-source";
-import { mergePortalOverrides } from "../market/portal-registry";
 import { AboutLicensesSection } from "./about-licenses-section";
 
 // Options for Segment components
@@ -423,15 +421,6 @@ export function SettingsPage() {
 				}),
 			})),
 		[t, i18n.language],
-	);
-
-	// Build available portals list for Default Market selector
-	const availablePortals = useMemo(
-		() =>
-			Object.values(mergePortalOverrides(dashboardSettings.marketPortals)).sort(
-				(a, b) => a.label.localeCompare(b.label),
-			),
-		[dashboardSettings.marketPortals],
 	);
 
 	useEffect(() => {
@@ -1479,8 +1468,6 @@ export function SettingsPage() {
 							entries={dashboardSettings.marketBlacklist}
 							onRestore={removeFromMarketBlacklist}
 							setDashboardSetting={setDashboardSetting}
-							dashboardSettings={dashboardSettings}
-							availablePortals={availablePortals}
 						/>
 					</TabsContent>
 					{showLicenseTab && licenseDocument && (
@@ -1501,16 +1488,12 @@ interface MarketBlacklistCardProps {
 		key: K,
 		value: DashboardSettings[K],
 	) => void;
-	dashboardSettings: DashboardSettings;
-	availablePortals: Array<{ id: string; label: string }>;
 }
 
 function MarketBlacklistCard({
 	entries,
 	onRestore,
 	setDashboardSetting,
-	dashboardSettings,
-	availablePortals,
 }: MarketBlacklistCardProps) {
 	const { t } = useTranslation();
 	const searchId = useId();
@@ -1554,50 +1537,11 @@ function MarketBlacklistCard({
 				<CardDescription>
 					{t("settings:market.description", {
 						defaultValue:
-							"Configure default market and manage hidden marketplace servers.",
+							"Manage hidden entries for the Official MCP Registry market.",
 					})}
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="flex h-full flex-col gap-4">
-				{/* Default Market settings */}
-				<div className="flex items-center justify-between gap-4">
-					<div className="space-y-0.5">
-						<h3 className="text-base font-medium">
-							{t("settings:market.defaultMarketTitle", {
-								defaultValue: "Default Market",
-							})}
-						</h3>
-						<p className="text-sm text-slate-500">
-							{t("settings:market.defaultMarketDescription", {
-								defaultValue:
-									"Choose which market appears first and cannot be closed.",
-							})}
-						</p>
-					</div>
-					<Select
-						value={dashboardSettings.defaultMarket}
-						onValueChange={(value) =>
-							setDashboardSetting("defaultMarket", value as DefaultMarket)
-						}
-					>
-						<SelectTrigger className="w-48">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="official">
-								{t("settings:market.officialPortal", {
-									defaultValue: "Official MCP Registry",
-								})}
-							</SelectItem>
-							{availablePortals.map((portal) => (
-								<SelectItem key={portal.id} value={portal.id}>
-									{portal.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</div>
-
 				{/* Enable Blacklist settings */}
 				<div className="flex items-center justify-between gap-4">
 					<div className="space-y-0.5">
