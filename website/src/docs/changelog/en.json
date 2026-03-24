@@ -19,6 +19,10 @@
 				"text": "Inspector list endpoints now return elapsed_ms, and prompt lookup can resolve across servers when no explicit server hint is supplied."
 			},
 			{
+				"type": "feat",
+				"text": "Added the Chrome extension: when you see MCP Server config snippets on web pages, you can import them to MCPMate desktop in one click."
+			},
+			{
 				"type": "chore",
 				"text": "Tracked generated open-source notices in the dashboard public assets for consistent distribution."
 			},

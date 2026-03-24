@@ -38,8 +38,8 @@ export default function ChangelogZH() {
 					<ul className="space-y-2 list-none pl-0">
 						{r.changes.map((c, i) => (
 							<li key={i} className="text-sm">
-								<div className="flex items-start gap-3">
-									<span className="inline-flex w-16 justify-center rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] uppercase tracking-wide text-slate-600 dark:text-slate-300">
+								<div className="grid grid-cols-[5.5rem,1fr] items-start gap-3">
+									<span className="inline-flex w-[5.5rem] justify-center whitespace-nowrap rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] uppercase tracking-wide text-slate-600 dark:text-slate-300">
 										{c.type}
 									</span>
 									<span className="text-slate-700 dark:text-slate-300 leading-6">

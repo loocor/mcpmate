@@ -19,6 +19,10 @@
 				"text": "Inspector 列表接口新增 elapsed_ms，prompt 查询在未指定 server 时可跨服务解析。"
 			},
 			{
+				"type": "feat",
+				"text": "新增 Chrome 扩展：当你在网页看到 MCP Server 配置片段时，可一键导入到 MCPMate 桌面端。"
+			},
+			{
 				"type": "chore",
 				"text": "将生成的开源许可证公告纳入前端静态资源，保证分发一致性。"
 			},
