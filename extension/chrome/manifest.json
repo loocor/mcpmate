@@ -1,0 +1,32 @@
+{
+	"manifest_version": 3,
+	"name": "MCPMate - Server Import",
+	"short_name": "MCPMate Import",
+	"version": "0.2.0",
+	"description": "Detect MCP snippets in code blocks and send them to MCPMate desktop via mcpmate://import/server.",
+	"homepage_url": "https://mcp.umate.ai",
+	"minimum_chrome_version": "114",
+	"host_permissions": ["<all_urls>"],
+	"icons": {
+		"16": "icons/icon-16.png",
+		"32": "icons/icon-32.png",
+		"48": "icons/icon-48.png",
+		"128": "icons/icon-128.png"
+	},
+	"action": {
+		"default_title": "MCPMate Server Import",
+		"default_icon": {
+			"16": "icons/icon-16.png",
+			"32": "icons/icon-32.png",
+			"48": "icons/icon-48.png",
+			"128": "icons/icon-128.png"
+		}
+	},
+	"content_scripts": [
+		{
+			"matches": ["<all_urls>"],
+			"js": ["content.js"],
+			"run_at": "document_idle"
+		}
+	]
+}
