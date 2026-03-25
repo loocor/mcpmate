@@ -218,6 +218,8 @@ impl UnifiedQueryService {
             refresh: Some(map_refresh_strategy(params.refresh)),
             timeout: Some(timeout),
             validation_session: validation_session(context),
+            runtime_identity: None,
+            connection_selection: None,
         }
     }
 }

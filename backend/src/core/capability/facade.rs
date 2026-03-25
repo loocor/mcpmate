@@ -54,8 +54,9 @@ pub async fn read_upstream_resource(
     mapping: &HashMap<String, ResourceMapping>,
     uri: &str,
     target_server_id: Option<&str>,
+    connection_selection: Option<&crate::core::capability::ConnectionSelection>,
 ) -> anyhow::Result<rmcp::model::ReadResourceResult> {
-    resources::read_upstream_resource(connection_pool, mapping, uri, target_server_id).await
+    resources::read_upstream_resource(connection_pool, mapping, uri, target_server_id, connection_selection).await
 }
 
 pub async fn build_prompt_mapping(
@@ -83,6 +84,7 @@ pub async fn get_upstream_prompt(
     name: &str,
     arguments: Option<serde_json::Map<String, serde_json::Value>>,
     target_server_id: Option<&str>,
+    connection_selection: Option<&crate::core::capability::ConnectionSelection>,
 ) -> anyhow::Result<rmcp::model::GetPromptResult> {
-    prompts::get_upstream_prompt(connection_pool, mapping, name, arguments, target_server_id).await
+    prompts::get_upstream_prompt(connection_pool, mapping, name, arguments, target_server_id, connection_selection).await
 }

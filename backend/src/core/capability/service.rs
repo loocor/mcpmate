@@ -61,6 +61,7 @@ impl CapabilityService {
                         server_id: server_id.clone(),
                         freshness_level: FreshnessLevel::Cached,
                         include_disabled: false,
+                        scope: crate::core::cache::CacheScope::shared_raw(),
                     };
                     let cached = match redb.get_server_data(&query).await {
                         Ok(res) => res.data.is_some(),

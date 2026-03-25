@@ -377,6 +377,7 @@ pub async fn read_upstream_resource(
     resource_mapping: &HashMap<String, ResourceMapping>,
     uri: &str,
     target_server_id: Option<&str>,
+    connection_selection: Option<&crate::core::capability::ConnectionSelection>,
 ) -> Result<ReadResourceResult> {
     tracing::debug!("Reading resource: {}", uri);
 
@@ -427,14 +428,30 @@ pub async fn read_upstream_resource(
         }
 
         if target_instance_id.is_none() {
-            pool.ensure_connected(server_id).await.context(format!(
-                "Failed to ensure connection for server '{}' (resource '{}')",
-                server_id, uri
-            ))?;
-            let iid = pool
-                .get_default_instance_id(server_id)
-                .map_err(|e| anyhow::anyhow!("Failed to get default instance for server '{}': {}", server_id, e))?;
-            target_instance_id = Some(iid);
+            if let Some(selection) = connection_selection {
+                let scoped_selection = crate::core::capability::ConnectionSelection {
+                    server_id: server_id.to_string(),
+                    affinity_key: selection.affinity_key.clone(),
+                    routing_fingerprint: selection.routing_fingerprint.clone(),
+                };
+                pool.ensure_connected_with_selection(&scoped_selection).await.context(format!(
+                    "Failed to ensure scoped connection for server '{}' (resource '{}')",
+                    server_id, uri
+                ))?;
+                let iid = pool.select_instance_id(&scoped_selection).map_err(|e| {
+                    anyhow::anyhow!("Failed to select scoped instance for server '{}': {}", server_id, e)
+                })?;
+                target_instance_id = Some(iid);
+            } else {
+                pool.ensure_connected(server_id).await.context(format!(
+                    "Failed to ensure connection for server '{}' (resource '{}')",
+                    server_id, uri
+                ))?;
+                let iid = pool
+                    .get_default_instance_id(server_id)
+                    .map_err(|e| anyhow::anyhow!("Failed to get default instance for server '{}': {}", server_id, e))?;
+                target_instance_id = Some(iid);
+            }
         }
 
         let iid = target_instance_id.expect("instance id must be set");

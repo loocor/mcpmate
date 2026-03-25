@@ -344,6 +344,7 @@ pub async fn get_upstream_prompt(
     prompt_name: &str,
     arguments: Option<serde_json::Map<String, JsonValue>>,
     target_server_id: Option<&str>,
+    connection_selection: Option<&crate::core::capability::ConnectionSelection>,
 ) -> Result<GetPromptResult> {
     tracing::debug!("Getting prompt '{}' with arguments: {:?}", prompt_name, arguments);
 
@@ -392,17 +393,36 @@ pub async fn get_upstream_prompt(
         }
 
         if target_instance_id.is_none() {
-            if let Err(e) = pool.ensure_connected(server_key).await {
-                return Err(anyhow!(
-                    "Failed to ensure connection for server '{}': {}",
-                    server_key,
-                    e
-                ));
+            if let Some(selection) = connection_selection {
+                let scoped_selection = crate::core::capability::ConnectionSelection {
+                    server_id: server_key.to_string(),
+                    affinity_key: selection.affinity_key.clone(),
+                    routing_fingerprint: selection.routing_fingerprint.clone(),
+                };
+                if let Err(e) = pool.ensure_connected_with_selection(&scoped_selection).await {
+                    return Err(anyhow!(
+                        "Failed to ensure scoped connection for server '{}': {}",
+                        server_key,
+                        e
+                    ));
+                }
+                let iid = pool
+                    .select_instance_id(&scoped_selection)
+                    .map_err(|e| anyhow!("Failed to select scoped instance for server '{}': {}", server_key, e))?;
+                target_instance_id = Some(iid);
+            } else {
+                if let Err(e) = pool.ensure_connected(server_key).await {
+                    return Err(anyhow!(
+                        "Failed to ensure connection for server '{}': {}",
+                        server_key,
+                        e
+                    ));
+                }
+                let iid = pool
+                    .get_default_instance_id(server_key)
+                    .map_err(|e| anyhow!("Failed to get default instance for server '{}': {}", server_key, e))?;
+                target_instance_id = Some(iid);
             }
-            let iid = pool
-                .get_default_instance_id(server_key)
-                .map_err(|e| anyhow!("Failed to get default instance for server '{}': {}", server_key, e))?;
-            target_instance_id = Some(iid);
         }
 
         let iid = target_instance_id.expect("instance id must be set");

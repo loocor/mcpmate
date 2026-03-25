@@ -11,7 +11,7 @@ use crate::core::cache::{
     CacheQuery, CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
     FreshnessLevel, RedbCacheManager,
 };
-use crate::core::capability::CapabilityType;
+use crate::core::capability::{CapabilityType, ConnectionSelection, RuntimeIdentity};
 use crate::core::capability::internal::{
     CapabilityFetchFailure, capability_declared, collect_capability_from_instance_peer, is_method_not_supported,
 };
@@ -26,6 +26,8 @@ pub struct ListCtx {
     pub refresh: Option<RefreshStrategy>,
     pub timeout: Option<Duration>,
     pub validation_session: Option<String>,
+    pub runtime_identity: Option<RuntimeIdentity>,
+    pub connection_selection: Option<ConnectionSelection>,
 }
 
 /// Context for capability call operations.
@@ -36,6 +38,8 @@ pub struct CallCtx {
     pub tool_name: String,
     pub timeout: Option<Duration>,
     pub arguments: Option<rmcp::model::JsonObject>,
+    pub runtime_identity: Option<RuntimeIdentity>,
+    pub connection_selection: Option<ConnectionSelection>,
 }
 
 /// Refresh strategy for list operations.
@@ -274,6 +278,7 @@ async fn list_impl(
             server_id: ctx.server_id.clone(),
             freshness_level: FreshnessLevel::Cached,
             include_disabled: false,
+            scope: crate::core::cache::CacheScope::shared_raw(),
         };
         if let Ok(result) = redb.get_server_data(&cache_query).await {
             if result.cache_hit {
@@ -337,12 +342,30 @@ async fn list_impl(
         let mut peer_opt = None;
         let mut instance_id_opt = None;
         let mut instance_source = OperationSource::Runtime;
+        if let Some(selection) = ctx.connection_selection.as_ref() {
+            if let Ok(Some(selected_instance_id)) = pool_guard.select_ready_instance_id(selection) {
+                if let Some(instances) = snap.get(&ctx.server_id) {
+                    if let Some((iid, _status, _res, _prm, peer)) = instances.iter().find(
+                        |(candidate_id, st, _, _, p)| {
+                            **candidate_id == selected_instance_id
+                                && matches!(st, crate::core::foundation::types::ConnectionStatus::Ready)
+                                && p.is_some()
+                        },
+                    ) {
+                        peer_opt = peer.clone();
+                        instance_id_opt = Some(iid.clone());
+                    }
+                }
+            }
+        }
         if let Some(instances) = snap.get(&ctx.server_id) {
-            if let Some((iid, _status, _res, _prm, peer)) = instances.iter().find(|(_, st, _, _, p)| {
-                matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
-            }) {
-                peer_opt = peer.clone();
-                instance_id_opt = Some(iid.clone());
+            if peer_opt.is_none() {
+                if let Some((iid, _status, _res, _prm, peer)) = instances.iter().find(|(_, st, _, _, p)| {
+                    matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
+                }) {
+                    peer_opt = peer.clone();
+                    instance_id_opt = Some(iid.clone());
+                }
             }
         }
         if peer_opt.is_none() {
@@ -590,6 +613,21 @@ async fn call_tool_impl(
     let fetch_peer = || async {
         let pool_guard = pool.lock().await;
         let snap = pool_guard.get_snapshot();
+        if let Some(selection) = ctx.connection_selection.as_ref() {
+            if let Ok(Some(selected_instance_id)) = pool_guard.select_ready_instance_id(selection) {
+                if let Some(instances) = snap.get(&ctx.server_id) {
+                    if let Some((instance_id, status, _res, _prm, peer)) = instances.iter().find(
+                        |(candidate_id, st, _, _, p)| {
+                            **candidate_id == selected_instance_id
+                                && matches!(st, crate::core::foundation::types::ConnectionStatus::Ready)
+                                && p.is_some()
+                        },
+                    ) {
+                        return (peer.clone(), Some(instance_id.clone()), Some(status.clone()));
+                    }
+                }
+            }
+        }
         if let Some(instances) = snap.get(&ctx.server_id) {
             if let Some((instance_id, status, _res, _prm, peer)) = instances.iter().find(|(_, st, _, _, p)| {
                 matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
@@ -606,7 +644,11 @@ async fn call_tool_impl(
     if peer_info.0.is_none() {
         let t_connect_begin = std::time::Instant::now();
         let mut pool_guard = pool.lock().await;
-        pool_guard.ensure_connected(&ctx.server_id).await?;
+        if let Some(selection) = ctx.connection_selection.as_ref() {
+            pool_guard.ensure_connected_with_selection(selection).await?;
+        } else {
+            pool_guard.ensure_connected(&ctx.server_id).await?;
+        }
         drop(pool_guard);
         peer_info = fetch_peer().await;
         tracing::debug!(
