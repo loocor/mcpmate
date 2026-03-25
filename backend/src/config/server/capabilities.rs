@@ -513,6 +513,37 @@ pub async fn store_redb_snapshot(
         .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
+/// Store snapshot in REDB with a specific cache scope (for client-filtered entries).
+pub async fn store_redb_snapshot_with_scope(
+    redb: &RedbCacheManager,
+    server_id: &str,
+    server_name: &str,
+    tools: Vec<CachedToolInfo>,
+    resources: Vec<CachedResourceInfo>,
+    prompts: Vec<CachedPromptInfo>,
+    resource_templates: Vec<CachedResourceTemplateInfo>,
+    protocol_version: Option<&str>,
+    scope: crate::core::cache::CacheScope,
+) -> Result<()> {
+    let protocol_version = protocol_version.unwrap_or("unknown").to_string();
+    let server_data = CachedServerData {
+        server_id: server_id.to_string(),
+        server_name: server_name.to_string(),
+        server_version: None,
+        protocol_version,
+        tools,
+        resources,
+        prompts,
+        resource_templates,
+        cached_at: chrono::Utc::now(),
+        fingerprint: format!("filtered:{}:{}", server_id, chrono::Utc::now().timestamp()),
+        scope,
+    };
+    redb.store_server_data(&server_data)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
 /// Dual-write: REDB full + SQLite shadow tables + server_tools batch upsert
 pub async fn store_dual_write(
     pool: &Pool<Sqlite>,

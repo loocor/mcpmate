@@ -28,6 +28,23 @@ impl CacheScope {
         Self::SharedRaw
     }
 
+    /// Create a client-filtered cache scope for per-client isolation.
+    ///
+    /// # Arguments
+    /// * `selection_key` - Cache scope key from ConnectionSelection::cache_scope_key()
+    /// * `rules_fingerprint` - Fingerprint of the client's rule configuration
+    pub fn client_filtered(selection_key: String, rules_fingerprint: String) -> Self {
+        Self::ClientFiltered {
+            selection_key,
+            rules_fingerprint,
+        }
+    }
+
+    /// Returns true if this scope is client-filtered (not shared raw).
+    pub fn is_client_filtered(&self) -> bool {
+        matches!(self, Self::ClientFiltered { .. })
+    }
+
     pub fn key_suffix(&self) -> String {
         match self {
             CacheScope::SharedRaw => "raw".to_string(),

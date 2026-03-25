@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 
 use crate::clients::models::{CapabilitySource, ClientCapabilityConfig};
@@ -10,6 +12,30 @@ use crate::config::profile::basic::get_active_profile;
 use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
 use crate::core::profile::ProfileService;
 use crate::core::proxy::server::ClientContext;
+
+static VISIBILITY_SNAPSHOT_CACHE: Lazy<DashMap<String, CachedSnapshot>> = Lazy::new(DashMap::new);
+
+pub fn invalidate_visibility_cache(client_id: &str) {
+    VISIBILITY_SNAPSHOT_CACHE.remove(client_id);
+    tracing::debug!(client_id = %client_id, "Invalidated visibility snapshot cache");
+}
+
+pub fn invalidate_all_visibility_caches() {
+    VISIBILITY_SNAPSHOT_CACHE.clear();
+    tracing::debug!("Invalidated all visibility snapshot caches");
+}
+
+/// Compute a deterministic fingerprint from a capability config.
+/// This is used for cache isolation - different configs produce different fingerprints.
+pub fn compute_capability_fingerprint(config: &ClientCapabilityConfig) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(config.capability_source.as_str());
+    hasher.update([0]);
+    hasher.update(config.selected_profile_ids.join("\u{1f}"));
+    hasher.update([0]);
+    hasher.update(config.custom_profile_id.as_deref().unwrap_or_default());
+    format!("{:x}", hasher.finalize())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapabilityKind {
@@ -50,6 +76,12 @@ struct ClientCapabilityRow {
     custom_profile_id: Option<String>,
 }
 
+struct CachedSnapshot {
+    snapshot: VisibilitySnapshot,
+    #[expect(dead_code)] // Reserved for future TTL-based cache invalidation
+    cached_at: std::time::Instant,
+}
+
 pub struct ProfileVisibilityService {
     db: Option<Arc<Database>>,
     _profile_service: Option<Arc<ProfileService>>,
@@ -76,6 +108,25 @@ impl ProfileVisibilityService {
             .context("Profile visibility requires database access")?;
 
         let capability_config = self.load_client_capability_config(client_id).await?;
+        let rules_fingerprint_pre = self.compute_config_fingerprint(&capability_config).await?;
+
+        if let Some(cached) = VISIBILITY_SNAPSHOT_CACHE.get(client_id) {
+            if cached.snapshot.rules_fingerprint == rules_fingerprint_pre {
+                tracing::debug!(
+                    client_id = %client_id,
+                    fingerprint = %rules_fingerprint_pre,
+                    "Visibility snapshot cache hit"
+                );
+                return Ok(cached.snapshot.clone());
+            }
+            tracing::debug!(
+                client_id = %client_id,
+                old_fingerprint = %cached.snapshot.rules_fingerprint,
+                new_fingerprint = %rules_fingerprint_pre,
+                "Visibility snapshot cache miss (fingerprint changed)"
+            );
+        }
+
         let profile_ids = self
             .resolve_profile_ids(&db.pool, &capability_config)
             .await?;
@@ -113,7 +164,7 @@ impl ProfileVisibilityService {
             ],
         );
 
-        Ok(VisibilitySnapshot {
+        let snapshot = VisibilitySnapshot {
             client_id: client_id.to_string(),
             rules_fingerprint,
             profile_ids,
@@ -127,7 +178,29 @@ impl ProfileVisibilityService {
             has_resource_policy,
             has_resource_template_policy,
             has_prompt_policy,
-        })
+        };
+
+        VISIBILITY_SNAPSHOT_CACHE.insert(
+            client_id.to_string(),
+            CachedSnapshot {
+                snapshot: snapshot.clone(),
+                cached_at: std::time::Instant::now(),
+            },
+        );
+        tracing::debug!(
+            client_id = %client_id,
+            fingerprint = %snapshot.rules_fingerprint,
+            "Cached visibility snapshot"
+        );
+
+        Ok(snapshot)
+    }
+
+    async fn compute_config_fingerprint(
+        &self,
+        config: &ClientCapabilityConfig,
+    ) -> Result<String> {
+        Ok(compute_capability_fingerprint(config))
     }
 
     pub async fn resolve_capability_config(

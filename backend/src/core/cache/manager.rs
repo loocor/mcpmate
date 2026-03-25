@@ -459,6 +459,134 @@ impl RedbCacheManager {
         Ok(())
     }
 
+    /// Invalidate all client-filtered cache entries matching a rules_fingerprint.
+    ///
+    /// Called when a client's capability configuration changes. All filtered cache entries
+    /// with the matching fingerprint are removed to ensure fresh data on next request.
+    pub async fn invalidate_by_rules_fingerprint(
+        &self,
+        rules_fingerprint: &str,
+    ) -> Result<usize, CacheError> {
+        use super::schema::SERVERS_TABLE;
+
+        let fingerprint_marker = format!(":{}", rules_fingerprint);
+        let mut invalidated_count: usize = 0;
+
+        let keys_to_remove: Vec<String> = {
+            let read_txn = self.db.begin_read()?;
+            let servers_table = read_txn.open_table(SERVERS_TABLE)?;
+
+            servers_table
+                .iter()?
+                .filter_map(|item| {
+                    let (key, _) = item.ok()?;
+                    let key_str = key.value().to_string();
+                    // Key format: "{server_id}#production#filtered:{selection_key}:{rules_fingerprint}"
+                    if key_str.contains(&fingerprint_marker) {
+                        Some(key_str)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        {
+            let mut memory_cache = self.memory_cache.write().await;
+            for key in &keys_to_remove {
+                memory_cache.pop(key);
+            }
+        }
+
+        if !keys_to_remove.is_empty() {
+            let write_txn = self.db.begin_write()?;
+            {
+                let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
+                for key in &keys_to_remove {
+                    servers_table.remove(key.as_str())?;
+                    invalidated_count += 1;
+                }
+            }
+            write_txn.commit()?;
+        }
+
+        if invalidated_count > 0 {
+            let mut m = self.metrics.write().await;
+            m.cache_invalidations += invalidated_count as u64;
+            info!(
+                invalidated_count = invalidated_count,
+                rules_fingerprint = %rules_fingerprint,
+                "Invalidated client-filtered cache entries by rules_fingerprint"
+            );
+        }
+
+        Ok(invalidated_count)
+    }
+
+    /// Invalidate all client-filtered cache entries matching a selection_key prefix.
+    ///
+    /// Called when a client's connection context changes (e.g., session affinity).
+    /// All filtered cache entries with the matching selection_key are removed.
+    pub async fn invalidate_by_selection_key(
+        &self,
+        selection_key: &str,
+    ) -> Result<usize, CacheError> {
+        use super::schema::SERVERS_TABLE;
+
+        let selection_marker = format!("filtered:{}:", selection_key);
+        let mut invalidated_count: usize = 0;
+
+        let keys_to_remove: Vec<String> = {
+            let read_txn = self.db.begin_read()?;
+            let servers_table = read_txn.open_table(SERVERS_TABLE)?;
+
+            servers_table
+                .iter()?
+                .filter_map(|item| {
+                    let (key, _) = item.ok()?;
+                    let key_str = key.value().to_string();
+                    // Key format: "{server_id}#production#filtered:{selection_key}:{rules_fingerprint}"
+                    if key_str.contains(&selection_marker) {
+                        Some(key_str)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        {
+            let mut memory_cache = self.memory_cache.write().await;
+            for key in &keys_to_remove {
+                memory_cache.pop(key);
+            }
+        }
+
+        if !keys_to_remove.is_empty() {
+            let write_txn = self.db.begin_write()?;
+            {
+                let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
+                for key in &keys_to_remove {
+                    servers_table.remove(key.as_str())?;
+                    invalidated_count += 1;
+                }
+            }
+            write_txn.commit()?;
+        }
+
+        if invalidated_count > 0 {
+            let mut m = self.metrics.write().await;
+            m.cache_invalidations += invalidated_count as u64;
+            info!(
+                invalidated_count = invalidated_count,
+                selection_key = %selection_key,
+                "Invalidated client-filtered cache entries by selection_key"
+            );
+        }
+
+        Ok(invalidated_count)
+    }
+
     /// Get cache statistics
     pub async fn get_stats(&self) -> CacheStats {
         let statistics = CacheStatistics::new(&self.db, self.metrics.clone());

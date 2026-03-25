@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::config::database::Database;
 use crate::core::cache::{
-    CacheQuery, CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
+    CacheQuery, CacheScope, CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
     FreshnessLevel, RedbCacheManager,
 };
 use crate::core::capability::{CapabilityType, ConnectionSelection, RuntimeIdentity};
@@ -17,6 +17,23 @@ use crate::core::capability::internal::{
 };
 use crate::core::capability::naming::{NamingKind, generate_unique_name};
 use crate::core::pool::{CapSyncFlags, FailureKind, UpstreamConnectionPool};
+
+/// Derive the appropriate cache scope from runtime identity and connection selection.
+///
+/// When both are present, returns `CacheScope::ClientFiltered` for per-client cache isolation.
+/// Otherwise, falls back to `CacheScope::SharedRaw` for shared raw capability snapshots.
+fn derive_cache_scope(
+    runtime_identity: Option<&RuntimeIdentity>,
+    connection_selection: Option<&ConnectionSelection>,
+) -> CacheScope {
+    match (runtime_identity, connection_selection) {
+        (Some(identity), Some(selection)) => CacheScope::client_filtered(
+            selection.cache_scope_key(),
+            identity.rules_fingerprint.clone(),
+        ),
+        _ => CacheScope::shared_raw(),
+    }
+}
 
 /// Context for capability listing operations.
 #[derive(Clone, Debug)]
@@ -272,13 +289,15 @@ async fn list_impl(
 ) -> Result<ListResult> {
     let start = std::time::Instant::now();
     let timeout = ctx.timeout.unwrap_or_else(|| Duration::from_secs(10));
+    let derived_scope = derive_cache_scope(ctx.runtime_identity.as_ref(), ctx.connection_selection.as_ref());
+    let is_client_filtered = derived_scope.is_client_filtered();
 
     if !matches!(ctx.refresh, Some(RefreshStrategy::Force)) {
         let cache_query = CacheQuery {
             server_id: ctx.server_id.clone(),
             freshness_level: FreshnessLevel::Cached,
             include_disabled: false,
-            scope: crate::core::cache::CacheScope::shared_raw(),
+            scope: derived_scope.clone(),
         };
         if let Ok(result) = redb.get_server_data(&cache_query).await {
             if result.cache_hit {
@@ -326,6 +345,39 @@ async fn list_impl(
                                 had_peer: false,
                             },
                         });
+                    }
+                }
+            }
+        }
+
+        // SharedRaw fallback for client-filtered cache miss
+        if is_client_filtered {
+            let shared_raw_query = CacheQuery {
+                server_id: ctx.server_id.clone(),
+                freshness_level: FreshnessLevel::Cached,
+                include_disabled: false,
+                scope: CacheScope::shared_raw(),
+            };
+            if let Ok(result) = redb.get_server_data(&shared_raw_query).await {
+                if result.cache_hit {
+                    if let Some(data) = result.data {
+                        let items = cached_items_from_data(ctx.capability, data);
+                        if !items.is_empty() {
+                            tracing::debug!(
+                                server_id = %ctx.server_id,
+                                capability = ?ctx.capability,
+                                "Client-filtered cache miss, fell back to SharedRaw cache"
+                            );
+                            return Ok(ListResult {
+                                items,
+                                meta: Meta {
+                                    cache_hit: true,
+                                    source: "cache_shared_raw_fallback".to_string(),
+                                    duration_ms: start.elapsed().as_millis() as u64,
+                                    had_peer: false,
+                                },
+                            });
+                        }
                     }
                 }
             }
@@ -452,6 +504,39 @@ async fn list_with_instance(
         tokio::spawn(async move {
             let _ = UpstreamConnectionPool::sync_capabilities(&db, &server_id, &instance_id, &peer, flags, None).await;
         });
+    }
+
+    let cache_scope = derive_cache_scope(ctx.runtime_identity.as_ref(), ctx.connection_selection.as_ref());
+    if cache_scope.is_client_filtered() && !items.is_empty() {
+        if let Ok(cache_manager) = RedbCacheManager::global() {
+            let server_id = server_id.clone();
+            let server_name = server_name.clone();
+            let scope = cache_scope;
+            let capability = ctx.capability;
+            let cached_items = convert_items_to_cached(&items, capability);
+            tokio::spawn(async move {
+                let protocol_version = "latest".to_string();
+                if let Err(e) = crate::config::server::capabilities::store_redb_snapshot_with_scope(
+                    &cache_manager,
+                    &server_id,
+                    &server_name,
+                    cached_items.tools,
+                    cached_items.resources,
+                    cached_items.prompts,
+                    cached_items.resource_templates,
+                    Some(&protocol_version),
+                    scope,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        server_id = %server_id,
+                        error = %e,
+                        "Failed to store client-filtered cache entry"
+                    );
+                }
+            });
+        }
     }
 
     Ok((
@@ -840,6 +925,103 @@ fn convert_cached_tool(
     Some(tool)
 }
 
+struct CachedItems {
+    tools: Vec<CachedToolInfo>,
+    resources: Vec<CachedResourceInfo>,
+    prompts: Vec<CachedPromptInfo>,
+    resource_templates: Vec<CachedResourceTemplateInfo>,
+}
+
+fn convert_items_to_cached(items: &CapabilityItems, _capability: CapabilityType) -> CachedItems {
+    use chrono::Utc;
+
+    let now = Utc::now();
+    let mut result = CachedItems {
+        tools: Vec::new(),
+        resources: Vec::new(),
+        prompts: Vec::new(),
+        resource_templates: Vec::new(),
+    };
+
+    match items {
+        CapabilityItems::Tools(tools) => {
+            result.tools = tools
+                .iter()
+                .map(|tool| {
+                    let schema = tool.schema_as_json_value();
+                    let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
+                    let output_schema_json = tool.output_schema.as_ref().map(|s| {
+                        serde_json::to_string(&serde_json::Value::Object((**s).clone()))
+                            .unwrap_or_else(|_| "{}".to_string())
+                    });
+                    CachedToolInfo {
+                        name: tool.name.to_string(),
+                        description: tool.description.clone().map(|d| d.into_owned()),
+                        input_schema_json,
+                        output_schema_json,
+                        unique_name: None,
+                        icons: tool.icons.clone(),
+                        enabled: true,
+                        cached_at: now,
+                    }
+                })
+                .collect();
+        }
+        CapabilityItems::Prompts(prompts) => {
+            result.prompts = prompts
+                .iter()
+                .map(|prompt| CachedPromptInfo {
+                    name: prompt.name.to_string(),
+                    description: prompt.description.clone(),
+                    arguments: prompt
+                        .arguments
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|arg| crate::core::cache::PromptArgument {
+                            name: arg.name,
+                            description: arg.description,
+                            required: arg.required.unwrap_or(false),
+                        })
+                        .collect(),
+                    icons: prompt.icons.clone(),
+                    enabled: true,
+                    cached_at: now,
+                })
+                .collect();
+        }
+        CapabilityItems::Resources(resources) => {
+            result.resources = resources
+                .iter()
+                .map(|resource| CachedResourceInfo {
+                    uri: resource.uri.clone(),
+                    name: Some(resource.name.clone()),
+                    description: resource.description.clone(),
+                    mime_type: resource.mime_type.clone(),
+                    icons: resource.icons.clone(),
+                    enabled: true,
+                    cached_at: now,
+                })
+                .collect();
+        }
+        CapabilityItems::ResourceTemplates(templates) => {
+            result.resource_templates = templates
+                .iter()
+                .map(|template| CachedResourceTemplateInfo {
+                    uri_template: template.uri_template.clone(),
+                    name: Some(template.name.clone()),
+                    description: template.description.clone(),
+                    mime_type: template.mime_type.clone(),
+                    enabled: true,
+                    cached_at: now,
+                })
+                .collect();
+        }
+    }
+
+    result
+}
+
 async fn ensure_tool_unique_names(
     database: &Arc<Database>,
     server_id: &str,
@@ -850,4 +1032,193 @@ async fn ensure_tool_unique_names(
         .await
         .context("Failed to assign unique tool names")?;
     Ok(tools)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::cache::{CacheScope, CachedServerData, CachedToolInfo};
+    use chrono::Utc;
+
+    fn make_test_cached_data(server_id: &str, scope: CacheScope, tool_count: usize) -> CachedServerData {
+        let now = Utc::now();
+        CachedServerData {
+            server_id: server_id.to_string(),
+            server_name: "test-server".to_string(),
+            server_version: Some("1.0.0".to_string()),
+            protocol_version: "2024-11-05".to_string(),
+            tools: (0..tool_count)
+                .map(|i| CachedToolInfo {
+                    name: format!("tool_{}", i),
+                    description: Some(format!("Test tool {}", i)),
+                    input_schema_json: r#"{"type":"object"}"#.to_string(),
+                    output_schema_json: None,
+                    unique_name: None,
+                    icons: None,
+                    enabled: true,
+                    cached_at: now,
+                })
+                .collect(),
+            resources: Vec::new(),
+            prompts: Vec::new(),
+            resource_templates: Vec::new(),
+            cached_at: now,
+            fingerprint: "test-fingerprint".to_string(),
+            scope,
+        }
+    }
+
+    #[test]
+    fn derive_cache_scope_returns_shared_raw_when_no_identity_or_selection() {
+        let scope = derive_cache_scope(None, None);
+        assert!(!scope.is_client_filtered());
+        assert_eq!(scope.key_suffix(), "raw");
+    }
+
+    #[test]
+    fn derive_cache_scope_returns_client_filtered_when_both_present() {
+        use crate::core::capability::{AffinityKey, ConnectionSelection, RuntimeIdentity};
+
+        let identity = RuntimeIdentity {
+            client_id: "test-client".to_string(),
+            profile_id: None,
+            rules_fingerprint: "fp-123".to_string(),
+        };
+        let selection = ConnectionSelection {
+            server_id: "srv-1".to_string(),
+            affinity_key: AffinityKey::PerSession("sess-abc".to_string()),
+            routing_fingerprint: Some("fp-456".to_string()),
+        };
+
+        let scope = derive_cache_scope(Some(&identity), Some(&selection));
+        assert!(scope.is_client_filtered());
+    }
+
+    #[test]
+    fn derive_cache_scope_returns_shared_raw_when_only_identity() {
+        use crate::core::capability::RuntimeIdentity;
+
+        let identity = RuntimeIdentity {
+            client_id: "test-client".to_string(),
+            profile_id: None,
+            rules_fingerprint: "fp-123".to_string(),
+        };
+
+        let scope = derive_cache_scope(Some(&identity), None);
+        assert!(!scope.is_client_filtered());
+    }
+
+    #[test]
+    fn derive_cache_scope_returns_shared_raw_when_only_selection() {
+        use crate::core::capability::{AffinityKey, ConnectionSelection};
+
+        let selection = ConnectionSelection {
+            server_id: "srv-1".to_string(),
+            affinity_key: AffinityKey::PerSession("sess-abc".to_string()),
+            routing_fingerprint: Some("fp-456".to_string()),
+        };
+
+        let scope = derive_cache_scope(None, Some(&selection));
+        assert!(!scope.is_client_filtered());
+    }
+
+    #[test]
+    fn cached_items_from_data_converts_tools_correctly() {
+        let data = make_test_cached_data("srv-1", CacheScope::shared_raw(), 3);
+        let items = cached_items_from_data(CapabilityType::Tools, data);
+
+        match items {
+            CapabilityItems::Tools(tools) => {
+                assert_eq!(tools.len(), 3);
+                // Tools get unique names via generate_unique_name when unique_name is None
+                assert!(tools[0].name.as_ref().contains("tool_0"));
+            }
+            _ => panic!("Expected Tools variant"),
+        }
+    }
+
+    #[test]
+    fn cached_items_from_data_converts_prompts_correctly() {
+        let mut data = make_test_cached_data("srv-1", CacheScope::shared_raw(), 0);
+        data.prompts = vec![crate::core::cache::CachedPromptInfo {
+            name: "test_prompt".to_string(),
+            description: Some("Test prompt".to_string()),
+            arguments: Vec::new(),
+            icons: None,
+            enabled: true,
+            cached_at: Utc::now(),
+        }];
+
+        let items = cached_items_from_data(CapabilityType::Prompts, data);
+
+        match items {
+            CapabilityItems::Prompts(prompts) => {
+                assert_eq!(prompts.len(), 1);
+                assert_eq!(&prompts[0].name, "test_prompt");
+            }
+            _ => panic!("Expected Prompts variant"),
+        }
+    }
+
+    #[test]
+    fn cached_items_from_data_converts_resources_correctly() {
+        let mut data = make_test_cached_data("srv-1", CacheScope::shared_raw(), 0);
+        data.resources = vec![crate::core::cache::CachedResourceInfo {
+            uri: "file:///test/resource".to_string(),
+            name: Some("test_resource".to_string()),
+            description: Some("Test resource".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            icons: None,
+            enabled: true,
+            cached_at: Utc::now(),
+        }];
+
+        let items = cached_items_from_data(CapabilityType::Resources, data);
+
+        match items {
+            CapabilityItems::Resources(resources) => {
+                assert_eq!(resources.len(), 1);
+                assert_eq!(resources[0].uri, "file:///test/resource");
+            }
+            _ => panic!("Expected Resources variant"),
+        }
+    }
+
+    #[test]
+    fn capability_items_empty_returns_correct_variant() {
+        assert!(matches!(
+            CapabilityItems::empty(CapabilityType::Tools),
+            CapabilityItems::Tools(v) if v.is_empty()
+        ));
+        assert!(matches!(
+            CapabilityItems::empty(CapabilityType::Prompts),
+            CapabilityItems::Prompts(v) if v.is_empty()
+        ));
+        assert!(matches!(
+            CapabilityItems::empty(CapabilityType::Resources),
+            CapabilityItems::Resources(v) if v.is_empty()
+        ));
+        assert!(matches!(
+            CapabilityItems::empty(CapabilityType::ResourceTemplates),
+            CapabilityItems::ResourceTemplates(v) if v.is_empty()
+        ));
+    }
+
+    #[test]
+    fn capability_items_is_empty_works_correctly() {
+        assert!(CapabilityItems::empty(CapabilityType::Tools).is_empty());
+        let schema: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+        let tool = rmcp::model::Tool::new(
+            std::borrow::Cow::Borrowed("test"),
+            std::borrow::Cow::Borrowed("desc"),
+            std::sync::Arc::new(schema),
+        );
+        assert!(!CapabilityItems::Tools(vec![tool]).is_empty());
+    }
+
+    #[test]
+    fn cache_scope_is_client_filtered_returns_correct_value() {
+        assert!(!CacheScope::shared_raw().is_client_filtered());
+        assert!(CacheScope::client_filtered("key".to_string(), "fp".to_string()).is_client_filtered());
+    }
 }
