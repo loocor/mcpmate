@@ -1,21 +1,58 @@
-//! Profile visibility service
-//!
-//! Centralizes profile-driven capability visibility (tools/resources/prompts)
-//! for MCP list responses. Uses ProfileService cache when available and falls
-//! back to lightweight SQL queries. Returns allowlists in unique-name space
-//! to match proxy aggregation output.
-
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
+use sha2::{Digest, Sha256};
 
+use crate::clients::models::{CapabilitySource, ClientCapabilityConfig};
 use crate::config::database::Database;
+use crate::config::profile::basic::get_active_profile;
+use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
 use crate::core::profile::ProfileService;
+use crate::core::proxy::server::ClientContext;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilityKind {
+    Tools,
+    Resources,
+    ResourceTemplates,
+    Prompts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisibilityQuery {
+    pub client_id: String,
+    pub rules_fingerprint: String,
+    pub capability_kind: CapabilityKind,
+}
+
+#[derive(Debug, Clone)]
+pub struct VisibilitySnapshot {
+    pub client_id: String,
+    pub rules_fingerprint: String,
+    pub profile_ids: Vec<String>,
+    pub server_ids: Vec<String>,
+    pub allowed_tools: HashSet<String>,
+    pub allowed_resources: HashSet<String>,
+    pub allowed_resource_templates: HashSet<String>,
+    pub allowed_prompts: HashSet<String>,
+    allowed_resource_prefixes: HashSet<String>,
+    has_tool_policy: bool,
+    has_resource_policy: bool,
+    has_resource_template_policy: bool,
+    has_prompt_policy: bool,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ClientCapabilityRow {
+    capability_source: Option<String>,
+    selected_profile_ids: Option<String>,
+    custom_profile_id: Option<String>,
+}
 
 pub struct ProfileVisibilityService {
-    db: Option<Arc<Database>>,                    // fallback when merge cache unavailable
-    profile_service: Option<Arc<ProfileService>>, // preferred source (merged caches)
+    db: Option<Arc<Database>>,
+    _profile_service: Option<Arc<ProfileService>>,
 }
 
 impl ProfileVisibilityService {
@@ -23,291 +60,1190 @@ impl ProfileVisibilityService {
         db: Option<Arc<Database>>,
         profile_service: Option<Arc<ProfileService>>,
     ) -> Self {
-        Self { db, profile_service }
+        Self {
+            db,
+            _profile_service: profile_service,
+        }
     }
 
-    /// Return Some(allowed) if any profile rows exist for tools; otherwise None (no filtering).
-    async fn allowed_tools_set(&self) -> Result<Option<HashSet<String>>> {
-        // Prefer merged cache
-        if let Some(ps) = &self.profile_service {
-            if let Some(set) = ps.allowed_tool_unique_set().await {
-                return Ok(Some(set));
-            }
-        }
-        let Some(db) = &self.db else { return Ok(None) };
-
-        // Determine if any profile_tool rows exist under active profiles
-        let any_count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(1)
-            FROM profile_tool cst
-            JOIN profile cs ON cst.profile_id = cs.id
-            WHERE cs.is_active = 1
-            "#,
-        )
-        .fetch_one(&db.pool)
-        .await
-        .unwrap_or(0);
-        if any_count == 0 {
-            return Ok(None);
-        }
-
-        // Build allowlist using unique_name
-        let sql = crate::config::profile::tool::build_enabled_tools_query(None);
-        let rows: Vec<(String, String, String, String)> =
-            sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
-        let mut set = HashSet::new();
-        for (_unique_name, _server_name, _tool_name, _server_id) in rows {
-            // build_enabled_tools_query selects: unique_name, server_name, tool_name, server_id
-            set.insert(_unique_name);
-        }
-        Ok(Some(set))
-    }
-
-    /// Return Some(allowed) if any profile_resource rows exist; otherwise None (no filtering).
-    async fn allowed_resources_set(&self) -> Result<Option<HashSet<String>>> {
-        // Prefer merged cache
-        if let Some(ps) = &self.profile_service {
-            if let Some(set) = ps.allowed_resource_unique_set().await {
-                return Ok(Some(set));
-            }
-        }
-        let Some(db) = &self.db else { return Ok(None) };
-        let any_count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(1)
-            FROM profile_resource csr
-            JOIN profile cs ON csr.profile_id = cs.id
-            WHERE cs.is_active = 1
-            "#,
-        )
-        .fetch_one(&db.pool)
-        .await
-        .unwrap_or(0);
-        if any_count == 0 {
-            return Ok(None);
-        }
-
-        let sql = crate::config::profile::resource::build_enabled_resources_query(None);
-        // Selected columns: server_id, server_name(original), resource_uri
-        let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
-        let mut set = HashSet::new();
-        for (_server_id, server_name_original, upstream_uri) in rows {
-            let unique = crate::core::capability::naming::generate_unique_name(
-                crate::core::capability::naming::NamingKind::Resource,
-                &server_name_original,
-                &upstream_uri,
-            );
-            set.insert(unique);
-        }
-        Ok(Some(set))
-    }
-
-    /// Return Some(allowed) for resource templates (unique template names) if any rows exist; otherwise None
-    async fn allowed_resource_templates_unique_set(&self) -> Result<Option<HashSet<String>>> {
-        let Some(db) = &self.db else { return Ok(None) };
-        let any_count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(1)
-            FROM profile_resource_template prt
-            JOIN profile cs ON prt.profile_id = cs.id
-            WHERE cs.is_active = 1
-            "#,
-        )
-        .fetch_one(&db.pool)
-        .await
-        .unwrap_or(0);
-        if any_count == 0 {
-            return Ok(None);
-        }
-
-        let sql = crate::config::profile::resource_template::build_enabled_resource_templates_query(None);
-        let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
-        let mut set = HashSet::new();
-        for (_server_id, server_name_original, uri_template) in rows {
-            // Build template unique-name in template namespace: server_norm_/uri_template
-            let unique = crate::core::capability::naming::generate_unique_name(
-                crate::core::capability::naming::NamingKind::ResourceTemplate,
-                &server_name_original,
-                &uri_template,
-            );
-            set.insert(unique);
-        }
-        Ok(Some(set))
-    }
-
-    /// Return Some(allowed) resource unique-name prefixes derived from enabled templates: server_norm:/prefix
-    async fn allowed_resource_prefixes_from_templates(&self) -> Result<Option<HashSet<String>>> {
-        let Some(db) = &self.db else { return Ok(None) };
-        let any_count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(1)
-            FROM profile_resource_template prt
-            JOIN profile cs ON prt.profile_id = cs.id
-            WHERE cs.is_active = 1
-            "#,
-        )
-        .fetch_one(&db.pool)
-        .await
-        .unwrap_or(0);
-        if any_count == 0 {
-            return Ok(None);
-        }
-
-        let sql = crate::config::profile::resource_template::build_enabled_resource_templates_query(None);
-        let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
-        let mut set = HashSet::new();
-        for (_server_id, server_name_original, uri_template) in rows {
-            let prefix = crate::config::profile::resource_template::template_prefix(&uri_template).to_string();
-            // Build resource unique-name prefix: server_norm:/prefix
-            let unique_prefix = crate::core::capability::naming::generate_unique_name(
-                crate::core::capability::naming::NamingKind::Resource,
-                &server_name_original,
-                &prefix,
-            );
-            set.insert(unique_prefix);
-        }
-        Ok(Some(set))
-    }
-
-    /// Return Some(allowed) if any profile_prompt rows exist; otherwise None (no filtering).
-    async fn allowed_prompts_set(&self) -> Result<Option<HashSet<String>>> {
-        // Prefer merged cache
-        if let Some(ps) = &self.profile_service {
-            if let Some(set) = ps.allowed_prompt_unique_set().await {
-                return Ok(Some(set));
-            }
-        }
-        let Some(db) = &self.db else { return Ok(None) };
-        let any_count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(1)
-            FROM profile_prompt csp
-            JOIN profile cs ON csp.profile_id = cs.id
-            WHERE cs.is_active = 1
-            "#,
-        )
-        .fetch_one(&db.pool)
-        .await
-        .unwrap_or(0);
-        if any_count == 0 {
-            return Ok(None);
-        }
-
-        let sql = crate::config::profile::prompt::build_enabled_prompts_query(None);
-        // Selected columns: server_id, server_name(original), prompt_name
-        let rows: Vec<(String, String, String)> = sqlx::query_as(&sql).fetch_all(&db.pool).await.unwrap_or_default();
-        let mut set = HashSet::new();
-        for (_server_id, server_name_original, upstream_name) in rows {
-            let unique = crate::core::capability::naming::generate_unique_name(
-                crate::core::capability::naming::NamingKind::Prompt,
-                &server_name_original,
-                &upstream_name,
-            );
-            set.insert(unique);
-        }
-        Ok(Some(set))
-    }
-
-    pub async fn filter_tools(
+    pub async fn resolve_snapshot(
         &self,
+        client_id: &str,
+    ) -> Result<VisibilitySnapshot> {
+        let db = self
+            .db
+            .as_ref()
+            .context("Profile visibility requires database access")?;
+
+        let capability_config = self.load_client_capability_config(client_id).await?;
+        let profile_ids = self
+            .resolve_profile_ids(&db.pool, &capability_config)
+            .await?;
+        let server_ids = self
+            .resolve_server_ids(&db.pool, capability_config.capability_source, &profile_ids)
+            .await?;
+
+        let (allowed_tools, has_tool_policy) = self
+            .resolve_allowed_tools(&db.pool, &server_ids, &profile_ids)
+            .await?;
+        let (allowed_resources, has_resource_policy) = self
+            .resolve_allowed_resources(&db.pool, &server_ids, &profile_ids)
+            .await?;
+        let (allowed_resource_templates, allowed_resource_prefixes, has_resource_template_policy) = self
+            .resolve_allowed_resource_templates(&db.pool, &server_ids, &profile_ids)
+            .await?;
+        let (allowed_prompts, has_prompt_policy) = self
+            .resolve_allowed_prompts(&db.pool, &server_ids, &profile_ids)
+            .await?;
+
+        let rules_fingerprint = compute_rules_fingerprint(
+            &capability_config,
+            &profile_ids,
+            &server_ids,
+            &allowed_tools,
+            &allowed_resources,
+            &allowed_resource_templates,
+            &allowed_resource_prefixes,
+            &allowed_prompts,
+            [
+                has_tool_policy,
+                has_resource_policy,
+                has_resource_template_policy,
+                has_prompt_policy,
+            ],
+        );
+
+        Ok(VisibilitySnapshot {
+            client_id: client_id.to_string(),
+            rules_fingerprint,
+            profile_ids,
+            server_ids,
+            allowed_tools,
+            allowed_resources,
+            allowed_resource_templates,
+            allowed_prompts,
+            allowed_resource_prefixes,
+            has_tool_policy,
+            has_resource_policy,
+            has_resource_template_policy,
+            has_prompt_policy,
+        })
+    }
+
+    pub async fn resolve_capability_config(
+        &self,
+        client_id: &str,
+    ) -> Result<ClientCapabilityConfig> {
+        self.load_client_capability_config(client_id).await
+    }
+
+    pub async fn filter_tools_for_client(
+        &self,
+        client_context: &ClientContext,
+        tools: Vec<rmcp::model::Tool>,
+    ) -> Result<Vec<rmcp::model::Tool>> {
+        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        Ok(self.filter_tools_with_snapshot(&snapshot, tools))
+    }
+
+    pub async fn filter_resources_for_client(
+        &self,
+        client_context: &ClientContext,
+        resources: Vec<rmcp::model::Resource>,
+        templates: Vec<rmcp::model::ResourceTemplate>,
+    ) -> Result<(Vec<rmcp::model::Resource>, Vec<rmcp::model::ResourceTemplate>)> {
+        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        Ok(self.filter_resources_with_snapshot(&snapshot, resources, templates))
+    }
+
+    pub async fn filter_prompts_for_client(
+        &self,
+        client_context: &ClientContext,
+        prompts: Vec<rmcp::model::Prompt>,
+    ) -> Result<Vec<rmcp::model::Prompt>> {
+        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        Ok(self.filter_prompts_with_snapshot(&snapshot, prompts))
+    }
+
+    pub async fn assert_tool_allowed(
+        &self,
+        client_context: &ClientContext,
+        unique_tool_name: &str,
+    ) -> Result<()> {
+        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        self.assert_tool_allowed_with_snapshot(&snapshot, unique_tool_name)
+            .await
+    }
+
+    pub async fn assert_resource_allowed(
+        &self,
+        client_context: &ClientContext,
+        unique_resource_uri: &str,
+    ) -> Result<()> {
+        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        self.assert_resource_allowed_with_snapshot(&snapshot, unique_resource_uri)
+            .await
+    }
+
+    pub async fn assert_prompt_allowed(
+        &self,
+        client_context: &ClientContext,
+        unique_prompt_name: &str,
+    ) -> Result<()> {
+        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        self.assert_prompt_allowed_with_snapshot(&snapshot, unique_prompt_name)
+            .await
+    }
+
+    pub fn filter_tools_with_snapshot(
+        &self,
+        snapshot: &VisibilitySnapshot,
         mut tools: Vec<rmcp::model::Tool>,
     ) -> Vec<rmcp::model::Tool> {
-        match self.allowed_tools_set().await {
-            Ok(Some(allowed)) => {
-                let before = tools.len();
-                tools.retain(|t| allowed.contains(t.name.as_ref()));
-                let after = tools.len();
-                tracing::debug!(
-                    filtered = (before as i64 - after as i64),
-                    kept = after as i64,
-                    "ProfileVisibility: tools filtered"
-                );
-                tools
-            }
-            _ => tools,
+        if snapshot.server_ids.is_empty() {
+            return Vec::new();
         }
+
+        if !snapshot.has_tool_policy {
+            return tools;
+        }
+
+        tools.retain(|tool| snapshot.allowed_tools.contains(tool.name.as_ref()));
+        tools
     }
 
-    pub async fn filter_resources(
+    pub fn filter_resources_with_snapshot(
         &self,
+        snapshot: &VisibilitySnapshot,
         mut resources: Vec<rmcp::model::Resource>,
-    ) -> Vec<rmcp::model::Resource> {
-        let allowed_explicit = self.allowed_resources_set().await.unwrap_or(None);
-        let allowed_prefixes = self.allowed_resource_prefixes_from_templates().await.unwrap_or(None);
-
-        // If neither explicit nor templates gating exists, do not filter
-        if allowed_explicit.is_none() && allowed_prefixes.is_none() {
-            return resources;
+        mut templates: Vec<rmcp::model::ResourceTemplate>,
+    ) -> (Vec<rmcp::model::Resource>, Vec<rmcp::model::ResourceTemplate>) {
+        if snapshot.server_ids.is_empty() {
+            return (Vec::new(), Vec::new());
         }
 
-        // allowed_prefixes are already in server_norm:/prefix form
+        if snapshot.has_resource_policy || snapshot.has_resource_template_policy {
+            resources.retain(|resource| resource_allowed_from_snapshot(snapshot, resource.raw.uri.as_str()));
+        }
 
-        let before = resources.len();
-        resources.retain(|r| {
-            let u = r.raw.uri.as_str();
-            // Explicit allow list
-            if let Some(ref aset) = allowed_explicit {
-                if aset.contains(u) {
-                    return true;
-                }
-            }
-            // Template-derived allow prefixes
-            if let Some(ref prefixes) = allowed_prefixes {
-                if prefixes.iter().any(|p| u.starts_with(p)) {
-                    return true;
-                }
-            }
-            // If explicit gating exists but none matched, drop; else keep
-            allowed_explicit.is_none()
-        });
+        if snapshot.has_resource_template_policy {
+            templates.retain(|template| snapshot.allowed_resource_templates.contains(template.raw.name.as_str()));
+        }
 
-        let after = resources.len();
-        tracing::debug!(
-            filtered = (before as i64 - after as i64),
-            kept = after as i64,
-            "ProfileVisibility: resources filtered (with templates)"
-        );
-        resources
+        (resources, templates)
     }
 
-    pub async fn filter_prompts(
+    pub fn filter_prompts_with_snapshot(
         &self,
+        snapshot: &VisibilitySnapshot,
         mut prompts: Vec<rmcp::model::Prompt>,
     ) -> Vec<rmcp::model::Prompt> {
-        match self.allowed_prompts_set().await {
-            Ok(Some(allowed)) => {
-                let before = prompts.len();
-                prompts.retain(|p| allowed.contains(p.name.as_str()));
-                let after = prompts.len();
-                tracing::debug!(
-                    filtered = (before as i64 - after as i64),
-                    kept = after as i64,
-                    "ProfileVisibility: prompts filtered"
-                );
-                prompts
-            }
-            _ => prompts,
+        if snapshot.server_ids.is_empty() {
+            return Vec::new();
         }
+
+        if !snapshot.has_prompt_policy {
+            return prompts;
+        }
+
+        prompts.retain(|prompt| snapshot.allowed_prompts.contains(prompt.name.as_str()));
+        prompts
     }
 
-    pub async fn filter_resource_templates(
+    pub async fn assert_tool_allowed_with_snapshot(
         &self,
-        mut templates: Vec<rmcp::model::ResourceTemplate>,
-    ) -> Vec<rmcp::model::ResourceTemplate> {
-        match self.allowed_resource_templates_unique_set().await {
-            Ok(Some(allowed)) => {
-                let before = templates.len();
-                templates.retain(|t| allowed.contains(t.raw.name.as_str()));
-                let after = templates.len();
-                tracing::debug!(
-                    filtered = (before as i64 - after as i64),
-                    kept = after as i64,
-                    "ProfileVisibility: resource templates filtered"
-                );
-                templates
-            }
-            _ => templates,
+        snapshot: &VisibilitySnapshot,
+        unique_tool_name: &str,
+    ) -> Result<()> {
+        ensure_allowed(
+            self.snapshot_allows_tool(snapshot, unique_tool_name).await?,
+            format!("Tool '{unique_tool_name}' is not available for this client"),
+        )
+    }
+
+    pub async fn assert_resource_allowed_with_snapshot(
+        &self,
+        snapshot: &VisibilitySnapshot,
+        unique_resource_uri: &str,
+    ) -> Result<()> {
+        ensure_allowed(
+            self.snapshot_allows_resource(snapshot, unique_resource_uri).await?,
+            format!("Resource '{unique_resource_uri}' is not available for this client"),
+        )
+    }
+
+    pub async fn assert_prompt_allowed_with_snapshot(
+        &self,
+        snapshot: &VisibilitySnapshot,
+        unique_prompt_name: &str,
+    ) -> Result<()> {
+        ensure_allowed(
+            self.snapshot_allows_prompt(snapshot, unique_prompt_name).await?,
+            format!("Prompt '{unique_prompt_name}' is not available for this client"),
+        )
+    }
+
+    async fn snapshot_allows_tool(
+        &self,
+        snapshot: &VisibilitySnapshot,
+        unique_tool_name: &str,
+    ) -> Result<bool> {
+        if snapshot.server_ids.is_empty() {
+            return Ok(false);
         }
+
+        if snapshot.has_tool_policy {
+            return Ok(snapshot.allowed_tools.contains(unique_tool_name));
+        }
+
+        self.snapshot_allows_server(NamingKind::Tool, snapshot, unique_tool_name)
+            .await
+    }
+
+    async fn snapshot_allows_resource(
+        &self,
+        snapshot: &VisibilitySnapshot,
+        unique_resource_uri: &str,
+    ) -> Result<bool> {
+        if snapshot.server_ids.is_empty() {
+            return Ok(false);
+        }
+
+        if snapshot.has_resource_policy || snapshot.has_resource_template_policy {
+            return Ok(resource_allowed_from_snapshot(snapshot, unique_resource_uri));
+        }
+
+        self.snapshot_allows_server(NamingKind::Resource, snapshot, unique_resource_uri)
+            .await
+    }
+
+    async fn snapshot_allows_prompt(
+        &self,
+        snapshot: &VisibilitySnapshot,
+        unique_prompt_name: &str,
+    ) -> Result<bool> {
+        if snapshot.server_ids.is_empty() {
+            return Ok(false);
+        }
+
+        if snapshot.has_prompt_policy {
+            return Ok(snapshot.allowed_prompts.contains(unique_prompt_name));
+        }
+
+        self.snapshot_allows_server(NamingKind::Prompt, snapshot, unique_prompt_name)
+            .await
+    }
+
+    async fn snapshot_allows_server(
+        &self,
+        kind: NamingKind,
+        snapshot: &VisibilitySnapshot,
+        unique_value: &str,
+    ) -> Result<bool> {
+        let (server_name, _) = resolve_unique_name(kind, unique_value)
+            .await
+            .with_context(|| format!("Failed to resolve canonical capability name '{unique_value}'"))?;
+        let server_id = crate::core::capability::resolver::to_id(&server_name)
+            .await
+            .with_context(|| format!("Failed to resolve server id for '{server_name}'"))?
+            .ok_or_else(|| anyhow!("Server '{server_name}' not found for canonical capability '{unique_value}'"))?;
+        Ok(snapshot.server_ids.iter().any(|candidate| candidate == &server_id))
+    }
+
+    async fn load_client_capability_config(
+        &self,
+        client_id: &str,
+    ) -> Result<ClientCapabilityConfig> {
+        let db = self
+            .db
+            .as_ref()
+            .context("Profile visibility requires database access")?;
+
+        let row = sqlx::query_as::<_, ClientCapabilityRow>(
+            r#"
+            SELECT capability_source, selected_profile_ids, custom_profile_id
+            FROM client
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(client_id)
+        .fetch_optional(&db.pool)
+        .await
+        .with_context(|| format!("Failed to load client capability config for '{client_id}'"))?
+        .ok_or_else(|| anyhow!("Client capability config not found for '{client_id}'"))?;
+
+        ClientCapabilityConfig::from_parts(
+            row.capability_source.as_deref(),
+            row.selected_profile_ids.as_deref(),
+            row.custom_profile_id,
+        )
+        .map_err(|error| anyhow!(error))
+    }
+
+    async fn resolve_profile_ids(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        capability_config: &ClientCapabilityConfig,
+    ) -> Result<Vec<String>> {
+        let mut profile_ids = match capability_config.capability_source {
+            CapabilitySource::Activated => get_active_profile(pool)
+                .await
+                .context("Failed to load active profiles")?
+                .into_iter()
+                .filter_map(|profile| profile.id)
+                .collect(),
+            CapabilitySource::Profiles => capability_config.selected_profile_ids.clone(),
+            CapabilitySource::Custom => vec![
+                capability_config
+                    .custom_profile_id
+                    .clone()
+                    .ok_or_else(|| anyhow!("Custom capability source requires custom_profile_id"))?,
+            ],
+        };
+
+        profile_ids.sort();
+        profile_ids.dedup();
+        Ok(profile_ids)
+    }
+
+    async fn resolve_server_ids(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        capability_source: CapabilitySource,
+        profile_ids: &[String],
+    ) -> Result<Vec<String>> {
+        let mut server_ids = if profile_ids.is_empty() {
+            if capability_source == CapabilitySource::Activated {
+                sqlx::query_scalar::<_, String>(
+                    r#"
+                    SELECT id
+                    FROM server_config
+                    WHERE enabled = 1
+                    ORDER BY name, id
+                    "#,
+                )
+                .fetch_all(pool)
+                .await
+                .context("Failed to load enabled servers for activated mode")?
+            } else {
+                Vec::new()
+            }
+        } else {
+            let placeholders = repeat_placeholders(profile_ids.len());
+            let sql = format!(
+                r#"
+                SELECT DISTINCT sc.id
+                FROM server_config sc
+                JOIN profile_server ps ON sc.id = ps.server_id
+                WHERE ps.profile_id IN ({placeholders})
+                  AND ps.enabled = 1
+                  AND sc.enabled = 1
+                ORDER BY sc.name, sc.id
+                "#,
+            );
+
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
+            for profile_id in profile_ids {
+                query = query.bind(profile_id);
+            }
+            query
+                .fetch_all(pool)
+                .await
+                .context("Failed to resolve visible servers for client snapshot")?
+        };
+
+        server_ids.sort();
+        server_ids.dedup();
+        Ok(server_ids)
+    }
+
+    async fn resolve_allowed_tools(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        server_ids: &[String],
+        profile_ids: &[String],
+    ) -> Result<(HashSet<String>, bool)> {
+        if server_ids.is_empty() {
+            return Ok((HashSet::new(), false));
+        }
+
+        let has_policy = has_profile_rows(pool, "profile_tool", profile_ids).await?;
+        let values = if has_policy {
+            let profile_placeholders = repeat_placeholders(profile_ids.len());
+            let server_placeholders = repeat_placeholders(server_ids.len());
+            let sql = format!(
+                r#"
+                SELECT DISTINCT st.unique_name
+                FROM profile_tool pt
+                JOIN server_tools st ON pt.server_tool_id = st.id
+                JOIN server_config sc ON st.server_id = sc.id
+                WHERE pt.profile_id IN ({profile_placeholders})
+                  AND st.server_id IN ({server_placeholders})
+                  AND pt.enabled = 1
+                  AND sc.enabled = 1
+                "#,
+            );
+
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
+            for profile_id in profile_ids {
+                query = query.bind(profile_id);
+            }
+            for server_id in server_ids {
+                query = query.bind(server_id);
+            }
+            query.fetch_all(pool).await.context("Failed to load tool policy rows")?
+        } else {
+            query_unique_values(pool, "server_tools", "unique_name", "server_id", server_ids)
+                .await
+                .context("Failed to load visible tools for snapshot")?
+        };
+
+        Ok((values.into_iter().collect(), has_policy))
+    }
+
+    async fn resolve_allowed_resources(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        server_ids: &[String],
+        profile_ids: &[String],
+    ) -> Result<(HashSet<String>, bool)> {
+        if server_ids.is_empty() {
+            return Ok((HashSet::new(), false));
+        }
+
+        let has_policy = has_profile_rows(pool, "profile_resource", profile_ids).await?;
+        let values = if has_policy {
+            let profile_placeholders = repeat_placeholders(profile_ids.len());
+            let server_placeholders = repeat_placeholders(server_ids.len());
+            let sql = format!(
+                r#"
+                SELECT DISTINCT sc.name, pr.resource_uri
+                FROM profile_resource pr
+                JOIN server_config sc ON pr.server_id = sc.id
+                WHERE pr.profile_id IN ({profile_placeholders})
+                  AND pr.server_id IN ({server_placeholders})
+                  AND pr.enabled = 1
+                  AND sc.enabled = 1
+                "#,
+            );
+
+            let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+            for profile_id in profile_ids {
+                query = query.bind(profile_id);
+            }
+            for server_id in server_ids {
+                query = query.bind(server_id);
+            }
+
+            query
+                .fetch_all(pool)
+                .await
+                .context("Failed to load resource policy rows")?
+                .into_iter()
+                .map(|(server_name, resource_uri)| {
+                    generate_unique_name(NamingKind::Resource, &server_name, &resource_uri)
+                })
+                .collect()
+        } else {
+            query_unique_values(pool, "server_resources", "unique_uri", "server_id", server_ids)
+                .await
+                .context("Failed to load visible resources for snapshot")?
+        };
+
+        Ok((values.into_iter().collect(), has_policy))
+    }
+
+    async fn resolve_allowed_resource_templates(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        server_ids: &[String],
+        profile_ids: &[String],
+    ) -> Result<(HashSet<String>, HashSet<String>, bool)> {
+        if server_ids.is_empty() {
+            return Ok((HashSet::new(), HashSet::new(), false));
+        }
+
+        let has_policy = has_profile_rows(pool, "profile_resource_template", profile_ids).await?;
+        let (values, prefixes) = if has_policy {
+            let profile_placeholders = repeat_placeholders(profile_ids.len());
+            let server_placeholders = repeat_placeholders(server_ids.len());
+            let sql = format!(
+                r#"
+                SELECT DISTINCT sc.name, prt.uri_template
+                FROM profile_resource_template prt
+                JOIN server_config sc ON prt.server_id = sc.id
+                WHERE prt.profile_id IN ({profile_placeholders})
+                  AND prt.server_id IN ({server_placeholders})
+                  AND prt.enabled = 1
+                  AND sc.enabled = 1
+                "#,
+            );
+
+            let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+            for profile_id in profile_ids {
+                query = query.bind(profile_id);
+            }
+            for server_id in server_ids {
+                query = query.bind(server_id);
+            }
+
+            let rows = query
+                .fetch_all(pool)
+                .await
+                .context("Failed to load resource template policy rows")?;
+
+            let values = rows
+                .iter()
+                .map(|(server_name, uri_template)| {
+                    generate_unique_name(NamingKind::ResourceTemplate, server_name, uri_template)
+                })
+                .collect::<Vec<_>>();
+            let prefixes = rows
+                .iter()
+                .map(|(server_name, uri_template)| {
+                    let prefix = crate::config::profile::resource_template::template_prefix(uri_template);
+                    generate_unique_name(NamingKind::Resource, server_name, prefix)
+                })
+                .collect::<Vec<_>>();
+            (values, prefixes)
+        } else {
+            (
+                query_unique_values(
+                pool,
+                "server_resource_templates",
+                "unique_name",
+                "server_id",
+                server_ids,
+            )
+            .await
+            .context("Failed to load visible resource templates for snapshot")?,
+                Vec::new(),
+            )
+        };
+
+        Ok((
+            values.into_iter().collect(),
+            prefixes.into_iter().collect(),
+            has_policy,
+        ))
+    }
+
+    async fn resolve_allowed_prompts(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        server_ids: &[String],
+        profile_ids: &[String],
+    ) -> Result<(HashSet<String>, bool)> {
+        if server_ids.is_empty() {
+            return Ok((HashSet::new(), false));
+        }
+
+        let has_policy = has_profile_rows(pool, "profile_prompt", profile_ids).await?;
+        let values = if has_policy {
+            let profile_placeholders = repeat_placeholders(profile_ids.len());
+            let server_placeholders = repeat_placeholders(server_ids.len());
+            let sql = format!(
+                r#"
+                SELECT DISTINCT sc.name, pp.prompt_name
+                FROM profile_prompt pp
+                JOIN server_config sc ON pp.server_id = sc.id
+                WHERE pp.profile_id IN ({profile_placeholders})
+                  AND pp.server_id IN ({server_placeholders})
+                  AND pp.enabled = 1
+                  AND sc.enabled = 1
+                "#,
+            );
+
+            let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+            for profile_id in profile_ids {
+                query = query.bind(profile_id);
+            }
+            for server_id in server_ids {
+                query = query.bind(server_id);
+            }
+
+            query
+                .fetch_all(pool)
+                .await
+                .context("Failed to load prompt policy rows")?
+                .into_iter()
+                .map(|(server_name, prompt_name)| {
+                    generate_unique_name(NamingKind::Prompt, &server_name, &prompt_name)
+                })
+                .collect()
+        } else {
+            query_unique_values(pool, "server_prompts", "unique_name", "server_id", server_ids)
+                .await
+                .context("Failed to load visible prompts for snapshot")?
+        };
+
+        Ok((values.into_iter().collect(), has_policy))
+    }
+}
+
+fn ensure_allowed(
+    allowed: bool,
+    message: String,
+) -> Result<()> {
+    if allowed {
+        Ok(())
+    } else {
+        Err(anyhow!(message))
+    }
+}
+
+fn resource_allowed_from_snapshot(
+    snapshot: &VisibilitySnapshot,
+    unique_uri: &str,
+) -> bool {
+    if snapshot.server_ids.is_empty() {
+        return false;
+    }
+
+    if !snapshot.has_resource_policy && !snapshot.has_resource_template_policy {
+        return true;
+    }
+
+    if snapshot.has_resource_policy && snapshot.allowed_resources.contains(unique_uri) {
+        return true;
+    }
+
+    if snapshot.has_resource_template_policy
+        && snapshot
+            .allowed_resource_prefixes
+            .iter()
+            .any(|prefix| unique_uri.starts_with(prefix))
+    {
+        return true;
+    }
+
+    false
+}
+
+async fn has_profile_rows(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    table: &str,
+    profile_ids: &[String],
+) -> Result<bool> {
+    if profile_ids.is_empty() {
+        return Ok(false);
+    }
+
+    let placeholders = repeat_placeholders(profile_ids.len());
+    let sql = format!("SELECT COUNT(1) FROM {table} WHERE profile_id IN ({placeholders})");
+    let mut query = sqlx::query_scalar::<_, i64>(&sql);
+    for profile_id in profile_ids {
+        query = query.bind(profile_id);
+    }
+    Ok(query
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("Failed to query profile rows from '{table}'"))?
+        > 0)
+}
+
+async fn query_unique_values(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    table: &str,
+    value_column: &str,
+    filter_column: &str,
+    filter_values: &[String],
+) -> Result<Vec<String>> {
+    if filter_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = repeat_placeholders(filter_values.len());
+    let sql = format!(
+        "SELECT DISTINCT {value_column} FROM {table} WHERE {filter_column} IN ({placeholders}) ORDER BY {value_column}"
+    );
+    let mut query = sqlx::query_scalar::<_, String>(&sql);
+    for filter_value in filter_values {
+        query = query.bind(filter_value);
+    }
+    query
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("Failed to load values from '{table}'"))
+}
+
+fn repeat_placeholders(count: usize) -> String {
+    vec!["?"; count].join(", ")
+}
+
+fn compute_rules_fingerprint(
+    capability_config: &ClientCapabilityConfig,
+    profile_ids: &[String],
+    server_ids: &[String],
+    allowed_tools: &HashSet<String>,
+    allowed_resources: &HashSet<String>,
+    allowed_resource_templates: &HashSet<String>,
+    allowed_resource_prefixes: &HashSet<String>,
+    allowed_prompts: &HashSet<String>,
+    policy_flags: [bool; 4],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(capability_config.capability_source.as_str());
+    hasher.update([0]);
+    hasher.update(capability_config.selected_profile_ids.join("\u{1f}"));
+    hasher.update([0]);
+    hasher.update(capability_config.custom_profile_id.as_deref().unwrap_or_default());
+    hasher.update([0]);
+    hasher.update(profile_ids.join("\u{1f}"));
+    hasher.update([0]);
+    hasher.update(server_ids.join("\u{1f}"));
+    hasher.update([0]);
+    hasher.update(sorted_values(allowed_tools).join("\u{1f}"));
+    hasher.update([0]);
+    hasher.update(sorted_values(allowed_resources).join("\u{1f}"));
+    hasher.update([0]);
+    hasher.update(sorted_values(allowed_resource_templates).join("\u{1f}"));
+    hasher.update([0]);
+    hasher.update(sorted_values(allowed_resource_prefixes).join("\u{1f}"));
+    hasher.update([0]);
+    hasher.update(sorted_values(allowed_prompts).join("\u{1f}"));
+    hasher.update([0]);
+    for flag in policy_flags {
+        hasher.update([u8::from(flag)]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn sorted_values(values: &HashSet<String>) -> Vec<String> {
+    let mut sorted = values.iter().cloned().collect::<Vec<_>>();
+    sorted.sort();
+    sorted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::clients::models::CapabilitySource;
+    use crate::common::profile::ProfileType;
+    use crate::common::server::ServerType;
+    use crate::config::{
+        client::init::initialize_client_table,
+        models::{Profile, Server},
+        profile::{self, init::initialize_profile_tables},
+        server::{self, init::initialize_server_tables},
+    };
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tempfile::TempDir;
+
+    async fn create_visibility_service() -> (TempDir, Arc<Database>, ProfileVisibilityService) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+
+        initialize_server_tables(&pool).await.expect("init server tables");
+        initialize_profile_tables(&pool).await.expect("init profile tables");
+        initialize_client_table(&pool).await.expect("init client table");
+
+        crate::core::capability::naming::initialize(pool.clone());
+
+        let db = Arc::new(Database {
+            pool,
+            path: temp_dir.path().join("test.db"),
+        });
+
+        let service = ProfileVisibilityService::new(Some(db.clone()), None);
+        (temp_dir, db, service)
+    }
+
+    async fn insert_profile(
+        db: &Arc<Database>,
+        name: &str,
+        profile_type: ProfileType,
+        is_active: bool,
+    ) -> String {
+        let mut profile = Profile::new(name.to_string(), profile_type);
+        profile.is_active = is_active;
+        profile::upsert_profile(&db.pool, &profile)
+            .await
+            .expect("upsert profile")
+    }
+
+    async fn insert_server(
+        db: &Arc<Database>,
+        name: &str,
+        capabilities: &str,
+    ) -> String {
+        let mut server = Server::new(name.to_string(), ServerType::Stdio);
+        server.capabilities = Some(capabilities.to_string());
+        server::upsert_server(&db.pool, &server)
+            .await
+            .expect("upsert server")
+    }
+
+    async fn seed_tool(
+        db: &Arc<Database>,
+        profile_id: &str,
+        server_id: &str,
+        server_name: &str,
+        tool_name: &str,
+    ) -> String {
+        let unique_name = crate::config::server::tools::upsert_server_tool(
+            &db.pool,
+            server_id,
+            server_name,
+            tool_name,
+            None,
+            None,
+        )
+        .await
+        .expect("upsert server tool")
+        .unique_name;
+        profile::add_tool_to_profile(&db.pool, profile_id, server_id, tool_name, true)
+            .await
+            .expect("add tool to profile");
+        unique_name
+    }
+
+    async fn seed_prompt(
+        db: &Arc<Database>,
+        profile_id: &str,
+        server_id: &str,
+        server_name: &str,
+        prompt_name: &str,
+    ) -> String {
+        let unique_name = generate_unique_name(NamingKind::Prompt, server_name, prompt_name);
+        sqlx::query(
+            r#"
+            INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(crate::generate_id!("sprm"))
+        .bind(server_id)
+        .bind(server_name)
+        .bind(prompt_name)
+        .bind(&unique_name)
+        .bind(Option::<String>::None)
+        .execute(&db.pool)
+        .await
+        .expect("insert server prompt");
+
+        profile::add_prompt_to_profile(&db.pool, profile_id, server_id, prompt_name, true)
+            .await
+            .expect("add prompt to profile");
+        unique_name
+    }
+
+    async fn seed_resource(
+        db: &Arc<Database>,
+        profile_id: &str,
+        server_id: &str,
+        server_name: &str,
+        resource_uri: &str,
+    ) -> String {
+        let unique_uri = generate_unique_name(NamingKind::Resource, server_name, resource_uri);
+        sqlx::query(
+            r#"
+            INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri, name, description, mime_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(crate::generate_id!("sres"))
+        .bind(server_id)
+        .bind(server_name)
+        .bind(resource_uri)
+        .bind(&unique_uri)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .execute(&db.pool)
+        .await
+        .expect("insert server resource");
+
+        profile::add_resource_to_profile(&db.pool, profile_id, server_id, resource_uri, true)
+            .await
+            .expect("add resource to profile");
+        unique_uri
+    }
+
+    async fn seed_resource_template(
+        db: &Arc<Database>,
+        profile_id: &str,
+        server_id: &str,
+        server_name: &str,
+        uri_template: &str,
+    ) -> String {
+        let unique_name = generate_unique_name(NamingKind::ResourceTemplate, server_name, uri_template);
+        sqlx::query(
+            r#"
+            INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(crate::generate_id!("srt"))
+        .bind(server_id)
+        .bind(server_name)
+        .bind(uri_template)
+        .bind(&unique_name)
+        .bind(uri_template)
+        .bind(Option::<String>::None)
+        .execute(&db.pool)
+        .await
+        .expect("insert server resource template");
+
+        profile::add_resource_template_to_profile(&db.pool, profile_id, server_id, uri_template, true)
+            .await
+            .expect("add resource template to profile");
+        unique_name
+    }
+
+    async fn insert_client_config(
+        db: &Arc<Database>,
+        identifier: &str,
+        capability_source: CapabilitySource,
+        selected_profile_ids: Vec<String>,
+        custom_profile_id: Option<String>,
+    ) {
+        let selected_profile_ids_json = if selected_profile_ids.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&selected_profile_ids).expect("selected profile ids json"))
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO client (id, name, identifier, managed, capability_source, selected_profile_ids, custom_profile_id)
+            VALUES (?, ?, ?, 1, ?, ?, ?)
+            "#,
+        )
+        .bind(crate::generate_id!("clnt"))
+        .bind(identifier)
+        .bind(identifier)
+        .bind(capability_source.as_str())
+        .bind(selected_profile_ids_json)
+        .bind(custom_profile_id)
+        .execute(&db.pool)
+        .await
+        .expect("insert client config");
+    }
+
+    #[tokio::test]
+    async fn resolve_snapshot_uses_active_profiles_for_activated_mode() {
+        let (_temp_dir, db, service) = create_visibility_service().await;
+
+        let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
+        let inactive_profile_id = insert_profile(&db, "inactive", ProfileType::Shared, false).await;
+        let active_server_id = insert_server(&db, "active-server", "tools,prompts,resources").await;
+        let inactive_server_id = insert_server(&db, "inactive-server", "tools,prompts,resources").await;
+
+        profile::add_server_to_profile(&db.pool, &active_profile_id, &active_server_id, true)
+            .await
+            .expect("add active server");
+        profile::add_server_to_profile(&db.pool, &inactive_profile_id, &inactive_server_id, true)
+            .await
+            .expect("add inactive server");
+
+        let active_tool = seed_tool(&db, &active_profile_id, &active_server_id, "active-server", "tool_alpha").await;
+        let _inactive_tool =
+            seed_tool(&db, &inactive_profile_id, &inactive_server_id, "inactive-server", "tool_beta").await;
+
+        insert_client_config(&db, "client-a", CapabilitySource::Activated, Vec::new(), None).await;
+
+        let snapshot = service.resolve_snapshot("client-a").await.expect("resolve snapshot");
+
+        assert_eq!(snapshot.profile_ids, vec![active_profile_id]);
+        assert_eq!(snapshot.server_ids, vec![active_server_id]);
+        assert!(snapshot.allowed_tools.contains(&active_tool));
+        assert_eq!(snapshot.allowed_tools.len(), 1);
+        assert!(!snapshot.rules_fingerprint.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_snapshot_uses_selected_profiles_for_profiles_mode() {
+        let (_temp_dir, db, service) = create_visibility_service().await;
+
+        let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
+        let selected_profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
+        let active_server_id = insert_server(&db, "active-server", "tools").await;
+        let selected_server_id = insert_server(&db, "selected-server", "tools").await;
+
+        profile::add_server_to_profile(&db.pool, &active_profile_id, &active_server_id, true)
+            .await
+            .expect("add active server");
+        profile::add_server_to_profile(&db.pool, &selected_profile_id, &selected_server_id, true)
+            .await
+            .expect("add selected server");
+
+        let selected_tool =
+            seed_tool(&db, &selected_profile_id, &selected_server_id, "selected-server", "tool_selected").await;
+
+        insert_client_config(
+            &db,
+            "client-b",
+            CapabilitySource::Profiles,
+            vec![selected_profile_id.clone()],
+            None,
+        )
+        .await;
+
+        let snapshot = service.resolve_snapshot("client-b").await.expect("resolve snapshot");
+
+        assert_eq!(snapshot.profile_ids, vec![selected_profile_id]);
+        assert_eq!(snapshot.server_ids, vec![selected_server_id]);
+        assert!(snapshot.allowed_tools.contains(&selected_tool));
+        assert_eq!(snapshot.allowed_tools.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_snapshot_uses_custom_profile_for_custom_mode() {
+        let (_temp_dir, db, service) = create_visibility_service().await;
+
+        let custom_profile_id = insert_profile(&db, "custom", ProfileType::HostApp, false).await;
+        let custom_server_id = insert_server(&db, "custom-server", "prompts").await;
+
+        profile::add_server_to_profile(&db.pool, &custom_profile_id, &custom_server_id, true)
+            .await
+            .expect("add custom server");
+
+        let custom_prompt =
+            seed_prompt(&db, &custom_profile_id, &custom_server_id, "custom-server", "prompt_custom").await;
+
+        insert_client_config(
+            &db,
+            "client-c",
+            CapabilitySource::Custom,
+            Vec::new(),
+            Some(custom_profile_id.clone()),
+        )
+        .await;
+
+        let snapshot = service.resolve_snapshot("client-c").await.expect("resolve snapshot");
+
+        assert_eq!(snapshot.profile_ids, vec![custom_profile_id]);
+        assert_eq!(snapshot.server_ids, vec![custom_server_id]);
+        assert!(snapshot.allowed_prompts.contains(&custom_prompt));
+        assert_eq!(snapshot.allowed_prompts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn direct_authorization_uses_same_snapshot_rules_as_list_filtering() {
+        let (_temp_dir, db, service) = create_visibility_service().await;
+
+        let profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
+        let allowed_server_id = insert_server(&db, "alpha-server", "tools,prompts,resources").await;
+        let denied_server_id = insert_server(&db, "beta-server", "tools,prompts,resources").await;
+
+        profile::add_server_to_profile(&db.pool, &profile_id, &allowed_server_id, true)
+            .await
+            .expect("add allowed server");
+
+        let allowed_tool = seed_tool(&db, &profile_id, &allowed_server_id, "alpha-server", "tool_alpha").await;
+        let allowed_prompt =
+            seed_prompt(&db, &profile_id, &allowed_server_id, "alpha-server", "prompt_alpha").await;
+        let _allowed_resource = seed_resource(
+            &db,
+            &profile_id,
+            &allowed_server_id,
+            "alpha-server",
+            "file://workspace/explicit.txt",
+        )
+        .await;
+        let _allowed_template = seed_resource_template(
+            &db,
+            &profile_id,
+            &allowed_server_id,
+            "alpha-server",
+            "file://workspace/{path}",
+        )
+        .await;
+
+        let denied_tool = crate::config::server::tools::upsert_server_tool(
+            &db.pool,
+            &denied_server_id,
+            "beta-server",
+            "tool_beta",
+            None,
+            None,
+        )
+        .await
+        .expect("upsert denied tool")
+        .unique_name;
+        let denied_prompt = generate_unique_name(NamingKind::Prompt, "beta-server", "prompt_beta");
+        let denied_resource = generate_unique_name(NamingKind::Resource, "beta-server", "file://other/file.txt");
+
+        sqlx::query(
+            r#"
+            INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(crate::generate_id!("sprm"))
+        .bind(&denied_server_id)
+        .bind("beta-server")
+        .bind("prompt_beta")
+        .bind(&denied_prompt)
+        .bind(Option::<String>::None)
+        .execute(&db.pool)
+        .await
+        .expect("insert denied prompt");
+
+        sqlx::query(
+            r#"
+            INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri, name, description, mime_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(crate::generate_id!("sres"))
+        .bind(&denied_server_id)
+        .bind("beta-server")
+        .bind("file://other/file.txt")
+        .bind(&denied_resource)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .execute(&db.pool)
+        .await
+        .expect("insert denied resource");
+
+        insert_client_config(
+            &db,
+            "client-d",
+            CapabilitySource::Profiles,
+            vec![profile_id],
+            None,
+        )
+        .await;
+
+        let snapshot = service.resolve_snapshot("client-d").await.expect("resolve snapshot");
+
+        assert!(service
+            .assert_tool_allowed_with_snapshot(&snapshot, &allowed_tool)
+            .await
+            .is_ok());
+        assert!(service
+            .assert_tool_allowed_with_snapshot(&snapshot, &denied_tool)
+            .await
+            .is_err());
+        assert!(service
+            .assert_prompt_allowed_with_snapshot(&snapshot, &allowed_prompt)
+            .await
+            .is_ok());
+        assert!(service
+            .assert_prompt_allowed_with_snapshot(&snapshot, &denied_prompt)
+            .await
+            .is_err());
+
+        let dynamic_allowed = generate_unique_name(
+            NamingKind::Resource,
+            "alpha-server",
+            "file://workspace/main.rs",
+        );
+        assert!(service
+            .assert_resource_allowed_with_snapshot(&snapshot, &dynamic_allowed)
+            .await
+            .is_ok());
+        assert!(service
+            .assert_resource_allowed_with_snapshot(&snapshot, &denied_resource)
+            .await
+            .is_err());
     }
 }
