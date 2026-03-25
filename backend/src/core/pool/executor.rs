@@ -18,6 +18,7 @@ use crate::{
         server::{ServerType, TransportType},
         sync::SyncHelper,
     },
+    core::capability::ConnectionSelection,
     core::{
         events,
         foundation::types::{
@@ -278,6 +279,22 @@ impl UpstreamConnectionPool {
         // Get default instance id and connect via single executor
         let instance_id = self.get_default_instance_id(server_id)?;
         self.connect_internal(server_id, &instance_id).await?;
+        Ok(instance_id)
+    }
+
+    pub async fn ensure_connected_with_selection(
+        &mut self,
+        selection: &ConnectionSelection,
+    ) -> Result<String> {
+        if !self.connections.contains_key(&selection.server_id) {
+            let connection = crate::core::pool::UpstreamConnection::new(selection.server_id.to_string());
+            let instance_id = connection.id.clone();
+            let instances = self.connections.entry(selection.server_id.to_string()).or_default();
+            instances.insert(instance_id.clone(), connection);
+        }
+
+        let instance_id = self.select_instance_id(selection)?;
+        self.connect_internal(&selection.server_id, &instance_id).await?;
         Ok(instance_id)
     }
 

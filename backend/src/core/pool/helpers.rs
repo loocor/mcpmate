@@ -8,6 +8,7 @@ use crate::core::foundation::types::{
     ConnectionStatus, // status of the connection
     ErrorType,        // type of the error
 };
+use crate::core::capability::ConnectionSelection;
 use crate::core::pool::UpstreamConnection;
 use anyhow::{Context, Result};
 use std::{collections::HashMap, time::Instant};
@@ -141,6 +142,31 @@ impl super::UpstreamConnectionPool {
     ) -> Result<String> {
         let (instance_id, _) = self.get_default_instance(server_id)?;
         Ok(instance_id)
+    }
+
+    pub fn select_instance_id(
+        &self,
+        selection: &ConnectionSelection,
+    ) -> Result<String> {
+        self.get_default_instance_id(&selection.server_id)
+    }
+
+    pub fn select_ready_instance_id(
+        &self,
+        selection: &ConnectionSelection,
+    ) -> Result<Option<String>> {
+        let instances = self
+            .connections
+            .get(&selection.server_id)
+            .context(format!("Server '{}' not found in connection pool", selection.server_id))?;
+
+        Ok(instances.iter().find_map(|(instance_id, connection)| {
+            if connection.is_connected() && connection.service.is_some() {
+                Some(instance_id.clone())
+            } else {
+                None
+            }
+        }))
     }
 
     /// Get all instance IDs for a server
