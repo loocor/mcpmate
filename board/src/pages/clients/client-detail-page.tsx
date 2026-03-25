@@ -20,6 +20,7 @@ import {
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useUrlTab } from "../../lib/hooks/use-url-state";
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
@@ -135,7 +136,11 @@ export function ClientDetailPage() {
 	const [selectedBackups, setSelectedBackups] = useState<string[]>([]);
 	const [detected, setDetected] = useState<boolean>(false);
 	const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-	const [tabValue, setTabValue] = useState("overview");
+	const { activeTab: tabValue, setActiveTab: setTabValue } = useUrlTab({
+		paramName: "tab",
+		defaultTab: "overview",
+		validTabs: ["overview", "configuration", "backups", "logs"],
+	});
 	const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
 
 	// Try to get display name from list cache

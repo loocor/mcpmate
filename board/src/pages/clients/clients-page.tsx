@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Globe, Plus, RefreshCw, ToggleLeft } from "lucide-react";
 import React, { type MouseEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { EntityCard } from "../../components/entity-card";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
@@ -23,6 +23,7 @@ import {
 } from "../../components/ui/select";
 import { clientsApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { useUrlFilter, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { ClientListDefaultFilter } from "../../lib/store";
@@ -31,13 +32,28 @@ export function ClientsPage() {
 	const navigate = useNavigate();
 	const qc = useQueryClient();
 	const [refreshing, setRefreshing] = useState(false);
+	const [searchParams] = useSearchParams();
 	usePageTranslations("clients");
 	const { t, i18n } = useTranslation("clients");
-    const { defaultView, defaultFilter, setDashboardSetting } = useAppStore((state) => ({
-        defaultView: state.dashboardSettings.defaultView,
-        defaultFilter: state.dashboardSettings.clientListDefaultFilter,
-        setDashboardSetting: state.setDashboardSetting,
-    }));
+	const { defaultFilter, setDashboardSetting } = useAppStore((state) => ({
+		defaultFilter: state.dashboardSettings.clientListDefaultFilter,
+		setDashboardSetting: state.setDashboardSetting,
+	}));
+
+	const storedDefaultView = useAppStore((state) => state.dashboardSettings.defaultView);
+
+	const { view } = useUrlView({
+		paramName: "view",
+		defaultView: storedDefaultView,
+		validViews: ["grid", "list"],
+	});
+	const viewMode = view;
+
+	const { filter, setFilter } = useUrlFilter({
+		paramName: "filter",
+		defaultValue: defaultFilter,
+		validValues: ["all", "detected", "managed"],
+	});
 
 	const { data, isLoading, isRefetching, refetch } = useQuery({
 		queryKey: ["clients"],
@@ -77,14 +93,6 @@ export function ClientsPage() {
         return mapped;
     }, [clients]);
 
-    // Temporary filter state in toolbar; initialized from Settings
-    const [filter, setFilter] = React.useState<ClientListDefaultFilter>(defaultFilter);
-
-    // Keep in sync with Settings if changed elsewhere
-    React.useEffect(() => {
-        setFilter(defaultFilter);
-    }, [defaultFilter]);
-
     // Apply visibility filter from toolbar
     const filteredClientsAsEntities = React.useMemo(() => {
         if (filter === "detected") {
@@ -97,18 +105,9 @@ export function ClientsPage() {
     }, [clientsAsEntities, filter]);
 
 	// 排序后的数据状态
-    const [sortedClients, setSortedClients] = React.useState(
-        filteredClientsAsEntities,
-    );
-
-	// 同步最新数据源
-    React.useEffect(() => {
-        // Only update when reference actually changed to prevent update depth issues
-        setSortedClients((prev) =>
-            prev === filteredClientsAsEntities ? prev : filteredClientsAsEntities,
-        );
-    }, [filteredClientsAsEntities]);
-	const [search, setSearch] = React.useState("");
+	const [sortedClients, setSortedClients] = React.useState(
+		filteredClientsAsEntities,
+	);
 
 	const manageMutation = useMutation({
 		mutationFn: async ({
@@ -385,7 +384,7 @@ export function ClientsPage() {
 
 	// Prepare loading skeleton
 	const loadingSkeleton =
-		defaultView === "grid"
+		viewMode === "grid"
 			? Array.from({ length: 6 }, (_, index) => (
 					<Card key={`client-skeleton-grid-${index}`} className="p-4">
 						<div className="flex items-start gap-3">
@@ -480,7 +479,7 @@ export function ClientsPage() {
 			},
 			viewMode: {
 				enabled: true,
-				defaultMode: defaultView as "grid" | "list",
+				defaultMode: storedDefaultView as "grid" | "list",
 			},
 			sort: {
 				enabled: true,
@@ -509,23 +508,21 @@ export function ClientsPage() {
 				],
 				defaultSort: "display_name",
 			},
+			urlPersistence: {
+				enabled: true,
+			},
         }),
-        [filteredClientsAsEntities, defaultView, i18n.language, t],
+        [filteredClientsAsEntities, i18n.language, t],
     );
 
 	// 工具栏状态
 	const toolbarState = {
-		search,
-		viewMode: defaultView,
-		sort: "display_name", // 添加必需的 sort 属性
 		expanded,
 	};
 
 	// 工具栏回调
 	const toolbarCallbacks = {
-		onSearchChange: setSearch,
 		onViewModeChange: (mode: "grid" | "list") => {
-			// 直接更新全局设置
 			setDashboardSetting("defaultView", mode);
 		},
 		onSortedDataChange: setSortedClients,
@@ -632,7 +629,7 @@ export function ClientsPage() {
 				loadingSkeleton={loadingSkeleton}
 				emptyState={sortedClients.length === 0 ? emptyState : undefined}
 			>
-				{defaultView === "grid"
+				{viewMode === "grid"
 					? sortedClients.map((client) => renderClientCard(client))
 					: sortedClients.map((client) => renderClientListItem(client))}
 			</ListGridContainer>

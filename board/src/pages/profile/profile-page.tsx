@@ -33,6 +33,7 @@ import { PageToolbar } from "../../components/ui/page-toolbar";
 import { Switch } from "../../components/ui/switch";
 import { configSuitsApi, serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type {
@@ -98,9 +99,15 @@ export function ProfilePage() {
 
 	// Handle URL parameters for profile creation
 	const profileType = searchParams.get("type");
-	const defaultView = useAppStore((state) => state.dashboardSettings.defaultView);
+	const storedDefaultView = useAppStore((state) => state.dashboardSettings.defaultView);
 	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
-	const viewMode = defaultView;
+
+	const { view } = useUrlView({
+		paramName: "view",
+		defaultView: storedDefaultView,
+		validViews: ["grid", "list"],
+	});
+	const viewMode = view;
 
 	const [expanded, setExpanded] = useState(false);
 
@@ -749,7 +756,7 @@ export function ProfilePage() {
 		},
 		viewMode: {
 			enabled: true,
-			defaultMode: defaultView as "grid" | "list",
+			defaultMode: storedDefaultView as "grid" | "list",
 		},
 		sort: {
 			enabled: true,
@@ -768,6 +775,9 @@ export function ProfilePage() {
 				},
 			],
 			defaultSort: "name",
+		},
+		urlPersistence: {
+			enabled: true,
 		},
 	};
 

@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { CachedAvatar } from "../../components/cached-avatar";
 import CapabilityList from "../../components/capability-list";
 import {
@@ -91,7 +92,11 @@ export function ProfileDetailPage() {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
 
-	const [activeTab, setActiveTab] = useState("overview");
+	const { activeTab, setActiveTab } = useUrlTab({
+		paramName: "tab",
+		defaultTab: "overview",
+		validTabs: ["overview", "servers", "tools", "prompts", "resources", "templates"],
+	});
 
 	const mode = searchParams.get("mode");
 

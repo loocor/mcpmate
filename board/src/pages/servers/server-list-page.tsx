@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { EntityCard } from "../../components/entity-card";
@@ -41,6 +41,7 @@ import { Switch } from "../../components/ui/switch";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { configSuitsApi, serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { useUrlSort, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type {
@@ -131,8 +132,6 @@ export function ServerListPage() {
 	const [pending, setPending] = useState<Record<string, boolean>>({});
 	const [isTogglePending, setIsTogglePending] = useState(false);
 
-	// Search and sort state
-	const [search, setSearch] = useState("");
 	const [expanded, setExpanded] = useState(false);
 
 	// Sorted data state
@@ -189,11 +188,23 @@ export function ServerListPage() {
 		setAddDragActive(false);
 	}, []);
 
-	// View mode and developer toggles
-	const defaultView = useAppStore(
-		(state) => state.dashboardSettings.defaultView,
-	);
+	const [searchParams] = useSearchParams();
+	const storedDefaultView = useAppStore((state) => state.dashboardSettings.defaultView);
 	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
+
+	const { view } = useUrlView({
+		paramName: "view",
+		defaultView: storedDefaultView,
+		validViews: ["grid", "list"],
+	});
+	const viewMode = view;
+	const { sortState } = useUrlSort({
+		paramName: "sort",
+		defaultField: "name",
+		defaultDirection: "asc",
+		validFields: ["name", "enabled"],
+	});
+
 	const pendingServerDeepLinkImport = useAppStore(
 		(state) => state.pendingServerDeepLinkImport,
 	);
@@ -312,12 +323,26 @@ export function ServerListPage() {
 		retry: 1, // Reduce retry count to show errors more quickly
 	});
 
-	// Update sortedServers when servers data changes
 	React.useEffect(() => {
-		if (serverListResponse?.servers) {
-			setSortedServers(serverListResponse.servers);
+		if (sortedServers.length === 0 && serverListResponse?.servers) {
+			const initialSorted = [...serverListResponse.servers].sort((a, b) => {
+				const aValue = a[sortState.field as keyof ServerSummary];
+				const bValue = b[sortState.field as keyof ServerSummary];
+
+				let comparison = 0;
+				if (typeof aValue === "string" && typeof bValue === "string") {
+					comparison = aValue.localeCompare(bValue);
+				} else if (typeof aValue === "boolean" && typeof bValue === "boolean") {
+					comparison = Number(aValue) - Number(bValue);
+				} else {
+					comparison = String(aValue).localeCompare(String(bValue));
+				}
+
+				return sortState.direction === "desc" ? -comparison : comparison;
+			});
+			setSortedServers(initialSorted);
 		}
-	}, [serverListResponse?.servers]);
+	}, [serverListResponse?.servers, sortedServers.length, sortState]);
 
 	const { data: profileUsage } = useQuery<{ [serverId: string]: string[] }>({
 		queryKey: ["servers", "profile-usage"],
@@ -976,7 +1001,7 @@ export function ServerListPage() {
 
 	// Prepare loading skeleton
 	const loadingSkeleton =
-		defaultView === "grid"
+		viewMode === "grid"
 			? Array.from({ length: 6 }, (_, index) => (
 				<Card
 					key={`loading-grid-skeleton-${Date.now()}-${index}`}
@@ -1036,7 +1061,7 @@ export function ServerListPage() {
 		},
 		viewMode: {
 			enabled: true,
-			defaultMode: defaultView as "grid" | "list",
+			defaultMode: storedDefaultView as "grid" | "list",
 		},
 		sort: {
 			enabled: true,
@@ -1056,21 +1081,19 @@ export function ServerListPage() {
 			],
 			defaultSort: "name",
 		},
+		urlPersistence: {
+			enabled: true,
+		},
 	};
 
 	// Toolbar state
 	const toolbarState: PageToolbarState = {
-		search,
-		viewMode: defaultView,
-		sort: "name", // Add required sort property
 		expanded,
 	};
 
 	// Toolbar callbacks
 	const toolbarCallbacks: PageToolbarCallbacks<ToolbarServer> = {
-		onSearchChange: setSearch,
 		onViewModeChange: (mode: "grid" | "list") => {
-			// Directly update global settings
 			setDashboardSetting("defaultView", mode);
 		},
 		onSortedDataChange: (data) => setSortedServers(data as ServerSummary[]),
@@ -1223,7 +1246,7 @@ export function ServerListPage() {
 					filteredAndSortedServers.length === 0 ? emptyState : undefined
 				}
 			>
-				{defaultView === "grid"
+				{viewMode === "grid"
 					? filteredAndSortedServers.map(renderServerCard)
 					: filteredAndSortedServers.map(renderServerListItem)}
 			</ListGridContainer>

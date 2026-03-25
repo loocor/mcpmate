@@ -14,6 +14,12 @@ import type {
 	SortOption,
 	SortState,
 } from "../../types/page-toolbar";
+import {
+	useUrlSearch,
+	useUrlState,
+	useUrlView,
+	useUrlSort,
+} from "../../lib/hooks/use-url-state";
 
 // 通用实体接口
 export interface Entity {
@@ -57,6 +63,15 @@ export interface PageToolbarConfig<T extends Entity = Entity> {
 		defaultSort?: string;
 	};
 
+	// URL 持久化配置
+	urlPersistence?: {
+		enabled?: boolean;
+		search?: boolean;
+		view?: boolean;
+		sort?: boolean;
+		expanded?: boolean;
+	};
+
 	// 布局配置
 	layout?: "horizontal" | "vertical" | "responsive";
 	className?: string;
@@ -68,40 +83,41 @@ export interface PageToolbarConfig<T extends Entity = Entity> {
 	};
 }
 
-// 工具栏状态
+// 工具栏状态（外部控制模式）
 export interface PageToolbarState {
-	search: string;
-	viewMode: "grid" | "list";
-	sort: string;
+	search?: string;
+	viewMode?: "grid" | "list";
+	sort?: string;
 	sortState?: SortState;
 	expanded?: boolean;
 }
 
 // 工具栏回调
 export interface PageToolbarCallbacks<T extends Entity = Entity> {
-	onSearchChange: (search: string) => void;
-	onViewModeChange: (mode: "grid" | "list") => void;
+	onSearchChange?: (search: string) => void;
+	onViewModeChange?: (mode: "grid" | "list") => void;
+	onSortChange?: (sortState: SortState) => void;
 	onSortedDataChange?: (sortedData: T[]) => void;
 	onExpandedChange?: (expanded: boolean) => void;
 }
 
 // 工具栏属性
 export interface PageToolbarProps<T extends Entity = Entity> {
-    config: PageToolbarConfig<T>;
-    state: PageToolbarState;
-    callbacks: PageToolbarCallbacks<T>;
-    actions?: React.ReactNode;
-    filters?: React.ReactNode;
-    className?: string;
+	config: PageToolbarConfig<T>;
+	state?: PageToolbarState;
+	callbacks?: PageToolbarCallbacks<T>;
+	actions?: React.ReactNode;
+	filters?: React.ReactNode;
+	className?: string;
 }
 
 export function PageToolbar<T extends Entity = Entity>({
-    config,
-    state,
-    callbacks,
-    actions,
-    filters,
-    className,
+	config,
+	state,
+	callbacks,
+	actions,
+	filters,
+	className,
 }: PageToolbarProps<T>) {
 	const {
 		data = [],
@@ -109,16 +125,85 @@ export function PageToolbar<T extends Entity = Entity>({
 		viewMode: viewModeConfig,
 		sort: sortConfig,
 		compact: compactConfig,
+		urlPersistence,
 	} = config;
 
-	const { search, viewMode, expanded = false } = state;
+	const persistenceEnabled = urlPersistence?.enabled ?? false;
+	const persistSearch = urlPersistence?.search ?? true;
+	const persistView = urlPersistence?.view ?? true;
+	const persistSort = urlPersistence?.sort ?? true;
+	const persistExpanded = urlPersistence?.expanded ?? true;
 
-	const {
-		onSearchChange,
-		onViewModeChange,
-		onSortedDataChange,
-		onExpandedChange,
-	} = callbacks;
+	// URL 持久化 hooks
+	const urlSearch = useUrlSearch();
+	const urlView = useUrlView({
+		paramName: "view",
+		defaultView: viewModeConfig?.defaultMode ?? "grid",
+		validViews: ["grid", "list"],
+	});
+	const sortValidFields = sortConfig?.options?.map((opt) => opt.value) ?? [];
+	const urlSort = useUrlSort({
+		paramName: "sort",
+		defaultField: sortConfig?.defaultSort ?? "name",
+		defaultDirection: "asc",
+		validFields: sortValidFields.length > 0 ? sortValidFields : undefined,
+	});
+	const [urlExpanded, setUrlExpanded] = useUrlState<boolean>({
+		paramName: "expanded",
+		defaultValue: false,
+	});
+
+	// 决定使用 URL 还是外部状态
+	const search = persistenceEnabled && persistSearch
+		? urlSearch.search
+		: (state?.search ?? "");
+
+	const viewMode = persistenceEnabled && persistView
+		? urlView.view
+		: (state?.viewMode ?? viewModeConfig?.defaultMode ?? "grid");
+
+	const sortState = React.useMemo(() => {
+		if (persistenceEnabled && persistSort) {
+			return urlSort.sortState;
+		}
+		return state?.sortState ?? {
+			field: sortConfig?.defaultSort ?? "name",
+			direction: "asc" as const,
+		};
+	}, [persistenceEnabled, persistSort, urlSort.sortState, state?.sortState, sortConfig?.defaultSort]);
+
+	const expanded = persistenceEnabled && persistExpanded
+		? urlExpanded
+		: (state?.expanded ?? false);
+
+	// 处理状态变更
+	const handleSearchChange = (value: string) => {
+		if (persistenceEnabled && persistSearch) {
+			urlSearch.setSearch(value);
+		}
+		callbacks?.onSearchChange?.(value);
+	};
+
+	const handleViewModeChange = (mode: "grid" | "list") => {
+		if (persistenceEnabled && persistView) {
+			urlView.setView(mode);
+		}
+		callbacks?.onViewModeChange?.(mode);
+	};
+
+	const handleSortChange = (newSortState: SortState) => {
+		if (persistenceEnabled && persistSort) {
+			urlSort.setSortState(newSortState);
+		}
+		callbacks?.onSortChange?.(newSortState);
+	};
+
+	const handleExpandedChange = (value: boolean) => {
+		if (persistenceEnabled && persistExpanded) {
+			setUrlExpanded(value);
+		}
+		callbacks?.onExpandedChange?.(value);
+	};
 
 	// 辅助函数：获取嵌套属性值
 	const getNestedValue = React.useCallback(
@@ -129,21 +214,6 @@ export function PageToolbar<T extends Entity = Entity>({
 		},
 		[],
 	);
-
-	// 内部排序状态
-	const [sort, setSort] = React.useState(
-		sortConfig?.defaultSort || sortConfig?.options?.[0]?.value || "name",
-	);
-	const [sortState, setSortState] = React.useState<SortState>(() => {
-		const defaultField =
-			sortConfig?.defaultSort || sortConfig?.options?.[0]?.value || "name";
-		const defaultOption = sortConfig?.options.find(
-			(opt) => opt.value === defaultField,
-		);
-		const defaultDirection =
-			defaultOption?.defaultDirection || defaultOption?.direction || "asc";
-		return { field: defaultField, direction: defaultDirection };
-	});
 
 	// 搜索过滤
 	const filteredData = React.useMemo(() => {
@@ -187,7 +257,7 @@ export function PageToolbar<T extends Entity = Entity>({
 	// 通知排序后的数据变化（避免无限循环）
 	const lastSortedRef = React.useRef<T[] | null>(null);
 	React.useEffect(() => {
-		if (!onSortedDataChange) return;
+		if (!callbacks?.onSortedDataChange) return;
 
 		const previous = lastSortedRef.current;
 		const isSameAsPrevious =
@@ -200,8 +270,8 @@ export function PageToolbar<T extends Entity = Entity>({
 		}
 
 		lastSortedRef.current = sortedData;
-		onSortedDataChange(sortedData);
-	}, [sortedData, onSortedDataChange]);
+		callbacks.onSortedDataChange(sortedData);
+	}, [sortedData, callbacks]);
 
 	// 是否启用精简模式
 	const isCompact = compactConfig?.enabled !== false;
@@ -214,12 +284,11 @@ export function PageToolbar<T extends Entity = Entity>({
 		return (
 			<div className="flex-1">
 				<div className="flex items-center gap-2">
-					{/* 展开/收起按钮 */}
 					{isCompact && compactConfig?.showExpandButton !== false && (
 						<Button
 							variant="ghost"
 							size="sm"
-							onClick={() => onExpandedChange?.(!expanded)}
+							onClick={() => handleExpandedChange(!expanded)}
 							className="h-9 w-9 p-0 shrink-0 text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800"
 						>
 							{expanded ? (
@@ -230,12 +299,11 @@ export function PageToolbar<T extends Entity = Entity>({
 						</Button>
 					)}
 
-					{/* 搜索输入框 */}
 					<div className="relative flex-1">
 						<Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
 						<Input
 							value={search}
-							onChange={(e) => onSearchChange(e.target.value)}
+							onChange={(e) => handleSearchChange(e.target.value)}
 							placeholder={searchConfig.placeholder || "Search..."}
 							className="h-9 w-full rounded-md border border-slate-200 bg-white px-4 py-2 pl-10 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-400 dark:focus:ring-slate-600"
 						/>
@@ -254,7 +322,7 @@ export function PageToolbar<T extends Entity = Entity>({
 				<Button
 					variant={viewMode === "grid" ? "default" : "ghost"}
 					size="sm"
-					onClick={() => onViewModeChange("grid")}
+					onClick={() => handleViewModeChange("grid")}
 					className="h-9 px-3 rounded-l-md rounded-r-none"
 				>
 					<Grid3X3 className="h-4 w-4" />
@@ -262,7 +330,7 @@ export function PageToolbar<T extends Entity = Entity>({
 				<Button
 					variant={viewMode === "list" ? "default" : "ghost"}
 					size="sm"
-					onClick={() => onViewModeChange("list")}
+					onClick={() => handleViewModeChange("list")}
 					className="h-9 px-3 rounded-r-md rounded-l-none"
 				>
 					<List className="h-4 w-4" />
@@ -275,37 +343,29 @@ export function PageToolbar<T extends Entity = Entity>({
 	const renderSort = () => {
 		if (!sortConfig?.enabled || !isExpanded) return null;
 
-		// 获取当前排序选项
-		const currentOption = sortConfig.options.find((opt) => opt.value === sort);
+		const currentOption = sortConfig.options.find((opt) => opt.value === sortState.field);
 		const currentDirection =
 			sortState?.direction ||
 			currentOption?.defaultDirection ||
 			currentOption?.direction ||
 			"asc";
 
-		// 处理排序字段切换
 		const handleSortFieldChange = (newSort: string) => {
-			setSort(newSort);
-
-			// 切换到不同的字段，使用默认方向
 			const newOption = sortConfig.options.find((opt) => opt.value === newSort);
 			const newDirection =
 				newOption?.defaultDirection || newOption?.direction || "asc";
-			setSortState({ field: newSort, direction: newDirection });
+			handleSortChange({ field: newSort, direction: newDirection });
 		};
 
-		// 处理排序方向切换
 		const handleSortDirectionToggle = () => {
 			const newDirection = currentDirection === "asc" ? "desc" : "asc";
-			setSortState({ field: sort, direction: newDirection });
+			handleSortChange({ field: sortState.field, direction: newDirection });
 		};
 
-		// 获取当前排序选项的标签
 		const currentLabel = currentOption?.label || "Sort";
 
 		return (
 			<div className="flex items-center rounded-md border border-slate-200 dark:border-slate-700 h-9">
-				{/* 排序方向切换按钮 - 在左侧 */}
 				<Button
 					variant="outline"
 					size="sm"
@@ -320,8 +380,7 @@ export function PageToolbar<T extends Entity = Entity>({
 					)}
 				</Button>
 
-				{/* 排序字段选择器 */}
-				<Select value={sort} onValueChange={handleSortFieldChange}>
+				<Select value={sortState.field} onValueChange={handleSortFieldChange}>
 					<SelectTrigger className="h-9 w-full sm:w-[200px] border-l-0 rounded-l-none">
 						<SelectValue placeholder="Sort">{currentLabel}</SelectValue>
 					</SelectTrigger>
@@ -339,22 +398,16 @@ export function PageToolbar<T extends Entity = Entity>({
 
 	return (
 		<div className={cn("flex items-center gap-2", className)}>
-			{/* 搜索框 */}
 			{renderSearch()}
 
-			{/* 控制按钮组 */}
 			<div className="flex items-center gap-2">
-            {/* 排序 */}
-            {renderSort()}
+				{renderSort()}
 
-            {/* 过滤器（在展开模式下显示） */}
-            {isExpanded && filters}
+				{isExpanded && filters}
 
-            {/* 视图切换：位于过滤之后 */}
-            {renderViewMode()}
+				{renderViewMode()}
 
-            {/* 自定义操作（刷新 / 新增） */}
-            {actions}
+				{actions}
 			</div>
 		</div>
 	);
@@ -383,12 +436,4 @@ export const defaultPageToolbarConfig: PageToolbarConfig = {
 		enabled: true,
 		showExpandButton: true,
 	},
-};
-
-// 默认状态
-export const defaultPageToolbarState: PageToolbarState = {
-	search: "",
-	viewMode: "grid",
-	sort: "name",
-	expanded: false,
 };

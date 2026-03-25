@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
 import {
 	CapsuleStripeList,
@@ -59,6 +59,7 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { maskHeaderValue, sanitizeRecord } from "../../lib/security";
 import { useAppStore } from "../../lib/store";
+import { useUrlTab } from "../../lib/hooks/use-url-state";
 import type { ServerCapabilitySummary, ServerDetail } from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
 
@@ -690,6 +691,15 @@ export function ServerDetailPage() {
 	const serverVersion =
 		server?.server_version ?? readLegacyString(server, "serverVersion");
 	const defaultTab = viewMode === VIEW_MODES.debug ? "tools" : "overview";
+	const capabilityTabs = ["tools", "prompts", "resources", "templates"] as const;
+	const validTabs = viewMode === VIEW_MODES.browse
+		? ["overview", ...capabilityTabs]
+		: [...capabilityTabs];
+	const { activeTab: capabilityTab, setActiveTab: setCapabilityTab } = useUrlTab({
+		paramName: "tab",
+		defaultTab,
+		validTabs,
+	});
 	const serverEnabled = Boolean(server?.enabled ?? server?.globally_enabled);
 	const runtimeStatus = server?.status ?? (serverEnabled ? "idle" : "disabled");
 	const showDefaultHeaders = useAppStore(
@@ -837,7 +847,7 @@ export function ServerDetailPage() {
 			)}
 
 			{server && (
-				<Tabs key={viewMode} defaultValue={defaultTab} className="space-y-4">
+				<Tabs value={capabilityTab} onValueChange={setCapabilityTab} className="space-y-4">
 					<div className="flex items-center justify-between gap-2 flex-wrap">
 						<ServerCapabilityTabsHeader
 							serverId={serverId}
