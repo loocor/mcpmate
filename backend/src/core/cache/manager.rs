@@ -125,16 +125,16 @@ impl RedbCacheManager {
         Ok(manager)
     }
 
-    /// Generate cache key from server_id and instance_type (consistent with operations.rs)
     fn generate_cache_key(
         &self,
         server_id: &str,
         instance_type: &InstanceType,
+        scope: &CacheScope,
     ) -> String {
         let instance_key = match instance_type {
             InstanceType::Production => "production".to_string(),
         };
-        format!("{}#{}", server_id, instance_key)
+        format!("{}#{}#{}", server_id, instance_key, scope.key_suffix())
     }
 
     /// Create a new cache manager
@@ -266,7 +266,7 @@ impl RedbCacheManager {
         operations.store_server_data(server_data)?;
 
         // Update L1 (memory) cache using composite key
-        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type());
+        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type(), server_data.scope());
         let mut memory_cache = self.memory_cache.write().await;
         memory_cache.put(cache_key, server_data.clone());
 
@@ -285,7 +285,7 @@ impl RedbCacheManager {
         query: &CacheQuery,
     ) -> Result<CacheResult<Option<CachedServerData>>, CacheError> {
         // Generate composite key for consistent lookup
-        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type());
+        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type(), &query.scope);
         tracing::debug!(
             "[CACHE][GET_DATA] key={} freshness={:?}",
             cache_key,
@@ -442,7 +442,7 @@ impl RedbCacheManager {
         server_id: &str,
     ) -> Result<(), CacheError> {
         // Remove from L1 cache using composite key
-        let composite_key = self.generate_cache_key(server_id, &InstanceType::Production);
+        let composite_key = self.generate_cache_key(server_id, &InstanceType::Production, &CacheScope::shared_raw());
         let mut memory_cache = self.memory_cache.write().await;
         memory_cache.pop(&composite_key);
 

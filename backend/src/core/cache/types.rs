@@ -14,6 +14,31 @@ use rmcp::model::Icon;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CacheScope {
+    SharedRaw,
+    ClientFiltered {
+        selection_key: String,
+        rules_fingerprint: String,
+    },
+}
+
+impl CacheScope {
+    pub fn shared_raw() -> Self {
+        Self::SharedRaw
+    }
+
+    pub fn key_suffix(&self) -> String {
+        match self {
+            CacheScope::SharedRaw => "raw".to_string(),
+            CacheScope::ClientFiltered {
+                selection_key,
+                rules_fingerprint,
+            } => format!("filtered:{}:{}", selection_key, rules_fingerprint),
+        }
+    }
+}
+
 /// Cached server data structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedServerData {
@@ -27,12 +52,17 @@ pub struct CachedServerData {
     pub resource_templates: Vec<CachedResourceTemplateInfo>,
     pub cached_at: DateTime<Utc>,
     pub fingerprint: String,
+    pub scope: CacheScope,
 }
 
 impl CachedServerData {
     /// Get the instance type (always Production in simplified design)
     pub fn instance_type(&self) -> InstanceType {
         InstanceType::Production
+    }
+
+    pub fn scope(&self) -> &CacheScope {
+        &self.scope
     }
 }
 
@@ -144,6 +174,7 @@ pub struct CacheQuery {
     pub server_id: String,
     pub freshness_level: FreshnessLevel,
     pub include_disabled: bool,
+    pub scope: CacheScope,
 }
 
 impl CacheQuery {
@@ -242,5 +273,38 @@ impl From<redb::StorageError> for CacheError {
 impl From<redb::CommitError> for CacheError {
     fn from(err: redb::CommitError) -> Self {
         CacheError::InvalidFormat(format!("Commit error: {}", err))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CacheScope;
+    use crate::core::capability::{AffinityKey, ConnectionSelection};
+
+    #[test]
+    fn connection_selection_cache_scope_key_is_stable() {
+        let selection = ConnectionSelection {
+            server_id: "srv_1".to_string(),
+            affinity_key: AffinityKey::PerSession("sess-123".to_string()),
+            routing_fingerprint: Some("fp-123".to_string()),
+        };
+
+        assert_eq!(selection.cache_scope_key(), "srv_1#session:sess-123#fp-123");
+    }
+
+    #[test]
+    fn cache_scope_suffix_separates_raw_and_filtered_entries() {
+        let raw = CacheScope::shared_raw();
+        let filtered = CacheScope::ClientFiltered {
+            selection_key: "srv_1#session:sess-123#fp-123".to_string(),
+            rules_fingerprint: "fp-123".to_string(),
+        };
+
+        assert_eq!(raw.key_suffix(), "raw");
+        assert_eq!(
+            filtered.key_suffix(),
+            "filtered:srv_1#session:sess-123#fp-123:fp-123"
+        );
+        assert_ne!(raw.key_suffix(), filtered.key_suffix());
     }
 }

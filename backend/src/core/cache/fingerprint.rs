@@ -316,6 +316,7 @@ impl DefaultFingerprintGenerator {
             server_id: server_id.to_string(),
             freshness_level: super::types::FreshnessLevel::Cached,
             include_disabled: true,
+            scope: super::types::CacheScope::shared_raw(),
         };
 
         let server_data = match self.cache_manager.get_server_data(&query).await {

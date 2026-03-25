@@ -15,23 +15,16 @@ impl<'a> CacheOperations<'a> {
     pub fn new(db: &'a Database) -> Self {
         Self { db }
     }
-
-    /// Generate cache key from server_id and instance_type
-    ///
-    /// Format: "{server_id}#{instance_type_key}"
-    /// Examples:
-    /// - "srv_123#production"
-    /// - "srv_123#validation_api"
-    /// - "srv_123#exploration_session1"
     fn generate_cache_key(
         &self,
         server_id: &str,
         instance_type: &InstanceType,
+        scope: &CacheScope,
     ) -> String {
         let instance_key = match instance_type {
             InstanceType::Production => "production".to_string(),
         };
-        format!("{}#{}", server_id, instance_key)
+        format!("{}#{}#{}", server_id, instance_key, scope.key_suffix())
     }
 
     /// Store server data in cache
@@ -40,7 +33,7 @@ impl<'a> CacheOperations<'a> {
         server_data: &CachedServerData,
     ) -> Result<(), CacheError> {
         let write_txn = self.db.begin_write()?;
-        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type());
+        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type(), server_data.scope());
 
         {
             // Store main server data using composite key (server_id + instance_type)
@@ -107,7 +100,7 @@ impl<'a> CacheOperations<'a> {
         let servers_table = read_txn.open_table(SERVERS_TABLE)?;
 
         // Generate composite key for lookup
-        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type());
+        let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type(), &query.scope);
         tracing::info!("[CACHE][LOOKUP] key={}", cache_key);
 
         if let Some(data) = servers_table.get(cache_key.as_str())? {
