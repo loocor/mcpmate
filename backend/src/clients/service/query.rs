@@ -1,6 +1,6 @@
 use super::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::ServerTemplateInput;
+use crate::clients::models::{CapabilitySource, ServerTemplateInput};
 use crate::common::constants::defaults;
 use crate::config::profile::basic::get_active_profile;
 use crate::config::server::{args::get_server_args, env::get_server_env};
@@ -54,6 +54,27 @@ impl ClientConfigService {
 
         if let Some(profile_id) = &options.profile_id {
             return Ok(ServerSelection::Profile(profile_id.clone()));
+        }
+
+        if let Some(state) = self.fetch_state(&options.client_id).await? {
+            let capability_config = state.capability_config()?;
+            match capability_config.capability_source {
+                CapabilitySource::Activated => {}
+                CapabilitySource::Profiles => {
+                    let profile_ids = capability_config.selected_profile_ids;
+                    if profile_ids.len() == 1 {
+                        return Ok(ServerSelection::Profile(profile_ids[0].clone()));
+                    }
+                    if !profile_ids.is_empty() {
+                        return Ok(ServerSelection::Profiles(profile_ids));
+                    }
+                }
+                CapabilitySource::Custom => {
+                    if let Some(profile_id) = capability_config.custom_profile_id {
+                        return Ok(ServerSelection::Profile(profile_id));
+                    }
+                }
+            }
         }
 
         let active_profiles = get_active_profile(&self.db_pool)
@@ -201,4 +222,170 @@ impl ClientConfigService {
 
 fn sanitize_server_name(name: &str) -> String {
     name.replace(' ', "_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clients::models::ConfigMode;
+    use crate::clients::source::{FileTemplateSource, TemplateRoot};
+    use crate::common::profile::ProfileType;
+    use crate::config::{
+        client::init::initialize_client_table,
+        models::Profile,
+        profile::{self, init::initialize_profile_tables},
+        server::init::initialize_server_tables,
+    };
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    async fn create_test_service() -> (TempDir, ClientConfigService) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pool = Arc::new(
+            SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .expect("sqlite pool"),
+        );
+        initialize_server_tables(pool.as_ref()).await.expect("init server tables");
+        initialize_profile_tables(pool.as_ref()).await.expect("init profile tables");
+        initialize_client_table(pool.as_ref()).await.expect("init client table");
+
+        let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
+        let source = Arc::new(FileTemplateSource::bootstrap(template_root).await.expect("template source"));
+        let service = ClientConfigService::with_source(pool, source)
+            .await
+            .expect("client config service");
+
+        (temp_dir, service)
+    }
+
+    async fn insert_profile(
+        service: &ClientConfigService,
+        name: &str,
+        profile_type: ProfileType,
+        is_active: bool,
+    ) -> String {
+        let mut profile = Profile::new(name.to_string(), profile_type);
+        profile.is_active = is_active;
+        profile::upsert_profile(service.db_pool.as_ref(), &profile)
+            .await
+            .expect("upsert profile")
+    }
+
+    #[tokio::test]
+    async fn set_capability_config_normalizes_selected_profiles() {
+        let (_temp_dir, service) = create_test_service().await;
+        let profile_a = insert_profile(&service, "profile-a", ProfileType::Shared, false).await;
+        let profile_b = insert_profile(&service, "profile-b", ProfileType::Shared, false).await;
+
+        let config = service
+            .set_capability_config(
+                "client-a",
+                CapabilitySource::Profiles,
+                vec![format!("  {}  ", profile_b), profile_a.clone(), profile_b.clone()],
+            )
+            .await
+            .expect("set capability config");
+
+        let mut expected = vec![profile_a, profile_b];
+        expected.sort();
+
+        assert_eq!(config.capability_source, CapabilitySource::Profiles);
+        assert_eq!(config.selected_profile_ids, expected);
+        assert!(config.custom_profile_id.is_none());
+        assert_eq!(
+            service
+                .get_capability_config("client-a")
+                .await
+                .expect("get capability config")
+                .expect("stored config"),
+            config
+        );
+    }
+
+    #[tokio::test]
+    async fn set_capability_config_custom_creates_host_app_profile() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        let config = service
+            .set_capability_config("client-a", CapabilitySource::Custom, vec!["ignored".to_string()])
+            .await
+            .expect("set custom capability config");
+
+        let custom_profile_id = config.custom_profile_id.clone().expect("custom profile id");
+        let profile = profile::get_profile(service.db_pool.as_ref(), &custom_profile_id)
+            .await
+            .expect("load custom profile")
+            .expect("custom profile exists");
+
+        assert_eq!(config.capability_source, CapabilitySource::Custom);
+        assert!(config.selected_profile_ids.is_empty());
+        assert_eq!(profile.profile_type, ProfileType::HostApp);
+        assert_eq!(profile.name, "client-a_custom");
+    }
+
+    #[tokio::test]
+    async fn resolve_server_selection_prefers_client_profiles_over_active_profiles() {
+        let (_temp_dir, service) = create_test_service().await;
+        let active_profile_id = insert_profile(&service, "active-profile", ProfileType::Shared, true).await;
+        let selected_profile_id = insert_profile(&service, "selected-profile", ProfileType::Shared, false).await;
+
+        service
+            .set_capability_config(
+                "client-a",
+                CapabilitySource::Profiles,
+                vec![selected_profile_id.clone()],
+            )
+            .await
+            .expect("set profile capability config");
+
+        let selection = service
+            .resolve_server_selection(&crate::clients::ClientRenderOptions {
+                client_id: "client-a".to_string(),
+                mode: ConfigMode::Managed,
+                profile_id: None,
+                server_ids: None,
+                dry_run: true,
+            })
+            .await
+            .expect("resolve selection");
+
+        match selection {
+            ServerSelection::Profile(profile_id) => assert_eq!(profile_id, selected_profile_id),
+            other => panic!("expected selected profile, got {other:?}"),
+        }
+
+        assert_ne!(selected_profile_id, active_profile_id);
+    }
+
+    #[tokio::test]
+    async fn resolve_server_selection_uses_custom_profile() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        let config = service
+            .set_capability_config("client-a", CapabilitySource::Custom, Vec::new())
+            .await
+            .expect("set custom capability config");
+
+        let selection = service
+            .resolve_server_selection(&crate::clients::ClientRenderOptions {
+                client_id: "client-a".to_string(),
+                mode: ConfigMode::Managed,
+                profile_id: None,
+                server_ids: None,
+                dry_run: true,
+            })
+            .await
+            .expect("resolve selection");
+
+        match selection {
+            ServerSelection::Profile(profile_id) => {
+                assert_eq!(Some(profile_id), config.custom_profile_id)
+            }
+            other => panic!("expected custom profile, got {other:?}"),
+        }
+    }
 }

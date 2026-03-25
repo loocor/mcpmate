@@ -1,9 +1,10 @@
 use crate::api::handlers::client;
 use crate::api::models::client::{
     ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq,
-    ClientBackupPolicyResp, ClientBackupPolicySetReq, ClientCheckReq, ClientCheckResp, ClientConfigImportReq,
-    ClientConfigImportResp, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientManageReq, ClientManageResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
+    ClientBackupPolicyResp, ClientBackupPolicySetReq, ClientCapabilityConfigReq, ClientCapabilityConfigResp,
+    ClientCheckReq, ClientCheckResp, ClientConfigImportReq, ClientConfigImportResp, ClientConfigReq,
+    ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientManageReq,
+    ClientManageResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -74,6 +75,20 @@ aide_wrapper_payload!(
     "Update client settings (config_mode/transport/client_version)"
 );
 
+aide_wrapper_payload!(
+    client::update_capability_config,
+    ClientCapabilityConfigReq,
+    ClientCapabilityConfigResp,
+    "Update client capability configuration"
+);
+
+aide_wrapper_query!(
+    client::get_capability_config,
+    ClientConfigReq,
+    ClientCapabilityConfigResp,
+    "Get client capability configuration"
+);
+
 // Backup administration
 aide_wrapper_query!(
     client::list_backups,
@@ -123,6 +138,11 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         )
         .api_route("/client/manage", post_with(manage_aide, manage_docs))
         .api_route("/client/update", post_with(update_settings_aide, update_settings_docs))
+        .api_route(
+            "/client/capability-config",
+            get_with(get_capability_config_aide, get_capability_config_docs)
+                .post_with(update_capability_config_aide, update_capability_config_docs),
+        )
         .api_route("/client/backups/list", get_with(list_backups_aide, list_backups_docs))
         .api_route(
             "/client/backups/delete",

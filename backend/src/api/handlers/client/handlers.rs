@@ -3,7 +3,8 @@
 use super::config::{analyze_config_content, get_config_last_modified};
 use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
-    ClientBackupActionData, ClientBackupActionResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
+    ClientBackupActionData, ClientBackupActionResp, ClientCapabilityConfigData, ClientCapabilityConfigReq,
+    ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
     ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
     ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
     ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata,
@@ -129,6 +130,19 @@ pub async fn config_details(
     let support_url = metadata_string(&template, "support_url");
     let logo_url = extract_logo_url(&template);
 
+    let capability_config = service
+        .get_capability_config(&request.identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to load capability config"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .unwrap_or_default();
+
     let data = ClientConfigData {
         config_path: config_path.unwrap_or_default(),
         config_exists,
@@ -147,6 +161,9 @@ pub async fn config_details(
         docs_url,
         support_url,
         logo_url,
+        capability_source: capability_config.capability_source,
+        selected_profile_ids: capability_config.selected_profile_ids,
+        custom_profile_id: capability_config.custom_profile_id,
         warnings,
     };
 
@@ -444,6 +461,68 @@ pub async fn update_settings(
         data,
     )))
 }
+
+pub async fn update_capability_config(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientCapabilityConfigReq>,
+) -> Result<Json<ClientCapabilityConfigResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+
+    let config = service
+        .set_capability_config(
+            &request.identifier,
+            request.capability_source,
+            request.selected_profile_ids,
+        )
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to update capability config"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(ClientCapabilityConfigResp::success(
+        ClientCapabilityConfigData {
+            identifier: request.identifier,
+            capability_source: config.capability_source,
+            selected_profile_ids: config.selected_profile_ids,
+            custom_profile_id: config.custom_profile_id,
+        },
+    )))
+}
+
+pub async fn get_capability_config(
+    State(app_state): State<Arc<AppState>>,
+    Query(request): Query<ClientConfigReq>,
+) -> Result<Json<ClientCapabilityConfigResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+
+    let config = service
+        .get_capability_config(&request.identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to load capability config"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(ClientCapabilityConfigResp::success(
+        ClientCapabilityConfigData {
+            identifier: request.identifier,
+            capability_source: config.capability_source,
+            selected_profile_ids: config.selected_profile_ids,
+            custom_profile_id: config.custom_profile_id,
+        },
+    )))
+}
+
 async fn descriptor_to_client_info(
     service: &ClientConfigService,
     descriptor: ClientDescriptor,
@@ -458,6 +537,18 @@ async fn descriptor_to_client_info(
     let docs_url = metadata_string(&template, "docs_url");
     let support_url = metadata_string(&template, "support_url");
     let config_type = convert_container_type(template.config_mapping.container_type);
+    let capability_config = service
+        .get_capability_config(&template.identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %template.identifier,
+                error = %err,
+                "Failed to load client capability config"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .unwrap_or_default();
 
     let content = if descriptor.config_exists {
         match service.read_current_config(&template.identifier).await {
@@ -514,6 +605,9 @@ async fn descriptor_to_client_info(
             .await
             .ok()
             .and_then(|o| o.and_then(|(_, _, ver)| ver)),
+        capability_source: capability_config.capability_source,
+        selected_profile_ids: capability_config.selected_profile_ids,
+        custom_profile_id: capability_config.custom_profile_id,
         config_type,
         last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
         last_modified,
@@ -661,5 +755,163 @@ fn build_update_preview(
     match execution {
         TemplateExecutionResult::Applied { content, .. } => parse_config_value(content, template),
         TemplateExecutionResult::DryRun { content, .. } => parse_config_value(content, template),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::routes::AppState;
+    use crate::clients::{CapabilitySource, source::{FileTemplateSource, TemplateRoot}};
+    use crate::common::profile::ProfileType;
+    use crate::config::{
+        client::init::initialize_client_table,
+        database::Database,
+        models::Profile,
+        profile::{self, init::initialize_profile_tables},
+        server::init::initialize_server_tables,
+    };
+    use crate::core::{
+        cache::{RedbCacheManager, manager::CacheConfig},
+        models::Config,
+        pool::UpstreamConnectionPool,
+        profile::ConfigApplicationStateManager,
+    };
+    use crate::inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager};
+    use crate::system::metrics::MetricsCollector;
+    use axum::extract::{Query, State};
+    use axum::Json;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use tempfile::TempDir;
+    use tokio::sync::Mutex;
+
+    struct TestContext {
+        _temp_dir: TempDir,
+        app_state: Arc<AppState>,
+        client_service: Arc<ClientConfigService>,
+        db_pool: sqlx::SqlitePool,
+    }
+
+    async fn create_test_context() -> TestContext {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&db_pool)
+            .await
+            .expect("enable foreign keys");
+
+        initialize_server_tables(&db_pool).await.expect("init server tables");
+        initialize_profile_tables(&db_pool).await.expect("init profile tables");
+        initialize_client_table(&db_pool).await.expect("init client table");
+
+        let database = Arc::new(Database {
+            pool: db_pool.clone(),
+            path: PathBuf::from(":memory:"),
+        });
+
+        let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
+        let template_source = Arc::new(FileTemplateSource::bootstrap(template_root).await.expect("template source"));
+        let client_service = Arc::new(
+            ClientConfigService::with_source(Arc::new(db_pool.clone()), template_source)
+                .await
+                .expect("client service"),
+        );
+
+        let cache_path = temp_dir.path().join("capability.redb");
+        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
+
+        let app_state = Arc::new(AppState {
+            connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
+                Arc::new(Config::default()),
+                Some(database.clone()),
+            ))),
+            metrics_collector: Arc::new(MetricsCollector::new(Duration::from_secs(5))),
+            http_proxy: None,
+            profile_merge_service: None,
+            database: Some(database),
+            config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+            redb_cache,
+            unified_query: None,
+            client_service: Some(client_service.clone()),
+            inspector_calls: Arc::new(InspectorCallRegistry::new()),
+            inspector_sessions: Arc::new(InspectorSessionManager::new()),
+        });
+
+        TestContext {
+            _temp_dir: temp_dir,
+            app_state,
+            client_service,
+            db_pool,
+        }
+    }
+
+    async fn insert_shared_profile(pool: &sqlx::SqlitePool, name: &str) -> String {
+        let profile = Profile::new(name.to_string(), ProfileType::Shared);
+        profile::upsert_profile(pool, &profile).await.expect("upsert profile")
+    }
+
+    #[tokio::test]
+    async fn update_capability_config_returns_updated_payload() {
+        let context = create_test_context().await;
+        let profile_id = insert_shared_profile(&context.db_pool, "profile-a").await;
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-a".to_string(),
+                capability_source: CapabilitySource::Profiles,
+                selected_profile_ids: vec![profile_id.clone()],
+            }),
+        )
+        .await
+        .expect("update capability config");
+
+        assert!(response.success);
+        let data = response.data.expect("response data");
+        assert_eq!(data.identifier, "client-a");
+        assert_eq!(data.capability_source, CapabilitySource::Profiles);
+        assert_eq!(data.selected_profile_ids, vec![profile_id.clone()]);
+        assert!(data.custom_profile_id.is_none());
+
+        let stored = context
+            .client_service
+            .get_capability_config("client-a")
+            .await
+            .expect("stored config")
+            .expect("stored data");
+        assert_eq!(stored.capability_source, CapabilitySource::Profiles);
+        assert_eq!(stored.selected_profile_ids, vec![profile_id]);
+    }
+
+    #[tokio::test]
+    async fn get_capability_config_returns_stored_custom_profile() {
+        let context = create_test_context().await;
+        let config = context
+            .client_service
+            .set_capability_config("client-a", CapabilitySource::Custom, Vec::new())
+            .await
+            .expect("seed custom capability config");
+
+        let Json(response) = get_capability_config(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-a".to_string(),
+            }),
+        )
+        .await
+        .expect("get capability config");
+
+        assert!(response.success);
+        let data = response.data.expect("response data");
+        assert_eq!(data.identifier, "client-a");
+        assert_eq!(data.capability_source, CapabilitySource::Custom);
+        assert!(data.selected_profile_ids.is_empty());
+        assert_eq!(data.custom_profile_id, config.custom_profile_id);
     }
 }

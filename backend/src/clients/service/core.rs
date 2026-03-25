@@ -1,7 +1,10 @@
 use crate::clients::TemplateEngine;
 use crate::clients::detector::{ClientDetector, DetectedClient};
 use crate::clients::engine::TemplateExecutionResult;
-use crate::clients::models::{BackupPolicySetting, ClientTemplate, ConfigMode, ServerTemplateInput, TemplateFormat};
+use crate::clients::error::{ConfigError, ConfigResult};
+use crate::clients::models::{
+    BackupPolicySetting, ClientCapabilityConfig, ClientTemplate, ConfigMode, ServerTemplateInput, TemplateFormat,
+};
 use crate::clients::source::{ClientConfigSource, FileTemplateSource, TemplateRoot};
 use crate::system::paths::PathService;
 use chrono::{DateTime, Utc};
@@ -43,6 +46,9 @@ pub(super) struct ClientStateRow {
     pub(super) client_version: Option<String>,
     pub(super) backup_policy: Option<String>,
     pub(super) backup_limit: Option<i64>,
+    pub(super) capability_source: Option<String>,
+    pub(super) selected_profile_ids: Option<String>,
+    pub(super) custom_profile_id: Option<String>,
 }
 
 impl ClientStateRow {
@@ -56,6 +62,16 @@ impl ClientStateRow {
     pub(super) fn managed(&self) -> bool {
         self.managed != 0
     }
+
+    pub(super) fn capability_config(&self) -> ConfigResult<ClientCapabilityConfig> {
+        ClientCapabilityConfig::from_parts(
+            self.capability_source.as_deref(),
+            self.selected_profile_ids.as_deref(),
+            self.custom_profile_id.clone(),
+        )
+        .map_err(ConfigError::DataAccessError)
+    }
+
 }
 
 /// Summarized view of a client template combined with detection and filesystem state

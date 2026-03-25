@@ -1,5 +1,8 @@
 use super::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
+use crate::clients::models::{CapabilitySource, ClientCapabilityConfig};
+use crate::common::profile::{ProfileRole, ProfileType};
+use crate::config::models::Profile;
 
 const VALID_TRANSPORTS: &[&str] = &["auto", "sse", "stdio", "streamable_http"];
 
@@ -190,5 +193,153 @@ impl ClientConfigService {
         let transport = state.transport.unwrap_or_else(|| "auto".to_string());
 
         Ok(Some((state.config_mode, transport, state.client_version)))
+    }
+
+    pub async fn set_capability_config(
+        &self,
+        identifier: &str,
+        capability_source: CapabilitySource,
+        selected_profile_ids: Vec<String>,
+    ) -> ConfigResult<ClientCapabilityConfig> {
+        let name = self.resolve_client_name(identifier).await?;
+        self.ensure_state_row_with_name(identifier, &name).await?;
+
+        let selected_profile_ids = self.normalize_selected_profile_ids(capability_source, selected_profile_ids)?;
+        self.validate_selected_profile_ids(&selected_profile_ids).await?;
+
+        let custom_profile_id = match capability_source {
+            CapabilitySource::Activated | CapabilitySource::Profiles => None,
+            CapabilitySource::Custom => Some(self.ensure_custom_profile(identifier).await?),
+        };
+        let selected_profile_ids_json = if selected_profile_ids.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(&selected_profile_ids)
+                    .map_err(|err| ConfigError::DataAccessError(err.to_string()))?,
+            )
+        };
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET capability_source = ?,
+                selected_profile_ids = ?,
+                custom_profile_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(capability_source.as_str())
+        .bind(selected_profile_ids_json)
+        .bind(custom_profile_id.as_deref())
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        self.get_capability_config(identifier)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Failed to load capability config for {identifier}")))
+    }
+
+    pub async fn get_capability_config(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<Option<ClientCapabilityConfig>> {
+        let state = self.fetch_state(identifier).await?;
+        state.map(|row| row.capability_config()).transpose()
+    }
+
+    async fn ensure_custom_profile(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<String> {
+        let profile_name = format!("{}_custom", identifier);
+
+        if let Some(profile) = crate::config::profile::get_profile_by_name(&self.db_pool, &profile_name)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
+        {
+            if profile.profile_type != ProfileType::HostApp {
+                return Err(ConfigError::DataAccessError(format!(
+                    "Profile '{}' already exists but is not host_app",
+                    profile_name
+                )));
+            }
+
+            return profile.id.ok_or_else(|| {
+                ConfigError::DataAccessError(format!("Profile '{}' is missing an id", profile_name))
+            });
+        }
+
+        let profile = Profile {
+            id: None,
+            name: profile_name,
+            description: Some(format!("Custom profile for {}", identifier)),
+            profile_type: ProfileType::HostApp,
+            role: ProfileRole::User,
+            multi_select: false,
+            priority: 0,
+            is_active: false,
+            is_default: false,
+            created_at: None,
+            updated_at: None,
+        };
+
+        crate::config::profile::upsert_profile(&self.db_pool, &profile)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))
+    }
+
+    async fn validate_selected_profile_ids(
+        &self,
+        selected_profile_ids: &[String],
+    ) -> ConfigResult<()> {
+        for profile_id in selected_profile_ids {
+            let profile = crate::config::profile::get_profile(&self.db_pool, profile_id)
+                .await
+                .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
+                .ok_or_else(|| {
+                    ConfigError::DataAccessError(format!("Selected profile '{}' does not exist", profile_id))
+                })?;
+
+            if profile.profile_type != ProfileType::Shared {
+                return Err(ConfigError::DataAccessError(format!(
+                    "Selected profile '{}' must be a shared profile",
+                    profile_id
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn normalize_selected_profile_ids(
+        &self,
+        capability_source: CapabilitySource,
+        selected_profile_ids: Vec<String>,
+    ) -> ConfigResult<Vec<String>> {
+        match capability_source {
+            CapabilitySource::Activated => Ok(Vec::new()),
+            CapabilitySource::Profiles => {
+                let mut normalized = selected_profile_ids
+                    .into_iter()
+                    .map(|id| id.trim().to_string())
+                    .filter(|id| !id.is_empty())
+                    .collect::<Vec<_>>();
+                normalized.sort();
+                normalized.dedup();
+
+                if normalized.is_empty() {
+                    return Err(ConfigError::DataAccessError(
+                        "profiles capability source requires at least one selected profile".to_string(),
+                    ));
+                }
+
+                Ok(normalized)
+            }
+            CapabilitySource::Custom => Ok(Vec::new()),
+        }
     }
 }

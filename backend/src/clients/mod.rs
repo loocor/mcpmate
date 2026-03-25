@@ -15,7 +15,10 @@ pub use analyzer::analyze_config_content;
 pub use detector::{ClientDetector, DetectedClient};
 pub use engine::{TemplateEngine, TemplateExecutionResult};
 pub use error::ConfigError;
-pub use models::{ClientTemplate, ConfigMode, ContainerType, DetectionMethod, ManagedEndpointConfig, TemplateFormat};
+pub use models::{
+    CapabilitySource, ClientCapabilityConfig, ClientTemplate, ConfigMode, ContainerType, DetectionMethod,
+    ManagedEndpointConfig, TemplateFormat,
+};
 pub use service::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ClientRenderResult, HostedClientReapplySummary,
 };

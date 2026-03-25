@@ -1,5 +1,8 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
+use std::str::FromStr;
 
 /// Supported template output formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -135,6 +138,29 @@ mod tests {
         let keep_n_default = BackupPolicySetting::from_pair(Some("keep_n"), None);
         assert_eq!(keep_n_default.limit, Some(30));
     }
+
+    #[test]
+    fn parses_client_capability_config_from_parts() {
+        let config = ClientCapabilityConfig::from_parts(
+            Some("profiles"),
+            Some("[\"prof-a\",\"prof-b\"]"),
+            Some("custom-prof".to_string()),
+        )
+        .expect("capability config");
+
+        assert_eq!(config.capability_source, CapabilitySource::Profiles);
+        assert_eq!(config.selected_profile_ids, vec!["prof-a", "prof-b"]);
+        assert_eq!(config.custom_profile_id.as_deref(), Some("custom-prof"));
+    }
+
+    #[test]
+    fn defaults_client_capability_config_to_activated() {
+        let config = ClientCapabilityConfig::from_parts(None, None, None).expect("default capability config");
+
+        assert_eq!(config.capability_source, CapabilitySource::Activated);
+        assert!(config.selected_profile_ids.is_empty());
+        assert!(config.custom_profile_id.is_none());
+    }
 }
 
 // Default now derives on enum with #[default]
@@ -218,6 +244,39 @@ impl Default for ConfigMapping {
     }
 }
 
+impl ClientCapabilityConfig {
+    pub fn from_parts(
+        capability_source: Option<&str>,
+        selected_profile_ids_json: Option<&str>,
+        custom_profile_id: Option<String>,
+    ) -> Result<Self, String> {
+        let capability_source = capability_source
+            .map(CapabilitySource::from_str)
+            .transpose()
+            .map_err(|_| {
+                format!(
+                    "invalid capability_source '{}': expected activated|profiles|custom",
+                    capability_source.unwrap_or_default()
+                )
+            })?
+            .unwrap_or_default();
+
+        let selected_profile_ids = if let Some(raw) = selected_profile_ids_json {
+            serde_json::from_str::<Vec<String>>(raw).map_err(|err| {
+                format!("invalid selected_profile_ids payload '{}': {}", raw, err)
+            })?
+        } else {
+            Vec::new()
+        };
+
+        Ok(Self {
+            capability_source,
+            selected_profile_ids,
+            custom_profile_id,
+        })
+    }
+}
+
 /// Detection rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -270,6 +329,72 @@ pub enum ConfigMode {
     Native,
     #[default]
     Managed,
+}
+
+/// Capability source for client-scoped configuration and runtime policy.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilitySource {
+    #[default]
+    Activated,
+    Profiles,
+    Custom,
+}
+
+impl CapabilitySource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CapabilitySource::Activated => "activated",
+            CapabilitySource::Profiles => "profiles",
+            CapabilitySource::Custom => "custom",
+        }
+    }
+}
+
+impl fmt::Display for CapabilitySource {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseCapabilitySourceError;
+
+impl fmt::Display for ParseCapabilitySourceError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid capability source")
+    }
+}
+
+impl std::error::Error for ParseCapabilitySourceError {}
+
+impl FromStr for CapabilitySource {
+    type Err = ParseCapabilitySourceError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "activated" => Ok(CapabilitySource::Activated),
+            "profiles" => Ok(CapabilitySource::Profiles),
+            "custom" => Ok(CapabilitySource::Custom),
+            _ => Err(ParseCapabilitySourceError),
+        }
+    }
+}
+
+/// Persisted per-client capability configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct ClientCapabilityConfig {
+    pub capability_source: CapabilitySource,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_profile_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_profile_id: Option<String>,
 }
 
 /// Server context input to template rendering

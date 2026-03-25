@@ -520,17 +520,41 @@ impl TemplateEngine {
         let runtime_config = get_runtime_port_config();
 
         match transport {
-            "streamable_http" => Ok(Some(ServerTemplateInput {
-                name: "MCPMate".to_string(),
-                display_name: Some("MCPMate Proxy".to_string()),
-                transport: effective_transport.to_string(),
-                command: None,
-                args: Vec::new(),
-                env: HashMap::new(),
-                url: Some(runtime_config.mcp_http_url()),
-                headers: HashMap::new(),
-                metadata: HashMap::new(),
-            })),
+            "streamable_http" => {
+                let mut headers = HashMap::new();
+                headers.insert("x-mcpmate-client-id".to_string(), client_id.to_string());
+                if let Some(pid) = profile_id {
+                    headers.insert("x-mcpmate-profile-id".to_string(), pid.to_string());
+                }
+
+                let mut mcp_url = runtime_config.mcp_http_url();
+                let mut query = form_urlencoded::Serializer::new(String::new());
+                query.append_pair("client_id", client_id);
+                if let Some(pid) = profile_id {
+                    query.append_pair("profile_id", pid);
+                }
+                let query = query.finish();
+                if !query.is_empty() {
+                    if mcp_url.contains('?') {
+                        mcp_url.push('&');
+                    } else {
+                        mcp_url.push('?');
+                    }
+                    mcp_url.push_str(&query);
+                }
+
+                Ok(Some(ServerTemplateInput {
+                    name: "MCPMate".to_string(),
+                    display_name: Some("MCPMate Proxy".to_string()),
+                    transport: effective_transport.to_string(),
+                    command: None,
+                    args: Vec::new(),
+                    env: HashMap::new(),
+                    url: Some(mcp_url),
+                    headers,
+                    metadata: HashMap::new(),
+                }))
+            }
             "stdio" => {
                 let bridge_path = get_bridge_path().map_err(|err| {
                     ConfigError::TemplateParseError(format!(
@@ -784,9 +808,11 @@ mod tests {
         let args = bridge_entry.get("args").and_then(Value::as_array).expect("args array");
         assert_eq!(args[0].as_str().unwrap(), "--upstream-url");
         assert!(args[1].as_str().unwrap().contains("client_id=test-client"));
+        assert!(args[1].as_str().unwrap().contains("profile_id=profile-123"));
 
         let env = bridge_entry.get("env").and_then(Value::as_object).expect("env object");
         assert_eq!(env.get("APPID").and_then(Value::as_str).unwrap(), "test-client");
+        assert_eq!(env.get("PROFILE_ID").and_then(Value::as_str).unwrap(), "profile-123");
 
         std::fs::remove_file(&bridge_stub).expect("cleanup bridge stub");
     }
@@ -894,8 +920,32 @@ mod tests {
             .expect("entry object");
 
         let expected_url = get_runtime_port_config().mcp_http_url();
+        let rendered_url = entry.get("url").and_then(Value::as_str).expect("rendered url");
         assert_eq!(entry.get("type").and_then(Value::as_str), Some("streamable_http"));
-        assert_eq!(entry.get("url").and_then(Value::as_str), Some(expected_url.as_str()));
+        assert!(rendered_url.starts_with(expected_url.as_str()));
         assert!(entry.get("metadata").is_none());
+    }
+
+    #[test]
+    fn managed_streamable_http_injects_managed_side_band() {
+        let source = MemorySource {
+            template: ClientTemplate {
+                identifier: "test-client".to_string(),
+                ..Default::default()
+            },
+            config_path: "~/.config/test-client.json".to_string(),
+        };
+        let engine = TemplateEngine::with_defaults(Arc::new(source));
+
+        let managed = engine
+            .managed_runtime_for_transport("streamable_http", "streamable_http", "test-client", Some("profile-123"))
+            .expect("managed server")
+            .expect("streamable http server");
+
+        assert_eq!(managed.headers.get("x-mcpmate-client-id").map(String::as_str), Some("test-client"));
+        assert_eq!(managed.headers.get("x-mcpmate-profile-id").map(String::as_str), Some("profile-123"));
+        let url = managed.url.expect("managed url");
+        assert!(url.contains("client_id=test-client"));
+        assert!(url.contains("profile_id=profile-123"));
     }
 }

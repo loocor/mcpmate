@@ -8,7 +8,7 @@ use std::collections::HashMap;
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, managed, config_mode, transport, client_version, backup_policy, backup_limit FROM client",
+            "SELECT id, identifier, name, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, selected_profile_ids, custom_profile_id FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -91,7 +91,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, managed, config_mode, transport, client_version, backup_policy, backup_limit FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, selected_profile_ids, custom_profile_id FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)

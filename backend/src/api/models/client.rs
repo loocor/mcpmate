@@ -1,3 +1,4 @@
+use crate::clients::models::CapabilitySource;
 use crate::common::ClientCategory;
 use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
@@ -92,6 +93,15 @@ pub struct ClientInfo {
     #[schemars(description = "Detected client version string")]
     #[serde(default)]
     pub client_version: Option<String>,
+    #[schemars(description = "Capability source for client-scoped runtime policy")]
+    #[serde(default)]
+    pub capability_source: CapabilitySource,
+    #[schemars(description = "Selected shared profile ids when using profiles mode")]
+    #[serde(default)]
+    pub selected_profile_ids: Vec<String>,
+    #[schemars(description = "Client-private custom profile id when using custom mode")]
+    #[serde(default)]
+    pub custom_profile_id: Option<String>,
     #[schemars(description = "Format type of configuration file")]
     pub config_type: Option<ClientConfigType>,
     #[schemars(description = "ISO 8601 timestamp of last detection")]
@@ -292,6 +302,15 @@ pub struct ClientConfigData {
     #[schemars(description = "Logo URL for the client application")]
     #[serde(default)]
     pub logo_url: Option<String>,
+    #[schemars(description = "Capability source for client-scoped runtime policy")]
+    #[serde(default)]
+    pub capability_source: CapabilitySource,
+    #[schemars(description = "Selected shared profile ids when using profiles mode")]
+    #[serde(default)]
+    pub selected_profile_ids: Vec<String>,
+    #[schemars(description = "Client-private custom profile id when using custom mode")]
+    #[serde(default)]
+    pub custom_profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -382,7 +401,9 @@ pub struct ClientImportedServer {
     pub args: Vec<String>,
     #[schemars(description = "Environment variables")]
     pub env: std::collections::HashMap<String, String>,
-    #[schemars(description = "Server type reported by the client import (stdio|streamable_http, legacy sse may be normalized during import)")]
+    #[schemars(
+        description = "Server type reported by the client import (stdio|streamable_http, legacy sse may be normalized during import)"
+    )]
     pub server_type: String,
     #[schemars(description = "Endpoint URL for HTTP-based servers, including legacy SSE-compatible endpoints")]
     #[serde(default)]
@@ -427,6 +448,27 @@ api_resp!(
 );
 api_resp!(ClientManageResp, ClientManageData, "Client management toggle response");
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client capability configuration payload")]
+pub struct ClientCapabilityConfigData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Capability source for client-scoped runtime policy")]
+    pub capability_source: CapabilitySource,
+    #[schemars(description = "Selected shared profile ids when using profiles mode")]
+    #[serde(default)]
+    pub selected_profile_ids: Vec<String>,
+    #[schemars(description = "Client-private custom profile id when using custom mode")]
+    #[serde(default)]
+    pub custom_profile_id: Option<String>,
+}
+
+api_resp!(
+    ClientCapabilityConfigResp,
+    ClientCapabilityConfigData,
+    "Client capability configuration response"
+);
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Client settings update request (partial)")]
 pub struct ClientSettingsUpdateReq {
@@ -435,7 +477,9 @@ pub struct ClientSettingsUpdateReq {
     #[schemars(description = "Management mode: hosted|transparent")]
     #[serde(default)]
     pub config_mode: Option<String>,
-    #[schemars(description = "Transport protocol: auto|sse|stdio|streamable_http (sse remains for legacy client compatibility)")]
+    #[schemars(
+        description = "Transport protocol: auto|sse|stdio|streamable_http (sse remains for legacy client compatibility)"
+    )]
     #[serde(default)]
     pub transport: Option<String>,
     #[schemars(description = "Client version string")]
@@ -458,6 +502,18 @@ api_resp!(
     ClientSettingsUpdateData,
     "Client settings update response"
 );
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Client capability configuration update request")]
+pub struct ClientCapabilityConfigReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Capability source for client-scoped runtime policy")]
+    pub capability_source: CapabilitySource,
+    #[schemars(description = "Selected shared profile ids when using profiles mode")]
+    #[serde(default)]
+    pub selected_profile_ids: Vec<String>,
+}
 api_resp!(
     ClientBackupListResp,
     ClientBackupListData,
