@@ -47,7 +47,7 @@
       },
       streamable_http: {
         template: {
-          url: "{{url}}",
+          url: "{{{url}}}",
           http_headers: "{{{json headers}}}",
         },
         requires_type_field: false,

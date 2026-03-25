@@ -50,7 +50,7 @@
       },
       sse: {
         template: {
-          url: "{{url}}",
+          url: "{{{url}}}",
           type: "sse",
           headers: "{{{json headers}}}",
         },
@@ -60,7 +60,7 @@
         template: {
           type: "http",
           headers: "{{{json headers}}}",
-          url: "{{url}}",
+          url: "{{{url}}}",
         },
         requires_type_field: false,
       },

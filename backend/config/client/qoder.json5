@@ -41,7 +41,7 @@
       sse: {
         template: {
           type: "sse",
-          url: "{{url}}",
+          url: "{{{url}}}",
           headers: "{{{json headers}}}",
         },
         requires_type_field: false,
@@ -49,7 +49,7 @@
       streamable_http: {
         template: {
           type: "streamable_http",
-          url: "{{url}}",
+          url: "{{{url}}}",
         },
         requires_type_field: false,
       },

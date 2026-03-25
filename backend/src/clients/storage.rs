@@ -143,7 +143,7 @@ impl ConfigStorage for FileConfigStorage {
         // Normalize JSON forward slashes to avoid "\/" in on-disk files.
         // Serde may legally emit escaped slashes; some editors persist them literally.
         // We prefer human-friendly URLs in configs.
-        let normalized = content.to_string();
+        let normalized = content.replace("\\/", "/");
 
         if !policy.should_backup() {
             let path_service = get_path_service();
@@ -273,5 +273,21 @@ impl FileConfigStorage {
             .map_err(|err| ConfigError::FileOperationError(err.to_string()))?;
 
         Ok(backup.map(|path| path.to_string_lossy().to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn normalize_escaped_forward_slashes() {
+        let input = r#"{"url": "https:\/\/example.com\/path"}"#;
+        let expected = r#"{"url": "https://example.com/path"}"#;
+        assert_eq!(input.replace("\\/", "/"), expected);
+    }
+
+    #[test]
+    fn normalize_preserves_unescaped_slashes() {
+        let input = r#"{"url": "https://example.com/path"}"#;
+        assert_eq!(input.replace("\\/", "/"), input);
     }
 }

@@ -836,7 +836,7 @@ mod tests {
             FormatRule {
                 template: json!({
                     "type": "streamable_http",
-                    "url": "{{url}}"
+                    "url": "{{{url}}}"
                 }),
                 requires_type_field: false,
             },
@@ -924,6 +924,12 @@ mod tests {
         assert_eq!(entry.get("type").and_then(Value::as_str), Some("streamable_http"));
         assert!(rendered_url.starts_with(expected_url.as_str()));
         assert!(entry.get("metadata").is_none());
+
+        // Regression test: managed URL must NOT be HTML-escaped
+        // Handlebars {{url}} would escape '=' to '&#x3D;' breaking client_id query param
+        assert!(!rendered_url.contains("&#x3D;"), "URL must not contain HTML-escaped equals sign");
+        assert!(!rendered_url.contains("&#x26;"), "URL must not contain HTML-escaped ampersand");
+        assert!(rendered_url.contains("client_id=test-client"), "URL must contain literal client_id param");
     }
 
     #[test]
