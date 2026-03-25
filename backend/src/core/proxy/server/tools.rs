@@ -6,11 +6,21 @@ use rmcp::model::{CallToolRequest, CallToolRequestParams, CallToolResult, Client
 use rmcp::service::PeerRequestOptions;
 use rmcp::service::RequestContext;
 
+/// Determines whether a builtin tool should be visible/invocable for a given
+/// capability source. Profile management tools are only available for clients
+/// using the Activated capability source, as they operate on global profile state.
+/// Clients configured with Profiles or Custom mode should not see or manage
+/// profiles outside their configured scope.
 fn builtin_tool_allowed_for_capability_source(
     capability_source: crate::clients::models::CapabilitySource,
     tool_name: &str,
 ) -> bool {
-    capability_source == crate::clients::models::CapabilitySource::Activated || tool_name != "mcpmate_profile_switch"
+    let is_profile_tool = tool_name.starts_with("mcpmate_profile_");
+    if is_profile_tool {
+        capability_source == crate::clients::models::CapabilitySource::Activated
+    } else {
+        true
+    }
 }
 
 pub(super) async fn list_tools(
@@ -129,7 +139,7 @@ pub(super) async fn call_tool(
         "ProxyServer::call_tool received request"
     );
 
-    if request.name == "mcpmate_profile_switch" {
+    if request.name.starts_with("mcpmate_profile_") {
         let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
             server.database.clone(),
             server.profile_service.clone(),
@@ -140,7 +150,7 @@ pub(super) async fn call_tool(
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         if !builtin_tool_allowed_for_capability_source(capability_config.capability_source, &request.name) {
             return Err(McpError::invalid_params(
-                "mcpmate_profile_switch is only available for clients using the activated capability source"
+                "profile management tools are only available for clients using the activated capability source"
                     .to_string(),
                 None,
             ));
@@ -377,22 +387,46 @@ mod tests {
     use crate::clients::models::CapabilitySource;
 
     #[test]
-    fn profile_switch_is_only_available_for_activated_capability_source() {
-        assert!(builtin_tool_allowed_for_capability_source(
-            CapabilitySource::Activated,
-            "mcpmate_profile_switch",
-        ));
-        assert!(!builtin_tool_allowed_for_capability_source(
-            CapabilitySource::Profiles,
-            "mcpmate_profile_switch",
-        ));
-        assert!(!builtin_tool_allowed_for_capability_source(
-            CapabilitySource::Custom,
-            "mcpmate_profile_switch",
-        ));
-        assert!(builtin_tool_allowed_for_capability_source(
-            CapabilitySource::Profiles,
+    fn profile_tools_are_only_available_for_activated_capability_source() {
+        let profile_tools = [
             "mcpmate_profile_list",
-        ));
+            "mcpmate_profile_details",
+            "mcpmate_profile_switch",
+        ];
+
+        for tool in profile_tools {
+            assert!(
+                builtin_tool_allowed_for_capability_source(CapabilitySource::Activated, tool),
+                "{tool} should be available for Activated"
+            );
+            assert!(
+                !builtin_tool_allowed_for_capability_source(CapabilitySource::Profiles, tool),
+                "{tool} should NOT be available for Profiles"
+            );
+            assert!(
+                !builtin_tool_allowed_for_capability_source(CapabilitySource::Custom, tool),
+                "{tool} should NOT be available for Custom"
+            );
+        }
+    }
+
+    #[test]
+    fn non_profile_tools_are_available_for_all_capability_sources() {
+        let other_tools = ["some_other_tool", "another_mcpmate_service"];
+
+        for tool in other_tools {
+            assert!(
+                builtin_tool_allowed_for_capability_source(CapabilitySource::Activated, tool),
+                "{tool} should be available for Activated"
+            );
+            assert!(
+                builtin_tool_allowed_for_capability_source(CapabilitySource::Profiles, tool),
+                "{tool} should be available for Profiles"
+            );
+            assert!(
+                builtin_tool_allowed_for_capability_source(CapabilitySource::Custom, tool),
+                "{tool} should be available for Custom"
+            );
+        }
     }
 }

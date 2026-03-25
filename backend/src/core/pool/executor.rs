@@ -162,21 +162,17 @@ impl UpstreamConnectionPool {
             tracing::info!("Disconnect initiated from: {}", backtrace);
         }
 
-        // Step 1: Cancel the token first to stop new operations
         self.cancel_connection_token(server_id, instance_id);
 
-        // Step 2: Take the service from the connection
         let service = {
             let conn = self.get_instance_mut(server_id, instance_id)?;
             conn.service.take()
         };
 
-        // Step 3: Update connection status (immediately for non-blocking; after cancel for blocking)
         if non_blocking {
             let conn = self.get_instance_mut(server_id, instance_id)?;
             conn.update_disconnected();
 
-            // Cancel service asynchronously without blocking
             if let Some(service_arc) = service {
                 self.cancel_service_async(server_id, instance_id, service_arc);
             }
@@ -188,19 +184,22 @@ impl UpstreamConnectionPool {
                 instance_id
             );
         } else {
-            // Cancel active service if exists (early return if no service)
             if let Some(service_arc) = service {
                 self.cancel_service_with_timeout(server_id, instance_id, service_arc)
                     .await;
             }
 
-            // Update connection status after cancellation
             let conn = self.get_instance_mut(server_id, instance_id)?;
             conn.update_disconnected();
 
             let label = self.server_label(server_id).await;
             tracing::info!("Disconnected from server '{}' instance '{}'", label, instance_id);
         }
+
+        // Clean up all affinity-owned state for this instance:
+        // - Production route mappings pointing to this instance
+        // - Client-bound connection entries for this instance
+        self.cleanup_disconnected_instance(server_id, instance_id);
 
         Ok(())
     }
@@ -226,7 +225,6 @@ impl UpstreamConnectionPool {
     /// Disconnect from all servers
     pub async fn disconnect_all(&mut self) -> Result<()> {
         for server_id in self.connections.keys().cloned().collect::<Vec<_>>() {
-            // Get all instances for this server
             if let Some(instances) = self.connections.get(&server_id) {
                 for instance_id in instances.keys().cloned().collect::<Vec<_>>() {
                     if let Err(e) = self.disconnect(&server_id, &instance_id).await {
@@ -240,6 +238,25 @@ impl UpstreamConnectionPool {
                 }
             }
         }
+
+        for (server_id, bound_id) in self.client_bound_connections.keys().cloned().collect::<Vec<_>>() {
+            if let Some(instances) = self.client_bound_connections.get(&(server_id.clone(), bound_id.clone())) {
+                for instance_id in instances.keys().cloned().collect::<Vec<_>>() {
+                    if let Err(e) = self.disconnect(&server_id, &instance_id).await {
+                        tracing::error!(
+                            "Failed to disconnect client-bound instance '{}' for server '{}' bound '{}': {}",
+                            instance_id,
+                            server_id,
+                            bound_id,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        self.production_routes.clear();
+
         Ok(())
     }
 
@@ -263,37 +280,43 @@ impl UpstreamConnectionPool {
         self.connect_internal(server_id, instance_id).await
     }
 
-    /// Ensure a server has at least one connected instance and return its instance_id
+    /// Ensure a server has at least one connected instance and return its instance_id.
+    ///
+    /// **Note**: This method uses `AffinityKey::Default` and bypasses affinity-aware routing.
+    /// For production routing, use `ensure_connected_with_selection()` with a proper
+    /// `ConnectionSelection` derived from `ClientContext::connection_selection()`.
     pub async fn ensure_connected(
         &mut self,
         server_id: &str,
     ) -> Result<String> {
-        // Create a new connection entry if this is the first time we see the server
-        if !self.connections.contains_key(server_id) {
-            let connection = crate::core::pool::UpstreamConnection::new(server_id.to_string());
-            let instance_id = connection.id.clone();
-            let instances = self.connections.entry(server_id.to_string()).or_default();
-            instances.insert(instance_id.clone(), connection);
-        }
-
-        // Get default instance id and connect via single executor
-        let instance_id = self.get_default_instance_id(server_id)?;
-        self.connect_internal(server_id, &instance_id).await?;
-        Ok(instance_id)
+        let selection = ConnectionSelection {
+            server_id: server_id.to_string(),
+            affinity_key: crate::core::capability::AffinityKey::Default,
+            routing_fingerprint: None,
+        };
+        self.ensure_connected_with_selection(&selection).await
     }
 
+    /// Ensure a connection exists for a production route using affinity-aware routing.
+    ///
+    /// This method implements the full production routing lifecycle:
+    /// 1. Check if a route already exists via `resolve_production_route`
+    /// 2. If exists and instance is ready, return the instance_id
+    /// 3. If not, allocate a new route via `allocate_production_route`
+    /// 4. Establish the connection via `connect_internal`
     pub async fn ensure_connected_with_selection(
         &mut self,
         selection: &ConnectionSelection,
     ) -> Result<String> {
-        if !self.connections.contains_key(&selection.server_id) {
-            let connection = crate::core::pool::UpstreamConnection::new(selection.server_id.to_string());
-            let instance_id = connection.id.clone();
-            let instances = self.connections.entry(selection.server_id.to_string()).or_default();
-            instances.insert(instance_id.clone(), connection);
+        if let Some(instance_id) = self.resolve_production_route(selection) {
+            if let Ok(Some(ready_id)) = self.select_ready_instance_id(selection) {
+                if ready_id == instance_id {
+                    return Ok(instance_id);
+                }
+            }
         }
 
-        let instance_id = self.select_instance_id(selection)?;
+        let instance_id = self.allocate_production_route(selection);
         self.connect_internal(&selection.server_id, &instance_id).await?;
         Ok(instance_id)
     }
@@ -1001,29 +1024,27 @@ impl UpstreamConnectionPool {
         }
     }
 
-    /// Enable and start a server
+    /// Enable and start a server.
+    ///
+    /// This is an admin/control-plane operation that creates a shared connection.
+    /// Production routing will use `ensure_connected_with_selection()` with proper affinity.
     pub async fn enable_server(
         &mut self,
         server_id: &str,
     ) -> Result<()> {
-        // Early return if database not available
         let db = self
             .database
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
-        // Load latest config for this server
         let (_, config) = crate::core::foundation::loader::load_servers_from_active_profile(db).await?;
 
-        // Early return if server not found in config
         let Some(_server_config) = config.mcp_servers.get(server_id) else {
             return Err(anyhow::anyhow!("Server '{}' not found in active profile", server_id));
         };
 
-        // Update config and start server
         self.set_config(Arc::new(config))?;
 
-        // Create new connection if needed
         if !self.connections.contains_key(server_id) {
             let connection = crate::core::pool::UpstreamConnection::new(server_id.to_string());
             let instance_id = connection.id.clone();
@@ -1031,7 +1052,6 @@ impl UpstreamConnectionPool {
             instances.insert(instance_id.clone(), connection);
         }
 
-        // Get default instance ID and connect
         let instance_id = self.get_default_instance_id(server_id)?;
         self.connect_internal(server_id, &instance_id).await?;
 
@@ -1068,9 +1088,10 @@ impl UpstreamConnectionPool {
         // Disconnect all instances
         self.disconnect_all_instances(server_id).await;
 
-        // Remove server from pool
         self.connections.remove(server_id);
         self.cancellation_tokens.remove(server_id);
+        self.remove_all_client_bound_connections_for_server(server_id);
+        self.remove_all_production_routes_for_server(server_id);
 
         tracing::info!("Server '{}' disabled in all active profile and stopped", server_id);
         Ok(())
@@ -1081,19 +1102,39 @@ impl UpstreamConnectionPool {
         &mut self,
         server_id: &str,
     ) {
-        let Some(instances) = self.connections.get(server_id) else {
-            return; // No instances to disconnect, early return
-        };
+        if let Some(instances) = self.connections.get(server_id) {
+            let instance_ids: Vec<String> = instances.keys().cloned().collect();
+            for instance_id in instance_ids {
+                if let Err(e) = self.disconnect(server_id, &instance_id).await {
+                    tracing::warn!(
+                        "Failed to disconnect server '{}' instance '{}': {}",
+                        server_id,
+                        instance_id,
+                        e
+                    );
+                }
+            }
+        }
 
-        let instance_ids: Vec<String> = instances.keys().cloned().collect();
-        for instance_id in instance_ids {
-            if let Err(e) = self.disconnect(server_id, &instance_id).await {
-                tracing::warn!(
-                    "Failed to disconnect server '{}' instance '{}': {}",
-                    server_id,
-                    instance_id,
-                    e
-                );
+        let bound_keys: Vec<(String, String)> = self.client_bound_connections
+            .keys()
+            .filter(|(sid, _)| sid == server_id)
+            .cloned()
+            .collect();
+        for (sid, bound_id) in bound_keys {
+            if let Some(instances) = self.client_bound_connections.get(&(sid.clone(), bound_id.clone())) {
+                let instance_ids: Vec<String> = instances.keys().cloned().collect();
+                for instance_id in instance_ids {
+                    if let Err(e) = self.disconnect(&sid, &instance_id).await {
+                        tracing::warn!(
+                            "Failed to disconnect client-bound instance '{}' for server '{}' bound '{}': {}",
+                            instance_id,
+                            sid,
+                            bound_id,
+                            e
+                        );
+                    }
+                }
             }
         }
     }

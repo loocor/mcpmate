@@ -22,4 +22,4 @@ pub use connection::UpstreamConnectionPool;
 
 // Re-export selected types for external coordination
 pub use database::CapSyncFlags;
-pub use types::{FailureKind, UpstreamConnection};
+pub use types::{FailureKind, ProductionRouteKey, UpstreamConnection};

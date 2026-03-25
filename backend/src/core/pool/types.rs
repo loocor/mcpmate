@@ -18,6 +18,41 @@ use crate::generate_id;
 const FAILURE_DECAY_WINDOW_SECS: u64 = 120;
 const FAILURE_BACKOFF_SCHEDULE_SECS: [u64; 3] = [5, 15, 60];
 
+/// Production route key for affinity-aware connection routing.
+///
+/// This key combines server_id with affinity_key to uniquely identify
+/// a production connection route. It enables the pool to maintain
+/// separate connection instances for different client/session affinities.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ProductionRouteKey {
+    pub server_id: String,
+    pub affinity_key: crate::core::capability::AffinityKey,
+}
+
+impl ProductionRouteKey {
+    pub fn new(server_id: impl Into<String>, affinity_key: crate::core::capability::AffinityKey) -> Self {
+        Self {
+            server_id: server_id.into(),
+            affinity_key,
+        }
+    }
+
+    /// Create a route key for shareable (default) affinity.
+    pub fn shareable(server_id: impl Into<String>) -> Self {
+        Self::new(server_id, crate::core::capability::AffinityKey::Default)
+    }
+
+    /// Create a route key for per-client affinity.
+    pub fn per_client(server_id: impl Into<String>, client_id: impl Into<String>) -> Self {
+        Self::new(server_id, crate::core::capability::AffinityKey::PerClient(client_id.into()))
+    }
+
+    /// Create a route key for per-session affinity.
+    pub fn per_session(server_id: impl Into<String>, session_id: impl Into<String>) -> Self {
+        Self::new(server_id, crate::core::capability::AffinityKey::PerSession(session_id.into()))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureKind {
     Connect,

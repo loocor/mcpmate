@@ -108,6 +108,31 @@ pub struct SessionBinding {
     pub observed_client_info: Option<ObservedClientInfo>,
 }
 
+/// Resolver for managed client contexts that maintains session bindings.
+///
+/// ## Storage and Lifecycle
+///
+/// This resolver maintains three concurrent maps:
+///
+/// - `session_bindings`: Active session-to-client mappings. Cleared on explicit unbind.
+/// - `observed_clients`: Client info cache. Grows unbounded; entries persist across sessions.
+/// - `pending_initializations`: Transient contexts awaiting session binding. Cleared on bind.
+///
+/// ## Cleanup Semantics
+///
+/// `unbind_session` removes the session binding but intentionally leaves `observed_clients`
+/// and `pending_initializations` untouched:
+///
+/// - `observed_clients`: Serves as a cache for reconnections; retained for future sessions.
+/// - `pending_initializations`: Keyed by peer pointer; stale entries are harmless but consume
+///   memory until the peer is dropped. A future TTL-based cleanup could be added if needed.
+#[derive(Debug, Clone, Default)]
+pub struct SessionBoundClientContextResolver {
+    pub session_bindings: Arc<DashMap<String, SessionBinding>>,
+    pub observed_clients: Arc<DashMap<String, ObservedClientInfo>>,
+    pub pending_initializations: Arc<DashMap<usize, ClientContext>>,
+}
+
 #[async_trait]
 pub trait ManagedClientContextResolver: Send + Sync {
     async fn resolve_initialize_context(
@@ -131,13 +156,6 @@ pub trait ManagedClientContextResolver: Send + Sync {
         &self,
         session_id: &str,
     ) -> Result<()>;
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct SessionBoundClientContextResolver {
-    session_bindings: Arc<DashMap<String, SessionBinding>>,
-    observed_clients: Arc<DashMap<String, ObservedClientInfo>>,
-    pending_initializations: Arc<DashMap<usize, ClientContext>>,
 }
 
 impl SessionBoundClientContextResolver {
@@ -896,5 +914,187 @@ mod tests {
         assert_eq!(selection.server_id, "srv_1");
         assert_eq!(selection.routing_fingerprint.as_deref(), Some("fp-123"));
         assert!(matches!(selection.affinity_key, crate::core::capability::AffinityKey::PerSession(ref id) if id == "sess-123"));
+    }
+
+    // ========================================
+    // Session Binding Lifecycle Invariants
+    // ========================================
+
+    #[tokio::test]
+    async fn unbind_session_removes_binding() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let context = ClientContext {
+            client_id: "test-client".to_string(),
+            session_id: Some("sess-remove-test".to_string()),
+            profile_id: None,
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+
+        resolver.bind_session("sess-remove-test", &context).await.expect("bind should succeed");
+        assert!(resolver.session_bindings.contains_key("sess-remove-test"), "binding should exist after bind");
+
+        resolver.unbind_session("sess-remove-test").await.expect("unbind should succeed");
+        assert!(!resolver.session_bindings.contains_key("sess-remove-test"), "binding should be removed after unbind");
+    }
+
+    #[tokio::test]
+    async fn unbind_nonexistent_session_is_safe() {
+        let resolver = SessionBoundClientContextResolver::new();
+        // Unbinding a session that never existed should succeed without error
+        let result = resolver.unbind_session("nonexistent-session").await;
+        assert!(result.is_ok(), "unbinding nonexistent session should be safe");
+    }
+
+    #[tokio::test]
+    async fn rebind_same_session_with_identical_context_succeeds() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let context = ClientContext {
+            client_id: "test-client".to_string(),
+            session_id: Some("sess-rebind".to_string()),
+            profile_id: Some("profile-a".to_string()),
+            rules_fingerprint: Some("fp-123".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+
+        resolver.bind_session("sess-rebind", &context).await.expect("first bind should succeed");
+        // Rebinding with identical context should succeed (idempotent)
+        resolver.bind_session("sess-rebind", &context).await.expect("rebind with identical context should succeed");
+        assert!(resolver.session_bindings.contains_key("sess-rebind"));
+    }
+
+    #[tokio::test]
+    async fn observed_clients_persists_across_bindings() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let observed = ObservedClientInfo {
+            name: "test-client".to_string(),
+            version: "1.0.0".to_string(),
+            title: Some("Test Client".to_string()),
+        };
+        let context = ClientContext {
+            client_id: "client-obs".to_string(),
+            session_id: Some("sess-obs".to_string()),
+            profile_id: None,
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: Some(observed.clone()),
+        };
+
+        resolver.bind_session("sess-obs", &context).await.expect("bind should succeed");
+        let binding = resolver.session_bindings.get("sess-obs").expect("binding should exist");
+        assert_eq!(binding.observed_client_info.as_ref().map(|o| o.name.as_str()), Some("test-client"));
+    }
+
+    #[tokio::test]
+    async fn observed_clients_reused_for_subsequent_binding_without_observed_info() {
+        let resolver = SessionBoundClientContextResolver::new();
+
+        // First, store observed client info via the resolver's internal map
+        let observed = ObservedClientInfo {
+            name: "cached-client".to_string(),
+            version: "2.0.0".to_string(),
+            title: None,
+        };
+        resolver.observed_clients.insert("client-cached".to_string(), observed.clone());
+
+        // Bind a session WITHOUT observed_client_info - should pick up from cached
+        let context = ClientContext {
+            client_id: "client-cached".to_string(),
+            session_id: Some("sess-cached".to_string()),
+            profile_id: None,
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+        resolver.bind_session("sess-cached", &context).await.expect("bind should succeed");
+
+        let binding = resolver.session_bindings.get("sess-cached").expect("binding should exist");
+        assert_eq!(
+            binding.observed_client_info.as_ref().map(|o| o.name.as_str()),
+            Some("cached-client"),
+            "binding should use cached observed_client_info"
+        );
+    }
+
+    #[test]
+    fn pending_initializations_stores_context_without_session_id() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let context = ClientContext {
+            client_id: "pending-client".to_string(),
+            session_id: None, // No session ID
+            profile_id: None,
+            rules_fingerprint: None,
+            transport: ClientTransport::Other,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+
+        // Use a fake peer_key (in real code this comes from peer pointer)
+        let peer_key = 0x1234_usize;
+        resolver.pending_initializations.insert(peer_key, context.clone());
+
+        assert!(resolver.pending_initializations.contains_key(&peer_key), "pending context should be stored");
+        let stored = resolver.pending_initializations.get(&peer_key).expect("should exist");
+        assert_eq!(stored.client_id, "pending-client");
+    }
+
+    #[tokio::test]
+    async fn session_binding_rejects_profile_id_mismatch() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let first = ClientContext {
+            client_id: "same-client".to_string(),
+            session_id: Some("sess-profile".to_string()),
+            profile_id: Some("profile-a".to_string()),
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+        resolver.bind_session("sess-profile", &first).await.expect("first bind should succeed");
+
+        let second = ClientContext {
+            client_id: "same-client".to_string(),
+            session_id: Some("sess-profile".to_string()),
+            profile_id: Some("profile-b".to_string()), // Different profile
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+        let err = resolver.bind_session("sess-profile", &second).await.expect_err("should reject profile mismatch");
+        assert!(err.to_string().contains("already bound to profile_id"));
+    }
+
+    #[tokio::test]
+    async fn session_binding_rejects_rules_fingerprint_mismatch() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let first = ClientContext {
+            client_id: "same-client".to_string(),
+            session_id: Some("sess-fp".to_string()),
+            profile_id: None,
+            rules_fingerprint: Some("fp-alpha".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+        resolver.bind_session("sess-fp", &first).await.expect("first bind should succeed");
+
+        let second = ClientContext {
+            client_id: "same-client".to_string(),
+            session_id: Some("sess-fp".to_string()),
+            profile_id: None,
+            rules_fingerprint: Some("fp-beta".to_string()), // Different fingerprint
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+        let err = resolver.bind_session("sess-fp", &second).await.expect_err("should reject fingerprint mismatch");
+        assert!(err.to_string().contains("already bound to rules_fingerprint"));
     }
 }

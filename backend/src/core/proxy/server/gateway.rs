@@ -190,6 +190,27 @@ impl ProxyServer {
         Ok(())
     }
 
+    /// Remove all state associated with a downstream session.
+    ///
+    /// ## Invariants
+    ///
+    /// This method maintains consistency across all session-related data structures:
+    ///
+    /// - `downstream_clients`: The peer is removed.
+    /// - `resource_subscriptions`: All entries for this session are removed.
+    /// - `server_resource_index`: For each subscription, the reverse index entry is removed.
+    /// - `call_sessions_by_token` / `call_sessions_by_request`: In-flight call mappings are cleared.
+    /// - `session_bindings`: The client context resolver's binding is removed.
+    ///
+    /// ## Trigger Points
+    ///
+    /// Cleanup is triggered reactively when session usage fails:
+    /// - `notify_resource_updated_for_session` fails to send
+    /// - `broadcast_notify` fails for a session
+    /// - `forward_upstream_progress` / `forward_upstream_cancelled` / `forward_upstream_log` fail
+    ///
+    /// The MCP protocol lacks an explicit "session closed" notification, so stale sessions
+    /// are only detected when subsequent operations fail.
     pub async fn remove_downstream_session(
         &self,
         session_id: &str,
@@ -888,5 +909,188 @@ impl ServerHandler for ProxyServer {
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
         super::prompts::get_prompt(self, request, _context).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::proxy::server::common::{ClientIdentitySource, ClientTransport};
+
+    struct TestServerState {
+        downstream_clients: Arc<dashmap::DashMap<String, rmcp::service::Peer<rmcp::RoleServer>>>,
+        resource_subscriptions: Arc<dashmap::DashMap<(String, String), String>>,
+        server_resource_index: Arc<dashmap::DashMap<String, dashmap::DashSet<(String, String)>>>,
+        session_bindings: Arc<SessionBoundClientContextResolver>,
+    }
+
+    fn create_test_server_state() -> TestServerState {
+        TestServerState {
+            downstream_clients: Arc::new(dashmap::DashMap::new()),
+            resource_subscriptions: Arc::new(dashmap::DashMap::new()),
+            server_resource_index: Arc::new(dashmap::DashMap::new()),
+            session_bindings: Arc::new(SessionBoundClientContextResolver::new()),
+        }
+    }
+
+    async fn cleanup_session_state(session_id: &str, state: &TestServerState) {
+        state.downstream_clients.remove(session_id);
+
+        let subscription_keys: Vec<((String, String), String)> = state
+            .resource_subscriptions
+            .iter()
+            .filter(|entry| entry.key().0 == session_id)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        for ((subscription_session, unique_uri), server_id) in subscription_keys {
+            state
+                .resource_subscriptions
+                .remove(&(subscription_session.clone(), unique_uri.clone()));
+            if !server_id.is_empty() {
+                if let Some(index) = state.server_resource_index.get(&server_id) {
+                    index.remove(&(subscription_session, unique_uri));
+                }
+            }
+        }
+
+        let _ = state.session_bindings.unbind_session(session_id).await;
+    }
+
+    #[tokio::test]
+    async fn resource_subscriptions_cleanup_removes_session_entries() {
+        let state = create_test_server_state();
+        let session_id = "test-session";
+
+        state.resource_subscriptions.insert(
+            (session_id.to_string(), "resource://a".to_string()),
+            "srv-1".to_string(),
+        );
+        state.resource_subscriptions.insert(
+            (session_id.to_string(), "resource://b".to_string()),
+            "srv-1".to_string(),
+        );
+        state.resource_subscriptions.insert(
+            ("other".to_string(), "resource://c".to_string()),
+            "srv-1".to_string(),
+        );
+
+        {
+            let idx = state.server_resource_index.entry("srv-1".to_string()).or_default();
+            idx.insert((session_id.to_string(), "resource://a".to_string()));
+            idx.insert((session_id.to_string(), "resource://b".to_string()));
+            idx.insert(("other".to_string(), "resource://c".to_string()));
+        }
+
+        assert_eq!(state.resource_subscriptions.len(), 3);
+
+        cleanup_session_state(session_id, &state).await;
+
+        assert!(!state
+            .resource_subscriptions
+            .contains_key(&(session_id.to_string(), "resource://a".to_string())));
+        assert!(!state
+            .resource_subscriptions
+            .contains_key(&(session_id.to_string(), "resource://b".to_string())));
+        assert!(state
+            .resource_subscriptions
+            .contains_key(&("other".to_string(), "resource://c".to_string())));
+
+        let idx = state.server_resource_index.get("srv-1").expect("index should exist");
+        assert!(!idx.contains(&(session_id.to_string(), "resource://a".to_string())));
+        assert!(idx.contains(&("other".to_string(), "resource://c".to_string())));
+    }
+
+    #[tokio::test]
+    async fn cleanup_is_idempotent() {
+        let state = create_test_server_state();
+        let session_id = "test-idempotent";
+
+        cleanup_session_state(session_id, &state).await;
+        cleanup_session_state(session_id, &state).await;
+    }
+
+    #[tokio::test]
+    async fn session_binding_cleanup_via_resolver() {
+        let resolver = Arc::new(SessionBoundClientContextResolver::new());
+        let session_id = "test-binding-cleanup";
+
+        let context = ClientContext {
+            client_id: "client-1".to_string(),
+            session_id: Some(session_id.to_string()),
+            profile_id: None,
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+
+        resolver.bind_session(session_id, &context).await.expect("bind should succeed");
+        assert!(resolver.session_bindings.contains_key(session_id));
+
+        resolver.unbind_session(session_id).await.expect("unbind should succeed");
+        assert!(!resolver.session_bindings.contains_key(session_id));
+
+        resolver.unbind_session(session_id).await.expect("unbind should be idempotent");
+    }
+
+    #[tokio::test]
+    async fn multiple_sessions_cleanup_isolation() {
+        let state = create_test_server_state();
+        let session_a = "session-a";
+        let session_b = "session-b";
+
+        state.resource_subscriptions.insert(
+            (session_a.to_string(), "resource://1".to_string()),
+            "srv".to_string(),
+        );
+        state.resource_subscriptions.insert(
+            (session_b.to_string(), "resource://2".to_string()),
+            "srv".to_string(),
+        );
+
+        {
+            let idx = state.server_resource_index.entry("srv".to_string()).or_default();
+            idx.insert((session_a.to_string(), "resource://1".to_string()));
+            idx.insert((session_b.to_string(), "resource://2".to_string()));
+        }
+
+        cleanup_session_state(session_a, &state).await;
+
+        assert!(!state
+            .resource_subscriptions
+            .contains_key(&(session_a.to_string(), "resource://1".to_string())));
+        assert!(state
+            .resource_subscriptions
+            .contains_key(&(session_b.to_string(), "resource://2".to_string())));
+    }
+
+    #[test]
+    fn client_context_without_session() {
+        let context_no_session = ClientContext {
+            client_id: "no-session".to_string(),
+            session_id: None,
+            profile_id: None,
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+
+        assert!(context_no_session.session_id.is_none());
+    }
+
+    #[test]
+    fn client_context_with_session() {
+        let context_with_session = ClientContext {
+            client_id: "with-session".to_string(),
+            session_id: Some("sess-123".to_string()),
+            profile_id: None,
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+
+        assert_eq!(context_with_session.session_id.as_deref(), Some("sess-123"));
     }
 }

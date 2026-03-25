@@ -118,8 +118,12 @@ impl HttpClientRegistry {
 /// by dedicated managers (PoolConfigManager and ServerSyncManager).
 #[derive(Debug, Clone)]
 pub struct UpstreamConnectionPool {
-    /// Map of server ID to map of instance ID to connection
+    /// Map of server ID to map of instance ID to connection (shared production instances)
     pub connections: HashMap<String, HashMap<String, types::UpstreamConnection>>,
+    /// Production routes keyed by (server_id, affinity_key) -> instance_id
+    pub production_routes: HashMap<types::ProductionRouteKey, String>,
+    /// Client-bound connections: (server_id, client_id) -> instance_id -> connection
+    pub client_bound_connections: HashMap<(String, String), HashMap<String, types::UpstreamConnection>>,
     /// Exploration sessions: session_id -> map of server_id to connection (minimal skeleton)
     pub exploration_sessions: HashMap<String, HashMap<String, types::UpstreamConnection>>,
     /// Validation sessions: session_id -> map of server_id to connection (minimal skeleton)
@@ -162,6 +166,8 @@ impl UpstreamConnectionPool {
 
         Self {
             connections: HashMap::new(),
+            production_routes: HashMap::new(),
+            client_bound_connections: HashMap::new(),
             exploration_sessions: HashMap::new(),
             validation_sessions: HashMap::new(),
             exploration_expirations: HashMap::new(),
@@ -459,6 +465,22 @@ impl UpstreamConnectionPool {
             }
             if !vec.is_empty() {
                 result.insert(server_id.clone(), vec);
+            }
+        }
+
+        for ((server_id, _bound_id), instances) in &self.client_bound_connections {
+            let entry = result.entry(server_id.clone()).or_default();
+            for (id, conn) in instances.iter() {
+                let supports_resources = conn.supports_resources();
+                let supports_prompts = conn.supports_prompts();
+                let peer = conn.service.as_ref().map(|svc| svc.peer().clone());
+                entry.push((
+                    id.clone(),
+                    conn.status.clone(),
+                    supports_resources,
+                    supports_prompts,
+                    peer,
+                ));
             }
         }
 
