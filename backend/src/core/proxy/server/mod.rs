@@ -6,5 +6,9 @@ mod prompts;
 mod resources;
 mod tools;
 
-pub use common::{UnifiedHttpServer, UnifiedHttpServerConfig, supports_capability};
+pub use common::{
+    ClientContext, ClientIdentitySource, ClientTransport, ManagedClientContextResolver, ObservedClientInfo,
+    SessionBinding, SessionBoundClientContextResolver, UnifiedHttpServer, UnifiedHttpServerConfig,
+    resolve_initialize_context_parts, resolve_request_context_parts, supports_capability,
+};
 pub use gateway::ProxyServer;

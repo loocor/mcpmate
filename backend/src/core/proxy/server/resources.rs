@@ -14,6 +14,16 @@ pub(super) async fn list_resources(
     _request: Option<PaginatedRequestParams>,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourcesResult, McpError> {
+    let client = server.resolve_bound_client_context(&_context).await?;
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    let snapshot = vis
+        .resolve_snapshot(&client.client_id)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
     let mut resources: Vec<rmcp::model::Resource> = Vec::new();
 
     if let Some(db) = &server.database {
@@ -21,10 +31,8 @@ pub(super) async fn list_resources(
             r#"
             SELECT sc.id, sc.name, sc.capabilities
             FROM server_config sc
-            JOIN profile_server ps ON ps.server_id = sc.id AND ps.enabled = 1
-            JOIN profile p ON p.id = ps.profile_id AND p.is_active = 1
             WHERE sc.enabled = 1
-            GROUP BY sc.id, sc.name, sc.capabilities
+            ORDER BY sc.name, sc.id
             "#,
         )
         .fetch_all(&db.pool)
@@ -36,6 +44,9 @@ pub(super) async fn list_resources(
 
         let mut tasks = Vec::new();
         for (server_id, server_name, capabilities) in enabled_servers {
+            if !visible_server_ids.contains(&server_id) {
+                continue;
+            }
             if !super::supports_capability(
                 capabilities.as_deref(),
                 crate::core::capability::CapabilityType::Resources,
@@ -48,6 +59,8 @@ pub(super) async fn list_resources(
                 refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
                 timeout: Some(std::time::Duration::from_secs(10)),
                 validation_session: None,
+                runtime_identity: client.runtime_identity(),
+                connection_selection: client.connection_selection(server_id.clone()),
             };
             let redb = redb.clone();
             let pool = pool.clone();
@@ -81,12 +94,7 @@ pub(super) async fn list_resources(
         }
     }
 
-    // Apply centralized profile visibility filter (resources)
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    resources = vis.filter_resources(resources).await;
+    resources = vis.filter_resources_with_snapshot(&snapshot, resources, Vec::new()).0;
 
     // Apply pagination
     let page = server.paginator.paginate_resources(&_request, resources)?;
@@ -109,6 +117,16 @@ pub(super) async fn list_resource_templates(
     _request: Option<PaginatedRequestParams>,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourceTemplatesResult, McpError> {
+    let client = server.resolve_bound_client_context(&_context).await?;
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    let snapshot = vis
+        .resolve_snapshot(&client.client_id)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
     let Some(_db) = &server.database else {
         tracing::warn!("Database not available for server filtering; returning empty list");
         return Ok(ListResourceTemplatesResult {
@@ -125,10 +143,8 @@ pub(super) async fn list_resource_templates(
             r#"
             SELECT sc.id, sc.name, sc.capabilities
             FROM server_config sc
-            JOIN profile_server ps ON ps.server_id = sc.id AND ps.enabled = 1
-            JOIN profile p ON p.id = ps.profile_id AND p.is_active = 1
             WHERE sc.enabled = 1
-            GROUP BY sc.id, sc.name, sc.capabilities
+            ORDER BY sc.name, sc.id
             "#,
         )
         .fetch_all(&db.pool)
@@ -140,6 +156,9 @@ pub(super) async fn list_resource_templates(
 
         let mut tasks = Vec::new();
         for (server_id, server_name, capabilities) in enabled_servers {
+            if !visible_server_ids.contains(&server_id) {
+                continue;
+            }
             if !super::supports_capability(
                 capabilities.as_deref(),
                 crate::core::capability::CapabilityType::ResourceTemplates,
@@ -152,6 +171,8 @@ pub(super) async fn list_resource_templates(
                 refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
                 timeout: Some(std::time::Duration::from_secs(10)),
                 validation_session: None,
+                runtime_identity: client.runtime_identity(),
+                connection_selection: client.connection_selection(server_id.clone()),
             };
             let redb = redb.clone();
             let pool = pool.clone();
@@ -188,12 +209,9 @@ pub(super) async fn list_resource_templates(
         }
     }
 
-    // Apply centralized profile visibility filter (resource templates)
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    let resource_templates = vis.filter_resource_templates(resource_templates).await;
+    let resource_templates = vis
+        .filter_resources_with_snapshot(&snapshot, Vec::new(), resource_templates)
+        .1;
 
     // Apply pagination
     let page = server
@@ -218,6 +236,7 @@ pub(super) async fn read_resource(
     request: ReadResourceRequestParams,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ReadResourceResult, McpError> {
+    let client = server.resolve_bound_client_context(&_context).await?;
     tracing::debug!("Reading resource: {}", request.uri);
 
     let mut lookup_uri = request.uri.clone();
@@ -280,11 +299,53 @@ pub(super) async fn read_resource(
         crate::core::capability::facade::build_resource_mapping(&server.connection_pool, server.database.as_ref()).await
     };
 
+    let canonical_uri = if resource_mapping.contains_key(&request.uri) {
+        request.uri.clone()
+    } else if let Some(mapping) = resource_mapping.get(&lookup_uri) {
+        generate_unique_name(
+            NamingKind::Resource,
+            &mapping.server_name,
+            &mapping.upstream_resource_uri,
+        )
+    } else {
+        request.uri.clone()
+    };
+
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    let snapshot = vis
+        .resolve_snapshot(&client.client_id)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    if let Err(error) = vis
+        .assert_resource_allowed_with_snapshot(&snapshot, &canonical_uri)
+        .await
+    {
+        tracing::warn!(
+            resource = %canonical_uri,
+            client_id = %client.client_id,
+            profile_id = ?client.profile_id,
+            error = %error,
+            "ProxyServer::read_resource denied by visibility policy"
+        );
+        return Err(McpError::invalid_params(
+            format!("Resource '{}' is not available for this client", canonical_uri),
+            None,
+        ));
+    }
+
+    let connection_selection = server_filter
+        .as_ref()
+        .and_then(|server_id| client.connection_selection(server_id.clone()));
+
     match crate::core::capability::facade::read_upstream_resource(
         &server.connection_pool,
         &resource_mapping,
         &lookup_uri,
         server_filter.as_deref(),
+        connection_selection.as_ref(),
     )
     .await
     {

@@ -6,11 +6,28 @@ use rmcp::model::{CallToolRequest, CallToolRequestParams, CallToolResult, Client
 use rmcp::service::PeerRequestOptions;
 use rmcp::service::RequestContext;
 
+fn builtin_tool_allowed_for_capability_source(
+    capability_source: crate::clients::models::CapabilitySource,
+    tool_name: &str,
+) -> bool {
+    capability_source == crate::clients::models::CapabilitySource::Activated || tool_name != "mcpmate_profile_switch"
+}
+
 pub(super) async fn list_tools(
     server: &ProxyServer,
     _request: Option<PaginatedRequestParams>,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<rmcp::model::ListToolsResult, McpError> {
+    let client = server.resolve_bound_client_context(&_context).await?;
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    let snapshot = vis
+        .resolve_snapshot(&client.client_id)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<std::collections::HashSet<_>>();
     let mut tools: Vec<rmcp::model::Tool> = Vec::new();
 
     if let Some(db) = &server.database {
@@ -18,10 +35,8 @@ pub(super) async fn list_tools(
             r#"
             SELECT sc.id, sc.name, sc.capabilities
             FROM server_config sc
-            JOIN profile_server ps ON ps.server_id = sc.id AND ps.enabled = 1
-            JOIN profile p ON p.id = ps.profile_id AND p.is_active = 1
             WHERE sc.enabled = 1
-            GROUP BY sc.id, sc.name, sc.capabilities
+            ORDER BY sc.name, sc.id
             "#,
         )
         .fetch_all(&db.pool)
@@ -33,6 +48,9 @@ pub(super) async fn list_tools(
 
         let mut tasks = Vec::new();
         for (server_id, _server_name, capabilities) in enabled_servers {
+            if !visible_server_ids.contains(&server_id) {
+                continue;
+            }
             if !super::supports_capability(capabilities.as_deref(), crate::core::capability::CapabilityType::Tools) {
                 continue;
             }
@@ -42,6 +60,8 @@ pub(super) async fn list_tools(
                 refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
                 timeout: Some(std::time::Duration::from_secs(10)),
                 validation_session: None,
+                runtime_identity: client.runtime_identity(),
+                connection_selection: client.connection_selection(server_id.clone()),
             };
             let redb = redb.clone();
             let pool = pool.clone();
@@ -63,14 +83,18 @@ pub(super) async fn list_tools(
         }
     }
 
-    // Apply centralized profile visibility filter (tools) before appending builtins
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    tools = vis.filter_tools(tools).await;
+    tools = vis.filter_tools_with_snapshot(&snapshot, tools);
 
-    let builtin_tools = server.builtin_services.tools();
+    let capability_config = vis
+        .resolve_capability_config(&client.client_id)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    let builtin_tools = server
+        .builtin_services
+        .tools()
+        .into_iter()
+        .filter(|tool| builtin_tool_allowed_for_capability_source(capability_config.capability_source, tool.name.as_ref()))
+        .collect::<Vec<_>>();
     tracing::debug!("Including {} builtin service tools", builtin_tools.len());
     tools.extend(builtin_tools);
 
@@ -95,6 +119,7 @@ pub(super) async fn call_tool(
     request: CallToolRequestParams,
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<CallToolResult, McpError> {
+    let client = server.resolve_bound_client_context(&_context).await?;
     let call_id = crate::generate_id!("tcall");
     let started_at = std::time::Instant::now();
 
@@ -103,6 +128,24 @@ pub(super) async fn call_tool(
         tool = %request.name,
         "ProxyServer::call_tool received request"
     );
+
+    if request.name == "mcpmate_profile_switch" {
+        let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+            server.database.clone(),
+            server.profile_service.clone(),
+        );
+        let capability_config = vis
+            .resolve_capability_config(&client.client_id)
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        if !builtin_tool_allowed_for_capability_source(capability_config.capability_source, &request.name) {
+            return Err(McpError::invalid_params(
+                "mcpmate_profile_switch is only available for clients using the activated capability source"
+                    .to_string(),
+                None,
+            ));
+        }
+    }
 
     if let Some(result) = server.builtin_services.call_tool(&request).await {
         tracing::debug!(
@@ -164,8 +207,36 @@ pub(super) async fn call_tool(
         server_name = %server_name,
         server_id = %server_id,
         upstream_tool = %original_tool_name,
+        client_id = %client.client_id,
+        profile_id = ?client.profile_id,
         "ProxyServer::call_tool resolved mapping"
     );
+
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    let snapshot = vis
+        .resolve_snapshot(&client.client_id)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    if let Err(error) = vis
+        .assert_tool_allowed_with_snapshot(&snapshot, &request.name)
+        .await
+    {
+        tracing::warn!(
+            call_id = %call_id,
+            tool = %request.name,
+            client_id = %client.client_id,
+            profile_id = ?client.profile_id,
+            error = %error,
+            "ProxyServer::call_tool denied by visibility policy"
+        );
+        return Err(McpError::invalid_params(
+            format!("Tool '{}' is not available for this client", request.name),
+            None,
+        ));
+    }
 
     // Resolve tool call timeout from env (fallback 30s)
     let call_timeout_secs: u64 = std::env::var("MCPMATE_TOOL_CALL_TIMEOUT_SECS")
@@ -179,12 +250,29 @@ pub(super) async fn call_tool(
         let snap = pool_guard.get_snapshot();
         let mut p: Option<rmcp::service::Peer<rmcp::RoleClient>> = None;
         let mut iid: Option<String> = None;
-        if let Some(instances) = snap.get(&server_id) {
-            if let Some((iid0, _st, _res, _prm, peer)) = instances.iter().find(|(_, st, _, _, p)| {
-                matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
-            }) {
-                p = peer.clone();
-                iid = Some(iid0.clone());
+        if let Some(selection) = client.connection_selection(server_id.clone()) {
+            if let Ok(Some(selected_instance_id)) = pool_guard.select_ready_instance_id(&selection) {
+                if let Some(instances) = snap.get(&server_id) {
+                    if let Some((iid0, _st, _res, _prm, peer)) = instances
+                        .iter()
+                        .find(|(candidate_id, _st, _res, _prm, peer)| {
+                            **candidate_id == selected_instance_id && peer.is_some()
+                        })
+                    {
+                        p = peer.clone();
+                        iid = Some(iid0.clone());
+                    }
+                }
+            }
+        }
+        if p.is_none() {
+            if let Some(instances) = snap.get(&server_id) {
+                if let Some((iid0, _st, _res, _prm, peer)) = instances.iter().find(|(_, st, _, _, p)| {
+                    matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
+                }) {
+                    p = peer.clone();
+                    iid = Some(iid0.clone());
+                }
             }
         }
         (p, iid)
@@ -195,10 +283,17 @@ pub(super) async fn call_tool(
         let t_connect_begin = std::time::Instant::now();
         {
             let mut pool_guard = server.connection_pool.lock().await;
-            pool_guard
-                .ensure_connected(&server_id)
-                .await
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            if let Some(selection) = client.connection_selection(server_id.clone()) {
+                pool_guard
+                    .ensure_connected_with_selection(&selection)
+                    .await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            } else {
+                pool_guard
+                    .ensure_connected(&server_id)
+                    .await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            }
         }
         let pool_guard = server.connection_pool.lock().await;
         let snap = pool_guard.get_snapshot();
@@ -239,8 +334,9 @@ pub(super) async fn call_tool(
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-    // Map progress token and request id to downstream peer for forwarding
-    server.register_call_session(handle.progress_token.clone(), handle.id.clone(), _context.peer.clone());
+    // Map progress token and request id to the exact downstream route for forwarding
+    let downstream_route = server.build_downstream_route(&client, _context.peer.clone())?;
+    server.register_call_session(handle.progress_token.clone(), handle.id.clone(), downstream_route);
 
     // Await response and cleanup mapping
     let token = handle.progress_token.clone();
@@ -272,5 +368,31 @@ pub(super) async fn call_tool(
             );
             Err(McpError::internal_error(e.to_string(), None))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::builtin_tool_allowed_for_capability_source;
+    use crate::clients::models::CapabilitySource;
+
+    #[test]
+    fn profile_switch_is_only_available_for_activated_capability_source() {
+        assert!(builtin_tool_allowed_for_capability_source(
+            CapabilitySource::Activated,
+            "mcpmate_profile_switch",
+        ));
+        assert!(!builtin_tool_allowed_for_capability_source(
+            CapabilitySource::Profiles,
+            "mcpmate_profile_switch",
+        ));
+        assert!(!builtin_tool_allowed_for_capability_source(
+            CapabilitySource::Custom,
+            "mcpmate_profile_switch",
+        ));
+        assert!(builtin_tool_allowed_for_capability_source(
+            CapabilitySource::Profiles,
+            "mcpmate_profile_list",
+        ));
     }
 }
