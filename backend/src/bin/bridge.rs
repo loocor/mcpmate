@@ -254,6 +254,27 @@ impl BridgeServer {
         })?;
         default_headers.insert(HeaderName::from_static("mcp-protocol-version"), header_value);
 
+        if let Ok(appid) = std::env::var("APPID") {
+            let appid = appid.trim();
+            if !appid.is_empty() {
+                let value = HeaderValue::from_str(appid).map_err(|err| {
+                    tracing::error!("Invalid APPID header value: {err}");
+                    McpError::internal_error("Invalid APPID header value", None)
+                })?;
+                default_headers.insert(HeaderName::from_static("x-mcpmate-client-id"), value);
+            }
+        }
+        if let Ok(profile_id) = std::env::var("PROFILE_ID") {
+            let profile_id = profile_id.trim();
+            if !profile_id.is_empty() {
+                let value = HeaderValue::from_str(profile_id).map_err(|err| {
+                    tracing::error!("Invalid PROFILE_ID header value: {err}");
+                    McpError::internal_error("Invalid PROFILE_ID header value", None)
+                })?;
+                default_headers.insert(HeaderName::from_static("x-mcpmate-profile-id"), value);
+            }
+        }
+
         let http_client = HttpClient::builder()
             .default_headers(default_headers)
             .build()

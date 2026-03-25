@@ -506,6 +506,7 @@ pub async fn store_redb_snapshot(
         resource_templates,
         cached_at: chrono::Utc::now(),
         fingerprint: format!("store:{}:{}", server_id, chrono::Utc::now().timestamp()),
+        scope: crate::core::cache::CacheScope::shared_raw(),
     };
     redb.store_server_data(&server_data)
         .await

@@ -69,6 +69,8 @@ async fn server_tools_core(
             refresh,
             timeout: Some(std::time::Duration::from_secs(10)),
             validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
+            runtime_identity: None,
+            connection_selection: None,
         })
         .await;
     match list_result {

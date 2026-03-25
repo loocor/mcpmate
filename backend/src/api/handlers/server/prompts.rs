@@ -108,6 +108,8 @@ async fn server_prompts_core(
             refresh,
             timeout: Some(std::time::Duration::from_secs(10)),
             validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
+            runtime_identity: None,
+            connection_selection: None,
         })
         .await;
     // TODO: introduce unified naming module for prompts to avoid potential name collisions (similar to tools)

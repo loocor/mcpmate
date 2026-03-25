@@ -11,7 +11,7 @@ use crate::{
         routes::AppState,
     },
     config::{database::Database, server},
-    core::cache::{CacheQuery, FreshnessLevel},
+    core::cache::{CacheQuery, CacheScope, FreshnessLevel},
 };
 use axum::http::StatusCode;
 
@@ -463,6 +463,7 @@ async fn get_server_protocol_version(
         server_id: server_id.to_string(),
         freshness_level: FreshnessLevel::Cached,
         include_disabled: true,
+        scope: CacheScope::shared_raw(),
     };
 
     if let Ok(result) = state.redb_cache.get_server_data(&query).await {
@@ -689,6 +690,7 @@ pub fn build_cache_query(
         server_id: server_id.to_owned(),
         freshness_level,
         include_disabled: false,
+        scope: CacheScope::shared_raw(),
     }
 }
 
@@ -742,7 +744,8 @@ pub fn create_runtime_cache_data(
         prompts,
         resource_templates,
         cached_at: now,
-        fingerprint: format!("runtime:{}:{}", server_info.server_id, now.timestamp()),
+        fingerprint: format!("runtime-raw:{}", server_info.server_id),
+        scope: crate::core::cache::CacheScope::shared_raw(),
     }
 }
 

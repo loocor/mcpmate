@@ -43,6 +43,12 @@
 - Log significant findings, regressions, or retest evidence back into `backend/docs/progress.md` so the document remains the single working backlog.
 - Pre-release stance: MCPMate has no production footprint; there is zero historical data. When adjusting the schema or configuration, perform a clean rebuild; do not independently add migrations, compatibility layers, or fallbacks. Only make an exception if explicitly required by the product owner (Loocor).
 
+## Delivery Discipline & Design Alignment
+- Treat `.claude/plans/configuration-mode-implementation.md` as the delivery contract for configuration-mode work unless Loocor explicitly approves a scope change.
+- A validation-grade or minimum unifying implementation may be used to verify an idea, but it must never be reported as phase-complete or delivery-ready.
+- Before marking any phase complete, compare the implementation against the design contract, list the remaining gaps, and continue until delivery-critical gaps are closed.
+- If review shows that a lower layer is not delivery-ready, stop the higher-phase rollout, fix the foundation first, and only then resume the later phase.
+
 ## Protocol Standards & SDK Alignment
 - Follow the MCP specification dated 2025-06-18 (https://modelcontextprotocol.io/specification/2025-06-18) and use the official `rmcp` crate from crates.io for transports, clients, and capability helpers.
 

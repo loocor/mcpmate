@@ -151,6 +151,7 @@ pub async fn prompt_get(
                 &upstream_name,
                 req.arguments.clone(),
                 server_filter.as_deref(),
+                None,
             )
             .await
             .map_err(map_anyhow)?;
@@ -229,6 +230,7 @@ pub async fn resource_read(
                 &mapping,
                 &upstream_uri,
                 server_filter.as_deref(),
+                None,
             )
             .await
             .map_err(map_anyhow)?;
@@ -711,6 +713,8 @@ async fn list_capability_via_components(
         refresh,
         timeout: Some(Duration::from_secs(10)),
         validation_session: session_id,
+        runtime_identity: None,
+        connection_selection: None,
     };
 
     let result = service.list(&ctx).await.map_err(map_anyhow)?;

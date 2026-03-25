@@ -646,6 +646,7 @@ async fn load_cached_protocol_versions(
             server_id: server_id.clone(),
             freshness_level: crate::core::cache::FreshnessLevel::Cached,
             include_disabled: true,
+            scope: crate::core::cache::CacheScope::shared_raw(),
         };
 
         let version = state.redb_cache.get_server_data(&query).await.ok().and_then(|result| {

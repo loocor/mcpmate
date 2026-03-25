@@ -51,7 +51,10 @@ pub async fn tools_list(
         .and_then(|v| v.as_u64())
         .unwrap_or(tools.len() as u64) as usize;
     let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
-    let elapsed_ms = data_value.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
+    let elapsed_ms = data_value
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_default();
     let data = InspectorToolsListData {
         mode,
         tools,
@@ -269,7 +272,10 @@ pub async fn prompts_list(
         .and_then(|v| v.as_u64())
         .unwrap_or(prompts.len() as u64) as usize;
     let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
-    let elapsed_ms = data_value.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
+    let elapsed_ms = data_value
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_default();
     let data = InspectorPromptsListData {
         mode,
         prompts,
@@ -456,7 +462,10 @@ pub async fn templates_list(
         .and_then(|v| v.as_u64())
         .unwrap_or(templates.len() as u64) as usize;
     let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
-    let elapsed_ms = data_value.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
+    let elapsed_ms = data_value
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_default();
     let data = InspectorTemplatesListData {
         mode,
         templates,
