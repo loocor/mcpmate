@@ -217,13 +217,25 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
                     client_context.profile_id
                 ));
             }
-            if existing.rules_fingerprint != client_context.rules_fingerprint {
-                return Err(anyhow!(
-                    "Managed session '{}' already bound to rules_fingerprint {:?} instead of {:?}",
-                    session_id,
-                    existing.rules_fingerprint,
-                    client_context.rules_fingerprint
-                ));
+            // Allow upgrading from None to Some(fingerprint) during initialize flow,
+            // but reject real mismatches (both Some but different values).
+            match (&existing.rules_fingerprint, &client_context.rules_fingerprint) {
+                (Some(existing_fp), Some(new_fp)) if existing_fp != new_fp => {
+                    return Err(anyhow!(
+                        "Managed session '{}' already bound to rules_fingerprint {:?} instead of {:?}",
+                        session_id,
+                        existing.rules_fingerprint,
+                        client_context.rules_fingerprint
+                    ));
+                }
+                (Some(_), None) => {
+                    return Err(anyhow!(
+                        "Managed session '{}' already bound to rules_fingerprint {:?}, cannot downgrade to None",
+                        session_id,
+                        existing.rules_fingerprint
+                    ));
+                }
+                _ => {}
             }
         }
 
@@ -1089,12 +1101,68 @@ mod tests {
             client_id: "same-client".to_string(),
             session_id: Some("sess-fp".to_string()),
             profile_id: None,
-            rules_fingerprint: Some("fp-beta".to_string()), // Different fingerprint
+            rules_fingerprint: Some("fp-beta".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
         };
         let err = resolver.bind_session("sess-fp", &second).await.expect_err("should reject fingerprint mismatch");
+        assert!(err.to_string().contains("already bound to rules_fingerprint"));
+    }
+
+    #[tokio::test]
+    async fn session_binding_allows_fingerprint_upgrade_from_none() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let initial = ClientContext {
+            client_id: "cursor".to_string(),
+            session_id: Some("sess-upgrade".to_string()),
+            profile_id: Some("profile-a".to_string()),
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        resolver.bind_session("sess-upgrade", &initial).await.expect("initial bind should succeed");
+
+        let upgraded = ClientContext {
+            client_id: "cursor".to_string(),
+            session_id: Some("sess-upgrade".to_string()),
+            profile_id: Some("profile-a".to_string()),
+            rules_fingerprint: Some("fp-123".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        resolver.bind_session("sess-upgrade", &upgraded).await.expect("upgrade bind should succeed");
+
+        let binding = resolver.session_bindings.get("sess-upgrade").expect("binding should exist");
+        assert_eq!(binding.rules_fingerprint.as_deref(), Some("fp-123"));
+    }
+
+    #[tokio::test]
+    async fn session_binding_rejects_fingerprint_downgrade_from_some() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let initial = ClientContext {
+            client_id: "cursor".to_string(),
+            session_id: Some("sess-downgrade".to_string()),
+            profile_id: None,
+            rules_fingerprint: Some("fp-original".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        resolver.bind_session("sess-downgrade", &initial).await.expect("initial bind should succeed");
+
+        let downgrade = ClientContext {
+            client_id: "cursor".to_string(),
+            session_id: Some("sess-downgrade".to_string()),
+            profile_id: None,
+            rules_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        let err = resolver.bind_session("sess-downgrade", &downgrade).await.expect_err("should reject fingerprint downgrade");
         assert!(err.to_string().contains("already bound to rules_fingerprint"));
     }
 }
