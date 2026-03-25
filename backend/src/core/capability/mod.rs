@@ -18,7 +18,7 @@ pub mod tools;
 
 pub use domain::{
     AffinityKey, CapabilityError, CapabilityItem, CapabilityQuery, CapabilityResult, CapabilityType, ConnectionMode,
-    DataSource, FreshnessRequirement, IsolationMode, QueryContext,
+    ConnectionSelection, DataSource, FreshnessRequirement, IsolationMode, QueryContext, RuntimeIdentity,
 };
 pub use integration::{UnifiedQueryAdapter, UnifiedQueryIntegration, migration::MigrationComparison};
 pub use query::{MetricsCollector, UnifiedQueryService, UnifiedQueryServiceBuilder};

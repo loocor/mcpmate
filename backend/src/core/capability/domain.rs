@@ -539,6 +539,39 @@ pub struct ConnectionMode {
     pub affinity_key: AffinityKey,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeIdentity {
+    pub client_id: String,
+    pub profile_id: Option<String>,
+    pub rules_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionSelection {
+    pub server_id: String,
+    pub affinity_key: AffinityKey,
+    pub routing_fingerprint: Option<String>,
+}
+
+impl ConnectionSelection {
+    pub fn cache_scope_key(&self) -> String {
+        match &self.routing_fingerprint {
+            Some(routing_fingerprint) => {
+                format!("{}#{}#{}", self.server_id, self.affinity_key_string(), routing_fingerprint)
+            }
+            None => format!("{}#{}", self.server_id, self.affinity_key_string()),
+        }
+    }
+
+    pub fn affinity_key_string(&self) -> String {
+        match &self.affinity_key {
+            AffinityKey::Default => "default".to_string(),
+            AffinityKey::PerClient(id) => format!("client:{}", id),
+            AffinityKey::PerSession(id) => format!("session:{}", id),
+        }
+    }
+}
+
 impl ConnectionMode {
     /// Create shareable mode (default for HTTP/SSE)
     pub fn shareable() -> Self {
