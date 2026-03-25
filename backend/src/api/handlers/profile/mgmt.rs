@@ -133,7 +133,8 @@ pub async fn profile_list(
             if let Some(profile_type) = &request.profile_type {
                 profile.profile_type.to_string() == *profile_type
             } else {
-                true
+                // By default, exclude host_app profiles (internal use only)
+                profile.profile_type != crate::common::profile::ProfileType::HostApp
             }
         })
         .collect();

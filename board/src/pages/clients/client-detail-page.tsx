@@ -9,6 +9,7 @@ import {
 	Download,
 	HardDrive,
 	Info,
+	Pencil,
 	Play,
 	Plus,
 	RefreshCw,
@@ -18,7 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
@@ -127,13 +128,14 @@ export function ClientDetailPage() {
 	const { identifier } = useParams<{ identifier: string }>();
 	const qc = useQueryClient();
 	const navigate = useNavigate();
+	const [searchParams] = useSearchParams();
 	usePageTranslations("clients");
 	const { t } = useTranslation("clients");
 	const [displayName, setDisplayName] = useState("");
 	const [selectedBackups, setSelectedBackups] = useState<string[]>([]);
 	const [detected, setDetected] = useState<boolean>(false);
 	const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-	const [tabValue, setTabValue] = useState<ClientDetailTab>("overview");
+	const [tabValue, setTabValue] = useState("overview");
 	const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
 
 	// Try to get display name from list cache
@@ -232,10 +234,7 @@ export function ClientDetailPage() {
 		[profiles],
 	);
 	const sharedProfiles = useMemo(
-		() =>
-			profiles.filter(
-				(profile) => profile.suit_type === "shared" && profile.is_active,
-			),
+		() => profiles.filter((profile) => profile.suit_type === "shared"),
 		[profiles],
 	);
 
@@ -403,7 +402,11 @@ export function ClientDetailPage() {
 		}
 
 		if (selectedConfig === "profile") {
-			if (selectedProfiles.length === 0) {
+			const profileIds = selectedProfiles.length > 0
+				? selectedProfiles
+				: [sharedProfiles.find((p) => p.is_default)?.id].filter(Boolean) as string[];
+
+			if (profileIds.length === 0) {
 				throw new Error(
 					t("detail.configuration.errors.profileRequired", {
 						defaultValue:
@@ -411,10 +414,11 @@ export function ClientDetailPage() {
 					}),
 				);
 			}
+
 			return {
 				identifier,
 				capability_source: "profiles" as const,
-				selected_profile_ids: selectedProfiles,
+				selected_profile_ids: profileIds,
 			};
 		}
 
@@ -448,20 +452,8 @@ export function ClientDetailPage() {
 			return { profile: { profile_id: capabilityData.custom_profile_id } };
 		}
 
-		if (capabilityData.capability_source === "profiles") {
-			if (capabilityData.selected_profile_ids.length !== 1) {
-				throw new Error(
-					t("detail.configuration.errors.singleProfileApply", {
-						defaultValue:
-							"Configuration apply currently requires exactly one shared profile when using Profiles mode.",
-					}),
-				);
-			}
-			return {
-				profile: { profile_id: capabilityData.selected_profile_ids[0] },
-			};
-		}
-
+		// For "profiles" and "activated" modes, return "default" to let backend resolve
+		// from capability_config.selected_profile_ids (supports multi-profile merge)
 		return "default";
 	};
 
@@ -883,7 +875,7 @@ export function ClientDetailPage() {
 
 			<Tabs
 				value={tabValue}
-				onValueChange={(value) => setTabValue(value as ClientDetailTab)}
+				onValueChange={setTabValue}
 			>
 				<div className="flex items-center justify-between">
 					<TabsList>
@@ -1696,11 +1688,15 @@ export function ClientDetailPage() {
 
 													<CapsuleStripeListItem
 														interactive={selectedConfig !== "custom" || !!customProfileId}
-														className="border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
+														className={
+															selectedConfig === "custom" && customProfileId
+																? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
+																: "border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
+														}
 														onClick={() => {
 															if (selectedConfig === "custom") {
 																if (customProfileId) {
-																	navigate(`/profiles/${customProfileId}`);
+																	navigate(`/profiles/${customProfileId}?mode=custom`);
 																}
 															} else {
 																navigate("/profiles");
@@ -1708,8 +1704,16 @@ export function ClientDetailPage() {
 														}}
 													>
 														<div className="flex w-full items-center gap-3">
-															<div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-dashed border-slate-300 dark:border-slate-600">
-																<Plus className="h-3 w-3 text-slate-400" />
+															<div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${
+																selectedConfig === "custom" && customProfileId
+																	? "border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800"
+																	: "border-dashed border-slate-300 dark:border-slate-600"
+															}`}>
+																{selectedConfig === "custom" && customProfileId ? (
+																	<Pencil className="h-3 w-3 text-slate-500 dark:text-slate-400" />
+																) : (
+																	<Plus className="h-3 w-3 text-slate-400" />
+																)}
 															</div>
 															<div className="flex-1 min-w-0">
 															<div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
@@ -1718,7 +1722,7 @@ export function ClientDetailPage() {
 																		"detail.configuration.sections.profiles.ghost.titleCustom",
 																		{
 																			defaultValue: customProfileId
-																				? "Open the custom profile"
+																				? "Manage custom profile"
 																				: "Custom profile will be created on apply",
 																		},
 																	)
@@ -1733,7 +1737,7 @@ export function ClientDetailPage() {
 																		"detail.configuration.sections.profiles.ghost.subtitleCustom",
 																		{
 																			defaultValue: customProfileId
-																				? "Review the client-private host app profile that backs this capability source"
+																				? "Configure which servers are available to this client"
 																				: "Apply once to let MCPMate provision the client-private host app profile",
 																		},
 																	)

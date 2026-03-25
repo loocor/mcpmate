@@ -98,13 +98,10 @@ export function ProfilePage() {
 
 	// Handle URL parameters for profile creation
 	const profileType = searchParams.get("type");
-	const defaultView = useAppStore(
-		(state) => state.dashboardSettings.defaultView,
-	);
+	const defaultView = useAppStore((state) => state.dashboardSettings.defaultView);
 	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
+	const viewMode = defaultView;
 
-	// 搜索和排序状态
-	const [search, setSearch] = useState("");
 	const [expanded, setExpanded] = useState(false);
 
 	// 排序后的数据状态
@@ -135,15 +132,16 @@ export function ProfilePage() {
 		? (suitsResponse!.suits as ConfigSuit[])
 		: EMPTY_SUITS;
 	const suits = useMemo(
-		() => arrangeSuitsWithDefaultAnchor(rawSuits),
+		() => arrangeSuitsWithDefaultAnchor(rawSuits).filter((s) => s.suit_type !== "host_app"),
 		[rawSuits],
 	);
 	const activeSuits = suits.filter((suit) => suit.is_active);
 
-	// 当 suits 数据变化时更新 sortedSuits（仅在引用变化时）
 	React.useEffect(() => {
-		setSortedSuits((prev) => (prev === suits ? prev : suits));
-	}, [suits]);
+		if (sortedSuits.length === 0) {
+			setSortedSuits(suits);
+		}
+	}, [suits, sortedSuits.length]);
 
 	// Get active suit IDs for query keys
 	const activeSuitIds = activeSuits.map((suit) => suit.id);
@@ -666,7 +664,7 @@ export function ProfilePage() {
 
 	// Prepare loading skeleton
 	const loadingSkeleton =
-		defaultView === "grid"
+		viewMode === "grid"
 			? Array.from({ length: 6 }, (_, index) => {
 					const cardId = `loading-grid-${index}`;
 					return (
@@ -728,7 +726,7 @@ export function ProfilePage() {
 
 	// 工具栏配置
 	const toolbarConfig = {
-		data: (suitsResponse?.suits || []) as ConfigSuit[],
+		data: suits,
 		search: {
 			placeholder: t("profiles:searchPlaceholder", {
 				defaultValue: "Search profiles...",
@@ -775,21 +773,15 @@ export function ProfilePage() {
 
 	// 工具栏状态
 	const toolbarState = {
-		search,
-		viewMode: defaultView,
-		sort: "name", // 添加必需的 sort 属性
 		expanded,
 	};
 
 	// 工具栏回调
 	const toolbarCallbacks = {
-		onSearchChange: setSearch,
 		onViewModeChange: (mode: "grid" | "list") => {
-			// 直接更新全局设置
 			setDashboardSetting("defaultView", mode);
 		},
-		onSortedDataChange: (data: ConfigSuit[]) =>
-			setSortedSuits(arrangeSuitsWithDefaultAnchor(data)),
+		onSortedDataChange: setSortedSuits,
 		onExpandedChange: setExpanded,
 	};
 
@@ -882,7 +874,7 @@ export function ProfilePage() {
 					filteredAndSortedSuits.length === 0 ? emptyState : undefined
 				}
 			>
-				{defaultView === "grid"
+				{viewMode === "grid"
 					? filteredAndSortedSuits.map(renderSuitCard)
 					: filteredAndSortedSuits.map(renderSuitListItem)}
 			</ListGridContainer>

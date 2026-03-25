@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { CachedAvatar } from "../../components/cached-avatar";
 import CapabilityList from "../../components/capability-list";
@@ -87,9 +87,13 @@ export function ProfileDetailPage() {
 	const { t } = useTranslation();
 	usePageTranslations("profiles");
 	const { profileId } = useParams<{ profileId: string }>();
+	const [searchParams] = useSearchParams();
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
+
 	const [activeTab, setActiveTab] = useState("overview");
+
+	const mode = searchParams.get("mode");
 
 	// Developer toggles
 	const enableServerDebug = useAppStore(
@@ -593,6 +597,8 @@ export function ProfileDetailPage() {
 
 	const suitRole = suit?.role ?? "user";
 	const isDefaultAnchor = suitRole === "default_anchor";
+	const isHostApp = suit?.suit_type === "host_app";
+	const isCustomMode = mode === "custom";
 	const defaultButtonDisabled =
 		!suit || isDefaultAnchor || toggleDefaultMutation.isPending;
 	const defaultButtonLabel = !suit
@@ -918,18 +924,20 @@ export function ProfileDetailPage() {
 						<Edit3 className="h-4 w-4" />
 						{t("profiles:detail.buttons.edit", { defaultValue: "Edit" })}
 					</Button>
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={handleDefaultToggle}
-													disabled={defaultButtonDisabled}
-													className="gap-2"
-													aria-pressed={suit?.is_default ?? false}
-												>
-													{defaultButtonIcon}
-													{defaultButtonLabel}
-												</Button>
-												{suitRole === "user" && (
+												{!isHostApp && !isCustomMode && (
+													<Button
+														variant="outline"
+														size="sm"
+														onClick={handleDefaultToggle}
+														disabled={defaultButtonDisabled}
+														className="gap-2"
+														aria-pressed={suit?.is_default ?? false}
+													>
+														{defaultButtonIcon}
+														{defaultButtonLabel}
+													</Button>
+												)}
+												{suitRole === "user" && !isHostApp && !isCustomMode && (
 													<Button
 														variant="outline"
 														size="sm"
@@ -949,16 +957,18 @@ export function ProfileDetailPage() {
 														{suit?.is_active ? t("profiles:detail.buttons.disable", { defaultValue: "Disable" }) : t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
 													</Button>
 												)}
-												<Button
-													variant="destructive"
-													size="sm"
-													onClick={() => setIsDeleteDialogOpen(true)}
-													disabled={!!suit?.is_default}
-													className="gap-2"
-												>
-													<Trash2 className="h-4 w-4" />
-													{t("profiles:detail.buttons.delete", { defaultValue: "Delete" })}
-												</Button>
+												{!isHostApp && !isCustomMode && (
+													<Button
+														variant="destructive"
+														size="sm"
+														onClick={() => setIsDeleteDialogOpen(true)}
+														disabled={!!suit?.is_default}
+														className="gap-2"
+													>
+														<Trash2 className="h-4 w-4" />
+														{t("profiles:detail.buttons.delete", { defaultValue: "Delete" })}
+													</Button>
+												)}
 											</ButtonGroup>
 										</div>
 									</div>
@@ -1881,6 +1891,7 @@ export function ProfileDetailPage() {
 				onOpenChange={handleEditDrawerClose}
 				mode="edit"
 				suit={suit}
+				restrictProfileType={isHostApp ? "host_app" : undefined}
 				onSuccess={() => {
 					handleEditDrawerClose(false);
 					handleRefreshAll();

@@ -93,7 +93,7 @@ export function ProfileFormDrawer({
 	onSuccess,
 	restrictProfileType,
 }: ProfileFormDrawerProps) {
-	const { t, i18n } = useTranslation();
+	const { t } = useTranslation();
 	usePageTranslations("profiles");
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
@@ -133,22 +133,33 @@ export function ProfileFormDrawer({
 	const [serverSelectionTouched, setServerSelectionTouched] = useState(false);
 	const [cloneSelectionApplied, setCloneSelectionApplied] = useState(false);
 	const [isClosing, setIsClosing] = useState(false);
-	const steps: Array<{ id: DrawerStep; label: string; hint: string }> = [
-		{
-			id: "details",
-			label: t("profiles:form.steps.profile", { defaultValue: "Profile" }),
-			hint: t("profiles:form.steps.hints.basics", { defaultValue: "Basics" }),
-		},
-		{
-			id: "servers",
-			label: t("profiles:form.steps.servers", { defaultValue: "Servers" }),
-			hint: t("profiles:form.steps.hints.assign", { defaultValue: "Assign" }),
-		},
-	];
+
+	const isHostAppProfile = restrictProfileType === "host_app" || suit?.suit_type === "host_app";
+
+	const steps: Array<{ id: DrawerStep; label: string; hint: string }> = isHostAppProfile
+		? [
+				{
+					id: "servers",
+					label: t("profiles:form.steps.servers", { defaultValue: "Servers" }),
+					hint: t("profiles:form.steps.hints.assign", { defaultValue: "Assign" }),
+				},
+			]
+		: [
+				{
+					id: "details",
+					label: t("profiles:form.steps.profile", { defaultValue: "Profile" }),
+					hint: t("profiles:form.steps.hints.basics", { defaultValue: "Basics" }),
+				},
+				{
+					id: "servers",
+					label: t("profiles:form.steps.servers", { defaultValue: "Servers" }),
+					hint: t("profiles:form.steps.hints.assign", { defaultValue: "Assign" }),
+				},
+			];
 
 	// 完全重置所有状态的函数
 	const resetAllStates = useCallback(() => {
-		setStep("details");
+		setStep(isHostAppProfile ? "servers" : "details");
 		setSelectionInitialized(false);
 		setServerSelectionTouched(false);
 		setCloneSelectionApplied(false);
@@ -178,7 +189,7 @@ export function ProfileFormDrawer({
 				clone_from_id: "none",
 			});
 		}
-	}, [mode, suit, restrictProfileType]);
+	}, [mode, suit, restrictProfileType, isHostAppProfile]);
 
 	// Overlay close handler (immediate, no delay)
 	const handleOverlayClose = useCallback(() => {
@@ -545,10 +556,16 @@ export function ProfileFormDrawer({
 	};
 
 	const isMutating = createMutation.isPending || updateMutation.isPending;
-	const detailsStepValid = formData.name.trim().length > 0;
+	const detailsStepValid = isHostAppProfile || formData.name.trim().length > 0;
 
-	const profileServers = suitServersResponse?.servers ?? [];
-	const allServers = allServersResponse?.servers ?? [];
+	const profileServers = useMemo(
+		() => suitServersResponse?.servers ?? [],
+		[suitServersResponse?.servers],
+	);
+	const allServers = useMemo(
+		() => allServersResponse?.servers ?? [],
+		[allServersResponse?.servers],
+	);
 
 	const transferDataSource = useMemo((): TransferItem[] => {
 		const serverMap = new Map<string, TransferItem>();
@@ -581,7 +598,7 @@ export function ProfileFormDrawer({
 		return Array.from(serverMap.values()).sort((a, b) =>
 			a.name.localeCompare(b.name),
 		);
-	}, [allServers, profileServers, i18n.language]);
+	}, [allServers, profileServers, t]);
 
 	// 获取当前已经纳入管理的服务器 ID 列表
 	const targetServerKeys = useMemo(() => {
@@ -732,7 +749,7 @@ export function ProfileFormDrawer({
 		cloneContent,
 		formData.clone_from_id,
 		clonePreviewLoading,
-		i18n.language,
+		t,
 	]);
 
 	const selectedCloneProfile = useMemo(
@@ -998,27 +1015,37 @@ export function ProfileFormDrawer({
 			<DrawerContent className="h-full flex flex-col">
 				<DrawerHeader>
 					<DrawerTitle>
-						{mode === "create"
-							? t("profiles:form.title.create", {
-									defaultValue: "Create New Profile",
+						{isHostAppProfile
+							? t("profiles:form.title.manageServers", {
+									defaultValue: "Manage Servers",
 								})
-							: t("profiles:form.title.edit", { defaultValue: "Edit Profile" })}
+							: mode === "create"
+								? t("profiles:form.title.create", {
+										defaultValue: "Create New Profile",
+									})
+								: t("profiles:form.title.edit", { defaultValue: "Edit Profile" })}
 					</DrawerTitle>
 					<DrawerDescription>
-						{mode === "create"
-							? t("profiles:form.description.create", {
+						{isHostAppProfile
+							? t("profiles:form.description.manageServers", {
 									defaultValue:
-										"Create a new profile to organize your MCP servers and tools.",
+										"Configure which MCP servers are available to this client.",
 								})
-							: t("profiles:form.description.edit", {
-									defaultValue: "Update the profile settings.",
-								})}
+							: mode === "create"
+								? t("profiles:form.description.create", {
+										defaultValue:
+											"Create a new profile to organize your MCP servers and tools.",
+									})
+								: t("profiles:form.description.edit", {
+										defaultValue: "Update the profile settings.",
+									})}
 					</DrawerDescription>
 				</DrawerHeader>
 
 				<form onSubmit={handleSubmit} className="flex h-full flex-col">
 					{/* Content area - scrollable */}
 					<div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4">
+						{!isHostAppProfile && (
 						<div className="flex flex-wrap items-center gap-4">
 							{steps.map((item, index) => {
 								const isActive = step === item.id;
@@ -1078,6 +1105,7 @@ export function ProfileFormDrawer({
 								);
 							})}
 						</div>
+						)}
 
 						{step === "details" && (
 							<div className="space-y-4">
@@ -1203,25 +1231,38 @@ export function ProfileFormDrawer({
 					<DrawerFooter className="border-t bg-background">
 						<div className="flex w-full flex-wrap items-center justify-between gap-2">
 							<div className="flex gap-2">
-								<Button
-									type="button"
-									variant="outline"
-									onClick={() => {
-										if (step === "details") {
-											closeDrawer();
-										} else {
-											setStep("details");
-										}
-									}}
-									disabled={isMutating}
-								>
-									{step === "details"
-										? t("profiles:form.buttons.cancel", {
-												defaultValue: "Cancel",
-											})
-										: t("profiles:form.buttons.back", { defaultValue: "Back" })}
-								</Button>
-								{step === "servers" && (
+								{isHostAppProfile ? (
+									<Button
+										type="button"
+										variant="outline"
+										onClick={closeDrawer}
+										disabled={isMutating}
+									>
+										{t("profiles:form.buttons.cancel", {
+											defaultValue: "Cancel",
+										})}
+									</Button>
+								) : (
+									<Button
+										type="button"
+										variant="outline"
+										onClick={() => {
+											if (step === "details") {
+												closeDrawer();
+											} else {
+												setStep("details");
+											}
+										}}
+										disabled={isMutating}
+									>
+										{step === "details"
+											? t("profiles:form.buttons.cancel", {
+													defaultValue: "Cancel",
+												})
+											: t("profiles:form.buttons.back", { defaultValue: "Back" })}
+									</Button>
+								)}
+								{step === "servers" && !isHostAppProfile && (
 									<Button
 										type="button"
 										variant="ghost"

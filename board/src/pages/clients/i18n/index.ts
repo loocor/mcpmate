@@ -172,8 +172,8 @@ export const clientsTranslations = {
 						},
 						statusLabel: {
 							default: "",
-							profile: "WIP",
-							custom: "WIP",
+							profile: "",
+							custom: "",
 						},
 					},
 					profiles: {
@@ -518,24 +518,24 @@ export const clientsTranslations = {
 							none: "无",
 						},
 					},
-					source: {
-						title: "2. 能力来源",
-						descriptions: {
-							default: "使用所有已激活的配置集。",
-							profile: "选择特定共享配置集。",
-							custom: "使用自定义配置设置。",
-						},
-						options: {
-							default: "已激活",
-							profile: "配置集",
-							custom: "自定义",
-						},
-						statusLabel: {
-							default: "",
-							profile: "开发中",
-							custom: "开发中",
-						},
+				source: {
+					title: "2. 能力来源",
+					descriptions: {
+						default: "使用所有已激活的配置集。",
+						profile: "选择特定共享配置集。",
+						custom: "使用自定义配置设置。",
 					},
+					options: {
+						default: "已激活",
+						profile: "配置集",
+						custom: "自定义",
+					},
+					statusLabel: {
+						default: "",
+						profile: "",
+						custom: "",
+					},
+				},
 					profiles: {
 						title: "3. 配置集列表",
 						descriptions: {
@@ -871,24 +871,24 @@ export const clientsTranslations = {
 							none: "なし",
 						},
 					},
-					source: {
-						title: "2. 機能ソース",
-						descriptions: {
-							default: "現在有効なプロファイルをすべて使用します。",
-							profile: "含める共有プロファイルを選択します。",
-							custom: "カスタム設定を使用します。",
-						},
-						options: {
-							default: "有効化済み",
-							profile: "プロファイル",
-							custom: "カスタマイズ",
-						},
-						statusLabel: {
-							default: "",
-							profile: "開発中",
-							custom: "開発中",
-						},
+				source: {
+					title: "2. 機能ソース",
+					descriptions: {
+						default: "現在有効なプロファイルをすべて使用します。",
+						profile: "含める共有プロファイルを選択します。",
+						custom: "カスタム設定を使用します。",
 					},
+					options: {
+						default: "有効化済み",
+						profile: "プロファイル",
+						custom: "カスタマイズ",
+					},
+					statusLabel: {
+						default: "",
+						profile: "",
+						custom: "",
+					},
+				},
 					profiles: {
 						title: "3. プロファイル一覧",
 						descriptions: {
