@@ -328,6 +328,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_capability_config_and_invalidate_rejects_empty_profiles_selection() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        let error = service
+            .update_capability_config_and_invalidate("client-a", CapabilitySource::Profiles, Vec::new())
+            .await
+            .expect_err("empty profiles selection should fail");
+
+        assert!(error
+            .to_string()
+            .contains("profiles capability source requires at least one selected profile"));
+    }
+
+    #[tokio::test]
     async fn resolve_server_selection_prefers_client_profiles_over_active_profiles() {
         let (_temp_dir, service) = create_test_service().await;
         let active_profile_id = insert_profile(&service, "active-profile", ProfileType::Shared, true).await;

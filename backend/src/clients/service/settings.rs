@@ -243,6 +243,47 @@ impl ClientConfigService {
             .ok_or_else(|| ConfigError::DataAccessError(format!("Failed to load capability config for {identifier}")))
     }
 
+    pub async fn update_capability_config_and_invalidate(
+        &self,
+        identifier: &str,
+        capability_source: CapabilitySource,
+        selected_profile_ids: Vec<String>,
+    ) -> ConfigResult<ClientCapabilityConfig> {
+        let old_config = self.get_capability_config(identifier).await?;
+        let old_fingerprint = old_config
+            .as_ref()
+            .map(crate::core::profile::visibility::compute_capability_fingerprint);
+
+        let config = self
+            .set_capability_config(identifier, capability_source, selected_profile_ids)
+            .await?;
+
+        if let Some(fingerprint) = old_fingerprint {
+            if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
+                match cache_manager.invalidate_by_rules_fingerprint(&fingerprint).await {
+                    Ok(count) => {
+                        tracing::info!(
+                            client = %identifier,
+                            old_fingerprint = %fingerprint,
+                            invalidated_count = count,
+                            "Invalidated client-filtered cache entries after capability config update"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            client = %identifier,
+                            error = %err,
+                            "Failed to invalidate client-filtered cache entries"
+                        );
+                    }
+                }
+            }
+        }
+
+        crate::core::profile::visibility::invalidate_visibility_cache(identifier);
+        Ok(config)
+    }
+
     pub async fn get_capability_config(
         &self,
         identifier: &str,

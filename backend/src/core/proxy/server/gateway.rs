@@ -190,6 +190,26 @@ impl ProxyServer {
         Ok(())
     }
 
+    pub async fn refresh_bound_session_runtime_identity(
+        &self,
+        session_id: &str,
+        client_id: &str,
+    ) -> Result<(), rmcp::ErrorData> {
+        let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+            self.database.clone(),
+            self.profile_service.clone(),
+        );
+        let snapshot = vis
+            .resolve_snapshot(client_id)
+            .await
+            .map_err(|error| self.map_client_context_error(error))?;
+
+        self.client_context_resolver
+            .refresh_session_rules_fingerprint(session_id, snapshot.rules_fingerprint)
+            .await
+            .map_err(|error| self.map_client_context_error(error))
+    }
+
     /// Remove all state associated with a downstream session.
     ///
     /// ## Invariants
@@ -349,8 +369,12 @@ impl ProxyServer {
         self.database = Some(db_arc.clone());
         crate::core::capability::naming::initialize(db_arc.pool.clone());
         self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
-        self.builtin_services =
-            Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(db_arc.clone(), self.connection_pool.clone()));
+        let client_config_service = Arc::new(crate::clients::service::ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
+        self.builtin_services = Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(
+            db_arc.clone(),
+            self.connection_pool.clone(),
+            client_config_service,
+        ));
         if let Err(e) = crate::core::capability::resolver::init(db_arc.clone()).await {
             tracing::warn!("Failed to initialize global resolver: {}", e);
         } else {

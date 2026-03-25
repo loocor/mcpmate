@@ -156,6 +156,12 @@ pub trait ManagedClientContextResolver: Send + Sync {
         &self,
         session_id: &str,
     ) -> Result<()>;
+
+    async fn refresh_session_rules_fingerprint(
+        &self,
+        session_id: &str,
+        rules_fingerprint: String,
+    ) -> Result<()>;
 }
 
 impl SessionBoundClientContextResolver {
@@ -297,6 +303,19 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
         session_id: &str,
     ) -> Result<()> {
         self.session_bindings.remove(session_id);
+        Ok(())
+    }
+
+    async fn refresh_session_rules_fingerprint(
+        &self,
+        session_id: &str,
+        rules_fingerprint: String,
+    ) -> Result<()> {
+        let mut binding = self
+            .session_bindings
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("Managed session '{}' is not bound", session_id))?;
+        binding.rules_fingerprint = Some(rules_fingerprint);
         Ok(())
     }
 }
@@ -1164,5 +1183,28 @@ mod tests {
         };
         let err = resolver.bind_session("sess-downgrade", &downgrade).await.expect_err("should reject fingerprint downgrade");
         assert!(err.to_string().contains("already bound to rules_fingerprint"));
+    }
+
+    #[tokio::test]
+    async fn session_binding_refreshes_rules_fingerprint() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let context = ClientContext {
+            client_id: "cursor".to_string(),
+            session_id: Some("sess-refresh".to_string()),
+            profile_id: None,
+            rules_fingerprint: Some("fp-old".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+
+        resolver.bind_session("sess-refresh", &context).await.expect("bind should succeed");
+        resolver
+            .refresh_session_rules_fingerprint("sess-refresh", "fp-new".to_string())
+            .await
+            .expect("refresh should succeed");
+
+        let binding = resolver.session_bindings.get("sess-refresh").expect("binding should exist");
+        assert_eq!(binding.rules_fingerprint.as_deref(), Some("fp-new"));
     }
 }

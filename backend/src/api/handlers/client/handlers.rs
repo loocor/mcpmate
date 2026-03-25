@@ -468,20 +468,8 @@ pub async fn update_capability_config(
 ) -> Result<Json<ClientCapabilityConfigResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let old_config = service.get_capability_config(&request.identifier).await.map_err(|err| {
-        tracing::error!(
-            client = %request.identifier,
-            error = %err,
-            "Failed to get old capability config"
-        );
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    let old_fingerprint = old_config.as_ref().map(|c| {
-        crate::core::profile::visibility::compute_capability_fingerprint(c)
-    });
-
     let config = service
-        .set_capability_config(
+        .update_capability_config_and_invalidate(
             &request.identifier,
             request.capability_source,
             request.selected_profile_ids,
@@ -495,30 +483,6 @@ pub async fn update_capability_config(
             );
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-
-    if let Some(fingerprint) = old_fingerprint {
-        if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
-            match cache_manager.invalidate_by_rules_fingerprint(&fingerprint).await {
-                Ok(count) => {
-                    tracing::info!(
-                        client = %request.identifier,
-                        old_fingerprint = %fingerprint,
-                        invalidated_count = count,
-                        "Invalidated client-filtered cache entries after capability config update"
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        client = %request.identifier,
-                        error = %err,
-                        "Failed to invalidate client-filtered cache entries"
-                    );
-                }
-            }
-        }
-    }
-
-    crate::core::profile::visibility::invalidate_visibility_cache(&request.identifier);
 
     Ok(Json(ClientCapabilityConfigResp::success(
         ClientCapabilityConfigData {
