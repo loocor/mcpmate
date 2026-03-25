@@ -10,6 +10,8 @@ import type {
 	ClientBackupListResp,
 	ClientBackupPolicyResp,
 	ClientBackupPolicySetReq,
+	ClientCapabilityConfigReq,
+	ClientCapabilityConfigResp,
 	ClientCheckResp,
 	ClientConfigImportData,
 	ClientConfigImportReq,
@@ -2085,6 +2087,25 @@ export const notificationsService = new NotificationsService();
 
 // Clients Management API
 export const clientsApi = {
+	getCapabilityConfig: async (identifier: string) => {
+		const q = new URLSearchParams({ identifier });
+		const resp = await fetchApi<ClientCapabilityConfigResp>(
+			`/api/client/capability-config?${q}`,
+		);
+		return extractApiData(resp);
+	},
+
+	updateCapabilityConfig: async (payload: ClientCapabilityConfigReq) => {
+		const resp = await fetchApi<ClientCapabilityConfigResp>(
+			"/api/client/capability-config",
+			{
+				method: "POST",
+				body: JSON.stringify(payload),
+			},
+		);
+		return extractApiData(resp);
+	},
+
 	list: async (refresh = false) => {
 		const q = new URLSearchParams({ refresh: String(refresh) });
 		const resp = await fetchApi<ClientCheckResp>(`/api/client/list?${q}`);

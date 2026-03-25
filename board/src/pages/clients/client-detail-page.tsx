@@ -65,6 +65,8 @@ import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import type {
 	ClientBackupEntry,
 	ClientBackupPolicySetReq,
+	ClientCapabilityConfigData,
+	ClientCapabilitySourceSelection,
 	ClientConfigImportData,
 	ClientConfigMode,
 	ClientConfigSelected,
@@ -178,7 +180,7 @@ export function ClientDetailPage() {
 	const [mode, setMode] = useState<ClientConfigMode>("hosted");
 	const [transport, setTransport] = useState<string>("auto");
 	const [selectedConfig, setSelectedConfig] =
-		useState<ClientConfigSelected>("default");
+		useState<ClientCapabilitySourceSelection>("default");
 	const [policyOpen, setPolicyOpen] = useState(false);
 	const [importPreviewOpen, setImportPreviewOpen] = useState(false);
 	const [importPreviewData, setImportPreviewData] =
@@ -191,6 +193,12 @@ export function ClientDetailPage() {
 	} = useQuery({
 		queryKey: ["client-config", identifier],
 		queryFn: () => clientsApi.configDetails(identifier || "", false),
+		enabled: !!identifier,
+	});
+
+	const { data: capabilityConfig, refetch: refetchCapabilityConfig } = useQuery({
+		queryKey: ["client-capability-config", identifier],
+		queryFn: () => clientsApi.getCapabilityConfig(identifier || ""),
 		enabled: !!identifier,
 	});
 
@@ -231,15 +239,54 @@ export function ClientDetailPage() {
 		[profiles],
 	);
 
+	const effectiveCapabilityConfig = useMemo<ClientCapabilityConfigData | null>(() => {
+		if (capabilityConfig) {
+			return capabilityConfig;
+		}
+		if (!identifier) {
+			return null;
+		}
+		return {
+			identifier,
+			capability_source: configDetails?.capability_source || "activated",
+			selected_profile_ids: configDetails?.selected_profile_ids || [],
+			custom_profile_id: configDetails?.custom_profile_id ?? null,
+		};
+	}, [capabilityConfig, configDetails?.capability_source, configDetails?.custom_profile_id, configDetails?.selected_profile_ids, identifier]);
+
+	const customProfileId =
+		effectiveCapabilityConfig?.custom_profile_id ?? configDetails?.custom_profile_id ?? null;
+
+	useEffect(() => {
+		if (!effectiveCapabilityConfig) {
+			return;
+		}
+		switch (effectiveCapabilityConfig.capability_source) {
+			case "profiles":
+				setSelectedConfig("profile");
+				setSelectedProfiles(effectiveCapabilityConfig.selected_profile_ids || []);
+				break;
+			case "custom":
+				setSelectedConfig("custom");
+				setSelectedProfiles([]);
+				break;
+			case "activated":
+			default:
+				setSelectedConfig("default");
+				setSelectedProfiles([]);
+				break;
+		}
+	}, [effectiveCapabilityConfig]);
+
 	// Get profile IDs for fetching capabilities
 	const profileIds = useMemo(() => {
 		if (selectedConfig === "default") {
 			return activeProfiles.map((p) => p.id);
 		} else if (selectedConfig === "profile") {
-			return sharedProfiles.map((p) => p.id);
+			return selectedProfiles;
 		}
 		return [];
-	}, [selectedConfig, activeProfiles, sharedProfiles]);
+	}, [selectedConfig, activeProfiles, selectedProfiles]);
 
 	// Fetch capabilities for profiles
 	const profileCapabilitiesQueries = useQueries({
@@ -350,6 +397,74 @@ export function ClientDetailPage() {
 		);
 	}, [logEntries, logFilter]);
 
+	const buildCapabilityConfigPayload = () => {
+		if (!identifier) {
+			throw new Error("No identifier provided");
+		}
+
+		if (selectedConfig === "profile") {
+			if (selectedProfiles.length === 0) {
+				throw new Error(
+					t("detail.configuration.errors.profileRequired", {
+						defaultValue:
+							"Select at least one shared profile before applying this capability source.",
+					}),
+				);
+			}
+			return {
+				identifier,
+				capability_source: "profiles" as const,
+				selected_profile_ids: selectedProfiles,
+			};
+		}
+
+		if (selectedConfig === "custom") {
+			return {
+				identifier,
+				capability_source: "custom" as const,
+				selected_profile_ids: [],
+			};
+		}
+
+		return {
+			identifier,
+			capability_source: "activated" as const,
+			selected_profile_ids: [],
+		};
+	};
+
+	const buildApplySelectedConfig = (
+		capabilityData: ClientCapabilityConfigData,
+	): ClientConfigSelected => {
+		if (capabilityData.capability_source === "custom") {
+			if (!capabilityData.custom_profile_id) {
+				throw new Error(
+					t("detail.configuration.errors.customProfileMissing", {
+						defaultValue:
+							"The custom profile has not been provisioned yet. Save again and reopen the editor.",
+					}),
+				);
+			}
+			return { profile: { profile_id: capabilityData.custom_profile_id } };
+		}
+
+		if (capabilityData.capability_source === "profiles") {
+			if (capabilityData.selected_profile_ids.length !== 1) {
+				throw new Error(
+					t("detail.configuration.errors.singleProfileApply", {
+						defaultValue:
+							"Configuration apply currently requires exactly one shared profile when using Profiles mode.",
+					}),
+				);
+			}
+			return {
+				profile: { profile_id: capabilityData.selected_profile_ids[0] },
+			};
+		}
+
+		return "default";
+	};
+
 	const { data: policyData, refetch: refetchPolicy } = useQuery({
 		queryKey: ["client-policy", identifier],
 		queryFn: () => clientsApi.getBackupPolicy(identifier || ""),
@@ -363,10 +478,14 @@ export function ClientDetailPage() {
 	>({
 		mutationFn: async ({ preview }) => {
 			if (!identifier) throw new Error("No identifier provided");
+			const capabilityData = await clientsApi.updateCapabilityConfig(
+				buildCapabilityConfigPayload(),
+			);
+
 			const data = await clientsApi.applyConfig({
 				identifier,
 				mode,
-				selected_config: selectedConfig,
+				selected_config: buildApplySelectedConfig(capabilityData),
 				preview,
 			});
 			return { data: data ?? null, preview };
@@ -444,6 +563,9 @@ export function ClientDetailPage() {
 				}
 			}
 			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
+			qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] });
+			refetchCapabilityConfig();
+			refetchDetails();
 		},
 		onError: (e) =>
 			notifyError(
@@ -1223,7 +1345,7 @@ export function ClientDetailPage() {
 											<Segment
 												value={selectedConfig}
 												onValueChange={(v) =>
-													setSelectedConfig(v as ClientConfigSelected)
+													setSelectedConfig(v as ClientCapabilitySourceSelection)
 												}
 												options={[
 													{
@@ -1244,11 +1366,11 @@ export function ClientDetailPage() {
 															"detail.configuration.sections.source.options.profile",
 															{ defaultValue: "Profiles" },
 														),
-														status:
-															t(
-																"detail.configuration.sections.source.statusLabel.profile",
-																{ defaultValue: "WIP" },
-															) || undefined,
+													status:
+														t(
+															"detail.configuration.sections.source.statusLabel.profile",
+															{ defaultValue: "" },
+														) || undefined,
 													},
 													{
 														value: "custom",
@@ -1256,11 +1378,11 @@ export function ClientDetailPage() {
 															"detail.configuration.sections.source.options.custom",
 															{ defaultValue: "Customize" },
 														),
-														status:
-															t(
-																"detail.configuration.sections.source.statusLabel.custom",
-																{ defaultValue: "WIP" },
-															) || undefined,
+													status:
+														t(
+															"detail.configuration.sections.source.statusLabel.custom",
+															{ defaultValue: "" },
+														) || undefined,
 													},
 												]}
 												showDots={true}
@@ -1572,14 +1694,14 @@ export function ClientDetailPage() {
 														)
 													) : null}
 
-													{/* Ghost item for creating new profile */}
 													<CapsuleStripeListItem
-														interactive
+														interactive={selectedConfig !== "custom" || !!customProfileId}
 														className="border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
 														onClick={() => {
 															if (selectedConfig === "custom") {
-																// Navigate to profile creation with host application type
-																navigate("/profiles?type=host_app&mode=create");
+																if (customProfileId) {
+																	navigate(`/profiles/${customProfileId}`);
+																}
 															} else {
 																navigate("/profiles");
 															}
@@ -1590,28 +1712,31 @@ export function ClientDetailPage() {
 																<Plus className="h-3 w-3 text-slate-400" />
 															</div>
 															<div className="flex-1 min-w-0">
-																<div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
-																	{selectedConfig === "custom"
-																		? t(
-																				"detail.configuration.sections.profiles.ghost.titleCustom",
-																				{
-																					defaultValue: "Customize the profile",
-																				},
-																			)
+															<div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
+																{selectedConfig === "custom"
+																	? t(
+																		"detail.configuration.sections.profiles.ghost.titleCustom",
+																		{
+																			defaultValue: customProfileId
+																				? "Open the custom profile"
+																				: "Custom profile will be created on apply",
+																		},
+																	)
 																		: t(
 																				"detail.configuration.sections.profiles.ghost.titleDefault",
 																				{ defaultValue: "Add a new profile" },
 																			)}
 																</div>
-																<div className="text-xs text-slate-400 dark:text-slate-600 truncate">
-																	{selectedConfig === "custom"
-																		? t(
-																				"detail.configuration.sections.profiles.ghost.subtitleCustom",
-																				{
-																					defaultValue:
-																						"Create and manage host application profile",
-																				},
-																			)
+															<div className="text-xs text-slate-400 dark:text-slate-600 truncate">
+																{selectedConfig === "custom"
+																	? t(
+																		"detail.configuration.sections.profiles.ghost.subtitleCustom",
+																		{
+																			defaultValue: customProfileId
+																				? "Review the client-private host app profile that backs this capability source"
+																				: "Apply once to let MCPMate provision the client-private host app profile",
+																		},
+																	)
 																		: t(
 																				"detail.configuration.sections.profiles.ghost.subtitleDefault",
 																				{

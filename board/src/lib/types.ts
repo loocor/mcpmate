@@ -834,7 +834,12 @@ export interface ClientManageResp {
 
 // Client config details
 export type ClientConfigMode = "hosted" | "transparent" | "none" | string;
-export type ClientConfigSelected = "default" | "profile" | "custom" | string;
+export type ClientCapabilitySourceSelection = "default" | "profile" | "custom" | string;
+export type ClientConfigSelected = 
+	| "default" 
+	| { profile: { profile_id: string } } 
+	| { servers: { server_ids: string[] } } 
+	| string;
 
 export interface ClientImportedServer {
 	name: string;
@@ -906,12 +911,36 @@ export interface ClientConfigData {
 	docs_url?: string | null;
 	support_url?: string | null;
 	logo_url?: string | null;
+	capability_source?: CapabilitySource;
+	selected_profile_ids?: string[];
+	custom_profile_id?: string | null;
 }
 
 export interface ClientConfigResp {
 	data?: ClientConfigData | null;
 	error?: unknown | null;
 	success: boolean;
+}
+
+export type CapabilitySource = "activated" | "profiles" | "custom";
+
+export interface ClientCapabilityConfigData {
+	identifier: string;
+	capability_source: CapabilitySource;
+	selected_profile_ids: string[];
+	custom_profile_id?: string | null;
+}
+
+export interface ClientCapabilityConfigResp {
+	data?: ClientCapabilityConfigData | null;
+	error?: unknown | null;
+	success: boolean;
+}
+
+export interface ClientCapabilityConfigReq {
+	identifier: string;
+	capability_source: CapabilitySource;
+	selected_profile_ids?: string[];
 }
 
 export interface ClientConfigUpdateReq {
