@@ -41,10 +41,11 @@ twoway = "0.2"
 tauri-plugin-deep-link = "2"
 uuid = { version = "1.22.0", features = ["v4"] }
 hostname = "0.4"
-service-manager = "0.11.0"
+service-manager = { path = "/Volumes/External/GitHub/service-manager-rs" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
+plist = "1.1"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

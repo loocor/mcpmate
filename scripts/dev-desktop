@@ -24,6 +24,11 @@ TAURI_DIR="$(project_dir desktop/tauri)"
 print_section "board build"
 run_in "$BOARD_DIR" bun run build
 
+print_section "backend dependency check"
+BACKEND_DIR="$(project_dir backend)"
+printf 'Ensuring backend dependencies are up-to-date...\n'
+run_in "$BACKEND_DIR" cargo check --quiet
+
 print_section "desktop tauri dev"
 printf 'MCPMATE_TAURI_ENABLE_INSPECTOR=%s\n' "${MCPMATE_TAURI_ENABLE_INSPECTOR:-1}"
 printf 'MCPMATE_TAURI_LOG=%s\n' "${MCPMATE_TAURI_LOG:-debug}"

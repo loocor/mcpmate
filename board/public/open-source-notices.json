@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-24T06:21:47Z",
+  "generatedAt": "2026-03-26T17:21:31Z",
   "sections": [
     {
       "id": "backend",
@@ -722,6 +722,16 @@
           "licenseFile": ""
         },
         {
+          "name": "plist",
+          "version": "1.8.0",
+          "license": "MIT",
+          "repository": "https://github.com/ebarnard/rust-plist/",
+          "homepage": "",
+          "description": "A rusty plist parser. Supports Serde serialization.",
+          "author": "Ed Barnard <eabarnard@gmail.com>",
+          "licenseFile": ""
+        },
+        {
           "name": "regex",
           "version": "1.11.3",
           "license": "MIT OR Apache-2.0",
@@ -769,6 +779,16 @@
           "homepage": "",
           "description": "A JSON serialization file format",
           "author": "Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "service-manager",
+          "version": "0.11.0",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/chipsenkbeil/service-manager-rs",
+          "homepage": "https://github.com/chipsenkbeil/service-manager-rs",
+          "description": "Provides adapters to communicate with various operating system service managers",
+          "author": "Chip Senkbeil <chip@senkbeil.org>",
           "licenseFile": ""
         },
         {

@@ -3905,6 +3905,7 @@ dependencies = [
  "keyring",
  "mcpmate",
  "once_cell",
+ "plist",
  "regex",
  "reqwest 0.12.23",
  "rfd 0.14.1",
@@ -6548,8 +6549,6 @@ dependencies = [
 [[package]]
 name = "service-manager"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ff6975a4ea07dda326cf122fcc1b5cf6266daad42d1442a666a99fe50f0de9"
 dependencies = [
  "cfg-if",
  "dirs 4.0.0",

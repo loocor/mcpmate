@@ -4,9 +4,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+struct BackendBuildContext {
+    backend_dir: PathBuf,
+    sidecar_dir: PathBuf,
+    target: String,
+    profile: String,
+    exe_suffix: &'static str,
+}
+
 fn main() {
     embed_auth_config_from_env_file();
     ensure_local_core_sidecar();
+    ensure_bridge_sidecar();
 
     // Allow cfg gate in sources and enable a compile-time cfg for a special diagnostic build of the market proxy.
     println!("cargo:rustc-check-cfg=cfg(market_diag_default)");
@@ -31,72 +40,9 @@ fn main() {
 }
 
 fn ensure_local_core_sidecar() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.join("../../..");
-    let backend_dir = workspace_root.join("backend");
-    let target = env::var("TARGET").expect("TARGET");
-    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
-    let exe_suffix = if target.contains("windows") {
-        ".exe"
-    } else {
-        ""
-    };
-
-    let sidecar_dir = backend_dir.join("target/sidecars");
-    let sidecar_target = sidecar_dir.join(format!("mcpmate-core-{}{}", target, exe_suffix));
-    let sidecar_plain = sidecar_dir.join(format!("mcpmate-core{}", exe_suffix));
-
-    println!(
-        "cargo:rerun-if-changed={}",
-        backend_dir.join("src/main.rs").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        backend_dir.join("Cargo.toml").display()
-    );
-
-    if sidecar_target.exists() && sidecar_plain.exists() {
-        return;
-    }
-
-    let mut cargo = Command::new("cargo");
-    cargo
-        .arg("build")
-        .arg("--manifest-path")
-        .arg(backend_dir.join("Cargo.toml"))
-        .arg("-p")
-        .arg("mcpmate")
-        .arg("--bin")
-        .arg("mcpmate")
-        .arg("--target")
-        .arg(&target);
-
-    if profile == "release" {
-        cargo.arg("--release");
-    }
-
-    let status = cargo
-        .status()
-        .expect("failed to invoke cargo build for mcpmate core sidecar");
-    if !status.success() {
-        panic!("failed to build mcpmate core sidecar");
-    }
-
-    let built_binary = backend_dir
-        .join("target")
-        .join(&target)
-        .join(&profile)
-        .join(format!("mcpmate{}", exe_suffix));
-
-    if !built_binary.exists() {
-        panic!("missing built mcpmate binary at {}", built_binary.display());
-    }
-
-    fs::create_dir_all(&sidecar_dir).expect("failed to create sidecar directory");
-    fs::copy(&built_binary, &sidecar_target)
-        .expect("failed to copy mcpmate core sidecar target file");
-    fs::copy(&built_binary, &sidecar_plain)
-        .expect("failed to copy mcpmate core sidecar plain file");
+    let context = backend_build_context();
+    emit_backend_rerun_hints(&context.backend_dir, &["src/main.rs", "Cargo.toml"]);
+    ensure_backend_sidecar(&context, "mcpmate", "mcpmate-core");
 }
 
 /// Load `embed.env` next to Cargo.toml and emit `cargo:rustc-env` for account/auth settings.
@@ -156,4 +102,93 @@ fn embed_auth_config_from_env_file() {
     // Must stay in sync with `identifier` in tauri.conf.json unless you intentionally migrate keychain entries.
     println!("cargo:rustc-env=MCPMATE_AUTH_WORKER_BASE={auth_base}");
     println!("cargo:rustc-env=MCPMATE_KEYCHAIN_SERVICE={keychain_service}");
+}
+
+fn ensure_bridge_sidecar() {
+    let context = backend_build_context();
+    ensure_backend_sidecar(&context, "bridge", "bridge");
+}
+
+fn backend_build_context() -> BackendBuildContext {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.join("../../..");
+    let backend_dir = workspace_root.join("backend");
+    let target = env::var("TARGET").expect("TARGET");
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let exe_suffix = if target.contains("windows") {
+        ".exe"
+    } else {
+        ""
+    };
+
+    BackendBuildContext {
+        sidecar_dir: backend_dir.join("target/sidecars"),
+        backend_dir,
+        target,
+        profile,
+        exe_suffix,
+    }
+}
+
+fn emit_backend_rerun_hints(backend_dir: &Path, paths: &[&str]) {
+    for path in paths {
+        println!(
+            "cargo:rerun-if-changed={}",
+            backend_dir.join(path).display()
+        );
+    }
+}
+
+fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, sidecar_name: &str) {
+    let sidecar_target = context.sidecar_dir.join(format!(
+        "{sidecar_name}-{}{}",
+        context.target, context.exe_suffix
+    ));
+    let sidecar_plain = context
+        .sidecar_dir
+        .join(format!("{sidecar_name}{}", context.exe_suffix));
+
+    if sidecar_target.exists() && sidecar_plain.exists() {
+        return;
+    }
+
+    let mut cargo = Command::new("cargo");
+    cargo
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(context.backend_dir.join("Cargo.toml"))
+        .arg("-p")
+        .arg("mcpmate")
+        .arg("--bin")
+        .arg(binary_name)
+        .arg("--target")
+        .arg(&context.target);
+
+    if context.profile == "release" {
+        cargo.arg("--release");
+    }
+
+    let status = cargo
+        .status()
+        .unwrap_or_else(|_| panic!("failed to invoke cargo build for {binary_name} sidecar"));
+    assert!(status.success(), "failed to build {binary_name} sidecar");
+
+    let built_binary = context
+        .backend_dir
+        .join("target")
+        .join(&context.target)
+        .join(&context.profile)
+        .join(format!("{binary_name}{}", context.exe_suffix));
+
+    assert!(
+        built_binary.exists(),
+        "missing built {binary_name} binary at {}",
+        built_binary.display()
+    );
+
+    fs::create_dir_all(&context.sidecar_dir).expect("failed to create sidecar directory");
+    fs::copy(&built_binary, &sidecar_target)
+        .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar target file"));
+    fs::copy(&built_binary, &sidecar_plain)
+        .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar plain file"));
 }

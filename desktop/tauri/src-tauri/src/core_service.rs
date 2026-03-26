@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::source_config::DesktopCoreSourceConfig;
 
-pub const LOCAL_CORE_SERVICE_LABEL: &str = "com.mcpmate.core";
+pub const LOCAL_CORE_SERVICE_LABEL: &str = "ai.umate.mcpmate.core";
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -85,11 +85,22 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         .unwrap_or_else(|_| format!("{}-unknown-{}", std::env::consts::ARCH, std::env::consts::OS));
     let mut candidates: Vec<PathBuf> = Vec::new();
 
+    // For release builds, check MacOS directory first (where Tauri bundles sidecars)
+    // The app bundle structure is: MCPMate.app/Contents/MacOS/mcpmate-core
     if let Ok(resource_dir) = app.path().resource_dir() {
+        // Try MacOS directory (sibling to Resources)
+        if let Some(contents_dir) = resource_dir.parent() {
+            let macos_dir = contents_dir.join("MacOS");
+            candidates.push(macos_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
+            candidates.push(macos_dir.join(format!("mcpmate-core{exe_suffix}")));
+        }
+
+        // Also check Resources directory (standard Tauri resource location)
         candidates.push(resource_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
         candidates.push(resource_dir.join(format!("mcpmate-core{exe_suffix}")));
     }
 
+    // For debug builds, check workspace target directories
     if cfg!(debug_assertions) {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let workspace_root = manifest_dir.join("../../..");
