@@ -101,13 +101,16 @@ impl ProfileVisibilityService {
     pub async fn resolve_snapshot(
         &self,
         client_id: &str,
+        profile_id_override: Option<&str>,
     ) -> Result<VisibilitySnapshot> {
         let db = self
             .db
             .as_ref()
             .context("Profile visibility requires database access")?;
 
-        let capability_config = self.load_client_capability_config(client_id).await?;
+        let capability_config = self
+            .load_client_capability_config(client_id, profile_id_override)
+            .await?;
         let rules_fingerprint_pre = self.compute_config_fingerprint(&capability_config).await?;
 
         if let Some(cached) = VISIBILITY_SNAPSHOT_CACHE.get(client_id) {
@@ -127,16 +130,12 @@ impl ProfileVisibilityService {
             );
         }
 
-        let profile_ids = self
-            .resolve_profile_ids(&db.pool, &capability_config)
-            .await?;
+        let profile_ids = self.resolve_profile_ids(&db.pool, &capability_config).await?;
         let server_ids = self
             .resolve_server_ids(&db.pool, capability_config.capability_source, &profile_ids)
             .await?;
 
-        let (allowed_tools, has_tool_policy) = self
-            .resolve_allowed_tools(&db.pool, &server_ids, &profile_ids)
-            .await?;
+        let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(&db.pool, &server_ids, &profile_ids).await?;
         let (allowed_resources, has_resource_policy) = self
             .resolve_allowed_resources(&db.pool, &server_ids, &profile_ids)
             .await?;
@@ -196,6 +195,14 @@ impl ProfileVisibilityService {
         Ok(snapshot)
     }
 
+    pub async fn resolve_snapshot_for_client(
+        &self,
+        client_context: &ClientContext,
+    ) -> Result<VisibilitySnapshot> {
+        self.resolve_snapshot(&client_context.client_id, client_context.profile_id.as_deref())
+            .await
+    }
+
     async fn compute_config_fingerprint(
         &self,
         config: &ClientCapabilityConfig,
@@ -207,7 +214,7 @@ impl ProfileVisibilityService {
         &self,
         client_id: &str,
     ) -> Result<ClientCapabilityConfig> {
-        self.load_client_capability_config(client_id).await
+        self.load_client_capability_config(client_id, None).await
     }
 
     pub async fn filter_tools_for_client(
@@ -215,7 +222,7 @@ impl ProfileVisibilityService {
         client_context: &ClientContext,
         tools: Vec<rmcp::model::Tool>,
     ) -> Result<Vec<rmcp::model::Tool>> {
-        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        let snapshot = self.resolve_snapshot_for_client(client_context).await?;
         Ok(self.filter_tools_with_snapshot(&snapshot, tools))
     }
 
@@ -225,7 +232,7 @@ impl ProfileVisibilityService {
         resources: Vec<rmcp::model::Resource>,
         templates: Vec<rmcp::model::ResourceTemplate>,
     ) -> Result<(Vec<rmcp::model::Resource>, Vec<rmcp::model::ResourceTemplate>)> {
-        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        let snapshot = self.resolve_snapshot_for_client(client_context).await?;
         Ok(self.filter_resources_with_snapshot(&snapshot, resources, templates))
     }
 
@@ -234,7 +241,7 @@ impl ProfileVisibilityService {
         client_context: &ClientContext,
         prompts: Vec<rmcp::model::Prompt>,
     ) -> Result<Vec<rmcp::model::Prompt>> {
-        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        let snapshot = self.resolve_snapshot_for_client(client_context).await?;
         Ok(self.filter_prompts_with_snapshot(&snapshot, prompts))
     }
 
@@ -243,7 +250,7 @@ impl ProfileVisibilityService {
         client_context: &ClientContext,
         unique_tool_name: &str,
     ) -> Result<()> {
-        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        let snapshot = self.resolve_snapshot_for_client(client_context).await?;
         self.assert_tool_allowed_with_snapshot(&snapshot, unique_tool_name)
             .await
     }
@@ -253,7 +260,7 @@ impl ProfileVisibilityService {
         client_context: &ClientContext,
         unique_resource_uri: &str,
     ) -> Result<()> {
-        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        let snapshot = self.resolve_snapshot_for_client(client_context).await?;
         self.assert_resource_allowed_with_snapshot(&snapshot, unique_resource_uri)
             .await
     }
@@ -263,7 +270,7 @@ impl ProfileVisibilityService {
         client_context: &ClientContext,
         unique_prompt_name: &str,
     ) -> Result<()> {
-        let snapshot = self.resolve_snapshot(&client_context.client_id).await?;
+        let snapshot = self.resolve_snapshot_for_client(client_context).await?;
         self.assert_prompt_allowed_with_snapshot(&snapshot, unique_prompt_name)
             .await
     }
@@ -426,13 +433,23 @@ impl ProfileVisibilityService {
     async fn load_client_capability_config(
         &self,
         client_id: &str,
+        profile_id_override: Option<&str>,
     ) -> Result<ClientCapabilityConfig> {
+        if let Some(profile_id) = profile_id_override {
+            tracing::info!(
+                client_id = %client_id,
+                profile_id = %profile_id,
+                "Using profile_id override from URL parameter"
+            );
+            return Ok(Self::custom_capability_config(profile_id));
+        }
+
         let db = self
             .db
             .as_ref()
             .context("Profile visibility requires database access")?;
 
-        let row = sqlx::query_as::<_, ClientCapabilityRow>(
+        let row_opt = sqlx::query_as::<_, ClientCapabilityRow>(
             r#"
             SELECT capability_source, selected_profile_ids, custom_profile_id
             FROM client
@@ -442,15 +459,39 @@ impl ProfileVisibilityService {
         .bind(client_id)
         .fetch_optional(&db.pool)
         .await
-        .with_context(|| format!("Failed to load client capability config for '{client_id}'"))?
-        .ok_or_else(|| anyhow!("Client capability config not found for '{client_id}'"))?;
+        .with_context(|| format!("Failed to load client capability config for '{client_id}'"))?;
 
-        ClientCapabilityConfig::from_parts(
-            row.capability_source.as_deref(),
-            row.selected_profile_ids.as_deref(),
-            row.custom_profile_id,
-        )
-        .map_err(|error| anyhow!(error))
+        if let Some(row) = row_opt {
+            return ClientCapabilityConfig::from_parts(
+                row.capability_source.as_deref(),
+                row.selected_profile_ids.as_deref(),
+                row.custom_profile_id,
+            )
+            .map_err(|error| anyhow!(error));
+        }
+
+        tracing::warn!(
+            client_id = %client_id,
+            "Client not configured in database, using active profile as fallback"
+        );
+
+        Ok(Self::active_capability_config())
+    }
+
+    fn custom_capability_config(profile_id: &str) -> ClientCapabilityConfig {
+        ClientCapabilityConfig {
+            capability_source: CapabilitySource::Custom,
+            selected_profile_ids: vec![],
+            custom_profile_id: Some(profile_id.to_string()),
+        }
+    }
+
+    fn active_capability_config() -> ClientCapabilityConfig {
+        ClientCapabilityConfig {
+            capability_source: CapabilitySource::Activated,
+            selected_profile_ids: vec![],
+            custom_profile_id: None,
+        }
     }
 
     async fn resolve_profile_ids(
@@ -682,23 +723,19 @@ impl ProfileVisibilityService {
         } else {
             (
                 query_unique_values(
-                pool,
-                "server_resource_templates",
-                "unique_name",
-                "server_id",
-                server_ids,
-            )
-            .await
-            .context("Failed to load visible resource templates for snapshot")?,
+                    pool,
+                    "server_resource_templates",
+                    "unique_name",
+                    "server_id",
+                    server_ids,
+                )
+                .await
+                .context("Failed to load visible resource templates for snapshot")?,
                 Vec::new(),
             )
         };
 
-        Ok((
-            values.into_iter().collect(),
-            prefixes.into_iter().collect(),
-            has_policy,
-        ))
+        Ok((values.into_iter().collect(), prefixes.into_iter().collect(), has_policy))
     }
 
     async fn resolve_allowed_prompts(
@@ -740,9 +777,7 @@ impl ProfileVisibilityService {
                 .await
                 .context("Failed to load prompt policy rows")?
                 .into_iter()
-                .map(|(server_name, prompt_name)| {
-                    generate_unique_name(NamingKind::Prompt, &server_name, &prompt_name)
-                })
+                .map(|(server_name, prompt_name)| generate_unique_name(NamingKind::Prompt, &server_name, &prompt_name))
                 .collect()
         } else {
             query_unique_values(pool, "server_prompts", "unique_name", "server_id", server_ids)
@@ -758,11 +793,7 @@ fn ensure_allowed(
     allowed: bool,
     message: String,
 ) -> Result<()> {
-    if allowed {
-        Ok(())
-    } else {
-        Err(anyhow!(message))
-    }
+    if allowed { Ok(()) } else { Err(anyhow!(message)) }
 }
 
 fn resource_allowed_from_snapshot(
@@ -947,9 +978,7 @@ mod tests {
     ) -> String {
         let mut server = Server::new(name.to_string(), ServerType::Stdio);
         server.capabilities = Some(capabilities.to_string());
-        server::upsert_server(&db.pool, &server)
-            .await
-            .expect("upsert server")
+        server::upsert_server(&db.pool, &server).await.expect("upsert server")
     }
 
     async fn seed_tool(
@@ -959,17 +988,11 @@ mod tests {
         server_name: &str,
         tool_name: &str,
     ) -> String {
-        let unique_name = crate::config::server::tools::upsert_server_tool(
-            &db.pool,
-            server_id,
-            server_name,
-            tool_name,
-            None,
-            None,
-        )
-        .await
-        .expect("upsert server tool")
-        .unique_name;
+        let unique_name =
+            crate::config::server::tools::upsert_server_tool(&db.pool, server_id, server_name, tool_name, None, None)
+                .await
+                .expect("upsert server tool")
+                .unique_name;
         profile::add_tool_to_profile(&db.pool, profile_id, server_id, tool_name, true)
             .await
             .expect("add tool to profile");
@@ -1115,13 +1138,29 @@ mod tests {
             .await
             .expect("add inactive server");
 
-        let active_tool = seed_tool(&db, &active_profile_id, &active_server_id, "active-server", "tool_alpha").await;
-        let _inactive_tool =
-            seed_tool(&db, &inactive_profile_id, &inactive_server_id, "inactive-server", "tool_beta").await;
+        let active_tool = seed_tool(
+            &db,
+            &active_profile_id,
+            &active_server_id,
+            "active-server",
+            "tool_alpha",
+        )
+        .await;
+        let _inactive_tool = seed_tool(
+            &db,
+            &inactive_profile_id,
+            &inactive_server_id,
+            "inactive-server",
+            "tool_beta",
+        )
+        .await;
 
         insert_client_config(&db, "client-a", CapabilitySource::Activated, Vec::new(), None).await;
 
-        let snapshot = service.resolve_snapshot("client-a").await.expect("resolve snapshot");
+        let snapshot = service
+            .resolve_snapshot("client-a", None)
+            .await
+            .expect("resolve snapshot");
 
         assert_eq!(snapshot.profile_ids, vec![active_profile_id]);
         assert_eq!(snapshot.server_ids, vec![active_server_id]);
@@ -1146,8 +1185,14 @@ mod tests {
             .await
             .expect("add selected server");
 
-        let selected_tool =
-            seed_tool(&db, &selected_profile_id, &selected_server_id, "selected-server", "tool_selected").await;
+        let selected_tool = seed_tool(
+            &db,
+            &selected_profile_id,
+            &selected_server_id,
+            "selected-server",
+            "tool_selected",
+        )
+        .await;
 
         insert_client_config(
             &db,
@@ -1158,7 +1203,10 @@ mod tests {
         )
         .await;
 
-        let snapshot = service.resolve_snapshot("client-b").await.expect("resolve snapshot");
+        let snapshot = service
+            .resolve_snapshot("client-b", None)
+            .await
+            .expect("resolve snapshot");
 
         assert_eq!(snapshot.profile_ids, vec![selected_profile_id]);
         assert_eq!(snapshot.server_ids, vec![selected_server_id]);
@@ -1177,8 +1225,14 @@ mod tests {
             .await
             .expect("add custom server");
 
-        let custom_prompt =
-            seed_prompt(&db, &custom_profile_id, &custom_server_id, "custom-server", "prompt_custom").await;
+        let custom_prompt = seed_prompt(
+            &db,
+            &custom_profile_id,
+            &custom_server_id,
+            "custom-server",
+            "prompt_custom",
+        )
+        .await;
 
         insert_client_config(
             &db,
@@ -1189,7 +1243,10 @@ mod tests {
         )
         .await;
 
-        let snapshot = service.resolve_snapshot("client-c").await.expect("resolve snapshot");
+        let snapshot = service
+            .resolve_snapshot("client-c", None)
+            .await
+            .expect("resolve snapshot");
 
         assert_eq!(snapshot.profile_ids, vec![custom_profile_id]);
         assert_eq!(snapshot.server_ids, vec![custom_server_id]);
@@ -1210,8 +1267,7 @@ mod tests {
             .expect("add allowed server");
 
         let allowed_tool = seed_tool(&db, &profile_id, &allowed_server_id, "alpha-server", "tool_alpha").await;
-        let allowed_prompt =
-            seed_prompt(&db, &profile_id, &allowed_server_id, "alpha-server", "prompt_alpha").await;
+        let allowed_prompt = seed_prompt(&db, &profile_id, &allowed_server_id, "alpha-server", "prompt_alpha").await;
         let _allowed_resource = seed_resource(
             &db,
             &profile_id,
@@ -1277,46 +1333,50 @@ mod tests {
         .await
         .expect("insert denied resource");
 
-        insert_client_config(
-            &db,
-            "client-d",
-            CapabilitySource::Profiles,
-            vec![profile_id],
-            None,
-        )
-        .await;
+        insert_client_config(&db, "client-d", CapabilitySource::Profiles, vec![profile_id], None).await;
 
-        let snapshot = service.resolve_snapshot("client-d").await.expect("resolve snapshot");
+        let snapshot = service
+            .resolve_snapshot("client-d", None)
+            .await
+            .expect("resolve snapshot");
 
-        assert!(service
-            .assert_tool_allowed_with_snapshot(&snapshot, &allowed_tool)
-            .await
-            .is_ok());
-        assert!(service
-            .assert_tool_allowed_with_snapshot(&snapshot, &denied_tool)
-            .await
-            .is_err());
-        assert!(service
-            .assert_prompt_allowed_with_snapshot(&snapshot, &allowed_prompt)
-            .await
-            .is_ok());
-        assert!(service
-            .assert_prompt_allowed_with_snapshot(&snapshot, &denied_prompt)
-            .await
-            .is_err());
-
-        let dynamic_allowed = generate_unique_name(
-            NamingKind::Resource,
-            "alpha-server",
-            "file://workspace/main.rs",
+        assert!(
+            service
+                .assert_tool_allowed_with_snapshot(&snapshot, &allowed_tool)
+                .await
+                .is_ok()
         );
-        assert!(service
-            .assert_resource_allowed_with_snapshot(&snapshot, &dynamic_allowed)
-            .await
-            .is_ok());
-        assert!(service
-            .assert_resource_allowed_with_snapshot(&snapshot, &denied_resource)
-            .await
-            .is_err());
+        assert!(
+            service
+                .assert_tool_allowed_with_snapshot(&snapshot, &denied_tool)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .assert_prompt_allowed_with_snapshot(&snapshot, &allowed_prompt)
+                .await
+                .is_ok()
+        );
+        assert!(
+            service
+                .assert_prompt_allowed_with_snapshot(&snapshot, &denied_prompt)
+                .await
+                .is_err()
+        );
+
+        let dynamic_allowed = generate_unique_name(NamingKind::Resource, "alpha-server", "file://workspace/main.rs");
+        assert!(
+            service
+                .assert_resource_allowed_with_snapshot(&snapshot, &dynamic_allowed)
+                .await
+                .is_ok()
+        );
+        assert!(
+            service
+                .assert_resource_allowed_with_snapshot(&snapshot, &denied_resource)
+                .await
+                .is_err()
+        );
     }
 }

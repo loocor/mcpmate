@@ -1,7 +1,7 @@
 use super::*;
+use crate::clients::models::CapabilitySource;
 use crate::core::capability::naming::{NamingKind, resolve_unique_name};
 use crate::mcper::builtin::ClientBuiltinContext;
-use crate::clients::models::CapabilitySource;
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, PaginatedRequestParams};
@@ -29,9 +29,7 @@ fn builtin_tool_allowed_for_capability_source(
             "mcpmate_client_profiles_list" | "mcpmate_client_profiles_select" => {
                 capability_source == CapabilitySource::Profiles
             }
-            "mcpmate_client_custom_profile_details" => {
-                capability_source == CapabilitySource::Custom
-            }
+            "mcpmate_client_custom_profile_details" => capability_source == CapabilitySource::Custom,
             _ => true,
         }
     } else {
@@ -50,10 +48,14 @@ pub(super) async fn list_tools(
         server.profile_service.clone(),
     );
     let snapshot = vis
-        .resolve_snapshot(&client.client_id)
+        .resolve_snapshot_for_client(&client)
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<std::collections::HashSet<_>>();
+    let visible_server_ids = snapshot
+        .server_ids
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     let mut tools: Vec<rmcp::model::Tool> = Vec::new();
 
     if let Some(db) = &server.database {
@@ -119,7 +121,9 @@ pub(super) async fn list_tools(
         .builtin_services
         .tools()
         .into_iter()
-        .filter(|tool| builtin_tool_allowed_for_capability_source(capability_config.capability_source, tool.name.as_ref()))
+        .filter(|tool| {
+            builtin_tool_allowed_for_capability_source(capability_config.capability_source, tool.name.as_ref())
+        })
         .collect::<Vec<_>>();
     tracing::debug!("Including {} builtin service tools", builtin_tools.len());
     tools.extend(builtin_tools);
@@ -185,7 +189,11 @@ pub(super) async fn call_tool(
                 custom_profile_id: capability_config.custom_profile_id,
             };
 
-            if let Some(result) = server.builtin_services.call_tool_with_context(&request, Some(&builtin_context)).await {
+            if let Some(result) = server
+                .builtin_services
+                .call_tool_with_context(&request, Some(&builtin_context))
+                .await
+            {
                 tracing::debug!(
                     call_id = %call_id,
                     tool = %request.name,
@@ -286,13 +294,10 @@ pub(super) async fn call_tool(
         server.profile_service.clone(),
     );
     let snapshot = vis
-        .resolve_snapshot(&client.client_id)
+        .resolve_snapshot_for_client(&client)
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    if let Err(error) = vis
-        .assert_tool_allowed_with_snapshot(&snapshot, &request.name)
-        .await
-    {
+    if let Err(error) = vis.assert_tool_allowed_with_snapshot(&snapshot, &request.name).await {
         tracing::warn!(
             call_id = %call_id,
             tool = %request.name,
@@ -322,9 +327,8 @@ pub(super) async fn call_tool(
         if let Some(selection) = client.connection_selection(server_id.clone()) {
             if let Ok(Some(selected_instance_id)) = pool_guard.select_ready_instance_id(&selection) {
                 if let Some(instances) = snap.get(&server_id) {
-                    if let Some((iid0, _st, _res, _prm, peer)) = instances
-                        .iter()
-                        .find(|(candidate_id, _st, _res, _prm, peer)| {
+                    if let Some((iid0, _st, _res, _prm, peer)) =
+                        instances.iter().find(|(candidate_id, _st, _res, _prm, peer)| {
                             **candidate_id == selected_instance_id && peer.is_some()
                         })
                     {

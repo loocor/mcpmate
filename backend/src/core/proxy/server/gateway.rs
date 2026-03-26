@@ -94,7 +94,8 @@ impl ProxyServer {
         context: &RequestContext<rmcp::RoleServer>,
         initialize: &InitializeRequestParams,
     ) -> Result<ClientContext, rmcp::ErrorData> {
-        let client = self.client_context_resolver
+        let client = self
+            .client_context_resolver
             .resolve_initialize_context(initialize, context)
             .await
             .map_err(|error| self.map_client_context_error(error))?;
@@ -159,7 +160,7 @@ impl ProxyServer {
             self.profile_service.clone(),
         );
         let snapshot = vis
-            .resolve_snapshot(&client.client_id)
+            .resolve_snapshot_for_client(&client)
             .await
             .map_err(|error| self.map_client_context_error(error))?;
         client.rules_fingerprint = Some(snapshot.rules_fingerprint);
@@ -200,7 +201,7 @@ impl ProxyServer {
             self.profile_service.clone(),
         );
         let snapshot = vis
-            .resolve_snapshot(client_id)
+            .resolve_snapshot(client_id, None)
             .await
             .map_err(|error| self.map_client_context_error(error))?;
 
@@ -369,7 +370,8 @@ impl ProxyServer {
         self.database = Some(db_arc.clone());
         crate::core::capability::naming::initialize(db_arc.pool.clone());
         self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
-        let client_config_service = Arc::new(crate::clients::service::ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
+        let client_config_service =
+            Arc::new(crate::clients::service::ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
         self.builtin_services = Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(
             db_arc.clone(),
             self.connection_pool.clone(),
@@ -526,9 +528,7 @@ impl ProxyServer {
         };
         let peer = peer_ref.clone();
         drop(peer_ref);
-        let param = ResourceUpdatedNotificationParam {
-            uri: uri.to_string(),
-        };
+        let param = ResourceUpdatedNotificationParam { uri: uri.to_string() };
         match peer.notify_resource_updated(param).await {
             Ok(()) => true,
             Err(error) => {
@@ -957,7 +957,10 @@ mod tests {
         }
     }
 
-    async fn cleanup_session_state(session_id: &str, state: &TestServerState) {
+    async fn cleanup_session_state(
+        session_id: &str,
+        state: &TestServerState,
+    ) {
         state.downstream_clients.remove(session_id);
 
         let subscription_keys: Vec<((String, String), String)> = state
@@ -993,10 +996,9 @@ mod tests {
             (session_id.to_string(), "resource://b".to_string()),
             "srv-1".to_string(),
         );
-        state.resource_subscriptions.insert(
-            ("other".to_string(), "resource://c".to_string()),
-            "srv-1".to_string(),
-        );
+        state
+            .resource_subscriptions
+            .insert(("other".to_string(), "resource://c".to_string()), "srv-1".to_string());
 
         {
             let idx = state.server_resource_index.entry("srv-1".to_string()).or_default();
@@ -1009,15 +1011,21 @@ mod tests {
 
         cleanup_session_state(session_id, &state).await;
 
-        assert!(!state
-            .resource_subscriptions
-            .contains_key(&(session_id.to_string(), "resource://a".to_string())));
-        assert!(!state
-            .resource_subscriptions
-            .contains_key(&(session_id.to_string(), "resource://b".to_string())));
-        assert!(state
-            .resource_subscriptions
-            .contains_key(&("other".to_string(), "resource://c".to_string())));
+        assert!(
+            !state
+                .resource_subscriptions
+                .contains_key(&(session_id.to_string(), "resource://a".to_string()))
+        );
+        assert!(
+            !state
+                .resource_subscriptions
+                .contains_key(&(session_id.to_string(), "resource://b".to_string()))
+        );
+        assert!(
+            state
+                .resource_subscriptions
+                .contains_key(&("other".to_string(), "resource://c".to_string()))
+        );
 
         let idx = state.server_resource_index.get("srv-1").expect("index should exist");
         assert!(!idx.contains(&(session_id.to_string(), "resource://a".to_string())));
@@ -1048,13 +1056,22 @@ mod tests {
             observed_client_info: None,
         };
 
-        resolver.bind_session(session_id, &context).await.expect("bind should succeed");
+        resolver
+            .bind_session(session_id, &context)
+            .await
+            .expect("bind should succeed");
         assert!(resolver.session_bindings.contains_key(session_id));
 
-        resolver.unbind_session(session_id).await.expect("unbind should succeed");
+        resolver
+            .unbind_session(session_id)
+            .await
+            .expect("unbind should succeed");
         assert!(!resolver.session_bindings.contains_key(session_id));
 
-        resolver.unbind_session(session_id).await.expect("unbind should be idempotent");
+        resolver
+            .unbind_session(session_id)
+            .await
+            .expect("unbind should be idempotent");
     }
 
     #[tokio::test]
@@ -1063,14 +1080,12 @@ mod tests {
         let session_a = "session-a";
         let session_b = "session-b";
 
-        state.resource_subscriptions.insert(
-            (session_a.to_string(), "resource://1".to_string()),
-            "srv".to_string(),
-        );
-        state.resource_subscriptions.insert(
-            (session_b.to_string(), "resource://2".to_string()),
-            "srv".to_string(),
-        );
+        state
+            .resource_subscriptions
+            .insert((session_a.to_string(), "resource://1".to_string()), "srv".to_string());
+        state
+            .resource_subscriptions
+            .insert((session_b.to_string(), "resource://2".to_string()), "srv".to_string());
 
         {
             let idx = state.server_resource_index.entry("srv".to_string()).or_default();
@@ -1080,12 +1095,16 @@ mod tests {
 
         cleanup_session_state(session_a, &state).await;
 
-        assert!(!state
-            .resource_subscriptions
-            .contains_key(&(session_a.to_string(), "resource://1".to_string())));
-        assert!(state
-            .resource_subscriptions
-            .contains_key(&(session_b.to_string(), "resource://2".to_string())));
+        assert!(
+            !state
+                .resource_subscriptions
+                .contains_key(&(session_a.to_string(), "resource://1".to_string()))
+        );
+        assert!(
+            state
+                .resource_subscriptions
+                .contains_key(&(session_b.to_string(), "resource://2".to_string()))
+        );
     }
 
     #[test]

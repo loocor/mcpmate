@@ -20,7 +20,7 @@ pub(super) async fn list_resources(
         server.profile_service.clone(),
     );
     let snapshot = vis
-        .resolve_snapshot(&client.client_id)
+        .resolve_snapshot_for_client(&client)
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
     let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
@@ -123,7 +123,7 @@ pub(super) async fn list_resource_templates(
         server.profile_service.clone(),
     );
     let snapshot = vis
-        .resolve_snapshot(&client.client_id)
+        .resolve_snapshot_for_client(&client)
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
     let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
@@ -316,7 +316,7 @@ pub(super) async fn read_resource(
         server.profile_service.clone(),
     );
     let snapshot = vis
-        .resolve_snapshot(&client.client_id)
+        .resolve_snapshot_for_client(&client)
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
     if let Err(error) = vis
