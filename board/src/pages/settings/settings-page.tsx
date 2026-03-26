@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Moon, RotateCcw, Sun } from "lucide-react";
+import { Download, Moon, RotateCcw, Sun, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
@@ -42,6 +42,10 @@ import {
 	setApiBaseUrl,
 } from "../../lib/api";
 import {
+	type DesktopCoreSourceResponse,
+	useDesktopCoreState,
+} from "../../lib/desktop-core-state";
+import {
 	notifyError,
 	notifySuccess,
 	stringifyError,
@@ -49,7 +53,6 @@ import {
 import { SUPPORTED_LANGUAGES } from "../../lib/i18n/index";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import {
-	detectTauriEnvironment,
 	isTauriEnvironmentSync,
 } from "../../lib/platform";
 import {
@@ -180,6 +183,24 @@ const MENU_BAR_ICON_OPTIONS: ReadonlyArray<{
 		},
 	];
 
+function persistLocalPorts(api: number, mcp: number): void {
+	try {
+		window.localStorage?.setItem("mcpmate.system.api_port", String(api));
+		window.localStorage?.setItem("mcpmate.system.mcp_port", String(mcp));
+	} catch {
+		// LocalStorage write is best-effort
+	}
+}
+
+function readCachedLocalPort(raw: string | null | undefined): number | undefined {
+	if (!raw) {
+		return undefined;
+	}
+
+	const value = Number(raw);
+	return !Number.isNaN(value) && value > 0 ? value : undefined;
+}
+
 export function SettingsPage() {
 	usePageTranslations("settings");
 	const queryClient = useQueryClient();
@@ -187,6 +208,13 @@ export function SettingsPage() {
 	const backupLimitId = useId();
 	const menuBarSelectId = useId();
 	const { t, i18n } = useTranslation();
+	const {
+		isTauriShell,
+		coreView,
+		busyAction,
+		refreshCoreView,
+		manageLocalCore,
+	} = useDesktopCoreState();
 	const [searchParams, setSearchParams] = useSearchParams();
 
 	const theme = useAppStore((state) => state.theme);
@@ -202,27 +230,94 @@ export function SettingsPage() {
 	const [licenseDocument, setLicenseDocument] =
 		useState<OpenSourceDocument | null>(null);
 	const [licenseLoaded, setLicenseLoaded] = useState(false);
-	const [isTauriShell, setIsTauriShell] = useState(() =>
-		isTauriEnvironmentSync(),
+	const [coreSource, setCoreSource] = useState<"localhost" | "remote">(
+		"localhost",
 	);
+	const [localhostRuntimeMode, setLocalhostRuntimeMode] = useState<
+		"service" | "desktop_managed"
+	>("service");
+	const [remoteBaseUrl, setRemoteBaseUrl] = useState("");
+	const [localService, setLocalService] = useState<
+		DesktopCoreSourceResponse["localService"]
+	>({
+		status: "not_installed",
+		label: "Not Installed",
+		detail: "",
+		level: "user",
+		installed: false,
+		running: false,
+	});
+	const [serviceStatusExpanded, setServiceStatusExpanded] = useState(false);
 
 	// Developer → Backend ports (API/MCP)
 	const [apiPort, setApiPort] = useState<number | "">("");
 	const [mcpPort, setMcpPort] = useState<number | "">("");
 	const [loadingPorts, setLoadingPorts] = useState(false);
 	const [applyBusy, setApplyBusy] = useState(false);
+	const sourceOptions = useMemo<SegmentOption[]>(
+		() => [
+			{
+				value: "localhost",
+				label: t("settings:system.sourceOptions.localhost", {
+					defaultValue: "Localhost",
+				}),
+			},
+			{
+				value: "remote",
+				label: t("settings:system.sourceOptions.remote", {
+					defaultValue: "Remote",
+				}),
+				status: t("wipTag", { defaultValue: "(WIP)" }),
+			},
+		],
+		[t, i18n.language],
+	);
 	const [webDialogOpen, setWebDialogOpen] = useState(false);
 
-	const wireDashboardToSystemPorts = useCallback(
-		async (api: number, mcp: number) => {
-			setApiBaseUrl(`http://127.0.0.1:${api}`);
+	const applyCoreSourceView = useCallback(
+		(response: DesktopCoreSourceResponse) => {
+			setCoreSource(response.selectedSource);
+			setLocalhostRuntimeMode(response.localhostRuntimeMode);
+			setRemoteBaseUrl(response.remoteBaseUrl || "");
+			setLocalService(response.localService);
+			setApiPort(response.localhostApiPort);
+			setMcpPort(response.localhostMcpPort);
+			persistLocalPorts(response.localhostApiPort, response.localhostMcpPort);
+		},
+		[],
+	);
+
+	const seedPortsFromLocalStorage = useCallback(() => {
+		try {
+			const cachedApi = window.localStorage?.getItem("mcpmate.system.api_port");
+			const cachedMcp = window.localStorage?.getItem("mcpmate.system.mcp_port");
+			const nextApiPort = readCachedLocalPort(cachedApi);
+			const nextMcpPort = readCachedLocalPort(cachedMcp);
+
+			if (nextApiPort !== undefined) {
+				setApiPort(nextApiPort);
+				setApiBaseUrl(`http://127.0.0.1:${nextApiPort}`);
+			}
+
+			if (nextMcpPort !== undefined) {
+				setMcpPort(nextMcpPort);
+			}
+		} catch {
+			// Cache read is best-effort
+		}
+	}, []);
+
+	const wireDashboardToCoreSource = useCallback(
+		async (
+			apiBaseUrl: string,
+			api?: number,
+			mcp?: number,
+		) => {
+			setApiBaseUrl(apiBaseUrl);
 			notificationsService.reconnectAfterApiBaseChanged();
 			await queryClient.invalidateQueries({ predicate: () => true });
-			try {
-				window.localStorage?.setItem("mcpmate.system.api_port", String(api));
-				window.localStorage?.setItem("mcpmate.system.mcp_port", String(mcp));
-			} catch {
-				// LocalStorage write is best-effort
+			if (typeof api === "number" && typeof mcp === "number") {
+				persistLocalPorts(api, mcp);
 			}
 		},
 		[queryClient],
@@ -239,68 +334,36 @@ export function SettingsPage() {
 	const loadRuntimePorts = useCallback(async () => {
 		setLoadingPorts(true);
 		try {
-			const persistPortsLocal = (api: number, mcp: number) => {
-				try {
-					window.localStorage?.setItem(
-						"mcpmate.system.api_port",
-						String(api),
-					);
-					window.localStorage?.setItem(
-						"mcpmate.system.mcp_port",
-						String(mcp),
-					);
-				} catch {
-					// LocalStorage write is best-effort
-				}
-			};
-
-			const seedFromLocalStorage = () => {
-				try {
-					const cachedApi = window.localStorage?.getItem(
-						"mcpmate.system.api_port",
-					);
-					const cachedMcp = window.localStorage?.getItem(
-						"mcpmate.system.mcp_port",
-					);
-					const parsePositivePort = (raw: string | null | undefined) => {
-						if (!raw) return undefined;
-						const n = Number(raw);
-						return !Number.isNaN(n) && n > 0 ? n : undefined;
-					};
-					const apiN = parsePositivePort(cachedApi);
-					const mcpN = parsePositivePort(cachedMcp);
-					if (apiN !== undefined) {
-						setApiPort(apiN);
-						setApiBaseUrl(`http://127.0.0.1:${apiN}`);
-					}
-					if (mcpN !== undefined) setMcpPort(mcpN);
-				} catch {
-					// Cache read is best-effort
-				}
-			};
-
 			const applyAuthorityPorts = (api: number, mcp: number) => {
 				setApiPort(api);
 				setMcpPort(mcp);
-				persistPortsLocal(api, mcp);
+				persistLocalPorts(api, mcp);
+				setCoreSource("localhost");
+				setLocalhostRuntimeMode("service");
+				setRemoteBaseUrl("");
+				setLocalService((current) => ({
+					...current,
+					status: "not_installed",
+					label: "Not Installed",
+					running: false,
+					installed: false,
+				}));
 				setApiBaseUrl(`http://127.0.0.1:${api}`);
 			};
 
 			if (isTauriEnvironmentSync()) {
 				try {
-					const { invoke } = await import("@tauri-apps/api/core");
-					const resp = (await invoke("mcp_shell_read_runtime_ports")) as {
-						api_port: number;
-						mcp_port: number;
-					};
+					const resp = await refreshCoreView();
 					if (
-						typeof resp.api_port === "number" &&
-						typeof resp.mcp_port === "number"
+						resp &&
+						typeof resp.localhostApiPort === "number" &&
+						typeof resp.localhostMcpPort === "number"
 					) {
-						applyAuthorityPorts(resp.api_port, resp.mcp_port);
+						applyCoreSourceView(resp);
+						setApiBaseUrl(resp.apiBaseUrl || `http://127.0.0.1:${resp.localhostApiPort}`);
 					}
 				} catch {
-					seedFromLocalStorage();
+					seedPortsFromLocalStorage();
 					notifyError(
 						t("settings:system.portsReloadFailedTitle", {
 							defaultValue: "Could not load ports from shell",
@@ -338,12 +401,119 @@ export function SettingsPage() {
 				}
 			}
 
-			seedFromLocalStorage();
+			seedPortsFromLocalStorage();
 		} finally {
 			setLoadingPorts(false);
 		}
 		// API_BASE_URL is a live module binding; reads inside this async fn stay current without listing it in deps.
-	}, [t, i18n.language]);
+	}, [applyCoreSourceView, refreshCoreView, seedPortsFromLocalStorage, t, i18n.language]);
+
+	const runtimeModeOptions = useMemo<SegmentOption[]>(
+		() => [
+			{
+				value: "service",
+				label: t("settings:system.runtimeModeOptions.service", {
+					defaultValue: "Service",
+				}),
+			},
+			{
+				value: "desktop_managed",
+				label: t("settings:system.runtimeModeOptions.desktopManaged", {
+					defaultValue: "Desktop",
+				}),
+			},
+		],
+		[t, i18n.language],
+	);
+
+	const currentRuntimeModeLabel = useMemo(
+		() =>
+			localhostRuntimeMode === "service"
+				? t("settings:system.runtimeModeOptions.service", {
+					defaultValue: "Service",
+				})
+				: t("settings:system.runtimeModeOptions.desktopManaged", {
+					defaultValue: "Desktop",
+				}),
+		[localhostRuntimeMode, t, i18n.language],
+	);
+
+	const applyDisabled =
+		applyBusy ||
+		typeof apiPort !== "number" ||
+		typeof mcpPort !== "number" ||
+		apiPort <= 0 ||
+		mcpPort <= 0 ||
+		apiPort === mcpPort ||
+		(coreSource === "remote" && !remoteBaseUrl.trim());
+
+	const handleApplyCoreSource = useCallback(async () => {
+		if (typeof apiPort !== "number" || typeof mcpPort !== "number") {
+			return;
+		}
+
+		if (!isTauriShell) {
+			void wireDashboardToCoreSource(
+				`http://127.0.0.1:${apiPort}`,
+				apiPort,
+				mcpPort,
+			);
+			setWebDialogOpen(true);
+			return;
+		}
+
+		try {
+			setApplyBusy(true);
+			const { invoke } = await import("@tauri-apps/api/core");
+			const response = (await invoke("mcp_shell_apply_core_source", {
+				payload: {
+					selectedSource: coreSource,
+					localhostRuntimeMode,
+					localhostApiPort: apiPort,
+					localhostMcpPort: mcpPort,
+					remoteBaseUrl,
+				},
+			})) as DesktopCoreSourceResponse;
+
+			applyCoreSourceView(response);
+			await wireDashboardToCoreSource(
+				response.apiBaseUrl,
+				response.localhostApiPort,
+				response.localhostMcpPort,
+			);
+			notifySuccess(
+				t("settings:system.applySuccessTitle", {
+					defaultValue: "Core source updated",
+				}),
+				t("settings:system.applySuccessDescription", {
+					source: response.selectedSource,
+					apiPort: response.localhostApiPort,
+					mcpPort: response.localhostMcpPort,
+					defaultValue:
+						"Desktop is now attached to the selected {{source}} core. Existing service definitions were refreshed if needed.",
+				}),
+			);
+		} catch (error) {
+			notifyError(
+				t("settings:system.applyFailedTitle", {
+					defaultValue: "Could not update core source",
+				}),
+				stringifyError(error),
+			);
+		} finally {
+			setApplyBusy(false);
+		}
+	}, [
+		apiPort,
+		applyCoreSourceView,
+		coreSource,
+		isTauriShell,
+		localhostRuntimeMode,
+		mcpPort,
+		remoteBaseUrl,
+		t,
+		wireDashboardToCoreSource,
+	]);
 
 	const tabTriggerClass =
 		"justify-start px-3 py-2 text-left text-sm font-medium text-slate-600 data-[state=active]:text-emerald-700 dark:text-slate-300";
@@ -424,23 +594,6 @@ export function SettingsPage() {
 	);
 
 	useEffect(() => {
-		if (isTauriShell) {
-			return undefined;
-		}
-		let cancelled = false;
-		const detect = async () => {
-			const result = await detectTauriEnvironment();
-			if (!cancelled) {
-				setIsTauriShell(result);
-			}
-		};
-		void detect();
-		return () => {
-			cancelled = true;
-		};
-	}, [isTauriShell]);
-
-	useEffect(() => {
 		let cancelled = false;
 		const noticesUrl = `${import.meta.env.BASE_URL}open-source-notices.json`;
 
@@ -482,6 +635,13 @@ export function SettingsPage() {
 	useEffect(() => {
 		void loadRuntimePorts();
 	}, [loadRuntimePorts]);
+
+	useEffect(() => {
+		if (!coreView) {
+			return;
+		}
+		applyCoreSourceView(coreView);
+	}, [applyCoreSourceView, coreView]);
 
 	useEffect(() => {
 		if (!isTauriShell) {
@@ -1066,26 +1226,195 @@ export function SettingsPage() {
 								<CardTitle>
 									{t("settings:system.title", { defaultValue: "System" })}
 								</CardTitle>
-								<CardDescription>
-									{t("settings:system.description", {
-										defaultValue:
-											"Configure backend ports used by the local MCP proxy and API.",
-									})}
-								</CardDescription>
-							</CardHeader>
-							<CardContent className="space-y-6">
-								{/* Row: API Port */}
+							<CardDescription>
+								{t("settings:system.description", {
+									defaultValue:
+										"Choose which core service the desktop should attach to, and configure localhost ports when using the built-in local core.",
+								})}
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-6">
+							<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+								<div className="space-y-1.5">
+									<Label htmlFor="core-source">
+										{t("settings:system.sourceTitle", {
+											defaultValue: "Core Service Source",
+										})}
+									</Label>
+									<p className="text-xs text-slate-500">
+										{t("settings:system.sourceDescription", {
+											defaultValue:
+												"Attach MCPMate Desktop to a persistent localhost core or a future remote core endpoint.",
+										})}
+									</p>
+								</div>
+								<div className="flex sm:justify-end">
+									<div className="w-56">
+										<Segment
+											value={coreSource}
+											onValueChange={(value) => {
+												if (value === "localhost") {
+													setCoreSource("localhost");
+												}
+											}}
+											options={sourceOptions}
+											showDots={false}
+										/>
+									</div>
+								</div>
+							</div>
+
+							{coreSource === "remote" ? (
 								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+									<div className="space-y-1.5">
+										<Label htmlFor="remote-core-url">
+											{t("settings:system.remoteUrlTitle", {
+												defaultValue: "Remote Core URL",
+											})}
+										</Label>
+										<p className="text-xs text-slate-500">
+											{t("settings:system.remoteUrlDescription", {
+												defaultValue:
+													"Store the remote core endpoint for future attach support. This phase still prioritizes localhost service management.",
+											})}
+										</p>
+									</div>
+									<div className="flex sm:justify-end">
+										<Input
+											id="remote-core-url"
+											type="url"
+											value={remoteBaseUrl}
+											onChange={(event) => setRemoteBaseUrl(event.target.value)}
+											placeholder={t("settings:system.remoteUrlPlaceholder", {
+												defaultValue: "https://your-core.example.com",
+											})}
+											className="w-full sm:w-80"
+										/>
+									</div>
+								</div>
+							) : null}
+
+							{coreSource === "localhost" ? (
+								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+									<div className="space-y-1.5">
+										<Label htmlFor="localhost-runtime-mode">
+											{t("settings:system.runtimeModeTitle", {
+												defaultValue: "Local Runtime Mode",
+											})}
+										</Label>
+									<p className="text-xs text-slate-500">
+										{t("settings:system.runtimeModeDescription", {
+											defaultValue:
+												"Choose whether localhost core is managed as an OS service or tied to the MCPMate desktop lifecycle.",
+										})}
+									</p>
+									{isTauriShell ? (
+										<button
+											type="button"
+											onClick={() => setServiceStatusExpanded((prev) => !prev)}
+											className="text-xs font-medium text-slate-600 underline-offset-2 hover:underline dark:text-slate-300"
+										>
+											{serviceStatusExpanded
+												? t("settings:system.lessToggle", { defaultValue: "Less" })
+												: t("settings:system.moreToggle", { defaultValue: "More..." })}
+										</button>
+									) : null}
+								</div>
+									<div className="flex sm:justify-end">
+									<div className="w-56">
+											<Segment
+												value={localhostRuntimeMode}
+												onValueChange={(value) =>
+													setLocalhostRuntimeMode(
+														value as "service" | "desktop_managed",
+													)
+												}
+												options={runtimeModeOptions}
+												showDots={false}
+											/>
+										</div>
+									</div>
+								</div>
+							) : null}
+
+							{isTauriShell && coreSource === "localhost" && serviceStatusExpanded ? (
+								<div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+									<div className="flex items-start justify-between gap-4">
+										<div className="space-y-1">
+											<p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+												{t("settings:system.serviceStatusTitle", {
+													defaultValue: "Local Core Service Status",
+												})}
+											</p>
+											<p className="text-sm text-slate-600 dark:text-slate-300">
+												{localService.label}
+											</p>
+											<p className="text-xs text-slate-500">
+												{t("settings:system.runtimeModeCurrent", {
+													defaultValue: "Current runtime mode: {{value}}",
+													value: currentRuntimeModeLabel,
+												})}
+											</p>
+											<p className="text-xs text-slate-500">
+												{localService.detail ||
+													t("settings:system.serviceStatusFallback", {
+														defaultValue:
+															"The desktop will attach to the configured localhost core service when it is available.",
+													})}
+											</p>
+											<p className="text-xs text-slate-500">
+												{t("settings:system.serviceLevel", {
+													defaultValue: "Service level: {{value}}",
+													value: localService.level,
+												})}
+											</p>
+										</div>
+										{localhostRuntimeMode === "service" ? (
+											<div className="flex shrink-0 items-center gap-2">
+											<Button
+												variant={localService.installed ? "destructive" : "secondary"}
+												disabled={busyAction !== null}
+												onClick={() =>
+													void manageLocalCore(
+														localService.installed ? "uninstall" : "install",
+													)
+												}
+											>
+													{localService.installed ? (
+														<Trash2 className="mr-2 h-4 w-4" />
+													) : (
+														<Download className="mr-2 h-4 w-4" />
+													)}
+													{busyAction === "install" || busyAction === "uninstall"
+														? t("settings:system.serviceActionBusy", {
+															defaultValue: "Working…",
+														})
+														: localService.installed
+															? t("settings:system.uninstallAction", {
+																defaultValue: "Uninstall",
+															})
+															: t("settings:system.installAction", {
+																defaultValue: "Install",
+															})}
+												</Button>
+											</div>
+										) : null}
+									</div>
+								</div>
+							) : null}
+
+							{/* Row: API Port */}
+							<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
 									<div className="space-y-1.5">
 										<Label htmlFor="api-port">
 											{t("settings:system.apiPortTitle", {
-												defaultValue: "Backend API Port",
+												defaultValue: "Localhost Core API Port",
 											})}
 										</Label>
 										<p className="text-xs text-slate-500">
 											{t("settings:system.apiPortDescription", {
 												defaultValue:
-													"Port for REST and dashboard access (default 8080).",
+													"Port for localhost REST and dashboard access (default 8080).",
 											})}
 										</p>
 									</div>
@@ -1110,13 +1439,13 @@ export function SettingsPage() {
 									<div className="space-y-1.5">
 										<Label htmlFor="mcp-port">
 											{t("settings:system.mcpPortTitle", {
-												defaultValue: "Backend MCP Server Port",
+												defaultValue: "Localhost Core MCP Port",
 											})}
 										</Label>
 										<p className="text-xs text-slate-500">
 											{t("settings:system.mcpPortDescription", {
 												defaultValue:
-													"Port for MCP proxy endpoint (/mcp). Default 8000.",
+													"Port for the localhost MCP proxy endpoint (/mcp). Default 8000.",
 											})}
 										</p>
 									</div>
@@ -1138,107 +1467,39 @@ export function SettingsPage() {
 
 								{/* Bottom actions */}
 								<div className="mt-1 space-y-2">
-									<div className="flex items-center justify-between gap-4">
-										<p className="text-xs text-slate-500">
-											{isTauriShell
-												? t("settings:system.helperTauri", {
-													defaultValue:
-														"Tauri: Apply ports and restart backend in-place.",
-												})
-												: t("settings:system.helperWeb", {
-													defaultValue:
-														"Web: Change ports then restart the backend process externally.",
-												})}
-										</p>
+									<div className="flex items-center justify-end gap-4">
 										<div className="flex shrink-0 flex-wrap justify-end gap-2">
 											<Button
 												variant="secondary"
 												onClick={() => loadRuntimePorts()}
-												disabled={loadingPorts || applyBusy}
-											>
+											disabled={loadingPorts || applyBusy}
+										>
 												{loadingPorts
 													? t("loading", { defaultValue: "Loading…" })
 													: t("reload", { defaultValue: "Reload" })}
 											</Button>
 											<Button
 												variant="default"
-												disabled={
-													applyBusy ||
-													typeof apiPort !== "number" ||
-													typeof mcpPort !== "number" ||
-													apiPort <= 0 ||
-													mcpPort <= 0 ||
-													apiPort === mcpPort
-												}
-												onClick={async () => {
-													if (
-														typeof apiPort !== "number" ||
-														typeof mcpPort !== "number"
-													) {
-														return;
-													}
-													if (isTauriShell) {
-														try {
-															setApplyBusy(true);
-															const { invoke } = await import(
-																"@tauri-apps/api/core"
-															);
-															await invoke(
-																"mcp_shell_restart_backend_with_ports",
-																{
-																	apiPort,
-																	mcpPort,
-																},
-															);
-															await wireDashboardToSystemPorts(
-																apiPort,
-																mcpPort,
-															);
-															notifySuccess(
-																t("settings:system.restartSuccessTitle", {
-																	defaultValue: "Backend restarted",
-																}),
-																t("settings:system.restartSuccessDescription", {
-																	apiPort,
-																	mcpPort,
-																	defaultValue:
-																		"API on port {{apiPort}}, MCP on port {{mcpPort}}. Ports are saved for the next app launch.",
-																}),
-															);
-														} catch (err) {
-															notifyError(
-																t("settings:system.restartFailedTitle", {
-																	defaultValue: "Could not restart backend",
-																}),
-																stringifyError(err),
-															);
-														} finally {
-															setApplyBusy(false);
-														}
-													} else {
-														void wireDashboardToSystemPorts(
-															apiPort,
-															mcpPort,
-														);
-														setWebDialogOpen(true);
-													}
+												disabled={applyDisabled}
+												onClick={() => {
+													void handleApplyCoreSource();
 												}}
 											>
 												{applyBusy
-													? t("settings:system.restartButtonBusy", {
-														defaultValue: "Restarting…",
+													? t("settings:system.applyButtonBusy", {
+														defaultValue: "Applying…",
 													})
 													: t("settings:system.apply", {
-														defaultValue: "Apply & Restart",
+														defaultValue: "Apply Core Source",
 													})}
 											</Button>
 										</div>
 									</div>
 									{applyBusy && isTauriShell ? (
 										<p className="text-xs text-amber-700 dark:text-amber-400/90">
-											{t("settings:system.restartProgressHint", {
+											{t("settings:system.applyProgressHint", {
 												defaultValue:
-													"Stopping and starting the embedded backend. API requests may fail briefly; please wait.",
+													"Updating the selected core source. API requests may fail briefly while the desktop reconnects.",
 											})}
 										</p>
 									) : null}

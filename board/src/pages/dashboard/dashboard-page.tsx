@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Server, Sliders, Users } from "lucide-react";
+import { Activity, Play, RefreshCw, Server, Sliders, Square, Users } from "lucide-react";
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
+import { Button } from "../../components/ui/button";
+import { useDesktopCoreState } from "../../lib/desktop-core-state";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { APP_VERSION_LABEL } from "../../lib/app-version";
 import type { LegendProps, TooltipProps } from "recharts";
@@ -322,6 +324,8 @@ function MetricsLegend({ payload }: { payload?: LegendProps["payload"] }) {
 export function DashboardPage() {
 	usePageTranslations("dashboard");
 	const { t } = useTranslation();
+	const { isTauriShell, coreView, busyAction, refreshCoreView, manageLocalCore } =
+		useDesktopCoreState();
 	const { data: systemStatus, isLoading: isLoadingSystem } = useQuery({
 		queryKey: ["systemStatus"],
 		queryFn: systemApi.getStatus,
@@ -429,8 +433,79 @@ export function DashboardPage() {
 	const managedClients =
 		clientsData?.client?.filter((client) => client.managed).length ?? 0;
 
+	const effectiveSystemStatus = React.useMemo(() => {
+		if (
+			isTauriShell &&
+			coreView?.selectedSource === "localhost" &&
+			!coreView.localService.running
+		) {
+			return {
+				...systemStatus,
+				status: "stopped",
+				uptime: 0,
+			};
+		}
+		return systemStatus;
+	}, [coreView?.localService.running, coreView?.selectedSource, isTauriShell, systemStatus]);
+
 	return (
 		<div className="space-y-4">
+			{isTauriShell && coreView?.selectedSource === "localhost" ? (
+				<div className="flex w-full items-center justify-between gap-4 px-1 py-2">
+					<div className="min-w-0 space-y-1">
+						<div className="flex items-center gap-2">
+							<span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+								{t("dashboard:core.title", { defaultValue: "Local Core" })}
+							</span>
+							<span className="text-xs text-slate-500">
+								{coreView.localhostRuntimeMode === "service"
+									? t("dashboard:core.modeService", {
+										defaultValue: "Service",
+									})
+									: t("dashboard:core.modeDesktopManaged", {
+										defaultValue: "Desktop",
+									})}
+							</span>
+						</div>
+						<p className="text-sm text-slate-700 dark:text-slate-300">
+							{coreView.localService.label}
+						</p>
+						<p className="text-xs text-slate-500 dark:text-slate-400">
+							{coreView.localService.detail}
+						</p>
+					</div>
+					<div className="flex shrink-0 items-center gap-2">
+						<Button
+							variant="ghost"
+							size="icon"
+							className="rounded-full"
+							disabled={busyAction !== null}
+							onClick={() => {
+								void refreshCoreView();
+							}}
+						>
+							<RefreshCw className="h-4 w-4" />
+						</Button>
+						<Button
+							variant={coreView.localService.running ? "destructive" : "default"}
+							size="icon"
+							className={`rounded-full ${coreView.localService.running ? "" : "bg-emerald-600 hover:bg-emerald-700"}`}
+							disabled={busyAction !== null}
+							onClick={() =>
+								void manageLocalCore(
+									coreView.localService.running ? "stop" : "start",
+								)
+							}
+						>
+							{coreView.localService.running ? (
+								<Square className="h-4 w-4" />
+							) : (
+								<Play className="h-4 w-4" />
+							)}
+						</Button>
+					</div>
+				</div>
+			) : null}
 			<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 				<Link to="/runtime" className="block h-full">
 					<Card className="h-full min-h-[160px] hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer">
@@ -451,7 +526,7 @@ export function DashboardPage() {
 									{isLoadingSystem ? (
 										<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
 									) : (
-										<StatusBadge status={systemStatus?.status || "unknown"} />
+								<StatusBadge status={effectiveSystemStatus?.status || "unknown"} />
 									)}
 								</div>
 								<div className="flex items-center justify-between">
@@ -462,7 +537,7 @@ export function DashboardPage() {
 										<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
 									) : (
 										<span className="text-sm font-medium">
-											{formatUptime(systemStatus?.uptime || 0)}
+									{formatUptime(effectiveSystemStatus?.uptime || 0)}
 										</span>
 									)}
 								</div>

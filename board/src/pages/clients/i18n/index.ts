@@ -149,7 +149,7 @@ export const clientsTranslations = {
 							hosted:
 								"MCPMate provisions a dedicated MCP server for this client and enables advanced MCPMate features.",
 							transparent:
-								"MCPMate applies the selected original MCP server configurations for this client and performs no additional actions.",
+								"MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
 							none: "MCPMate does not manage this client's configuration.",
 						},
 						options: {
@@ -160,10 +160,17 @@ export const clientsTranslations = {
 					},
 					source: {
 						title: "2. Capability Source",
+						titleTransparent: "2. Server Source",
 						descriptions: {
 							default: "Use all currently activated profiles.",
 							profile: "Select specific shared profiles to include.",
 							custom: "Use customized configuration settings.",
+							transparentDefault:
+								"Write the servers from all currently activated profiles directly into this client's MCP configuration.",
+							transparentProfile:
+								"Write the servers from the selected shared profiles directly into this client's MCP configuration.",
+							transparentCustom:
+								"Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
 						},
 						options: {
 							default: "Activated",
@@ -185,6 +192,12 @@ export const clientsTranslations = {
 								"Select which shared profiles to include in this client's configuration.",
 							custom:
 								"Create and maintain a customized configuration for the current application.",
+							transparentDefault:
+								"Transparent mode will write the enabled servers from all currently activated profiles directly into this client's MCP configuration.",
+							transparentProfile:
+								"Select which shared profiles contribute enabled servers to this client's MCP configuration in transparent mode.",
+							transparentCustom:
+								"Transparent mode uses only the enabled servers from this client-specific custom profile when writing the MCP configuration.",
 						},
 						modeNone:
 							'Configuration mode is set to "none" - no profiles need to be applied',
@@ -196,6 +209,8 @@ export const clientsTranslations = {
 							titleCustom: "Customize the profile",
 							titleDefault: "Add a new profile",
 							subtitleCustom: "Create and manage host application profile",
+							subtitleCustomTransparent:
+								"Configure which servers should be written into this client directly.",
 							subtitleDefault: "Click to navigate to profile management page",
 						},
 					},
@@ -509,7 +524,7 @@ export const clientsTranslations = {
 							hosted:
 								"将为该客户端配置唯一 MCP Server，并可使用 MCPMate 各高级特性。",
 							transparent:
-								"MCPMate 将为该客户端配置选择的各原始 MCP Server 配置，此外不做任何操作。",
+								"MCPMate 会将所选配置集中的服务器直接写入该客户端的 MCP 配置，且不会保留 capabilities 层级的控制。",
 							none: "MCPMate 不管理该客户端配置。",
 						},
 						options: {
@@ -520,10 +535,17 @@ export const clientsTranslations = {
 					},
 				source: {
 					title: "2. 能力来源",
+					titleTransparent: "2. 服务器来源",
 					descriptions: {
 						default: "使用所有已激活的配置集。",
 						profile: "选择特定共享配置集。",
 						custom: "使用自定义配置设置。",
+						transparentDefault:
+							"将当前所有已激活配置集中的服务器直接写入该客户端的 MCP 配置。",
+						transparentProfile:
+							"将所选共享配置集中的服务器直接写入该客户端的 MCP 配置。",
+						transparentCustom:
+							"将该客户端专属自定义配置集中的服务器直接写入该客户端的 MCP 配置。",
 					},
 					options: {
 						default: "已激活",
@@ -543,6 +565,12 @@ export const clientsTranslations = {
 								"选择已激活来源时，将配置所有当前激活的配置集，复选项将保持锁定。",
 							profile: "选择要包含在该客户端配置中的共享配置集。",
 							custom: "为当前应用创建并维护自定义配置。",
+							transparentDefault:
+								"透明模式会将当前所有已激活配置集中已启用的服务器直接写入该客户端的 MCP 配置。",
+							transparentProfile:
+								"选择哪些共享配置集为透明模式下该客户端的 MCP 配置提供已启用服务器。",
+							transparentCustom:
+								"透明模式在写入 MCP 配置时，仅使用该客户端专属自定义配置集中已启用的服务器。",
 						},
 						modeNone: "配置模式为“无”——无需应用任何配置集",
 						empty: {
@@ -553,6 +581,7 @@ export const clientsTranslations = {
 							titleCustom: "自定义配置集",
 							titleDefault: "新增配置集",
 							subtitleCustom: "创建并管理宿主应用配置集",
+							subtitleCustomTransparent: "配置哪些服务器会被直接写入当前客户端。",
 							subtitleDefault: "点击前往配置集管理页面",
 						},
 					},
@@ -862,7 +891,7 @@ export const clientsTranslations = {
 							hosted:
 								"このクライアント専用の MCP サーバーを構成し、MCPMate の高度な機能を利用できるようにします。",
 							transparent:
-								"MCPMate は選択した元の MCP サーバー構成をこのクライアントに適用し、それ以上の処理は行いません。",
+								"MCPMate は選択したプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込み、capability 単位の制御は保持しません。",
 							none: "MCPMate はこのクライアントを管理しません。",
 						},
 						options: {
@@ -873,10 +902,17 @@ export const clientsTranslations = {
 					},
 				source: {
 					title: "2. 機能ソース",
+					titleTransparent: "2. サーバーソース",
 					descriptions: {
 						default: "現在有効なプロファイルをすべて使用します。",
 						profile: "含める共有プロファイルを選択します。",
 						custom: "カスタム設定を使用します。",
+						transparentDefault:
+							"現在有効なすべてのプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
+						transparentProfile:
+							"選択した共有プロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
+						transparentCustom:
+							"このクライアント専用のカスタムプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
 					},
 					options: {
 						default: "有効化済み",
@@ -896,6 +932,12 @@ export const clientsTranslations = {
 								"有効化ソースでは、現在有効なプロファイルがすべて適用されます。チェックボックスは固定されます。",
 							profile: "このクライアントに含める共有プロファイルを選択します。",
 							custom: "このアプリ向けのカスタム設定を作成・維持します。",
+							transparentDefault:
+								"トランスペアレントモードでは、現在有効なすべてのプロファイルの有効化されたサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
+							transparentProfile:
+								"トランスペアレントモードでこのクライアントの MCP 設定に有効化されたサーバーを提供する共有プロファイルを選択します。",
+							transparentCustom:
+								"トランスペアレントモードで MCP 設定を書き込む際は、このクライアント専用カスタムプロファイルの有効化されたサーバーのみを使用します。",
 						},
 						modeNone: "モードが『なし』のためプロファイルは適用されません",
 						empty: {
@@ -906,6 +948,8 @@ export const clientsTranslations = {
 							titleCustom: "プロファイルをカスタマイズ",
 							titleDefault: "新しいプロファイルを追加",
 							subtitleCustom: "ホストアプリ用プロファイルを作成・管理",
+							subtitleCustomTransparent:
+								"このクライアントへ直接書き込むサーバーを設定します。",
 							subtitleDefault: "プロファイル管理ページへ移動",
 						},
 					},

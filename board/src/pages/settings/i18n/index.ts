@@ -11,34 +11,76 @@ en: {
 			developer: "Developer",
 			about: "About & Licenses",
 		},
-        system: {
-            title: "System",
-            description: "Configure backend ports used by the local MCP proxy and API.",
-            apiPortTitle: "Backend API Port",
-            apiPortDescription: "Port for REST and dashboard access (default 8080).",
-            mcpPortTitle: "Backend MCP Server Port",
-            mcpPortDescription: "Port for MCP proxy endpoint (/mcp). Default 8000.",
-            apply: "Apply & Restart",
-            helperTauri: "Tauri: Apply ports and restart backend in-place.",
-            helperWeb: "Web: Change ports then restart the backend process externally.",
-            webDialogTitle: "Apply & Restart (Web)",
-            webDialogDesc: "The browser cannot restart the backend. Use one of the commands below with the selected ports.",
+		system: {
+			title: "System",
+			description:
+				"Choose which core service the desktop should attach to, and configure localhost ports when using the built-in local core.",
+			sourceTitle: "Core Service Source",
+			sourceDescription:
+				"Attach MCPMate Desktop to a persistent localhost core or a future remote core endpoint.",
+			sourceOptions: {
+				localhost: "Localhost",
+				remote: "Remote",
+			},
+			runtimeModeTitle: "Local Runtime Mode",
+			runtimeModeDescription:
+				"Choose whether localhost core is managed as an OS service or tied to the MCPMate desktop lifecycle.",
+			runtimeModeCurrent: "Current runtime mode: {{value}}",
+			moreToggle: "More...",
+			lessToggle: "Less",
+			runtimeModeOptions: {
+				service: "Service",
+				desktopManaged: "Desktop",
+			},
+			remoteUrlTitle: "Remote Core URL",
+			remoteUrlDescription:
+				"Store the remote core endpoint for future attach support. This phase still prioritizes localhost service management.",
+			remoteUrlPlaceholder: "https://your-core.example.com",
+			apiPortTitle: "Localhost Core API Port",
+			apiPortDescription: "Port for localhost REST and dashboard access (default 8080).",
+			mcpPortTitle: "Localhost Core MCP Port",
+			mcpPortDescription: "Port for the localhost MCP proxy endpoint (/mcp). Default 8000.",
+			apply: "Apply Core Source",
+			helperTauri:
+				"Tauri: Save the selected core source, manage the localhost core through OS service commands, and reconnect on next launch.",
+			helperWeb: "Web: Change ports then restart the backend process externally.",
+			webDialogTitle: "Apply & Restart (Web)",
+			webDialogDesc: "The browser cannot restart the backend. Use one of the commands below with the selected ports.",
             optionCargoTitle: "Option A — cargo run (dev)",
             optionBinaryTitle: "Option B — binary (release)",
             copy: "Copy",
             stopCurrent: "Stop current backend",
             close: "Close",
-            restartButtonBusy: "Restarting…",
-            restartProgressHint:
-                "Stopping and starting the embedded backend. API requests may fail briefly; please wait.",
-            restartSuccessTitle: "Backend restarted",
-            restartSuccessDescription:
-                "API on port {{apiPort}}, MCP on port {{mcpPort}}. Ports are saved for the next app launch.",
-            restartFailedTitle: "Could not restart backend",
-            portsReloadFailedTitle: "Could not load ports from shell",
-            portsReloadFailedDescription:
-                "Showing cached values if any. Check the desktop app is healthy and try Reload again.",
-        },
+			applyButtonBusy: "Applying…",
+			applyProgressHint:
+				"Updating the selected core source. API requests may fail briefly while the desktop reconnects.",
+			applySuccessTitle: "Core source updated",
+			applySuccessDescription:
+				"Desktop is now attached to the selected {{source}} core. Existing service definitions were refreshed if needed.",
+			applyFailedTitle: "Could not update core source",
+			serviceStatusTitle: "Local Core Service Status",
+			serviceStatusFallback:
+				"The desktop will attach to the configured localhost core service when it is available.",
+			serviceLevel: "Service level: {{value}}",
+			statusAction: "Status",
+			startAction: "Start",
+			restartAction: "Restart",
+			stopAction: "Stop",
+			installAction: "Install",
+			uninstallAction: "Uninstall",
+			serviceActionBusy: "Working…",
+			serviceActionSuccessTitle: "Local core service updated",
+			serviceActionSuccessDescription:
+				"Local core service action {{action}} completed. Current status: {{status}}.",
+			serviceActionFailedTitle: "Could not manage local core service",
+			portsReloadFailedTitle: "Could not load ports from shell",
+			portsReloadFailedDescription:
+				"Showing cached values if any. Check the desktop app is healthy and try Reload again.",
+			localhostRunning:
+				"The local core is running. In Desktop mode it stops only when MCPMate truly quits.",
+			localhostStopped:
+				"The local core is currently stopped. In Desktop mode, applying this source will start it automatically.",
+		},
 		general: {
 			title: "General",
 			description: "Baseline preferences for the main workspace views.",
@@ -200,16 +242,35 @@ en: {
 			developer: "开发者",
 			about: "关于",
 		},
-        system: {
-            title: "系统",
-            description: "配置本地 MCP 代理与 API 使用的后端端口。",
-            apiPortTitle: "后端 API 端口",
-            apiPortDescription: "用于 REST 与控制台访问的端口（默认 8080）。",
-            mcpPortTitle: "后端 MCP 服务端口",
-            mcpPortDescription: "用于 MCP 代理端点的端口（/mcp），默认 8000。",
-            apply: "应用并重启",
-            helperTauri: "Tauri：就地应用端口并重启后端。",
-            helperWeb: "Web：修改端口后，请在外部重启后端进程。",
+		system: {
+			title: "系统",
+			description: "选择桌面端要挂载的 core 服务源，并在使用本地 core 时配置 localhost 端口。",
+			sourceTitle: "Core 服务源",
+			sourceDescription: "让 MCPMate Desktop 挂载到可常驻的 localhost core，或未来的 remote core 端点。",
+			sourceOptions: {
+				localhost: "本地 localhost",
+				remote: "远程",
+			},
+			runtimeModeTitle: "本地运行模式",
+			runtimeModeDescription:
+				"选择 localhost core 是由操作系统服务管理，还是跟随 MCPMate Desktop 生命周期运行。",
+			runtimeModeCurrent: "当前运行模式：{{value}}",
+			moreToggle: "更多…",
+			lessToggle: "收起",
+			runtimeModeOptions: {
+				service: "服务",
+				desktopManaged: "桌面",
+			},
+			remoteUrlTitle: "远程 Core URL",
+			remoteUrlDescription: "先保存远程 core 地址以便后续接入；当前阶段仍以本地 core 常驻管理为主。",
+			remoteUrlPlaceholder: "https://your-core.example.com",
+			apiPortTitle: "本地 Core API 端口",
+			apiPortDescription: "localhost REST 与控制台访问端口（默认 8080）。",
+			mcpPortTitle: "本地 Core MCP 端口",
+			mcpPortDescription: "localhost MCP 代理端点端口（/mcp），默认 8000。",
+			apply: "应用 Core 服务源",
+			helperTauri: "Tauri：保存所选 core 服务源，并通过操作系统服务命令管理 localhost core，在下次启动时自动重新挂载。",
+			helperWeb: "Web：修改端口后，请在外部重启后端进程。",
             webDialogTitle: "网页环境应用与重启",
             webDialogDesc: "浏览器无法直接重启后端，请复制以下命令并在终端执行（使用上方端口）。",
             optionCargoTitle: "方案 A — cargo run（开发）",
@@ -217,17 +278,33 @@ en: {
             copy: "复制",
             stopCurrent: "停止当前后端",
             close: "关闭",
-            restartButtonBusy: "正在重启…",
-            restartProgressHint:
-                "正在停止并启动内嵌后端，期间 API 可能短暂失败，请稍候。",
-            restartSuccessTitle: "后端已重启",
-            restartSuccessDescription:
-                "API 端口 {{apiPort}}，MCP 端口 {{mcpPort}}。端口已保存，下次启动将沿用。",
-            restartFailedTitle: "无法重启后端",
-            portsReloadFailedTitle: "无法从桌面壳读取端口",
-            portsReloadFailedDescription:
-                "如有缓存将显示缓存值。请确认应用正常后再次点击重新加载。",
-        },
+			applyButtonBusy: "正在应用…",
+			applyProgressHint:
+				"正在更新所选 core 服务源。桌面端重新挂载期间，API 可能短暂失败。",
+			applySuccessTitle: "Core 服务源已更新",
+			applySuccessDescription:
+				"桌面端现已挂载到所选 {{source}} core，如有需要也已刷新本地服务定义。",
+			applyFailedTitle: "无法更新 Core 服务源",
+			serviceStatusTitle: "本地 Core 服务状态",
+			serviceStatusFallback: "桌面端会在 localhost core 服务可用时自动挂载到它。",
+			serviceLevel: "服务级别：{{value}}",
+			statusAction: "状态",
+			startAction: "启动",
+			restartAction: "重启",
+			stopAction: "停止",
+			installAction: "安装",
+			uninstallAction: "卸载",
+			serviceActionBusy: "处理中…",
+			serviceActionSuccessTitle: "本地 Core 服务已更新",
+			serviceActionSuccessDescription:
+				"本地 Core 服务操作 {{action}} 已完成，当前状态：{{status}}。",
+			serviceActionFailedTitle: "无法管理本地 Core 服务",
+			portsReloadFailedTitle: "无法从桌面壳读取端口",
+			portsReloadFailedDescription:
+				"如有缓存将显示缓存值。请确认应用正常后再次点击重新加载。",
+			localhostRunning: "本地 core 正在运行；在 Desktop 模式下，只有真正退出 MCPMate 才会停止。",
+			localhostStopped: "本地 core 当前未运行；在 Desktop 模式下，应用该服务源后会自动启动。",
+		},
 		general: {
 			title: "通用",
 			description: "管理工作区的默认视图与基础偏好。",
@@ -379,15 +456,36 @@ en: {
 		system: {
 			title: "システム",
 			description:
-				"ローカル MCP プロキシと API が使用するバックエンドポートを設定します。",
-			apiPortTitle: "バックエンド API ポート",
-			apiPortDescription: "REST とダッシュボード用ポート（既定 8080）。",
-			mcpPortTitle: "バックエンド MCP サーバーポート",
+				"デスクトップが接続する core サービスを選択し、localhost core を使う場合のポートを設定します。",
+			sourceTitle: "Core サービスソース",
+			sourceDescription:
+				"MCPMate Desktop を常駐 localhost core、または将来の remote core エンドポイントへ接続します。",
+			sourceOptions: {
+				localhost: "Localhost",
+				remote: "Remote",
+			},
+			runtimeModeTitle: "ローカル実行モード",
+			runtimeModeDescription:
+				"localhost core を OS サービスとして管理するか、MCPMate Desktop のライフサイクルに従わせるかを選択します。",
+			runtimeModeCurrent: "現在の実行モード: {{value}}",
+			moreToggle: "もっと見る…",
+			lessToggle: "折りたたむ",
+			runtimeModeOptions: {
+				service: "Service",
+				desktopManaged: "Desktop",
+			},
+			remoteUrlTitle: "Remote Core URL",
+			remoteUrlDescription:
+				"将来の接続用に remote core の URL を保存します。現段階では localhost core の常駐管理を優先します。",
+			remoteUrlPlaceholder: "https://your-core.example.com",
+			apiPortTitle: "Localhost Core API ポート",
+			apiPortDescription: "localhost の REST とダッシュボード用ポート（既定 8080）。",
+			mcpPortTitle: "Localhost Core MCP ポート",
 			mcpPortDescription:
-				"MCP プロキシエンドポート用ポート（/mcp）、既定 8000。",
-			apply: "適用して再起動",
+				"localhost の MCP プロキシエンドポイント用ポート（/mcp）、既定 8000。",
+			apply: "Core サービスを適用",
 			helperTauri:
-				"Tauri：ポートを適用してバックエンドをその場で再起動します。",
+				"Tauri：選択した core サービスを保存し、OS のサービスコマンドで localhost core を管理し、次回起動時に再接続します。",
 			helperWeb:
 				"Web：ポート変更後に外部でバックエンドを再起動してください。",
 			webDialogTitle: "Web 環境での適用と再起動",
@@ -398,16 +496,35 @@ en: {
 			copy: "コピー",
 			stopCurrent: "現在のバックエンドを停止",
 			close: "閉じる",
-			restartButtonBusy: "再起動中…",
-			restartProgressHint:
-				"埋め込みバックエンドを停止・起動しています。数秒間 API が失敗することがあります。",
-			restartSuccessTitle: "バックエンドを再起動しました",
-			restartSuccessDescription:
-				"API ポート {{apiPort}}、MCP ポート {{mcpPort}}。次回起動用に保存しました。",
-			restartFailedTitle: "バックエンドを再起動できませんでした",
+			applyButtonBusy: "適用中…",
+			applyProgressHint:
+				"選択した core サービスを更新しています。デスクトップの再接続中は API が一時的に失敗することがあります。",
+			applySuccessTitle: "Core サービスを更新しました",
+			applySuccessDescription:
+				"デスクトップは選択した {{source}} core に接続しました。必要に応じて localhost サービス定義も更新されました。",
+			applyFailedTitle: "Core サービスを更新できませんでした",
+			serviceStatusTitle: "Local Core サービス状態",
+			serviceStatusFallback:
+				"localhost core サービスが利用可能になると、デスクトップはそこへ接続します。",
+			serviceLevel: "サービスレベル: {{value}}",
+			statusAction: "状態",
+			startAction: "開始",
+			restartAction: "再起動",
+			stopAction: "停止",
+			installAction: "インストール",
+			uninstallAction: "アンインストール",
+			serviceActionBusy: "処理中…",
+			serviceActionSuccessTitle: "Local core サービスを更新しました",
+			serviceActionSuccessDescription:
+				"Local core サービス操作 {{action}} が完了しました。現在の状態: {{status}}。",
+			serviceActionFailedTitle: "Local core サービスを管理できませんでした",
 			portsReloadFailedTitle: "シェルからポートを読み込めませんでした",
 			portsReloadFailedDescription:
 				"キャッシュがあればそれを表示します。アプリの状態を確認のうえ、再読み込みを試してください。",
+			localhostRunning:
+				"ローカル core は実行中です。Desktop モードでは MCPMate を本当に終了したときだけ停止します。",
+			localhostStopped:
+				"ローカル core は停止中です。Desktop モードではこの設定を適用すると自動起動します。",
 		},
 		general: {
 			title: "一般",

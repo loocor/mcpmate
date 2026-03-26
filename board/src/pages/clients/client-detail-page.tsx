@@ -77,7 +77,40 @@ import type {
 } from "../../lib/types";
 import { formatBackupTime } from "../../lib/utils";
 
-type ClientDetailTab = "overview" | "configuration" | "backups";
+const arrangeProfilesWithDefaultFirst = (items: ConfigSuit[] = []) => {
+	if (!items.length) {
+		return [] as ConfigSuit[];
+	}
+	const byName = (a: ConfigSuit, b: ConfigSuit) =>
+		a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+	const defaults = items.filter((profile) => profile.is_default).sort(byName);
+	const others = items.filter((profile) => !profile.is_default).sort(byName);
+	return [...defaults, ...others];
+};
+
+const SUPPORTED_TRANSPORT_OPTIONS = ["stdio", "sse", "streamable_http"];
+
+function getTransportOptionLabel(
+	transport: string,
+	t: ReturnType<typeof useTranslation>["t"],
+): string {
+	switch (transport) {
+		case "streamable_http":
+			return t("detail.configuration.transportOptions.streamableHttp", {
+				defaultValue: "Streamable HTTP",
+			});
+		case "sse":
+			return t("detail.configuration.transportOptions.sseLegacy", {
+				defaultValue: "SSE (Legacy)",
+			});
+		case "stdio":
+			return t("detail.configuration.transportOptions.stdio", {
+				defaultValue: "STDIO",
+			});
+		default:
+			return transport.toUpperCase();
+	}
+}
 
 function extractServers(obj: unknown): string[] {
 	if (!obj || typeof obj !== "object") return [];
@@ -129,7 +162,7 @@ export function ClientDetailPage() {
 	const { identifier } = useParams<{ identifier: string }>();
 	const qc = useQueryClient();
 	const navigate = useNavigate();
-	const [searchParams] = useSearchParams();
+	useSearchParams();
 	usePageTranslations("clients");
 	const { t } = useTranslation("clients");
 	const [displayName, setDisplayName] = useState("");
@@ -143,45 +176,32 @@ export function ClientDetailPage() {
 	});
 	const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
 
-	// Try to get display name from list cache
+	const { data: clientsData } = useQuery({
+		queryKey: ["clients"],
+		queryFn: () => clientsApi.list(false),
+		retry: 1,
+	});
+
+	const currentClient = useMemo(
+		() => clientsData?.client?.find((client) => client.identifier === identifier),
+		[clientsData?.client, identifier],
+	);
+
 	useEffect(() => {
-		const cached = qc.getQueryData<{
-			client?: Array<{
-				identifier: string;
-				display_name?: string;
-				detected?: boolean;
-			}>;
-		}>(["clients"]);
-		if (cached?.client) {
-			const found = cached.client.find((c) => c.identifier === identifier);
-			if (found) {
-				setDisplayName(found.display_name || "");
-				setDetected(!!found.detected);
-				const modeVal = (found as any)?.config_mode;
-				if (typeof modeVal === "string") setMode(modeVal as ClientConfigMode);
-				const trVal = (found as any)?.transport;
-				setTransport(typeof trVal === "string" ? (trVal as string) : "auto");
-			}
+		if (!currentClient) {
+			return;
 		}
-		if (!displayName) {
-			// Fallback: fetch list once to resolve display name
-			clientsApi
-				.list(false)
-				.then((d) => {
-					if (d?.client) {
-						const f = d.client.find((c) => c.identifier === identifier);
-						if (f?.display_name) setDisplayName(f.display_name);
-						if (typeof f?.detected === "boolean") setDetected(!!f.detected);
-						const modeVal = (f as any)?.config_mode;
-						if (typeof modeVal === "string")
-							setMode(modeVal as ClientConfigMode);
-						const trVal = (f as any)?.transport;
-						setTransport(typeof trVal === "string" ? (trVal as string) : "auto");
-					}
-				})
-				.catch(() => {});
+		setDisplayName(currentClient.display_name || "");
+		setDetected(!!currentClient.detected);
+		if (typeof currentClient.config_mode === "string") {
+			setMode(currentClient.config_mode as ClientConfigMode);
 		}
-	}, [identifier, qc, displayName]);
+		setTransport(
+			typeof currentClient.transport === "string"
+				? currentClient.transport
+				: "auto",
+		);
+	}, [currentClient]);
 
 	const limitId = useId();
 	const [mode, setMode] = useState<ClientConfigMode>("hosted");
@@ -235,11 +255,17 @@ export function ClientDetailPage() {
 	// Process profiles data
 	const profiles: ConfigSuit[] = profilesData?.suits || [];
 	const activeProfiles = useMemo(
-		() => profiles.filter((profile) => profile.is_active),
+		() =>
+			arrangeProfilesWithDefaultFirst(
+				profiles.filter((profile) => profile.is_active),
+			),
 		[profiles],
 	);
 	const sharedProfiles = useMemo(
-		() => profiles.filter((profile) => profile.suit_type === "shared"),
+		() =>
+			arrangeProfilesWithDefaultFirst(
+				profiles.filter((profile) => profile.suit_type === "shared"),
+			),
 		[profiles],
 	);
 
@@ -282,19 +308,23 @@ export function ClientDetailPage() {
 		}
 	}, [effectiveCapabilityConfig]);
 
-	// Get profile IDs for fetching capabilities
-	const profileIds = useMemo(() => {
-		if (selectedConfig === "default") {
-			return activeProfiles.map((p) => p.id);
-		} else if (selectedConfig === "profile") {
-			return selectedProfiles;
+	const capabilityProfileIds = useMemo(() => {
+		const ids = new Set<string>();
+		for (const profile of activeProfiles) {
+			ids.add(profile.id);
 		}
-		return [];
-	}, [selectedConfig, activeProfiles, selectedProfiles]);
+		for (const profile of sharedProfiles) {
+			ids.add(profile.id);
+		}
+		if (customProfileId) {
+			ids.add(customProfileId);
+		}
+		return Array.from(ids);
+	}, [activeProfiles, customProfileId, sharedProfiles]);
 
 	// Fetch capabilities for profiles
 	const profileCapabilitiesQueries = useQueries({
-		queries: profileIds.map((profileId) => ({
+		queries: capabilityProfileIds.map((profileId) => ({
 			queryKey: ["profile-capabilities", profileId],
 			queryFn: async () => {
 				const [serversRes, toolsRes, resourcesRes, promptsRes] =
@@ -336,7 +366,7 @@ export function ClientDetailPage() {
 					},
 				};
 			},
-			enabled: profileIds.length > 0,
+			enabled: capabilityProfileIds.length > 0,
 			retry: 1,
 		})),
 	});
@@ -351,6 +381,22 @@ export function ClientDetailPage() {
 		});
 		return map;
 	}, [profileCapabilitiesQueries]);
+
+	const customProfileCapabilities = customProfileId
+		? profileCapabilities.get(customProfileId)
+		: undefined;
+
+	const supportedTransportOptions = useMemo(() => {
+		const supported = (configDetails?.supported_transports || []) as string[];
+		if (supported.length < 2) {
+			return [] as string[];
+		}
+
+		const allowed = new Set(supported);
+		return SUPPORTED_TRANSPORT_OPTIONS.filter((transportOption) =>
+			allowed.has(transportOption),
+		);
+	}, [configDetails?.supported_transports]);
 
 	const templateMeta = configDetails?.template;
 	const detailDescription =
@@ -462,6 +508,51 @@ export function ClientDetailPage() {
 		return "default";
 	};
 
+	const renderProfileCapabilitySummary = (
+		capabilities: NonNullable<ReturnType<typeof profileCapabilities.get>>,
+	) => {
+		const capabilityItems = [
+			{
+				key: "servers",
+				label: t("detail.configuration.labels.servers", {
+					defaultValue: "Servers",
+				}),
+				counts: capabilities.servers,
+			},
+			{
+				key: "tools",
+				label: t("detail.configuration.labels.tools", {
+					defaultValue: "Tools",
+				}),
+				counts: capabilities.tools,
+			},
+			{
+				key: "resources",
+				label: t("detail.configuration.labels.resources", {
+					defaultValue: "Resources",
+				}),
+				counts: capabilities.resources,
+			},
+			{
+				key: "prompts",
+				label: t("detail.configuration.labels.prompts", {
+					defaultValue: "Prompts",
+				}),
+				counts: capabilities.prompts,
+			},
+		];
+
+		return (
+			<div className="mt-1 flex gap-4 text-xs text-slate-500">
+				{capabilityItems.map((item) => (
+					<span key={item.key}>
+						{item.label}: {item.counts.enabled}/{item.counts.total}
+					</span>
+				))}
+			</div>
+		);
+	};
+
 	const { data: policyData, refetch: refetchPolicy } = useQuery({
 		queryKey: ["client-policy", identifier],
 		queryFn: () => clientsApi.getBackupPolicy(identifier || ""),
@@ -475,9 +566,21 @@ export function ClientDetailPage() {
 	>({
 		mutationFn: async ({ preview }) => {
 			if (!identifier) throw new Error("No identifier provided");
+			await clientsApi.update({
+				identifier,
+				config_mode: mode,
+			});
 			const capabilityData = await clientsApi.updateCapabilityConfig(
 				buildCapabilityConfigPayload(),
 			);
+			if (!capabilityData) {
+				throw new Error(
+					t("detail.configuration.errors.capabilityConfigMissing", {
+						defaultValue:
+							"Capability configuration update returned no data. Please try again.",
+					}),
+				);
+			}
 
 			const data = await clientsApi.applyConfig({
 				identifier,
@@ -559,6 +662,7 @@ export function ClientDetailPage() {
 					});
 				}
 			}
+			qc.invalidateQueries({ queryKey: ["clients"] });
 			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
 			qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] });
 			refetchCapabilityConfig();
@@ -1047,40 +1151,7 @@ export function ClientDetailPage() {
 																defaultValue: "Enable",
 															})}
 												</Button>
-												{(() => {
-													const supported =
-														(configDetails?.supported_transports ||
-															[]) as string[];
-													// Show selector only when there are 2+ concrete transports
-													if (!supported || supported.length < 2) return null;
-													const optionLabel = (v: string) => {
-														switch (v) {
-															case "streamable_http":
-																return t(
-																	"detail.configuration.transportOptions.streamableHttp",
-																	{ defaultValue: "Streamable HTTP" },
-																);
-															case "sse":
-																return t(
-																	"detail.configuration.transportOptions.sseLegacy",
-																	{ defaultValue: "SSE (Legacy)" },
-																);
-															case "stdio":
-																return t(
-																	"detail.configuration.transportOptions.stdio",
-																	{ defaultValue: "STDIO" },
-																);
-															default:
-																return v.toUpperCase();
-														}
-													};
-													const allowed = new Set(supported);
-													const options = [
-														"stdio",
-														"sse",
-														"streamable_http",
-													].filter((v) => allowed.has(v));
-													return (
+												{supportedTransportOptions.length > 0 ? (
 														<ButtonGroupText className="h-9 p-0 select-none shadow-none">
 															<Select
 																value={transport}
@@ -1121,16 +1192,15 @@ export function ClientDetailPage() {
 																</SelectTrigger>
 																<SelectContent align="end">
 																	<SelectItem value="auto">Auto</SelectItem>
-																	{options.map((v) => (
+																	{supportedTransportOptions.map((v) => (
 																		<SelectItem key={v} value={v}>
-																			{optionLabel(v)}
+																			{getTransportOptionLabel(v, t)}
 																		</SelectItem>
 																	))}
 																</SelectContent>
 															</Select>
 														</ButtonGroupText>
-													);
-												})()}
+												) : null}
 											</ButtonGroup>
 										</div>
 									</div>
@@ -1260,7 +1330,7 @@ export function ClientDetailPage() {
 															"detail.configuration.sections.mode.descriptions.transparent",
 															{
 																defaultValue:
-																	"MCPMate applies the selected original MCP server configurations for this client and performs no additional actions.",
+																	"MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
 															},
 														)}
 													{mode === "none" &&
@@ -1308,12 +1378,40 @@ export function ClientDetailPage() {
 										<div className="space-y-3">
 											<div className="space-y-1">
 												<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-													{t("detail.configuration.sections.source.title", {
-														defaultValue: "2. Capability Source",
-													})}
+													{mode === "transparent"
+														? t("detail.configuration.sections.source.titleTransparent", {
+															defaultValue: "2. Server Source",
+														})
+														: t("detail.configuration.sections.source.title", {
+															defaultValue: "2. Capability Source",
+														})}
 												</h4>
 												<p className="text-xs text-slate-500 leading-relaxed">
-													{selectedConfig === "default" &&
+													{mode === "transparent" && selectedConfig === "default" &&
+														t(
+															"detail.configuration.sections.source.descriptions.transparentDefault",
+															{
+																defaultValue:
+																	"Write the servers from all currently activated profiles directly into this client's MCP configuration.",
+															},
+														)}
+													{mode === "transparent" && selectedConfig === "profile" &&
+														t(
+															"detail.configuration.sections.source.descriptions.transparentProfile",
+															{
+																defaultValue:
+																	"Write the servers from the selected shared profiles directly into this client's MCP configuration.",
+															},
+														)}
+													{mode === "transparent" && selectedConfig === "custom" &&
+														t(
+															"detail.configuration.sections.source.descriptions.transparentCustom",
+															{
+																defaultValue:
+																	"Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
+															},
+														)}
+													{mode !== "transparent" && selectedConfig === "default" &&
 														t(
 															"detail.configuration.sections.source.descriptions.default",
 															{
@@ -1321,7 +1419,7 @@ export function ClientDetailPage() {
 																	"Use all currently activated profiles.",
 															},
 														)}
-													{selectedConfig === "profile" &&
+													{mode !== "transparent" && selectedConfig === "profile" &&
 														t(
 															"detail.configuration.sections.source.descriptions.profile",
 															{
@@ -1329,7 +1427,7 @@ export function ClientDetailPage() {
 																	"Select specific shared profiles to include.",
 															},
 														)}
-													{selectedConfig === "custom" &&
+													{mode !== "transparent" && selectedConfig === "custom" &&
 														t(
 															"detail.configuration.sections.source.descriptions.custom",
 															{
@@ -1405,35 +1503,59 @@ export function ClientDetailPage() {
 												{/* Dynamic description based on source */}
 												{selectedConfig === "default" && (
 													<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-														{t(
-															"detail.configuration.sections.profiles.descriptions.default",
-															{
-																defaultValue:
-																	"When the activated source is selected, configure all currently activated profiles. Checkboxes are locked to keep the selection consistent.",
-															},
-														)}
+														{mode === "transparent"
+															? t(
+																"detail.configuration.sections.profiles.descriptions.transparentDefault",
+																{
+																	defaultValue:
+																		"Transparent mode will write the enabled servers from all currently activated profiles directly into this client's MCP configuration.",
+																},
+															)
+															: t(
+																"detail.configuration.sections.profiles.descriptions.default",
+																{
+																	defaultValue:
+																		"When the activated source is selected, configure all currently activated profiles. Checkboxes are locked to keep the selection consistent.",
+																},
+															)}
 													</p>
 												)}
 												{selectedConfig === "profile" && (
 													<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-														{t(
-															"detail.configuration.sections.profiles.descriptions.profile",
-															{
-																defaultValue:
-																	"Select which shared profiles to include in this client's configuration.",
-															},
-														)}
+														{mode === "transparent"
+															? t(
+																"detail.configuration.sections.profiles.descriptions.transparentProfile",
+																{
+																	defaultValue:
+																		"Select which shared profiles contribute enabled servers to this client's MCP configuration in transparent mode.",
+																},
+															)
+															: t(
+																"detail.configuration.sections.profiles.descriptions.profile",
+																{
+																	defaultValue:
+																		"Select which shared profiles to include in this client's configuration.",
+																},
+															)}
 													</p>
 												)}
 												{selectedConfig === "custom" && (
 													<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-														{t(
-															"detail.configuration.sections.profiles.descriptions.custom",
-															{
-																defaultValue:
-																	"Create and maintain a customized configuration for the current application.",
-															},
-														)}
+														{mode === "transparent"
+															? t(
+																"detail.configuration.sections.profiles.descriptions.transparentCustom",
+																{
+																	defaultValue:
+																		"Transparent mode uses only the enabled servers from this client-specific custom profile when writing the MCP configuration.",
+																},
+															)
+															: t(
+																"detail.configuration.sections.profiles.descriptions.custom",
+																{
+																	defaultValue:
+																		"Create and maintain a customized configuration for the current application.",
+																},
+															)}
 													</p>
 												)}
 											</div>
@@ -1480,59 +1602,16 @@ export function ClientDetailPage() {
 																					{profile.name}
 																				</div>
 																				<div className="text-xs text-slate-500 truncate">
-																					{profile.description ||
-																						t(
-																							"detail.configuration.labels.noDescription",
+																	{profile.description ||
+																		t(
+																			"detail.configuration.labels.noDescription",
 																							{
 																								defaultValue: "No description",
 																							},
-																						)}
-																				</div>
-																				{capabilities && (
-																					<div className="flex gap-4 mt-1 text-xs text-slate-500">
-																						<span>
-																							{t(
-																								"detail.configuration.labels.servers",
-																								{
-																									defaultValue: "Servers",
-																								},
-																							)}
-																							: {capabilities.servers.enabled}/
-																							{capabilities.servers.total}
-																						</span>
-																						<span>
-																							{t(
-																								"detail.configuration.labels.tools",
-																								{
-																									defaultValue: "Tools",
-																								},
-																							)}
-																							: {capabilities.tools.enabled}/
-																							{capabilities.tools.total}
-																						</span>
-																						<span>
-																							{t(
-																								"detail.configuration.labels.resources",
-																								{
-																									defaultValue: "Resources",
-																								},
-																							)}
-																							: {capabilities.resources.enabled}
-																							/{capabilities.resources.total}
-																						</span>
-																						<span>
-																							{t(
-																								"detail.configuration.labels.prompts",
-																								{
-																									defaultValue: "Prompts",
-																								},
-																							)}
-																							: {capabilities.prompts.enabled}/
-																							{capabilities.prompts.total}
-																						</span>
-																					</div>
-																				)}
-																			</div>
+																		)}
+																	</div>
+																	{capabilities && renderProfileCapabilitySummary(capabilities)}
+																</div>
 																			<div className="ml-auto flex items-center gap-2">
 																				<Button
 																					variant="ghost"
@@ -1607,59 +1686,16 @@ export function ClientDetailPage() {
 																					{profile.name}
 																				</div>
 																				<div className="text-xs text-slate-500 truncate">
-																					{profile.description ||
-																						t(
-																							"detail.configuration.labels.noDescription",
+																	{profile.description ||
+																		t(
+																			"detail.configuration.labels.noDescription",
 																							{
 																								defaultValue: "No description",
 																							},
-																						)}
-																				</div>
-																				{capabilities && (
-																					<div className="flex gap-4 mt-1 text-xs text-slate-500">
-																						<span>
-																							{t(
-																								"detail.configuration.labels.servers",
-																								{
-																									defaultValue: "Servers",
-																								},
-																							)}
-																							: {capabilities.servers.enabled}/
-																							{capabilities.servers.total}
-																						</span>
-																						<span>
-																							{t(
-																								"detail.configuration.labels.tools",
-																								{
-																									defaultValue: "Tools",
-																								},
-																							)}
-																							: {capabilities.tools.enabled}/
-																							{capabilities.tools.total}
-																						</span>
-																						<span>
-																							{t(
-																								"detail.configuration.labels.resources",
-																								{
-																									defaultValue: "Resources",
-																								},
-																							)}
-																							: {capabilities.resources.enabled}
-																							/{capabilities.resources.total}
-																						</span>
-																						<span>
-																							{t(
-																								"detail.configuration.labels.prompts",
-																								{
-																									defaultValue: "Prompts",
-																								},
-																							)}
-																							: {capabilities.prompts.enabled}/
-																							{capabilities.prompts.total}
-																						</span>
-																					</div>
-																				)}
-																			</div>
+																		)}
+																	</div>
+																	{capabilities && renderProfileCapabilitySummary(capabilities)}
+																</div>
 																			<div className="ml-auto flex items-center gap-2">
 																				<Button
 																					variant="ghost"
@@ -1692,7 +1728,7 @@ export function ClientDetailPage() {
 													) : null}
 
 													<CapsuleStripeListItem
-														interactive={selectedConfig !== "custom" || !!customProfileId}
+														interactive
 														className={
 															selectedConfig === "custom" && customProfileId
 																? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
@@ -1702,6 +1738,8 @@ export function ClientDetailPage() {
 															if (selectedConfig === "custom") {
 																if (customProfileId) {
 																	navigate(`/profiles/${customProfileId}?mode=custom`);
+																} else {
+																	applyMutation.mutate({ preview: false });
 																}
 															} else {
 																navigate("/profiles");
@@ -1726,9 +1764,9 @@ export function ClientDetailPage() {
 																	? t(
 																		"detail.configuration.sections.profiles.ghost.titleCustom",
 																		{
-																			defaultValue: customProfileId
-																				? "Manage custom profile"
-																				: "Custom profile will be created on apply",
+																					defaultValue: customProfileId
+																						? "Manage custom profile"
+																						: "Create custom profile",
 																		},
 																	)
 																		: t(
@@ -1737,24 +1775,29 @@ export function ClientDetailPage() {
 																			)}
 																</div>
 															<div className="text-xs text-slate-400 dark:text-slate-600 truncate">
-																{selectedConfig === "custom"
-																	? t(
-																		"detail.configuration.sections.profiles.ghost.subtitleCustom",
-																		{
-																			defaultValue: customProfileId
-																				? "Configure which servers are available to this client"
-																				: "Apply once to let MCPMate provision the client-private host app profile",
-																		},
-																	)
+																	{selectedConfig === "custom"
+																		? t(
+																			mode === "transparent"
+																				? "detail.configuration.sections.profiles.ghost.subtitleCustomTransparent"
+																				: "detail.configuration.sections.profiles.ghost.subtitleCustom",
+																			{
+																					defaultValue: customProfileId
+																						? "Configure this client-specific custom profile"
+																						: "Create a client-specific custom profile now",
+																			},
+																		)
 																		: t(
 																				"detail.configuration.sections.profiles.ghost.subtitleDefault",
 																				{
 																					defaultValue:
 																						"Click to navigate to profile management page",
-																				},
-																			)}
+																			},
+																		)}
+																	</div>
+																	{customProfileCapabilities
+																		? renderProfileCapabilitySummary(customProfileCapabilities)
+																		: null}
 																</div>
-															</div>
 														</div>
 													</CapsuleStripeListItem>
 												</CapsuleStripeList>

@@ -1,5 +1,5 @@
 export const dashboardTranslations = {
-	en: {
+		en: {
 		cards: {
 			systemStatus: "System Status",
 			profiles: "Profiles",
@@ -27,6 +27,15 @@ export const dashboardTranslations = {
 			mcpmateMemory: "MCPMate Memory (%)",
 			hostCpu: "Host CPU (%)",
 			hostMemory: "Host Memory (%)",
+		},
+		core: {
+			title: "Local Core",
+			modeService: "Service",
+			modeDesktopManaged: "Desktop",
+			statusAction: "Status",
+			startAction: "Start",
+			restartAction: "Restart",
+			stopAction: "Stop",
 		},
 	},
 	"zh-CN": {
@@ -57,6 +66,15 @@ export const dashboardTranslations = {
 			hostCpu: "主机 CPU (%)",
 			hostMemory: "主机内存 (%)",
 		},
+		core: {
+			title: "本地 Core",
+			modeService: "服务",
+			modeDesktopManaged: "桌面",
+			statusAction: "状态",
+			startAction: "启动",
+			restartAction: "重启",
+			stopAction: "停止",
+		},
 	},
 	"ja-JP": {
 		cards: {
@@ -86,6 +104,15 @@ export const dashboardTranslations = {
 			mcpmateMemory: "MCPMate メモリ (%)",
 			hostCpu: "ホスト CPU (%)",
 			hostMemory: "ホストメモリ (%)",
+		},
+		core: {
+			title: "Local Core",
+			modeService: "Service",
+			modeDesktopManaged: "Desktop",
+			statusAction: "状態",
+			startAction: "開始",
+			restartAction: "再起動",
+			stopAction: "停止",
 		},
 	},
 } as const;

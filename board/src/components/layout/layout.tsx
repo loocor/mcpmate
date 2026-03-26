@@ -1,12 +1,18 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Outlet, useNavigate } from "react-router-dom";
 import { openFeedbackEmail } from "../../lib/feedback-email";
+import { notificationsService, setApiBaseUrl } from "../../lib/api";
 import { isTauriEnvironmentSync } from "../../lib/platform";
 import { useAppStore } from "../../lib/store";
 import { websiteLangParam } from "../../lib/website-lang";
 import { Header } from "./header";
 import { Sidebar } from "./sidebar";
+
+function applyDesktopApiBaseUrl(apiBaseUrl: string): void {
+	setApiBaseUrl(apiBaseUrl);
+	notificationsService.reconnectAfterApiBaseChanged();
+}
 
 function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw: unknown): void {
 	if (!raw || typeof raw !== "object") {
@@ -32,6 +38,9 @@ export function Layout() {
 	const { sidebarOpen, theme, setSidebarOpen } = useAppStore();
 	const navigate = useNavigate();
 	const { t, i18n } = useTranslation();
+	const [desktopSourceReady, setDesktopSourceReady] = useState(
+		() => !isTauriEnvironmentSync(),
+	);
 
 	// Apply theme and react to changes (system/manual)
 	React.useEffect(() => {
@@ -67,9 +76,45 @@ export function Layout() {
 	}, [theme]);
 
 	React.useEffect(() => {
+		let cancelled = false;
+
+		const syncDesktopCoreSource = async () => {
+			if (!isTauriEnvironmentSync()) {
+				setDesktopSourceReady(true);
+				return;
+			}
+
+			try {
+				const { invoke } = await import("@tauri-apps/api/core");
+				const source = (await invoke("mcp_shell_read_core_source")) as {
+					apiBaseUrl?: string;
+				};
+				if (!cancelled && typeof source.apiBaseUrl === "string") {
+					applyDesktopApiBaseUrl(source.apiBaseUrl);
+				}
+			} catch (error) {
+				if (import.meta.env.DEV) {
+					console.warn("[Layout] Failed to resolve desktop core source", error);
+				}
+			} finally {
+				if (!cancelled) {
+					setDesktopSourceReady(true);
+				}
+			}
+		};
+
+		void syncDesktopCoreSource();
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	React.useEffect(() => {
 		let unlistenMain: (() => void) | undefined;
 		let unlistenSettings: (() => void) | undefined;
 		let unlistenImportServer: (() => void) | undefined;
+		let unlistenCoreState: (() => void) | undefined;
 		let cancelled = false;
 
 		const bind = async () => {
@@ -99,6 +144,15 @@ export function Layout() {
 				unlistenImportServer = await listen("mcp-import/server", (event) => {
 					handleImportServerPayload(navigate, event.payload);
 				});
+				unlistenCoreState = await listen("mcpmate://core/status-changed", (event) => {
+					const payload =
+						event.payload && typeof event.payload === "object"
+							? (event.payload as { apiBaseUrl?: string })
+							: undefined;
+					if (typeof payload?.apiBaseUrl === "string") {
+						applyDesktopApiBaseUrl(payload.apiBaseUrl);
+					}
+				});
 
 				const pending = await invoke<unknown>(
 					"mcp_deep_link_take_pending_server_import",
@@ -122,6 +176,9 @@ export function Layout() {
 			}
 			if (unlistenImportServer) {
 				void unlistenImportServer();
+			}
+			if (unlistenCoreState) {
+				void unlistenCoreState();
 			}
 		};
 	}, [navigate]);
@@ -175,6 +232,10 @@ export function Layout() {
 	const handleFooterFeedbackClick = useCallback(() => {
 		void openFeedbackEmail();
 	}, []);
+
+	if (!desktopSourceReady) {
+		return <div className="min-h-screen bg-slate-50 dark:bg-slate-900" />;
+	}
 
 	return (
 		<div className="min-h-screen">
