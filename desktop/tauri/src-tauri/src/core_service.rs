@@ -260,6 +260,29 @@ pub async fn wait_for_localhost_core_stopped(api_port: u16) -> bool {
     false
 }
 
+/// Wait for a port to become available (not in use)
+pub async fn wait_for_port_available(port: u16) -> Result<()> {
+    use std::net::TcpListener;
+
+    for attempt in 0..30 {
+        // Try to bind to the port to check if it's available
+        match TcpListener::bind(format!("127.0.0.1:{}", port)) {
+            Ok(_) => {
+                // Port is available
+                return Ok(());
+            }
+            Err(_) => {
+                // Port still in use, wait and retry
+                if attempt < 29 {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+    }
+
+    anyhow::bail!("Port {} did not become available after 15 seconds", port)
+}
+
 pub async fn read_local_service_status(config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
     let (level, status) = {
         let manager = service_manager()?;
@@ -370,10 +393,13 @@ pub async fn restart_local_service(app: &AppHandle, config: &DesktopCoreSourceCo
 }
 
 pub async fn stop_local_service(config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
+    let label = service_label()?;
+
     let status = {
         let manager = service_manager()?;
-        manager.status(ServiceStatusCtx { label: service_label()? })?
+        manager.status(ServiceStatusCtx { label: label.clone() })?
     };
+
     if matches!(status, ServiceStatus::NotInstalled) {
         return read_local_service_status(config).await;
     }
@@ -381,9 +407,7 @@ pub async fn stop_local_service(config: &DesktopCoreSourceConfig) -> Result<Loca
     {
         let manager = service_manager()?;
         manager
-            .stop(ServiceStopCtx {
-                label: service_label()?,
-            })
+            .stop(ServiceStopCtx { label })
             .context("failed to stop local core service")?;
     }
 

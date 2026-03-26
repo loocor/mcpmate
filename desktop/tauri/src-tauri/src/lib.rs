@@ -1,6 +1,6 @@
 use std::{
-	process::{Child, Command, Stdio},
-	sync::Arc,
+    process::{Child, Command, Stdio},
+    sync::Arc,
 };
 
 use anyhow::{Context, Error, Result};
@@ -25,15 +25,12 @@ mod shell;
 mod source_config;
 use core_service::{
     LocalCoreServiceStatusView, install_local_service, read_local_service_status,
-    resolve_local_core_binary,
-    restart_local_service, start_local_service, stop_local_service,
+    resolve_local_core_binary, restart_local_service, start_local_service, stop_local_service,
     sync_local_service_definition, uninstall_local_service,
 };
 use deep_link::ImportServerDeepLinkPayload;
 use shell::{ShellPreferences, ShellState};
-use source_config::{
-    DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode,
-};
+use source_config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::Builder as UpdaterPluginBuilder;
@@ -103,35 +100,35 @@ struct DesktopCoreSourceView {
 
 #[derive(Clone, Default)]
 struct DesktopManagedCoreState {
-	inner: Arc<AsyncMutex<Option<Child>>>,
+    inner: Arc<AsyncMutex<Option<Child>>>,
 }
 
 impl DesktopManagedCoreState {
-	async fn replace(&self, child: Child) {
-		let mut guard = self.inner.lock().await;
-		*guard = Some(child);
-	}
+    async fn replace(&self, child: Child) {
+        let mut guard = self.inner.lock().await;
+        *guard = Some(child);
+    }
 
-	async fn take(&self) -> Option<Child> {
-		let mut guard = self.inner.lock().await;
-		guard.take()
-	}
+    async fn take(&self) -> Option<Child> {
+        let mut guard = self.inner.lock().await;
+        guard.take()
+    }
 
-	async fn is_spawned(&self) -> bool {
-		let mut guard = self.inner.lock().await;
-		if let Some(child) = guard.as_mut() {
-			match child.try_wait() {
-				Ok(Some(_)) => {
-					*guard = None;
-					false
-				}
-				Ok(None) => true,
-				Err(_) => true,
-			}
-		} else {
-			false
-		}
-	}
+    async fn is_spawned(&self) -> bool {
+        let mut guard = self.inner.lock().await;
+        if let Some(child) = guard.as_mut() {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    *guard = None;
+                    false
+                }
+                Ok(None) => true,
+                Err(_) => true,
+            }
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -155,7 +152,10 @@ impl From<ShellPreferences> for ShellPreferencesView {
 }
 
 impl DesktopCoreSourceView {
-    fn from_config(config: &DesktopCoreSourceConfig, local_service: LocalCoreServiceStatusView) -> Self {
+    fn from_config(
+        config: &DesktopCoreSourceConfig,
+        local_service: LocalCoreServiceStatusView,
+    ) -> Self {
         let api_base_url = match config.selected_source {
             DesktopCoreSourceKind::Localhost => {
                 format!("http://127.0.0.1:{}", config.localhost.api_port)
@@ -176,39 +176,99 @@ impl DesktopCoreSourceView {
     }
 }
 
-async fn sync_shell_service_state(shell_state: &ShellState, status: &LocalCoreServiceStatusView) -> Result<()> {
+async fn sync_shell_service_state(
+    shell_state: &ShellState,
+    status: &LocalCoreServiceStatusView,
+) -> Result<()> {
     shell_state
         .update_service_status(status.is_active_for_menu(), &status.label)
         .await
 }
 
 fn emit_core_state_changed(app: &tauri::AppHandle, view: &DesktopCoreSourceView) {
-	if let Err(err) = app.emit(shell::EVENT_CORE_STATE_CHANGED, view) {
-		warn!(error = %err, "Failed to emit core-state-changed event");
-	}
+    if let Err(err) = app.emit(shell::EVENT_CORE_STATE_CHANGED, view) {
+        warn!(error = %err, "Failed to emit core-state-changed event");
+    }
 }
 
 async fn read_core_state_view(
-	config: &DesktopCoreSourceConfig,
-	managed_state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
+    managed_state: &DesktopManagedCoreState,
 ) -> Result<DesktopCoreSourceView> {
-	let local_service = match config.localhost_runtime_mode {
-		LocalCoreRuntimeMode::Service => read_local_service_status(config).await?,
-		LocalCoreRuntimeMode::DesktopManaged => {
-			read_desktop_managed_status(managed_state, config).await?
-		}
-	};
-	Ok(DesktopCoreSourceView::from_config(config, local_service))
+    let local_service = match config.localhost_runtime_mode {
+        LocalCoreRuntimeMode::Service => read_local_service_status(config).await?,
+        LocalCoreRuntimeMode::DesktopManaged => {
+            read_desktop_managed_status(managed_state, config).await?
+        }
+    };
+    Ok(DesktopCoreSourceView::from_config(config, local_service))
 }
 
 async fn sync_and_emit_core_state(
-	app: &tauri::AppHandle,
-	shell_state: &ShellState,
-	view: &DesktopCoreSourceView,
+    app: &tauri::AppHandle,
+    shell_state: &ShellState,
+    view: &DesktopCoreSourceView,
 ) -> Result<()> {
-	sync_shell_service_state(shell_state, &view.local_service).await?;
-	emit_core_state_changed(app, view);
-	Ok(())
+    sync_shell_service_state(shell_state, &view.local_service).await?;
+    emit_core_state_changed(app, view);
+    Ok(())
+}
+
+async fn stop_localhost_runtime(
+    managed_state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
+) {
+    match config.localhost_runtime_mode {
+        LocalCoreRuntimeMode::DesktopManaged => {
+            let _ = stop_desktop_managed_core(managed_state, config).await;
+        }
+        LocalCoreRuntimeMode::Service => {
+            let _ = stop_local_service(config).await;
+        }
+    }
+}
+
+async fn wait_for_port_release(port: u16, label: &str, context: &str) {
+    if let Err(err) = core_service::wait_for_port_available(port).await {
+        warn!(error = %err, port, %label, %context, "Port did not become available");
+    }
+}
+
+async fn wait_for_localhost_ports(config: &DesktopCoreSourceConfig, context: &str) {
+    wait_for_port_release(config.localhost.api_port, "API", context).await;
+    if config.localhost.mcp_port != config.localhost.api_port {
+        wait_for_port_release(config.localhost.mcp_port, "MCP", context).await;
+    }
+}
+
+async fn handle_localhost_source_transition(
+    managed_state: &DesktopManagedCoreState,
+    previous: &DesktopCoreSourceConfig,
+    config: &DesktopCoreSourceConfig,
+) {
+    let runtime_mode_changed = previous.selected_source == DesktopCoreSourceKind::Localhost
+        && config.selected_source == DesktopCoreSourceKind::Localhost
+        && previous.localhost_runtime_mode != config.localhost_runtime_mode;
+
+    if runtime_mode_changed {
+        stop_localhost_runtime(managed_state, previous).await;
+        wait_for_localhost_ports(config, "after stopping previous localhost core").await;
+        return;
+    }
+
+    let leaving_desktop_managed = previous.selected_source == DesktopCoreSourceKind::Localhost
+        && previous.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
+        && config.selected_source != DesktopCoreSourceKind::Localhost;
+
+    if leaving_desktop_managed {
+        let _ = stop_desktop_managed_core(managed_state, previous).await;
+        wait_for_port_release(
+            previous.localhost.api_port,
+            "API",
+            "after stopping desktop-managed core",
+        )
+        .await;
+    }
 }
 
 pub fn run() -> Result<()> {
@@ -611,27 +671,28 @@ pub fn run() -> Result<()> {
     builder
         .build(tauri::generate_context!())
         .map_err(Error::new)?
-        .run(move |app_handle, event| {
-            match event {
-                #[cfg(target_os = "macos")]
-                RunEvent::Reopen { .. } => {
-                    if let Err(err) = shell::ensure_window_visibility(app_handle) {
-                        warn!(error = %err, "Failed to restore main window on app reopen");
-                    }
-                    if let Err(err) = app_handle.emit(shell::EVENT_OPEN_MAIN, json!({})) {
-                        warn!(error = %err, "Failed to emit open-main on app reopen");
-                    }
+        .run(move |app_handle, event| match event {
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => {
+                if let Err(err) = shell::ensure_window_visibility(app_handle) {
+                    warn!(error = %err, "Failed to restore main window on app reopen");
                 }
-                RunEvent::Exit => {
-				if let Some(state) = app_handle.try_state::<DesktopManagedCoreState>()
-					&& let Ok(config) = DesktopCoreSourceConfig::load(global_paths())
-					&& config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
-				{
-					let _ = tauri::async_runtime::block_on(stop_desktop_managed_core(state.inner(), &config));
-				}
-			}
-                _ => {}
+                if let Err(err) = app_handle.emit(shell::EVENT_OPEN_MAIN, json!({})) {
+                    warn!(error = %err, "Failed to emit open-main on app reopen");
+                }
             }
+            RunEvent::Exit => {
+                if let Some(state) = app_handle.try_state::<DesktopManagedCoreState>()
+                    && let Ok(config) = DesktopCoreSourceConfig::load(global_paths())
+                    && config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
+                {
+                    let _ = tauri::async_runtime::block_on(stop_desktop_managed_core(
+                        state.inner(),
+                        &config,
+                    ));
+                }
+            }
+            _ => {}
         });
 
     Ok(())
@@ -686,12 +747,12 @@ async fn mcp_shell_read_preferences(
 
 #[tauri::command]
 async fn mcp_shell_read_core_source(
-	managed_state: tauri::State<'_, DesktopManagedCoreState>,
+    managed_state: tauri::State<'_, DesktopManagedCoreState>,
 ) -> Result<DesktopCoreSourceView, String> {
     let config = DesktopCoreSourceConfig::load(global_paths()).map_err(|err| err.to_string())?;
-	read_core_state_view(&config, managed_state.inner())
-		.await
-		.map_err(|err| err.to_string())
+    read_core_state_view(&config, managed_state.inner())
+        .await
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -714,31 +775,25 @@ async fn mcp_shell_apply_core_source(
     DesktopCoreSourceConfig::save(global_paths(), &config).map_err(|err| err.to_string())?;
     persist_localhost_ports(&config);
 
-	if previous.selected_source == DesktopCoreSourceKind::Localhost
-		&& previous.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
-		&& (config.selected_source != DesktopCoreSourceKind::Localhost
-			|| config.localhost_runtime_mode != LocalCoreRuntimeMode::DesktopManaged)
-	{
-		let _ = stop_desktop_managed_core(managed_state.inner(), &previous).await;
-	}
+    handle_localhost_source_transition(managed_state.inner(), &previous, &config).await;
 
-	let view = match (config.selected_source, config.localhost_runtime_mode) {
-		(DesktopCoreSourceKind::Localhost, LocalCoreRuntimeMode::Service) => {
-			sync_local_service_definition(&app, &config)
-				.await
-				.map_err(|err| err.to_string())?;
-			read_core_state_view(&config, managed_state.inner())
-				.await
-				.map_err(|err| err.to_string())?
-		}
-		_ => read_core_state_view(&config, managed_state.inner())
-			.await
-			.map_err(|err| err.to_string())?,
-	};
+    let view = match (config.selected_source, config.localhost_runtime_mode) {
+        (DesktopCoreSourceKind::Localhost, LocalCoreRuntimeMode::Service) => {
+            sync_local_service_definition(&app, &config)
+                .await
+                .map_err(|err| err.to_string())?;
+            read_core_state_view(&config, managed_state.inner())
+                .await
+                .map_err(|err| err.to_string())?
+        }
+        _ => read_core_state_view(&config, managed_state.inner())
+            .await
+            .map_err(|err| err.to_string())?,
+    };
 
-	sync_and_emit_core_state(&app, shell_state.inner(), &view)
-		.await
-		.map_err(|err| err.to_string())?;
+    sync_and_emit_core_state(&app, shell_state.inner(), &view)
+        .await
+        .map_err(|err| err.to_string())?;
     Ok(view)
 }
 
@@ -751,59 +806,73 @@ async fn mcp_shell_manage_local_core_service(
 ) -> Result<DesktopCoreSourceView, String> {
     let config = DesktopCoreSourceConfig::load(global_paths()).map_err(|err| err.to_string())?;
 
-	let view = match (config.localhost_runtime_mode, action) {
-		(LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Start) => start_local_service(&app, &config)
-			.await
-			.map(|status| DesktopCoreSourceView::from_config(&config, status))
-			.map_err(|err| err.to_string())?,
-		(LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Restart) => restart_local_service(&app, &config)
-			.await
-			.map(|status| DesktopCoreSourceView::from_config(&config, status))
-			.map_err(|err| err.to_string())?,
-		(LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Stop) => stop_local_service(&config)
-			.await
-			.map(|status| DesktopCoreSourceView::from_config(&config, status))
-			.map_err(|err| err.to_string())?,
-		(LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Status) => read_core_state_view(&config, managed_state.inner())
-			.await
-			.map_err(|err| err.to_string())?,
-		(LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Install) => install_local_service(&app, &config)
-			.map(|status| DesktopCoreSourceView::from_config(&config, status))
-			.map_err(|err| err.to_string())?,
-		(LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Uninstall) => uninstall_local_service(&config)
-			.map(|status| DesktopCoreSourceView::from_config(&config, status))
-			.map_err(|err| err.to_string())?,
-		(LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Start) => {
-			start_desktop_managed_core(&app, managed_state.inner(), &config)
-				.await
-				.map(|status| DesktopCoreSourceView::from_config(&config, status))
-				.map_err(|err| err.to_string())?
-		}
-		(LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => {
-			let _ = stop_desktop_managed_core(managed_state.inner(), &config).await;
-			start_desktop_managed_core(&app, managed_state.inner(), &config)
-				.await
-				.map(|status| DesktopCoreSourceView::from_config(&config, status))
-				.map_err(|err| err.to_string())?
-		}
-		(LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Stop) => {
-			stop_desktop_managed_core(managed_state.inner(), &config)
-				.await
-				.map(|status| DesktopCoreSourceView::from_config(&config, status))
-				.map_err(|err| err.to_string())?
-		}
-		(LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Status) => read_core_state_view(&config, managed_state.inner())
-			.await
-			.map_err(|err| err.to_string())?,
-		(LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Install)
-		| (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Uninstall) => {
-			return Err("install/uninstall are only available in service mode".to_string());
-		}
-	};
+    let view = match (config.localhost_runtime_mode, action) {
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Start) => {
+            start_local_service(&app, &config)
+                .await
+                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Restart) => {
+            restart_local_service(&app, &config)
+                .await
+                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Stop) => {
+            stop_local_service(&config)
+                .await
+                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Status) => {
+            read_core_state_view(&config, managed_state.inner())
+                .await
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Install) => {
+            install_local_service(&app, &config)
+                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Uninstall) => {
+            uninstall_local_service(&config)
+                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Start) => {
+            start_desktop_managed_core(&app, managed_state.inner(), &config)
+                .await
+                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => {
+            let _ = stop_desktop_managed_core(managed_state.inner(), &config).await;
+            start_desktop_managed_core(&app, managed_state.inner(), &config)
+                .await
+                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Stop) => {
+            stop_desktop_managed_core(managed_state.inner(), &config)
+                .await
+                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Status) => {
+            read_core_state_view(&config, managed_state.inner())
+                .await
+                .map_err(|err| err.to_string())?
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Install)
+        | (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Uninstall) => {
+            return Err("install/uninstall are only available in service mode".to_string());
+        }
+    };
 
-	sync_and_emit_core_state(&app, shell_state.inner(), &view)
-		.await
-		.map_err(|err| err.to_string())?;
+    sync_and_emit_core_state(&app, shell_state.inner(), &view)
+        .await
+        .map_err(|err| err.to_string())?;
     Ok(view)
 }
 
@@ -960,7 +1029,6 @@ fn initialize_menu(app: &mut tauri::App) -> Result<()> {
     Ok(())
 }
 
-
 pub(crate) fn spawn_main_window<M>(manager: &M) -> Result<()>
 where
     M: Manager<Wry>,
@@ -1080,107 +1148,151 @@ fn initialize_paths(app: &mut tauri::App) -> Result<()> {
 }
 
 async fn initialize_selected_core_source(
-	app: tauri::AppHandle,
-	shell_state: ShellState,
-	managed_state: DesktopManagedCoreState,
+    app: tauri::AppHandle,
+    shell_state: ShellState,
+    managed_state: DesktopManagedCoreState,
 ) -> Result<()> {
     let config = DesktopCoreSourceConfig::load(global_paths())?;
     let status = match config.localhost_runtime_mode {
-		LocalCoreRuntimeMode::Service => read_local_service_status(&config).await?,
-		LocalCoreRuntimeMode::DesktopManaged => {
-			if config.selected_source == DesktopCoreSourceKind::Localhost {
-				start_desktop_managed_core(&app, &managed_state, &config).await?
-			} else {
-				read_desktop_managed_status(&managed_state, &config).await?
-			}
-		}
-	};
-	let view = DesktopCoreSourceView::from_config(&config, status);
-	sync_and_emit_core_state(&app, &shell_state, &view).await?;
+        LocalCoreRuntimeMode::Service => read_local_service_status(&config).await?,
+        LocalCoreRuntimeMode::DesktopManaged => {
+            if config.selected_source == DesktopCoreSourceKind::Localhost {
+                start_desktop_managed_core(&app, &managed_state, &config).await?
+            } else {
+                read_desktop_managed_status(&managed_state, &config).await?
+            }
+        }
+    };
+    let view = DesktopCoreSourceView::from_config(&config, status);
+    sync_and_emit_core_state(&app, &shell_state, &view).await?;
 
     Ok(())
 }
 
-fn spawn_desktop_managed_core(app: &tauri::AppHandle, config: &DesktopCoreSourceConfig) -> Result<Child> {
-	let binary = resolve_local_core_binary(app)?;
-	let mut command = Command::new(binary);
-	command
-		.arg("--api-port")
-		.arg(config.localhost.api_port.to_string())
-		.arg("--mcp-port")
-		.arg(config.localhost.mcp_port.to_string())
-		.arg("--log-level")
-		.arg("info")
-		.stdin(Stdio::null())
-		.stdout(Stdio::null())
-		.stderr(Stdio::null())
-		.env("MCPMATE_DATA_DIR", global_paths().base_dir())
-		.env("MCPMATE_API_PORT", config.localhost.api_port.to_string())
-		.env("MCPMATE_MCP_PORT", config.localhost.mcp_port.to_string());
-	command.spawn().context("failed to spawn desktop-managed localhost core")
+fn spawn_desktop_managed_core(
+    app: &tauri::AppHandle,
+    config: &DesktopCoreSourceConfig,
+) -> Result<Child> {
+    let binary = resolve_local_core_binary(app)?;
+    let mut command = Command::new(binary);
+    command
+        .arg("--api-port")
+        .arg(config.localhost.api_port.to_string())
+        .arg("--mcp-port")
+        .arg(config.localhost.mcp_port.to_string())
+        .arg("--log-level")
+        .arg("info")
+        .stdin(Stdio::null())
+        .env("MCPMATE_DATA_DIR", global_paths().base_dir())
+        .env("MCPMATE_API_PORT", config.localhost.api_port.to_string())
+        .env("MCPMATE_MCP_PORT", config.localhost.mcp_port.to_string());
+    configure_desktop_managed_stdio(&mut command);
+
+    command
+        .spawn()
+        .context("failed to spawn desktop-managed localhost core")
+}
+
+fn configure_desktop_managed_stdio(command: &mut Command) {
+    #[cfg(debug_assertions)]
+    {
+        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
 }
 
 async fn read_desktop_managed_status(
-	state: &DesktopManagedCoreState,
-	config: &DesktopCoreSourceConfig,
+    state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
-	let running = state.is_spawned().await || core_service::probe_localhost_core(config.localhost.api_port).await;
-	Ok(LocalCoreServiceStatusView {
-		status: if running {
-			core_service::LocalCoreServiceStatusKind::Running
-		} else {
-			core_service::LocalCoreServiceStatusKind::Stopped
-		},
-		label: if running { "Running".to_string() } else { "Stopped".to_string() },
-		detail: if running {
-			"The localhost core is managed by MCPMate Desktop and will stop only when the app truly quits.".to_string()
-		} else {
-			"The localhost core is currently stopped. Starting it will keep it alive while MCPMate Desktop is running.".to_string()
-		},
-		level: "desktop".to_string(),
-		installed: false,
-		running,
-	})
+    let running = state.is_spawned().await
+        || core_service::probe_localhost_core(config.localhost.api_port).await;
+    Ok(LocalCoreServiceStatusView {
+        status: if running {
+            core_service::LocalCoreServiceStatusKind::Running
+        } else {
+            core_service::LocalCoreServiceStatusKind::Stopped
+        },
+        label: if running {
+            "Running".to_string()
+        } else {
+            "Stopped".to_string()
+        },
+        detail: if running {
+            "The localhost core is managed by MCPMate Desktop and will stop only when the app truly quits.".to_string()
+        } else {
+            "The localhost core is currently stopped. Starting it will keep it alive while MCPMate Desktop is running.".to_string()
+        },
+        level: "desktop".to_string(),
+        installed: false,
+        running,
+    })
 }
 
 async fn start_desktop_managed_core(
-	app: &tauri::AppHandle,
-	state: &DesktopManagedCoreState,
-	config: &DesktopCoreSourceConfig,
+    app: &tauri::AppHandle,
+    state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
-	if core_service::probe_localhost_core(config.localhost.api_port).await {
-		return read_desktop_managed_status(state, config).await;
-	}
-	let child = spawn_desktop_managed_core(app, config)?;
-	state.replace(child).await;
-	core_service::wait_for_localhost_core(config.localhost.api_port).await?;
-	read_desktop_managed_status(state, config).await
+    if core_service::probe_localhost_core(config.localhost.api_port).await {
+        return read_desktop_managed_status(state, config).await;
+    }
+    let child = spawn_desktop_managed_core(app, config)?;
+    state.replace(child).await;
+
+    spawn_core_ready_notification(app.clone(), state.clone(), config.clone());
+
+    read_desktop_managed_status(state, config).await
+}
+
+fn spawn_core_ready_notification(
+    app: tauri::AppHandle,
+    state: DesktopManagedCoreState,
+    config: DesktopCoreSourceConfig,
+) {
+    tauri::async_runtime::spawn(async move {
+        if core_service::wait_for_localhost_core(config.localhost.api_port)
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        if let Ok(status) = read_desktop_managed_status(&state, &config).await {
+            let view = DesktopCoreSourceView::from_config(&config, status);
+            emit_core_state_changed(&app, &view);
+        }
+    });
 }
 
 async fn stop_desktop_managed_core(
-	state: &DesktopManagedCoreState,
-	config: &DesktopCoreSourceConfig,
+    state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
-	if let Some(mut child) = state.take().await {
-		child
-			.kill()
-			.context("failed to kill desktop-managed localhost core process")?;
-		child
-			.wait()
-			.context("failed to wait for desktop-managed localhost core process exit")?;
-	}
+    if let Some(mut child) = state.take().await {
+        child
+            .kill()
+            .context("failed to kill desktop-managed localhost core process")?;
+        child
+            .wait()
+            .context("failed to wait for desktop-managed localhost core process exit")?;
+    }
 
-	let _ = core_service::wait_for_localhost_core_stopped(config.localhost.api_port).await;
+    let _ = core_service::wait_for_localhost_core_stopped(config.localhost.api_port).await;
 
-	for _ in 0..10 {
-		let status = read_desktop_managed_status(state, config).await?;
-		if !status.running {
-			return Ok(status);
-		}
-		sleep(Duration::from_millis(300)).await;
-	}
+    for _ in 0..10 {
+        let status = read_desktop_managed_status(state, config).await?;
+        if !status.running {
+            return Ok(status);
+        }
+        sleep(Duration::from_millis(300)).await;
+    }
 
-	read_desktop_managed_status(state, config).await
+    read_desktop_managed_status(state, config).await
 }
 
 fn persist_localhost_ports(config: &DesktopCoreSourceConfig) {
@@ -1193,7 +1305,6 @@ fn persist_localhost_ports(config: &DesktopCoreSourceConfig) {
         warn!(error = %err, "Failed to persist localhost core ports");
     }
 }
-
 
 fn try_use_default_paths() -> Result<MCPMatePaths> {
     let paths = MCPMatePaths::new()?;
