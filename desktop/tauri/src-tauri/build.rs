@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     embed_auth_config_from_env_file();
+    ensure_local_core_sidecar();
 
     // Allow cfg gate in sources and enable a compile-time cfg for a special diagnostic build of the market proxy.
     println!("cargo:rustc-check-cfg=cfg(market_diag_default)");
@@ -26,6 +28,75 @@ fn main() {
     }
 
     tauri_build::build();
+}
+
+fn ensure_local_core_sidecar() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.join("../../..");
+    let backend_dir = workspace_root.join("backend");
+    let target = env::var("TARGET").expect("TARGET");
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let exe_suffix = if target.contains("windows") {
+        ".exe"
+    } else {
+        ""
+    };
+
+    let sidecar_dir = backend_dir.join("target/sidecars");
+    let sidecar_target = sidecar_dir.join(format!("mcpmate-core-{}{}", target, exe_suffix));
+    let sidecar_plain = sidecar_dir.join(format!("mcpmate-core{}", exe_suffix));
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        backend_dir.join("src/main.rs").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        backend_dir.join("Cargo.toml").display()
+    );
+
+    if sidecar_target.exists() && sidecar_plain.exists() {
+        return;
+    }
+
+    let mut cargo = Command::new("cargo");
+    cargo
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(backend_dir.join("Cargo.toml"))
+        .arg("-p")
+        .arg("mcpmate")
+        .arg("--bin")
+        .arg("mcpmate")
+        .arg("--target")
+        .arg(&target);
+
+    if profile == "release" {
+        cargo.arg("--release");
+    }
+
+    let status = cargo
+        .status()
+        .expect("failed to invoke cargo build for mcpmate core sidecar");
+    if !status.success() {
+        panic!("failed to build mcpmate core sidecar");
+    }
+
+    let built_binary = backend_dir
+        .join("target")
+        .join(&target)
+        .join(&profile)
+        .join(format!("mcpmate{}", exe_suffix));
+
+    if !built_binary.exists() {
+        panic!("missing built mcpmate binary at {}", built_binary.display());
+    }
+
+    fs::create_dir_all(&sidecar_dir).expect("failed to create sidecar directory");
+    fs::copy(&built_binary, &sidecar_target)
+        .expect("failed to copy mcpmate core sidecar target file");
+    fs::copy(&built_binary, &sidecar_plain)
+        .expect("failed to copy mcpmate core sidecar plain file");
 }
 
 /// Load `embed.env` next to Cargo.toml and emit `cargo:rustc-env` for account/auth settings.

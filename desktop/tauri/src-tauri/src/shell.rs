@@ -43,13 +43,17 @@ pub fn tray_template_icon() -> Image<'static> {
 
 pub const TRAY_ID: &str = "mcpmate.tray.main";
 pub const MENU_OPEN_MAIN: &str = "mcpmate.tray.open_main";
-pub const MENU_TOGGLE_SERVICE: &str = "mcpmate.tray.toggle_service";
+pub const MENU_SERVICE_STATUS: &str = "mcpmate.tray.service_status";
+pub const MENU_START_SERVICE: &str = "mcpmate.tray.start_service";
+pub const MENU_RESTART_SERVICE: &str = "mcpmate.tray.restart_service";
+pub const MENU_STOP_SERVICE: &str = "mcpmate.tray.stop_service";
 pub const MENU_OPEN_SETTINGS: &str = "mcpmate.tray.open_settings";
 pub const MENU_SHOW_ABOUT: &str = "mcpmate.tray.show_about";
 pub const MENU_QUIT: &str = "mcpmate.tray.quit";
 
 pub const EVENT_OPEN_MAIN: &str = "mcpmate://open-main";
 pub const EVENT_OPEN_SETTINGS: &str = "mcpmate://open-settings";
+pub const EVENT_CORE_STATE_CHANGED: &str = "mcpmate://core/status-changed";
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -124,8 +128,11 @@ struct ShellRuntimeState {
     preferences: ShellPreferences,
     prefs_path: PathBuf,
     tray: Option<TrayIcon<Wry>>,
-    toggle_item: Option<MenuItem<Wry>>,
-    backend_running: bool,
+    status_item: Option<MenuItem<Wry>>,
+    start_item: Option<MenuItem<Wry>>,
+    restart_item: Option<MenuItem<Wry>>,
+    stop_item: Option<MenuItem<Wry>>,
+    service_running: bool,
 }
 
 #[derive(Clone)]
@@ -150,25 +157,33 @@ impl ShellState {
         self.inner.lock().await.preferences.clone()
     }
 
-    pub async fn is_backend_running(&self) -> bool {
-        self.inner.lock().await.backend_running
-    }
-
     pub async fn register_tray(
         &self,
         tray: TrayIcon<Wry>,
-        toggle_item: MenuItem<Wry>,
+        status_item: MenuItem<Wry>,
+        start_item: MenuItem<Wry>,
+        restart_item: MenuItem<Wry>,
+        stop_item: MenuItem<Wry>,
     ) -> Result<()> {
         {
             let mut guard = self.inner.lock().await;
             guard.tray = Some(tray.clone());
-            guard.toggle_item = Some(toggle_item.clone());
-            Self::update_toggle_item_label(&toggle_item, guard.backend_running)?;
+            guard.status_item = Some(status_item.clone());
+            guard.start_item = Some(start_item.clone());
+            guard.restart_item = Some(restart_item.clone());
+            guard.stop_item = Some(stop_item.clone());
+            Self::update_service_menu_items(
+                &status_item,
+                &start_item,
+                &restart_item,
+                &stop_item,
+                guard.service_running,
+                "Unknown",
+            )?;
             let prefs = guard.preferences.clone();
-            let backend_running = guard.backend_running;
             drop(guard);
 
-            let visible = Self::should_show_icon(&prefs, backend_running);
+            let visible = Self::should_show_icon(&prefs);
             if visible {
                 let icon = tray_template_icon();
                 set_tray_icon_with_template(&tray, icon)
@@ -192,14 +207,13 @@ impl ShellState {
     ) -> Result<()> {
         prefs.apply_constraints();
 
-        let (path, tray, backend_running, prev_show_dock_icon) = {
+        let (path, tray, prev_show_dock_icon) = {
             let mut guard = self.inner.lock().await;
             let prev_show_dock_icon = guard.preferences.show_dock_icon;
             guard.preferences = prefs.clone();
             (
                 guard.prefs_path.clone(),
                 guard.tray.clone(),
-                guard.backend_running,
                 prev_show_dock_icon,
             )
         };
@@ -209,36 +223,48 @@ impl ShellState {
         }
 
         if let Some(tray) = tray {
-            Self::apply_tray_visibility(&tray, &prefs, backend_running)?;
+            Self::apply_tray_visibility(&tray, &prefs)?;
         }
 
         ShellPreferences::save_to_path(&path, &prefs)?;
         Ok(())
     }
 
-    pub async fn update_backend_running(&self, running: bool) -> Result<()> {
-        let (tray, toggle_item, prefs) = {
+    pub async fn update_service_status(&self, running: bool, label: &str) -> Result<()> {
+        let (tray, status_item, start_item, restart_item, stop_item, prefs) = {
             let mut guard = self.inner.lock().await;
-            guard.backend_running = running;
+            guard.service_running = running;
             (
                 guard.tray.clone(),
-                guard.toggle_item.clone(),
+                guard.status_item.clone(),
+                guard.start_item.clone(),
+                guard.restart_item.clone(),
+                guard.stop_item.clone(),
                 guard.preferences.clone(),
             )
         };
 
-        if let Some(item) = toggle_item {
-            Self::update_toggle_item_label(&item, running)?;
+        if let (Some(status_item), Some(start_item), Some(restart_item), Some(stop_item)) =
+            (status_item, start_item, restart_item, stop_item)
+        {
+            Self::update_service_menu_items(
+                &status_item,
+                &start_item,
+                &restart_item,
+                &stop_item,
+                running,
+                label,
+            )?;
         }
 
         if let Some(tray) = tray {
-            Self::apply_tray_visibility(&tray, &prefs, running)?;
+            Self::apply_tray_visibility(&tray, &prefs)?;
         }
 
         Ok(())
     }
 
-    fn should_show_icon(prefs: &ShellPreferences, _backend_running: bool) -> bool {
+    fn should_show_icon(prefs: &ShellPreferences) -> bool {
         if !prefs.show_dock_icon {
             return true;
         }
@@ -249,12 +275,8 @@ impl ShellState {
         }
     }
 
-    fn apply_tray_visibility(
-        tray: &TrayIcon<Wry>,
-        prefs: &ShellPreferences,
-        backend_running: bool,
-    ) -> Result<()> {
-        let visible = Self::should_show_icon(prefs, backend_running);
+    fn apply_tray_visibility(tray: &TrayIcon<Wry>, prefs: &ShellPreferences) -> Result<()> {
+        let visible = Self::should_show_icon(prefs);
         if visible {
             let icon = tray_template_icon();
             set_tray_icon_with_template(tray, icon)
@@ -269,14 +291,27 @@ impl ShellState {
         Ok(())
     }
 
-    fn update_toggle_item_label(item: &MenuItem<Wry>, running: bool) -> Result<()> {
-        let text = if running {
-            "Stop Service"
-        } else {
-            "Start Service"
-        };
-        item.set_text(text)
-            .context("failed to update tray toggle item text")
+    fn update_service_menu_items(
+        status_item: &MenuItem<Wry>,
+        start_item: &MenuItem<Wry>,
+        restart_item: &MenuItem<Wry>,
+        stop_item: &MenuItem<Wry>,
+        running: bool,
+        label: &str,
+    ) -> Result<()> {
+        status_item
+            .set_text(format!("Local Core: {label}"))
+            .context("failed to update tray service status label")?;
+        start_item
+            .set_enabled(!running)
+            .context("failed to update tray start item state")?;
+        restart_item
+            .set_enabled(running)
+            .context("failed to update tray restart item state")?;
+        stop_item
+            .set_enabled(running)
+            .context("failed to update tray stop item state")?;
+        Ok(())
     }
 }
 

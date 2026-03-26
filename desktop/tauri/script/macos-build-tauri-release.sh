@@ -394,7 +394,7 @@ fi
 mkdir -p "$SIDECAR_OUTPUT_DIR"
 
 if [[ -d "$SIDECAR_OUTPUT_DIR" ]]; then
-  find "$SIDECAR_OUTPUT_DIR" -maxdepth 1 -type f -name 'bridge*' -delete
+  find "$SIDECAR_OUTPUT_DIR" -maxdepth 1 -type f \( -name 'bridge*' -o -name 'mcpmate-core*' \) -delete
 fi
 
 build_bridge_sidecar() {
@@ -427,10 +427,41 @@ build_bridge_sidecar() {
   chmod +x "$SIDECAR_OUTPUT_DIR/bridge"
 }
 
+build_core_sidecar() {
+  local target="$1"
+
+  local cargo_profile_flags=""
+  if [[ "$PROFILE" == "release" ]]; then
+    cargo_profile_flags="--release"
+  fi
+
+  echo "[macos-build-tauri-release] building core sidecar for $target"
+  cargo build \
+    --manifest-path "$BACKEND_DIR/Cargo.toml" \
+    -p mcpmate \
+    ${cargo_profile_flags} \
+    --bin mcpmate \
+    --target "$target"
+  local build_subdir="debug"
+  if [[ "$PROFILE" == "release" ]]; then
+    build_subdir="release"
+  fi
+  local built_path="$BACKEND_DIR/target/$target/$build_subdir/mcpmate"
+  if [[ ! -f "$built_path" ]]; then
+    echo "[macos-build-tauri-release] missing core binary at $built_path" >&2
+    exit 1
+  fi
+  cp "$built_path" "$SIDECAR_OUTPUT_DIR/mcpmate-core-$target"
+  chmod +x "$SIDECAR_OUTPUT_DIR/mcpmate-core-$target"
+  cp "$built_path" "$SIDECAR_OUTPUT_DIR/mcpmate-core"
+  chmod +x "$SIDECAR_OUTPUT_DIR/mcpmate-core"
+}
+
 for TARGET in "${TARGET_LIST[@]}"; do
   echo "[macos-build-tauri-release] building target=$TARGET profile=$PROFILE bundles=$BUNDLES"
 
   build_bridge_sidecar "$TARGET"
+  build_core_sidecar "$TARGET"
 
   cmd=(
     cargo tauri build

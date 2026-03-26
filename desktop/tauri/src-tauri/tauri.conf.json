@@ -37,7 +37,10 @@
 		"active": true,
 		"targets": ["app", "dmg"],
 		"icon": ["icons/icon.icns"],
-		"externalBin": ["../../../backend/target/sidecars/bridge"],
+		"externalBin": [
+			"../../../backend/target/sidecars/bridge",
+			"../../../backend/target/sidecars/mcpmate-core"
+		],
 		"macOS": {
 			"entitlements": "entitlements.plist",
 			"minimumSystemVersion": "10.15",
