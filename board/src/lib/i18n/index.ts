@@ -3,6 +3,7 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 import { inspectorTranslations } from "../../components/i18n/inspector";
 import { accountTranslations } from "../../pages/account/i18n";
+import { auditTranslations } from "../../pages/audit/i18n";
 import { clientsTranslations } from "../../pages/clients/i18n";
 import { dashboardTranslations } from "../../pages/dashboard/i18n";
 import { marketTranslations } from "../../pages/market/i18n";
@@ -48,6 +49,9 @@ export const loadTranslations = (
 };
 
 export const loadPageTranslations = {
+	audit: () => {
+		loadTranslations("audit", auditTranslations);
+	},
 	dashboard: () => {
 		loadTranslations("dashboard", dashboardTranslations);
 	},

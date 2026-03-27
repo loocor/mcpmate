@@ -183,30 +183,38 @@ export function Layout() {
 		};
 	}, [navigate]);
 
-	// Responsive sidebar: auto-collapse on small screens; if it was auto-collapsed,
-	// re-open when returning to large screens. Manual toggles remain respected.
+	const sidebarOpenRef = React.useRef(sidebarOpen);
+	React.useEffect(() => {
+		sidebarOpenRef.current = sidebarOpen;
+	}, [sidebarOpen]);
+
+	// Responsive sidebar: auto-collapse once on entering narrow widths, and allow
+	// manual expand while narrow. Re-open on wide screens only if last close was auto.
 	React.useEffect(() => {
 		const autoKey = "mcp_sidebar_auto";
+		const BREAKPOINT = 1200;
 		const handler = () => {
 			try {
 				const w = window.innerWidth;
-				if (w < 1200) {
-					if (sidebarOpen) setSidebarOpen(false);
-					try {
-						localStorage.setItem(autoKey, "1");
-					} catch {
-						/* noop */
+				if (w < BREAKPOINT) {
+					if (sidebarOpenRef.current) {
+						setSidebarOpen(false);
+						try {
+							localStorage.setItem(autoKey, "1");
+						} catch {
+							/* noop */
+						}
 					}
 					return;
 				}
-				// Large screens: only auto-open if last close was auto
+				// Wide screens: only auto-open if last close was auto
 				let wasAuto = false;
 				try {
 					wasAuto = localStorage.getItem(autoKey) === "1";
 				} catch {
 					/* noop */
 				}
-				if (w >= 1200 && wasAuto && !sidebarOpen) {
+				if (w >= BREAKPOINT && wasAuto && !sidebarOpenRef.current) {
 					setSidebarOpen(true);
 					try {
 						localStorage.removeItem(autoKey);
@@ -221,7 +229,7 @@ export function Layout() {
 		handler();
 		window.addEventListener("resize", handler);
 		return () => window.removeEventListener("resize", handler);
-	}, [sidebarOpen, setSidebarOpen]);
+	}, [setSidebarOpen]);
 
 	const termsLabel = t("layout.terms", { defaultValue: "Terms" });
 	const privacyLabel = t("layout.privacy", { defaultValue: "Privacy" });

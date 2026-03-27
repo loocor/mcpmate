@@ -8,6 +8,8 @@ import {
 } from "react-router-dom";
 import { Layout } from "./components/layout/layout";
 import { LanguageSynchronizer } from "./components/language-synchronizer.ts";
+import { ApiDocsPage } from "./pages/api-docs/api-docs-page";
+import { AuditPage } from "./pages/audit/audit-page";
 import { ClientDetailPage } from "./pages/clients/client-detail-page";
 import { ClientsPage } from "./pages/clients/clients-page";
 import { DashboardPage } from "./pages/dashboard/dashboard-page";
@@ -76,6 +78,8 @@ function App() {
 						<Route path="clients" element={<ClientsPage />} />
 						<Route path="clients/:identifier" element={<ClientDetailPage />} />
 						<Route path="runtime" element={<RuntimePage />} />
+						<Route path="audit" element={<AuditPage />} />
+						<Route path="api-docs" element={<ApiDocsPage />} />
 						<Route path="account" element={<Navigate to="/" replace />} />
 						<Route path="settings" element={<SettingsPage />} />
 
