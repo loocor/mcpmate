@@ -10,6 +10,7 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from "../../components/ui/sidebar";
+import { detectLocale, getLocalizedText, getGroupName } from "./sidebar-helpers";
 
 const WipTag = () => (
 	<span className="ml-1 inline-flex items-center rounded-sm bg-amber-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-800 leading-none opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
@@ -26,7 +27,7 @@ const renderMenuLabel = (title: React.ReactNode) => (
 
 export default function Sidebar({ topPx }: { topPx?: number }) {
 	const location = useLocation();
-	const locale = location.pathname.startsWith("/docs/zh") ? "zh" : "en";
+	const locale = detectLocale(location.pathname);
 	const nav = React.useMemo<DocNav | undefined>(
 		() => docsNav.find((n) => n.locale === locale),
 		[locale],
@@ -172,7 +173,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 					<input
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
-						placeholder={locale === "zh" ? "搜索文档…" : "Search docs…"}
+						placeholder={getLocalizedText(locale, "search")}
 						className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-800/70 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
 					/>
 					{query && (
@@ -215,7 +216,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 									.includes(query.toLowerCase()),
 							) && (
 								<div className="px-3 py-2 text-xs text-slate-500">
-									{locale === "zh" ? "无匹配结果" : "No results"}
+									{getLocalizedText(locale, "noResults")}
 								</div>
 							)}
 						</div>
@@ -260,8 +261,8 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 
 								const collapsed = openGroup !== g.group;
 								const indent =
-									g.group === (locale === "zh" ? "功能特性" : "Features") ||
-									g.group === (locale === "zh" ? "操作指南" : "Guides");
+									g.group === getGroupName(locale, "Features") ||
+									g.group === getGroupName(locale, "Guides");
 								return (
 									<SidebarGroup key={g.group}>
 										<button

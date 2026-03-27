@@ -1,4 +1,4 @@
-export type Locale = "en" | "zh";
+export type Locale = "en" | "zh" | "ja";
 
 export type DocPage = {
 	id: string;
@@ -518,6 +518,256 @@ export const docsNav: DocNav[] = [
 						path: "/docs/zh/roadmap",
 						title: "开发规划",
 						component: () => import("./pages/zh/Roadmap"),
+					},
+				],
+			},
+		],
+	},
+	{
+		locale: "ja",
+		groups: [
+			{
+				group: "",
+				pages: [
+					{
+						id: "quickstart",
+						path: "/docs/ja/quickstart",
+						title: "クイックスタート",
+						summary: "数分で MCPMate をインストールして実行。",
+						keywords: ["インストール", "セットアップ"],
+						component: () => import("./pages/ja/Quickstart"),
+					},
+				],
+			},
+			{
+				group: "機能",
+				pages: [
+					{
+						id: "features-overview",
+						path: "/docs/ja/features-overview",
+						title: "概要",
+						summary: "MCPMate の強力な機能を探索",
+						component: () => import("./pages/ja/FeaturesOverview"),
+					},
+					{
+						id: "centralized-config",
+						path: "/docs/ja/centralized-config",
+						title: "一元管理",
+						component: () => import("./pages/ja/CentralizedConfig"),
+					},
+					{
+						id: "resource-optimization",
+						path: "/docs/ja/resource-optimization",
+						title: "リソース最適化",
+						component: () => import("./pages/ja/ResourceOptimization"),
+					},
+					{
+						id: "inspector",
+						path: "/docs/ja/inspector",
+						title: "インスペクター",
+						component: () => import("./pages/ja/Inspector"),
+					},
+					{
+						id: "context-switching",
+						path: "/docs/ja/context-switching",
+						title: "シームレスなコンテキスト切り替え",
+						component: () => import("./pages/ja/ContextSwitching"),
+					},
+					{
+						id: "protocol-bridging",
+						path: "/docs/ja/protocol-bridging",
+						title: "プロトコルブリッジ",
+						component: () => import("./pages/ja/ProtocolBridging"),
+					},
+					{
+						id: "marketplace",
+						path: "/docs/ja/marketplace",
+						title: "インラインマーケット",
+						component: () => import("./pages/ja/Marketplace"),
+					},
+					{
+						id: "granular-controls",
+						path: "/docs/ja/granular-controls",
+						title: "きめ細かい制御",
+						component: () => import("./pages/ja/GranularControls"),
+					},
+					{
+						id: "auto-discovery",
+						path: "/docs/ja/auto-discovery",
+						title: "自動検出とインポート",
+						component: () => import("./pages/ja/AutoDiscovery"),
+					},
+					{
+						id: "uni-import",
+						path: "/docs/ja/uni-import",
+						title: "ユニインポート",
+						component: () => import("./pages/ja/UniImport"),
+					},
+				],
+			},
+			{
+				group: "操作ガイド",
+				pages: [
+					{
+						id: "guides-overview",
+						path: "/docs/ja/guides-overview",
+						title: "概要",
+						summary: "MCPMate を効率的に使いこなす",
+						component: () => import("./pages/ja/GuidesOverview"),
+					},
+					{
+						id: "dashboard",
+						path: "/docs/ja/dashboard",
+						title: "ダッシュボード",
+						component: () => import("./pages/ja/Dashboard"),
+					},
+					{
+						group: "プロファイル",
+						pages: [
+							{
+								id: "profile",
+								path: "/docs/ja/profile",
+								title: "概要",
+								summary: "プロファイルモジュールの価値、範囲、ドキュメント構成を理解する。",
+								component: () => import("./pages/ja/Profile"),
+							},
+							{
+								id: "profile-presets",
+								path: "/docs/ja/profile-presets",
+								title: "プリセットテンプレート",
+								component: () => import("./pages/ja/ProfilePresets"),
+							},
+							{
+								id: "profile-detail-overview",
+								path: "/docs/ja/profile-detail-overview",
+								title: "詳細概要",
+								component: () => import("./pages/ja/ProfileDetailOverview"),
+							},
+							{
+								id: "profile-capabilities",
+								path: "/docs/ja/profile-capabilities",
+								title: "能力タブ",
+								component: () => import("./pages/ja/ProfileCapabilities"),
+							},
+						],
+					},
+					{
+						group: "クライアント",
+						pages: [
+							{
+								id: "clients",
+								path: "/docs/ja/clients",
+								title: "概要",
+								summary: "クライアントアプリの一覧と詳細フローの役割分担を理解する。",
+								component: () => import("./pages/ja/ClientApps"),
+							},
+							{
+								id: "client-detail-overview",
+								path: "/docs/ja/client-detail-overview",
+								title: "詳細概要",
+								component: () => import("./pages/ja/ClientDetailOverview"),
+							},
+							{
+								id: "client-configuration",
+								path: "/docs/ja/client-configuration",
+								title: "設定管理",
+								component: () => import("./pages/ja/ClientConfiguration"),
+							},
+							{
+								id: "client-backups",
+								path: "/docs/ja/client-backups",
+								title: "バックアップと復元",
+								component: () => import("./pages/ja/ClientBackups"),
+							},
+						],
+					},
+					{
+						group: "サーバー",
+						pages: [
+							{
+								id: "servers",
+								path: "/docs/ja/servers",
+								title: "概要",
+								component: () => import("./pages/ja/Servers"),
+							},
+							{
+								id: "server-import-preview",
+								path: "/docs/ja/server-import-preview",
+								title: "インポートとプレビュー",
+								component: () => import("./pages/ja/ServerImportPreview"),
+							},
+							{
+								id: "server-detail-overview",
+								path: "/docs/ja/server-detail-overview",
+								title: "詳細概要",
+								component: () => import("./pages/ja/ServerDetailOverview"),
+							},
+							{
+								id: "server-capabilities",
+								path: "/docs/ja/server-capabilities",
+								title: "能力閲覧",
+								component: () => import("./pages/ja/ServerCapabilities"),
+							},
+							{
+								id: "server-inspector",
+								path: "/docs/ja/server-inspector",
+								title: "インスペクター",
+								component: () => import("./pages/ja/ServerInspector"),
+							},
+							{
+								id: "server-instances",
+								path: "/docs/ja/server-instances",
+								title: "インスタンス管理",
+								component: () => import("./pages/ja/ServerInstances"),
+							},
+						],
+					},
+					{
+						id: "market",
+						path: "/docs/ja/market",
+						title: "マーケット",
+						component: () => import("./pages/ja/Market"),
+					},
+					{
+						id: "runtime",
+						path: "/docs/ja/runtime",
+						title: "ランタイム",
+						component: () => import("./pages/ja/Runtime"),
+					},
+					{
+						id: "logs",
+						path: "/docs/ja/logs",
+						title: "監査ログ",
+						component: () => import("./pages/ja/Logs"),
+					},
+					{
+						id: "api-docs",
+						path: "/docs/ja/api-docs",
+						title: "API ドキュメント",
+						component: () => import("./pages/ja/APIDocs"),
+					},
+					{
+						id: "settings",
+						path: "/docs/ja/settings",
+						title: "設定",
+						component: () => import("./pages/ja/Settings"),
+					},
+				],
+			},
+			{
+				group: "",
+				pages: [
+					{
+						id: "changelog",
+						path: "/docs/ja/changelog",
+						title: "変更履歴",
+						component: () => import("./pages/ja/Changelog"),
+					},
+					{
+						id: "roadmap",
+						path: "/docs/ja/roadmap",
+						title: "ロードマップ",
+						component: () => import("./pages/ja/Roadmap"),
 					},
 				],
 			},

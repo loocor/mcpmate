@@ -44,6 +44,13 @@ export function renderDocRoutes() {
 			element={<Navigate to="/docs/zh/quickstart" replace />}
 		/>,
 	);
+	routes.push(
+		<Route
+			key="docs-ja"
+			path="/docs/ja"
+			element={<Navigate to="/docs/ja/quickstart" replace />}
+		/>,
+	);
 
 	return routes;
 }
