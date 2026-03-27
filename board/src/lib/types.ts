@@ -1113,6 +1113,34 @@ export interface ClientBackupPolicyPayload {
 }
 
 export interface ClientBackupPolicySetReq {
-  identifier: string;
-  policy: ClientBackupPolicyPayload;
+	identifier: string;
+	policy: ClientBackupPolicyPayload;
+}
+
+// Token Estimation Types
+export interface CapTypeEstimate {
+	available_count: number;
+	visible_count: number;
+	disabled_count: number;
+	available_tokens: number;
+	visible_tokens: number;
+	savings_tokens: number;
+}
+
+export interface TokenBreakdownResponse {
+	tools: CapTypeEstimate;
+	prompts: CapTypeEstimate;
+	resources: CapTypeEstimate;
+	templates: CapTypeEstimate;
+}
+
+export interface TokenEstimateResponse {
+	total_available_tokens: number;
+	visible_tokens: number;
+	savings_tokens: number;
+	builtin_overhead_tokens: number;
+	net_savings_tokens: number;
+	breakdown: TokenBreakdownResponse;
+	estimation_method: string;
+	approximate: boolean;
 }

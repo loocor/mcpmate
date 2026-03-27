@@ -71,9 +71,11 @@ import type {
 	SkippedServer,
 	SystemMetrics,
 	SystemStatus,
+	TokenEstimateResponse,
 	ToolDetail,
 	UpdateConfigSuitRequest,
 } from "./types";
+import { useQuery } from "@tanstack/react-query";
 
 // Base API configuration
 // Prefer VITE_API_BASE_URL; otherwise infer from runtime context with sane fallbacks.
@@ -2298,3 +2300,29 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 };
+
+// Token Estimate API
+export const tokenEstimateApi = {
+	getEstimate: async (profileId: string, capabilitySource?: string): Promise<TokenEstimateResponse> => {
+		const params = new URLSearchParams({ profile_id: profileId });
+		if (capabilitySource) {
+			params.append("capability_source", capabilitySource);
+		}
+		const url = `/api/mcp/profile/token-estimate?${params}`;
+		return fetchApi<TokenEstimateResponse>(url);
+	},
+};
+
+// React Query hook for token estimates
+export function useTokenEstimate(profileId: string | undefined, capabilitySource?: string) {
+	return useQuery({
+		queryKey: ["tokenEstimate", profileId, capabilitySource],
+		queryFn: () => {
+			if (!profileId) return Promise.resolve(null);
+			return tokenEstimateApi.getEstimate(profileId, capabilitySource);
+		},
+		enabled: !!profileId,
+		staleTime: 5 * 60 * 1000, // 5 minutes
+		retry: 1,
+	});
+}
