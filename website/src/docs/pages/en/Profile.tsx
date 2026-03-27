@@ -23,6 +23,23 @@ export default function Profile() {
 				alt="Profiles list with stats and default profile card"
 			/>
 
+			<H2>Guide map</H2>
+			<Ul>
+				<Li>
+					<strong>Preset Templates</strong> explains the read-only preset route and
+					when to clone instead of editing in place.
+				</Li>
+				<Li>
+					<strong>Detail Overview</strong> focuses on the overview tab of
+					<code>/profiles/:profileId</code>, including activation, default rules,
+					and counters.
+				</Li>
+				<Li>
+					<strong>Capability Tabs</strong> covers the server, tool, prompt,
+					resource, and template tabs where exposure is tuned for each profile.
+				</Li>
+			</Ul>
+
 			<Callout type="info" title="Default anchor profiles">
 				Profiles tagged with the <code>default_anchor</code> role are pinned to the
 				top of the list and cannot be disabled. They act as the fallback profile
@@ -69,6 +86,40 @@ export default function Profile() {
 				servers and capabilities, then clone or customize into a full profile when
 				you need editable copies.
 			</P>
+
+			<H2>Why shared profiles matter</H2>
+			<P>
+				Shared profiles are the reusable layer that clients can point at directly.
+				Instead of reopening a complex configuration screen and toggling servers,
+				tools, prompts, and resources one by one, you can prepare named working
+				modes such as writing, frontend development, or research and then switch the
+				whole bundle as one decision.
+			</P>
+			<Ul>
+				<Li>They reduce repeated UI work when the same capability mix is needed across multiple clients.</Li>
+				<Li>They narrow the visible capability surface to what the current task actually needs.</Li>
+				<Li>They make it easier to keep expensive tools, prompts, and resources out of sessions that do not need them.</Li>
+			</Ul>
+
+			<H2>Switching without opening MCPMate</H2>
+			<P>
+				MCPMate ships built-in MCP tools for profiles and client profile selection.
+				When a client is configured to expose them, the model inside tools such as
+				Cursor or Cherry Studio can switch profiles or choose shared profiles from
+				conversation context instead of requiring you to reopen MCPMate&apos;s UI.
+			</P>
+			<Callout type="info" title="Natural language is the trigger, MCP tools do the work">
+				There is no separate language parser just for profile switching. The practical
+				experience comes from the client model calling MCPMate&apos;s built-in profile or
+				client-selection tools when those tools are visible in the current mode.
+			</Callout>
+
+			<Callout type="info" title="Compared with Claude Code">
+				Claude Code officially documents on-demand loading for skills and MCP schemas,
+				plus automatic tool choice inside its agent loop. MCPMate reaches a similar
+				outcome of reducing unnecessary capability exposure, but through profile-based
+				switching rather than Claude Code&apos;s schema-loading and permission model.
+			</Callout>
 
 			<H2>Activation workflow</H2>
 			<Ul>

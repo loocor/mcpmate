@@ -22,9 +22,12 @@ const en = {
 	"hero.cta.waitlist": "Join Waitlist",
 	"hero.cta.download": "View on GitHub",
 	"hero.cta.learn": "Learn More",
-	"hero.stats.config": "Less Configuration",
-	"hero.stats.resource": "Resource Reduction",
-	"hero.stats.integration": "Integration Rate",
+	"hero.stats.configValue": "One Endpoint",
+	"hero.stats.config": "One proxy endpoint for all AI clients",
+	"hero.stats.resourceValue": "On-Demand",
+	"hero.stats.resource": "Switch profiles, expose only what you need",
+	"hero.stats.integrationValue": "Transparent",
+	"hero.stats.integration": "Know what you use, inspect how it runs",
 	"hero.dashboard": "MCPMate Dashboard",
 	"hero.slide.dashboard": "Dashboard — system health and metrics",
 	"hero.slide.profiles": "Profiles — switch capability sets",
@@ -67,87 +70,86 @@ const en = {
 	// Features
 	"features.title": "Powerful Features",
 	"features.subtitle":
-		"MCP is powerful but complex. MCPMate makes it easy to unlock that power without the configuration headaches",
+		"MCPMate turns MCP from scattered configuration work into a local control plane for import, rollout, inspection, and switching.",
 	"features.centralized": "Centralized Configuration",
 	"features.centralized.desc":
-		"Configure once, use everywhere. Eliminate redundant setups across different clients.",
+		"Manage servers, profiles, and clients from one place instead of editing every client separately.",
 	"features.resource": "Resource Optimization",
 	"features.resource.desc":
-		"Intelligently manage server resources to reduce system overhead and improve performance.",
+		"Expose only the tools, prompts, and resources the current task actually needs.",
 	"features.inspector": "Inspector",
 	"features.inspector.desc":
-		"Deep‑dive into server states, logs, and diagnostics without leaving the dashboard.",
+		"Compare proxy and native behavior, run live calls, and capture raw evidence without leaving the dashboard.",
 	"features.more_coming": "More powerful features are on the way.",
 	"features.feedback_welcome":
 		"We'd love to hear your feedback and suggestions!",
 	"features.read_more": "Read more",
 	"features.context": "Seamless Context Switching",
 	"features.context.desc":
-		"Switch between different work scenarios with instant configuration changes.",
+		"Switch shared profiles or task presets instead of rebuilding capability sets by hand.",
 	"features.bridge": "Protocol Bridging",
 	"features.bridge.desc":
 		"Connect stdio-based clients to Streamable HTTP services without modifying the client.",
 	"features.marketplace": "Inline Marketplace",
 	"features.marketplace.desc":
-		"Official MCP registry — find tools without hunting.",
+		"Browse registry entries, import them into preview, and keep discovery close to operations.",
 	"features.templates": "Granular Controls",
 	"features.templates.desc":
-		"Toggle capabilities per tool/profile with fine‑grained switches.",
+		"Enable or disable servers and capabilities at profile level for precise exposure control.",
 	"features.autodiscovery": "Auto Discovery & Import",
 	"features.autodiscovery.desc":
-		"Detect existing configs and import them without manual edits.",
+		"Detect existing client configs and pull them into MCPMate without starting from scratch.",
 	"features.uniimport": "Uni‑Import",
 	"features.uniimport.desc":
-		"Drag, drop, or paste configs; JSON/TOML, mcpb soon.",
+		"Drop, paste, or capture messy snippets from the web, then normalize, preview, and validate before import.",
 
 	// Value (Why MCPMate?)
 	"value.title": "Why MCPMate?",
 	"value.subtitle":
-		"Less setup, more flow — for creators, team leads, and owners alike.",
-	"value.creators.title": "Keep Flow, Not Friction",
+		"MCPMate is for people who want MCP to be operable, not just technically possible.",
+	"value.creators.title": "Stay in flow, switch by intent",
 	"value.creators.p1":
-		"No more copying configs between clients; configure once, use everywhere.",
+		"Package working modes as shared profiles instead of re-tuning every client one toggle at a time.",
 	"value.creators.p2":
-		"One place to start/stop tools; less memory, fewer distractions.",
+		"Let compatible clients switch profiles or client selections through MCPMate's built-in MCP tools.",
 	"value.creators.p3":
-		"Switch work scenes instantly with profiles and presets.",
+		"Keep only the capabilities a task actually needs in view to reduce noise and token waste.",
 	"value.creators.diagram": "Creator Flow",
-	"value.managers.title": "Consistency by Default",
+	"value.managers.title": "Roll out flexibly across clients",
 	"value.managers.p1":
-		"Onboard faster with shared presets and policy‑guarded configs.",
+		"Choose hosted mode for MCPMate-managed control or transparent mode for direct native client output.",
 	"value.managers.p2":
-		"Reduce “works on my machine” with uniform tooling and visibility.",
+		"Let one client follow activated profiles, selected shared profiles, or a client-specific custom profile.",
 	"value.managers.p3":
-		"Track usage, version drift, and common errors to prevent outages.",
+		"Keep compatibility escape hatches without giving up a richer managed path for most users.",
 	"value.managers.diagram": "Team Consistency",
-	"value.owners.title": "Cost, Control, Confidence",
-	"value.owners.p1": "Roll out safely across orgs with staged deployment.",
-	"value.owners.p2": "Keep token spend and data boundaries under control.",
-	"value.owners.p3": "Audit trails and guardrails to meet compliance needs.",
+	"value.owners.title": "Operate locally with clearer control",
+	"value.owners.p1": "Run the core as a local service and reopen the web UI or desktop shell only when you need it.",
+	"value.owners.p2": "Use the local API and Inspector to automate checks and investigate real behavior.",
+	"value.owners.p3": "Keep privacy, auditability, and local boundaries visible instead of burying them in scattered config files.",
 	"value.owners.diagram": "Enterprise Readiness",
 
 	// Architecture (Design Values)
 	"arch.title": "Design Principles",
-	"arch.subtitle": "What we optimize for: performance, experience, and safety.",
+	"arch.subtitle": "What we optimize for: operability, low friction, and local trust.",
 	"arch.values.performance.title": "Performance First",
 	"arch.values.performance.desc":
-		"Rust core with a bias for low latency and low overhead.",
-	"arch.values.performance.p1": "Thin proxy paths, near‑native throughput",
-	"arch.values.performance.p2": "Resource‑aware orchestration; start on demand",
-	"arch.values.performance.p3": "Practical metrics to spot bottlenecks",
+		"A Rust core that keeps routing, visibility, and inspection close to the work.",
+	"arch.values.performance.p1": "Standalone core service with local API and local MCP endpoint",
+	"arch.values.performance.p2": "Reuse one runtime instead of reconfiguring every client",
+	"arch.values.performance.p3": "Operational visibility through metrics, Inspector, and runtime status",
 	"arch.values.experience.title": "Delightful Experience",
 	"arch.values.experience.desc":
-		"Setup should be minutes, not days. Clear defaults over knobs.",
-	"arch.values.experience.p1": "One configuration, many surfaces",
-	"arch.values.experience.p2": "Profiles/presets for instant context switch",
-	"arch.values.experience.p3": "Neutral to tools — no vendor lock‑in",
+		"Make advanced MCP workflows feel like switching modes, not editing files.",
+	"arch.values.experience.p1": "Import from snippets, bundles, registries, and browser capture",
+	"arch.values.experience.p2": "Profiles and client modes for gradual rollout",
+	"arch.values.experience.p3": "Web, desktop, and API surfaces on the same local core",
 	"arch.values.security.title": "Safety by Design",
 	"arch.values.security.desc":
-		"Privacy‑respecting, auditable, principle‑of‑least‑privilege.",
-	"arch.values.security.p1": "Local‑first, minimal telemetry, explicit consent",
-	"arch.values.security.p2":
-		"Clear boundaries between upstream/downstream tools",
-	"arch.values.security.p3": "Audit trails and policy hooks",
+		"Local-first boundaries with explicit control over what gets exposed.",
+	"arch.values.security.p1": "Capability-level exposure through profiles and client selection",
+	"arch.values.security.p2": "Transparent mode when direct native output is the safer fit",
+	"arch.values.security.p3": "Audit and validation surfaces before broad rollout",
 
 	// Contact
 	"contact.title": "Get in Touch",
@@ -207,10 +209,10 @@ const en = {
 		"Pull the latest changes from GitHub and rebuild with `cargo build --release`.",
 	"faq.different.title": "What makes MCPMate different from other solutions?",
 	"faq.different.answer":
-		"MCPMate is built with Rust for maximum performance and reliability. Our AI-driven configuration management and themed tool groups make it easier than ever to manage your MCP ecosystem.",
+		"MCPMate combines profile-based capability control, flexible client rollout modes, import preview, and live inspection in one local-first control plane.",
 	"faq.compatible.title": "Can I use MCPMate with my existing MCP tools?",
 	"faq.compatible.answer":
-		"Yes! MCPMate works with any MCP-compatible tools and clients, including Claude Desktop, Cherry Studio, Cursor, VSCode, Windsurf, Zed, and more.",
+		"Yes. MCPMate works with MCP-compatible clients and also gives you a managed path and a transparent path, so you can choose between deeper MCPMate control and direct native client output.",
 
 	// Notice ribbon (site updating)
 	"notice.construction.ribbon": "Updating",

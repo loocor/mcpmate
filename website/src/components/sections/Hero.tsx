@@ -72,47 +72,47 @@ const Hero = () => {
 
   return (
     <div className="pt-24 md:pt-32 pb-16 md:pb-24 px-4 md:px-6">
-      <div className="container mx-auto relative z-10">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-          <div className="flex flex-col items-start space-y-6">
-            <div className="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
-              <span className="flex h-2 w-2 rounded-full bg-blue-500 mr-2"></span>
-              {t('hero.early_access')}
-            </div>
+		<div className="container mx-auto relative z-10">
+			<div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+				<div className="flex flex-col items-start space-y-6">
+					<div className="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+						<span className="flex h-2 w-2 rounded-full bg-blue-500 mr-2"></span>
+						{t('hero.early_access')}
+					</div>
 
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-tight text-slate-900 dark:text-white">
-              <span>{t('hero.title')}</span>
-              <br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600 dark:from-blue-400 dark:to-cyan-400">
-                {t('hero.subtitle')}
-              </span>
-            </h1>
+					<h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-tight text-slate-900 dark:text-white">
+						<span>{t('hero.title')}</span>
+						<br />
+						<span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600 dark:from-blue-400 dark:to-cyan-400">
+							{t('hero.subtitle')}
+						</span>
+					</h1>
 
-            <p className="text-lg md:text-xl text-slate-600 dark:text-slate-400 max-w-lg">
-              {t('hero.description')}
-            </p>
+					<p className="text-lg md:text-xl text-slate-600 dark:text-slate-400 max-w-lg">
+						{t('hero.description')}
+					</p>
 
-            <div className="flex flex-col sm:flex-row gap-4 pt-2">
-              <Button size="lg" onClick={() => window.open('https://github.com/loocor/mcpmate', '_blank')}>
-                <span>{t('hero.cta.download')}</span>
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-              <Button variant="outline" size="lg" onClick={() => scrollToSection('features')}>
-                {t('hero.cta.learn')}
-              </Button>
-            </div>
+					<div className="flex flex-col sm:flex-row gap-4 pt-2 w-full sm:w-auto">
+						<Button size="lg" onClick={() => window.open('https://github.com/loocor/mcpmate', '_blank')} className="w-full sm:w-auto">
+							<span>{t('hero.cta.download')}</span>
+							<ArrowRight className="ml-2 h-5 w-5" />
+						</Button>
+						<Button variant="outline" size="lg" onClick={() => scrollToSection('features')} className="w-full sm:w-auto">
+							{t('hero.cta.learn')}
+						</Button>
+					</div>
 
             <div className="grid grid-cols-3 gap-4 pt-6">
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-slate-900 dark:text-white">70%</span>
+                <span className="text-2xl font-bold text-slate-900 dark:text-white">{t('hero.stats.configValue')}</span>
                 <span className="text-sm text-slate-500 dark:text-slate-400">{t('hero.stats.config')}</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-slate-900 dark:text-white">50%</span>
+                <span className="text-2xl font-bold text-slate-900 dark:text-white">{t('hero.stats.resourceValue')}</span>
                 <span className="text-sm text-slate-500 dark:text-slate-400">{t('hero.stats.resource')}</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-slate-900 dark:text-white">100%</span>
+                <span className="text-2xl font-bold text-slate-900 dark:text-white">{t('hero.stats.integrationValue')}</span>
                 <span className="text-sm text-slate-500 dark:text-slate-400">{t('hero.stats.integration')}</span>
               </div>
             </div>

@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2 } from "../../components/Headings";
 import data from "../../changelog/zh.json";

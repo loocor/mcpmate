@@ -2,6 +2,7 @@ import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function MarketEN() {
 	return (
@@ -16,6 +17,12 @@ export default function MarketEN() {
 				here you can browse official listings, add your own portals, preview
 				metadata, and send candidates straight into the install wizard.
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/market-light.png"
+				darkSrc="/screenshot/market-dark.png"
+				alt="MCP Market with server listings and search"
+			/>
 
 			<H2>Registry & data</H2>
 			<Ul>

@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
@@ -24,6 +23,37 @@ export default function Servers() {
 				darkSrc="/screenshot/servers-dark.png"
 				alt="Servers grid with transport badges and status"
 			/>
+
+			<H2>Guide map</H2>
+			<Ul>
+				<Li>
+					<strong>Import &amp; Preview</strong> explains Uni-Import, dirty-input
+					normalization, capability preview, and the final validation step before
+					installation.
+				</Li>
+				<Li>
+					It also covers the Chrome / Edge extension path that can capture compatible
+					MCP snippets from the web and open MCPMate directly for import.
+				</Li>
+				<Li>
+					<strong>Detail Overview</strong> explains the browse view at
+					<code>/servers/:serverId</code>, including status, instances, and edit
+					or delete actions.
+				</Li>
+				<Li>
+					<strong>Capabilities</strong> covers the normalized Tools, Prompts,
+					Resources, and Resource Templates inventory in browse mode.
+				</Li>
+				<Li>
+					<strong>Inspector</strong> covers debug mode, proxy vs. native channel
+					selection, and the execution drawer used for live calls and reads.
+				</Li>
+				<Li>
+					<strong>Instances</strong> focuses on
+					<code>/servers/:serverId/instances/:instanceId</code> when a single
+					transport needs attention.
+				</Li>
+			</Ul>
 
 			<H2>Stats cards & toolbar</H2>
 			<Ul>
@@ -86,6 +116,12 @@ export default function Servers() {
 				onto the Add button to trigger the server install wizard. MCPMate parses
 				the payload, normalizes transports, and lets you preview the resulting
 				config before committing it.
+			</P>
+			<P>
+				If you want the full workflow, continue to <strong>Import &amp; Preview</strong>.
+				That guide focuses on why noisy pasted snippets still work, what the
+				preview step actually validates, and how the final dry-run protects the
+				real import.
 			</P>
 
 			<H3>Manual form & edit drawer</H3>

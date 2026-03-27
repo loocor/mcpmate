@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
@@ -16,6 +15,13 @@ export default function ClientAppsZH() {
 				darkSrc="/screenshot/clients-dark.png"
 				alt="客户端网格：检测状态与托管开关"
 			/>
+
+			<H2>文档导航</H2>
+			<Ul>
+				<Li><strong>详情概览</strong> 解释状态徽标、检测结果、文档链接、传输方式与当前服务器卡片。</Li>
+				<Li><strong>配置管理</strong> 解释托管 / 透明模式、能力来源、应用流程与导入预览。</Li>
+				<Li><strong>备份与恢复</strong> 解释保留策略、回滚、批量删除与恢复场景。</Li>
+			</Ul>
 
 			<H2>统计与筛选</H2>
 			<Ul>

@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, Li, P, Ul } from "../../components/Headings";
 import Callout from "../../components/Callout";

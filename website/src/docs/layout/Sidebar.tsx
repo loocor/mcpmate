@@ -51,6 +51,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 		}
 		return null;
 	});
+	const [openSubGroup, setOpenSubGroup] = React.useState<string | null>(null);
 
 	// Auto-collapse when navigating to root-level pages, or auto-expand when navigating to group pages
 	React.useEffect(() => {
@@ -63,25 +64,36 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 
 			if (isRootLevelPage) {
 				setOpenGroup(null);
+				setOpenSubGroup(null);
 			} else {
 				// Auto-expand the group that contains the current page
 				if (nav) {
+					let matched = false;
 					for (const group of nav.groups) {
 						if (group.group && group.group.trim() !== "") {
-							// Check if current page is in this group
-							const isInGroup = group.pages.some((p: DocPage | DocGroup) => {
-								if ("path" in p) {
-									return p.path === current.path;
+							for (const page of group.pages) {
+								if ("path" in page && page.path === current.path) {
+									setOpenGroup(group.group);
+									setOpenSubGroup(null);
+									matched = true;
+									break;
 								}
-								// Check sub-groups
-								if ("group" in p) {
-									return p.pages.some((sp: DocPage) => sp.path === current.path);
+
+								if ("group" in page) {
+									const subGroupKey = `${group.group}/${page.group}`;
+									const isInSubGroup = page.pages.some(
+										(sp) => "path" in sp && sp.path === current.path,
+									);
+									if (isInSubGroup) {
+										setOpenGroup(group.group);
+										setOpenSubGroup(subGroupKey);
+										matched = true;
+										break;
+									}
 								}
-								return false;
-							});
-							
-							if (isInGroup) {
-								setOpenGroup(group.group);
+							}
+
+							if (matched) {
 								break;
 							}
 						}
@@ -134,11 +146,11 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 			setBottomPad(16 + overlap); // base gap 16px + any overlap amount
 		};
 		calc();
-		window.addEventListener("resize", calc, { passive: true });
-		window.addEventListener("scroll", calc, { passive: true });
+		window.addEventListener("resize", calc);
+		window.addEventListener("scroll", calc);
 		return () => {
-			window.removeEventListener("resize", calc, { passive: true });
-			window.removeEventListener("scroll", calc, { passive: true });
+			window.removeEventListener("resize", calc);
+			window.removeEventListener("scroll", calc);
 		};
 	}, []);
 
@@ -224,11 +236,12 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 														<SidebarMenuItem key={p.path}>
 															<Link to={p.path}>
 																<SidebarMenuButton
-																	active={current?.path === p.path}
-																	onClick={() => {
-																		// Collapse all collapsible menu items when clicking root-level items
-																		setOpenGroup(null);
-																	}}
+										active={current?.path === p.path}
+										onClick={() => {
+											// Collapse all collapsible menu items when clicking root-level items
+											setOpenGroup(null);
+											setOpenSubGroup(null);
+										}}
 																	onMouseEnter={() => {
 																		// Preload the component on hover
 																		p.component();
@@ -253,10 +266,15 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 									<SidebarGroup key={g.group}>
 										<button
 											type="button"
-											onClick={() => {
-												// Toggle current group: if it's open, close it; if it's closed, open it
-												setOpenGroup(openGroup === g.group ? null : g.group);
-											}}
+										onClick={() => {
+											// Toggle current group: if it's open, close it; if it's closed, open it
+											if (openGroup === g.group) {
+												setOpenGroup(null);
+												setOpenSubGroup(null);
+											} else {
+												setOpenGroup(g.group);
+											}
+										}}
 											className="group w-full text-left rounded-md px-2 py-2.5 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
 											aria-expanded={!collapsed}
 										>
@@ -278,24 +296,25 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 													{g.pages.map((p) => {
 														if ("group" in p) {
 															const sg: DocGroup = p;
-															const key = `${g.group}/${sg.group}`;
-															const opened = openGroup === key;
-															return (
+													const key = `${g.group}/${sg.group}`;
+													const opened = openSubGroup === key;
+													return (
 																<div
 																	key={sg.group}
-																	className="mb-2 ml-3 pl-2 border-l border-slate-200 dark:border-slate-700"
+																	className="mb-2"
 																>
 																	<button
 																		type="button"
-																		onClick={() => {
-																			// Toggle sub-group: if it's open, close it; if it's closed, open it
-																			setOpenGroup(opened ? null : key);
-																		}}
-																		className="group w-full flex items-center justify-between px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-300"
+																onClick={() => {
+																	// Toggle sub-group: if it's open, close it; if it's closed, open it
+																	setOpenGroup(g.group);
+																	setOpenSubGroup(opened ? null : key);
+																}}
+																		className="group w-full text-left rounded-md px-2 py-2 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
 																		aria-expanded={opened}
 																	>
 																		<span className="inline-flex items-center gap-1">
-																			<span>{sg.group}</span>
+																			<span className="leading-tight">{sg.group}</span>
 																			<WipTag />
 																		</span>
 																		<span
@@ -305,22 +324,26 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 																		</span>
 																	</button>
 																	{opened && (
-																		<div className="mt-1">
-																			{sg.pages.map((sp: DocPage) => (
-																				<SidebarMenuItem key={sp.path}>
-																					<Link to={sp.path}>
-																					<SidebarMenuButton
-																							active={current?.path === sp.path}
-																							onMouseEnter={() => {
-																								// Preload the component on hover
-																								sp.component();
-																							}}
-																						>
-																							{renderMenuLabel(sp.title)}
-																						</SidebarMenuButton>
-																					</Link>
-																				</SidebarMenuItem>
-																			))}
+																		<div className="mt-1 ml-3 pl-2 border-l border-slate-200 dark:border-slate-700">
+															{sg.pages.map((sp) => {
+																if (!("path" in sp)) {
+																	return null;
+																}
+																return (
+																	<SidebarMenuItem key={sp.path}>
+																		<Link to={sp.path}>
+																			<SidebarMenuButton
+																				active={current?.path === sp.path}
+																				onMouseEnter={() => {
+																					sp.component();
+																				}}
+																			>
+																				{renderMenuLabel(sp.title)}
+																			</SidebarMenuButton>
+																		</Link>
+																	</SidebarMenuItem>
+																);
+															})}
 																		</div>
 																	)}
 																</div>

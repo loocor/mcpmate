@@ -24,6 +24,22 @@ export default function ClientApps() {
 				alt="Clients grid with detection and managed toggles"
 			/>
 
+			<H2>Guide map</H2>
+			<Ul>
+				<Li>
+					<strong>Detail Overview</strong> explains status badges, detection,
+					docs links, transport badges, and current-server cards.
+				</Li>
+				<Li>
+					<strong>Configuration</strong> explains hosted vs. transparent mode,
+					capability source, apply flows, and import preview.
+				</Li>
+				<Li>
+					<strong>Backups</strong> focuses on retention, rollback, bulk delete,
+					and recovery guidance.
+				</Li>
+			</Ul>
+
 			<H2>Stats & filters</H2>
 			<Ul>
 				<Li>

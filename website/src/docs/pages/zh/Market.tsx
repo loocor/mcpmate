@@ -1,6 +1,7 @@
 import Callout from "../../components/Callout";
 import { H2, H3, Li, P, Ul } from "../../components/Headings";
 import DocLayout from "../../layout/DocLayout";
+import DocScreenshot from "../../components/DocScreenshot";
 
 export default function MarketZH() {
 	return (
@@ -8,6 +9,12 @@ export default function MarketZH() {
 			<P>
 				服务源展示 MCPMate 官方注册表，可搜索、排序并将候选项送往安装向导。
 			</P>
+
+			<DocScreenshot
+				lightSrc="/screenshot/market-light.png"
+				darkSrc="/screenshot/market-dark.png"
+				alt="MCP 服务源列表与搜索"
+			/>
 
 			<H2>数据与导入</H2>
 			<Ul>

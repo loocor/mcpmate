@@ -49,8 +49,22 @@ export default function SettingsZH() {
 				在“系统”标签中可修改 API 与 MCP 端口，并一键复制 <code>cargo run</code> 或发布版二进制的启动命令；必要时可直接发起停止请求终止当前后端。
 			</P>
 
+			<H3>不必一直开着完整桌面界面</H3>
+			<P>
+				桌面端会单独跟踪本地 core source，并区分 <code>service</code> 与 <code>desktop_managed</code> 等运行模式。对用户来说，这意味着 MCPMate 的本地核心服务可以在后台持续运行，而不是要求你把那个完整桌面窗口一直摆在前台才能工作。
+			</P>
+
+			<H3>本地 Web 与 API 访问</H3>
+			<P>
+				控制台本身就是通过本地 API 和 WebSocket 在工作，API Docs 页面也会指向当前运行中的本地后端。因此，只要服务还在运行，你既可以在浏览器里重新打开管理界面，也可以直接接本地 API 去做自动化或调度集成。
+			</P>
+
 			<Callout type="warning" title="端口改动需重启">
 				更新端口后，请先用复制的命令重新启动后端，再刷新控制台。否则前端仍会请求旧端口并触发网络错误。
+			</Callout>
+
+			<Callout type="info" title="为什么端口配置值得特别说明">
+				代码里已经有“端口变更后重写 hosted + managed client 配置”的专门支持，也有面向 transparent 客户端的 profile 同步路径。对用户来说，这意味着受管模式本来就是朝着“尽量不要手工回头逐个改客户端配置”这个方向设计的。
 			</Callout>
 
 			<H2>开发者选项</H2>

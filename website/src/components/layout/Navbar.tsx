@@ -149,6 +149,15 @@ const Navbar = () => {
 						{t("nav.features")}
 					</button>
 					<button
+						onClick={() => {
+							navigate(`/docs/${language}/quickstart`);
+							setIsOpen(false);
+						}}
+						className="p-3 rounded-lg text-center font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+					>
+						{t("nav.documentation")}
+					</button>
+					<button
 						onClick={() => scrollToSection("faq")}
 						className="p-3 rounded-lg text-center font-medium transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
 					>

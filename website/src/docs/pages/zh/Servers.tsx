@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
@@ -16,6 +15,16 @@ export default function ServersZH() {
 				darkSrc="/screenshot/servers-dark.png"
 				alt="服务器列表：传输类型与状态"
 			/>
+
+			<H2>文档导航</H2>
+			<Ul>
+				<Li><strong>导入与预览</strong> 说明 Uni-Import、脏输入清洗、能力预览，以及安装前最后一步校验。</Li>
+				<Li>它也会覆盖 Chrome / Edge 扩展这条入口：在网页里捕获兼容 MCP 片段，然后直接唤起 MCPMate 导入。</Li>
+				<Li><strong>详情概览</strong> 对应 <code>/servers/:serverId</code> 的浏览视图，重点解释状态、实例、编辑与删除。</Li>
+				<Li><strong>能力浏览</strong> 对应 browse 模式下的 Tools、Prompts、Resources、Templates 清单。</Li>
+				<Li><strong>Inspector</strong> 对应 debug 模式、proxy / native 通道切换，以及实时调用抽屉。</Li>
+				<Li><strong>实例管理</strong> 对应 <code>/servers/:serverId/instances/:instanceId</code>，适合排查单个传输实例。</Li>
+			</Ul>
 
 			<H2>统计卡与工具栏</H2>
 			<Ul>
@@ -51,6 +60,9 @@ export default function ServersZH() {
 			<H3>Uni-Import 流程</H3>
 			<P>
 				将 <code>.mcpb</code>、<code>.dxt</code>、JSON 片段、URL 或纯文本拖拽到新增按钮上即可触发安装向导。系统会解析内容、标准化传输配置，并在提交前提供预览。
+			</P>
+			<P>
+				如果你想看完整链路，请继续阅读 <strong>导入与预览</strong> 子页。那里会重点解释为什么带噪声的粘贴片段也能工作、Preview 真正验证了什么，以及最后的 dry-run 如何保护真实导入。
 			</P>
 
 			<H3>手动表单与编辑抽屉</H3>

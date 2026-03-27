@@ -96,10 +96,34 @@ export default function Settings() {
 				ports.
 			</P>
 
+			<H3>Run the core without keeping the full desktop UI open</H3>
+			<P>
+				The desktop shell tracks a separate local core source with runtime modes such
+				as <code>service</code> and <code>desktop_managed</code>. In practice, this
+				means MCPMate can keep the local core running as a background service while
+				you stop treating the full desktop window as something that must stay open on
+				screen all day.
+			</P>
+
+			<H3>Local web and API access</H3>
+			<P>
+				The dashboard already talks to a local API and WebSocket endpoint, and the API
+				Docs page resolves to the running local backend. That makes MCPMate useful in
+				two ways: you can reopen the web UI in a browser when the service is running,
+				and you can integrate against the local API for automation or orchestration.
+			</P>
+
 			<Callout type="warning" title="Restart required after port changes">
 				When you update API or MCP ports, restart the backend with the copied
 				command before refreshing the dashboard. Otherwise, the UI will continue
 				to point at the old port and fail to fetch data.
+			</Callout>
+
+			<Callout type="info" title="Why port settings are worth documenting">
+				The codebase includes dedicated support for reapplying hosted, managed client
+				configs after MCP port changes, and separate transparent-client sync paths for
+				profile-driven native renders. The practical takeaway is that managed rollout
+				is designed to avoid hand-editing every client when local runtime details move.
 			</Callout>
 
 			<H2>Developer-focused options</H2>

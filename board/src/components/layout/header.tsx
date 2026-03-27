@@ -19,16 +19,62 @@ const WEBSITE_DOCS_ORIGIN = "https://mcp.umate.ai";
 /**
  * Map Board routes to website guide slugs (see `website/src/docs/nav.ts` Guides section).
  */
-function boardPathToDocsPage(pathname: string): string {
+export function boardPathToDocsPage(pathname: string, search = ""): string {
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab") ?? "overview";
+  const view = params.get("view") ?? "browse";
+
   if (pathname === "/" || pathname === "") return "dashboard";
-  if (pathname.startsWith("/profiles") || pathname.startsWith("/config"))
+
+  if (pathname.startsWith("/profiles/presets/")) {
+    return "profile-presets";
+  }
+
+  if (pathname.startsWith("/profiles/") || pathname.startsWith("/config/")) {
+    if (tab === "overview") return "profile-detail-overview";
+    if (
+      ["servers", "tools", "prompts", "resources", "templates"].includes(tab)
+    ) {
+      return `profile-capabilities#${tab}`;
+    }
+    return "profile-detail-overview";
+  }
+
+  if (pathname.startsWith("/profiles") || pathname.startsWith("/config")) {
     return "profile";
+  }
+
+  if (pathname.startsWith("/clients/")) {
+    if (tab === "configuration") return "client-configuration";
+    if (tab === "backups") return "client-backups";
+    return "client-detail-overview";
+  }
+
   if (pathname.startsWith("/clients")) return "clients";
   if (pathname.startsWith("/market")) return "market";
+
+  if (pathname.startsWith("/servers/") && pathname.includes("/instances/")) {
+    return "server-instances";
+  }
+
+  if (pathname.startsWith("/servers/")) {
+    if (view === "debug") {
+      if (["tools", "prompts", "resources", "templates"].includes(tab)) {
+        return `server-inspector#${tab}`;
+      }
+      return "server-inspector";
+    }
+    if (["tools", "prompts", "resources", "templates"].includes(tab)) {
+      return `server-capabilities#${tab}`;
+    }
+    return "server-detail-overview";
+  }
+
   if (pathname.startsWith("/servers")) return "servers";
   if (pathname.startsWith("/runtime") || pathname.startsWith("/system"))
     return "runtime";
-  if (pathname.startsWith("/audit")) return "audit";
+  if (pathname.startsWith("/audit")) return "logs";
+  if (pathname.startsWith("/api-docs")) return "api-docs";
   if (pathname.startsWith("/settings")) return "settings";
   if (pathname.startsWith("/account")) return "quickstart";
   if (pathname.startsWith("/404")) return "guides-overview";
@@ -90,12 +136,12 @@ export function Header() {
 
   const handleDocsClick = useCallback(() => {
     const locale = websiteDocsLocale(i18n.language);
-    const page = boardPathToDocsPage(location.pathname);
+    const page = boardPathToDocsPage(location.pathname, location.search);
     const targetUrl = `${WEBSITE_DOCS_ORIGIN}/docs/${locale}/${page}`;
     if (typeof window !== "undefined") {
       window.open(targetUrl, "_blank", "noopener,noreferrer");
     }
-  }, [i18n.language, location.pathname]);
+  }, [i18n.language, location.pathname, location.search]);
 
   const isMainRoute = MAIN_ROUTES.includes(location.pathname);
   const routeKey = ROUTE_KEYS[location.pathname];
