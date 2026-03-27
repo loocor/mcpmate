@@ -1,6 +1,5 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
-import { P } from "../../components/Headings";
+import { H2, Li, P, Ul } from "../../components/Headings";
 
 export default function AutoDiscovery() {
 	return (
@@ -17,46 +16,44 @@ export default function AutoDiscovery() {
 				tedious process of manually recreating your setup in a new tool.
 			</P>
 
-			<h2>How It Works</h2>
+			<H2>How it works</H2>
 			<P>
 				MCPMate scans common configuration locations used by popular MCP
 				clients:
 			</P>
-			<ul>
-				<li>Claude Desktop configuration files</li>
-				<li>VS Code MCP extensions settings</li>
-				<li>Cursor MCP configurations</li>
-				<li>Other standard MCP client setups</li>
-			</ul>
+			<Ul>
+				<Li>Claude Desktop configuration files</Li>
+				<Li>VS Code MCP extension settings</Li>
+				<Li>Cursor MCP configurations</Li>
+				<Li>Other standard MCP client setups</Li>
+			</Ul>
 
-			<h2>Import Process</h2>
-			<ol>
-				<li>MCPMate automatically scans for existing configurations</li>
-				<li>Displays discovered servers in the import interface</li>
-				<li>You review and select which servers to import</li>
-				<li>MCPMate imports the configurations into your active profile</li>
-			</ol>
+			<H2>Import process</H2>
+			<Ul>
+				<Li>MCPMate scans for existing configurations automatically.</Li>
+				<Li>The import view lists discovered servers for review.</Li>
+				<Li>You select what to import and target profile placement.</Li>
+				<Li>Imported entries are normalized and stored in MCPMate.</Li>
+			</Ul>
 
-			<h2>Benefits</h2>
-			<ul>
-				<li>
+			<H2>Benefits</H2>
+			<Ul>
+				<Li>
 					<strong>Quick Onboarding:</strong> Get started with MCPMate immediately
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>No Manual Work:</strong> Avoid copying configuration details by
 					hand
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Preserve Existing Setup:</strong> Your original configurations
 					remain untouched
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Error Prevention:</strong> Reduce configuration mistakes from
 					manual entry
-				</li>
-			</ul>
-
-			<P>Content coming soon with auto-discovery walkthrough and screenshots.</P>
+				</Li>
+			</Ul>
 		</DocLayout>
 	);
 }

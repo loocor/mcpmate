@@ -19,11 +19,11 @@ export default function GuidesOverview() {
 			</P>
 
 			<Callout type="info" title="How these guides map to the product">
-				The Dashboard, Profiles, Clients, Servers, Market, and Runtime articles
-				match the main sidebar order. API Docs appears at the bottom only after
-				you enable it in Settings → Developer. Account and Settings sit below
-				that. Open the dashboard in another tab while reading so you can follow
-				along.
+				The Dashboard, Profiles, Clients, Servers, Market, Runtime, and Audit
+				Logs articles match the main sidebar order. API Docs appears at the bottom
+				only after you enable it in Settings → Developer. Account and Settings sit
+				below that. Open the dashboard in another tab while reading so you can
+				follow along.
 			</Callout>
 
 			<H2>Board layout: sidebar and header</H2>
@@ -79,7 +79,7 @@ export default function GuidesOverview() {
 					CPU / memory chart sampled about every 10 seconds.
 				</Li>
 				<Li>
-					<strong>Profiles</strong> &mdash; curate reusable suit bundles with
+					<strong>Profiles</strong> &mdash; curate reusable profile bundles with
 					granular enable toggles, statistics, and quick activation buttons.
 				</Li>
 				<Li>
@@ -99,6 +99,10 @@ export default function GuidesOverview() {
 				<Li>
 					<strong>Runtime</strong> &mdash; monitor bundled runtimes (uv, Bun),
 					reset caches, and view capability cache statistics.
+				</Li>
+				<Li>
+					<strong>Audit Logs</strong> &mdash; inspect cursor-paginated operation
+					history for profile/client/server changes and security-relevant events.
 				</Li>
 				<Li>
 					<strong>API Docs</strong> &mdash; optional sidebar link to the
@@ -132,7 +136,9 @@ export default function GuidesOverview() {
 			<P>
 				Explore the Market to discover additional MCP servers, then confirm the
 				runtime and capability caches are primed. Finish in Settings to lock in
-				default views, marketplace portals, and the API Docs shortcut.
+				default views, marketplace portals, API base ports, and the API Docs
+				shortcut. For separated deployments (core service + UI shell), this step
+				is where you keep backend connectivity explicit.
 			</P>
 
 			<H2>Shared UI patterns to notice</H2>

@@ -1,6 +1,5 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
-import { P } from "../../components/Headings";
+import { H2, Li, P, Ul } from "../../components/Headings";
 
 export default function GranularControls() {
 	return (
@@ -18,46 +17,51 @@ export default function GranularControls() {
 				server.
 			</P>
 
-			<h2>Control Levels</h2>
-			<ul>
-				<li>
+			<H2>Control levels</H2>
+			<Ul>
+				<Li>
 					<strong>Server Level:</strong> Enable or disable entire servers
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Capability Level:</strong> Toggle tools, prompts, and resources
 					independently
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Individual Item Level:</strong> Control specific tools or
 					prompts within a server
-				</li>
-			</ul>
+				</Li>
+			</Ul>
 
-			<h2>Use Cases</h2>
-			<ul>
-				<li>
+			<H2>Use cases</H2>
+			<Ul>
+				<Li>
 					<strong>Security:</strong> Disable potentially dangerous operations
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Performance:</strong> Reduce overhead by disabling unused
 					features
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Focus:</strong> Hide irrelevant tools to reduce clutter
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Testing:</strong> Gradually enable features during development
-				</li>
-			</ul>
+				</Li>
+			</Ul>
 
-			<h2>Benefits</h2>
+			<H2>Benefits</H2>
 			<P>
 				Granular controls give you precise command over what functionality is
 				available to your clients. This is especially valuable in team
 				environments where different users may need different levels of access.
 			</P>
 
-			<P>Content coming soon with detailed control interface documentation.</P>
+			<H2>Recommended rollout pattern</H2>
+			<Ul>
+				<Li>Enable new capabilities in a limited profile first.</Li>
+				<Li>Validate via Inspector, then apply profile to more clients.</Li>
+				<Li>Use Audit Logs to confirm exactly when toggles changed.</Li>
+			</Ul>
 		</DocLayout>
 	);
 }

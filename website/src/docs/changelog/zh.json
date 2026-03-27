@@ -1,5 +1,30 @@
 [
 	{
+		"version": "0.1.5",
+		"date": "2026-03-27",
+		"highlights": [
+			"上线 Core Server + UI 分离运行模式，并打通后端、控制台、桌面的审计日志链路。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "新增审计日志数据模型、API 路由与存储策略，提供结构化操作时间线。"
+			},
+			{
+				"type": "feat",
+				"text": "控制台新增独立审计日志页面，支持游标分页与筛选，适配高频事件场景。"
+			},
+			{
+				"type": "feat",
+				"text": "桌面核心服务接线支持 Core Server 与 UI 分离运行，控制平面与壳层可独立部署。"
+			},
+			{
+				"type": "docs",
+				"text": "同步更新 website 文档与仓库 README，确保运行模式与审计能力描述一致。"
+			}
+		]
+	},
+	{
 		"version": "0.1.4",
 		"date": "2026-03-24",
 		"highlights": [

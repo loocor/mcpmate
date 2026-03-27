@@ -12,11 +12,6 @@ const inProgress = [
 			"我们正在完善工具清单隔离与会话策略，确保不同客户端只看到自己的能力范围。",
 	},
 	{
-		title: "全链路操作留痕",
-		description:
-			"即将上线的审计轨迹会记录每一次 MCP 调用，并支持脱敏与最小化开销，方便团队共享环境协作。",
-	},
-	{
 		title: "跨平台发行",
 		description:
 			"macOS、Windows、Linux 的原生安装包、自动更新与系统服务集成已在规划中。",
@@ -55,11 +50,6 @@ const onTheHorizon = [
 			"提供配置同步、云端轻量托管等能力，让多端保持一致体验。",
 	},
 	{
-		title: "审计中心",
-		description:
-			"集中展示审计事件、标记风险并协调后续处理，提升安全透明度。",
-	},
-	{
 		title: "主从管理",
 		description:
 			"支持设置从属模式，方便团队在多节点之间协作与统一管理。",
@@ -86,6 +76,16 @@ const Roadmap = () => {
 					{inProgress.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
 					))}
+				</ul>
+
+				<h2>近期已交付</h2>
+				<ul className="space-y-2">
+					<li>
+						Core Server + UI 分离运行模式已上线，后端核心服务可独立部署，Web/桌面壳按需连接。
+					</li>
+					<li>
+						审计日志页面已上线，支持筛选与游标分页，适配高频操作留痕场景。
+					</li>
 				</ul>
 
 				<h2>规划中</h2>

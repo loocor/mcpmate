@@ -12,10 +12,9 @@ export default function Profile() {
 			}}
 		>
 			<P>
-				Profiles (internally called <em>suits</em>) let you bundle MCP servers,
-				tools, resources, and prompts into named presets. The Profiles page in
-				the dashboard provides a searchable catalog of every suit, quick stats,
-				and activation toggles that sync directly with the proxy.
+				Profiles let you bundle MCP servers, tools, resources, and prompts into
+				named presets. The Profiles page provides a searchable catalog, quick
+				stats, and activation toggles that sync directly with the core service.
 			</P>
 
 			<DocScreenshot
@@ -24,8 +23,8 @@ export default function Profile() {
 				alt="Profiles list with stats and default profile card"
 			/>
 
-			<Callout type="info" title="Default anchor suits">
-				Suits tagged with the <code>default_anchor</code> role are pinned to the
+			<Callout type="info" title="Default anchor profiles">
+				Profiles tagged with the <code>default_anchor</code> role are pinned to the
 				top of the list and cannot be disabled. They act as the fallback profile
 				that guarantees core capabilities stay online.
 			</Callout>
@@ -33,9 +32,9 @@ export default function Profile() {
 			<H2>Stats cards & toolbar</H2>
 			<Ul>
 				<Li>
-					Review the four stats cards: active suits, enabled servers, enabled
+					Review the four stats cards: active profiles, enabled servers, enabled
 					tools, and ready instances. These values aggregate across all active
-					suits by calling the proxy&apos;s <code>/config/suits</code> APIs.
+					profiles.
 				</Li>
 				<Li>
 					The toolbar supports search (name/description), sorting (alphabetical
@@ -48,20 +47,20 @@ export default function Profile() {
 				</Li>
 			</Ul>
 
-			<H2>Creating and editing suits</H2>
-			<H3>New suit drawer</H3>
+			<H2>Creating and editing profiles</H2>
+			<H3>New profile drawer</H3>
 			<P>
 				Click <strong>New Profile</strong> to launch the side drawer. The form
-				supports friendly display names, descriptions, and optional suit types
+				supports friendly display names, descriptions, and optional profile types
 				(e.g., writer, coder). If you arrive via a preset shortcut (such as
 				<code>?type=writer</code>), the drawer preselects the appropriate template.
 			</P>
 
 			<H3>Detail pages</H3>
 			<P>
-				Selecting a suit card navigates to <code>/profiles/:profileId</code>,
+				Selecting a profile card navigates to <code>/profiles/:profileId</code>,
 				where you inspect servers, tools, prompts, and resources assigned to that
-				suit. The detail view exposes per-capability toggles and activity logs
+				profile. The detail view exposes per-capability toggles and activity logs
 				while preserving a breadcrumb back to the catalog.
 			</P>
 			<P>
@@ -75,16 +74,16 @@ export default function Profile() {
 			<Ul>
 				<Li>
 					Every card and list item includes a toggle switch for enabling or
-					pausing the suit. MCPMate immediately calls the activation/deactivation
+					pausing the profile. MCPMate immediately calls the activation/deactivation
 					endpoints and surfaces toast notifications confirming the change.
 				</Li>
 				<Li>
-					When multiple suits are active, their enabled servers, tools, and
+					When multiple profiles are active, their enabled servers, tools, and
 					resources are merged at runtime. The stats cards keep you aware of the
 					total footprint.
 				</Li>
 				<Li>
-					Default anchor suits display a disabled toggle to prevent accidental
+					Default anchor profiles display a disabled toggle to prevent accidental
 					removal of baseline configurations.
 				</Li>
 			</Ul>
@@ -92,8 +91,8 @@ export default function Profile() {
 			<Callout type="warning" title="Troubleshooting activation">
 				If a toggle appears stuck, open the Runtime page to confirm the proxy is
 				healthy, then reload the Profiles page with the refresh button. You can
-				also inspect the suit via <code>/config/suits/:id</code> using the API
-				Docs link to ensure the backend persisted the change.
+				also verify profile status via API Docs to ensure the backend persisted
+				the change.
 			</Callout>
 		</DocLayout>
 	);

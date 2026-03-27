@@ -81,7 +81,7 @@ export default function ClientApps() {
 				<Li>
 					<strong>Configuration</strong> &mdash; live view of MCP servers MCPMate
 					would write for this client, import-from-client flows, and hosted vs.
-					transparent behavior hints.
+					transparent mode hints.
 				</Li>
 				<Li>
 					<strong>Backups</strong> &mdash; rotating snapshots created when you

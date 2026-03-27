@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
@@ -40,6 +39,16 @@ export default function QuickstartZH() {
 					<strong>账户</strong> 在 macOS 上可关联 GitHub，为后续云端相关能力预留身份；顶栏{" "}
 					<strong>文档</strong> 会在新标签打开 <code>mcp.umate.ai</code> 上与本页面对应的指南章节。
 				</Li>
+			</Ul>
+
+			<H2>分离模式运行（Core Server + UI）</H2>
+			<P>
+				你可以将 MCPMate 核心服务与 UI 壳层解耦，适配远程部署或多机协作场景。
+			</P>
+			<Ul>
+				<Li>在目标主机启动后端服务，并确认 API/MCP 端口可访问。</Li>
+				<Li>让 Web 控制台或桌面壳连接该后端，而非仅使用本地一体化运行。</Li>
+				<Li>在“设置 → 系统”中核对端口与启动命令，端口变化后按复制命令重启。</Li>
 			</Ul>
 
 			<H2>安装 MCP 服务</H2>
@@ -84,6 +93,12 @@ export default function QuickstartZH() {
 			<Ul>
 				<Li>若服务无法启动或提示缺少运行环境，请打开 <strong>运行时</strong> 页面。</Li>
 				<Li>使用 <strong>安装 / 修复</strong> 按钮为 uv、Bun 等运行时一键安装依赖，必要时可清理缓存。</Li>
+			</Ul>
+
+			<H2>查看审计日志</H2>
+			<Ul>
+				<Li>进入 <strong>审计日志</strong> 页面，查看配置集、客户端、服务器等关键操作轨迹。</Li>
+				<Li>通过动作类型与时间范围筛选，并使用游标分页加载历史事件。</Li>
 			</Ul>
 
 			<H2>更新与贡献</H2>

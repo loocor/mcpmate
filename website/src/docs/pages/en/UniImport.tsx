@@ -1,6 +1,5 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
-import { P } from "../../components/Headings";
+import { H2, Li, P, Ul } from "../../components/Headings";
 
 export default function UniImport() {
 	return (
@@ -8,7 +7,7 @@ export default function UniImport() {
 			meta={{
 				title: "Uni-Import",
 				description:
-					"Easy configuration through drag-and-drop or paste - supports JSON/TOML, mcpb coming soon",
+					"Easy configuration through drag-and-drop or paste with normalized transport handling",
 			}}
 		>
 			<P>
@@ -17,51 +16,50 @@ export default function UniImport() {
 				import it into MCPMate through simple drag-and-drop or paste operations.
 			</P>
 
-			<h2>Supported Formats</h2>
-			<ul>
-				<li>
+			<H2>Supported formats</H2>
+			<Ul>
+				<Li>
 					<strong>JSON:</strong> Standard MCP configuration format
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>TOML:</strong> Alternative configuration format
-				</li>
-				<li>
-					<strong>MCPB:</strong> Coming soon - MCPMate's bundle format for
-					sharing complete setups
-				</li>
-			</ul>
+				</Li>
+				<Li>
+					<strong>Snippet text:</strong> Direct paste from docs, chat, or team
+					wikis
+				</Li>
+			</Ul>
 
-			<h2>Import Methods</h2>
-			<ul>
-				<li>
+			<H2>Import methods</H2>
+			<Ul>
+				<Li>
 					<strong>Drag & Drop:</strong> Simply drag configuration files into
 					MCPMate
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Paste:</strong> Copy configuration text and paste it into the
 					import dialog
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>File Browser:</strong> Traditional file selection dialog
-				</li>
-			</ul>
+				</Li>
+			</Ul>
 
-			<h2>Smart Parsing</h2>
+			<H2>Smart parsing</H2>
 			<P>
 				Uni-Import automatically detects the format of your configuration and
 				validates it before import. If there are any issues, MCPMate provides
-				clear error messages and suggestions for fixing them.
+				clear error messages and suggestions for fixing them. Legacy SSE-style
+				input is accepted and normalized to Streamable HTTP during persistence.
 			</P>
 
-			<h2>Use Cases</h2>
-			<ul>
-				<li>Importing shared team configurations</li>
-				<li>Migrating from other MCP tools</li>
-				<li>Quick setup from documentation examples</li>
-				<li>Restoring from backups</li>
-			</ul>
-
-			<P>Content coming soon with Uni-Import examples and supported schemas.</P>
+			<H2>Use cases</H2>
+			<Ul>
+				<Li>Importing shared team configurations.</Li>
+				<Li>Migrating from other MCP tools.</Li>
+				<Li>Quick setup from documentation examples.</Li>
+				<Li>Restoring from backups.</Li>
+			</Ul>
 		</DocLayout>
 	);
 }

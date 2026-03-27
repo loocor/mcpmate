@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
@@ -20,7 +19,7 @@ export default function SettingsZH() {
 			<H2>标签概览</H2>
 			<Ul>
 				<Li>
-					<strong>通用</strong>：选择默认列表视图、应用模式（Express / Expert）、界面语言（简体中文、English、日本語）。
+					<strong>通用</strong>：选择默认列表视图、运行模式（引导式 / 高级）、界面语言（简体中文、English、日本語）。
 				</Li>
 				<Li><strong>外观</strong>：切换亮暗主题、是否跟随系统；在 Tauri 桌面端时可配置菜单栏与 Dock 图标策略。</Li>
 				<Li><strong>服务器控制</strong>：确定启停是否同步到托管客户端，以及新服务器是否自动加入默认配置集。</Li>

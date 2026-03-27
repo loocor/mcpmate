@@ -1,6 +1,5 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
-import { P } from "../../components/Headings";
+import { H2, Li, P, Ul } from "../../components/Headings";
 
 export default function ContextSwitching() {
 	return (
@@ -18,41 +17,45 @@ export default function ContextSwitching() {
 				researching, or collaborating.
 			</P>
 
-			<h2>How It Works</h2>
+			<H2>How it works</H2>
 			<P>
 				Create multiple profiles in MCPMate, each with its own set of servers
 				and settings. Switch between profiles with a single click, and all
 				connected clients automatically update to use the new configuration.
 			</P>
 
-			<h2>Example Scenarios</h2>
-			<ul>
-				<li>
+			<H2>Example scenarios</H2>
+			<Ul>
+				<Li>
 					<strong>Development Profile:</strong> Code assistance, file operations,
 					Git integration
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Writing Profile:</strong> Grammar checking, research tools,
 					citation management
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Analysis Profile:</strong> Data processing, visualization,
 					statistical tools
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Team Profile:</strong> Shared resources and collaboration tools
-				</li>
-			</ul>
+				</Li>
+			</Ul>
 
-			<h2>Benefits</h2>
-			<ul>
-				<li>No need to manually reconfigure clients</li>
-				<li>Reduce cognitive load by focusing only on relevant tools</li>
-				<li>Optimize performance by loading only what you need</li>
-				<li>Create specialized workflows for different tasks</li>
-			</ul>
+			<H2>Operational tips</H2>
+			<Ul>
+				<Li>Keep one default anchor profile always active as your safe baseline.</Li>
+				<Li>Use Hosted mode when you need instant profile switching in clients.</Li>
+				<Li>For separated deployments, verify API connectivity before switching.</Li>
+				<Li>After major changes, verify effects in Audit Logs and client pages.</Li>
+			</Ul>
 
-			<P>Content coming soon with profile management best practices.</P>
+			<P>
+				A practical sequence is: prepare profiles in advance, switch by task, and
+				review Audit Logs for traceability when multiple operators share one core
+				service.
+			</P>
 		</DocLayout>
 	);
 }

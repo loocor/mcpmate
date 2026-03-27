@@ -40,7 +40,7 @@ export default function APIDocsEN() {
 			<H3>REST operations</H3>
 			<P>
 				The OpenAPI view lists endpoints grouped by area (system, servers,
-				config suits, runtime, marketplace, etc.). Expand an operation to inspect
+				profiles, runtime, marketplace, etc.). Expand an operation to inspect
 				request/response schemas and issue test calls using the Try It button.
 			</P>
 

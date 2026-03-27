@@ -1,6 +1,5 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
-import { P } from "../../components/Headings";
+import { H2, Li, P, Ul } from "../../components/Headings";
 
 export default function ResourceOptimization() {
 	return (
@@ -17,34 +16,39 @@ export default function ResourceOptimization() {
 				lifecycle management, MCPMate ensures your MCP servers run efficiently.
 			</P>
 
-			<h2>Key Features</h2>
-			<ul>
-				<li>
+			<H2>Key capabilities</H2>
+			<Ul>
+				<Li>
 					<strong>Connection Pooling:</strong> Share server instances across
 					multiple clients
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Automatic Lifecycle Management:</strong> Start servers
 					on-demand and stop them when not in use
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Memory Optimization:</strong> Reduce memory footprint through
 					intelligent resource sharing
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Performance Monitoring:</strong> Track resource usage and
 					identify optimization opportunities
-				</li>
-			</ul>
+				</Li>
+			</Ul>
 
-			<h2>Benefits</h2>
+			<H2>Benefits</H2>
 			<P>
 				Instead of running multiple instances of the same server for different
 				clients, MCPMate can share a single instance across all your
 				applications, dramatically reducing CPU and memory usage.
 			</P>
 
-			<P>Content coming soon with performance benchmarks and optimization tips.</P>
+			<H2>Operational checks</H2>
+			<Ul>
+				<Li>Use Dashboard metrics to spot sustained CPU/memory growth.</Li>
+				<Li>Review Runtime page cache and runtime health before scaling clients.</Li>
+				<Li>Track major optimization changes in Audit Logs for later comparison.</Li>
+			</Ul>
 		</DocLayout>
 	);
 }

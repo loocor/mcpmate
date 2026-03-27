@@ -1,6 +1,5 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
-import { P } from "../../components/Headings";
+import { H2, Li, P, Ul } from "../../components/Headings";
 import DocScreenshot from "../../components/DocScreenshot";
 
 export default function Inspector() {
@@ -15,7 +14,7 @@ export default function Inspector() {
 			<P>
 				The MCPMate Inspector provides a powerful interface for monitoring and
 				debugging your MCP servers. Get real-time insights into server behavior,
-				examine logs, and diagnose issues—all from within the 				MCPMate console.
+				examine logs, and diagnose issues all from within the MCPMate console.
 			</P>
 
 			<DocScreenshot
@@ -24,40 +23,43 @@ export default function Inspector() {
 				alt="Inspector tool call panel against server capabilities"
 			/>
 
-			<h2>Features</h2>
-			<ul>
-				<li>
+			<H2>Features</H2>
+			<Ul>
+				<Li>
 					<strong>Real-time Monitoring:</strong> Watch server activity as it
 					happens
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Log Viewer:</strong> Browse and search through server logs
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Request/Response Inspector:</strong> Examine MCP protocol
 					messages in detail
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Performance Metrics:</strong> Track response times and resource
 					usage
-				</li>
-				<li>
+				</Li>
+				<Li>
 					<strong>Error Diagnostics:</strong> Quickly identify and troubleshoot
 					issues
-				</li>
-			</ul>
+				</Li>
+			</Ul>
 
-			<h2>Use Cases</h2>
-			<ul>
-				<li>Debugging server configuration issues</li>
-				<li>Monitoring server performance in production</li>
-				<li>Understanding MCP protocol interactions</li>
-				<li>Troubleshooting client-server communication problems</li>
-			</ul>
+			<H2>Use cases</H2>
+			<Ul>
+				<Li>Debugging server configuration issues.</Li>
+				<Li>Monitoring runtime behavior during rollout windows.</Li>
+				<Li>Validating capability payloads before enabling to all clients.</Li>
+				<Li>Troubleshooting client-server communication problems.</Li>
+			</Ul>
 
-			<P>
-				Content coming soon with detailed inspector interface documentation.
-			</P>
+			<H2>Suggested workflow</H2>
+			<Ul>
+				<Li>Start from server details to identify the target server/capability.</Li>
+				<Li>Run controlled calls in Inspector and capture response metadata.</Li>
+				<Li>Cross-check timestamps with Audit Logs for full operation context.</Li>
+			</Ul>
 		</DocLayout>
 	);
 }

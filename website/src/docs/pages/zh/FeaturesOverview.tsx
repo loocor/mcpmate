@@ -30,6 +30,10 @@ export default function FeaturesOverview() {
 				<li>
 					<strong>精细控制：</strong>通过精确的开关微调每一项能力
 				</li>
+				<li>
+					<strong>Core Server + UI 分离：</strong>后端核心服务可独立运行，
+					Web/桌面 UI 可按需连接
+				</li>
 			</ul>
 
 			<h3>性能与优化</h3>
@@ -53,6 +57,10 @@ export default function FeaturesOverview() {
 				</li>
 				<li>
 					<strong>全能导入：</strong>通过拖放或粘贴轻松配置
+				</li>
+				<li>
+					<strong>审计日志：</strong>以可筛选、游标分页的方式追踪管理动作与
+					MCP 活动记录
 				</li>
 			</ul>
 

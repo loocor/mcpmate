@@ -148,6 +148,12 @@ export const docsNav: DocNav[] = [
 						component: () => import("./pages/en/Runtime"),
 					},
 					{
+						id: "logs",
+						path: "/docs/en/logs",
+						title: "Audit Logs",
+						component: () => import("./pages/en/Logs"),
+					},
+					{
 						id: "api-docs",
 						path: "/docs/en/api-docs",
 						title: "API Docs",
@@ -310,6 +316,12 @@ export const docsNav: DocNav[] = [
 						path: "/docs/zh/runtime",
 						title: "运行时",
 						component: () => import("./pages/zh/Runtime"),
+					},
+					{
+						id: "logs",
+						path: "/docs/zh/logs",
+						title: "审计日志",
+						component: () => import("./pages/zh/Logs"),
 					},
 					{
 						id: "api-docs",

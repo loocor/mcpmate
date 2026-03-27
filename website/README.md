@@ -1,9 +1,27 @@
 MCPMate Website
 
+The `website/` project contains:
+- Public marketing pages
+- Embedded product documentation (`src/docs/`)
+- Release changelog pages used by `mcp.umate.ai`
+
 Local development
 - Install deps: `bun install` (or `npm install`)
 - Run dev server: `bun run dev` (or `npm run dev`)
 - Build: `bun run build` (or `npm run build`)
+
+Documentation authoring
+- Docs routes and sidebar: `src/docs/nav.ts`
+- English pages: `src/docs/pages/en/`
+- Chinese pages: `src/docs/pages/zh/`
+- Changelog data: `src/docs/changelog/en.json`, `src/docs/changelog/zh.json`
+- Keep EN/ZH docs aligned when adding or updating product capabilities
+
+Current product highlights to keep documented
+- Core server + UI separated operation mode (backend decoupled from dashboard shell)
+- Integrated desktop mode (Tauri bundles backend + board)
+- Audit logs and operational traceability workflows
+- Streamable HTTP aligned transport behavior and legacy SSE input normalization in install/import flows
 
 Preview download configuration
 - Copy `.env.example` to `.env`

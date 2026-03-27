@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
@@ -29,7 +28,7 @@ export default function Settings() {
 			<Ul>
 				<Li>
 					<strong>General</strong> &mdash; set the default list/grid view,
-					pick the app mode (Express vs. Expert), and choose the dashboard
+					pick the operation mode (guided vs. advanced), and choose the dashboard
 					language (English, Simplified Chinese, or Japanese).
 				</Li>
 				<Li>

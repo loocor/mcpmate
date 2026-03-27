@@ -1,5 +1,30 @@
 [
 	{
+		"version": "0.1.5",
+		"date": "2026-03-27",
+		"highlights": [
+			"Introduced separated core-server/UI operation mode and shipped end-to-end audit log workflows across backend, dashboard, and desktop."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Added audit log data models, API routes, and storage policies to expose a structured operation timeline."
+			},
+			{
+				"type": "feat",
+				"text": "Dashboard now includes a dedicated Audit Logs page with cursor pagination and filtering for large event streams."
+			},
+			{
+				"type": "feat",
+				"text": "Desktop core service wiring now supports core-server/UI separation so control plane and shell can run independently."
+			},
+			{
+				"type": "docs",
+				"text": "Refreshed website docs and repository READMEs to match current operation modes and audit capabilities."
+			}
+		]
+	},
+	{
 		"version": "0.1.4",
 		"date": "2026-03-24",
 		"highlights": [

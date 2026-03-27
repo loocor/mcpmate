@@ -17,7 +17,7 @@ export default function GuidesOverview() {
 			</P>
 
 			<Callout type="info" title="指南如何映射到产品">
-				控制台、配置集、客户端、服务器、市场、运行时与侧边栏顺序一致。「API
+				控制台、配置集、客户端、服务器、市场、运行时、审计日志与侧边栏顺序一致。「API
 				文档」需在「设置 → 开发者」中开启后才会出现在侧栏底部；其下还有「账户」与「设置」。建议阅读时同时打开控制台对照操作。
 			</Callout>
 
@@ -73,6 +73,9 @@ export default function GuidesOverview() {
 					<strong>运行时</strong> —— 监控 uv 与 Bun 状态、清理缓存、查看能力缓存统计。
 				</Li>
 				<Li>
+					<strong>审计日志</strong> —— 通过游标分页查看配置集、客户端、服务器变更及安全相关事件时间线。
+				</Li>
+				<Li>
 					<strong>API 文档</strong> —— 侧栏可选入口，打开代理托管的 OpenAPI 交互文档（默认路径{" "}
 					<code>/docs</code>）。
 				</Li>
@@ -95,6 +98,7 @@ export default function GuidesOverview() {
 			<H3>3. 拓展能力</H3>
 			<P>
 				在市场里导入新的 MCP 服务器，随后到运行时确认环境与缓存正常，最后在设置里固定默认视图、市场门户以及 API 文档入口。
+				如果采用 Core Server + UI 分离部署，也建议在此步骤同步校准端口与后端连接参数。
 			</P>
 
 			<H2>通用交互模式</H2>

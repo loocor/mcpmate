@@ -35,6 +35,10 @@ export default function FeaturesOverview() {
 					<strong>Granular Controls:</strong> Fine-tune every capability with
 					precise toggles
 				</li>
+				<li>
+					<strong>Core Server + UI Separation:</strong> Run the backend core
+					service independently and connect web/desktop UI shells as needed
+				</li>
 			</ul>
 
 			<h3>Performance & Optimization</h3>
@@ -62,6 +66,10 @@ export default function FeaturesOverview() {
 				<li>
 					<strong>Uni-Import:</strong> Easy configuration through drag-and-drop
 					or paste
+				</li>
+				<li>
+					<strong>Audit Logs:</strong> Track management actions and MCP activity
+					with filterable, cursor-paginated history
 				</li>
 			</ul>
 

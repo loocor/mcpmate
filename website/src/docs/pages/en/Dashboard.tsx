@@ -39,9 +39,9 @@ export default function Dashboard() {
 					page for deeper repair actions.
 				</Li>
 				<Li>
-					<strong>Profiles</strong> surfaces the total suits and how many are
+					<strong>Profiles</strong> surfaces the total profiles and how many are
 					currently active. It respects the same data ordering as the Profiles
-					page (default anchor first, then active suits) so discrepancies are
+					page (default anchor first, then active profiles) so discrepancies are
 					easy to spot.
 				</Li>
 				<Li>

@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
@@ -54,6 +53,26 @@ export default function Quickstart() {
 				</Li>
 			</Ul>
 
+			<H2>Run in separated mode (core server + UI)</H2>
+			<P>
+				You can decouple MCPMate core services from the UI shell for remote or
+				multi-machine operations.
+			</P>
+			<Ul>
+				<Li>
+					Run backend on the target host and expose the REST/MCP ports you plan
+					to use.
+				</Li>
+				<Li>
+					Connect the dashboard shell (web or desktop) to that backend instead of
+					running an all-in-one local bundle.
+				</Li>
+				<Li>
+					Use the Settings → System section to verify API/MCP ports and copy
+					relaunch commands when endpoints change.
+				</Li>
+			</Ul>
+
 			<H2>Install MCP servers</H2>
 			<P>Pick the approach that matches the services you want to use.</P>
 			<H3>Browse the built-in marketplace</H3>
@@ -105,6 +124,18 @@ export default function Quickstart() {
 					<strong> Install / Repair</strong> to provision required runtimes (uv, Bun).
 				</Li>
 				<Li>Clear caches from the same page if you suspect stale data.</Li>
+			</Ul>
+
+			<H2>Review audit logs</H2>
+			<Ul>
+				<Li>
+					Open the <strong>Audit Logs</strong> page to review profile/client/server
+					operations and security-relevant actions.
+				</Li>
+				<Li>
+					Filter by action type and time range, then paginate with cursor-based
+					loading for long-running environments.
+				</Li>
 			</Ul>
 
 			<H2>Updates and contributions</H2>

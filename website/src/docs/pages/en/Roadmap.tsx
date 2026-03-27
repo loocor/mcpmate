@@ -12,11 +12,6 @@ const inProgress = [
 			"Granular tool visibility and session isolation are being polished so each client only sees what it should.",
 	},
 	{
-		title: "End-to-end activity logging",
-		description:
-			"A lightweight audit trail will capture every MCP interaction with optional redaction, giving teams confidence in shared environments.",
-	},
-	{
 		title: "Cross-platform packaging",
 		description:
 			"macOS, Windows, and Linux installers with auto-updates and system service support are on the way.",
@@ -55,11 +50,6 @@ const onTheHorizon = [
 			"Lightweight cloud sync and hosted options that keep configurations aligned across environments.",
 	},
 	{
-		title: "Audit hub",
-		description:
-			"A centralized surface for reviewing recorded events, highlighting anomalies, and coordinating follow-up.",
-	},
-	{
 		title: "Master-follower mode",
 		description:
 			"Designate follower nodes to mirror a primary instance, enabling coordinated rollouts inside larger teams.",
@@ -89,6 +79,18 @@ const Roadmap = () => {
 					{inProgress.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
 					))}
+				</ul>
+
+				<h2>Recently Delivered</h2>
+				<ul className="space-y-2">
+					<li>
+						Core server + UI separated operation mode is now available, so the
+						control-plane backend can run independently from web/desktop shells.
+					</li>
+					<li>
+						Audit Logs is now live with filtering and cursor pagination for large
+						operation timelines.
+					</li>
 				</ul>
 
 				<h2>On the Horizon</h2>

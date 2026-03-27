@@ -16,6 +16,7 @@ MCPMate is a comprehensive Model Context Protocol (MCP) management center design
 - [Core Components](#core-components)
 - [Screenshots](#screenshots)
 - [Quick Start](#quick-start)
+- [Deployment Modes](#deployment-modes)
 - [Architecture](#architecture)
 - [Key Features](#key-features)
 - [Development](#development)
@@ -87,6 +88,15 @@ Cross-platform desktop application built with Tauri 2:
 - Intelligent client detection and configuration generation
 - System tray integration with native notifications
 - Supports macOS, Windows, and Linux
+
+### Audit Hub
+
+Unified audit trail for operational and security events:
+
+- Collects MCP operations and management-side changes into a structured timeline
+- Supports cursor-based pagination for high-volume environments
+- Exposes REST APIs for querying and reviewing audit records
+- Provides a dedicated Audit Logs page in the dashboard UI
 
 ## Screenshots
 
@@ -182,6 +192,14 @@ bun run dev
 
 The dashboard will be available at `http://localhost:5173`.
 
+## Deployment Modes
+
+MCPMate supports both integrated and separated operation modes:
+
+- **Integrated mode (desktop)** — Tauri bundles backend + dashboard for local all-in-one operation
+- **Separated mode (core server + UI)** — run backend independently and connect either the web dashboard or desktop shell to that core service
+- **Client mode flexibility** — managed clients can continue using hosted/transparent workflows while the control plane runs remotely
+
 ## Architecture
 
 ```
@@ -227,6 +245,12 @@ MCPMate detects and configures multiple AI clients:
 - Tool poisoning detection
 - Sensitive data detection
 - Security alerts and audit logs
+
+### Audit Logs
+
+- Dedicated **Audit Logs** page for filtering and reviewing historical actions
+- Event stream includes actor, target, action type, and timestamp metadata
+- Cursor pagination support for large datasets and incremental loading
 
 ## Development
 

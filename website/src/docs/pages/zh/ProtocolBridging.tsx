@@ -33,8 +33,7 @@ export default function ProtocolBridging() {
 					<strong>混合部署：</strong>在同一工作流程中混合使用本地和远程服务器
 				</li>
 				<li>
-					<strong>旧客户端支持：</strong>在仅支持 stdio 的旧客户端上使用现代
-					Streamable HTTP 服务器
+					<strong>历史配置兼容：</strong>导入旧版 SSE 风格配置片段，并按统一传输模型运行
 				</li>
 				<li>
 					<strong>服务迁移：</strong>在不中断客户端的情况下从 stdio 逐步迁移到
@@ -50,7 +49,12 @@ export default function ProtocolBridging() {
 				<li>为您的 MCP 基础设施做好未来准备</li>
 			</ul>
 
-			<P>协议桥接配置示例即将推出。</P>
+			<h2>推荐部署模式</h2>
+			<ul>
+				<li>将 MCPMate 核心服务部署在稳定主机上。</li>
+				<li>通过桥接链路承接仅支持 stdio 的客户端。</li>
+				<li>对现代集成统一暴露 Streamable HTTP 端点。</li>
+			</ul>
 		</DocLayout>
 	);
 }

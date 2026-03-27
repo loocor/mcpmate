@@ -38,8 +38,8 @@ export default function ProtocolBridging() {
 					the same workflow
 				</li>
 				<li>
-					<strong>Legacy Client Support:</strong> Use modern SSE servers with
-					older stdio-only clients
+					<strong>Legacy Config Compatibility:</strong> Import historical SSE-style
+					config snippets and run them through the normalized transport model
 				</li>
 				<li>
 					<strong>Service Migration:</strong> Gradually migrate from stdio to
@@ -55,7 +55,12 @@ export default function ProtocolBridging() {
 				<li>Future-proof your MCP infrastructure</li>
 			</ul>
 
-			<P>Content coming soon with protocol bridging configuration examples.</P>
+			<h2>Practical deployment pattern</h2>
+			<ul>
+				<li>Run MCPMate core service on a stable host.</li>
+				<li>Connect stdio-only clients through bridge or hosted client mode.</li>
+				<li>Expose Streamable HTTP endpoint for modern integrations.</li>
+			</ul>
 		</DocLayout>
 	);
 }
