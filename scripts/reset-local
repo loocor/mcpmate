@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "$(cd "$(dirname "$0")" && pwd)/common.sh"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: ./scripts/reset-local
+
+Removes local MCPMate runtime residue for a clean-room dev environment.
+This stops local services/processes and deletes local data, caches, sidecars,
+temporary files, and desktop-shell app data.
+EOF
+  exit 0
+fi
+
+print_section "stop local MCPMate processes"
+pkill -f "mcpmate-core" >/dev/null 2>&1 || true
+pkill -f "/backend/target/.*/mcpmate" >/dev/null 2>&1 || true
+pkill -f "cargo tauri dev" >/dev/null 2>&1 || true
+pkill -f "bun run dev" >/dev/null 2>&1 || true
+pkill -f "vite" >/dev/null 2>&1 || true
+
+print_section "unload launchd services"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  USER_ID="$(id -u)"
+  launchctl bootout "gui/${USER_ID}" "$HOME/Library/LaunchAgents/ai.umate.mcpmate.core.plist" >/dev/null 2>&1 || true
+  launchctl bootout "gui/${USER_ID}" "$HOME/Library/LaunchAgents/com.mcpmate.core.plist" >/dev/null 2>&1 || true
+  launchctl remove ai.umate.mcpmate.core >/dev/null 2>&1 || true
+  launchctl remove com.mcpmate.core >/dev/null 2>&1 || true
+fi
+
+print_section "remove launch agent definitions"
+rm -f "$HOME/Library/LaunchAgents/ai.umate.mcpmate.core.plist"
+rm -f "$HOME/Library/LaunchAgents/com.mcpmate.core.plist"
+
+print_section "remove backend sidecars and build residue"
+rm -f "$(project_dir backend)/target/sidecars/mcpmate-core"*
+rm -f "$(project_dir backend)/target/sidecars/bridge"*
+
+print_section "remove MCPMate data directories"
+rm -rf "$HOME/.mcpmate"
+rm -rf "$HOME/Library/Application Support/desktop.mcp.umate.ai"
+
+print_section "remove temporary files"
+rm -rf /tmp/mcpmate-downloads
+rm -rf /tmp/mcpmate-runtime-install
+rm -rf /tmp/mcpmate-bun-extract
+rm -rf /tmp/mcpmate-uv-extract
+rm -f /tmp/mcpmate-market-diag.log
+rm -f /tmp/mcpmate-backend.log
+rm -f /tmp/mcpmate-board.log
+rm -f /tmp/mcpmate-cache-*.redb
+
+print_section "done"
+printf 'Local MCPMate runtime state has been reset.\n'

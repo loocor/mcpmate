@@ -8,7 +8,8 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
 Usage: ./scripts/dev-desktop [cargo tauri dev args...]
 
-Builds board/dist first, then starts the MCPMate Tauri desktop app in dev mode.
+Starts the MCPMate Tauri desktop app in dev mode.
+The board dev server is started by Tauri's beforeDevCommand using the configured host/port.
 The script enables inspector and debug logging, and keeps all logs in the current terminal.
 Additional arguments are forwarded to cargo tauri dev.
 EOF
@@ -18,11 +19,7 @@ fi
 require_command cargo
 require_command bun
 
-BOARD_DIR="$(project_dir board)"
 TAURI_DIR="$(project_dir desktop/tauri)"
-
-print_section "board build"
-run_in "$BOARD_DIR" bun run build
 
 print_section "backend dependency check"
 BACKEND_DIR="$(project_dir backend)"

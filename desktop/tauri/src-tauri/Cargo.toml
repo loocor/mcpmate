@@ -41,7 +41,7 @@ twoway = "0.2"
 tauri-plugin-deep-link = "2"
 uuid = { version = "1.22.0", features = ["v4"] }
 hostname = "0.4"
-service-manager = { path = "/Volumes/External/GitHub/service-manager-rs" }
+service-manager = { git = "https://github.com/loocor/service-manager-rs", rev = "9c1200af240e5820c3e2d62344cf17d60e907efa" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

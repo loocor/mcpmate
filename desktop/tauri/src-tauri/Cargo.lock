@@ -6549,6 +6549,7 @@ dependencies = [
 [[package]]
 name = "service-manager"
 version = "0.11.0"
+source = "git+https://github.com/loocor/service-manager-rs?rev=9c1200af240e5820c3e2d62344cf17d60e907efa#9c1200af240e5820c3e2d62344cf17d60e907efa"
 dependencies = [
  "cfg-if",
  "dirs 4.0.0",

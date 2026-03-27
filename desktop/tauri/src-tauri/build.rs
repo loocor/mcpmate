@@ -148,10 +148,6 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
         .sidecar_dir
         .join(format!("{sidecar_name}{}", context.exe_suffix));
 
-    if sidecar_target.exists() && sidecar_plain.exists() {
-        return;
-    }
-
     let mut cargo = Command::new("cargo");
     cargo
         .arg("build")

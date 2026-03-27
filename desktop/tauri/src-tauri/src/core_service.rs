@@ -130,16 +130,12 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         .context("unable to resolve local MCPMate core service binary")
 }
 
-pub fn install_local_service(app: &AppHandle, config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
-	ensure_local_service_definition(app, config)?;
-	Ok(LocalCoreServiceStatusView {
-		status: LocalCoreServiceStatusKind::Stopped,
-		label: "Installed".to_string(),
-		detail: "The localhost core service definition was installed or refreshed.".to_string(),
-		level: level_label(resolve_service_level()),
-		installed: true,
-		running: false,
-	})
+pub async fn install_local_service(
+    app: &AppHandle,
+    config: &DesktopCoreSourceConfig,
+) -> Result<LocalCoreServiceStatusView> {
+    ensure_local_service_definition(app, config)?;
+    read_local_service_status(config).await
 }
 
 pub fn uninstall_local_service(_config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
@@ -400,7 +396,7 @@ pub async fn stop_local_service(config: &DesktopCoreSourceConfig) -> Result<Loca
         manager.status(ServiceStatusCtx { label: label.clone() })?
     };
 
-    if matches!(status, ServiceStatus::NotInstalled) {
+    if matches!(status, ServiceStatus::NotInstalled | ServiceStatus::Stopped(_)) {
         return read_local_service_status(config).await;
     }
 

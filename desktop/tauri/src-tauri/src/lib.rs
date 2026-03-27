@@ -18,6 +18,7 @@ use tauri::{
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 mod account;
+mod audit;
 mod core_service;
 mod deep_link;
 mod runtime_ports;
@@ -794,6 +795,29 @@ async fn mcp_shell_apply_core_source(
     sync_and_emit_core_state(&app, shell_state.inner(), &view)
         .await
         .map_err(|err| err.to_string())?;
+
+    if let Err(err) = audit::emit_desktop_audit_event(
+        mcpmate::audit::AuditAction::CoreSourceApply,
+        mcpmate::audit::AuditStatus::Success,
+        Some(match config.selected_source {
+            DesktopCoreSourceKind::Localhost => "localhost".to_string(),
+            DesktopCoreSourceKind::Remote => "remote".to_string(),
+        }),
+        Some("Applied desktop core source configuration".to_string()),
+        Some(json!({
+            "selected_source": config.selected_source,
+            "localhost_runtime_mode": config.localhost_runtime_mode,
+            "localhost_api_port": config.localhost.api_port,
+            "localhost_mcp_port": config.localhost.mcp_port,
+            "remote_base_url": config.remote.base_url,
+        })),
+        None,
+    )
+    .await
+    {
+        warn!(error = %err, "Failed to emit desktop audit event for core source apply");
+    }
+
     Ok(view)
 }
 
@@ -805,8 +829,24 @@ async fn mcp_shell_manage_local_core_service(
     action: LocalCoreServiceAction,
 ) -> Result<DesktopCoreSourceView, String> {
     let config = DesktopCoreSourceConfig::load(global_paths()).map_err(|err| err.to_string())?;
+    let action_name = format!("{:?}", action).to_lowercase();
 
-    let view = match (config.localhost_runtime_mode, action) {
+    let audit_action = match (config.localhost_runtime_mode, action.clone()) {
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Start) => mcpmate::audit::AuditAction::LocalCoreServiceStart,
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Restart) => mcpmate::audit::AuditAction::LocalCoreServiceRestart,
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Stop) => mcpmate::audit::AuditAction::LocalCoreServiceStop,
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Install) => mcpmate::audit::AuditAction::LocalCoreServiceInstall,
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Uninstall) => mcpmate::audit::AuditAction::LocalCoreServiceUninstall,
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Status) => mcpmate::audit::AuditAction::RestRequest,
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Start) => mcpmate::audit::AuditAction::DesktopManagedCoreStart,
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => mcpmate::audit::AuditAction::DesktopManagedCoreRestart,
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Stop) => mcpmate::audit::AuditAction::DesktopManagedCoreStop,
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Status) => mcpmate::audit::AuditAction::RestRequest,
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Install)
+        | (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Uninstall) => mcpmate::audit::AuditAction::RestRequest,
+    };
+
+    let view = match (config.localhost_runtime_mode, action.clone()) {
         (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Start) => {
             start_local_service(&app, &config)
                 .await
@@ -832,6 +872,7 @@ async fn mcp_shell_manage_local_core_service(
         }
         (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Install) => {
             install_local_service(&app, &config)
+                .await
                 .map(|status| DesktopCoreSourceView::from_config(&config, status))
                 .map_err(|err| err.to_string())?
         }
@@ -866,13 +907,51 @@ async fn mcp_shell_manage_local_core_service(
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Install)
         | (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Uninstall) => {
-            return Err("install/uninstall are only available in service mode".to_string());
+            let message = "install/uninstall are only available in service mode".to_string();
+            if let Err(err) = audit::emit_desktop_audit_event(
+                audit_action,
+                mcpmate::audit::AuditStatus::Failed,
+                Some(action_name.clone()),
+                Some("Rejected local core service action".to_string()),
+                Some(json!({
+                    "localhost_runtime_mode": config.localhost_runtime_mode,
+                    "action": action_name,
+                })),
+                Some(message.clone()),
+            )
+            .await
+            {
+                warn!(error = %err, "Failed to emit desktop audit event for rejected service action");
+            }
+            return Err(message);
         }
     };
 
     sync_and_emit_core_state(&app, shell_state.inner(), &view)
         .await
         .map_err(|err| err.to_string())?;
+
+    if !matches!(action, LocalCoreServiceAction::Status) {
+        if let Err(err) = audit::emit_desktop_audit_event(
+            audit_action,
+            mcpmate::audit::AuditStatus::Success,
+            Some(action_name.clone()),
+            Some("Completed local core service action".to_string()),
+            Some(json!({
+                "localhost_runtime_mode": config.localhost_runtime_mode,
+                "action": action_name,
+                "status": view.local_service.status,
+                "installed": view.local_service.installed,
+                "running": view.local_service.running,
+            })),
+            None,
+        )
+        .await
+        {
+            warn!(error = %err, "Failed to emit desktop audit event for service action");
+        }
+    }
+
     Ok(view)
 }
 
