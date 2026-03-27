@@ -1,5 +1,9 @@
 import type {
 	ApiResponse,
+	AuditListData,
+	AuditListResp,
+	AuditPolicyResp,
+	AuditPolicySetReq,
 	BatchOperationResponse,
 	CapabilitiesKeysResponse,
 	CapabilitiesMetricsStats,
@@ -77,6 +81,27 @@ import type {
 const API_BASE_OVERRIDE_KEY = "mcpmate.api_base_override";
 export const API_BASE_CHANGED_EVENT = "mcpmate:api-base-changed";
 
+const isDesktopShellEnvironment = (): boolean => {
+	if (typeof window === "undefined") {
+		return false;
+	}
+	const w = window as Record<string, unknown>;
+	const protocol = window.location?.protocol?.toLowerCase() ?? "";
+	const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+	return (
+		protocol === "tauri:" ||
+		protocol === "app:" ||
+		protocol === "file:" ||
+		w.__TAURI__ !== undefined ||
+		w.__TAURI_IPC__ !== undefined ||
+		w.__TAURI_INTERNALS__ !== undefined ||
+		w.__TAURI_METADATA__ !== undefined ||
+		w.__MCPMATE_IS_TAURI__ !== undefined ||
+		ua.includes("Tauri") ||
+		ua.includes("MCPMate")
+	);
+};
+
 const resolveApiBaseUrl = (): string => {
 	const envBase =
 		typeof import.meta !== "undefined" ? import.meta.env?.VITE_API_BASE_URL : undefined;
@@ -85,9 +110,8 @@ const resolveApiBaseUrl = (): string => {
 		return envBase.trim();
 	}
 
-	// Runtime override (e.g., Tauri Settings → change API port)
 	try {
-		if (typeof window !== "undefined" && window.localStorage) {
+		if (isDesktopShellEnvironment() && typeof window !== "undefined" && window.localStorage) {
 			const override = window.localStorage.getItem(API_BASE_OVERRIDE_KEY);
 			if (override && override.trim().length > 0) {
 				return override.trim();
@@ -118,10 +142,15 @@ const resolveApiBaseUrl = (): string => {
 export let API_BASE_URL = resolveApiBaseUrl();
 export function setApiBaseUrl(newBase: string | null | undefined) {
 	const candidate = (newBase ?? "").trim();
+	const shouldPersistOverride = isDesktopShellEnvironment();
 	if (candidate.length > 0) {
 		API_BASE_URL = candidate;
 		try {
-			window.localStorage?.setItem(API_BASE_OVERRIDE_KEY, candidate);
+			if (shouldPersistOverride) {
+				window.localStorage?.setItem(API_BASE_OVERRIDE_KEY, candidate);
+			} else {
+				window.localStorage?.removeItem(API_BASE_OVERRIDE_KEY);
+			}
 			window.dispatchEvent(
 				new CustomEvent(API_BASE_CHANGED_EVENT, { detail: { apiBaseUrl: candidate } }),
 			);
@@ -1287,6 +1316,49 @@ export const inspectorApi = {
 		if (q.mode) qs.set("mode", q.mode);
 		if (q.refresh != null) qs.set("refresh", String(q.refresh));
 		return fetchApi(`/api/mcp/inspector/template/list?${qs}`);
+	},
+};
+
+export const auditApi = {
+	list: async (query?: {
+		cursor?: string;
+		limit?: number;
+		category?: string;
+		action?: string;
+		status?: string;
+		client_id?: string;
+		profile_id?: string;
+		server_id?: string;
+		session_id?: string;
+	}) => {
+		const qs = new URLSearchParams();
+		if (query?.cursor) qs.set("cursor", query.cursor);
+		if (query?.limit != null) qs.set("limit", String(query.limit));
+		if (query?.category) qs.set("category", query.category);
+		if (query?.action) qs.set("action", query.action);
+		if (query?.status) qs.set("status", query.status);
+		if (query?.client_id) qs.set("client_id", query.client_id);
+		if (query?.profile_id) qs.set("profile_id", query.profile_id);
+		if (query?.server_id) qs.set("server_id", query.server_id);
+		if (query?.session_id) qs.set("session_id", query.session_id);
+		const resp = await fetchApi<AuditListResp>(`/api/audit/events?${qs}`);
+		return extractApiData<AuditListData>(resp);
+	},
+	eventsWsUrl: () => {
+		const wsBase = resolveWebSocketUrl();
+		return `${wsBase}/audit/events`;
+	},
+	getPolicy: async () => {
+		const resp = await fetchApi<AuditPolicyResp>("/api/audit/policy");
+		return extractApiData<AuditPolicyData>(resp);
+	},
+	setPolicy: async (payload: AuditPolicySetReq) => {
+		const resp = await fetchApi<AuditPolicyResp>("/api/audit/policy", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		});
+		return extractApiData<AuditPolicyData>(resp);
 	},
 };
 

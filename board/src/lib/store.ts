@@ -35,6 +35,9 @@ export interface DashboardSettings {
 	marketBlacklist: MarketBlacklistEntry[];
 	enableMarketBlacklist: boolean;
 	showApiDocsMenu: boolean;
+	showClientLiveLogs: boolean;
+	showServerLiveLogs: boolean;
+	showProfileLiveLogs: boolean;
 	defaultMarket: DefaultMarket;
 	marketPortals: Record<string, MarketPortalMeta>;
 }
@@ -96,6 +99,9 @@ const defaultDashboardSettings: DashboardSettings = {
 	marketBlacklist: [],
 	enableMarketBlacklist: false,
 	showApiDocsMenu: true,
+	showClientLiveLogs: true,
+	showServerLiveLogs: true,
+	showProfileLiveLogs: true,
 	defaultMarket: "official",
 	marketPortals: {},
 };
@@ -174,6 +180,18 @@ function normalizeDashboardSettings(
 
 	if (typeof patch.showApiDocsMenu === "boolean") {
 		next.showApiDocsMenu = patch.showApiDocsMenu;
+	}
+
+	if (typeof patch.showClientLiveLogs === "boolean") {
+		next.showClientLiveLogs = patch.showClientLiveLogs;
+	}
+
+	if (typeof patch.showServerLiveLogs === "boolean") {
+		next.showServerLiveLogs = patch.showServerLiveLogs;
+	}
+
+	if (typeof patch.showProfileLiveLogs === "boolean") {
+		next.showProfileLiveLogs = patch.showProfileLiveLogs;
 	}
 
 	if (typeof patch.enableMarketBlacklist === "boolean") {

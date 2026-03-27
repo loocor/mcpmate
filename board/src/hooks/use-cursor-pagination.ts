@@ -33,6 +33,10 @@ interface UseCursorPaginationResult {
 	 */
 	itemsPerPage: number;
 	/**
+	 * Cursor history for each visited page
+	 */
+	cursorHistory: (string | undefined)[];
+	/**
 	 * Go to next page
 	 */
 	goToNextPage: (nextCursor: string | undefined) => void;
@@ -48,6 +52,14 @@ interface UseCursorPaginationResult {
 	 * Set whether there is a next page
 	 */
 	setHasNextPage: (hasNext: boolean) => void;
+	/**
+	 * Replace pagination state directly
+	 */
+	setPaginationState: (
+		page: number,
+		history: (string | undefined)[],
+		hasNext: boolean,
+	) => void;
 }
 
 /**
@@ -96,15 +108,26 @@ export function useCursorPagination({
 		onReset?.();
 	}, [onReset]);
 
+	const setPaginationState = useCallback(
+		(page: number, history: (string | undefined)[], hasNext: boolean) => {
+			setCurrentPage(page);
+			setCursorHistory(history);
+			setHasNextPage(hasNext);
+		},
+		[],
+	);
+
 	return {
 		currentPage,
 		currentCursor,
 		hasPreviousPage,
 		hasNextPage,
 		itemsPerPage: limit,
+		cursorHistory,
 		goToNextPage,
 		goToPreviousPage,
 		resetToFirstPage,
 		setHasNextPage,
+		setPaginationState,
 	};
 }
