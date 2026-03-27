@@ -10,12 +10,13 @@ import {
     Trash2,
     Eye,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { CachedAvatar } from "../../components/cached-avatar";
+import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import CapabilityList from "../../components/capability-list";
 import {
 	CapsuleStripeList,
@@ -58,7 +59,7 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { configSuitsApi, serversApi } from "../../lib/api";
+import { auditApi, configSuitsApi, serversApi } from "../../lib/api";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type {
@@ -92,10 +93,18 @@ export function ProfileDetailPage() {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
 
+	const showProfileLiveLogs = useAppStore(
+		(state) => state.dashboardSettings.showProfileLiveLogs,
+	);
+	const validDetailTabs = useMemo(
+		() =>
+			["overview", "servers", "tools", "prompts", "resources", "templates"],
+		[showProfileLiveLogs],
+	);
 	const { activeTab, setActiveTab } = useUrlTab({
 		paramName: "tab",
 		defaultTab: "overview",
-		validTabs: ["overview", "servers", "tools", "prompts", "resources", "templates"],
+		validTabs: validDetailTabs,
 	});
 
 	const mode = searchParams.get("mode");
@@ -162,6 +171,104 @@ export function ProfileDetailPage() {
 	const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
 	const [selectedPromptIds, setSelectedPromptIds] = useState<string[]>([]);
 	const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+	const [logFilter, setLogFilter] = useState("");
+	const [logPageSize, setLogPageSize] = useState<number>(10);
+	const [logPageCursors, setLogPageCursors] = useState<string[]>([]);
+	const [logCurrentPageIndex, setLogCurrentPageIndex] = useState(0);
+	const [isLogPaginationActionLoading, setIsLogPaginationActionLoading] =
+		useState(false);
+	const logCurrentCursor = logPageCursors[logCurrentPageIndex];
+
+	const profileLogsQuery = useQuery({
+		queryKey: [
+			"profile-audit-logs",
+			profileId,
+			logCurrentCursor,
+			logPageSize,
+			showProfileLiveLogs,
+		],
+		queryFn: () =>
+			auditApi.list({
+				limit: logPageSize,
+				cursor: logCurrentCursor,
+				profile_id: profileId,
+			}),
+		enabled: Boolean(profileId && showProfileLiveLogs),
+		refetchOnWindowFocus: false,
+		retry: false,
+	});
+
+	useEffect(() => {
+		setLogPageCursors([]);
+		setLogCurrentPageIndex(0);
+	}, [profileId, logPageSize]);
+
+	const filteredProfileLogs = useMemo(() => {
+		const logs = profileLogsQuery.data?.events ?? [];
+		const term = logFilter.trim().toLowerCase();
+		if (!term) return logs;
+		return logs.filter((event) => {
+			const haystacks = [
+				event.action,
+				event.category,
+				event.status,
+				event.target,
+				event.route,
+				event.error_message,
+				event.detail,
+				event.request_id,
+				event.mcp_method,
+			]
+				.filter(Boolean)
+				.map((value) => String(value).toLowerCase());
+			return haystacks.some((value) => value.includes(term));
+		});
+	}, [profileLogsQuery.data?.events, logFilter]);
+
+	const handleProfileLogsNextPage = () => {
+		if (!profileLogsQuery.data?.next_cursor) return;
+		const nextCursor = profileLogsQuery.data.next_cursor;
+		setLogPageCursors((prev) => {
+			const next = [...prev];
+			next[logCurrentPageIndex + 1] = nextCursor;
+			return next;
+		});
+		setLogCurrentPageIndex((prev) => prev + 1);
+	};
+
+	const handleProfileLogsPrevPage = () => {
+		if (logCurrentPageIndex > 0) {
+			setLogCurrentPageIndex((prev) => prev - 1);
+		}
+	};
+
+	const handleProfileLogsFirstPage = () => {
+		setLogCurrentPageIndex(0);
+	};
+
+	const handleProfileLogsLastPage = async () => {
+		if (!profileLogsQuery.data?.next_cursor || !profileId) return;
+		setIsLogPaginationActionLoading(true);
+		try {
+			let nextCursor: string | undefined = profileLogsQuery.data.next_cursor;
+			let targetPageIndex = logCurrentPageIndex;
+			const nextPageCursors = [...logPageCursors];
+			while (nextCursor) {
+				targetPageIndex += 1;
+				nextPageCursors[targetPageIndex] = nextCursor;
+				const page = await auditApi.list({
+					limit: logPageSize,
+					cursor: nextCursor,
+					profile_id: profileId,
+				});
+				nextCursor = page.next_cursor ?? undefined;
+			}
+			setLogPageCursors(nextPageCursors);
+			setLogCurrentPageIndex(targetPageIndex);
+		} finally {
+			setIsLogPaginationActionLoading(false);
+		}
+	};
 
 	// Bulk mutations using server-side batch manage to improve reliability
 	const bulkToolsM = useMutation({
@@ -1062,6 +1169,66 @@ export function ProfileDetailPage() {
 									</CardContent>
 								</Card>
 							</div>
+							{showProfileLiveLogs ? (
+								<AuditLogsPanel
+									title={t("profiles:detail.logs.title", { defaultValue: "Logs" })}
+									description={t("profiles:detail.logs.description", {
+										defaultValue: "Runtime and audit logs related to this profile.",
+									})}
+									searchPlaceholder={t("profiles:detail.logs.searchPlaceholder", {
+										defaultValue: "Search logs...",
+									})}
+									refreshLabel={t("profiles:detail.logs.refresh", {
+										defaultValue: "Refresh Logs",
+									})}
+									loadingLabel={t("profiles:detail.logs.loading", {
+										defaultValue: "Loading logs...",
+									})}
+									emptyLabel={t("profiles:detail.logs.empty", {
+										defaultValue:
+											"No log entries recorded for this profile yet.",
+									})}
+									headers={{
+										timestamp: t("profiles:detail.logs.headers.timestamp", {
+											defaultValue: "Timestamp",
+										}),
+										action: t("profiles:detail.logs.headers.action", {
+											defaultValue: "Action",
+										}),
+										category: t("profiles:detail.logs.headers.category", {
+											defaultValue: "Category",
+										}),
+										status: t("profiles:detail.logs.headers.status", {
+											defaultValue: "Status",
+										}),
+										target: t("profiles:detail.logs.headers.target", {
+											defaultValue: "Target",
+										}),
+									}}
+									searchValue={logFilter}
+									onSearchChange={setLogFilter}
+									onRefresh={() => void profileLogsQuery.refetch()}
+									rows={filteredProfileLogs}
+									isLoading={profileLogsQuery.isLoading}
+									isFetching={profileLogsQuery.isFetching}
+									isPaginationActionLoading={isLogPaginationActionLoading}
+									currentPage={logCurrentPageIndex + 1}
+									hasPreviousPage={logCurrentPageIndex > 0}
+									hasNextPage={Boolean(profileLogsQuery.data?.next_cursor)}
+									itemsPerPage={logPageSize}
+									onItemsPerPageChange={setLogPageSize}
+									onPreviousPage={handleProfileLogsPrevPage}
+									onFirstPage={handleProfileLogsFirstPage}
+									onNextPage={handleProfileLogsNextPage}
+									onLastPage={() => void handleProfileLogsLastPage()}
+									expandLabel={t("profiles:detail.logs.expand", {
+										defaultValue: "Expand Logs",
+									})}
+									collapseLabel={t("profiles:detail.logs.collapse", {
+										defaultValue: "Collapse Logs",
+									})}
+								/>
+							) : null}
 						</div>
 					</TabsContent>
 

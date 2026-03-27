@@ -18,6 +18,17 @@ type HttpProxyResponse = {
 	end(chunk?: string): void;
 };
 
+function isHttpProxyResponse(value: unknown): value is HttpProxyResponse {
+	if (!value || typeof value !== "object") {
+		return false;
+	}
+	const candidate = value as {
+		writeHead?: unknown;
+		end?: unknown;
+	};
+	return typeof candidate.writeHead === "function" && typeof candidate.end === "function";
+}
+
 type HttpProxyServer = {
 	on(event: "proxyReq", listener: (proxyReq: ClientRequest) => void): void;
 	on(event: "proxyReqWs", listener: (proxyReq: ClientRequest) => void): void;
@@ -34,7 +45,7 @@ type HttpProxyServer = {
 
 function attachBackendStartupProxyHandler(proxy: HttpProxyServer): void {
 	proxy.on("error", (error, _req, res) => {
-		if (error.code === "ECONNREFUSED" && res) {
+		if (error.code === "ECONNREFUSED" && isHttpProxyResponse(res)) {
 			res.writeHead(503, {
 				"Content-Type": "application/json",
 				"Retry-After": "1",

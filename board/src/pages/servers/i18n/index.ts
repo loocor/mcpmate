@@ -210,6 +210,24 @@ export const serversTranslations = {
 				prompts: "Prompts ({{count}})",
 				resources: "Resources ({{count}})",
 				templates: "Resource Templates ({{count}})",
+				logs: "Logs",
+			},
+			logs: {
+				title: "Logs",
+				description: "Runtime and audit logs related to this server.",
+				searchPlaceholder: "Search logs...",
+				refresh: "Refresh Logs",
+				expand: "Expand Logs",
+				collapse: "Collapse Logs",
+				loading: "Loading logs...",
+				headers: {
+					timestamp: "Timestamp",
+					action: "Action",
+					category: "Category",
+					status: "Status",
+					target: "Target",
+				},
+				empty: "No log entries recorded for this server yet.",
 			},
 			capabilityList: {
 				labels: {
@@ -825,6 +843,24 @@ export const serversTranslations = {
 				prompts: "提示 ({{count}})",
 				resources: "资源 ({{count}})",
 				templates: "模板 ({{count}})",
+				logs: "日志",
+			},
+			logs: {
+				title: "日志",
+				description: "展示与该服务器相关的运行日志与审计事件。",
+				searchPlaceholder: "搜索日志...",
+				refresh: "刷新日志",
+				expand: "展开日志",
+				collapse: "收起日志",
+				loading: "正在加载日志...",
+				headers: {
+					timestamp: "时间",
+					action: "动作",
+					category: "类别",
+					status: "状态",
+					target: "目标",
+				},
+				empty: "暂未记录该服务器相关日志。",
 			},
 			capabilityList: {
 				labels: {
@@ -1416,6 +1452,24 @@ export const serversTranslations = {
 				prompts: "プロンプト ({{count}})",
 				resources: "リソース ({{count}})",
 				templates: "テンプレート ({{count}})",
+				logs: "ログ",
+			},
+			logs: {
+				title: "ログ",
+				description: "このサーバーに関連する実行ログと監査イベントを表示します。",
+				searchPlaceholder: "ログを検索...",
+				refresh: "ログを更新",
+				expand: "ログを展開",
+				collapse: "ログを折りたたむ",
+				loading: "ログを読み込み中...",
+				headers: {
+					timestamp: "時刻",
+					action: "アクション",
+					category: "カテゴリ",
+					status: "ステータス",
+					target: "対象",
+				},
+				empty: "このサーバーに関連するログはまだありません。",
 			},
 			capabilityList: {
 				labels: {

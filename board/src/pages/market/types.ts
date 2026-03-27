@@ -45,6 +45,10 @@ export interface ServerGridProps {
 	enableBlacklist: boolean;
 	onNextPage: () => void;
 	onPreviousPage: () => void;
+	onFirstPage: () => void;
+	onLastPage: () => Promise<void>;
+	onItemsPerPageChange: (itemsPerPage: number) => void;
+	isPaginationActionLoading: boolean;
 }
 
 export interface MarketSearchProps {
@@ -71,5 +75,9 @@ export interface UseMarketDataReturn {
 	};
 	onNextPage: () => void;
 	onPreviousPage: () => void;
+	onFirstPage: () => void;
+	onLastPage: () => Promise<void>;
+	onItemsPerPageChange: (itemsPerPage: number) => void;
+	isPaginationActionLoading: boolean;
 	onRefresh: () => void;
 }

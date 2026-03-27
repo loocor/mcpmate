@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useCursorPagination } from "../../../hooks/use-cursor-pagination";
 import { fetchRegistryServers, getOfficialMeta } from "../../../lib/registry";
 import { useAppStore } from "../../../lib/store";
@@ -12,6 +12,8 @@ export function useMarketData(
 	sort: "recent" | "name",
 ): UseMarketDataReturn {
 	const queryClient = useQueryClient();
+	const [itemsPerPage, setItemsPerPage] = useState(9);
+	const [isPaginationActionLoading, setIsPaginationActionLoading] = useState(false);
 	const marketBlacklist = useAppStore(
 		(state) => state.dashboardSettings.marketBlacklist,
 	);
@@ -22,12 +24,12 @@ export function useMarketData(
 	}, [queryClient]);
 
 	const pagination = useCursorPagination({
-		limit: 9,
+		limit: itemsPerPage,
 		onReset: handlePaginationReset,
 	});
 
 	const registryQuery = useQuery({
-		queryKey: ["market", "registry", search, pagination.currentPage],
+		queryKey: ["market", "registry", search, pagination.currentPage, itemsPerPage],
 		queryFn: async () => {
 			const result = await fetchRegistryServers({
 				cursor: pagination.currentCursor,
@@ -131,6 +133,56 @@ export function useMarketData(
 		window.scrollTo({ top: 0, behavior: "smooth" });
 	}, [pagination]);
 
+	const handleFirstPage = useCallback(() => {
+		pagination.resetToFirstPage();
+		window.scrollTo({ top: 0, behavior: "smooth" });
+	}, [pagination]);
+
+	const handleItemsPerPageChange = useCallback(
+		(nextItemsPerPage: number) => {
+			if (nextItemsPerPage === itemsPerPage) {
+				return;
+			}
+			setItemsPerPage(nextItemsPerPage);
+			pagination.resetToFirstPage();
+		},
+		[itemsPerPage, pagination],
+	);
+
+	const handleLastPage = useCallback(async () => {
+		if (!registryQuery.data?.metadata?.nextCursor) {
+			return;
+		}
+
+		setIsPaginationActionLoading(true);
+		try {
+			let nextCursor: string | undefined = registryQuery.data.metadata.nextCursor;
+			let targetPage = pagination.currentPage;
+			const history = [...pagination.cursorHistory];
+
+			while (nextCursor) {
+				if (history.length < targetPage + 1) {
+					history.push(nextCursor);
+				} else {
+					history[targetPage] = nextCursor;
+				}
+				targetPage += 1;
+
+				const result = await fetchRegistryServers({
+					cursor: nextCursor,
+					search: search || undefined,
+					limit: itemsPerPage,
+				});
+				nextCursor = result.metadata.nextCursor;
+			}
+
+			pagination.setPaginationState(targetPage, history, false);
+			window.scrollTo({ top: 0, behavior: "smooth" });
+		} finally {
+			setIsPaginationActionLoading(false);
+		}
+	}, [itemsPerPage, pagination, registryQuery.data?.metadata?.nextCursor, search]);
+
 	return {
 		servers: sortedServers,
 		sortedServers,
@@ -146,6 +198,10 @@ export function useMarketData(
 		},
 		onNextPage: handleNextPage,
 		onPreviousPage: handlePreviousPage,
+		onFirstPage: handleFirstPage,
+		onLastPage: handleLastPage,
+		onItemsPerPageChange: handleItemsPerPageChange,
+		isPaginationActionLoading,
 		onRefresh: handleRefresh,
 	};
 }

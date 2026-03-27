@@ -41,6 +41,10 @@ export function MarketPage() {
 		pagination,
 		onNextPage,
 		onPreviousPage,
+		onFirstPage,
+		onLastPage,
+		onItemsPerPageChange,
+		isPaginationActionLoading,
 		onRefresh,
 	} = useMarketData(debouncedSearch, sort);
 
@@ -235,6 +239,10 @@ export function MarketPage() {
 					enableBlacklist={enableMarketBlacklist}
 					onNextPage={onNextPage}
 					onPreviousPage={onPreviousPage}
+					onFirstPage={onFirstPage}
+					onLastPage={onLastPage}
+					onItemsPerPageChange={onItemsPerPageChange}
+					isPaginationActionLoading={isPaginationActionLoading}
 				/>
 
 				{showScrollTop ? (

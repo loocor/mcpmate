@@ -26,6 +26,7 @@ import {
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
 import { ConfirmDialog } from "../../components/confirm-dialog";
+import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import { CachedAvatar } from "../../components/cached-avatar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -61,9 +62,10 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { clientsApi, configSuitsApi } from "../../lib/api";
+import { auditApi, clientsApi, configSuitsApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
+import { useAppStore } from "../../lib/store";
 import type {
 	ClientBackupEntry,
 	ClientBackupPolicySetReq,
@@ -165,14 +167,21 @@ export function ClientDetailPage() {
 	useSearchParams();
 	usePageTranslations("clients");
 	const { t } = useTranslation("clients");
+	const showClientLiveLogs = useAppStore(
+		(state) => state.dashboardSettings.showClientLiveLogs,
+	);
 	const [displayName, setDisplayName] = useState("");
 	const [selectedBackups, setSelectedBackups] = useState<string[]>([]);
 	const [detected, setDetected] = useState<boolean>(false);
 	const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+	const detailTabs = useMemo(
+		() => ["overview", "configuration", "backups"],
+		[],
+	);
 	const { activeTab: tabValue, setActiveTab: setTabValue } = useUrlTab({
 		paramName: "tab",
 		defaultTab: "overview",
-		validTabs: ["overview", "configuration", "backups", "logs"],
+		validTabs: detailTabs,
 	});
 	const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
 
@@ -407,45 +416,110 @@ export function ClientDetailPage() {
 	const detailSupportUrl =
 		configDetails?.support_url ?? templateMeta?.support_url ?? "";
 
-	const [logEntries, setLogEntries] = useState<
-		Array<{
-			id: string;
-			message: string;
-			level: "warning";
-			timestamp: string;
-		}>
-	>([]);
 	const [logFilter, setLogFilter] = useState("");
+	const [logPageSize, setLogPageSize] = useState<number>(10);
+	const [logPageCursors, setLogPageCursors] = useState<string[]>([]);
+	const [logCurrentPageIndex, setLogCurrentPageIndex] = useState(0);
+	const [isLogPaginationActionLoading, setIsLogPaginationActionLoading] =
+		useState(false);
+	const logCurrentCursor = logPageCursors[logCurrentPageIndex];
+
+	const logsQuery = useQuery({
+		queryKey: [
+			"client-audit-logs",
+			identifier,
+			logCurrentCursor,
+			logPageSize,
+			showClientLiveLogs,
+		],
+		queryFn: () =>
+			auditApi.list({
+				limit: logPageSize,
+				cursor: logCurrentCursor,
+				client_id: identifier,
+			}),
+		enabled: Boolean(identifier && showClientLiveLogs),
+		refetchOnWindowFocus: false,
+		retry: false,
+	});
 
 	useEffect(() => {
-		if (configDetails?.warnings?.length) {
-			setLogEntries((prev) => {
-				const existing = new Set(prev.map((entry) => entry.message));
-				const next = [...prev];
-				for (const warning of configDetails.warnings ?? []) {
-					if (!existing.has(warning)) {
-						next.push({
-							id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-							message: warning,
-							level: "warning",
-							timestamp: new Date().toISOString(),
-						});
-					}
-				}
-				return next;
-			});
-		}
-	}, [configDetails?.warnings]);
+		setLogPageCursors([]);
+		setLogCurrentPageIndex(0);
+	}, [identifier, logPageSize]);
 
 	const filteredLogs = useMemo(() => {
-		if (!logFilter.trim()) {
-			return logEntries;
+		const logs = logsQuery.data?.events ?? [];
+		const term = logFilter.trim().toLowerCase();
+		if (!term) {
+			return logs;
 		}
-		const term = logFilter.toLowerCase();
-		return logEntries.filter((entry) =>
-			entry.message.toLowerCase().includes(term),
-		);
-	}, [logEntries, logFilter]);
+		return logs.filter((event) => {
+			const haystacks = [
+				event.action,
+				event.category,
+				event.status,
+				event.target,
+				event.route,
+				event.error_message,
+				event.detail,
+				event.mcp_method,
+				event.request_id,
+			]
+				.filter(Boolean)
+				.map((value) => String(value).toLowerCase());
+			return haystacks.some((value) => value.includes(term));
+		});
+	}, [logsQuery.data?.events, logFilter]);
+
+	const handleLogsNextPage = () => {
+		if (!logsQuery.data?.next_cursor) {
+			return;
+		}
+		const nextCursor = logsQuery.data.next_cursor;
+		setLogPageCursors((prev) => {
+			const next = [...prev];
+			next[logCurrentPageIndex + 1] = nextCursor;
+			return next;
+		});
+		setLogCurrentPageIndex((prev) => prev + 1);
+	};
+
+	const handleLogsPrevPage = () => {
+		if (logCurrentPageIndex > 0) {
+			setLogCurrentPageIndex((prev) => prev - 1);
+		}
+	};
+
+	const handleLogsFirstPage = () => {
+		setLogCurrentPageIndex(0);
+	};
+
+	const handleLogsLastPage = async () => {
+		if (!logsQuery.data?.next_cursor || !identifier) {
+			return;
+		}
+		setIsLogPaginationActionLoading(true);
+		try {
+			let nextCursor: string | undefined = logsQuery.data.next_cursor;
+			let targetPageIndex = logCurrentPageIndex;
+			const nextPageCursors = [...logPageCursors];
+			while (nextCursor) {
+				targetPageIndex += 1;
+				nextPageCursors[targetPageIndex] = nextCursor;
+				const page = await auditApi.list({
+					limit: logPageSize,
+					cursor: nextCursor,
+					client_id: identifier,
+				});
+				nextCursor = page.next_cursor ?? undefined;
+			}
+			setLogPageCursors(nextPageCursors);
+			setLogCurrentPageIndex(targetPageIndex);
+		} finally {
+			setIsLogPaginationActionLoading(false);
+		}
+	};
 
 	const buildCapabilityConfigPayload = () => {
 		if (!identifier) {
@@ -604,24 +678,6 @@ export function ClientDetailPage() {
 							defaultValue: "Review the diff before applying.",
 						}),
 					);
-					// Surface backend warnings from preview
-					if (Array.isArray(data.warnings) && data.warnings.length) {
-						setLogEntries((prev) => {
-							const existing = new Set(prev.map((e) => e.message));
-							const next = [...prev];
-							for (const w of data.warnings!) {
-								if (!existing.has(w)) {
-									next.push({
-										id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-										message: w,
-										level: "warning",
-										timestamp: new Date().toISOString(),
-									});
-								}
-							}
-							return next;
-						});
-					}
 				} else {
 					notifyInfo(
 						t("detail.notifications.previewReady.title", {
@@ -643,24 +699,6 @@ export function ClientDetailPage() {
 				);
 				// Refresh backup records after successful apply
 				refetchBackups();
-				// Surface backend warnings from apply
-				if (data && Array.isArray(data.warnings) && data.warnings.length) {
-					setLogEntries((prev) => {
-						const existing = new Set(prev.map((e) => e.message));
-						const next = [...prev];
-						for (const w of data.warnings!) {
-							if (!existing.has(w)) {
-								next.push({
-									id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-									message: w,
-									level: "warning",
-									timestamp: new Date().toISOString(),
-								});
-							}
-						}
-						return next;
-					});
-				}
 			}
 			qc.invalidateQueries({ queryKey: ["clients"] });
 			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
@@ -999,9 +1037,6 @@ export function ClientDetailPage() {
 						<TabsTrigger value="backups">
 							{t("detail.tabs.backups", { defaultValue: "Backups" })}
 						</TabsTrigger>
-						<TabsTrigger value="logs">
-							{t("detail.tabs.logs", { defaultValue: "Logs" })}
-						</TabsTrigger>
 					</TabsList>
 				</div>
 
@@ -1267,6 +1302,53 @@ export function ClientDetailPage() {
 								)}
 							</CardContent>
 						</Card>
+						{showClientLiveLogs ? (
+							<AuditLogsPanel
+								title={t("detail.logs.title", { defaultValue: "Logs" })}
+								description={t("detail.logs.description", {
+									defaultValue: "Runtime warnings and backend notes for this client.",
+								})}
+								searchPlaceholder={t("detail.logs.searchPlaceholder", {
+									defaultValue: "Search logs...",
+								})}
+								refreshLabel={t("detail.logs.refresh", { defaultValue: "Refresh Logs" })}
+								loadingLabel={t("detail.logs.loading", {
+									defaultValue: "Loading logs...",
+								})}
+								emptyLabel={t("detail.logs.empty", {
+									defaultValue: "No log entries recorded for this client yet.",
+								})}
+								headers={{
+									timestamp: t("detail.logs.headers.timestamp", {
+										defaultValue: "Timestamp",
+									}),
+									action: t("detail.logs.headers.action", { defaultValue: "Action" }),
+									category: t("detail.logs.headers.category", {
+										defaultValue: "Category",
+									}),
+									status: t("detail.logs.headers.status", { defaultValue: "Status" }),
+									target: t("detail.logs.headers.target", { defaultValue: "Target" }),
+								}}
+								searchValue={logFilter}
+								onSearchChange={setLogFilter}
+								onRefresh={() => void logsQuery.refetch()}
+								rows={filteredLogs}
+								isLoading={logsQuery.isLoading}
+								isFetching={logsQuery.isFetching}
+								isPaginationActionLoading={isLogPaginationActionLoading}
+								currentPage={logCurrentPageIndex + 1}
+								hasPreviousPage={logCurrentPageIndex > 0}
+								hasNextPage={Boolean(logsQuery.data?.next_cursor)}
+								itemsPerPage={logPageSize}
+								onItemsPerPageChange={setLogPageSize}
+								onPreviousPage={handleLogsPrevPage}
+								onFirstPage={handleLogsFirstPage}
+								onNextPage={handleLogsNextPage}
+								onLastPage={() => void handleLogsLastPage()}
+								expandLabel={t("detail.logs.expand", { defaultValue: "Expand Logs" })}
+								collapseLabel={t("detail.logs.collapse", { defaultValue: "Collapse Logs" })}
+							/>
+						) : null}
 					</div>
 				</TabsContent>
 
@@ -1983,75 +2065,6 @@ export function ClientDetailPage() {
 					</Card>
 				</TabsContent>
 
-				<TabsContent value="logs">
-					<Card>
-						<CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-							<div>
-								<CardTitle>
-									{t("detail.logs.title", { defaultValue: "Logs" })}
-								</CardTitle>
-								<CardDescription>
-									{t("detail.logs.description", {
-										defaultValue:
-											"Runtime warnings and backend notes for this client.",
-									})}
-								</CardDescription>
-							</div>
-							<div className="flex flex-wrap items-center gap-2">
-								<Input
-									type="search"
-									placeholder={t("detail.logs.searchPlaceholder", {
-										defaultValue: "Search logs...",
-									})}
-									value={logFilter}
-									onChange={(event) => setLogFilter(event.target.value)}
-									className="h-8 w-48"
-								/>
-								<Button
-									size="sm"
-									variant="outline"
-									onClick={() => setLogEntries([])}
-									disabled={!logEntries.length}
-								>
-									{t("detail.logs.clear", { defaultValue: "Clear Logs" })}
-								</Button>
-							</div>
-						</CardHeader>
-						<CardContent className="pt-0">
-							{filteredLogs.length ? (
-								<div className="space-y-3">
-									{filteredLogs.map((entry) => (
-										<div
-											key={entry.id}
-											className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900"
-										>
-											<div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 text-xs text-slate-500 dark:border-slate-700">
-												<span>
-													{new Date(entry.timestamp).toLocaleTimeString()}
-												</span>
-												<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
-													{t("detail.logs.warning", {
-														defaultValue: "Warning",
-													})}
-												</span>
-											</div>
-											<pre className="px-4 py-3 text-[12px] leading-relaxed text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
-												{entry.message}
-											</pre>
-										</div>
-									))}
-								</div>
-							) : (
-								<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-									{t("detail.logs.empty", {
-										defaultValue:
-											"No log entries recorded for this client yet.",
-									})}
-								</div>
-							)}
-						</CardContent>
-					</Card>
-				</TabsContent>
 			</Tabs>
 
 			<ConfirmDialog

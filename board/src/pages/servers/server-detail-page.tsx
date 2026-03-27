@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
+import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
@@ -53,14 +54,17 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { configSuitsApi, inspectorApi, serversApi } from "../../lib/api";
+import { auditApi, configSuitsApi, inspectorApi, serversApi } from "../../lib/api";
 import { writeClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { maskHeaderValue, sanitizeRecord } from "../../lib/security";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
-import type { ServerCapabilitySummary, ServerDetail } from "../../lib/types";
+import type {
+	ServerCapabilitySummary,
+	ServerDetail,
+} from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
 
 const readLegacyCapability = (
@@ -183,6 +187,9 @@ export function ServerDetailPage() {
 	);
 	const syncServerStateToClients = useAppStore(
 		(state) => state.dashboardSettings.syncServerStateToClients,
+	);
+	const showServerLiveLogs = useAppStore(
+		(state) => state.dashboardSettings.showServerLiveLogs,
 	);
 
 	const initialChannel = useMemo(() => getInitialInspectorChannel(), []);
@@ -668,6 +675,47 @@ export function ServerDetailPage() {
 		},
 		[],
 	);
+	const handleServerLogsNextPage = () => {
+		if (!serverLogsQuery.data?.next_cursor) return;
+		const nextCursor = serverLogsQuery.data.next_cursor;
+		setLogPageCursors((prev) => {
+			const next = [...prev];
+			next[logCurrentPageIndex + 1] = nextCursor;
+			return next;
+		});
+		setLogCurrentPageIndex((prev) => prev + 1);
+	};
+	const handleServerLogsPrevPage = () => {
+		if (logCurrentPageIndex > 0) {
+			setLogCurrentPageIndex((prev) => prev - 1);
+		}
+	};
+	const handleServerLogsFirstPage = () => {
+		setLogCurrentPageIndex(0);
+	};
+	const handleServerLogsLastPage = async () => {
+		if (!serverLogsQuery.data?.next_cursor || !serverId) return;
+		setIsLogPaginationActionLoading(true);
+		try {
+			let nextCursor: string | undefined = serverLogsQuery.data.next_cursor;
+			let targetPageIndex = logCurrentPageIndex;
+			const nextPageCursors = [...logPageCursors];
+			while (nextCursor) {
+				targetPageIndex += 1;
+				nextPageCursors[targetPageIndex] = nextCursor;
+				const page = await auditApi.list({
+					limit: logPageSize,
+					cursor: nextCursor,
+					server_id: serverId,
+				});
+				nextCursor = page.next_cursor ?? undefined;
+			}
+			setLogPageCursors(nextPageCursors);
+			setLogCurrentPageIndex(targetPageIndex);
+		} finally {
+			setIsLogPaginationActionLoading(false);
+		}
+	};
 
 	const serverDisplayName = server?.name || serverId;
 	const primaryIconSrc = server?.icons?.[0]?.src;
@@ -700,6 +748,56 @@ export function ServerDetailPage() {
 		defaultTab,
 		validTabs,
 	});
+	const [logFilter, setLogFilter] = useState("");
+	const [logPageSize, setLogPageSize] = useState<number>(10);
+	const [logPageCursors, setLogPageCursors] = useState<string[]>([]);
+	const [logCurrentPageIndex, setLogCurrentPageIndex] = useState(0);
+	const [isLogPaginationActionLoading, setIsLogPaginationActionLoading] =
+		useState(false);
+	const logCurrentCursor = logPageCursors[logCurrentPageIndex];
+	const serverLogsQuery = useQuery({
+		queryKey: [
+			"server-audit-logs",
+			serverId,
+			logCurrentCursor,
+			logPageSize,
+			showServerLiveLogs,
+		],
+		queryFn: () =>
+			auditApi.list({
+				limit: logPageSize,
+				cursor: logCurrentCursor,
+				server_id: serverId,
+			}),
+		enabled: Boolean(serverId && showServerLiveLogs),
+		refetchOnWindowFocus: false,
+		retry: false,
+	});
+	useEffect(() => {
+		setLogPageCursors([]);
+		setLogCurrentPageIndex(0);
+	}, [serverId, logPageSize]);
+	const filteredServerLogs = useMemo(() => {
+		const logs = serverLogsQuery.data?.events ?? [];
+		const term = logFilter.trim().toLowerCase();
+		if (!term) return logs;
+		return logs.filter((event) => {
+			const haystacks = [
+				event.action,
+				event.category,
+				event.status,
+				event.target,
+				event.route,
+				event.error_message,
+				event.detail,
+				event.request_id,
+				event.mcp_method,
+			]
+				.filter(Boolean)
+				.map((value) => String(value).toLowerCase());
+			return haystacks.some((value) => value.includes(term));
+		});
+	}, [serverLogsQuery.data?.events, logFilter]);
 	const serverEnabled = Boolean(server?.enabled ?? server?.globally_enabled);
 	const runtimeStatus = server?.status ?? (serverEnabled ? "idle" : "disabled");
 	const showDefaultHeaders = useAppStore(
@@ -1167,6 +1265,63 @@ export function ServerDetailPage() {
 											</CardContent>
 										</Card>
 									) : null}
+									{showServerLiveLogs && viewMode === VIEW_MODES.browse ? (
+										<AuditLogsPanel
+											title={t("detail.logs.title", { defaultValue: "Logs" })}
+											description={t("detail.logs.description", {
+												defaultValue:
+													"Runtime and audit logs related to this server.",
+											})}
+											searchPlaceholder={t("detail.logs.searchPlaceholder", {
+												defaultValue: "Search logs...",
+											})}
+											refreshLabel={t("detail.logs.refresh", {
+												defaultValue: "Refresh Logs",
+											})}
+											loadingLabel={t("detail.logs.loading", {
+												defaultValue: "Loading logs...",
+											})}
+											emptyLabel={t("detail.logs.empty", {
+												defaultValue:
+													"No log entries recorded for this server yet.",
+											})}
+											headers={{
+												timestamp: t("detail.logs.headers.timestamp", {
+													defaultValue: "Timestamp",
+												}),
+												action: t("detail.logs.headers.action", {
+													defaultValue: "Action",
+												}),
+												category: t("detail.logs.headers.category", {
+													defaultValue: "Category",
+												}),
+												status: t("detail.logs.headers.status", {
+													defaultValue: "Status",
+												}),
+												target: t("detail.logs.headers.target", {
+													defaultValue: "Target",
+												}),
+											}}
+											searchValue={logFilter}
+											onSearchChange={setLogFilter}
+											onRefresh={() => void serverLogsQuery.refetch()}
+											rows={filteredServerLogs}
+											isLoading={serverLogsQuery.isLoading}
+											isFetching={serverLogsQuery.isFetching}
+											isPaginationActionLoading={isLogPaginationActionLoading}
+											currentPage={logCurrentPageIndex + 1}
+											hasPreviousPage={logCurrentPageIndex > 0}
+											hasNextPage={Boolean(serverLogsQuery.data?.next_cursor)}
+											itemsPerPage={logPageSize}
+											onItemsPerPageChange={setLogPageSize}
+											onPreviousPage={handleServerLogsPrevPage}
+											onFirstPage={handleServerLogsFirstPage}
+											onNextPage={handleServerLogsNextPage}
+											onLastPage={() => void handleServerLogsLastPage()}
+											expandLabel={t("detail.logs.expand", { defaultValue: "Expand Logs" })}
+											collapseLabel={t("detail.logs.collapse", { defaultValue: "Collapse Logs" })}
+										/>
+									) : null}
 								</div>
 							)}
 						</TabsContent>
@@ -1184,6 +1339,7 @@ export function ServerDetailPage() {
 								onInspect={(item) => handleInspect("tool", item)}
 								logs={logs}
 								onClearLogs={() => clearLogsByPrefix("tools/")}
+								showLogs={showServerLiveLogs}
 							/>
 						)}
 					</TabsContent>
@@ -1200,6 +1356,7 @@ export function ServerDetailPage() {
 								onInspect={(item) => handleInspect("prompt", item)}
 								logs={logs}
 								onClearLogs={() => clearLogsByPrefix("prompts/")}
+								showLogs={showServerLiveLogs}
 							/>
 						)}
 					</TabsContent>
@@ -1216,6 +1373,7 @@ export function ServerDetailPage() {
 								onInspect={(item) => handleInspect("resource", item)}
 								logs={logs}
 								onClearLogs={() => clearLogsByPrefix("resources/")}
+								showLogs={showServerLiveLogs}
 							/>
 						)}
 					</TabsContent>
@@ -1232,6 +1390,7 @@ export function ServerDetailPage() {
 								onInspect={(item) => handleInspect("template", item)}
 								logs={logs}
 								onClearLogs={() => clearLogsByPrefix("templates/")}
+								showLogs={showServerLiveLogs}
 							/>
 						)}
 					</TabsContent>
@@ -1448,6 +1607,7 @@ interface InspectorDebugSectionProps {
 	onInspect: (item: CapabilityRecord | null) => void;
 	logs: InspectorLogEntry[];
 	onClearLogs: () => void;
+	showLogs: boolean;
 }
 
 interface InspectorChannelControlsProps {
@@ -1593,11 +1753,18 @@ function InspectorDebugSection({
 	onInspect,
 	logs,
 	onClearLogs,
+	showLogs,
 }: InspectorDebugSectionProps) {
 	const [filter, setFilter] = useState("");
 	const [logFilter, setLogFilter] = useState("");
 	const [tab, setTab] = useState<"results" | "logs">("results");
 	const { t } = useTranslation("servers");
+
+	useEffect(() => {
+		if (!showLogs && tab === "logs") {
+			setTab("results");
+		}
+	}, [showLogs, tab]);
 
 	const title = useMemo(() => {
 		if (kind === "tools") {
@@ -1661,12 +1828,14 @@ function InspectorDebugSection({
 							defaultValue: "Results ({{count}})",
 						})}
 					</TabsTrigger>
-					<TabsTrigger value="logs">
-						{t("detail.inspector.tabs.logs", {
-							count: sectionLogs.length,
-							defaultValue: "Logs ({{count}})",
-						})}
-					</TabsTrigger>
+					{showLogs ? (
+						<TabsTrigger value="logs">
+							{t("detail.inspector.tabs.logs", {
+								count: sectionLogs.length,
+								defaultValue: "Logs ({{count}})",
+							})}
+						</TabsTrigger>
+					) : null}
 				</TabsList>
 				{tab === "results" ? (
 					<div className="flex items-center gap-2 flex-wrap">
@@ -1772,22 +1941,23 @@ function InspectorDebugSection({
 				</Card>
 			</TabsContent>
 
-			<TabsContent value="logs" className="space-y-4">
-				<Card className="min-h-[220px]">
-					<CardContent className="space-y-2 p-4 max-h-[60vh] overflow-auto">
-						{sectionLogs.length === 0 ? (
-							<p className="text-sm text-slate-500">
-								{t("detail.inspector.logs.empty", {
-									defaultValue: "No inspector events yet.",
-								})}
-							</p>
-						) : (
-							<CapsuleStripeList>
-								{sectionLogs.map((entry) => (
-									<CapsuleStripeListItem
-										key={entry.id}
-										className="group items-start text-xs"
-									>
+			{showLogs ? (
+				<TabsContent value="logs" className="space-y-4">
+					<Card className="min-h-[220px]">
+						<CardContent className="space-y-2 p-4 max-h-[60vh] overflow-auto">
+							{sectionLogs.length === 0 ? (
+								<p className="text-sm text-slate-500">
+									{t("detail.inspector.logs.empty", {
+										defaultValue: "No inspector events yet.",
+									})}
+								</p>
+							) : (
+								<CapsuleStripeList>
+									{sectionLogs.map((entry) => (
+										<CapsuleStripeListItem
+											key={entry.id}
+											className="group items-start text-xs"
+										>
 										{/* Error message */}
 										{entry.message ? (
 											<p className="text-red-500 mb-1">{entry.message}</p>
@@ -1855,13 +2025,14 @@ function InspectorDebugSection({
 												</div>
 											</div>
 										) : null}
-									</CapsuleStripeListItem>
-								))}
-							</CapsuleStripeList>
-						)}
-					</CardContent>
-				</Card>
-			</TabsContent>
+										</CapsuleStripeListItem>
+									))}
+								</CapsuleStripeList>
+							)}
+						</CardContent>
+					</Card>
+				</TabsContent>
+			) : null}
 		</Tabs>
 	);
 }

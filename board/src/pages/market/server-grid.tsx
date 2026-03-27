@@ -5,6 +5,8 @@ import { Card, CardFooter, CardHeader } from "../../components/ui/card";
 import { MarketCard } from "./market-card";
 import type { ServerGridProps } from "./types";
 
+const MARKET_PAGE_SIZE_OPTIONS = [9, 27, 54, 72];
+
 export function ServerGrid({
 	servers,
 	isInitialLoading,
@@ -16,6 +18,10 @@ export function ServerGrid({
 	enableBlacklist,
 	onNextPage,
 	onPreviousPage,
+	onFirstPage,
+	onLastPage,
+	onItemsPerPageChange,
+	isPaginationActionLoading,
 }: ServerGridProps) {
 	const { t } = useTranslation();
 	return (
@@ -106,12 +112,16 @@ export function ServerGrid({
 					currentPage={pagination.currentPage}
 					hasPreviousPage={pagination.hasPreviousPage}
 					hasNextPage={pagination.hasNextPage}
-					isLoading={isInitialLoading || isPageLoading}
+					isLoading={isInitialLoading || isPageLoading || isPaginationActionLoading}
 					itemsPerPage={pagination.itemsPerPage}
 					currentPageItemCount={servers.length}
+					onItemsPerPageChange={onItemsPerPageChange}
 					onPreviousPage={onPreviousPage}
+					onFirstPage={onFirstPage}
 					onNextPage={onNextPage}
-					className="mt-6"
+					onLastPage={onLastPage}
+					pageSizeOptions={MARKET_PAGE_SIZE_OPTIONS}
+					className="mt-4"
 				/>
 			) : null}
 		</>
