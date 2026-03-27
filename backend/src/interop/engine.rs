@@ -219,11 +219,12 @@ impl MCPMateEngine {
         // Step 2: Setup database (30%)
         Self::update_progress(&startup_progress, 0.3, "Initializing database...").await;
         let db = setup_database().await?;
+        let audit_db = crate::core::proxy::init::setup_audit_database().await?;
 
         // Step 3: Setup proxy server with startup mode (50%)
         Self::update_progress(&startup_progress, 0.5, "Setting up proxy server...").await;
         let startup_mode = config.to_startup_mode();
-        let (proxy_arc1, proxy_arc) = setup_proxy_server_with_params(db, &startup_mode).await?;
+        let (proxy_arc1, proxy_arc) = setup_proxy_server_with_params(db, audit_db, &startup_mode).await?;
 
         // Step 4: Debug environment and command availability (only if not minimal)
         if !config.minimal {

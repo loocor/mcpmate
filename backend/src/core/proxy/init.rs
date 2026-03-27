@@ -5,11 +5,14 @@
 use super::{Args, ProxyServer, args::StartupMode};
 use crate::{
     api::handlers::system,
+    audit::{AuditRetentionPolicySetting, AuditService, AuditStore, run_retention_worker},
+    config::audit_database::AuditDatabase,
     config::database::Database,
     core::{capability::naming, foundation::loader},
 };
 use anyhow::Result;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{self, EnvFilter};
 
 /// Setup logging based on command line arguments
@@ -189,9 +192,23 @@ pub async fn setup_database() -> Result<Database> {
     Ok(db)
 }
 
+pub async fn setup_audit_database() -> Result<Option<AuditDatabase>> {
+    match AuditDatabase::new().await {
+        Ok(database) => {
+            tracing::info!("Audit database initialized successfully");
+            Ok(Some(database))
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "Audit database initialization failed; continuing without audit subsystem");
+            Ok(None)
+        }
+    }
+}
+
 /// Setup proxy server with startup parameters
 pub async fn setup_proxy_server_with_params(
     db: Database,
+    audit_db: Option<AuditDatabase>,
     startup_mode: &StartupMode,
 ) -> Result<(Arc<ProxyServer>, Arc<ProxyServer>)> {
     // Load configuration from database using core loader with startup parameters
@@ -213,11 +230,37 @@ pub async fn setup_proxy_server_with_params(
     proxy.set_database(db).await?;
     tracing::info!("Using database connection for tool-level configuration.");
 
+    let audit_store = if let Some(audit_db) = audit_db {
+        let audit_db = Arc::new(audit_db);
+        let audit_store = Arc::new(AuditStore::from_database(audit_db.as_ref()));
+        audit_store.initialize().await?;
+        let audit_service = Arc::new(AuditService::new(audit_store.clone()).await?);
+        proxy.set_audit_service(audit_db, audit_service);
+        tracing::info!("Audit service initialized and attached to proxy server");
+        Some(audit_store)
+    } else {
+        None
+    };
+
     // Create Arc wrappers for the proxy server
     let proxy_arc = Arc::new(proxy.clone());
     ProxyServer::set_global(Arc::new(tokio::sync::Mutex::new(proxy)));
 
-    // Event system will be initialized in proxy.set_database() with proper handlers
+    if let Some(store) = audit_store {
+        let cancellation_token = CancellationToken::new();
+        let retention_token = cancellation_token.clone();
+        tokio::spawn(async move {
+            let policy = match store.get_policy().await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to load audit retention policy, using default");
+                    AuditRetentionPolicySetting::default()
+                }
+            };
+            run_retention_worker(store, policy, retention_token).await;
+        });
+    }
+
     tracing::info!("Proxy server created, event system will be initialized with handlers");
 
     Ok((proxy_arc.clone(), proxy_arc))
@@ -225,5 +268,5 @@ pub async fn setup_proxy_server_with_params(
 
 /// Setup proxy server with database and configuration using core modules (legacy function for backward compatibility)
 pub async fn setup_proxy_server(db: Database) -> Result<(Arc<ProxyServer>, Arc<ProxyServer>)> {
-    setup_proxy_server_with_params(db, &StartupMode::Default).await
+    setup_proxy_server_with_params(db, None, &StartupMode::Default).await
 }

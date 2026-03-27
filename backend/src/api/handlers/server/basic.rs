@@ -948,6 +948,8 @@ mod tests {
             http_proxy: None,
             profile_merge_service: None,
             database: Some(database),
+            audit_database: None,
+            audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
             redb_cache,
             unified_query: None,

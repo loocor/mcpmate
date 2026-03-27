@@ -11,6 +11,7 @@ use crate::api::models::client::{
     ClientTemplateStorageMetadata,
 };
 use crate::api::routes::AppState;
+use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat};
 use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
@@ -22,7 +23,7 @@ use axum::{
 };
 use chrono::Utc;
 use json5;
-use serde_json::Value;
+use serde_json::{Value, json};
 use serde_yaml;
 use std::sync::Arc;
 use toml;
@@ -250,6 +251,25 @@ pub async fn config_apply(
         scheduled = outcome.scheduled,
         "config_apply succeeded"
     );
+
+    emit_client_audit_event(
+        &app_state,
+        AuditAction::ClientConfigApply,
+        AuditStatus::Success,
+        "/api/client/config/apply",
+        &request.identifier,
+        Some(request.identifier.clone()),
+        Some(json!({
+            "mode": request.mode,
+            "preview": request.preview,
+            "applied": applied,
+            "scheduled": outcome.scheduled,
+            "selected_config": request.selected_config,
+        })),
+        None,
+    )
+    .await;
+
     Ok(Json(ClientConfigUpdateResp::success(data)))
 }
 
@@ -293,6 +313,21 @@ pub async fn config_restore(
         backup: request.backup,
         message,
     };
+
+    emit_client_audit_event(
+        &app_state,
+        AuditAction::ClientConfigRestore,
+        AuditStatus::Success,
+        "/api/client/config/restore",
+        &data.identifier,
+        Some(data.backup.clone()),
+        Some(json!({
+            "backup": data.backup,
+            "message": data.message,
+        })),
+        None,
+    )
+    .await;
 
     Ok(Json(ClientBackupActionResp::success(data)))
 }
@@ -394,6 +429,25 @@ pub async fn config_import(
         scheduled_reason: None,
     };
 
+    emit_client_audit_event(
+        &app_state,
+        AuditAction::ClientConfigImport,
+        AuditStatus::Success,
+        "/api/client/config/import",
+        &request.identifier,
+        Some(request.identifier.clone()),
+        Some(json!({
+            "preview": request.preview,
+            "profile_id": request.profile_id,
+            "imported_count": data.summary.imported_count,
+            "skipped_count": data.summary.skipped_count,
+            "failed_count": data.summary.failed_count,
+            "scheduled": data.scheduled,
+        })),
+        None,
+    )
+    .await;
+
     Ok(Json(ClientConfigImportResp::success(data)))
 }
 
@@ -403,6 +457,33 @@ pub(crate) fn get_client_service(state: &AppState) -> Result<Arc<ClientConfigSer
         .as_ref()
         .cloned()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)
+}
+
+async fn emit_client_audit_event(
+    app_state: &AppState,
+    action: AuditAction,
+    status: AuditStatus,
+    route: &str,
+    client_id: &str,
+    target: Option<String>,
+    data: Option<Value>,
+    error_message: Option<String>,
+) {
+    let mut event = AuditEvent::new(action, status)
+        .with_http_route("POST", route)
+        .with_client_id(client_id.to_string());
+
+    if let Some(target) = target {
+        event = event.with_target(target);
+    }
+    if let Some(data) = data {
+        event = event.with_data(data);
+    }
+    if let Some(error_message) = error_message {
+        event = event.with_error(None::<String>, error_message);
+    }
+
+    crate::audit::interceptor::emit_event(app_state.audit_service.as_ref(), event.build()).await;
 }
 
 /// PATCH/POST /api/client/update - partial update client settings
@@ -457,6 +538,22 @@ pub async fn update_settings(
         client_version: version,
     };
 
+    emit_client_audit_event(
+        &app_state,
+        AuditAction::ClientSettingsUpdate,
+        AuditStatus::Success,
+        "/api/client/update",
+        &data.identifier,
+        Some(data.identifier.clone()),
+        Some(json!({
+            "config_mode": data.config_mode,
+            "transport": data.transport,
+            "client_version": data.client_version,
+        })),
+        None,
+    )
+    .await;
+
     Ok(Json(crate::api::models::client::ClientSettingsUpdateResp::success(
         data,
     )))
@@ -484,14 +581,30 @@ pub async fn update_capability_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    Ok(Json(ClientCapabilityConfigResp::success(
-        ClientCapabilityConfigData {
-            identifier: request.identifier,
-            capability_source: config.capability_source,
-            selected_profile_ids: config.selected_profile_ids,
-            custom_profile_id: config.custom_profile_id,
-        },
-    )))
+    let data = ClientCapabilityConfigData {
+        identifier: request.identifier,
+        capability_source: config.capability_source,
+        selected_profile_ids: config.selected_profile_ids,
+        custom_profile_id: config.custom_profile_id,
+    };
+
+    emit_client_audit_event(
+        &app_state,
+        AuditAction::ClientCapabilityUpdate,
+        AuditStatus::Success,
+        "/api/client/capability-config",
+        &data.identifier,
+        Some(data.identifier.clone()),
+        Some(json!({
+            "capability_source": data.capability_source,
+            "selected_profile_ids": data.selected_profile_ids,
+            "custom_profile_id": data.custom_profile_id,
+        })),
+        None,
+    )
+    .await;
+
+    Ok(Json(ClientCapabilityConfigResp::success(data)))
 }
 
 pub async fn get_capability_config(
@@ -835,6 +948,8 @@ mod tests {
             http_proxy: None,
             profile_merge_service: None,
             database: Some(database),
+            audit_database: None,
+            audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
             redb_cache,
             unified_query: None,

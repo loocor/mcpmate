@@ -10,6 +10,7 @@
 
 use super::{common, shared::*};
 use crate::api::models::server::{ServerManageAction, ServerManageReq, ServerOperationData};
+use serde_json::{Map, Value};
 
 // Helper functions for server management operations
 
@@ -64,6 +65,8 @@ pub async fn manage_server(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ServerManageReq>,
 ) -> Result<Json<ServerOperationData>, ApiError> {
+    let started_at = std::time::Instant::now();
+    let request_id = request.id.clone();
     match request.action {
         ServerManageAction::Enable => {
             // Convert to the format expected by enable_server
@@ -75,7 +78,16 @@ pub async fn manage_server(
             };
 
             // Call the existing enable_server logic
-            enable_server_core(State(state), id, sync_query).await
+            let result = enable_server_core(State(state.clone()), id, sync_query).await;
+            emit_server_manage_audit(
+                &state,
+                &request_id,
+                &ServerManageAction::Enable,
+                started_at.elapsed().as_millis() as u64,
+                result.as_ref().err(),
+            )
+                .await;
+            result
         }
         ServerManageAction::Disable => {
             // Convert to the format expected by disable_server
@@ -87,9 +99,53 @@ pub async fn manage_server(
             };
 
             // Call the existing disable_server logic
-            disable_server_core(State(state), id, sync_query).await
+            let result = disable_server_core(State(state.clone()), id, sync_query).await;
+            emit_server_manage_audit(
+                &state,
+                &request_id,
+                &ServerManageAction::Disable,
+                started_at.elapsed().as_millis() as u64,
+                result.as_ref().err(),
+            )
+                .await;
+            result
         }
     }
+}
+
+async fn emit_server_manage_audit(
+    state: &Arc<AppState>,
+    server_id: &str,
+    action: &ServerManageAction,
+    duration_ms: u64,
+    error: Option<&ApiError>,
+) {
+    let mut data = Map::new();
+    data.insert("sync_requested".to_string(), Value::Bool(false));
+    let audit_action = match action {
+        ServerManageAction::Enable => crate::audit::AuditAction::ServerEnable,
+        ServerManageAction::Disable => crate::audit::AuditAction::ServerDisable,
+    };
+    let status = if error.is_some() {
+        crate::audit::AuditStatus::Failed
+    } else {
+        crate::audit::AuditStatus::Success
+    };
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            audit_action,
+            status,
+            "POST",
+            "/api/mcp/servers/manage",
+            Some(duration_ms),
+            Some(server_id.to_string()),
+            None,
+            Some(data),
+            error.map(ToString::to_string),
+        ),
+    )
+    .await;
 }
 /// Enable a server by setting its global availability to enabled
 /// (Legacy function for backwards compatibility - consider using manage_server instead)

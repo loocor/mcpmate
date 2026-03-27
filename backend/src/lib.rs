@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod api;
 pub mod clients;
 pub mod common;

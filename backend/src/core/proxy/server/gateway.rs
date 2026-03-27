@@ -1,11 +1,14 @@
 use super::common::{ClientContext, ManagedClientContextResolver, SessionBoundClientContextResolver};
 use crate::{
+    audit::AuditService,
+    config::audit_database::AuditDatabase,
     config::database::Database,
     core::{pool::UpstreamConnectionPool, transport::TransportType},
     mcper::builtin::BuiltinServiceRegistry,
 };
 use anyhow::Context;
 use once_cell::sync::OnceCell;
+use serde_json::{Map, Value};
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, InitializeRequestParams,
     ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParams,
@@ -30,6 +33,8 @@ pub struct DownstreamRoute {
 pub struct ProxyServer {
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     pub database: Option<Arc<Database>>,
+    pub audit_database: Option<Arc<AuditDatabase>>,
+    pub audit_service: Option<Arc<AuditService>>,
     pub profile_service: Option<Arc<crate::core::profile::ProfileService>>,
     pub runtime_cache: Arc<crate::runtime::RuntimeCache>,
     pub redb_cache: Arc<crate::core::cache::RedbCacheManager>,
@@ -49,6 +54,8 @@ impl Clone for ProxyServer {
         Self {
             connection_pool: self.connection_pool.clone(),
             database: self.database.clone(),
+            audit_database: self.audit_database.clone(),
+            audit_service: self.audit_service.clone(),
             profile_service: self.profile_service.clone(),
             runtime_cache: self.runtime_cache.clone(),
             redb_cache: self.redb_cache.clone(),
@@ -347,6 +354,8 @@ impl ProxyServer {
         Self {
             connection_pool,
             database: None,
+            audit_database: None,
+            audit_service: None,
             profile_service: None,
             runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
             redb_cache,
@@ -392,6 +401,15 @@ impl ProxyServer {
             "Database connection, builtin services, server manager, and event handlers set for proxy server"
         );
         Ok(())
+    }
+
+    pub fn set_audit_service(
+        &mut self,
+        audit_database: Arc<AuditDatabase>,
+        audit_service: Arc<AuditService>,
+    ) {
+        self.audit_database = Some(audit_database);
+        self.audit_service = Some(audit_service);
     }
 
     async fn setup_event_handlers(&self) -> anyhow::Result<()> {
@@ -654,6 +672,30 @@ impl ProxyServer {
             progress = ?param.progress,
             "Forwarded progress to downstream"
         );
+        let mut data = Map::new();
+        data.insert("client_id".to_string(), Value::String(route.client_id.clone()));
+        data.insert("session_id".to_string(), Value::String(route.session_id.clone()));
+        data.insert("progress".to_string(), Value::from(param.progress));
+        if let Some(total) = param.total {
+            data.insert("total".to_string(), Value::from(total));
+        }
+        if let Some(message) = param.message.clone() {
+            data.insert("message".to_string(), Value::String(message));
+        }
+        crate::audit::interceptor::emit_event(
+            self.audit_service.as_ref(),
+            crate::audit::interceptor::build_mcp_event(
+                crate::audit::AuditAction::NotificationProgress,
+                crate::audit::AuditStatus::Success,
+                None,
+                None,
+                None,
+                None,
+                Some(data),
+                None,
+            ),
+        )
+        .await;
         match route.peer.notify_progress(param.clone()).await {
             Ok(()) => true,
             Err(error) => {
@@ -683,6 +725,24 @@ impl ProxyServer {
             reason = ?param.reason,
             "Forwarded cancellation to downstream"
         );
+        let mut data = Map::new();
+        data.insert("client_id".to_string(), Value::String(route.client_id.clone()));
+        data.insert("session_id".to_string(), Value::String(route.session_id.clone()));
+        data.insert("request_id".to_string(), Value::String(param.request_id.to_string()));
+        crate::audit::interceptor::emit_event(
+            self.audit_service.as_ref(),
+            crate::audit::interceptor::build_mcp_event(
+                crate::audit::AuditAction::NotificationCancelled,
+                crate::audit::AuditStatus::Cancelled,
+                None,
+                None,
+                None,
+                None,
+                Some(data),
+                param.reason.clone().map(|reason| reason.to_string()),
+            ),
+        )
+        .await;
         match route.peer.notify_cancelled(param.clone()).await {
             Ok(()) => true,
             Err(error) => {
@@ -716,6 +776,41 @@ impl ProxyServer {
             level = ?param.level,
             "Forwarded log message to downstream"
         );
+        let mut data = Map::new();
+        data.insert("client_id".to_string(), Value::String(route.client_id.clone()));
+        data.insert("session_id".to_string(), Value::String(route.session_id.clone()));
+        data.insert(
+            "level".to_string(),
+            Value::String(match param.level {
+                rmcp::model::LoggingLevel::Debug => "debug",
+                rmcp::model::LoggingLevel::Info => "info",
+                rmcp::model::LoggingLevel::Notice => "notice",
+                rmcp::model::LoggingLevel::Warning => "warning",
+                rmcp::model::LoggingLevel::Error => "error",
+                rmcp::model::LoggingLevel::Critical => "critical",
+                rmcp::model::LoggingLevel::Alert => "alert",
+                rmcp::model::LoggingLevel::Emergency => "emergency",
+            }
+            .to_string()),
+        );
+        if let Some(logger) = param.logger.clone() {
+            data.insert("logger".to_string(), Value::String(logger.to_string()));
+        }
+        data.insert("data".to_string(), param.data.clone());
+        crate::audit::interceptor::emit_event(
+            self.audit_service.as_ref(),
+            crate::audit::interceptor::build_mcp_event(
+                crate::audit::AuditAction::NotificationMessage,
+                crate::audit::AuditStatus::Success,
+                None,
+                None,
+                None,
+                None,
+                Some(data),
+                None,
+            ),
+        )
+        .await;
         match route.peer.notify_logging_message(param.clone()).await {
             Ok(()) => true,
             Err(error) => {
@@ -734,6 +829,7 @@ impl ServerHandler for ProxyServer {
         request: InitializeRequestParams,
         context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ServerInfo, rmcp::ErrorData> {
+        let started_at = std::time::Instant::now();
         self.enforce_origin_if_present(&context)?;
         tracing::info!(
             client_protocol = %request.protocol_version,
@@ -766,6 +862,32 @@ impl ServerHandler for ProxyServer {
         if client.session_id.is_some() {
             self.register_downstream_client(&client, context.peer.clone()).await?;
         }
+
+        let mut data = Map::new();
+        data.insert("client_name".to_string(), Value::String(request.client_info.name.clone()));
+        data.insert("client_version".to_string(), Value::String(request.client_info.version.clone()));
+        data.insert(
+            "has_sampling".to_string(),
+            Value::Bool(request.capabilities.sampling.is_some()),
+        );
+        data.insert(
+            "has_elicitation".to_string(),
+            Value::Bool(request.capabilities.elicitation.is_some()),
+        );
+        crate::audit::interceptor::emit_event(
+            self.audit_service.as_ref(),
+            crate::audit::interceptor::build_mcp_event(
+                crate::audit::AuditAction::Initialize,
+                crate::audit::AuditStatus::Success,
+                Some(&client),
+                Some(request.protocol_version.to_string()),
+                None,
+                Some(started_at.elapsed().as_millis() as u64),
+                Some(data),
+                None,
+            ),
+        )
+        .await;
 
         Ok(self.get_info())
     }
@@ -870,9 +992,21 @@ impl ServerHandler for ProxyServer {
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let audit_client = self.resolve_bound_client_context(&_context).await.ok();
+        let started_at = std::time::Instant::now();
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::tools::list_tools(self, _request, _context).await
+        let result = super::tools::list_tools(self, _request, _context).await;
+        emit_mcp_result(
+            self,
+            crate::audit::AuditAction::ToolsList,
+            audit_client.as_ref(),
+            None,
+            started_at.elapsed().as_millis() as u64,
+            result.as_ref().err().map(ToString::to_string),
+        )
+        .await;
+        result
     }
 
     async fn call_tool(
@@ -880,9 +1014,22 @@ impl ServerHandler for ProxyServer {
         request: CallToolRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let audit_client = self.resolve_bound_client_context(&_context).await.ok();
+        let started_at = std::time::Instant::now();
+        let target = Some(request.name.to_string());
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::tools::call_tool(self, request, _context).await
+        let result = super::tools::call_tool(self, request, _context).await;
+        emit_mcp_result(
+            self,
+            crate::audit::AuditAction::ToolsCall,
+            audit_client.as_ref(),
+            target,
+            started_at.elapsed().as_millis() as u64,
+            result.as_ref().err().map(ToString::to_string),
+        )
+        .await;
+        result
     }
 
     async fn list_resources(
@@ -890,9 +1037,21 @@ impl ServerHandler for ProxyServer {
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourcesResult, rmcp::ErrorData> {
+        let audit_client = self.resolve_bound_client_context(&_context).await.ok();
+        let started_at = std::time::Instant::now();
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::resources::list_resources(self, _request, _context).await
+        let result = super::resources::list_resources(self, _request, _context).await;
+        emit_mcp_result(
+            self,
+            crate::audit::AuditAction::ResourcesList,
+            audit_client.as_ref(),
+            None,
+            started_at.elapsed().as_millis() as u64,
+            result.as_ref().err().map(ToString::to_string),
+        )
+        .await;
+        result
     }
 
     async fn list_resource_templates(
@@ -910,9 +1069,22 @@ impl ServerHandler for ProxyServer {
         request: ReadResourceRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ReadResourceResult, rmcp::ErrorData> {
+        let audit_client = self.resolve_bound_client_context(&_context).await.ok();
+        let started_at = std::time::Instant::now();
+        let target = Some(request.uri.to_string());
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::resources::read_resource(self, request, _context).await
+        let result = super::resources::read_resource(self, request, _context).await;
+        emit_mcp_result(
+            self,
+            crate::audit::AuditAction::ResourcesRead,
+            audit_client.as_ref(),
+            target,
+            started_at.elapsed().as_millis() as u64,
+            result.as_ref().err().map(ToString::to_string),
+        )
+        .await;
+        result
     }
 
     async fn list_prompts(
@@ -920,9 +1092,21 @@ impl ServerHandler for ProxyServer {
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListPromptsResult, rmcp::ErrorData> {
+        let audit_client = self.resolve_bound_client_context(&_context).await.ok();
+        let started_at = std::time::Instant::now();
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::prompts::list_prompts(self, _request, _context).await
+        let result = super::prompts::list_prompts(self, _request, _context).await;
+        emit_mcp_result(
+            self,
+            crate::audit::AuditAction::PromptsList,
+            audit_client.as_ref(),
+            None,
+            started_at.elapsed().as_millis() as u64,
+            result.as_ref().err().map(ToString::to_string),
+        )
+        .await;
+        result
     }
 
     async fn get_prompt(
@@ -930,10 +1114,52 @@ impl ServerHandler for ProxyServer {
         request: GetPromptRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<GetPromptResult, rmcp::ErrorData> {
+        let audit_client = self.resolve_bound_client_context(&_context).await.ok();
+        let started_at = std::time::Instant::now();
+        let target = Some(request.name.to_string());
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
-        super::prompts::get_prompt(self, request, _context).await
+        let result = super::prompts::get_prompt(self, request, _context).await;
+        emit_mcp_result(
+            self,
+            crate::audit::AuditAction::PromptsGet,
+            audit_client.as_ref(),
+            target,
+            started_at.elapsed().as_millis() as u64,
+            result.as_ref().err().map(ToString::to_string),
+        )
+        .await;
+        result
     }
+}
+
+async fn emit_mcp_result(
+    server: &ProxyServer,
+    action: crate::audit::AuditAction,
+    client: Option<&ClientContext>,
+    target: Option<String>,
+    duration_ms: u64,
+    error_message: Option<String>,
+) {
+    let status = if error_message.is_some() {
+        crate::audit::AuditStatus::Failed
+    } else {
+        crate::audit::AuditStatus::Success
+    };
+    crate::audit::interceptor::emit_event(
+        server.audit_service.as_ref(),
+        crate::audit::interceptor::build_mcp_event(
+            action,
+            status,
+            client,
+            None,
+            target,
+            Some(duration_ms),
+            None,
+            error_message,
+        ),
+    )
+    .await;
 }
 
 #[cfg(test)]

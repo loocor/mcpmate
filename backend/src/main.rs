@@ -3,7 +3,7 @@ use clap::Parser;
 
 use mcpmate::core::proxy::{
     Args,
-    init::{setup_database, setup_logging, setup_proxy_server_with_params},
+    init::{setup_audit_database, setup_database, setup_logging, setup_proxy_server_with_params},
     startup::{start_api_server, start_background_connections, start_proxy_server},
 };
 use mcpmate::system::config::init_port_config;
@@ -34,9 +34,10 @@ async fn main() -> Result<()> {
 
     // Setup database
     let db = setup_database().await?;
+    let audit_db = setup_audit_database().await?;
 
     // Setup proxy server with startup parameters
-    let (proxy_arc1, proxy_arc2) = setup_proxy_server_with_params(db, &startup_mode).await?;
+    let (proxy_arc1, proxy_arc2) = setup_proxy_server_with_params(db, audit_db, &startup_mode).await?;
 
     // Start background connections
     start_background_connections(&proxy_arc1, proxy_arc2.clone()).await?;

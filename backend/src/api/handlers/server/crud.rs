@@ -23,6 +23,7 @@ use crate::{
     },
 };
 use axum::{Json, extract::State};
+use serde_json::{Map, Value};
 use std::sync::Arc;
 use std::{collections::BTreeSet, str::FromStr};
 
@@ -202,6 +203,7 @@ pub async fn create_server(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerCreateReq>,
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
 
     // Check if server already exists
@@ -330,7 +332,8 @@ pub async fn create_server(
     let details = common::get_complete_server_details(&db.pool, &server_id, &server_name, &state).await;
     let effective_enabled = details.globally_enabled && details.enabled_in_profile;
 
-    Ok(Json(ServerDetailsResp::success(ServerDetailsData {
+    let audit_server_id = server_id.clone();
+    let response = Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: server_name,
         registry_server_id,
@@ -349,7 +352,27 @@ pub async fn create_server(
         created_at,
         updated_at,
         instances: details.instances,
-    })))
+    }));
+
+    let mut data = Map::new();
+    data.insert("server_name".to_string(), Value::String(payload.name));
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ServerCreate,
+            crate::audit::AuditStatus::Success,
+            "POST",
+            "/api/mcp/servers/create",
+            Some(started_at.elapsed().as_millis() as u64),
+            Some(audit_server_id),
+            None,
+            Some(data),
+            None,
+        ),
+    )
+    .await;
+
+    Ok(response)
 }
 
 /// Update an existing MCP server configuration
@@ -378,6 +401,7 @@ pub async fn update_server(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerUpdateReq>,
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
 
     let id = payload.id.clone();
@@ -496,7 +520,9 @@ pub async fn update_server(
     let details = common::get_complete_server_details(&db.pool, &server_id, &existing_server.name, &state).await;
 
     // Return success response
-    Ok(Json(ServerDetailsResp::success(ServerDetailsData {
+    let audit_server_id = server_id.clone();
+    let audit_server_name = existing_server.name.clone();
+    let response = Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: existing_server.name,
         registry_server_id: updated_server.registry_server_id.clone(),
@@ -515,7 +541,27 @@ pub async fn update_server(
         created_at: updated_server.created_at.map(|dt| dt.to_rfc3339()),
         updated_at: updated_server.updated_at.map(|dt| dt.to_rfc3339()),
         instances: details.instances,
-    })))
+    }));
+
+    let mut data = Map::new();
+    data.insert("server_name".to_string(), Value::String(audit_server_name));
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ServerUpdate,
+            crate::audit::AuditStatus::Success,
+            "POST",
+            "/api/mcp/servers/update",
+            Some(started_at.elapsed().as_millis() as u64),
+            Some(audit_server_id),
+            None,
+            Some(data),
+            None,
+        ),
+    )
+    .await;
+
+    Ok(response)
 }
 
 /// Import servers from JSON configuration (now uses unified core)
@@ -525,6 +571,7 @@ pub async fn import_servers(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServersImportReq>,
 ) -> Result<Json<ServersImportData>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
 
     // Use safer dedup strategy by default: name + fingerprint, skip on conflict
@@ -567,7 +614,7 @@ pub async fn import_servers(
     let failed_servers: Vec<String> = failed.keys().cloned().collect();
     let error_details = if failed.is_empty() { None } else { Some(failed) };
 
-    Ok(Json(ServersImportData {
+    let response = Json(ServersImportData {
         imported_count: imported_servers.len(),
         imported_servers,
         skipped_count: skipped_servers.len(),
@@ -575,7 +622,42 @@ pub async fn import_servers(
         failed_count: failed_servers.len(),
         failed_servers,
         error_details,
-    }))
+    });
+
+    let mut data = Map::new();
+    data.insert(
+        "imported_count".to_string(),
+        Value::from(response.0.imported_count as u64),
+    );
+    data.insert(
+        "skipped_count".to_string(),
+        Value::from(response.0.skipped_count as u64),
+    );
+    data.insert(
+        "failed_count".to_string(),
+        Value::from(response.0.failed_count as u64),
+    );
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ServerImport,
+            if response.0.failed_count > 0 {
+                crate::audit::AuditStatus::Failed
+            } else {
+                crate::audit::AuditStatus::Success
+            },
+            "POST",
+            "/api/mcp/servers/import",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            payload.target_profile_id,
+            Some(data),
+            None,
+        ),
+    )
+    .await;
+
+    Ok(response)
 }
 
 fn skipped_server_to_api(source: SkippedServer) -> SkippedServerData {
@@ -664,6 +746,7 @@ pub async fn delete_server(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ServerDeleteReq>,
 ) -> Result<Json<ServerOperationData>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
 
     let id = request.id;
@@ -695,11 +778,29 @@ pub async fn delete_server(
     tracing::info!("Successfully deleted server '{}'", existing_server.name);
 
     // Return success response
-    Ok(Json(ServerOperationData {
+    let response = Json(ServerOperationData {
         id: server_id,
         name: existing_server.name,
         result: "Successfully deleted server".to_string(),
         status: "Deleted".to_string(),
         allowed_operations: Vec::new(),
-    }))
+    });
+
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ServerDelete,
+            crate::audit::AuditStatus::Success,
+            "DELETE",
+            "/api/mcp/servers/delete",
+            Some(started_at.elapsed().as_millis() as u64),
+            Some(response.0.id.clone()),
+            None,
+            None,
+            None,
+        ),
+    )
+    .await;
+
+    Ok(response)
 }

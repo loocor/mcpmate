@@ -59,6 +59,8 @@ fn build_test_state() -> Arc<AppState> {
         http_proxy: None,
         profile_merge_service: None,
         database: None,
+        audit_database: None,
+        audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
         redb_cache: redb,
         unified_query: None,

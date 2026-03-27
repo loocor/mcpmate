@@ -11,6 +11,7 @@ use crate::{
     config::profile::is_default_anchor_profile,
 };
 use chrono::Utc;
+use serde_json::{Map, Value};
 use std::str::FromStr;
 
 // ==========================================
@@ -218,6 +219,7 @@ pub async fn profile_delete(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ProfileDeleteReq>,
 ) -> Result<Json<ProfileManageResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
 
     // Get the existing profile to check if it exists and get its name
@@ -258,7 +260,23 @@ pub async fn profile_delete(
         timestamp: Utc::now().to_rfc3339(),
     };
 
-    Ok(Json(ProfileManageResp::success(response)))
+    let response = Json(ProfileManageResp::success(response));
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ProfileDelete,
+            crate::audit::AuditStatus::Success,
+            "DELETE",
+            "/api/mcp/profile/delete",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            Some(request.id),
+            None,
+            None,
+        ),
+    )
+    .await;
+    Ok(response)
 }
 
 /// Create a new profile
@@ -268,6 +286,7 @@ pub async fn profile_create(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ProfileCreateReq>,
 ) -> Result<Json<ProfileResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
 
     // Validate name uniqueness
@@ -317,7 +336,25 @@ pub async fn profile_create(
     // Convert to response format
     let response = profile_to_response(&created_profile);
 
-    Ok(Json(ProfileResp::success(response)))
+    let response = Json(ProfileResp::success(response));
+    let mut data = Map::new();
+    data.insert("profile_name".to_string(), Value::String(created_profile.name));
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ProfileCreate,
+            crate::audit::AuditStatus::Success,
+            "POST",
+            "/api/mcp/profile/create",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            response.0.data.as_ref().map(|profile| profile.id.clone()),
+            Some(data),
+            None,
+        ),
+    )
+    .await;
+    Ok(response)
 }
 
 /// Update an existing profile
@@ -327,6 +364,7 @@ pub async fn profile_update(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ProfileUpdateReq>,
 ) -> Result<Json<ProfileResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
 
     // 1. Get existing profile by ID
@@ -355,7 +393,23 @@ pub async fn profile_update(
     // 7. Convert to response format
     let response = profile_to_response(&updated_profile);
 
-    Ok(Json(ProfileResp::success(response)))
+    let response = Json(ProfileResp::success(response));
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ProfileUpdate,
+            crate::audit::AuditStatus::Success,
+            "POST",
+            "/api/mcp/profile/update",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            Some(request.id),
+            None,
+            None,
+        ),
+    )
+    .await;
+    Ok(response)
 }
 
 /// Manage profile operations (activate/deactivate) - supports single or multiple profile
@@ -365,6 +419,7 @@ pub async fn profile_manage(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ProfileManageReq>,
 ) -> Result<Json<ProfileManageResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
 
     let mut results = Vec::new();
@@ -401,6 +456,7 @@ pub async fn profile_manage(
 
     // Check if sync parameter is true and trigger client configuration synchronization
     let should_sync = request.sync.unwrap_or(false);
+    let requested_action = request.action.clone();
     if should_sync && success_count > 0 {
         // Spawn async task to sync client configurations
         let state_clone = state.clone();
@@ -412,7 +468,7 @@ pub async fn profile_manage(
 
         tokio::spawn(async move {
             // For activation, pass the first successful profile ID; for deactivation, pass None
-            let profile_id = match request.action {
+            let profile_id = match requested_action {
                 ProfileAction::Activate => successful_profile_ids.first().cloned(),
                 ProfileAction::Deactivate => None,
             };
@@ -430,7 +486,29 @@ pub async fn profile_manage(
         timestamp: Utc::now().to_rfc3339(),
     };
 
-    Ok(Json(ProfileManageResp::success(response)))
+    let response = Json(ProfileManageResp::success(response));
+    let audit_action = match request.action {
+        ProfileAction::Activate => crate::audit::AuditAction::ProfileActivate,
+        ProfileAction::Deactivate => crate::audit::AuditAction::ProfileDeactivate,
+    };
+    let mut data = Map::new();
+    data.insert("profile_count".to_string(), Value::from(request.ids.len() as u64));
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            audit_action,
+            if failed_count > 0 { crate::audit::AuditStatus::Failed } else { crate::audit::AuditStatus::Success },
+            "POST",
+            "/api/mcp/profile/manage",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            request.ids.first().cloned(),
+            Some(data),
+            None,
+        ),
+    )
+    .await;
+    Ok(response)
 }
 
 /// Process a single profile operation with complete functionality

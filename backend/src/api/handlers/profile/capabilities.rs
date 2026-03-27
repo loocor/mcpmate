@@ -9,6 +9,7 @@ use crate::api::models::profile::{
     ProfileResourcesListData, ProfileResourcesListResp, ProfileServerManageData, ProfileServerManageResp,
     ProfileToolData, ProfileToolsListData, ProfileToolsListResp,
 };
+use serde_json::{Map, Value};
 
 // Component type enumeration for type-safe operations
 #[derive(Debug, Clone, Copy)]
@@ -287,6 +288,7 @@ pub async fn component_manage(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ProfileComponentManageReq>,
 ) -> Result<Json<ProfileServerManageResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
 
     // Verify profile exists
@@ -297,7 +299,36 @@ pub async fn component_manage(
     let enabled = matches!(request.action, ProfileComponentAction::Enable);
 
     // Execute unified operations (single or batch)
-    execute_unified_operations(&state, &request, enabled).await
+    let result = execute_unified_operations(&state, &request, enabled).await;
+    let mut data = Map::new();
+    data.insert(
+        "component_count".to_string(),
+        Value::from(request.component_ids.len() as u64),
+    );
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            if enabled {
+                crate::audit::AuditAction::CapabilityGrant
+            } else {
+                crate::audit::AuditAction::CapabilityRevoke
+            },
+            if result.is_ok() {
+                crate::audit::AuditStatus::Success
+            } else {
+                crate::audit::AuditStatus::Failed
+            },
+            "POST",
+            "/api/mcp/profile/components/manage",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            Some(request.profile_id.clone()),
+            Some(data),
+            result.as_ref().err().map(ToString::to_string),
+        ),
+    )
+    .await;
+    result
 }
 
 /// Validate component IDs from request

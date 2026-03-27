@@ -12,6 +12,7 @@ use crate::api::models::client::{
     ClientBackupPolicyResp, ClientBackupPolicySetReq,
 };
 use crate::api::routes::AppState;
+use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::ConfigError;
 use crate::clients::models::{BackupPolicy, BackupPolicySetting};
 
@@ -49,6 +50,20 @@ pub async fn delete_backup(
         .await
         .map_err(|err| map_restore_error(err, &request.identifier, &request.backup))?;
 
+    crate::audit::interceptor::emit_event(
+        app_state.audit_service.as_ref(),
+        AuditEvent::new(AuditAction::ClientBackupDelete, AuditStatus::Success)
+            .with_http_route("POST", "/api/client/backups/delete")
+            .with_client_id(request.identifier.clone())
+            .with_target(request.backup.clone())
+            .with_data(serde_json::json!({
+                "identifier": request.identifier,
+                "backup": request.backup,
+            }))
+            .build(),
+    )
+    .await;
+
     let data = ClientBackupActionData {
         identifier: request.identifier,
         backup: request.backup,
@@ -85,6 +100,20 @@ pub async fn set_backup_policy(
         .set_backup_policy(&request.identifier, policy)
         .await
         .map_err(|err| map_policy_error(err, &request.identifier))?;
+
+    crate::audit::interceptor::emit_event(
+        app_state.audit_service.as_ref(),
+        AuditEvent::new(AuditAction::ClientBackupPolicyUpdate, AuditStatus::Success)
+            .with_http_route("POST", "/api/client/backups/policy")
+            .with_client_id(request.identifier.clone())
+            .with_target(request.identifier.clone())
+            .with_data(serde_json::json!({
+                "policy": updated.policy.as_str(),
+                "limit": updated.limit,
+            }))
+            .build(),
+    )
+    .await;
 
     Ok(Json(ClientBackupPolicyResp::success(ClientBackupPolicyData {
         identifier: request.identifier,
