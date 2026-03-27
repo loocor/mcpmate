@@ -2,6 +2,7 @@
 // Contains route definitions for the API server
 
 pub mod ai;
+pub mod audit;
 pub mod client;
 pub mod inspector;
 pub mod openapi;
@@ -41,6 +42,8 @@ pub struct AppState {
     pub profile_merge_service: Option<Arc<crate::core::profile::ProfileService>>,
     /// Database reference for API operations
     pub database: Option<Arc<crate::config::database::Database>>,
+    pub audit_database: Option<Arc<crate::config::audit_database::AuditDatabase>>,
+    pub audit_service: Option<Arc<crate::audit::AuditService>>,
     /// Configuration application state manager
     pub config_application_state: Arc<crate::core::profile::ConfigApplicationStateManager>,
     /// Redb cache manager (unified capabilities cache)
@@ -99,6 +102,18 @@ async fn create_router_internal(
         None
     };
 
+    let audit_database = if let Some(ref proxy) = http_proxy {
+        proxy.audit_database.clone()
+    } else {
+        None
+    };
+
+    let audit_service = if let Some(ref proxy) = http_proxy {
+        proxy.audit_service.clone()
+    } else {
+        None
+    };
+
     // Create and initialize configuration application state manager
     let config_application_state = Arc::new(crate::core::profile::ConfigApplicationStateManager::new());
 
@@ -126,6 +141,8 @@ async fn create_router_internal(
             http_proxy: http_proxy.clone(),
             profile_merge_service: profile_merge_service.clone(),
             database: database.clone(),
+            audit_database: audit_database.clone(),
+            audit_service: audit_service.clone(),
             config_application_state: config_application_state.clone(),
             redb_cache: redb_cache.clone(),
             unified_query: None, // avoid recursion
@@ -158,6 +175,8 @@ async fn create_router_internal(
         http_proxy,
         profile_merge_service,
         database,
+        audit_database,
+        audit_service,
         config_application_state,
         redb_cache,
         unified_query,
@@ -172,6 +191,7 @@ async fn create_router_internal(
     // Create API router with aide support
     let api_router = ApiRouter::new()
         .merge(ai::routes(state.clone()))
+        .merge(audit::routes(state.clone()))
         .merge(server::routes(state.clone()))
         .merge(system::routes(state.clone()))
         .merge(profile::routes(state.clone()))
@@ -186,6 +206,10 @@ async fn create_router_internal(
         .route(
             "/inspector/events",
             get(crate::api::handlers::inspector::tool_call_events_ws),
+        )
+        .route(
+            "/audit/events",
+            get(crate::api::handlers::audit::audit_events_ws),
         )
         .with_state(state.clone());
 

@@ -1,6 +1,7 @@
 // MCP Proxy API models module
 // Contains data models for API requests and responses
 
+pub mod audit;
 pub mod cache;
 pub mod client;
 pub mod inspector;
