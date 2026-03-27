@@ -16,8 +16,11 @@ export function websiteLangParam(i18nLanguage: string | undefined): WebsiteLangP
 }
 
 /**
- * Public docs on the marketing site only ship `en` and `zh` (see website DocRoutes).
+ * Public docs on the marketing site ship `en`, `zh`, and `ja` (see website DocRoutes).
  */
-export function websiteDocsLocale(i18nLanguage: string | undefined): "en" | "zh" {
-	return websiteLangParam(i18nLanguage) === "zh" ? "zh" : "en";
+export function websiteDocsLocale(i18nLanguage: string | undefined): "en" | "zh" | "ja" {
+	const lang = websiteLangParam(i18nLanguage);
+	if (lang === "zh") return "zh";
+	if (lang === "ja") return "ja";
+	return "en";
 }
