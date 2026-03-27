@@ -53,19 +53,19 @@ const Hero = () => {
     return () => clearInterval(interval);
   }, [carouselItems.length]);
 
-  const scrollToSection = (id: string) => {
-    const element = document.getElementById(id);
-    if (element) {
-      const offset = 80;
-      const elementPosition = element.getBoundingClientRect().top;
-      const offsetPosition = elementPosition + window.pageYOffset - offset;
+	const scrollToSection = (id: string) => {
+		const element = document.getElementById(id);
+		if (element) {
+			const offset = 80;
+			const elementPosition = element.getBoundingClientRect().top;
+			const offsetPosition = elementPosition + window.scrollY - offset;
 
-      window.scrollTo({
-        top: offsetPosition,
-        behavior: 'smooth',
-      });
-    }
-  };
+			window.scrollTo({
+				top: offsetPosition,
+				behavior: "smooth",
+			});
+		}
+	};
 
   const active = carouselItems[activeIndex];
   const slideAlt = t(active.titleKey);

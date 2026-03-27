@@ -4,11 +4,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 import logoImage from "../../assets/images/logo.svg";
 import { trackMCPMateEvents } from "../../utils/analytics";
 import { useLanguage } from "../LanguageProvider";
-import { useTheme } from "../ThemeProvider";
 
 const Navbar = () => {
-	useTheme();
-    const { t, language } = useLanguage();
+	const { t, language } = useLanguage();
 	const navigate = useNavigate();
 	const location = useLocation();
 	const [isOpen, setIsOpen] = useState(false);
@@ -41,9 +39,9 @@ const Navbar = () => {
 			return;
 		}
 
-		const offset = 80; // Account for fixed header
+		const offset = 80;
 		const elementPosition = element.getBoundingClientRect().top;
-		const offsetPosition = elementPosition + window.pageYOffset - offset;
+		const offsetPosition = elementPosition + window.scrollY - offset;
 
 		window.scrollTo({
 			top: offsetPosition,
@@ -51,8 +49,6 @@ const Navbar = () => {
 		});
 		setIsOpen(false);
 	};
-
-	// reserved for external links if needed in future
 
 	return (
 		<header
