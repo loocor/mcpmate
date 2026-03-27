@@ -80,6 +80,14 @@ impl MCPMatePaths {
         format!("sqlite:{}", self.database_path().display())
     }
 
+    pub fn audit_database_path(&self) -> PathBuf {
+        self.base_dir.join(constants::paths::AUDIT_DATABASE_FILE_NAME)
+    }
+
+    pub fn audit_database_url(&self) -> String {
+        format!("sqlite:{}", self.audit_database_path().display())
+    }
+
     /// Get runtime-specific directory (~/.mcpmate/runtimes/{runtime_type})
     pub fn runtime_type_dir(
         &self,

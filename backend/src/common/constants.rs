@@ -195,6 +195,7 @@ pub mod paths {
     pub const MCPMATE_DIR_NAME: &str = ".mcpmate";
     /// Database file name
     pub const DATABASE_FILE_NAME: &str = "mcpmate.db";
+    pub const AUDIT_DATABASE_FILE_NAME: &str = "audit.db";
     /// Runtimes directory name
     pub const RUNTIMES_DIR_NAME: &str = "runtimes";
     /// Cache directory name
