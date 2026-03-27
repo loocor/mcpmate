@@ -1,5 +1,23 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { Download, Moon, RotateCcw, Sun, Trash2 } from "lucide-react";
+import type { AuditRetentionPolicy } from "../../lib/types";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
+import {
+	Activity,
+	AppWindow,
+	BookText,
+	Download,
+	ExternalLink,
+	FileSearch,
+	Bug,
+	LayoutGrid,
+	Moon,
+	Palette,
+	RotateCcw,
+	Server,
+	Sliders,
+	Store,
+	Sun,
+	Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
@@ -37,6 +55,7 @@ import {
 	TabsTrigger,
 } from "../../components/ui/tabs";
 import {
+	auditApi,
 	API_BASE_URL,
 	notificationsService,
 	setApiBaseUrl,
@@ -161,10 +180,17 @@ const BACKUP_STRATEGY_CONFIG = [
 	},
 ];
 
+const CHROME_EXTENSION_PLACEHOLDER_URL =
+	"https://mcp.umate.ai/extensions/chrome";
+const EDGE_EXTENSION_PLACEHOLDER_URL =
+	"https://mcp.umate.ai/extensions/edge";
+
 interface ShellPreferencesResponse {
 	menuBarIconMode: MenuBarIconMode;
 	showDockIcon: boolean;
 }
+
+type LocalhostRuntimeMode = "service" | "desktop_managed";
 
 const MENU_BAR_ICON_OPTIONS: ReadonlyArray<{
 	value: MenuBarIconMode;
@@ -201,6 +227,29 @@ function readCachedLocalPort(raw: string | null | undefined): number | undefined
 	return !Number.isNaN(value) && value > 0 ? value : undefined;
 }
 
+function getServiceInstallLabel(params: {
+	busyAction: string | null;
+	installed: boolean;
+	t: ReturnType<typeof useTranslation>["t"];
+}): string {
+	const { busyAction, installed, t } = params;
+	if (busyAction === "install" || busyAction === "uninstall") {
+		return t("settings:system.serviceActionBusy", {
+			defaultValue: "Working…",
+		});
+	}
+
+	if (installed) {
+		return t("settings:system.uninstallAction", {
+			defaultValue: "Uninstall",
+		});
+	}
+
+	return t("settings:system.installAction", {
+		defaultValue: "Install",
+	});
+}
+
 export function SettingsPage() {
 	usePageTranslations("settings");
 	const queryClient = useQueryClient();
@@ -233,9 +282,8 @@ export function SettingsPage() {
 	const [coreSource, setCoreSource] = useState<"localhost" | "remote">(
 		"localhost",
 	);
-	const [localhostRuntimeMode, setLocalhostRuntimeMode] = useState<
-		"service" | "desktop_managed"
-	>("service");
+	const [localhostRuntimeMode, setLocalhostRuntimeMode] =
+		useState<LocalhostRuntimeMode>("service");
 	const [remoteBaseUrl, setRemoteBaseUrl] = useState("");
 	const [localService, setLocalService] = useState<
 		DesktopCoreSourceResponse["localService"]
@@ -273,6 +321,67 @@ export function SettingsPage() {
 		[t, i18n.language],
 	);
 	const [webDialogOpen, setWebDialogOpen] = useState(false);
+	const [policyType, setPolicyType] = useState<string>("combined");
+	const [policyDays, setPolicyDays] = useState<number>(30);
+	const [policyCount, setPolicyCount] = useState<number>(100000);
+	const [sweepInterval, setSweepInterval] = useState<number>(3600);
+
+	const policyQuery = useQuery({
+		queryKey: ["audit", "policy"],
+		queryFn: () => auditApi.getPolicy(),
+	});
+
+	useEffect(() => {
+		if (policyQuery.data) {
+			const p = policyQuery.data.policy;
+			if (p === "off") {
+				setPolicyType("off");
+			} else if (typeof p === "object" && "keep_days" in p) {
+				setPolicyType("keep_days");
+				setPolicyDays(p.keep_days.days);
+			} else if (typeof p === "object" && "keep_count" in p) {
+				setPolicyType("keep_count");
+				setPolicyCount(p.keep_count.count);
+			} else if (typeof p === "object" && "combined" in p) {
+				setPolicyType("combined");
+				setPolicyDays(p.combined.days);
+				setPolicyCount(p.combined.count);
+			}
+			setSweepInterval(policyQuery.data.sweep_interval_secs);
+		}
+	}, [policyQuery.data]);
+
+	const policyMutation = useMutation({
+		mutationFn: (data: { policy: AuditRetentionPolicy; sweep_interval_secs: number }) =>
+			auditApi.setPolicy(data),
+		onSuccess: () => {
+			notifySuccess(t("settings:audit.saved", { defaultValue: "Retention policy saved" }));
+			policyQuery.refetch();
+		},
+		onError: (e) => {
+			notifyError(t("settings:audit.saveFailed", { defaultValue: "Failed to save policy" }), String(e));
+		},
+	});
+
+	const handleSavePolicy = useCallback(() => {
+		let policy: AuditRetentionPolicy;
+		switch (policyType) {
+			case "off":
+				policy = "off";
+				break;
+			case "keep_days":
+				policy = { keep_days: { days: policyDays } };
+				break;
+			case "keep_count":
+				policy = { keep_count: { count: policyCount } };
+				break;
+			case "combined":
+			default:
+				policy = { combined: { days: policyDays, count: policyCount } };
+		}
+		policyMutation.mutate({ policy, sweep_interval_secs: sweepInterval });
+	}, [policyType, policyDays, policyCount, sweepInterval, policyMutation]);
+
 
 	const applyCoreSourceView = useCallback(
 		(response: DesktopCoreSourceResponse) => {
@@ -296,7 +405,9 @@ export function SettingsPage() {
 
 			if (nextApiPort !== undefined) {
 				setApiPort(nextApiPort);
-				setApiBaseUrl(`http://127.0.0.1:${nextApiPort}`);
+				if (isTauriShell) {
+					setApiBaseUrl(`http://127.0.0.1:${nextApiPort}`);
+				}
 			}
 
 			if (nextMcpPort !== undefined) {
@@ -305,7 +416,7 @@ export function SettingsPage() {
 		} catch {
 			// Cache read is best-effort
 		}
-	}, []);
+	}, [isTauriShell]);
 
 	const wireDashboardToCoreSource = useCallback(
 		async (
@@ -348,7 +459,11 @@ export function SettingsPage() {
 					running: false,
 					installed: false,
 				}));
-				setApiBaseUrl(`http://127.0.0.1:${api}`);
+				if (isTauriShell) {
+					setApiBaseUrl(`http://127.0.0.1:${api}`);
+				} else {
+					setApiBaseUrl("");
+				}
 			};
 
 			if (isTauriEnvironmentSync()) {
@@ -406,7 +521,7 @@ export function SettingsPage() {
 			setLoadingPorts(false);
 		}
 		// API_BASE_URL is a live module binding; reads inside this async fn stay current without listing it in deps.
-	}, [applyCoreSourceView, refreshCoreView, seedPortsFromLocalStorage, t, i18n.language]);
+	}, [applyCoreSourceView, refreshCoreView, seedPortsFromLocalStorage, isTauriShell, t, i18n.language]);
 
 	const runtimeModeOptions = useMemo<SegmentOption[]>(
 		() => [
@@ -447,6 +562,18 @@ export function SettingsPage() {
 		apiPort === mcpPort ||
 		(coreSource === "remote" && !remoteBaseUrl.trim());
 
+	const serviceInstallAction = localService.installed ? "uninstall" : "install";
+	const serviceInstallIcon = localService.installed ? (
+		<Trash2 className="mr-2 h-4 w-4" />
+	) : (
+		<Download className="mr-2 h-4 w-4" />
+	);
+	const serviceInstallLabel = getServiceInstallLabel({
+		busyAction,
+		installed: localService.installed,
+		t,
+	});
+
 	const handleApplyCoreSource = useCallback(async () => {
 		if (typeof apiPort !== "number" || typeof mcpPort !== "number") {
 			return;
@@ -454,7 +581,7 @@ export function SettingsPage() {
 
 		if (!isTauriShell) {
 			void wireDashboardToCoreSource(
-				`http://127.0.0.1:${apiPort}`,
+				"",
 				apiPort,
 				mcpPort,
 			);
@@ -516,7 +643,9 @@ export function SettingsPage() {
 	]);
 
 	const tabTriggerClass =
-		"justify-start px-3 py-2 text-left text-sm font-medium text-slate-600 data-[state=active]:text-emerald-700 dark:text-slate-300";
+		"w-full justify-center gap-2 px-2 py-2 text-left text-sm font-medium text-slate-600 data-[state=active]:text-emerald-700 md:justify-start md:px-3 dark:text-slate-300";
+	const settingItemTitleClass = "text-base font-medium";
+	const settingItemDescriptionClass = "text-sm text-muted-foreground";
 
 	const themeOptions = useMemo<SegmentOption[]>(
 		() =>
@@ -718,37 +847,73 @@ export function SettingsPage() {
 				value={activeTab}
 				onValueChange={handleTabChange}
 				orientation="vertical"
-				className="flex flex-col gap-4 xl:flex-row xl:items-start"
+				className="flex items-start gap-4"
 			>
-				<TabsList className="flex w-full flex-row flex-wrap gap-2 overflow-x-auto rounded-lg p-2 xl:w-64 xl:flex-col xl:overflow-visible xl:p-3 xl:self-start">
+				<TabsList className="sticky top-4 flex w-14 shrink-0 flex-col gap-1 self-start rounded-lg p-1 md:w-56 md:p-2">
 					<TabsTrigger value="general" className={tabTriggerClass}>
-						{t("settings:tabs.general", { defaultValue: "General" })}
+						<LayoutGrid className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.general", { defaultValue: "General" })}
+						</span>
 					</TabsTrigger>
 					<TabsTrigger value="appearance" className={tabTriggerClass}>
-						{t("settings:tabs.appearance", { defaultValue: "Appearance" })}
+						<Palette className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.appearance", { defaultValue: "Appearance" })}
+						</span>
 					</TabsTrigger>
 					<TabsTrigger value="servers" className={tabTriggerClass}>
-						{t("settings:tabs.serverControls", {
-							defaultValue: "Server Controls",
-						})}
+						<Server className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.serverControls", {
+								defaultValue: "Server Controls",
+							})}
+						</span>
 					</TabsTrigger>
 					<TabsTrigger value="clients" className={tabTriggerClass}>
-						{t("settings:tabs.clientDefaults", {
-							defaultValue: "Client Defaults",
-						})}
+						<AppWindow className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.clientDefaults", {
+								defaultValue: "Client Controls",
+							})}
+						</span>
+					</TabsTrigger>
+					<TabsTrigger value="profile" className={tabTriggerClass}>
+						<Sliders className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.profile", { defaultValue: "Profile Controls" })}
+						</span>
 					</TabsTrigger>
 					<TabsTrigger value="market" className={tabTriggerClass}>
-						{t("settings:tabs.market", { defaultValue: "MCP Market" })}
+						<Store className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.market", { defaultValue: "MCP Market" })}
+						</span>
 					</TabsTrigger>
 					<TabsTrigger value="develop" className={tabTriggerClass}>
-						{t("settings:tabs.developer", { defaultValue: "Developer" })}
+						<Bug className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.developer", { defaultValue: "Developer" })}
+						</span>
+					</TabsTrigger>
+					<TabsTrigger value="audit" className={tabTriggerClass}>
+						<FileSearch className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.audit", { defaultValue: "Audit Policy" })}
+						</span>
 					</TabsTrigger>
 					<TabsTrigger value="system" className={tabTriggerClass}>
-						{t("settings:tabs.system", { defaultValue: "System" })}
+						<Activity className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.system", { defaultValue: "System" })}
+						</span>
 					</TabsTrigger>
 					{showLicenseTab && (
 						<TabsTrigger value="about" className={tabTriggerClass}>
-							{t("settings:tabs.about", { defaultValue: "About & Licenses" })}
+							<BookText className="h-4 w-4 shrink-0" />
+							<span className="hidden md:inline truncate">
+								{t("settings:tabs.about", { defaultValue: "About & Licenses" })}
+							</span>
 						</TabsTrigger>
 					)}
 				</TabsList>
@@ -767,7 +932,7 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-4">
+							<CardContent className="space-y-5">
 								{/* Default View */}
 								<div className="flex items-center justify-between gap-4">
 									<div className="space-y-0.5">
@@ -776,7 +941,7 @@ export function SettingsPage() {
 												defaultValue: "Default View",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-xs text-muted-foreground">
 											{t("settings:general.defaultViewDescription", {
 												defaultValue:
 													"Choose the default layout for displaying items.",
@@ -807,7 +972,7 @@ export function SettingsPage() {
 											})}{" "}
 											<sup>{t("wipTag", { defaultValue: "(WIP)" })}</sup>
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:general.appModeDescription", {
 												defaultValue: "Select the interface complexity level.",
 											})}
@@ -836,7 +1001,7 @@ export function SettingsPage() {
 												defaultValue: "Language",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:general.languageDescription", {
 												defaultValue: "Select the dashboard language.",
 											})}
@@ -883,7 +1048,7 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-4">
+							<CardContent className="space-y-5">
 								<div className="space-y-4">
 									<div className="flex items-center justify-between gap-4">
 										<div className="space-y-0.5">
@@ -892,7 +1057,7 @@ export function SettingsPage() {
 													defaultValue: "Theme",
 												})}
 											</h3>
-											<p className="text-sm text-slate-500">
+											<p className="text-xs text-muted-foreground">
 												{t("settings:appearance.themeDescription", {
 													defaultValue: "Switch between light and dark mode.",
 												})}
@@ -917,7 +1082,7 @@ export function SettingsPage() {
 													defaultValue: "System Preference",
 												})}
 											</h3>
-											<p className="text-sm text-slate-500">
+											<p className="text-xs text-muted-foreground">
 												{t("settings:appearance.systemPreferenceDescription", {
 													defaultValue:
 														"Follow the operating system preference automatically.",
@@ -941,7 +1106,7 @@ export function SettingsPage() {
 															defaultValue: "Menu Bar Icon",
 														})}
 													</h3>
-													<p className="text-sm text-slate-500">
+													<p className="text-sm text-muted-foreground">
 														{t("settings:appearance.menuBarDescription", {
 															defaultValue:
 																"Choose when the desktop tray icon should appear.",
@@ -985,7 +1150,7 @@ export function SettingsPage() {
 															defaultValue: "Dock / Taskbar Icon",
 														})}
 													</h3>
-													<p className="text-sm text-slate-500">
+													<p className="text-sm text-muted-foreground">
 														{t("settings:appearance.dockDescription", {
 															defaultValue:
 																"Show MCPMate in the Dock (macOS), taskbar (Windows/Linux), or run from the tray or menu bar only.",
@@ -1001,7 +1166,7 @@ export function SettingsPage() {
 											</div>
 
 											{!dashboardSettings.showDockIcon && (
-												<p className="text-xs leading-relaxed text-slate-500">
+												<p className="text-sm leading-relaxed text-muted-foreground">
 													{t("settings:appearance.dockHiddenNotice", {
 														defaultValue:
 															"The Dock or taskbar entry is hidden. The tray icon stays visible so you can reopen MCPMate.",
@@ -1038,7 +1203,7 @@ export function SettingsPage() {
 												defaultValue: "Sync Global Start/Stop",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:servers.syncDescription", {
 												defaultValue:
 													"Push global enable state to managed clients instantly.",
@@ -1060,7 +1225,7 @@ export function SettingsPage() {
 												defaultValue: "Auto Add To Default Profile",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:servers.autoAddDescription", {
 												defaultValue:
 													"Include new servers in the default profile automatically.",
@@ -1077,6 +1242,27 @@ export function SettingsPage() {
 										}
 									/>
 								</div>
+								<div className="flex items-center justify-between gap-4">
+									<div>
+										<h3 className="text-base font-medium">
+											{t("settings:servers.liveLogsTitle", {
+												defaultValue: "Server Detail Logs",
+											})}
+										</h3>
+										<p className="text-sm text-muted-foreground">
+											{t("settings:servers.liveLogsDescription", {
+												defaultValue:
+													"Show paginated live logs on the Server detail page.",
+											})}
+										</p>
+									</div>
+									<Switch
+										checked={dashboardSettings.showServerLiveLogs}
+										onCheckedChange={(checked) =>
+											setDashboardSetting("showServerLiveLogs", checked)
+										}
+									/>
+								</div>
 							</CardContent>
 						</Card>
 					</TabsContent>
@@ -1086,7 +1272,7 @@ export function SettingsPage() {
 							<CardHeader>
 								<CardTitle>
 									{t("settings:clients.title", {
-										defaultValue: "Client Defaults",
+										defaultValue: "Client Controls",
 									})}
 								</CardTitle>
 								<CardDescription>
@@ -1096,7 +1282,7 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-4">
+							<CardContent className="space-y-5">
 								<div className="flex items-center justify-between gap-4">
 									<div className="space-y-0.5">
 										<h3 className="text-base font-medium">
@@ -1104,7 +1290,7 @@ export function SettingsPage() {
 												defaultValue: "Client Application Mode",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:clients.modeDescription", {
 												defaultValue:
 													"Choose how client applications should operate by default.",
@@ -1133,7 +1319,7 @@ export function SettingsPage() {
 												defaultValue: "Default Client Visibility",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:clients.defaultVisibilityDescription", {
 												defaultValue:
 													"Choose which client statuses are shown by default on the Clients page.",
@@ -1162,7 +1348,7 @@ export function SettingsPage() {
 												defaultValue: "Client Backup Strategy",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:clients.backupStrategyDescription", {
 												defaultValue:
 													"Define how client configurations should be backed up.",
@@ -1191,7 +1377,7 @@ export function SettingsPage() {
 												defaultValue: "Maximum Backup Copies",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:clients.backupLimitDescription", {
 												defaultValue:
 													"Set the maximum number of backup copies to keep. Applied when the strategy is set to Keep N. Values below 1 are rounded up.",
@@ -1215,11 +1401,174 @@ export function SettingsPage() {
 										className="w-64"
 									/>
 								</div>
+								<div className="flex items-center justify-between gap-4">
+									<div className="space-y-0.5">
+										<h3 className="text-base font-medium">
+											{t("settings:clients.liveLogsTitle", {
+												defaultValue: "Client Detail Logs",
+											})}
+										</h3>
+										<p className="text-sm text-muted-foreground">
+											{t("settings:clients.liveLogsDescription", {
+												defaultValue:
+													"Show paginated live logs on the Client detail page.",
+											})}
+										</p>
+									</div>
+									<Switch
+										checked={dashboardSettings.showClientLiveLogs}
+										onCheckedChange={(checked) =>
+											setDashboardSetting("showClientLiveLogs", checked)
+										}
+									/>
+								</div>
+							</CardContent>
+						</Card>
+					</TabsContent>
+
+					<TabsContent value="profile" className="mt-0 h-full">
+						<Card className="h-full">
+							<CardHeader>
+								<CardTitle>
+									{t("settings:profile.title", { defaultValue: "Profile Controls" })}
+								</CardTitle>
+								<CardDescription>
+									{t("settings:profile.description", {
+										defaultValue:
+											"Configure profile detail behavior and live diagnostics visibility.",
+									})}
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-5">
+								<div className="flex items-center justify-between gap-4">
+									<div className="space-y-0.5">
+										<h3 className="text-base font-medium">
+											{t("settings:profile.liveLogsTitle", {
+												defaultValue: "Profile Detail Logs",
+											})}
+										</h3>
+										<p className="text-sm text-muted-foreground">
+											{t("settings:profile.liveLogsDescription", {
+												defaultValue:
+													"Show paginated live logs on the Profile detail page.",
+											})}
+										</p>
+									</div>
+									<Switch
+										checked={dashboardSettings.showProfileLiveLogs}
+										onCheckedChange={(checked) =>
+											setDashboardSetting("showProfileLiveLogs", checked)
+										}
+									/>
+								</div>
 							</CardContent>
 						</Card>
 					</TabsContent>
 
 					{/* System tab: Backend ports configuration */}
+										<TabsContent value="audit" className="mt-0 h-full">
+						<Card className="h-full">
+							<CardHeader>
+								<CardTitle>
+									{t("settings:audit.title", { defaultValue: "Audit Policy" })}
+								</CardTitle>
+								<CardDescription>
+									{t("settings:audit.description", {
+										defaultValue:
+											"Manage how long audit events are retained in the database.",
+									})}
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-5">
+								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+									<div className="space-y-1.5">
+										<h3 className={settingItemTitleClass}>
+											{t("settings:audit.typeTitle", {
+												defaultValue: "Retention Strategy",
+											})}
+										</h3>
+										<p className={settingItemDescriptionClass}>
+											{t("settings:audit.typeDescription", { defaultValue: "Select how events are automatically pruned." })}
+										</p>
+									</div>
+									<div className="flex sm:justify-end">
+										<Select value={policyType} onValueChange={setPolicyType}>
+											<SelectTrigger className="w-full sm:w-64">
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												<SelectItem value="combined">{t("settings:audit.typeCombined", { defaultValue: "Combined (days + count)" })}</SelectItem>
+												<SelectItem value="keep_days">{t("settings:audit.typeDays", { defaultValue: "Keep by days" })}</SelectItem>
+												<SelectItem value="keep_count">{t("settings:audit.typeCount", { defaultValue: "Keep by count" })}</SelectItem>
+												<SelectItem value="off">{t("settings:audit.typeOff", { defaultValue: "Disabled (keep all)" })}</SelectItem>
+											</SelectContent>
+										</Select>
+									</div>
+								</div>
+
+								{(policyType === "keep_days" || policyType === "combined") && (
+									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+										<div className="space-y-1.5">
+											<h3 className={settingItemTitleClass}>
+												{t("settings:audit.daysTitle", {
+													defaultValue: "Days to keep",
+												})}
+											</h3>
+											<p className={settingItemDescriptionClass}>
+												{t("settings:audit.daysDescription", { defaultValue: "Events older than this number of days will be deleted." })}
+											</p>
+										</div>
+										<div className="flex sm:justify-end">
+											<Input
+												type="number"
+												min={1}
+												value={policyDays}
+												onChange={(e) => setPolicyDays(Number(e.target.value))}
+												className="w-full sm:w-64"
+											/>
+										</div>
+									</div>
+								)}
+
+								{(policyType === "keep_count" || policyType === "combined") && (
+									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+										<div className="space-y-1.5">
+											<h3 className={settingItemTitleClass}>
+												{t("settings:audit.countTitle", {
+													defaultValue: "Max events",
+												})}
+											</h3>
+											<p className={settingItemDescriptionClass}>
+												{t("settings:audit.countDescription", { defaultValue: "If event count exceeds this limit, oldest events will be deleted." })}
+											</p>
+										</div>
+										<div className="flex sm:justify-end">
+											<Input
+												type="number"
+												min={1}
+												value={policyCount}
+												onChange={(e) => setPolicyCount(Number(e.target.value))}
+												className="w-full sm:w-64"
+											/>
+										</div>
+									</div>
+								)}
+
+								<div className="mt-4 flex justify-end gap-2">
+									<Button
+										variant="default"
+										disabled={policyMutation.isPending}
+										onClick={handleSavePolicy}
+									>
+										{policyMutation.isPending
+											? t("settings:audit.saving", { defaultValue: "Saving..." })
+											: t("settings:audit.save", { defaultValue: "Save Policy" })}
+									</Button>
+								</div>
+							</CardContent>
+						</Card>
+					</TabsContent>
+
 					<TabsContent value="system" className="mt-0 h-full">
 						<Card className="h-full">
 							<CardHeader>
@@ -1229,22 +1578,22 @@ export function SettingsPage() {
 							<CardDescription>
 								{t("settings:system.description", {
 									defaultValue:
-										"Choose which core service the desktop should attach to, and configure localhost ports when using the built-in local core.",
+										"Manage how MCPMate Desktop connects to and controls its service, including runtime mode and local ports.",
 								})}
 							</CardDescription>
 						</CardHeader>
-						<CardContent className="space-y-6">
+						<CardContent className="space-y-5">
 							<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
 								<div className="space-y-1.5">
-									<Label htmlFor="core-source">
+									<h3 className={settingItemTitleClass}>
 										{t("settings:system.sourceTitle", {
-											defaultValue: "Core Service Source",
+											defaultValue: "Service Target",
 										})}
-									</Label>
-									<p className="text-xs text-slate-500">
+									</h3>
+									<p className={settingItemDescriptionClass}>
 										{t("settings:system.sourceDescription", {
 											defaultValue:
-												"Attach MCPMate Desktop to a persistent localhost core or a future remote core endpoint.",
+												"Choose whether Desktop should attach to the built-in local service or a remote service endpoint.",
 										})}
 									</p>
 								</div>
@@ -1267,12 +1616,12 @@ export function SettingsPage() {
 							{coreSource === "remote" ? (
 								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
 									<div className="space-y-1.5">
-										<Label htmlFor="remote-core-url">
+										<h3 className={settingItemTitleClass}>
 											{t("settings:system.remoteUrlTitle", {
 												defaultValue: "Remote Core URL",
 											})}
-										</Label>
-										<p className="text-xs text-slate-500">
+										</h3>
+										<p className={settingItemDescriptionClass}>
 											{t("settings:system.remoteUrlDescription", {
 												defaultValue:
 													"Store the remote core endpoint for future attach support. This phase still prioritizes localhost service management.",
@@ -1297,28 +1646,31 @@ export function SettingsPage() {
 							{coreSource === "localhost" ? (
 								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
 									<div className="space-y-1.5">
-										<Label htmlFor="localhost-runtime-mode">
+										<h3 className={settingItemTitleClass}>
 											{t("settings:system.runtimeModeTitle", {
 												defaultValue: "Local Runtime Mode",
 											})}
-										</Label>
-									<p className="text-xs text-slate-500">
+										</h3>
+									<p className={settingItemDescriptionClass}>
 										{t("settings:system.runtimeModeDescription", {
 											defaultValue:
 												"Choose whether localhost core is managed as an OS service or tied to the MCPMate desktop lifecycle.",
 										})}
+										{isTauriShell ? (
+											<>
+												{" "}
+												<button
+													type="button"
+													onClick={() => setServiceStatusExpanded((prev) => !prev)}
+													className="inline-flex whitespace-nowrap text-xs font-semibold text-sky-600 hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300"
+												>
+													{serviceStatusExpanded
+														? t("settings:system.lessToggle", { defaultValue: "Less" })
+														: t("settings:system.moreToggle", { defaultValue: "More" })}
+												</button>
+											</>
+										) : null}
 									</p>
-									{isTauriShell ? (
-										<button
-											type="button"
-											onClick={() => setServiceStatusExpanded((prev) => !prev)}
-											className="text-xs font-medium text-slate-600 underline-offset-2 hover:underline dark:text-slate-300"
-										>
-											{serviceStatusExpanded
-												? t("settings:system.lessToggle", { defaultValue: "Less" })
-												: t("settings:system.moreToggle", { defaultValue: "More..." })}
-										</button>
-									) : null}
 								</div>
 									<div className="flex sm:justify-end">
 									<div className="w-56">
@@ -1340,33 +1692,32 @@ export function SettingsPage() {
 							{isTauriShell && coreSource === "localhost" && serviceStatusExpanded ? (
 								<div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
 									<div className="flex items-start justify-between gap-4">
-										<div className="space-y-1">
+										<div className="space-y-0.5">
 											<p className="text-sm font-medium text-slate-900 dark:text-slate-100">
 												{t("settings:system.serviceStatusTitle", {
-													defaultValue: "Local Core Service Status",
+													defaultValue: "Local Service Status",
 												})}
 											</p>
 											<p className="text-sm text-slate-600 dark:text-slate-300">
 												{localService.label}
 											</p>
-											<p className="text-xs text-slate-500">
+											<p className="text-xs text-muted-foreground">
 												{t("settings:system.runtimeModeCurrent", {
 													defaultValue: "Current runtime mode: {{value}}",
 													value: currentRuntimeModeLabel,
+												})}{" "}
+												{" · "}
+												{t("settings:system.serviceLevel", {
+													defaultValue: "Service level: {{value}}",
+													value: localService.level,
 												})}
 											</p>
-											<p className="text-xs text-slate-500">
+											<p className="text-xs leading-5 text-muted-foreground">
 												{localService.detail ||
 													t("settings:system.serviceStatusFallback", {
 														defaultValue:
 															"The desktop will attach to the configured localhost core service when it is available.",
 													})}
-											</p>
-											<p className="text-xs text-slate-500">
-												{t("settings:system.serviceLevel", {
-													defaultValue: "Service level: {{value}}",
-													value: localService.level,
-												})}
 											</p>
 										</div>
 										{localhostRuntimeMode === "service" ? (
@@ -1375,27 +1726,11 @@ export function SettingsPage() {
 												variant={localService.installed ? "destructive" : "secondary"}
 												disabled={busyAction !== null}
 												onClick={() =>
-													void manageLocalCore(
-														localService.installed ? "uninstall" : "install",
-													)
+													void manageLocalCore(serviceInstallAction)
 												}
 											>
-													{localService.installed ? (
-														<Trash2 className="mr-2 h-4 w-4" />
-													) : (
-														<Download className="mr-2 h-4 w-4" />
-													)}
-													{busyAction === "install" || busyAction === "uninstall"
-														? t("settings:system.serviceActionBusy", {
-															defaultValue: "Working…",
-														})
-														: localService.installed
-															? t("settings:system.uninstallAction", {
-																defaultValue: "Uninstall",
-															})
-															: t("settings:system.installAction", {
-																defaultValue: "Install",
-															})}
+												{serviceInstallIcon}
+												{serviceInstallLabel}
 												</Button>
 											</div>
 										) : null}
@@ -1406,12 +1741,12 @@ export function SettingsPage() {
 							{/* Row: API Port */}
 							<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
 									<div className="space-y-1.5">
-										<Label htmlFor="api-port">
+										<h3 className={settingItemTitleClass}>
 											{t("settings:system.apiPortTitle", {
 												defaultValue: "Localhost Core API Port",
 											})}
-										</Label>
-										<p className="text-xs text-slate-500">
+										</h3>
+										<p className={settingItemDescriptionClass}>
 											{t("settings:system.apiPortDescription", {
 												defaultValue:
 													"Port for localhost REST and dashboard access (default 8080).",
@@ -1437,12 +1772,12 @@ export function SettingsPage() {
 								{/* Row: MCP Port */}
 								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
 									<div className="space-y-1.5">
-										<Label htmlFor="mcp-port">
+										<h3 className={settingItemTitleClass}>
 											{t("settings:system.mcpPortTitle", {
 												defaultValue: "Localhost Core MCP Port",
 											})}
-										</Label>
-										<p className="text-xs text-slate-500">
+										</h3>
+										<p className={settingItemDescriptionClass}>
 											{t("settings:system.mcpPortDescription", {
 												defaultValue:
 													"Port for the localhost MCP proxy endpoint (/mcp). Default 8000.",
@@ -1617,7 +1952,7 @@ export function SettingsPage() {
 												defaultValue: "Enable Server Inspection",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:developer.enableServerDebugDescription", {
 												defaultValue:
 													"Expose inspection instrumentation for newly added servers.",
@@ -1639,7 +1974,7 @@ export function SettingsPage() {
 												defaultValue: "Open Inspect Views In New Window",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:developer.openDebugInNewWindowDescription", {
 												defaultValue:
 													"When enabled, Inspect buttons launch a separate tab instead of navigating the current view.",
@@ -1661,7 +1996,7 @@ export function SettingsPage() {
 												defaultValue: "Show API Docs Menu",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:developer.showApiDocsDescription", {
 												defaultValue:
 													"Reveal the API Docs shortcut in the sidebar navigation.",
@@ -1683,7 +2018,7 @@ export function SettingsPage() {
 												defaultValue: "Show Raw Capability JSON",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:developer.showRawJsonDescription", {
 												defaultValue:
 													"Display raw JSON payloads under Details in capability lists (Server details and Uni‑Import preview).",
@@ -1706,7 +2041,7 @@ export function SettingsPage() {
 												defaultValue: "Show Default HTTP Headers",
 											})}
 										</h3>
-										<p className="text-sm text-slate-500">
+										<p className="text-sm text-muted-foreground">
 											{t("settings:developer.showDefaultHeadersDescription", {
 												defaultValue:
 													"Display the server's default HTTP headers (values are redacted) in Server Details. Use only for inspection.",
@@ -1802,7 +2137,7 @@ function MarketBlacklistCard({
 					})}
 				</CardDescription>
 			</CardHeader>
-			<CardContent className="flex h-full flex-col gap-4">
+			<CardContent className="flex h-full flex-col gap-5">
 				{/* Enable Blacklist settings */}
 				<div className="flex items-center justify-between gap-4">
 					<div className="space-y-0.5">
@@ -1811,7 +2146,7 @@ function MarketBlacklistCard({
 								defaultValue: "Enable Blacklist",
 							})}
 						</h3>
-						<p className="text-sm text-slate-500">
+						<p className="text-sm text-muted-foreground">
 							{t("settings:market.enableBlacklistDescription", {
 								defaultValue:
 									"Hide quality-poor or unavailable content from the market to keep it clean",
@@ -1939,6 +2274,73 @@ function MarketBlacklistCard({
 						})}
 					</div>
 				)}
+
+				<div className="space-y-4 border-t border-slate-200 pt-4 dark:border-slate-700">
+					<div className="flex items-center justify-between gap-4">
+						<div className="space-y-0.5">
+							<h3 className="text-base font-medium">
+								{t("settings:market.installChromeExtension", {
+									defaultValue: "Install Chrome Extension",
+								})}
+							</h3>
+							<p className="text-sm text-muted-foreground">
+								{t("settings:market.installChromeExtensionDescription", {
+									defaultValue:
+										"Add the MCPMate Chrome extension to detect importable MCP server snippets and one-click import them into MCPMate.",
+								})}
+							</p>
+						</div>
+						<Button asChild variant="outline" size="sm" className="w-[12.75rem]">
+							<a
+								href={CHROME_EXTENSION_PLACEHOLDER_URL}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="inline-flex w-full items-center justify-center"
+							>
+								{t("settings:market.installChromeExtension", {
+									defaultValue: "Install Chrome Extension",
+								})}
+								<ExternalLink className="ml-1 h-3.5 w-3.5 shrink-0" />
+							</a>
+						</Button>
+					</div>
+
+					<div className="flex items-center justify-between gap-4">
+						<div className="space-y-0.5">
+							<h3 className="text-base font-medium">
+								{t("settings:market.installEdgeExtension", {
+									defaultValue: "Install Edge Extension",
+								})}
+							</h3>
+							<p className="text-sm text-muted-foreground">
+								{t("settings:market.installEdgeExtensionDescription", {
+									defaultValue:
+										"Add the MCPMate Edge extension to discover importable MCP server configurations on web pages and import with one click.",
+								})}
+							</p>
+						</div>
+						<Button asChild variant="outline" size="sm" className="w-[12.75rem]">
+							<a
+								href={EDGE_EXTENSION_PLACEHOLDER_URL}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="inline-flex w-full items-center justify-center"
+							>
+								{t("settings:market.installEdgeExtension", {
+									defaultValue: "Install Edge Extension",
+								})}
+								<ExternalLink className="ml-1 h-3.5 w-3.5 shrink-0" />
+							</a>
+						</Button>
+					</div>
+
+					<p className="text-xs text-muted-foreground">
+						{t("settings:market.browserExtensionsReviewHint", {
+							defaultValue:
+								"Browser extensions are currently under store review. Use these links to check availability and install once approved.",
+						})}
+					</p>
+				</div>
 			</CardContent>
 		</Card>
 	);
