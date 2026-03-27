@@ -7,9 +7,10 @@ import {
 } from "react";
 import enDict from "../i18n/en";
 import zhDict from "../i18n/zh";
+import jaDict from "../i18n/ja";
 import { checkI18nKeys } from "../utils/i18n-dev-check";
 
-export type Language = "en" | "zh";
+export type Language = "en" | "zh" | "ja";
 
 export interface LanguageContextType {
 	language: Language;
@@ -28,10 +29,12 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 		if (typeof window !== "undefined") {
 			try {
 				const params = new URLSearchParams(window.location.search);
-				const urlLang = params.get("lang") as Language | null;
-				if (urlLang && (urlLang === "en" || urlLang === "zh")) {
-					localStorage.setItem("language", urlLang);
-					return urlLang;
+				const urlLang = params.get("lang");
+				const validLanguages: Language[] = ["en", "zh", "ja"];
+				if (urlLang && validLanguages.includes(urlLang as Language)) {
+					const lang = urlLang as Language;
+					localStorage.setItem("language", lang);
+					return lang;
 				}
 			} catch {
 				/* ignore */
@@ -42,6 +45,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
 			const browserLang = navigator.language.toLowerCase();
 			if (browserLang.startsWith("zh")) return "zh";
+			if (browserLang.startsWith("ja")) return "ja";
 			return "en";
 		}
 		return "en";
@@ -52,7 +56,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 	}, [language]);
 
 	const t = (key: string): string => {
-		const dict = { en: enDict, zh: zhDict } as const;
+		const dict = { en: enDict, zh: zhDict, ja: jaDict } as const;
 		const primary = dict[language] as Record<string, string>;
 		const fallback = dict["en"] as Record<string, string>;
 		const translation = primary[key] ?? fallback[key];

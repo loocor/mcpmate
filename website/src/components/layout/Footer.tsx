@@ -31,10 +31,14 @@ const Footer = () => {
 	const { language, setLanguage, t } = useLanguage();
 	const navigate = useNavigate();
 	const location = useLocation();
-	const changelogPath =
-		language === "zh" ? "/docs/zh/changelog" : "/docs/en/changelog";
-	const roadmapPath =
-		language === "zh" ? "/docs/zh/roadmap" : "/docs/en/roadmap";
+	function getLocalePath(page: string): string {
+		if (language === "zh") return `/docs/zh/${page}`;
+		if (language === "ja") return `/docs/ja/${page}`;
+		return `/docs/en/${page}`;
+	}
+
+	const changelogPath = getLocalePath("changelog");
+	const roadmapPath = getLocalePath("roadmap");
 
 	// Helper function to check if current page is a documentation page
 	const isDocPage = (pathname: string): boolean => {
@@ -162,13 +166,7 @@ const Footer = () => {
 							<ul className="space-y-3">
 								<li>
 									<button
-										onClick={() =>
-											navigate(
-												language === "zh"
-													? "/docs/zh/quickstart"
-													: "/docs/en/quickstart",
-											)
-										}
+										onClick={() => navigate(getLocalePath("quickstart"))}
 										className="text-sm text-slate-600 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-colors"
 									>
 										{t("footer.documentation")}
@@ -246,6 +244,19 @@ const Footer = () => {
 											中
 										</span>
 										<span>中文</span>
+									</button>
+								</li>
+								<li>
+									<button
+										onClick={() => handleLanguageChange("ja")}
+										className={`group flex items-center gap-2 text-sm ${language === "ja" ? "text-blue-600 dark:text-blue-400" : "text-slate-600 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400"} transition-colors`}
+									>
+										<span
+											className={`inline-flex items-center justify-center w-5 h-5 rounded-sm ${language === "ja" ? "bg-blue-600" : "bg-slate-600 group-hover:bg-blue-600"} dark:bg-slate-600 dark:group-hover:bg-blue-600 text-white text-xs font-medium transition-colors`}
+										>
+											日
+										</span>
+										<span>日本語</span>
 									</button>
 								</li>
 							</ul>
