@@ -29,7 +29,9 @@
 				"height": 800,
 				"resizable": true,
 				"create": false,
-				"dragDropEnabled": false
+				"dragDropEnabled": false,
+				"titleBarStyle": "Transparent",
+				"hiddenTitle": true
 			}
 		]
 	},
