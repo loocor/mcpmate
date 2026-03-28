@@ -67,32 +67,30 @@ function EventRowSkeleton() {
 
 function EventsTableSkeleton() {
 	return (
-		<div className="overflow-x-auto">
-			<table className="w-full text-sm">
-				<thead>
-					<tr className="border-b text-left text-muted-foreground">
-						<th className="py-2 pr-4">Timestamp</th>
-						<th className="py-2 pr-4">Action</th>
-						<th className="py-2 pr-4">Category</th>
-						<th className="py-2 pr-4">Status</th>
-						<th className="py-2 pr-4">Target</th>
-						<th className="py-2 pr-4">Duration</th>
-						<th className="py-2" />
-					</tr>
-				</thead>
-				<tbody>
-					{Array.from({ length: 8 }).map((_, i) => (
-						<EventRowSkeleton key={i} />
-					))}
-				</tbody>
-			</table>
-		</div>
+		<table className="w-full text-sm">
+			<thead className="sticky top-0 z-[1] bg-white dark:bg-slate-900">
+				<tr className="border-b border-slate-200 text-left text-muted-foreground dark:border-slate-700">
+					<th className="py-2 pr-4">Timestamp</th>
+					<th className="py-2 pr-4">Action</th>
+					<th className="py-2 pr-4">Category</th>
+					<th className="py-2 pr-4">Status</th>
+					<th className="py-2 pr-4">Target</th>
+					<th className="py-2 pr-4">Duration</th>
+					<th className="py-2" />
+				</tr>
+			</thead>
+			<tbody>
+				{Array.from({ length: 8 }).map((_, i) => (
+					<EventRowSkeleton key={i} />
+				))}
+			</tbody>
+		</table>
 	);
 }
 
 function EmptyState({ hasFilters }: { hasFilters: boolean }) {
 	const { t } = useTranslation("audit");
-	
+
 	return (
 		<div className="flex flex-col items-center justify-center py-12 text-center">
 			{hasFilters ? (
@@ -301,8 +299,8 @@ export function AuditPage() {
 	);
 
 	return (
-		<div className="space-y-4">
-			<div className="flex items-center gap-2 min-w-0">
+		<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+			<div className="flex shrink-0 items-center gap-2 min-w-0">
 				<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
 					{t("audit:title", {
 						defaultValue: "Inspect audit events across REST and MCP flows",
@@ -316,8 +314,8 @@ export function AuditPage() {
 				</div>
 			</div>
 
-			<Card>
-				<CardHeader>
+			<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+				<CardHeader className="shrink-0">
 					<div className="flex items-center justify-between gap-2">
 						<CardTitle className="flex items-center gap-2">
 							<Filter className="h-5 w-5" />
@@ -371,11 +369,13 @@ export function AuditPage() {
 						</Select>
 					</div>
 				</CardHeader>
-				<CardContent>
+				<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
 					{query.isLoading && displayEvents.length === 0 ? (
-						<EventsTableSkeleton />
+						<div className="min-h-0 flex-1 overflow-auto overscroll-contain">
+							<EventsTableSkeleton />
+						</div>
 					) : query.isError && displayEvents.length === 0 ? (
-						<div className="flex flex-col items-center justify-center py-12 text-center">
+						<div className="flex min-h-0 flex-1 flex-col items-center justify-center py-12 text-center">
 							<AlertCircle className="h-12 w-12 text-destructive/50 mb-4" />
 							<p className="text-base font-medium text-muted-foreground">
 								{t("audit:states.error", { defaultValue: "Failed to load audit events" })}
@@ -385,12 +385,14 @@ export function AuditPage() {
 							</Button>
 						</div>
 					) : filteredEvents.length === 0 ? (
-						<EmptyState hasFilters={hasActiveFilters} />
+						<div className="flex min-h-0 flex-1 flex-col items-center justify-center">
+							<EmptyState hasFilters={hasActiveFilters} />
+						</div>
 					) : (
-						<div className="overflow-x-auto">
+						<div className="min-h-0 flex-1 overflow-auto overscroll-contain">
 							<table className="w-full text-sm">
-								<thead>
-									<tr className="border-b text-left text-muted-foreground">
+								<thead className="sticky top-0 z-[1] bg-white dark:bg-slate-900">
+									<tr className="border-b border-slate-200 text-left text-muted-foreground dark:border-slate-700">
 										<th className="py-2 pr-4">{t("audit:headers.timestamp", { defaultValue: "Timestamp" })}</th>
 										<th className="py-2 pr-4">{t("audit:headers.action", { defaultValue: "Action" })}</th>
 										<th className="py-2 pr-4">{t("audit:headers.category", { defaultValue: "Category" })}</th>
@@ -410,7 +412,7 @@ export function AuditPage() {
 													<td className="py-2 pr-4 whitespace-nowrap">
 														{formatLocalDateTime(new Date(event.occurred_at_ms).toISOString(), i18n.language)}
 													</td>
-													<td className="py-2 pr-4">{event.action}</td>
+													<td className="py-2 pr-4">{t(`audit:actionValues.${event.action}`, { defaultValue: event.action })}</td>
 													<td className="py-2 pr-4">
 														{t(`audit:categoryValues.${event.category}`, { defaultValue: event.category })}
 													</td>
@@ -467,7 +469,7 @@ export function AuditPage() {
 						onNextPage={handleNextPage}
 						onLastPage={handleLastPage}
 						pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
-						className="mt-4"
+						className="mt-4 shrink-0 border-t border-slate-200 pt-4 dark:border-slate-700"
 					/>
 				</CardContent>
 			</Card>

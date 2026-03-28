@@ -1,21 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-    BadgeCheck,
-    Bug,
-    Check,
-    Edit3,
-    Play,
-    RefreshCw,
-    Square,
-    Trash2,
-    Eye,
+	BadgeCheck,
+	Bug,
+	Check,
+	Edit3,
+	Play,
+	RefreshCw,
+	Square,
+	Trash2,
+	Eye,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { CachedAvatar } from "../../components/cached-avatar";
+import { CardListScrollBody } from "../../components/card-list-scroll-body";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import CapabilityList from "../../components/capability-list";
 import {
@@ -23,6 +24,8 @@ import {
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
 import { ProfileFormDrawer } from "../../components/profile-form-drawer";
+import { PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS } from "./components/profile-detail-layout-classes";
+import { ProfileTokenUsageChart } from "./components/profile-token-usage-chart";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -59,7 +62,7 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { auditApi, configSuitsApi, serversApi } from "../../lib/api";
+import { auditApi, configSuitsApi, serversApi, useProfileTokenChartSource } from "../../lib/api";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type {
@@ -93,6 +96,14 @@ export function ProfileDetailPage() {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
 
+	/** Refetch capability JSON payloads when server membership or live MCP definitions may have changed. */
+	const invalidateProfileCapabilityLedger = useCallback(() => {
+		if (profileId) {
+			void queryClient.invalidateQueries({ queryKey: ["capabilityTokenLedger", profileId] });
+			void queryClient.invalidateQueries({ queryKey: ["profileChartTokenEstimate", profileId] });
+		}
+	}, [profileId, queryClient]);
+
 	const showProfileLiveLogs = useAppStore(
 		(state) => state.dashboardSettings.showProfileLiveLogs,
 	);
@@ -117,29 +128,29 @@ export function ProfileDetailPage() {
 		(state) => state.dashboardSettings.openDebugInNewWindow,
 	);
 
-    const openDebug = (
-        targetServerId: string,
-        channel: "proxy" | "native" = "proxy",
-    ) => {
-        const url = `/servers/${encodeURIComponent(targetServerId)}?view=debug&channel=${channel}`;
-        if (openDebugInNewWindow) {
-            if (typeof window !== "undefined") {
-                window.open(url, "_blank", "noopener,noreferrer");
-            }
-            return;
-        }
-        navigate(url);
-    };
-    const openBrowse = (targetServerId: string) => {
-        const url = `/servers/${encodeURIComponent(targetServerId)}?view=browse`;
-        if (openDebugInNewWindow) {
-            if (typeof window !== "undefined") {
-                window.open(url, "_blank", "noopener,noreferrer");
-            }
-            return;
-        }
-        navigate(url);
-    };
+	const openDebug = (
+		targetServerId: string,
+		channel: "proxy" | "native" = "proxy",
+	) => {
+		const url = `/servers/${encodeURIComponent(targetServerId)}?view=debug&channel=${channel}`;
+		if (openDebugInNewWindow) {
+			if (typeof window !== "undefined") {
+				window.open(url, "_blank", "noopener,noreferrer");
+			}
+			return;
+		}
+		navigate(url);
+	};
+	const openBrowse = (targetServerId: string) => {
+		const url = `/servers/${encodeURIComponent(targetServerId)}?view=browse`;
+		if (openDebugInNewWindow) {
+			if (typeof window !== "undefined") {
+				window.open(url, "_blank", "noopener,noreferrer");
+			}
+			return;
+		}
+		navigate(url);
+	};
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	// Filters: servers
@@ -362,6 +373,7 @@ export function ProfileDetailPage() {
 			),
 		onSuccess: () => {
 			setSelectedServerIds([]);
+			invalidateProfileCapabilityLedger();
 			refetchServers();
 			notifySuccess(
 				t("profiles:detail.messages.serversUpdated", { defaultValue: "Servers updated" }),
@@ -557,8 +569,7 @@ export function ProfileDetailPage() {
 		onError: (error, nextDefault) => {
 			notifyError(
 				t("profiles:detail.messages.defaultUpdateFailed", { defaultValue: "Default update failed" }),
-				`Failed to ${nextDefault ? "set" : "remove"} default: ${
-					error instanceof Error ? error.message : String(error)
+				`Failed to ${nextDefault ? "set" : "remove"} default: ${error instanceof Error ? error.message : String(error)
 				}`,
 			);
 		},
@@ -600,13 +611,14 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enableServer(profileId!, serverId)
 				: configSuitsApi.disableServer(profileId!, serverId);
 		},
-	onSuccess: () => {
-		// Refetch all capability data to update counts in tabs
-		refetchServers();
-		refetchTools();
-		refetchResources();
-		refetchPrompts();
-		refetchTemplates();
+		onSuccess: () => {
+			invalidateProfileCapabilityLedger();
+			// Refetch all capability data to update counts in tabs
+			refetchServers();
+			refetchTools();
+			refetchResources();
+			refetchPrompts();
+			refetchTemplates();
 
 			// Invalidate profile statistics cache for config page
 			queryClient.invalidateQueries({
@@ -633,9 +645,9 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enableTool(profileId!, toolId)
 				: configSuitsApi.disableTool(profileId!, toolId);
 		},
-	onSuccess: () => {
-		refetchTools();
-		refetchTemplates();
+		onSuccess: () => {
+			refetchTools();
+			refetchTemplates();
 			notifySuccess(
 				t("profiles:detail.messages.toolUpdated", { defaultValue: "Tool updated" }),
 				"Tool status has been updated"
@@ -662,9 +674,9 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enableResource(profileId!, resourceId)
 				: configSuitsApi.disableResource(profileId!, resourceId);
 		},
-	onSuccess: () => {
-		refetchResources();
-		refetchTemplates();
+		onSuccess: () => {
+			refetchResources();
+			refetchTemplates();
 			notifySuccess(
 				t("profiles:detail.messages.resourceUpdated", { defaultValue: "Resource updated" }),
 				"Resource status has been updated"
@@ -691,9 +703,9 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enablePrompt(profileId!, promptId)
 				: configSuitsApi.disablePrompt(profileId!, promptId);
 		},
-	onSuccess: () => {
-		refetchPrompts();
-		refetchTemplates();
+		onSuccess: () => {
+			refetchPrompts();
+			refetchTemplates();
 			notifySuccess(
 				t("profiles:detail.messages.promptUpdated", { defaultValue: "Prompt updated" }),
 				"Prompt status has been updated"
@@ -722,9 +734,8 @@ export function ProfileDetailPage() {
 				: t("profiles:detail.buttons.joinDefault", { defaultValue: "Join Default" });
 	const defaultButtonIcon = suit?.is_default ? (
 		<BadgeCheck
-			className={`h-4 w-4 ${
-				toggleDefaultMutation.isPending ? "animate-spin" : ""
-			}`}
+			className={`h-4 w-4 ${toggleDefaultMutation.isPending ? "animate-spin" : ""
+				}`}
 		/>
 	) : (
 		<Square className="h-4 w-4" />
@@ -756,6 +767,7 @@ export function ProfileDetailPage() {
 		refetchResources();
 		refetchPrompts();
 		refetchTemplates();
+		invalidateProfileCapabilityLedger();
 	};
 
 	const handleEditDrawerClose = (open: boolean) => {
@@ -775,6 +787,28 @@ export function ProfileDetailPage() {
 	);
 	const enabledPrompts = prompts.filter((p: ConfigSuitPrompt) => p.enabled);
 	const enabledTemplates = templates.filter((t: any) => t.enabled);
+
+	const enabledByComponentId = useMemo(() => {
+		const m = new Map<string, boolean>();
+		for (const s of servers) {
+			m.set(s.id, s.enabled);
+		}
+		for (const item of tools) {
+			m.set(item.id, item.enabled);
+		}
+		for (const r of resources) {
+			m.set(r.id, r.enabled);
+		}
+		for (const p of prompts) {
+			m.set(p.id, p.enabled);
+		}
+		for (const tmpl of templates as ReadonlyArray<{ id: string; enabled: boolean }>) {
+			m.set(tmpl.id, tmpl.enabled);
+		}
+		return m;
+	}, [servers, tools, resources, prompts, templates]);
+
+	const tokenChartSource = useProfileTokenChartSource(profileId, enabledByComponentId);
 
 	// Global servers for availability(connected) calculation
 	const { data: globalServersResp } = useQuery({
@@ -885,8 +919,8 @@ export function ProfileDetailPage() {
 	});
 
 	return (
-		<div className="space-y-4">
-			<div className="flex items-center justify-between">
+		<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+			<div className="flex shrink-0 items-center justify-between">
 				<div className="flex items-center">
 					{suit && (
 						<div className="flex items-center gap-3">
@@ -919,7 +953,17 @@ export function ProfileDetailPage() {
 						</div>
 					)}
 				</div>
-				{/* page-level actions moved into Overview card */}
+				<div className="flex flex-shrink-0 items-center gap-3">
+					{profileId ? (
+						<ProfileTokenUsageChart
+							ledgerItems={tokenChartSource.ledgerItems}
+							fallbackEstimate={tokenChartSource.fallbackEstimate}
+							isLoading={tokenChartSource.isLoading}
+							isError={tokenChartSource.isError}
+							enabledByComponentId={enabledByComponentId}
+						/>
+					) : null}
+				</div>
 			</div>
 
 			{!profileId ? (
@@ -940,9 +984,9 @@ export function ProfileDetailPage() {
 				<Tabs
 					value={activeTab}
 					onValueChange={setActiveTab}
-					className="space-y-4"
+					className="flex min-h-0 flex-1 flex-col gap-4"
 				>
-					<div className="flex items-center justify-between">
+					<div className="flex shrink-0 items-center justify-between">
 						<TabsList className="flex items-center gap-2">
 							<TabsTrigger value="overview">{t("profiles:detail.tabs.overview", { defaultValue: "Overview" })}</TabsTrigger>
 							<TabsTrigger value="servers">
@@ -963,12 +1007,15 @@ export function ProfileDetailPage() {
 						</TabsList>
 					</div>
 
-					<TabsContent value="overview">
+					<TabsContent
+						value="overview"
+						className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
+					>
 						<div className="grid gap-4">
 							<Card>
 								<CardContent className="p-4">
 									<div className="flex flex-col gap-4">
-										<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+										<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
 											<div className="flex flex-wrap items-start gap-4">
 												<Avatar className="text-sm">
 													<AvatarFallback>
@@ -976,39 +1023,38 @@ export function ProfileDetailPage() {
 													</AvatarFallback>
 												</Avatar>
 												<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
-						<span className="text-xs uppercase text-slate-500">
-							{t("profiles:detail.labels.status", { defaultValue: "Status" })}
-						</span>
+													<span className="text-xs uppercase text-slate-500">
+														{t("profiles:detail.labels.status", { defaultValue: "Status" })}
+													</span>
 													<Badge
 														variant="secondary"
-														className={`justify-self-start border px-2.5 py-0.5 leading-none min-h-[1.5rem] ${
-															suit.is_active
-																? "border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-emerald-200"
-																: "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300"
-														}`}
+														className={`justify-self-start border px-2.5 py-0.5 leading-none min-h-[1.5rem] ${suit.is_active
+															? "border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-emerald-200"
+															: "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300"
+															}`}
 													>
 														{suit.is_active ? t("profiles:detail.status.active", { defaultValue: "Active" }) : t("profiles:detail.status.inactive", { defaultValue: "Inactive" })}
 													</Badge>
 
-						<span className="text-xs uppercase text-slate-500">
-							{t("profiles:detail.labels.type", { defaultValue: "Type" })}
-						</span>
-					<span className="font-mono text-sm leading-tight">
-						{t(`profiles:suitTypes.${suit.suit_type}`, {
-							defaultValue: formatProfileTypeLabel(suit.suit_type),
-						})}
-					</span>
+													<span className="text-xs uppercase text-slate-500">
+														{t("profiles:detail.labels.type", { defaultValue: "Type" })}
+													</span>
+													<span className="font-mono text-sm leading-tight">
+														{t(`profiles:suitTypes.${suit.suit_type}`, {
+															defaultValue: formatProfileTypeLabel(suit.suit_type),
+														})}
+													</span>
 
-						<span className="text-xs uppercase text-slate-500">
-							{t("profiles:detail.labels.multiSelect", { defaultValue: "Multi-select" })}
-						</span>
+													<span className="text-xs uppercase text-slate-500">
+														{t("profiles:detail.labels.multiSelect", { defaultValue: "Multi-select" })}
+													</span>
 													<span className="text-sm leading-tight">
 														{suit.multi_select ? t("profiles:detail.status.yes", { defaultValue: "Yes" }) : t("profiles:detail.status.no", { defaultValue: "No" })}
 													</span>
 
-						<span className="text-xs uppercase text-slate-500">
-							{t("profiles:detail.labels.priority", { defaultValue: "Priority" })}
-						</span>
+													<span className="text-xs uppercase text-slate-500">
+														{t("profiles:detail.labels.priority", { defaultValue: "Priority" })}
+													</span>
 													<span className="font-mono text-sm leading-tight">
 														{suit.priority}
 													</span>
@@ -1027,15 +1073,15 @@ export function ProfileDetailPage() {
 													/>
 													{t("profiles:detail.buttons.refresh", { defaultValue: "Refresh" })}
 												</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => setIsEditDialogOpen(true)}
-						className="gap-2"
-					>
-						<Edit3 className="h-4 w-4" />
-						{t("profiles:detail.buttons.edit", { defaultValue: "Edit" })}
-					</Button>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={() => setIsEditDialogOpen(true)}
+													className="gap-2"
+												>
+													<Edit3 className="h-4 w-4" />
+													{t("profiles:detail.buttons.edit", { defaultValue: "Edit" })}
+												</Button>
 												{!isHostApp && !isCustomMode && (
 													<Button
 														variant="outline"
@@ -1087,15 +1133,15 @@ export function ProfileDetailPage() {
 								</CardContent>
 							</Card>
 
-							<div className="grid gap-4 md:grid-cols-4">
-								<Card>
-										<CardHeader
-											className="pb-2 cursor-pointer"
-											onClick={() => setActiveTab("servers")}
-										>
-											<CardTitle className="text-sm">
-												{t("profiles:detail.labels.servers", { defaultValue: "Servers" })}
-											</CardTitle>
+							<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+								<Card className="h-full">
+									<CardHeader
+										className="pb-2 cursor-pointer"
+										onClick={() => setActiveTab("servers")}
+									>
+										<CardTitle className="text-sm">
+											{t("profiles:detail.labels.servers", { defaultValue: "Servers" })}
+										</CardTitle>
 									</CardHeader>
 									<CardContent>
 										<div className="text-2xl font-bold">
@@ -1108,14 +1154,14 @@ export function ProfileDetailPage() {
 										</p>
 									</CardContent>
 								</Card>
-								<Card>
-										<CardHeader
-											className="pb-2 cursor-pointer"
-											onClick={() => setActiveTab("tools")}
-										>
-											<CardTitle className="text-sm">
-												{t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
-											</CardTitle>
+								<Card className="h-full">
+									<CardHeader
+										className="pb-2 cursor-pointer"
+										onClick={() => setActiveTab("tools")}
+									>
+										<CardTitle className="text-sm">
+											{t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
+										</CardTitle>
 									</CardHeader>
 									<CardContent>
 										<div className="text-2xl font-bold">
@@ -1128,14 +1174,14 @@ export function ProfileDetailPage() {
 										</p>
 									</CardContent>
 								</Card>
-								<Card>
-										<CardHeader
-											className="pb-2 cursor-pointer"
-											onClick={() => setActiveTab("resources")}
-										>
-											<CardTitle className="text-sm">
-												{t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
-											</CardTitle>
+								<Card className="h-full">
+									<CardHeader
+										className="pb-2 cursor-pointer"
+										onClick={() => setActiveTab("resources")}
+									>
+										<CardTitle className="text-sm">
+											{t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
+										</CardTitle>
 									</CardHeader>
 									<CardContent>
 										<div className="text-2xl font-bold">
@@ -1148,14 +1194,14 @@ export function ProfileDetailPage() {
 										</p>
 									</CardContent>
 								</Card>
-								<Card>
-										<CardHeader
-											className="pb-2 cursor-pointer"
-											onClick={() => setActiveTab("prompts")}
-										>
-											<CardTitle className="text-sm">
-												{t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
-											</CardTitle>
+								<Card className="h-full">
+									<CardHeader
+										className="pb-2 cursor-pointer"
+										onClick={() => setActiveTab("prompts")}
+									>
+										<CardTitle className="text-sm">
+											{t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
+										</CardTitle>
 									</CardHeader>
 									<CardContent>
 										<div className="text-2xl font-bold">
@@ -1232,26 +1278,26 @@ export function ProfileDetailPage() {
 						</div>
 					</TabsContent>
 
-					<TabsContent value="servers">
-						<Card>
-							<CardHeader>
+					<TabsContent value="servers" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
 									<div>
-											<CardTitle>
-												{t("profiles:detail.labels.servers", { defaultValue: "Servers" })}
-											</CardTitle>
-											<CardDescription>
-												{t("profiles:detail.descriptions.servers", {
-													defaultValue: "Manage servers included in this profile",
-												})}
-											</CardDescription>
+										<CardTitle>
+											{t("profiles:detail.labels.servers", { defaultValue: "Servers" })}
+										</CardTitle>
+										<CardDescription>
+											{t("profiles:detail.descriptions.servers", {
+												defaultValue: "Manage servers included in this profile",
+											})}
+										</CardDescription>
 									</div>
 									{!isLoadingServers && (
 										<div className="flex flex-wrap items-center gap-2">
-												<Input
-													placeholder={t("profiles:detail.placeholders.searchServers", {
-														defaultValue: "Search servers...",
-													})}
+											<Input
+												placeholder={t("profiles:detail.placeholders.searchServers", {
+													defaultValue: "Search servers...",
+												})}
 												value={serverQuery}
 												onChange={(e) => setServerQuery(e.target.value)}
 												className="w-48 h-9"
@@ -1266,16 +1312,16 @@ export function ProfileDetailPage() {
 													<SelectTrigger className="w-36 h-9">
 														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
 													</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
-															</SelectItem>
-															<SelectItem value="enabled">
-																{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
-															</SelectItem>
-															<SelectItem value="disabled">
-																{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
-															</SelectItem>
+													<SelectContent>
+														<SelectItem value="all">
+															{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
+														</SelectItem>
+														<SelectItem value="enabled">
+															{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
+														</SelectItem>
+														<SelectItem value="disabled">
+															{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
+														</SelectItem>
 													</SelectContent>
 												</Select>
 											</div>
@@ -1288,19 +1334,19 @@ export function ProfileDetailPage() {
 															visibleServers.map((s: any) => s.id),
 														)
 													}
-													>
-														{t("profiles:detail.buttons.selectAll", {
-															defaultValue: "Select all",
-														})}
+												>
+													{t("profiles:detail.buttons.selectAll", {
+														defaultValue: "Select all",
+													})}
 												</Button>
 												<Button
 													variant="outline"
 													size="sm"
 													onClick={() => setSelectedServerIds([])}
-													>
-														{t("profiles:detail.buttons.clearSelection", {
-															defaultValue: "Clear",
-														})}
+												>
+													{t("profiles:detail.buttons.clearSelection", {
+														defaultValue: "Clear",
+													})}
 												</Button>
 												<Button
 													size="sm"
@@ -1309,8 +1355,8 @@ export function ProfileDetailPage() {
 														selectedServerIds.length === 0
 													}
 													onClick={() => bulkServersM.mutate({ enable: true })}
-													>
-														{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
+												>
+													{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
 												</Button>
 												<Button
 													size="sm"
@@ -1320,204 +1366,204 @@ export function ProfileDetailPage() {
 														selectedServerIds.length === 0
 													}
 													onClick={() => bulkServersM.mutate({ enable: false })}
-													>
-														{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
+												>
+													{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
 												</Button>
 											</ButtonGroup>
 										</div>
 									)}
 								</div>
 							</CardHeader>
-							<CardContent>
-								{isLoadingServers ? (
-									<div className="space-y-4">
-										{["s1", "s2", "s3"].map((id) => (
-											<div
-												key={`servers-skel-${id}`}
-												className="flex items-center justify-between rounded-lg border p-4"
-											>
-												<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-												<div className="h-6 w-12 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-											</div>
-										))}
-									</div>
-								) : visibleServers.length > 0 ? (
-									<CapsuleStripeList>
-										{visibleServers.map((server) => {
-											const global = (globalServers as any[]).find(
-												(gs: any) => gs.name === server.name,
-											);
-											const globallyEnabled: boolean | undefined =
-												global?.enabled;
-											const globalIcon = global?.icons?.[0]?.src;
-											const avatarFallback = (server.name || server.id || "S")
-												.slice(0, 1)
-												.toUpperCase();
-											const iconAlt = global?.name || server.name || server.id;
-											const globalDescription =
-												global?.meta?.description?.trim();
-											const selected = selectedServerIds.includes(server.id);
-											return (
-												<CapsuleStripeListItem
-													key={server.id}
-													interactive
-													className={`group relative transition-colors ${
-														selected
+							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
+								<CardListScrollBody>
+									{isLoadingServers ? (
+										<div className="space-y-4">
+											{["s1", "s2", "s3"].map((id) => (
+												<div
+													key={`servers-skel-${id}`}
+													className="flex items-center justify-between rounded-lg border p-4"
+												>
+													<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+													<div className="h-6 w-12 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+												</div>
+											))}
+										</div>
+									) : visibleServers.length > 0 ? (
+										<CapsuleStripeList className="rounded-none border-0 overflow-visible">
+											{visibleServers.map((server) => {
+												const global = (globalServers as any[]).find(
+													(gs: any) => gs.name === server.name,
+												);
+												const globallyEnabled: boolean | undefined =
+													global?.enabled;
+												const globalIcon = global?.icons?.[0]?.src;
+												const avatarFallback = (server.name || server.id || "S")
+													.slice(0, 1)
+													.toUpperCase();
+												const iconAlt = global?.name || server.name || server.id;
+												const globalDescription =
+													global?.meta?.description?.trim();
+												const selected = selectedServerIds.includes(server.id);
+												return (
+													<CapsuleStripeListItem
+														key={server.id}
+														interactive
+														className={`group relative transition-colors ${selected
 															? "bg-primary/10 ring-1 ring-primary/40"
 															: ""
-													}`}
-													onClick={() =>
-														setSelectedServerIds((prev) =>
-															prev.includes(server.id)
-																? prev.filter((x) => x !== server.id)
-																: [...prev, server.id],
-														)
-													}
-													onKeyDown={(e) => {
-														if (e.key === "Enter" || e.key === " ") {
-															e.preventDefault();
+															}`}
+														onClick={() =>
 															setSelectedServerIds((prev) =>
 																prev.includes(server.id)
 																	? prev.filter((x) => x !== server.id)
 																	: [...prev, server.id],
-															);
+															)
 														}
-													}}
-												>
-													<div className="flex w-full items-center justify-between gap-4">
-														<div className="flex flex-1 items-center gap-3">
-															<div
-																className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0px] transition-all duration-200 ${
-																	selected
+														onKeyDown={(e) => {
+															if (e.key === "Enter" || e.key === " ") {
+																e.preventDefault();
+																setSelectedServerIds((prev) =>
+																	prev.includes(server.id)
+																		? prev.filter((x) => x !== server.id)
+																		: [...prev, server.id],
+																);
+															}
+														}}
+													>
+														<div className="flex w-full items-center justify-between gap-4">
+															<div className="flex flex-1 items-center gap-3">
+																<div
+																	className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0px] transition-all duration-200 ${selected
 																		? "border-primary bg-primary text-white shadow-sm"
 																		: "border-slate-300 text-transparent group-hover:border-primary/50 group-hover:text-primary/60 dark:border-slate-700 dark:group-hover:border-primary/50"
-																}`}
-															>
-																<Check className="h-3 w-3" />
-															</div>
-															<CachedAvatar
-																src={globalIcon}
-																alt={iconAlt ? `${iconAlt} icon` : undefined}
-																fallback={avatarFallback}
-																size="sm"
-																shape="rounded"
-																className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
-															/>
-															<div className="min-w-0">
-																<h3 className="font-medium text-slate-900 dark:text-slate-100">
-																	{server.name}
-																</h3>
-																<p className="text-sm text-slate-500">
-																	ID: {server.id}
-																</p>
-																{globalDescription ? (
-																	<p className="text-xs text-slate-500 line-clamp-2">
-																		{globalDescription}
+																		}`}
+																>
+																	<Check className="h-3 w-3" />
+																</div>
+																<CachedAvatar
+																	src={globalIcon}
+																	alt={iconAlt ? `${iconAlt} icon` : undefined}
+																	fallback={avatarFallback}
+																	size="sm"
+																	shape="rounded"
+																	className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
+																/>
+																<div className="min-w-0">
+																	<h3 className="font-medium text-slate-900 dark:text-slate-100">
+																		{server.name}
+																	</h3>
+																	<p className="text-sm text-slate-500">
+																		ID: {server.id}
 																	</p>
-																) : null}
+																	{globalDescription ? (
+																		<p className="text-xs text-slate-500 line-clamp-2">
+																			{globalDescription}
+																		</p>
+																	) : null}
+																</div>
+															</div>
+															<div className="ml-auto flex items-center gap-2">
+																{/* Hover actions: Browse (left) + Inspect (right) */}
+																{enableServerDebug && (
+																	<>
+																		<div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+																			<button
+																				type="button"
+																				onClick={(ev) => {
+																					ev.stopPropagation();
+																					openBrowse(server.id);
+																				}}
+																				aria-label={t("profiles:detail.labels.browseServer", { defaultValue: "Browse server" })}
+																				className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+																			>
+																				<Eye size={20} />
+																			</button>
+																		</div>
+																		<div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+																			<button
+																				type="button"
+																				onClick={(ev) => {
+																					ev.stopPropagation();
+																					openDebug(
+																						server.id,
+																						server.enabled ? "proxy" : "native",
+																					);
+																				}}
+																				aria-label={t("profiles:detail.labels.debugServer", { defaultValue: "Inspect server" })}
+																				className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+																			>
+																				<Bug size={20} />
+																			</button>
+																		</div>
+																	</>
+																)}
+
+																{/* Global status badges and switch - positioned on the right */}
+																{globallyEnabled !== undefined &&
+																	(globallyEnabled ? (
+																		<Badge>
+																			{t("profiles:detail.globalStatus.enabled", {
+																				defaultValue: "Global Enabled",
+																			})}
+																		</Badge>
+																	) : (
+																		<Badge variant="outline">
+																			{t("profiles:detail.globalStatus.disabled", {
+																				defaultValue: "Global Disabled",
+																			})}
+																		</Badge>
+																	))}
+
+																{/* Always show switch */}
+																<Switch
+																	checked={server.enabled}
+																	onClick={(e) => e.stopPropagation()}
+																	onCheckedChange={(enabled) =>
+																		serverToggleMutation.mutate({
+																			serverId: server.id,
+																			enable: enabled,
+																		})
+																	}
+																	disabled={serverToggleMutation.isPending}
+																/>
 															</div>
 														</div>
-														<div className="ml-auto flex items-center gap-2">
-                                            {/* Hover actions: Browse (left) + Inspect (right) */}
-                                            {enableServerDebug && (
-                                                <>
-                                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                                                        <button
-                                                            type="button"
-                                                            onClick={(ev) => {
-                                                                ev.stopPropagation();
-                                                                openBrowse(server.id);
-                                                            }}
-                                                            aria-label={t("profiles:detail.labels.browseServer", { defaultValue: "Browse server" })}
-                                                            className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-                                                        >
-                                                            <Eye size={20} />
-                                                        </button>
-                                                    </div>
-                                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                                                        <button
-                                                            type="button"
-                                                            onClick={(ev) => {
-                                                                ev.stopPropagation();
-                                                                openDebug(
-                                                                    server.id,
-                                                                    server.enabled ? "proxy" : "native",
-                                                                );
-                                                            }}
-                                                            aria-label={t("profiles:detail.labels.debugServer", { defaultValue: "Inspect server" })}
-                                                            className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-                                                        >
-                                                            <Bug size={20} />
-                                                        </button>
-                                                    </div>
-                                                </>
-                                            )}
-
-															{/* Global status badges and switch - positioned on the right */}
-															{globallyEnabled !== undefined &&
-																(globallyEnabled ? (
-																	<Badge>
-																		{t("profiles:detail.globalStatus.enabled", {
-																			defaultValue: "Global Enabled",
-																		})}
-																	</Badge>
-																) : (
-																	<Badge variant="outline">
-																		{t("profiles:detail.globalStatus.disabled", {
-																			defaultValue: "Global Disabled",
-																		})}
-																	</Badge>
-																))}
-
-															{/* Always show switch */}
-															<Switch
-																checked={server.enabled}
-																onClick={(e) => e.stopPropagation()}
-																onCheckedChange={(enabled) =>
-																	serverToggleMutation.mutate({
-																		serverId: server.id,
-																		enable: enabled,
-																	})
-																}
-																disabled={serverToggleMutation.isPending}
-															/>
-														</div>
-													</div>
-												</CapsuleStripeListItem>
-											);
-										})}
-									</CapsuleStripeList>
-								) : (
-									<p className="text-center text-slate-500 py-8">
-										{t("profiles:detail.emptyStates.noServers", {
-											defaultValue: "No servers found in this profile",
-										})}
-									</p>
-								)}
+													</CapsuleStripeListItem>
+												);
+											})}
+										</CapsuleStripeList>
+									) : (
+										<p className="text-center text-slate-500 py-8">
+											{t("profiles:detail.emptyStates.noServers", {
+												defaultValue: "No servers found in this profile",
+											})}
+										</p>
+									)}
+								</CardListScrollBody>
 							</CardContent>
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="tools">
-						<Card>
-							<CardHeader>
+					<TabsContent value="tools" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
-										<div>
-											<CardTitle>
-												{t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
-											</CardTitle>
-											<CardDescription>
-												{t("profiles:detail.descriptions.tools", {
-													defaultValue: "Manage tools included in this profile",
-												})}
-											</CardDescription>
+									<div>
+										<CardTitle>
+											{t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
+										</CardTitle>
+										<CardDescription>
+											{t("profiles:detail.descriptions.tools", {
+												defaultValue: "Manage tools included in this profile",
+											})}
+										</CardDescription>
 									</div>
 									{!isLoadingTools && (
 										<div className="flex flex-wrap items-center gap-2">
-												<Input
-													placeholder={t("profiles:detail.placeholders.searchTools", {
-														defaultValue: "Search tools...",
-													})}
+											<Input
+												placeholder={t("profiles:detail.placeholders.searchTools", {
+													defaultValue: "Search tools...",
+												})}
 												value={toolQuery}
 												onChange={(e) => setToolQuery(e.target.value)}
 												className="w-48 h-9"
@@ -1532,16 +1578,16 @@ export function ProfileDetailPage() {
 													<SelectTrigger className="w-36 h-9">
 														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
 													</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
-															</SelectItem>
-															<SelectItem value="enabled">
-																{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
-															</SelectItem>
-															<SelectItem value="disabled">
-																{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
-															</SelectItem>
+													<SelectContent>
+														<SelectItem value="all">
+															{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
+														</SelectItem>
+														<SelectItem value="enabled">
+															{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
+														</SelectItem>
+														<SelectItem value="disabled">
+															{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
+														</SelectItem>
 													</SelectContent>
 												</Select>
 											</div>
@@ -1614,9 +1660,10 @@ export function ProfileDetailPage() {
 									)}
 								</div>
 							</CardHeader>
-							<CardContent>
+							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
 								<CapabilityList
 									asCard={false}
+									scrollContainedBody
 									title={t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
 									kind="tools"
 									context="profile"
@@ -1645,26 +1692,26 @@ export function ProfileDetailPage() {
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="prompts">
-						<Card>
-							<CardHeader>
+					<TabsContent value="prompts" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
-										<div>
-											<CardTitle>
-												{t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
-											</CardTitle>
-											<CardDescription>
-												{t("profiles:detail.descriptions.prompts", {
-													defaultValue: "Manage prompts included in this profile",
-												})}
-											</CardDescription>
+									<div>
+										<CardTitle>
+											{t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
+										</CardTitle>
+										<CardDescription>
+											{t("profiles:detail.descriptions.prompts", {
+												defaultValue: "Manage prompts included in this profile",
+											})}
+										</CardDescription>
 									</div>
 									{!isLoadingPrompts && (
 										<div className="flex flex-wrap items-center gap-2">
-												<Input
-													placeholder={t("profiles:detail.placeholders.searchPrompts", {
-														defaultValue: "Search prompts...",
-													})}
+											<Input
+												placeholder={t("profiles:detail.placeholders.searchPrompts", {
+													defaultValue: "Search prompts...",
+												})}
 												value={promptQuery}
 												onChange={(e) => setPromptQuery(e.target.value)}
 												className="w-48 h-9"
@@ -1679,16 +1726,16 @@ export function ProfileDetailPage() {
 													<SelectTrigger className="w-36 h-9">
 														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
 													</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
-															</SelectItem>
-															<SelectItem value="enabled">
-																{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
-															</SelectItem>
-															<SelectItem value="disabled">
-																{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
-															</SelectItem>
+													<SelectContent>
+														<SelectItem value="all">
+															{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
+														</SelectItem>
+														<SelectItem value="enabled">
+															{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
+														</SelectItem>
+														<SelectItem value="disabled">
+															{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
+														</SelectItem>
 													</SelectContent>
 												</Select>
 											</div>
@@ -1763,9 +1810,10 @@ export function ProfileDetailPage() {
 									)}
 								</div>
 							</CardHeader>
-							<CardContent>
+							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
 								<CapabilityList
 									asCard={false}
+									scrollContainedBody
 									title={t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
 									kind="prompts"
 									context="profile"
@@ -1794,26 +1842,26 @@ export function ProfileDetailPage() {
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="resources">
-						<Card>
-							<CardHeader>
+					<TabsContent value="resources" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
-					<div>
-						<CardTitle>
-							{t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
-						</CardTitle>
-						<CardDescription>
-							{t("profiles:detail.descriptions.resources", {
-								defaultValue: "Manage resources included in this profile",
-							})}
-						</CardDescription>
-					</div>
+									<div>
+										<CardTitle>
+											{t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
+										</CardTitle>
+										<CardDescription>
+											{t("profiles:detail.descriptions.resources", {
+												defaultValue: "Manage resources included in this profile",
+											})}
+										</CardDescription>
+									</div>
 									{!isLoadingResources && (
 										<div className="flex flex-wrap items-center gap-2">
-							<Input
-								placeholder={t("profiles:detail.placeholders.searchResources", {
-									defaultValue: "Search resources...",
-								})}
+											<Input
+												placeholder={t("profiles:detail.placeholders.searchResources", {
+													defaultValue: "Search resources...",
+												})}
 												value={resourceQuery}
 												onChange={(e) => setResourceQuery(e.target.value)}
 												className="w-48 h-9"
@@ -1830,17 +1878,17 @@ export function ProfileDetailPage() {
 													<SelectTrigger className="w-36 h-9">
 														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
 													</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="all">
-										{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
-									</SelectItem>
-									<SelectItem value="enabled">
-										{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
-									</SelectItem>
-									<SelectItem value="disabled">
-										{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
-									</SelectItem>
-								</SelectContent>
+													<SelectContent>
+														<SelectItem value="all">
+															{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
+														</SelectItem>
+														<SelectItem value="enabled">
+															{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
+														</SelectItem>
+														<SelectItem value="disabled">
+															{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
+														</SelectItem>
+													</SelectContent>
 												</Select>
 											</div>
 											<div className="hidden xl:block">
@@ -1851,12 +1899,12 @@ export function ProfileDetailPage() {
 													<SelectTrigger className="w-40 h-9">
 														<SelectValue placeholder={t("profiles:detail.placeholders.server", { defaultValue: "Server" })} />
 													</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="all">
-										{t("profiles:detail.filters.server.all", {
-											defaultValue: "All Servers",
-										})}
-									</SelectItem>
+													<SelectContent>
+														<SelectItem value="all">
+															{t("profiles:detail.filters.server.all", {
+																defaultValue: "All Servers",
+															})}
+														</SelectItem>
 														{serverNameOptions.map((name) => (
 															<SelectItem key={`res-sel-${name}`} value={name}>
 																{name}
@@ -1866,61 +1914,62 @@ export function ProfileDetailPage() {
 												</Select>
 											</div>
 											<ButtonGroup className="hidden md:flex ml-2">
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={() =>
-									setSelectedResourceIds(
-										visibleResources.map((r: any) => r.id),
-									)
-								}
-							>
-								{t("profiles:detail.buttons.selectAll", {
-									defaultValue: "Select all",
-								})}
-							</Button>
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={() => setSelectedResourceIds([])}
-							>
-								{t("profiles:detail.buttons.clearSelection", {
-									defaultValue: "Clear",
-								})}
-							</Button>
-							<Button
-								size="sm"
-								disabled={
-									bulkResourcesM.isPending ||
-									selectedResourceIds.length === 0
-								}
-								onClick={() =>
-									bulkResourcesM.mutate({ enable: true })
-								}
-							>
-								{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
-							</Button>
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={
-									bulkResourcesM.isPending ||
-									selectedResourceIds.length === 0
-								}
-								onClick={() =>
-									bulkResourcesM.mutate({ enable: false })
-								}
-							>
-								{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
-							</Button>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={() =>
+														setSelectedResourceIds(
+															visibleResources.map((r: any) => r.id),
+														)
+													}
+												>
+													{t("profiles:detail.buttons.selectAll", {
+														defaultValue: "Select all",
+													})}
+												</Button>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={() => setSelectedResourceIds([])}
+												>
+													{t("profiles:detail.buttons.clearSelection", {
+														defaultValue: "Clear",
+													})}
+												</Button>
+												<Button
+													size="sm"
+													disabled={
+														bulkResourcesM.isPending ||
+														selectedResourceIds.length === 0
+													}
+													onClick={() =>
+														bulkResourcesM.mutate({ enable: true })
+													}
+												>
+													{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
+												</Button>
+												<Button
+													size="sm"
+													variant="secondary"
+													disabled={
+														bulkResourcesM.isPending ||
+														selectedResourceIds.length === 0
+													}
+													onClick={() =>
+														bulkResourcesM.mutate({ enable: false })
+													}
+												>
+													{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
+												</Button>
 											</ButtonGroup>
 										</div>
 									)}
 								</div>
 							</CardHeader>
-							<CardContent>
+							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
 								<CapabilityList
 									asCard={false}
+									scrollContainedBody
 									title={t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
 									kind="resources"
 									context="profile"
@@ -1952,9 +2001,9 @@ export function ProfileDetailPage() {
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="templates">
-						<Card>
-							<CardHeader>
+					<TabsContent value="templates" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
 									<div>
 										<CardTitle>
@@ -2022,39 +2071,40 @@ export function ProfileDetailPage() {
 									)}
 								</div>
 							</CardHeader>
-							<CardContent>
-                        <CapabilityList
-                            asCard={false}
-                            title={t("profiles:detail.labels.templates", { defaultValue: "Templates" })}
-                            kind="templates"
-                            context="profile"
-                            items={visibleTemplates as any}
-                            loading={isLoadingTemplates}
-                            enableToggle
-                            getId={(p: any) => p.id}
-                            getEnabled={(p: any) => !!p.enabled}
-                            onToggle={(id, next) => templateToggleMutation.mutate({ templateId: id, enable: next })}
-                            emptyText={t("profiles:detail.emptyStates.noTemplates", { defaultValue: "No templates found in this profile" })}
-                            filterText={templateQuery}
-                            selectable
-                            selectedIds={selectedTemplateIds}
-                            onSelectToggle={(id) => setSelectedTemplateIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
-                            renderAction={undefined}
-                        />
+							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
+								<CapabilityList
+									asCard={false}
+									scrollContainedBody
+									title={t("profiles:detail.labels.templates", { defaultValue: "Templates" })}
+									kind="templates"
+									context="profile"
+									items={visibleTemplates as any}
+									loading={isLoadingTemplates}
+									enableToggle
+									getId={(p: any) => p.id}
+									getEnabled={(p: any) => !!p.enabled}
+									onToggle={(id, next) => templateToggleMutation.mutate({ templateId: id, enable: next })}
+									emptyText={t("profiles:detail.emptyStates.noTemplates", { defaultValue: "No templates found in this profile" })}
+									filterText={templateQuery}
+									selectable
+									selectedIds={selectedTemplateIds}
+									onSelectToggle={(id) => setSelectedTemplateIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
+									renderAction={undefined}
+								/>
 							</CardContent>
 						</Card>
 					</TabsContent>
 				</Tabs>
 			) : (
-			<Card>
-				<CardContent className="p-4">
-					<p className="text-center text-slate-500">
-						{t("profiles:detail.emptyStates.profileNotFound", {
-							defaultValue: "Profile not found",
-						})}
-					</p>
-				</CardContent>
-			</Card>
+				<Card>
+					<CardContent className="p-4">
+						<p className="text-center text-slate-500">
+							{t("profiles:detail.emptyStates.profileNotFound", {
+								defaultValue: "Profile not found",
+							})}
+						</p>
+					</CardContent>
+				</Card>
 			)}
 
 			{/* Edit Suit Drawer */}
@@ -2075,25 +2125,25 @@ export function ProfileDetailPage() {
 				open={isDeleteDialogOpen}
 				onOpenChange={setIsDeleteDialogOpen}
 			>
-			<AlertDialogContent>
-				<AlertDialogHeader>
-					<AlertDialogTitle>
-						{t("profiles:detail.dialogs.deleteTitle", {
-							defaultValue: "Delete Configuration Profile",
-						})}
-					</AlertDialogTitle>
-					<AlertDialogDescription>
-						{t("profiles:detail.dialogs.deleteDescription", {
-							defaultValue:
-								'Are you sure you want to delete "{{name}}"? This action cannot be undone. All associated configurations will be permanently removed.',
-							name: suit?.name ?? "",
-						})}
-					</AlertDialogDescription>
-				</AlertDialogHeader>
-				<AlertDialogFooter>
-					<AlertDialogCancel>
-						{t("profiles:form.buttons.cancel", { defaultValue: "Cancel" })}
-					</AlertDialogCancel>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							{t("profiles:detail.dialogs.deleteTitle", {
+								defaultValue: "Delete Configuration Profile",
+							})}
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							{t("profiles:detail.dialogs.deleteDescription", {
+								defaultValue:
+									'Are you sure you want to delete "{{name}}"? This action cannot be undone. All associated configurations will be permanently removed.',
+								name: suit?.name ?? "",
+							})}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>
+							{t("profiles:form.buttons.cancel", { defaultValue: "Cancel" })}
+						</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={() => {
 								deleteSuitMutation.mutate();

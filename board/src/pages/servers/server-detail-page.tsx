@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
+import { DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS } from "../../components/detail-capability-tab-content-class";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import {
 	CapsuleStripeList,
@@ -47,6 +48,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../../components/ui/card";
+import { JsonCodeBlock } from "../../components/json-code-block";
 import { Input } from "../../components/ui/input";
 import {
 	Tabs,
@@ -55,6 +57,7 @@ import {
 	TabsTrigger,
 } from "../../components/ui/tabs";
 import { auditApi, configSuitsApi, inspectorApi, serversApi } from "../../lib/api";
+import { smartFormat } from "../../lib/format";
 import { writeClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
@@ -848,8 +851,8 @@ export function ServerDetailPage() {
 	}
 
 	return (
-		<div className="space-y-4">
-			<div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+		<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+			<div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-center md:justify-between">
 				<div className="flex items-center gap-3">
 					<h2 className="text-3xl font-bold tracking-tight">
 						{serverDisplayName}
@@ -945,8 +948,12 @@ export function ServerDetailPage() {
 			)}
 
 			{server && (
-				<Tabs value={capabilityTab} onValueChange={setCapabilityTab} className="space-y-4">
-					<div className="flex items-center justify-between gap-2 flex-wrap">
+				<Tabs
+					value={capabilityTab}
+					onValueChange={setCapabilityTab}
+					className="flex min-h-0 flex-1 flex-col gap-4"
+				>
+					<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
 						<ServerCapabilityTabsHeader
 							serverId={serverId}
 							viewMode={viewMode}
@@ -967,7 +974,10 @@ export function ServerDetailPage() {
 					</div>
 
 					{viewMode === VIEW_MODES.browse ? (
-						<TabsContent value="overview">
+						<TabsContent
+							value="overview"
+							className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
+						>
 							{isLoading ? (
 								<Card>
 									<CardContent className="p-4">
@@ -1327,71 +1337,79 @@ export function ServerDetailPage() {
 						</TabsContent>
 					) : null}
 
-					<TabsContent value="tools">
+					<TabsContent value="tools" className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}>
 						{viewMode === VIEW_MODES.browse ? (
 							<ServerCapabilityList kind="tools" serverId={serverId} />
 						) : (
-							<InspectorDebugSection
-								kind="tools"
-								state={debugData.tools}
-								disabled={channel === "proxy" && !proxyAvailable}
-								onFetch={() => runList("tools")}
-								onInspect={(item) => handleInspect("tool", item)}
-								logs={logs}
-								onClearLogs={() => clearLogsByPrefix("tools/")}
-								showLogs={showServerLiveLogs}
-							/>
+							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+								<InspectorDebugSection
+									kind="tools"
+									state={debugData.tools}
+									disabled={channel === "proxy" && !proxyAvailable}
+									onFetch={() => runList("tools")}
+									onInspect={(item) => handleInspect("tool", item)}
+									logs={logs}
+									onClearLogs={() => clearLogsByPrefix("tools/")}
+									showLogs={showServerLiveLogs}
+								/>
+							</div>
 						)}
 					</TabsContent>
 
-					<TabsContent value="prompts">
+					<TabsContent value="prompts" className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}>
 						{viewMode === VIEW_MODES.browse ? (
 							<ServerCapabilityList kind="prompts" serverId={serverId} />
 						) : (
-							<InspectorDebugSection
-								kind="prompts"
-								state={debugData.prompts}
-								disabled={channel === "proxy" && !proxyAvailable}
-								onFetch={() => runList("prompts")}
-								onInspect={(item) => handleInspect("prompt", item)}
-								logs={logs}
-								onClearLogs={() => clearLogsByPrefix("prompts/")}
-								showLogs={showServerLiveLogs}
-							/>
+							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+								<InspectorDebugSection
+									kind="prompts"
+									state={debugData.prompts}
+									disabled={channel === "proxy" && !proxyAvailable}
+									onFetch={() => runList("prompts")}
+									onInspect={(item) => handleInspect("prompt", item)}
+									logs={logs}
+									onClearLogs={() => clearLogsByPrefix("prompts/")}
+									showLogs={showServerLiveLogs}
+								/>
+							</div>
 						)}
 					</TabsContent>
 
-					<TabsContent value="resources">
+					<TabsContent value="resources" className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}>
 						{viewMode === VIEW_MODES.browse ? (
 							<ServerCapabilityList kind="resources" serverId={serverId} />
 						) : (
-							<InspectorDebugSection
-								kind="resources"
-								state={debugData.resources}
-								disabled={channel === "proxy" && !proxyAvailable}
-								onFetch={() => runList("resources")}
-								onInspect={(item) => handleInspect("resource", item)}
-								logs={logs}
-								onClearLogs={() => clearLogsByPrefix("resources/")}
-								showLogs={showServerLiveLogs}
-							/>
+							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+								<InspectorDebugSection
+									kind="resources"
+									state={debugData.resources}
+									disabled={channel === "proxy" && !proxyAvailable}
+									onFetch={() => runList("resources")}
+									onInspect={(item) => handleInspect("resource", item)}
+									logs={logs}
+									onClearLogs={() => clearLogsByPrefix("resources/")}
+									showLogs={showServerLiveLogs}
+								/>
+							</div>
 						)}
 					</TabsContent>
 
-					<TabsContent value="templates">
+					<TabsContent value="templates" className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}>
 						{viewMode === VIEW_MODES.browse ? (
 							<ServerCapabilityList kind="templates" serverId={serverId} />
 						) : (
-							<InspectorDebugSection
-								kind="templates"
-								state={debugData.templates}
-								disabled={channel === "proxy" && !proxyAvailable}
-								onFetch={() => runList("templates")}
-								onInspect={(item) => handleInspect("template", item)}
-								logs={logs}
-								onClearLogs={() => clearLogsByPrefix("templates/")}
-								showLogs={showServerLiveLogs}
-							/>
+							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+								<InspectorDebugSection
+									kind="templates"
+									state={debugData.templates}
+									disabled={channel === "proxy" && !proxyAvailable}
+									onFetch={() => runList("templates")}
+									onInspect={(item) => handleInspect("template", item)}
+									logs={logs}
+									onClearLogs={() => clearLogsByPrefix("templates/")}
+									showLogs={showServerLiveLogs}
+								/>
+							</div>
 						)}
 					</TabsContent>
 				</Tabs>
@@ -1591,6 +1609,7 @@ function ServerCapabilityList({
 			dense
 			hoverActions
 			clickToToggleDetails
+			scrollContainedBody
 			emptyText={t("detail.capabilityList.empty", {
 				label: label.toLowerCase(),
 				defaultValue: "No {{label}} from this server",
@@ -1818,9 +1837,9 @@ function InspectorDebugSection({
 		<Tabs
 			value={tab}
 			onValueChange={(v) => setTab(v as "results" | "logs")}
-			className="w-full space-y-4"
+			className="flex w-full min-h-0 flex-1 flex-col gap-4"
 		>
-			<div className="flex items-center justify-between gap-2 flex-wrap">
+			<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
 				<TabsList className="flex flex-wrap gap-2">
 					<TabsTrigger value="results">
 						{t("detail.inspector.tabs.results", {
@@ -1893,16 +1912,20 @@ function InspectorDebugSection({
 				)}
 			</div>
 
-			<TabsContent value="results" className="space-y-4">
-				<Card className="min-h-[220px]">
+			<TabsContent
+				value="results"
+				className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
+			>
+				<Card className="flex min-h-[220px] flex-1 flex-col overflow-hidden">
 					{state.error ? (
-						<CardHeader className="pl-4 pt-4 pr-0 pb-0">
+						<CardHeader className="shrink-0 pl-4 pt-4 pr-0 pb-0">
 							<p className="text-xs text-red-500 mt-1">{state.error}</p>
 						</CardHeader>
 					) : null}
-					<CardContent className="p-4">
+					<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
 						<CapabilityList
 							asCard={false}
+							scrollContainedBody
 							title={undefined}
 							kind={kind}
 							context="server"
@@ -1942,92 +1965,106 @@ function InspectorDebugSection({
 			</TabsContent>
 
 			{showLogs ? (
-				<TabsContent value="logs" className="space-y-4">
-					<Card className="min-h-[220px]">
-						<CardContent className="space-y-2 p-4 max-h-[60vh] overflow-auto">
+				<TabsContent
+					value="logs"
+					className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
+				>
+					<Card className="flex min-h-[220px] flex-1 flex-col overflow-hidden">
+						<CardContent className="flex max-h-[60vh] min-h-0 flex-1 flex-col overflow-y-auto p-4">
 							{sectionLogs.length === 0 ? (
-								<p className="text-sm text-slate-500">
-									{t("detail.inspector.logs.empty", {
-										defaultValue: "No inspector events yet.",
-									})}
-								</p>
+								<div className="flex min-h-full w-full flex-col items-center justify-center px-4 py-8 text-center">
+									<p className="text-sm text-slate-500 dark:text-slate-400">
+										{t("detail.inspector.logs.empty", {
+											defaultValue: "No inspector events yet.",
+										})}
+									</p>
+								</div>
 							) : (
-								<CapsuleStripeList>
-									{sectionLogs.map((entry) => (
-										<CapsuleStripeListItem
-											key={entry.id}
-											className="group items-start text-xs"
-										>
-										{/* Error message */}
-										{entry.message ? (
-											<p className="text-red-500 mb-1">{entry.message}</p>
-										) : null}
+								<div className="space-y-2">
+									<CapsuleStripeList>
+										{sectionLogs.map((entry) => {
+											const logText =
+												entry.payload !== undefined ? safeLog(entry.payload) : "";
 
-										{/* Log content: hover info at bottom-right of text area */}
-										{entry.payload !== undefined ? (
-											<div className="relative group w-full">
-												<pre className="bg-transparent border-0 rounded-none p-0 max-h-48 overflow-auto pr-8">
-													{safeLog(entry.payload)}
-												</pre>
-												{/* Copy button (top-right, shown on hover) */}
-												<Button
-													size="sm"
-													variant="outline"
-													className="absolute top-0 right-0 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-													onClick={() => {
-														void writeClipboardText(safeLog(entry.payload));
-													}}
+											return (
+												<CapsuleStripeListItem
+													key={entry.id}
+													className="group items-start text-xs"
 												>
-													<Copy className="h-3 w-3" />
-												</Button>
-												{/* Bottom-right: timestamp, Action, Mode, Event badges (shown on hover) */}
-												<div className="absolute bottom-0 right-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-													<Badge
-														variant="secondary"
-														className="text-[10px] font-mono pointer-events-none"
-													>
-														{new Date(entry.timestamp).toLocaleTimeString()}
-													</Badge>
-													<Badge
-														variant="outline"
-														className="text-[10px] font-mono pointer-events-none"
-													>
-														{entry.method}
-													</Badge>
-													<Badge
-														variant="outline"
-														className="text-[10px] uppercase pointer-events-none"
-													>
-														{t(
-															`detail.inspector.logs.status.mode.${entry.mode}`,
-															{
-																defaultValue: entry.mode.toUpperCase(),
-															},
-														)}
-													</Badge>
-													<Badge
-														variant={
-															entry.event === "error"
-																? "destructive"
-																: entry.event === "success"
-																	? "success"
-																	: "secondary"
-														}
-														className="text-[10px] uppercase pointer-events-none"
-													>
-														{t(
-															`detail.inspector.logs.status.event.${entry.event}`,
-															{
-																defaultValue: entry.event.toUpperCase(),
-															},
-														)}
-													</Badge>
-												</div>
-											</div>
-										) : null}
-										</CapsuleStripeListItem>
-									))}
-								</CapsuleStripeList>
+													{/* Error message */}
+													{entry.message ? (
+														<p className="text-red-500 mb-1">{entry.message}</p>
+													) : null}
+
+													{/* Log content: hover info at bottom-right of text area */}
+													{entry.payload !== undefined ? (
+														<div className="relative group w-full">
+															<JsonCodeBlock
+																code={logText}
+																language={inspectorLogPrismLanguage(logText)}
+																className="bg-transparent dark:bg-transparent border-0 rounded-none p-0 shadow-none max-h-48 overflow-auto pr-8"
+															/>
+															{/* Copy button (top-right, shown on hover) */}
+															<Button
+																size="sm"
+																variant="outline"
+																className="absolute top-0 right-0 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+																onClick={() => {
+																	void writeClipboardText(logText);
+																}}
+															>
+																<Copy className="h-3 w-3" />
+															</Button>
+															{/* Bottom-right: timestamp, Action, Mode, Event badges (shown on hover) */}
+															<div className="absolute bottom-0 right-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+																<Badge
+																	variant="secondary"
+																	className="text-[10px] font-mono pointer-events-none"
+																>
+																	{new Date(entry.timestamp).toLocaleTimeString()}
+																</Badge>
+																<Badge
+																	variant="outline"
+																	className="text-[10px] font-mono pointer-events-none"
+																>
+																	{entry.method}
+																</Badge>
+																<Badge
+																	variant="outline"
+																	className="text-[10px] uppercase pointer-events-none"
+																>
+																	{t(
+																		`detail.inspector.logs.status.mode.${entry.mode}`,
+																		{
+																			defaultValue: entry.mode.toUpperCase(),
+																		},
+																	)}
+																</Badge>
+																<Badge
+																	variant={
+																		entry.event === "error"
+																			? "destructive"
+																			: entry.event === "success"
+																				? "success"
+																				: "secondary"
+																	}
+																	className="text-[10px] uppercase pointer-events-none"
+																>
+																	{t(
+																		`detail.inspector.logs.status.event.${entry.event}`,
+																		{
+																			defaultValue: entry.event.toUpperCase(),
+																		},
+																	)}
+																</Badge>
+															</div>
+														</div>
+													) : null}
+												</CapsuleStripeListItem>
+											);
+										})}
+									</CapsuleStripeList>
+								</div>
 							)}
 						</CardContent>
 					</Card>
@@ -2037,10 +2074,16 @@ function InspectorDebugSection({
 	);
 }
 
+function inspectorLogPrismLanguage(text: string): "json" | "plaintext" {
+	const t = text.trim();
+	if (t.startsWith("{") || t.startsWith("[")) {
+		return "json";
+	}
+	return "plaintext";
+}
+
 function safeLog(value: unknown) {
 	return smartFormat(value);
 }
 
 export default ServerDetailPage;
-
-import { smartFormat } from "../../lib/format";

@@ -153,8 +153,8 @@ export const clientsTranslations = {
 							none: "MCPMate does not manage this client's configuration.",
 						},
 						options: {
-							hosted: "Hosted Mode",
-							transparent: "Transparent Mode",
+							hosted: "Hosted",
+							transparent: "Transparent",
 							none: "None",
 						},
 					},

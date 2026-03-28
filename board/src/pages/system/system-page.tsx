@@ -79,7 +79,7 @@ export function SystemPage() {
 	const { data: metrics, isLoading: isLoadingMetrics } = useQuery({
 		queryKey: ["systemMetrics"],
 		queryFn: systemApi.getMetrics,
-		refetchInterval: 10000,
+		refetchInterval: 30_000,
 		retry: false,
 		refetchOnWindowFocus: false,
 	});

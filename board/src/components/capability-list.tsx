@@ -8,6 +8,8 @@ import type {
 	CapabilityRecord,
 } from "../types/capabilities";
 import type { JsonSchema } from "../types/json";
+import { CardListScrollBody } from "./card-list-scroll-body";
+import { JsonCodeBlock } from "./json-code-block";
 import { CachedAvatar } from "./cached-avatar";
 import {
 	CapsuleStripeList,
@@ -40,13 +42,18 @@ export interface CapabilityListProps<T = CapabilityRecord> {
 	asCard?: boolean;
 	/** Dense spacing between list items (space-y-2). */
 	dense?: boolean;
-    /** Render using CapsuleStripeList visual style. */
-    capsule?: boolean;
-    /** Hide actions until item hover. */
-    hoverActions?: boolean;
-    /** Clicking an item toggles the details block (if present). */
-    clickToToggleDetails?: boolean;
-    renderAction?: (mapped: CapabilityMapItem<T>, item: T) => ReactNode;
+	/** Render using CapsuleStripeList visual style. */
+	capsule?: boolean;
+	/** Hide actions until item hover. */
+	hoverActions?: boolean;
+	/** Clicking an item toggles the details block (if present). */
+	clickToToggleDetails?: boolean;
+	renderAction?: (mapped: CapabilityMapItem<T>, item: T) => ReactNode;
+	/**
+	 * When `asCard` is false and the list sits in a flex `Card` body, scroll inside this component so
+	 * the host card keeps rounded corners (see `CardListScrollBody`).
+	 */
+	scrollContainedBody?: boolean;
 }
 
 function asString(v: unknown): string | undefined {
@@ -253,25 +260,26 @@ export function CapabilityList<T = CapabilityRecord>({
 	onSelectToggle,
 	asCard,
 	dense,
-    capsule,
-    hoverActions,
-    clickToToggleDetails,
-    renderAction,
+	capsule,
+	hoverActions,
+	clickToToggleDetails,
+	renderAction,
+	scrollContainedBody,
 }: CapabilityListProps<T>) {
-    const [internalFilter, setInternalFilter] = useState("");
-    const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+	const [internalFilter, setInternalFilter] = useState("");
+	const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
 	const search = filterText ?? internalFilter;
 	const showRawJson = useAppStore(
 		(state) => state.dashboardSettings.showRawCapabilityJson,
 	);
 	const { t } = useTranslation();
 
-    const useCapsule = capsule ?? (context === "server");
+	const useCapsule = capsule ?? (context === "server");
 
-    const mappedItems = useMemo(
-        () => (items || []).map((it) => mapItem(kind, it)),
-        [items, kind],
-    );
+	const mappedItems = useMemo(
+		() => (items || []).map((it) => mapItem(kind, it)),
+		[items, kind],
+	);
 	const data = useMemo(
 		() => mappedItems
 			.filter((m) => matchText(m, search))
@@ -318,18 +326,18 @@ export function CapabilityList<T = CapabilityRecord>({
 		const hasSchema = schemaEntries.length > 0;
 		const hasOutSchema = outputSchemaEntries.length > 0;
 		const hasRaw = showRawJson && mapped.raw != null;
-        const hasDetails = hasArgs || hasSchema || hasOutSchema || hasRaw;
+		const hasDetails = hasArgs || hasSchema || hasOutSchema || hasRaw;
 
-        const isInteractiveTarget = (el: HTMLElement | null): boolean => {
-            if (!el) return false;
-            const selector = "button, a, input, textarea, select, [role=button]";
-            let cur: HTMLElement | null = el;
-            while (cur && cur !== (document.body as HTMLElement)) {
-                if (cur.matches?.(selector)) return true;
-                cur = cur.parentElement as HTMLElement | null;
-            }
-            return false;
-        };
+		const isInteractiveTarget = (el: HTMLElement | null): boolean => {
+			if (!el) return false;
+			const selector = "button, a, input, textarea, select, [role=button]";
+			let cur: HTMLElement | null = el;
+			while (cur && cur !== (document.body as HTMLElement)) {
+				if (cur.matches?.(selector)) return true;
+				cur = cur.parentElement as HTMLElement | null;
+			}
+			return false;
+		};
 
 		const indicatorClass = isSelected
 			? "border-primary bg-primary text-white shadow-sm"
@@ -355,15 +363,15 @@ export function CapabilityList<T = CapabilityRecord>({
 			</div>
 		) : null;
 
-        const detailsBlock = hasDetails ? (
-            <details
-                className="mt-2"
-                open={!!openMap[id]}
-                onToggle={(e) => {
-                    const isOpen = (e.currentTarget as HTMLDetailsElement).open;
-                    setOpenMap((prev) => ({ ...prev, [id]: isOpen }));
-                }}
-            >
+		const detailsBlock = hasDetails ? (
+			<details
+				className="mt-2"
+				open={!!openMap[id]}
+				onToggle={(e) => {
+					const isOpen = (e.currentTarget as HTMLDetailsElement).open;
+					setOpenMap((prev) => ({ ...prev, [id]: isOpen }));
+				}}
+			>
 				<summary className="cursor-pointer text-xs text-slate-500">
 					{t("servers:capabilityList.detailsToggle", {
 						defaultValue: "Details",
@@ -401,11 +409,11 @@ export function CapabilityList<T = CapabilityRecord>({
 											<td className="border-b py-1 pr-2">
 												{arg.required
 													? t("servers:capabilityList.table.requiredYes", {
-															defaultValue: "Yes",
-														})
+														defaultValue: "Yes",
+													})
 													: t("servers:capabilityList.table.requiredNo", {
-															defaultValue: "No",
-														})}
+														defaultValue: "No",
+													})}
 											</td>
 											<td className="border-b py-1 pr-2">
 												{arg.description ?? ""}
@@ -440,9 +448,7 @@ export function CapabilityList<T = CapabilityRecord>({
 					) : null}
 
 					{hasRaw ? (
-						<pre className="max-w-full whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs dark:bg-slate-900">
-							{JSON.stringify(mapped.raw, null, 2)}
-						</pre>
+						<JsonCodeBlock code={JSON.stringify(mapped.raw, null, 2)} />
 					) : null}
 				</div>
 			</details>
@@ -486,37 +492,35 @@ export function CapabilityList<T = CapabilityRecord>({
 						onClick={(e) => e.stopPropagation()}
 					/>
 				) : null}
-					{renderAction ? (
-						<div
-							role="presentation"
-							onClick={(e) => e.stopPropagation()}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" || e.key === " ") {
-									e.preventDefault();
-									e.stopPropagation();
-								}
-							}}
-						>
-							{renderAction(mapped, item)}
-						</div>
-					) : null}
+				{renderAction ? (
+					<div
+						role="presentation"
+						onClick={(e) => e.stopPropagation()}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								e.stopPropagation();
+							}
+						}}
+					>
+						{renderAction(mapped, item)}
+					</div>
+				) : null}
 			</>
 		);
 
-        const actionSection = (
-            <div className={`ml-auto flex items-start gap-2 ${
-                hoverActions ? "opacity-0 group-hover:opacity-100 transition-opacity" : ""
-            }`}>{actions}</div>
-        );
+		const actionSection = (
+			<div className={`ml-auto flex items-start gap-2 ${hoverActions ? "opacity-0 group-hover:opacity-100 transition-opacity" : ""
+				}`}>{actions}</div>
+		);
 
 		if (context === "profile") {
 			return (
 				<CapsuleStripeListItem
 					key={id}
 					interactive={!!selectable}
-					className={`group relative transition-colors ${
-						isSelected ? "bg-primary/10 ring-1 ring-primary/40" : ""
-					}`}
+					className={`group relative transition-colors ${isSelected ? "bg-primary/10 ring-1 ring-primary/40" : ""
+						}`}
 					onClick={selectable ? handleSelect : undefined}
 					onKeyDown={selectable ? handleKeyDown : undefined}
 				>
@@ -533,44 +537,44 @@ export function CapabilityList<T = CapabilityRecord>({
 			);
 		}
 
-        if (useCapsule) {
-            return (
-                <CapsuleStripeListItem
-                    key={id}
-                    interactive={false}
-                    className="group"
-                    onClick={(e) => {
-                        if (!clickToToggleDetails) return;
-                        const sel = typeof window !== "undefined" ? window.getSelection()?.toString() : "";
-                        if (sel && sel.trim().length > 0) return;
-                        if (isInteractiveTarget(e.target as HTMLElement)) return;
-                        const tgt = e.target as HTMLElement;
-                        if (tgt.closest('summary') || tgt.closest('details')) return;
-                        const detailsEl = (e.currentTarget as HTMLElement).querySelector("details") as HTMLDetailsElement | null;
-                        if (detailsEl) {
-                            detailsEl.open = !detailsEl.open;
-                            setOpenMap((prev) => ({ ...prev, [id]: detailsEl.open }));
-                        }
-                    }}
-                    onKeyDown={(e) => {
-                        if (!clickToToggleDetails) return;
-                        if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            const detailsEl = (e.currentTarget as HTMLElement).querySelector("details") as HTMLDetailsElement | null;
-                            if (detailsEl) {
-                                detailsEl.open = !detailsEl.open;
-                                setOpenMap((prev) => ({ ...prev, [id]: detailsEl.open }));
-                            }
-                        }
-                    }}
-                >
-                    <div className="flex w-full items-start justify-between gap-3">
-                        {leftSection}
-                        {actionSection}
-                    </div>
-                </CapsuleStripeListItem>
-            );
-        }
+		if (useCapsule) {
+			return (
+				<CapsuleStripeListItem
+					key={id}
+					interactive={false}
+					className="group"
+					onClick={(e) => {
+						if (!clickToToggleDetails) return;
+						const sel = typeof window !== "undefined" ? window.getSelection()?.toString() : "";
+						if (sel && sel.trim().length > 0) return;
+						if (isInteractiveTarget(e.target as HTMLElement)) return;
+						const tgt = e.target as HTMLElement;
+						if (tgt.closest('summary') || tgt.closest('details')) return;
+						const detailsEl = (e.currentTarget as HTMLElement).querySelector("details") as HTMLDetailsElement | null;
+						if (detailsEl) {
+							detailsEl.open = !detailsEl.open;
+							setOpenMap((prev) => ({ ...prev, [id]: detailsEl.open }));
+						}
+					}}
+					onKeyDown={(e) => {
+						if (!clickToToggleDetails) return;
+						if (e.key === "Enter" || e.key === " ") {
+							e.preventDefault();
+							const detailsEl = (e.currentTarget as HTMLElement).querySelector("details") as HTMLDetailsElement | null;
+							if (detailsEl) {
+								detailsEl.open = !detailsEl.open;
+								setOpenMap((prev) => ({ ...prev, [id]: detailsEl.open }));
+							}
+						}
+					}}
+				>
+					<div className="flex w-full items-start justify-between gap-3">
+						{leftSection}
+						{actionSection}
+					</div>
+				</CapsuleStripeListItem>
+			);
+		}
 
 		return (
 			<li
@@ -589,33 +593,52 @@ export function CapabilityList<T = CapabilityRecord>({
 		);
 	});
 
-    const listContent =
-        context === "profile" || useCapsule ? (
-            <CapsuleStripeList>{renderedItems}</CapsuleStripeList>
-        ) : (
-            <ul className={`${dense || asCard === false ? "space-y-2" : "space-y-4"} text-sm`}>
-                {renderedItems}
-            </ul>
-        );
+	const listContent =
+		context === "profile" || useCapsule ? (
+			<CapsuleStripeList
+				className={
+					scrollContainedBody
+						? "rounded-none border-0 overflow-visible"
+						: undefined
+				}
+			>
+				{renderedItems}
+			</CapsuleStripeList>
+		) : (
+			<ul className={`${dense || asCard === false ? "space-y-2" : "space-y-4"} text-sm`}>
+				{renderedItems}
+			</ul>
+		);
+
+	const isEmpty = !loading && renderedItems.length === 0;
 
 	const list = (
-		<div>
+		<div
+			className={
+				isEmpty
+					? "flex min-h-full w-full flex-col items-center justify-center px-4 py-8 text-center"
+					: undefined
+			}
+		>
 			{loading ? (
 				skeleton
 			) : renderedItems.length ? (
 				listContent
 			) : (
-				<div className="text-sm text-slate-500">
+				<p className="text-sm text-slate-500 dark:text-slate-400">
 					{emptyText ||
 						t("servers:capabilityList.emptyFallback", {
 							defaultValue: "No data.",
 						})}
-				</div>
+				</p>
 			)}
 		</div>
 	);
 
 	if (asCard === false) {
+		if (scrollContainedBody) {
+			return <CardListScrollBody>{list}</CardListScrollBody>;
+		}
 		return list;
 	}
 
@@ -629,9 +652,23 @@ export function CapabilityList<T = CapabilityRecord>({
 		defaultValue: `Search ${kind}...`,
 	});
 
+	const body = scrollContainedBody ? (
+		<CardListScrollBody>{list}</CardListScrollBody>
+	) : (
+		list
+	);
+
 	return (
-		<Card>
-			<CardHeader>
+		<Card
+			className={
+				scrollContainedBody
+					? "flex min-h-0 flex-1 flex-col overflow-hidden"
+					: undefined
+			}
+		>
+			<CardHeader
+				className={scrollContainedBody ? "shrink-0" : undefined}
+			>
 				<div className="flex items-center justify-between gap-2">
 					<CardTitle>{title ?? kindLabel}</CardTitle>
 					{showSearch ? (
@@ -647,7 +684,15 @@ export function CapabilityList<T = CapabilityRecord>({
 					) : null}
 				</div>
 			</CardHeader>
-			<CardContent>{list}</CardContent>
+			<CardContent
+				className={
+					scrollContainedBody
+						? "flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2"
+						: undefined
+				}
+			>
+				{body}
+			</CardContent>
 		</Card>
 	);
 }

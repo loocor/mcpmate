@@ -25,6 +25,7 @@ import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
+import { DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS } from "../../components/detail-capability-tab-content-class";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import { CachedAvatar } from "../../components/cached-avatar";
@@ -986,8 +987,8 @@ export function ClientDetailPage() {
 		);
 
 	return (
-		<div className="space-y-4">
-			<div className="flex items-center justify-between">
+		<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
+			<div className="flex shrink-0 items-center justify-between">
 				<div className="flex flex-col gap-1">
 					<div className="flex items-center gap-3 flex-wrap">
 						<h2 className="text-3xl font-bold tracking-tight">
@@ -999,16 +1000,16 @@ export function ClientDetailPage() {
 								{configDetails.managed
 									? t("detail.badges.managed", { defaultValue: "Managed" })
 									: t("detail.badges.unmanaged", {
-											defaultValue: "Unmanaged",
-										})}
+										defaultValue: "Unmanaged",
+									})}
 							</Badge>
 						) : null}
 						<Badge variant={detected ? "default" : "secondary"}>
 							{detected
 								? t("detail.badges.detected", { defaultValue: "Detected" })
 								: t("detail.badges.notDetected", {
-										defaultValue: "Not Detected",
-									})}
+									defaultValue: "Not Detected",
+								})}
 						</Badge>
 					</div>
 					{detailDescription ? (
@@ -1023,8 +1024,9 @@ export function ClientDetailPage() {
 			<Tabs
 				value={tabValue}
 				onValueChange={setTabValue}
+				className="flex min-h-0 flex-1 flex-col gap-4"
 			>
-				<div className="flex items-center justify-between">
+				<div className="flex shrink-0 items-center justify-between">
 					<TabsList>
 						<TabsTrigger value="overview">
 							{t("detail.tabs.overview", { defaultValue: "Overview" })}
@@ -1040,7 +1042,10 @@ export function ClientDetailPage() {
 					</TabsList>
 				</div>
 
-				<TabsContent value="overview">
+				<TabsContent
+					value="overview"
+					className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
+				>
 					<div className="grid gap-4">
 						<Card>
 							{loadingConfig ? (
@@ -1180,61 +1185,61 @@ export function ClientDetailPage() {
 													)}
 													{configDetails?.managed
 														? t("detail.overview.buttons.disable", {
-																defaultValue: "Disable",
-															})
+															defaultValue: "Disable",
+														})
 														: t("detail.overview.buttons.enable", {
-																defaultValue: "Enable",
-															})}
+															defaultValue: "Enable",
+														})}
 												</Button>
 												{supportedTransportOptions.length > 0 ? (
-														<ButtonGroupText className="h-9 p-0 select-none shadow-none">
-															<Select
-																value={transport}
-																onValueChange={async (v) => {
-																	// Transport must be one of: auto, sse, stdio, streamable_http
-																	setTransport(v);
-																	try {
-																		await clientsApi.update({
-																			identifier: identifier!,
-																			transport: v,
-																		});
-																		notifySuccess(
-																			t("detail.overview.transport.updated", {
-																				defaultValue: "Transport updated",
-																			}),
-																			"",
-																		);
-																		// refresh cache so list shows new transport immediately
-																		qc.invalidateQueries({
-																			queryKey: ["clients"],
-																		});
-																	} catch (err) {
-																		notifyError(
-																			t(
-																				"detail.overview.transport.updateFailed",
-																				{ defaultValue: "Update failed" },
-																			),
-																			String(err),
-																		);
-																	}
-																}}
+													<ButtonGroupText className="h-9 p-0 select-none shadow-none">
+														<Select
+															value={transport}
+															onValueChange={async (v) => {
+																// Transport must be one of: auto, sse, stdio, streamable_http
+																setTransport(v);
+																try {
+																	await clientsApi.update({
+																		identifier: identifier!,
+																		transport: v,
+																	});
+																	notifySuccess(
+																		t("detail.overview.transport.updated", {
+																			defaultValue: "Transport updated",
+																		}),
+																		"",
+																	);
+																	// refresh cache so list shows new transport immediately
+																	qc.invalidateQueries({
+																		queryKey: ["clients"],
+																	});
+																} catch (err) {
+																	notifyError(
+																		t(
+																			"detail.overview.transport.updateFailed",
+																			{ defaultValue: "Update failed" },
+																		),
+																		String(err),
+																	);
+																}
+															}}
+														>
+															<SelectTrigger
+																className="h-8 border-0 shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus:outline-none select-none bg-transparent px-3 min-w-[9rem]"
+																aria-label="Transport selector"
 															>
-																<SelectTrigger
-																	className="h-8 border-0 shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus:outline-none select-none bg-transparent px-3 min-w-[9rem]"
-																	aria-label="Transport selector"
-																>
-																	<SelectValue />
-																</SelectTrigger>
-																<SelectContent align="end">
-																	<SelectItem value="auto">Auto</SelectItem>
-																	{supportedTransportOptions.map((v) => (
-																		<SelectItem key={v} value={v}>
-																			{getTransportOptionLabel(v, t)}
-																		</SelectItem>
-																	))}
-																</SelectContent>
-															</Select>
-														</ButtonGroupText>
+																<SelectValue />
+															</SelectTrigger>
+															<SelectContent align="end">
+																<SelectItem value="auto">Auto</SelectItem>
+																{supportedTransportOptions.map((v) => (
+																	<SelectItem key={v} value={v}>
+																		{getTransportOptionLabel(v, t)}
+																	</SelectItem>
+																))}
+															</SelectContent>
+														</Select>
+													</ButtonGroupText>
 												) : null}
 											</ButtonGroup>
 										</div>
@@ -1352,547 +1357,552 @@ export function ClientDetailPage() {
 					</div>
 				</TabsContent>
 
-				<TabsContent value="configuration">
-					<div className="grid gap-4">
-						<Card>
-							<CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-								<div>
-									<CardTitle>
-										{t("detail.configuration.title", {
-											defaultValue: "Configuration Mode",
-										})}
-									</CardTitle>
-									<CardDescription>
-										{t("detail.configuration.description", {
-											defaultValue:
-												"If you don't understand what this means, please don't make any changes and keep the current settings.",
-										})}
-									</CardDescription>
-								</div>
-								{configDetails?.managed ? (
-									<Button
-										size="sm"
-										variant="default"
-										onClick={() => applyMutation.mutate({ preview: false })}
-										disabled={applyMutation.isPending}
-										className="gap-2"
-									>
-										<HardDrive
-											className={`h-4 w-4 ${applyMutation.isPending ? "animate-pulse" : ""}`}
-										/>
-										{t("detail.configuration.reapply", {
-											defaultValue: "Apply",
-										})}
-									</Button>
-								) : null}
-							</CardHeader>
-							<CardContent className="pt-0">
-								<div className="grid grid-cols-10 gap-8">
-									{/* Left side - Mode and Source (4/10) */}
-									<div className="col-span-4 space-y-6">
-										{/* Mode Selection */}
-										<div className="space-y-3">
-											<div className="space-y-1">
-												<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-													{t("detail.configuration.sections.mode.title", {
-														defaultValue: "1. Management Mode",
-													})}
-												</h4>
-												<p className="text-xs text-slate-500 leading-relaxed">
-													{mode === "hosted" &&
-														t(
-															"detail.configuration.sections.mode.descriptions.hosted",
-															{
-																defaultValue:
-																	"MCPMate provisions a dedicated MCP server for this client and enables advanced MCPMate features.",
-															},
-														)}
-													{mode === "transparent" &&
-														t(
-															"detail.configuration.sections.mode.descriptions.transparent",
-															{
-																defaultValue:
-																	"MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
-															},
-														)}
-													{mode === "none" &&
-														t(
-															"detail.configuration.sections.mode.descriptions.none",
-															{
-																defaultValue:
-																	"MCPMate does not manage this client's configuration.",
-															},
-														)}
-												</p>
-											</div>
-											<Segment
-												value={mode}
-												onValueChange={(v) => setMode(v as ClientConfigMode)}
-												options={[
-													{
-														value: "hosted",
-														label: t(
-															"detail.configuration.sections.mode.options.hosted",
-															{ defaultValue: "Hosted Mode" },
-														),
-													},
-													{
-														value: "transparent",
-														label: t(
-															"detail.configuration.sections.mode.options.transparent",
-															{ defaultValue: "Transparent Mode" },
-														),
-													},
-													{
-														value: "none",
-														label: t(
-															"detail.configuration.sections.mode.options.none",
-															{ defaultValue: "None" },
-														),
-													},
-												]}
-												showDots={true}
-												className="w-full"
-											/>
-										</div>
-
-										{/* Source Selection */}
-										<div className="space-y-3">
-											<div className="space-y-1">
-												<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-													{mode === "transparent"
-														? t("detail.configuration.sections.source.titleTransparent", {
-															defaultValue: "2. Server Source",
-														})
-														: t("detail.configuration.sections.source.title", {
-															defaultValue: "2. Capability Source",
-														})}
-												</h4>
-												<p className="text-xs text-slate-500 leading-relaxed">
-													{mode === "transparent" && selectedConfig === "default" &&
-														t(
-															"detail.configuration.sections.source.descriptions.transparentDefault",
-															{
-																defaultValue:
-																	"Write the servers from all currently activated profiles directly into this client's MCP configuration.",
-															},
-														)}
-													{mode === "transparent" && selectedConfig === "profile" &&
-														t(
-															"detail.configuration.sections.source.descriptions.transparentProfile",
-															{
-																defaultValue:
-																	"Write the servers from the selected shared profiles directly into this client's MCP configuration.",
-															},
-														)}
-													{mode === "transparent" && selectedConfig === "custom" &&
-														t(
-															"detail.configuration.sections.source.descriptions.transparentCustom",
-															{
-																defaultValue:
-																	"Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
-															},
-														)}
-													{mode !== "transparent" && selectedConfig === "default" &&
-														t(
-															"detail.configuration.sections.source.descriptions.default",
-															{
-																defaultValue:
-																	"Use all currently activated profiles.",
-															},
-														)}
-													{mode !== "transparent" && selectedConfig === "profile" &&
-														t(
-															"detail.configuration.sections.source.descriptions.profile",
-															{
-																defaultValue:
-																	"Select specific shared profiles to include.",
-															},
-														)}
-													{mode !== "transparent" && selectedConfig === "custom" &&
-														t(
-															"detail.configuration.sections.source.descriptions.custom",
-															{
-																defaultValue:
-																	"Use customized configuration settings.",
-															},
-														)}
-												</p>
-											</div>
-											<Segment
-												value={selectedConfig}
-												onValueChange={(v) =>
-													setSelectedConfig(v as ClientCapabilitySourceSelection)
-												}
-												options={[
-													{
-														value: "default",
-														label: t(
-															"detail.configuration.sections.source.options.default",
-															{ defaultValue: "Activated" },
-														),
-														status:
-															t(
-																"detail.configuration.sections.source.statusLabel.default",
-																{ defaultValue: "" },
-															) || undefined,
-													},
-													{
-														value: "profile",
-														label: t(
-															"detail.configuration.sections.source.options.profile",
-															{ defaultValue: "Profiles" },
-														),
-													status:
-														t(
-															"detail.configuration.sections.source.statusLabel.profile",
-															{ defaultValue: "" },
-														) || undefined,
-													},
-													{
-														value: "custom",
-														label: t(
-															"detail.configuration.sections.source.options.custom",
-															{ defaultValue: "Customize" },
-														),
-													status:
-														t(
-															"detail.configuration.sections.source.statusLabel.custom",
-															{ defaultValue: "" },
-														) || undefined,
-													},
-												]}
-												showDots={true}
-												className="w-full"
-												disabled={mode === "none"}
-											/>
-										</div>
+				<TabsContent
+					value="configuration"
+					className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}
+				>
+					<div className="min-h-0 flex-1 overflow-y-auto">
+						<div className="grid gap-4">
+							<Card>
+								<CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+									<div>
+										<CardTitle>
+											{t("detail.configuration.title", {
+												defaultValue: "Configuration Mode",
+											})}
+										</CardTitle>
+										<CardDescription>
+											{t("detail.configuration.description", {
+												defaultValue:
+													"If you don't understand what this means, please don't make any changes and keep the current settings.",
+											})}
+										</CardDescription>
 									</div>
-
-									{/* Right side - Profiles List (6/10) */}
-									{(mode === "hosted" ||
-										mode === "transparent" ||
-										mode === "none") && (
-										<div
-											className={`col-span-6 ${mode === "none" ? "opacity-50 pointer-events-none" : ""}`}
+									{configDetails?.managed ? (
+										<Button
+											size="sm"
+											variant="default"
+											onClick={() => applyMutation.mutate({ preview: false })}
+											disabled={applyMutation.isPending}
+											className="gap-2"
 										>
-											<div className="mb-3">
-												<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-													{t("detail.configuration.sections.profiles.title", {
-														defaultValue: "3. Profiles List",
-													})}
-												</h4>
-												{/* Dynamic description based on source */}
-												{selectedConfig === "default" && (
-													<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-														{mode === "transparent"
-															? t(
-																"detail.configuration.sections.profiles.descriptions.transparentDefault",
+											<HardDrive
+												className={`h-4 w-4 ${applyMutation.isPending ? "animate-pulse" : ""}`}
+											/>
+											{t("detail.configuration.reapply", {
+												defaultValue: "Apply",
+											})}
+										</Button>
+									) : null}
+								</CardHeader>
+								<CardContent className="pt-0">
+									<div className="grid grid-cols-10 gap-8">
+										{/* Left side - Mode and Source (4/10) */}
+										<div className="col-span-4 space-y-6">
+											{/* Mode Selection */}
+											<div className="space-y-3">
+												<div className="space-y-1">
+													<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
+														{t("detail.configuration.sections.mode.title", {
+															defaultValue: "1. Management Mode",
+														})}
+													</h4>
+													<p className="text-xs text-slate-500 leading-relaxed">
+														{mode === "hosted" &&
+															t(
+																"detail.configuration.sections.mode.descriptions.hosted",
 																{
 																	defaultValue:
-																		"Transparent mode will write the enabled servers from all currently activated profiles directly into this client's MCP configuration.",
+																		"MCPMate provisions a dedicated MCP server for this client and enables advanced MCPMate features.",
 																},
-															)
-															: t(
-																"detail.configuration.sections.profiles.descriptions.default",
+															)}
+														{mode === "transparent" &&
+															t(
+																"detail.configuration.sections.mode.descriptions.transparent",
 																{
 																	defaultValue:
-																		"When the activated source is selected, configure all currently activated profiles. Checkboxes are locked to keep the selection consistent.",
+																		"MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
+																},
+															)}
+														{mode === "none" &&
+															t(
+																"detail.configuration.sections.mode.descriptions.none",
+																{
+																	defaultValue:
+																		"MCPMate does not manage this client's configuration.",
 																},
 															)}
 													</p>
-												)}
-												{selectedConfig === "profile" && (
-													<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-														{mode === "transparent"
-															? t(
-																"detail.configuration.sections.profiles.descriptions.transparentProfile",
-																{
-																	defaultValue:
-																		"Select which shared profiles contribute enabled servers to this client's MCP configuration in transparent mode.",
-																},
-															)
-															: t(
-																"detail.configuration.sections.profiles.descriptions.profile",
-																{
-																	defaultValue:
-																		"Select which shared profiles to include in this client's configuration.",
-																},
-															)}
-													</p>
-												)}
-												{selectedConfig === "custom" && (
-													<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-														{mode === "transparent"
-															? t(
-																"detail.configuration.sections.profiles.descriptions.transparentCustom",
-																{
-																	defaultValue:
-																		"Transparent mode uses only the enabled servers from this client-specific custom profile when writing the MCP configuration.",
-																},
-															)
-															: t(
-																"detail.configuration.sections.profiles.descriptions.custom",
-																{
-																	defaultValue:
-																		"Create and maintain a customized configuration for the current application.",
-																},
-															)}
-													</p>
-												)}
+												</div>
+												<Segment
+													value={mode}
+													onValueChange={(v) => setMode(v as ClientConfigMode)}
+													options={[
+														{
+															value: "hosted",
+															label: t(
+																"detail.configuration.sections.mode.options.hosted",
+																{ defaultValue: "Hosted" },
+															),
+														},
+														{
+															value: "transparent",
+															label: t(
+																"detail.configuration.sections.mode.options.transparent",
+																{ defaultValue: "Transparent" },
+															),
+														},
+														{
+															value: "none",
+															label: t(
+																"detail.configuration.sections.mode.options.none",
+																{ defaultValue: "None" },
+															),
+														},
+													]}
+													showDots={true}
+													className="w-full"
+												/>
 											</div>
 
-											{loadingProfiles ? (
-												<div className="space-y-2">
-													{[1, 2, 3].map((i) => (
-														<div
-															key={i}
-															className="h-12 bg-slate-200 dark:bg-slate-800 animate-pulse rounded"
-														/>
-													))}
+											{/* Source Selection */}
+											<div className="space-y-3">
+												<div className="space-y-1">
+													<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
+														{mode === "transparent"
+															? t("detail.configuration.sections.source.titleTransparent", {
+																defaultValue: "2. Server Source",
+															})
+															: t("detail.configuration.sections.source.title", {
+																defaultValue: "2. Capability Source",
+															})}
+													</h4>
+													<p className="text-xs text-slate-500 leading-relaxed">
+														{mode === "transparent" && selectedConfig === "default" &&
+															t(
+																"detail.configuration.sections.source.descriptions.transparentDefault",
+																{
+																	defaultValue:
+																		"Write the servers from all currently activated profiles directly into this client's MCP configuration.",
+																},
+															)}
+														{mode === "transparent" && selectedConfig === "profile" &&
+															t(
+																"detail.configuration.sections.source.descriptions.transparentProfile",
+																{
+																	defaultValue:
+																		"Write the servers from the selected shared profiles directly into this client's MCP configuration.",
+																},
+															)}
+														{mode === "transparent" && selectedConfig === "custom" &&
+															t(
+																"detail.configuration.sections.source.descriptions.transparentCustom",
+																{
+																	defaultValue:
+																		"Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
+																},
+															)}
+														{mode !== "transparent" && selectedConfig === "default" &&
+															t(
+																"detail.configuration.sections.source.descriptions.default",
+																{
+																	defaultValue:
+																		"Use all currently activated profiles.",
+																},
+															)}
+														{mode !== "transparent" && selectedConfig === "profile" &&
+															t(
+																"detail.configuration.sections.source.descriptions.profile",
+																{
+																	defaultValue:
+																		"Select specific shared profiles to include.",
+																},
+															)}
+														{mode !== "transparent" && selectedConfig === "custom" &&
+															t(
+																"detail.configuration.sections.source.descriptions.custom",
+																{
+																	defaultValue:
+																		"Use customized configuration settings.",
+																},
+															)}
+													</p>
 												</div>
-											) : mode === "none" ? (
-												<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-													{t(
-														"detail.configuration.sections.profiles.modeNone",
+												<Segment
+													value={selectedConfig}
+													onValueChange={(v) =>
+														setSelectedConfig(v as ClientCapabilitySourceSelection)
+													}
+													options={[
 														{
-															defaultValue:
-																'Configuration mode is set to "none" - no profiles need to be applied',
+															value: "default",
+															label: t(
+																"detail.configuration.sections.source.options.default",
+																{ defaultValue: "Activated" },
+															),
+															status:
+																t(
+																	"detail.configuration.sections.source.statusLabel.default",
+																	{ defaultValue: "" },
+																) || undefined,
 														},
-													)}
-												</div>
-											) : (
-												<CapsuleStripeList>
-													{selectedConfig === "default" ? (
-														// Show active profiles for default source
-														activeProfiles.length > 0 ? (
-															activeProfiles.map((profile) => {
-																const capabilities = profileCapabilities.get(
-																	profile.id,
-																);
-																return (
-																	<CapsuleStripeListItem
-																		key={profile.id}
-																		className="cursor-default"
-																	>
-																		<div className="flex w-full items-center gap-3">
-																			<div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-300 bg-slate-100 dark:border-slate-600 dark:bg-slate-700">
-																				<Check className="h-3 w-3 text-slate-500" />
-																			</div>
-																			<div className="flex-1 min-w-0">
-																				<div className="font-medium text-sm truncate">
-																					{profile.name}
-																				</div>
-																				<div className="text-xs text-slate-500 truncate">
-																	{profile.description ||
-																		t(
-																			"detail.configuration.labels.noDescription",
-																							{
-																								defaultValue: "No description",
-																							},
-																		)}
-																	</div>
-																	{capabilities && renderProfileCapabilitySummary(capabilities)}
-																</div>
-																			<div className="ml-auto flex items-center gap-2">
-																				<Button
-																					variant="ghost"
-																					size="sm"
-																					className="h-6 w-6 p-0"
-																					onClick={() =>
-																						navigate(`/profiles/${profile.id}`)
-																					}
-																				>
-																					<Info className="h-3 w-3" />
-																				</Button>
-																			</div>
-																		</div>
-																	</CapsuleStripeListItem>
-																);
-															})
-														) : (
-															<CapsuleStripeListItem>
-																<div className="text-sm text-slate-500 py-4 text-center w-full">
-																	{t(
-																		"detail.configuration.sections.profiles.empty.active",
-																		{
-																			defaultValue: "No active profiles found",
-																		},
-																	)}
-																</div>
-															</CapsuleStripeListItem>
-														)
-													) : selectedConfig === "profile" ? (
-														// Show shared profiles for profile source
-														sharedProfiles.length > 0 ? (
-															sharedProfiles.map((profile) => {
-																const capabilities = profileCapabilities.get(
-																	profile.id,
-																);
-																const isSelected = selectedProfiles.includes(
-																	profile.id,
-																);
-																return (
-																	<CapsuleStripeListItem
-																		key={profile.id}
-																		interactive
-																		className={`group relative transition-colors ${
-																			isSelected
-																				? "bg-primary/10 ring-1 ring-primary/40"
-																				: ""
-																		}`}
-																		onClick={() => {
-																			setSelectedProfiles((prev) =>
-																				prev.includes(profile.id)
-																					? prev.filter(
-																							(id) => id !== profile.id,
-																						)
-																					: [...prev, profile.id],
-																			);
-																		}}
-																	>
-																		<div className="flex w-full items-center gap-3">
-																			<div
-																				className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition-all duration-200 ${
-																					isSelected
-																						? "border-primary bg-primary text-white"
-																						: "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-700"
-																				}`}
-																			>
-																				{isSelected && (
-																					<Check className="h-3 w-3" />
-																				)}
-																			</div>
-																			<div className="flex-1 min-w-0">
-																				<div className="font-medium text-sm truncate">
-																					{profile.name}
-																				</div>
-																				<div className="text-xs text-slate-500 truncate">
-																	{profile.description ||
-																		t(
-																			"detail.configuration.labels.noDescription",
-																							{
-																								defaultValue: "No description",
-																							},
-																		)}
-																	</div>
-																	{capabilities && renderProfileCapabilitySummary(capabilities)}
-																</div>
-																			<div className="ml-auto flex items-center gap-2">
-																				<Button
-																					variant="ghost"
-																					size="sm"
-																					className="h-6 w-6 p-0"
-																					onClick={(e) => {
-																						e.stopPropagation();
-																						navigate(`/profiles/${profile.id}`);
-																					}}
-																				>
-																					<Info className="h-3 w-3" />
-																				</Button>
-																			</div>
-																		</div>
-																	</CapsuleStripeListItem>
-																);
-															})
-														) : (
-															<CapsuleStripeListItem>
-																<div className="text-sm text-slate-500 py-4 text-center w-full">
-																	{t(
-																		"detail.configuration.sections.profiles.empty.shared",
-																		{
-																			defaultValue: "No shared profiles found",
-																		},
-																	)}
-																</div>
-															</CapsuleStripeListItem>
-														)
-													) : null}
+														{
+															value: "profile",
+															label: t(
+																"detail.configuration.sections.source.options.profile",
+																{ defaultValue: "Profiles" },
+															),
+															status:
+																t(
+																	"detail.configuration.sections.source.statusLabel.profile",
+																	{ defaultValue: "" },
+																) || undefined,
+														},
+														{
+															value: "custom",
+															label: t(
+																"detail.configuration.sections.source.options.custom",
+																{ defaultValue: "Customize" },
+															),
+															status:
+																t(
+																	"detail.configuration.sections.source.statusLabel.custom",
+																	{ defaultValue: "" },
+																) || undefined,
+														},
+													]}
+													showDots={true}
+													className="w-full"
+													disabled={mode === "none"}
+												/>
+											</div>
+										</div>
 
-													<CapsuleStripeListItem
-														interactive
-														className={
-															selectedConfig === "custom" && customProfileId
-																? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
-																: "border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
-														}
-														onClick={() => {
-															if (selectedConfig === "custom") {
-																if (customProfileId) {
-																	navigate(`/profiles/${customProfileId}?mode=custom`);
-																} else {
-																	applyMutation.mutate({ preview: false });
-																}
-															} else {
-																navigate("/profiles");
-															}
-														}}
-													>
-														<div className="flex w-full items-center gap-3">
-															<div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${
-																selectedConfig === "custom" && customProfileId
-																	? "border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800"
-																	: "border-dashed border-slate-300 dark:border-slate-600"
-															}`}>
-																{selectedConfig === "custom" && customProfileId ? (
-																	<Pencil className="h-3 w-3 text-slate-500 dark:text-slate-400" />
-																) : (
-																	<Plus className="h-3 w-3 text-slate-400" />
-																)}
-															</div>
-															<div className="flex-1 min-w-0">
-															<div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
-																{selectedConfig === "custom"
+										{/* Right side - Profiles List (6/10) */}
+										{(mode === "hosted" ||
+											mode === "transparent" ||
+											mode === "none") && (
+												<div
+													className={`col-span-6 ${mode === "none" ? "opacity-50 pointer-events-none" : ""}`}
+												>
+													<div className="mb-3">
+														<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
+															{t("detail.configuration.sections.profiles.title", {
+																defaultValue: "3. Profiles List",
+															})}
+														</h4>
+														{/* Dynamic description based on source */}
+														{selectedConfig === "default" && (
+															<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+																{mode === "transparent"
 																	? t(
-																		"detail.configuration.sections.profiles.ghost.titleCustom",
+																		"detail.configuration.sections.profiles.descriptions.transparentDefault",
 																		{
-																					defaultValue: customProfileId
-																						? "Manage custom profile"
-																						: "Create custom profile",
+																			defaultValue:
+																				"Transparent mode will write the enabled servers from all currently activated profiles directly into this client's MCP configuration.",
 																		},
 																	)
-																		: t(
-																				"detail.configuration.sections.profiles.ghost.titleDefault",
-																				{ defaultValue: "Add a new profile" },
-																			)}
-																</div>
-															<div className="text-xs text-slate-400 dark:text-slate-600 truncate">
-																	{selectedConfig === "custom"
-																		? t(
-																			mode === "transparent"
-																				? "detail.configuration.sections.profiles.ghost.subtitleCustomTransparent"
-																				: "detail.configuration.sections.profiles.ghost.subtitleCustom",
-																			{
-																					defaultValue: customProfileId
-																						? "Configure this client-specific custom profile"
-																						: "Create a client-specific custom profile now",
-																			},
-																		)
-																		: t(
-																				"detail.configuration.sections.profiles.ghost.subtitleDefault",
+																	: t(
+																		"detail.configuration.sections.profiles.descriptions.default",
+																		{
+																			defaultValue:
+																				"When the activated source is selected, configure all currently activated profiles. Checkboxes are locked to keep the selection consistent.",
+																		},
+																	)}
+															</p>
+														)}
+														{selectedConfig === "profile" && (
+															<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+																{mode === "transparent"
+																	? t(
+																		"detail.configuration.sections.profiles.descriptions.transparentProfile",
+																		{
+																			defaultValue:
+																				"Select which shared profiles contribute enabled servers to this client's MCP configuration in transparent mode.",
+																		},
+																	)
+																	: t(
+																		"detail.configuration.sections.profiles.descriptions.profile",
+																		{
+																			defaultValue:
+																				"Select which shared profiles to include in this client's configuration.",
+																		},
+																	)}
+															</p>
+														)}
+														{selectedConfig === "custom" && (
+															<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+																{mode === "transparent"
+																	? t(
+																		"detail.configuration.sections.profiles.descriptions.transparentCustom",
+																		{
+																			defaultValue:
+																				"Transparent mode uses only the enabled servers from this client-specific custom profile when writing the MCP configuration.",
+																		},
+																	)
+																	: t(
+																		"detail.configuration.sections.profiles.descriptions.custom",
+																		{
+																			defaultValue:
+																				"Create and maintain a customized configuration for the current application.",
+																		},
+																	)}
+															</p>
+														)}
+													</div>
+
+													{loadingProfiles ? (
+														<div className="space-y-2">
+															{[1, 2, 3].map((i) => (
+																<div
+																	key={i}
+																	className="h-12 bg-slate-200 dark:bg-slate-800 animate-pulse rounded"
+																/>
+															))}
+														</div>
+													) : mode === "none" ? (
+														<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+															{t(
+																"detail.configuration.sections.profiles.modeNone",
+																{
+																	defaultValue:
+																		'Configuration mode is set to "none" - no profiles need to be applied',
+																},
+															)}
+														</div>
+													) : (
+														<CapsuleStripeList>
+															{selectedConfig === "default" ? (
+																// Show active profiles for default source
+																activeProfiles.length > 0 ? (
+																	activeProfiles.map((profile) => {
+																		const capabilities = profileCapabilities.get(
+																			profile.id,
+																		);
+																		return (
+																			<CapsuleStripeListItem
+																				key={profile.id}
+																				className="cursor-default"
+																			>
+																				<div className="flex w-full items-center gap-3">
+																					<div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-300 bg-slate-100 dark:border-slate-600 dark:bg-slate-700">
+																						<Check className="h-3 w-3 text-slate-500" />
+																					</div>
+																					<div className="flex-1 min-w-0">
+																						<div className="font-medium text-sm truncate">
+																							{profile.name}
+																						</div>
+																						<div className="text-xs text-slate-500 truncate">
+																							{profile.description ||
+																								t(
+																									"detail.configuration.labels.noDescription",
+																									{
+																										defaultValue: "No description",
+																									},
+																								)}
+																						</div>
+																						{capabilities && renderProfileCapabilitySummary(capabilities)}
+																					</div>
+																					<div className="ml-auto flex items-center gap-2">
+																						<Button
+																							variant="ghost"
+																							size="sm"
+																							className="h-6 w-6 p-0"
+																							onClick={() =>
+																								navigate(`/profiles/${profile.id}`)
+																							}
+																						>
+																							<Info className="h-3 w-3" />
+																						</Button>
+																					</div>
+																				</div>
+																			</CapsuleStripeListItem>
+																		);
+																	})
+																) : (
+																	<CapsuleStripeListItem>
+																		<div className="text-sm text-slate-500 py-4 text-center w-full">
+																			{t(
+																				"detail.configuration.sections.profiles.empty.active",
 																				{
-																					defaultValue:
-																						"Click to navigate to profile management page",
-																			},
+																					defaultValue: "No active profiles found",
+																				},
+																			)}
+																		</div>
+																	</CapsuleStripeListItem>
+																)
+															) : selectedConfig === "profile" ? (
+																// Show shared profiles for profile source
+																sharedProfiles.length > 0 ? (
+																	sharedProfiles.map((profile) => {
+																		const capabilities = profileCapabilities.get(
+																			profile.id,
+																		);
+																		const isSelected = selectedProfiles.includes(
+																			profile.id,
+																		);
+																		return (
+																			<CapsuleStripeListItem
+																				key={profile.id}
+																				interactive
+																				className={`group relative transition-colors ${isSelected
+																						? "bg-primary/10 ring-1 ring-primary/40"
+																						: ""
+																					}`}
+																				onClick={() => {
+																					setSelectedProfiles((prev) =>
+																						prev.includes(profile.id)
+																							? prev.filter(
+																								(id) => id !== profile.id,
+																							)
+																							: [...prev, profile.id],
+																					);
+																				}}
+																			>
+																				<div className="flex w-full items-center gap-3">
+																					<div
+																						className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition-all duration-200 ${isSelected
+																								? "border-primary bg-primary text-white"
+																								: "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-700"
+																							}`}
+																					>
+																						{isSelected && (
+																							<Check className="h-3 w-3" />
+																						)}
+																					</div>
+																					<div className="flex-1 min-w-0">
+																						<div className="font-medium text-sm truncate">
+																							{profile.name}
+																						</div>
+																						<div className="text-xs text-slate-500 truncate">
+																							{profile.description ||
+																								t(
+																									"detail.configuration.labels.noDescription",
+																									{
+																										defaultValue: "No description",
+																									},
+																								)}
+																						</div>
+																						{capabilities && renderProfileCapabilitySummary(capabilities)}
+																					</div>
+																					<div className="ml-auto flex items-center gap-2">
+																						<Button
+																							variant="ghost"
+																							size="sm"
+																							className="h-6 w-6 p-0"
+																							onClick={(e) => {
+																								e.stopPropagation();
+																								navigate(`/profiles/${profile.id}`);
+																							}}
+																						>
+																							<Info className="h-3 w-3" />
+																						</Button>
+																					</div>
+																				</div>
+																			</CapsuleStripeListItem>
+																		);
+																	})
+																) : (
+																	<CapsuleStripeListItem>
+																		<div className="text-sm text-slate-500 py-4 text-center w-full">
+																			{t(
+																				"detail.configuration.sections.profiles.empty.shared",
+																				{
+																					defaultValue: "No shared profiles found",
+																				},
+																			)}
+																		</div>
+																	</CapsuleStripeListItem>
+																)
+															) : null}
+
+															<CapsuleStripeListItem
+																interactive
+																className={
+																	selectedConfig === "custom" && customProfileId
+																		? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
+																		: "border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
+																}
+																onClick={() => {
+																	if (selectedConfig === "custom") {
+																		if (customProfileId) {
+																			navigate(`/profiles/${customProfileId}?mode=custom`);
+																		} else {
+																			applyMutation.mutate({ preview: false });
+																		}
+																	} else {
+																		navigate("/profiles");
+																	}
+																}}
+															>
+																<div className="flex w-full items-center gap-3">
+																	<div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedConfig === "custom" && customProfileId
+																			? "border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800"
+																			: "border-dashed border-slate-300 dark:border-slate-600"
+																		}`}>
+																		{selectedConfig === "custom" && customProfileId ? (
+																			<Pencil className="h-3 w-3 text-slate-500 dark:text-slate-400" />
+																		) : (
+																			<Plus className="h-3 w-3 text-slate-400" />
 																		)}
 																	</div>
-																	{customProfileCapabilities
-																		? renderProfileCapabilitySummary(customProfileCapabilities)
-																		: null}
+																	<div className="flex-1 min-w-0">
+																		<div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
+																			{selectedConfig === "custom"
+																				? t(
+																					"detail.configuration.sections.profiles.ghost.titleCustom",
+																					{
+																						defaultValue: customProfileId
+																							? "Manage custom profile"
+																							: "Create custom profile",
+																					},
+																				)
+																				: t(
+																					"detail.configuration.sections.profiles.ghost.titleDefault",
+																					{ defaultValue: "Add a new profile" },
+																				)}
+																		</div>
+																		<div className="text-xs text-slate-400 dark:text-slate-600 truncate">
+																			{selectedConfig === "custom"
+																				? t(
+																					mode === "transparent"
+																						? "detail.configuration.sections.profiles.ghost.subtitleCustomTransparent"
+																						: "detail.configuration.sections.profiles.ghost.subtitleCustom",
+																					{
+																						defaultValue: customProfileId
+																							? "Configure this client-specific custom profile"
+																							: "Create a client-specific custom profile now",
+																					},
+																				)
+																				: t(
+																					"detail.configuration.sections.profiles.ghost.subtitleDefault",
+																					{
+																						defaultValue:
+																							"Click to navigate to profile management page",
+																					},
+																				)}
+																		</div>
+																		{customProfileCapabilities
+																			? renderProfileCapabilitySummary(customProfileCapabilities)
+																			: null}
+																	</div>
 																</div>
-														</div>
-													</CapsuleStripeListItem>
-												</CapsuleStripeList>
+															</CapsuleStripeListItem>
+														</CapsuleStripeList>
+													)}
+												</div>
 											)}
-										</div>
-									)}
-								</div>
-							</CardContent>
-						</Card>
+									</div>
+								</CardContent>
+							</Card>
+						</div>
 					</div>
 				</TabsContent>
 
-				<TabsContent value="backups">
+				<TabsContent
+					value="backups"
+					className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
+				>
 					<Card>
 						<CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 							<div>
@@ -1990,29 +2000,26 @@ export function ClientDetailPage() {
 												<div className="flex items-center justify-between flex-1">
 													<div className="flex items-center gap-3">
 														<div
-															className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0px] transition-all duration-200 ${
-																selected
+															className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0px] transition-all duration-200 ${selected
 																	? "border-primary bg-primary text-white shadow-sm"
 																	: "border-slate-300 text-transparent group-hover:border-primary/50 group-hover:text-primary/60 dark:border-slate-700 dark:group-hover:border-primary/50"
-															}`}
+																}`}
 														>
 															<Check className="h-3 w-3" />
 														</div>
 														<div
-															className={`font-mono transition-colors duration-200 ${
-																selected
+															className={`font-mono transition-colors duration-200 ${selected
 																	? "text-primary"
 																	: "text-slate-700 dark:text-slate-200"
-															}`}
+																}`}
 														>
 															{b.backup}
 														</div>
 													</div>
 													<div className="flex items-center justify-end gap-4">
 														<div
-															className={`flex items-center gap-4 text-slate-500 transition-all duration-200 ${
-																selected ? "text-primary" : ""
-															}`}
+															className={`flex items-center gap-4 text-slate-500 transition-all duration-200 ${selected ? "text-primary" : ""
+																}`}
 														>
 															<div>{formatBackupTime(b.created_at)}</div>
 															<div>{(b.size / 1024).toFixed(1)} KB</div>
@@ -2074,19 +2081,19 @@ export function ClientDetailPage() {
 					confirm?.kind === "delete"
 						? t("detail.confirm.deleteTitle", { defaultValue: "Delete Backup" })
 						: t("detail.confirm.restoreTitle", {
-								defaultValue: "Restore Backup",
-							})
+							defaultValue: "Restore Backup",
+						})
 				}
 				description={
 					confirm?.kind === "delete"
 						? t("detail.confirm.deleteDescription", {
-								defaultValue:
-									"Are you sure you want to delete this backup? This action cannot be undone.",
-							})
+							defaultValue:
+								"Are you sure you want to delete this backup? This action cannot be undone.",
+						})
 						: t("detail.confirm.restoreDescription", {
-								defaultValue:
-									"Restore configuration from the selected backup? Current config may be overwritten.",
-							})
+							defaultValue:
+								"Restore configuration from the selected backup? Current config may be overwritten.",
+						})
 				}
 				confirmLabel={
 					confirm?.kind === "delete"
@@ -2253,7 +2260,7 @@ export function ClientDetailPage() {
 									<div>{importPreviewData.summary?.failed_count ?? 0}</div>
 								</div>
 								{Array.isArray(importPreviewData.items) &&
-								importPreviewData.items.length > 0 ? (
+									importPreviewData.items.length > 0 ? (
 									<div className="rounded border">
 										<div className="px-3 py-2 text-xs text-slate-500 border-b">
 											{t("detail.importPreview.sections.servers", {

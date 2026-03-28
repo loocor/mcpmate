@@ -1,8 +1,16 @@
+import { useQueryClient } from "@tanstack/react-query";
 import React, { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Outlet, useNavigate } from "react-router-dom";
 import { openFeedbackEmail } from "../../lib/feedback-email";
-import { notificationsService, setApiBaseUrl } from "../../lib/api";
+import {
+	auditApi,
+	configSuitsApi,
+	notificationsService,
+	serversApi,
+	setApiBaseUrl,
+	systemApi,
+} from "../../lib/api";
 import { isTauriEnvironmentSync } from "../../lib/platform";
 import { useAppStore } from "../../lib/store";
 import { websiteLangParam } from "../../lib/website-lang";
@@ -35,12 +43,44 @@ function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw
 }
 
 export function Layout() {
+	const queryClient = useQueryClient();
 	const { sidebarOpen, theme, setSidebarOpen } = useAppStore();
 	const navigate = useNavigate();
 	const { t, i18n } = useTranslation();
 	const [desktopSourceReady, setDesktopSourceReady] = useState(
 		() => !isTauriEnvironmentSync(),
 	);
+
+	React.useEffect(() => {
+		if (!desktopSourceReady) {
+			return;
+		}
+		const staleMs = 30 * 1000;
+		void queryClient.prefetchQuery({
+			queryKey: ["systemMetrics"],
+			queryFn: systemApi.getMetrics,
+			staleTime: staleMs,
+			retry: false,
+		});
+		void queryClient.prefetchQuery({
+			queryKey: ["configSuits", "dashboard"],
+			queryFn: configSuitsApi.getAll,
+			staleTime: staleMs,
+			retry: false,
+		});
+		void queryClient.prefetchQuery({
+			queryKey: ["servers"],
+			queryFn: serversApi.getAll,
+			staleTime: staleMs,
+			retry: false,
+		});
+		void queryClient.prefetchQuery({
+			queryKey: ["audit", "mcp-calls-stats"],
+			queryFn: () => auditApi.list({ limit: 1000 }),
+			staleTime: staleMs,
+			retry: false,
+		});
+	}, [queryClient, desktopSourceReady]);
 
 	// Apply theme and react to changes (system/manual)
 	React.useEffect(() => {
@@ -253,12 +293,12 @@ export function Layout() {
 				className={`pt-16 transition-all duration-300 ease-in-out ${sidebarOpen ? "ml-64" : "ml-16"
 					}`}
 			>
-				{/* Make main area a flex column that occupies viewport height minus header, so footer can stick to bottom when content is short */}
-				<div className="w-full p-4 min-h-[calc(100vh-4rem)] flex flex-col">
-					<div className="flex-1">
+				{/* Viewport-height column: outlet fills space above footer; pages can use h-full + inner scroll */}
+				<div className="box-border flex h-[calc(100vh-4rem)] w-full flex-col overflow-hidden p-4">
+					<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
 						<Outlet />
 					</div>
-					<footer className="mt-6 text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-700 pt-2 pb-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+					<footer className="mt-6 shrink-0 text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-700 pt-2 pb-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
 						<div className="flex items-center gap-4 flex-wrap">
 							<a
 								className="hover:underline"

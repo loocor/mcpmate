@@ -233,6 +233,7 @@ export type AuditCategory =
   | "runtime_control";
 
 export type AuditStatus = "success" | "failed" | "cancelled";
+export type AuditStatus = "success" | "failed" | "cancelled";
 
 export type AuditAction =
   | "rest_request"
@@ -258,8 +259,27 @@ export type AuditAction =
   | "profile_delete"
   | "profile_activate"
   | "profile_deactivate"
+  | "client_manage_enable"
+  | "client_manage_disable"
+  | "client_settings_update"
+  | "client_config_apply"
+  | "client_config_restore"
+  | "client_config_import"
+  | "client_capability_update"
+  | "client_backup_delete"
+  | "client_backup_policy_update"
+  | "core_source_apply"
+  | "local_core_service_start"
+  | "local_core_service_restart"
+  | "local_core_service_stop"
+  | "local_core_service_install"
+  | "local_core_service_uninstall"
+  | "desktop_managed_core_start"
+  | "desktop_managed_core_restart"
+  | "desktop_managed_core_stop"
   | "capability_grant"
   | "capability_revoke";
+
 
 export interface AuditEventRecord {
   id?: number | null;
@@ -1138,9 +1158,21 @@ export interface TokenEstimateResponse {
 	total_available_tokens: number;
 	visible_tokens: number;
 	savings_tokens: number;
-	builtin_overhead_tokens: number;
-	net_savings_tokens: number;
 	breakdown: TokenBreakdownResponse;
 	estimation_method: string;
 	approximate: boolean;
+}
+
+/** Per-row payloads for client-side tokenizer (profile detail header). */
+export interface CapabilityTokenLedgerRow {
+	profile_row_id: string;
+	kind: string;
+	server_id: string;
+	server_enabled_in_profile: boolean;
+	payload_json: string;
+}
+
+export interface CapabilityTokenLedgerResponse {
+	items: CapabilityTokenLedgerRow[];
+	tokenizer_note: string;
 }

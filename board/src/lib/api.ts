@@ -71,10 +71,12 @@ import type {
 	SkippedServer,
 	SystemMetrics,
 	SystemStatus,
+	CapabilityTokenLedgerResponse,
 	TokenEstimateResponse,
 	ToolDetail,
 	UpdateConfigSuitRequest,
 } from "./types";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 // Base API configuration
@@ -293,6 +295,14 @@ function createApiError(response: Response, parsed?: unknown): Error {
 		}
 	}
 	return new Error(`API Error: ${response.status} ${response.statusText}`);
+}
+
+/** True when fetchApi failed with an HTTP 404 (e.g. older backend without a route). */
+export function isApiNotFoundError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+	return /\b404\b/.test(error.message);
 }
 
 const toTrimmedString = (value: unknown): string | undefined => {
@@ -2313,16 +2323,96 @@ export const tokenEstimateApi = {
 	},
 };
 
+/** Full capability JSON per profile row for client-side cl100k counting. */
+export const capabilityTokenLedgerApi = {
+	get: async (profileId: string): Promise<CapabilityTokenLedgerResponse> => {
+		const params = new URLSearchParams({ profile_id: profileId });
+		return fetchApi<CapabilityTokenLedgerResponse>(
+			`/api/mcp/profile/capability-token-ledger?${params}`,
+		);
+	},
+};
+
 // React Query hook for token estimates
-export function useTokenEstimate(profileId: string | undefined, capabilitySource?: string) {
+export function useTokenEstimate(
+	profileId: string | undefined,
+	capabilitySource?: string,
+	refreshKey?: string,
+) {
 	return useQuery({
-		queryKey: ["tokenEstimate", profileId, capabilitySource],
+		queryKey: ["tokenEstimate", profileId, capabilitySource, refreshKey],
 		queryFn: () => {
 			if (!profileId) return Promise.resolve(null);
 			return tokenEstimateApi.getEstimate(profileId, capabilitySource);
 		},
 		enabled: !!profileId,
-		staleTime: 5 * 60 * 1000, // 5 minutes
+		// Profile header / detail must reflect enable toggles immediately; server is cheap and authoritative.
+		staleTime: 0,
 		retry: 1,
 	});
+}
+
+/**
+ * Ledger JSON for client tokenizer; if the route is missing (404, older proxy), falls back to
+ * GET token-estimate keyed by capability enable fingerprint so toggles still refresh the chart.
+ */
+export function useProfileTokenChartSource(
+	profileId: string | undefined,
+	enabledByComponentId: ReadonlyMap<string, boolean>,
+) {
+	const capabilityFingerprint = useMemo(
+		() =>
+			[...enabledByComponentId.entries()]
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([id, on]) => `${id}:${on ? 1 : 0}`)
+				.join("|"),
+		[enabledByComponentId],
+	);
+
+	const ledgerQuery = useQuery({
+		queryKey: ["capabilityTokenLedger", profileId],
+		queryFn: async () => {
+			if (!profileId) return null;
+			return capabilityTokenLedgerApi.get(profileId);
+		},
+		enabled: !!profileId,
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
+		retry: (failureCount, error) => {
+			if (isApiNotFoundError(error)) {
+				return false;
+			}
+			return failureCount < 1;
+		},
+	});
+
+	const ledgerMissingRoute =
+		ledgerQuery.isError && isApiNotFoundError(ledgerQuery.error);
+
+	const estimateQuery = useQuery({
+		queryKey: ["profileChartTokenEstimate", profileId, capabilityFingerprint],
+		queryFn: async () => {
+			if (!profileId) return null;
+			return tokenEstimateApi.getEstimate(profileId);
+		},
+		enabled: !!profileId && ledgerMissingRoute,
+		staleTime: 0,
+		retry: 1,
+	});
+
+	const isLoading =
+		ledgerQuery.isPending || (ledgerMissingRoute && estimateQuery.isPending);
+	const isError =
+		(ledgerQuery.isError && !ledgerMissingRoute) ||
+		(ledgerMissingRoute && estimateQuery.isError);
+
+	const ledgerItems = ledgerQuery.data?.items;
+	const fallbackEstimate = ledgerMissingRoute ? (estimateQuery.data ?? null) : null;
+
+	return {
+		ledgerItems,
+		fallbackEstimate,
+		isLoading,
+		isError,
+	};
 }

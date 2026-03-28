@@ -1,5 +1,5 @@
 export const dashboardTranslations = {
-		en: {
+	en: {
 		cards: {
 			systemStatus: "System Status",
 			profiles: "Profiles",
@@ -21,12 +21,12 @@ export const dashboardTranslations = {
 		metrics: {
 			title: "Metrics",
 			description:
-				"MCPMate Process vs host utilization sampled every 10 seconds",
+				"MCPMate process CPU and memory utilization sampled every 30 seconds",
 			noData: "No metrics have been reported yet.",
-			mcpmateCpu: "MCPMate CPU (%)",
-			mcpmateMemory: "MCPMate Memory (%)",
-			hostCpu: "Host CPU (%)",
-			hostMemory: "Host Memory (%)",
+			waitingFirstSample:
+				"Leave this page open; the chart fills as samples arrive (about every 30 seconds).",
+			mcpmateCpu: "CPU (%)",
+			mcpmateMemory: "Memory (%)",
 		},
 		core: {
 			title: "Local Core",
@@ -36,6 +36,33 @@ export const dashboardTranslations = {
 			startAction: "Start",
 			restartAction: "Restart",
 			stopAction: "Stop",
+		},
+		tokenSavings: {
+			title: "Token Savings",
+			description: "Estimated context savings from profile filtering",
+			infoLabel: "How token savings are estimated",
+			infoLine1:
+				"Current values are recalculated from active profiles using tokenizer-based capability payloads.",
+			infoLine2:
+				"Each successful MCP list or call event in audit logs is matched to its profile and contributes that profile's current savings.",
+			infoLine3:
+				"This is not a frozen historical ledger yet: when profile configuration changes, earlier totals can be recomputed.",
+			infoLine4:
+				"That keeps the logic dynamic and closer to real usage, while finer time-slice reconstruction is still being improved.",
+			beforeFiltering: "Before Filtering",
+			afterFiltering: "After Filtering",
+			collectingData: "Collecting data...",
+			collectingDataHint:
+				"Estimates appear once servers and profiles finish loading.",
+			savedPercent: "Saved",
+			activeProfiles: "Active",
+			savedPerCall: "Saved per call",
+			enabled: "Enabled",
+			saved: "saved",
+			noData: "No data",
+			calls: "Calls",
+			emptyOrg:
+				"Add a server or profile to estimate token savings from capability filtering.",
 		},
 	},
 	"zh-CN": {
@@ -59,12 +86,12 @@ export const dashboardTranslations = {
 		},
 		metrics: {
 			title: "资源指标",
-			description: "MCPMate 进程与主机利用率对比，每 10 秒采样一次",
+			description: "MCPMate 进程 CPU 与内存占用，每 30 秒采样一次",
 			noData: "尚未报告任何指标数据。",
-			mcpmateCpu: "MCPMate CPU (%)",
-			mcpmateMemory: "MCPMate 内存 (%)",
-			hostCpu: "主机 CPU (%)",
-			hostMemory: "主机内存 (%)",
+			waitingFirstSample:
+				"请保持本页打开；图表会随采样逐步填充（约每 30 秒一次）。",
+			mcpmateCpu: "CPU (%)",
+			mcpmateMemory: "内存 (%)",
 		},
 		core: {
 			title: "本地 Core",
@@ -74,6 +101,28 @@ export const dashboardTranslations = {
 			startAction: "启动",
 			restartAction: "重启",
 			stopAction: "停止",
+		},
+		tokenSavings: {
+			title: "Token 节省",
+			description: "通过配置集过滤节省的预估上下文空间",
+			infoLabel: "查看 Token 节省估算说明",
+			infoLine1: "当前数值会基于活跃 profile 的能力载荷，并用 tokenizer 重新计算。",
+			infoLine2: "审计日志里每一次成功的 MCP list 或调用，都会关联到对应 profile 并累加该 profile 当前的节省值。",
+			infoLine3: "这还不是冻结的历史账本：当 profile 配置变化时，之前的累计值也可能被重新计算。",
+			infoLine4:
+				"这样会更贴近真实使用，但更细粒度的时点重建仍在继续完善。",
+			beforeFiltering: "过滤前",
+			afterFiltering: "过滤后",
+			collectingData: "数据收集中...",
+			collectingDataHint: "服务器与配置集加载完成后即可显示估算。",
+			savedPercent: "节省",
+			activeProfiles: "已激活",
+			savedPerCall: "每次节省",
+			enabled: "已启用",
+			saved: "节省",
+			noData: "暂无数据",
+			calls: "调用次数",
+			emptyOrg: "添加服务器或配置集后，即可估算能力过滤带来的 Token 节省。",
 		},
 	},
 	"ja-JP": {
@@ -98,12 +147,12 @@ export const dashboardTranslations = {
 		metrics: {
 			title: "リソースメトリクス",
 			description:
-				"MCPMate プロセスとホスト利用率の比較、10秒ごとにサンプリング",
+				"MCPMate プロセスの CPU とメモリ使用率、30 秒ごとにサンプリング",
 			noData: "まだメトリクスが報告されていません。",
-			mcpmateCpu: "MCPMate CPU (%)",
-			mcpmateMemory: "MCPMate メモリ (%)",
-			hostCpu: "ホスト CPU (%)",
-			hostMemory: "ホストメモリ (%)",
+			waitingFirstSample:
+				"このページを開いたままにしてください。約 30 秒ごとにサンプルが溜まりチャートが表示されます。",
+			mcpmateCpu: "CPU (%)",
+			mcpmateMemory: "メモリ (%)",
 		},
 		core: {
 			title: "Local Core",
@@ -113,6 +162,33 @@ export const dashboardTranslations = {
 			startAction: "開始",
 			restartAction: "再起動",
 			stopAction: "停止",
+		},
+		tokenSavings: {
+			title: "トークン節約",
+			description: "プロファイルフィルタリングによる推定コンテキスト節約",
+			infoLabel: "トークン節約の推定方法を見る",
+			infoLine1:
+				"現在の値は、アクティブな profile の capability payload を tokenizer ベースで再計算したものです。",
+			infoLine2:
+				"監査ログ内の成功した MCP list / call は対応する profile に紐づけられ、その profile の現在の節約量として積み上げられます。",
+			infoLine3:
+				"まだ固定化された履歴台帳ではないため、profile 設定が変わると過去分の累計も再計算されることがあります。",
+			infoLine4:
+				"その分、実利用には近づいていますが、より細かい時点再構成は引き続き改善中です。",
+			beforeFiltering: "フィルタ前",
+			afterFiltering: "フィルタ後",
+			collectingData: "データ収集中...",
+			collectingDataHint:
+				"サーバーとプロファイルの読み込みが終わると推定値が表示されます。",
+			savedPercent: "節約",
+			activeProfiles: "アクティブ",
+			savedPerCall: "1回あたりの節約",
+			enabled: "有効",
+			saved: "節約",
+			noData: "データなし",
+			calls: "呼び出し",
+			emptyOrg:
+				"サーバーまたはプロファイルを追加すると、機能フィルタによるトークン節約を推定できます。",
 		},
 	},
 } as const;
