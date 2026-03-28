@@ -3,7 +3,7 @@
 **中文** | [English](./README.md)
 
 <p align="center">
-  <img src="./docs/assets/dashboard.png" alt="MCPMate 控制台（浅色）" width="100%">
+  <img src="./assets/dashboard.png" alt="MCPMate 控制台（浅色）" width="100%">
 </p>
 
 > **一个管理所有 MCP 服务器和 AI 客户端的中心。**
@@ -106,53 +106,53 @@ runtime list
 
 | 浅色                                            | 深色                                                |
 | ----------------------------------------------- | --------------------------------------------------- |
-| ![Dashboard light](./docs/assets/dashboard.png) | ![Dashboard dark](./docs/assets/dashboard-dark.png) |
+| ![Dashboard light](./assets/dashboard.png) | ![Dashboard dark](./assets/dashboard-dark.png) |
 
 ### 服务器管理
 
-![Servers](./docs/assets/servers.png)
+![Servers](./assets/servers.png)
 
 ### 服务器详情 — 工具
 
 浏览 MCP 服务器暴露的所有工具及其描述。
 
-![Server Tools](./docs/assets/server-tools.png)
+![Server Tools](./assets/server-tools.png)
 
 ### 服务器详情 — 资源
 
 查看 MCP 服务器提供的资源。
 
-![Server Resources](./docs/assets/server-resources.png)
+![Server Resources](./assets/server-resources.png)
 
 ### Profile 概览
 
 每个 Profile 聚合服务器、工具、资源和提示词，用于特定场景。
 
-![Profile Overview](./docs/assets/profile-detail-overview.png)
+![Profile Overview](./assets/profile-detail-overview.png)
 
 ### Profile — 工具配置
 
 在 Profile 中启用或禁用单个工具。
 
-![Profile Tools](./docs/assets/profile-tools.png)
+![Profile Tools](./assets/profile-tools.png)
 
 ### 客户端配置
 
 为每个 AI 客户端配置管理模式和能力来源。
 
-![Client Configuration](./docs/assets/client-configuration.png)
+![Client Configuration](./assets/client-configuration.png)
 
 ### MCP 市场
 
 在应用内浏览官方 MCP 注册中心并安装服务器。
 
-![MCP Market](./docs/assets/market.png)
+![MCP Market](./assets/market.png)
 
 ### 工具检视器
 
 针对已连接服务器快速发起工具调用，并在控制台查看结构化返回。
 
-![Tool Inspector](./docs/assets/inspector-tool-call.png)
+![Tool Inspector](./assets/inspector-tool-call.png)
 
 ## 快速开始
 

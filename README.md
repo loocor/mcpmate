@@ -3,7 +3,7 @@
 [中文](./README_CN.md) | **English**
 
 <p align="center">
-  <img src="./docs/assets/dashboard.png" alt="MCPMate dashboard (light)" width="100%">
+  <img src="./assets/dashboard.png" alt="MCPMate dashboard (light)" width="100%">
 </p>
 
 > **One management center for all your MCP servers and AI clients.**
@@ -106,53 +106,53 @@ Light and dark themes use the same layout; status cards and the metrics chart ad
 
 | Light                                           | Dark                                                |
 | ----------------------------------------------- | --------------------------------------------------- |
-| ![Dashboard light](./docs/assets/dashboard.png) | ![Dashboard dark](./docs/assets/dashboard-dark.png) |
+| ![Dashboard light](./assets/dashboard.png) | ![Dashboard dark](./assets/dashboard-dark.png) |
 
 ### Server Management
 
-![Servers](./docs/assets/servers.png)
+![Servers](./assets/servers.png)
 
 ### Server Details — Tools
 
 Browse all tools exposed by an MCP server with descriptions.
 
-![Server Tools](./docs/assets/server-tools.png)
+![Server Tools](./assets/server-tools.png)
 
 ### Server Details — Resources
 
 View resources provided by MCP servers.
 
-![Server Resources](./docs/assets/server-resources.png)
+![Server Resources](./assets/server-resources.png)
 
 ### Profile Overview
 
 Each profile aggregates servers, tools, resources, and prompts for a specific use case.
 
-![Profile Overview](./docs/assets/profile-detail-overview.png)
+![Profile Overview](./assets/profile-detail-overview.png)
 
 ### Profile — Tool Configuration
 
 Enable or disable individual tools within a profile.
 
-![Profile Tools](./docs/assets/profile-tools.png)
+![Profile Tools](./assets/profile-tools.png)
 
 ### Client Configuration
 
 Configure management mode and capability source for each AI client.
 
-![Client Configuration](./docs/assets/client-configuration.png)
+![Client Configuration](./assets/client-configuration.png)
 
 ### MCP Market
 
 Browse the official MCP registry and install servers without leaving the app.
 
-![MCP Market](./docs/assets/market.png)
+![MCP Market](./assets/market.png)
 
 ### Tool Inspector
 
 Run quick tool calls against a connected server and inspect structured responses from the console.
 
-![Tool Inspector](./docs/assets/inspector-tool-call.png)
+![Tool Inspector](./assets/inspector-tool-call.png)
 
 ## Quick Start
 
