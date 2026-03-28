@@ -64,7 +64,10 @@ pub fn build_rest_event(
     event.build()
 }
 
-fn apply_client_context(mut event: AuditEvent, client: &ClientContext) -> AuditEvent {
+fn apply_client_context(
+    mut event: AuditEvent,
+    client: &ClientContext,
+) -> AuditEvent {
     event = event.with_client_id(client.client_id.clone());
     if let Some(profile_id) = &client.profile_id {
         event = event.with_profile_id(profile_id.clone());

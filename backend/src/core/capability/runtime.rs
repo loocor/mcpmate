@@ -8,14 +8,14 @@ use tokio::sync::Mutex;
 
 use crate::config::database::Database;
 use crate::core::cache::{
-    CacheQuery, CacheScope, CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
-    FreshnessLevel, RedbCacheManager,
+    CacheQuery, CacheScope, CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData,
+    CachedToolInfo, FreshnessLevel, RedbCacheManager,
 };
-use crate::core::capability::{CapabilityType, ConnectionSelection, RuntimeIdentity};
 use crate::core::capability::internal::{
     CapabilityFetchFailure, capability_declared, collect_capability_from_instance_peer, is_method_not_supported,
 };
 use crate::core::capability::naming::{NamingKind, generate_unique_name};
+use crate::core::capability::{CapabilityType, ConnectionSelection, RuntimeIdentity};
 use crate::core::pool::{CapSyncFlags, FailureKind, UpstreamConnectionPool};
 
 /// Derive the appropriate cache scope from runtime identity and connection selection.
@@ -27,10 +27,9 @@ fn derive_cache_scope(
     connection_selection: Option<&ConnectionSelection>,
 ) -> CacheScope {
     match (runtime_identity, connection_selection) {
-        (Some(identity), Some(selection)) => CacheScope::client_filtered(
-            selection.cache_scope_key(),
-            identity.rules_fingerprint.clone(),
-        ),
+        (Some(identity), Some(selection)) => {
+            CacheScope::client_filtered(selection.cache_scope_key(), identity.rules_fingerprint.clone())
+        }
         _ => CacheScope::shared_raw(),
     }
 }
@@ -397,13 +396,13 @@ async fn list_impl(
         if let Some(selection) = ctx.connection_selection.as_ref() {
             if let Ok(Some(selected_instance_id)) = pool_guard.select_ready_instance_id(selection) {
                 if let Some(instances) = snap.get(&ctx.server_id) {
-                    if let Some((iid, _status, _res, _prm, peer)) = instances.iter().find(
-                        |(candidate_id, st, _, _, p)| {
+                    if let Some((iid, _status, _res, _prm, peer)) =
+                        instances.iter().find(|(candidate_id, st, _, _, p)| {
                             **candidate_id == selected_instance_id
                                 && matches!(st, crate::core::foundation::types::ConnectionStatus::Ready)
                                 && p.is_some()
-                        },
-                    ) {
+                        })
+                    {
                         peer_opt = peer.clone();
                         instance_id_opt = Some(iid.clone());
                     }
@@ -701,13 +700,13 @@ async fn call_tool_impl(
         if let Some(selection) = ctx.connection_selection.as_ref() {
             if let Ok(Some(selected_instance_id)) = pool_guard.select_ready_instance_id(selection) {
                 if let Some(instances) = snap.get(&ctx.server_id) {
-                    if let Some((instance_id, status, _res, _prm, peer)) = instances.iter().find(
-                        |(candidate_id, st, _, _, p)| {
+                    if let Some((instance_id, status, _res, _prm, peer)) =
+                        instances.iter().find(|(candidate_id, st, _, _, p)| {
                             **candidate_id == selected_instance_id
                                 && matches!(st, crate::core::foundation::types::ConnectionStatus::Ready)
                                 && p.is_some()
-                        },
-                    ) {
+                        })
+                    {
                         return (peer.clone(), Some(instance_id.clone()), Some(status.clone()));
                     }
                 }
@@ -932,7 +931,10 @@ struct CachedItems {
     resource_templates: Vec<CachedResourceTemplateInfo>,
 }
 
-fn convert_items_to_cached(items: &CapabilityItems, _capability: CapabilityType) -> CachedItems {
+fn convert_items_to_cached(
+    items: &CapabilityItems,
+    _capability: CapabilityType,
+) -> CachedItems {
     use chrono::Utc;
 
     let now = Utc::now();
@@ -1040,7 +1042,11 @@ mod tests {
     use crate::core::cache::{CacheScope, CachedServerData, CachedToolInfo};
     use chrono::Utc;
 
-    fn make_test_cached_data(server_id: &str, scope: CacheScope, tool_count: usize) -> CachedServerData {
+    fn make_test_cached_data(
+        server_id: &str,
+        scope: CacheScope,
+        tool_count: usize,
+    ) -> CachedServerData {
         let now = Utc::now();
         CachedServerData {
             server_id: server_id.to_string(),

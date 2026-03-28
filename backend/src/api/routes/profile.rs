@@ -16,6 +16,7 @@ use crate::api::models::profile::{
     ProfileResourceTemplatesListResp, ProfileResourcesListResp, ProfileResp, ProfileServerManageResp,
     ProfileServersListResp, ProfileToolsListResp, ProfileUpdateReq,
 };
+use crate::api::models::token_estimate::{CapabilityTokenLedgerResponse, TokenEstimateQuery, TokenEstimateResponse};
 use crate::{aide_wrapper_payload, aide_wrapper_query};
 
 /// Create Profile management routes
@@ -78,6 +79,14 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/profile/prompts/manage",
             post_with(component_manage_aide, component_manage_docs),
+        )
+        .api_route(
+            "/mcp/profile/token-estimate",
+            get_with(token_estimate_aide, token_estimate_docs),
+        )
+        .api_route(
+            "/mcp/profile/capability-token-ledger",
+            get_with(capability_token_ledger_aide, capability_token_ledger_docs),
         )
         .with_state(state)
 }
@@ -177,4 +186,19 @@ aide_wrapper_payload!(
     ProfileComponentManageReq,
     ProfileServerManageResp,
     "Manage component operations (enable/disable tools, resources, prompts)"
+);
+
+// Generate aide-compatible wrapper for token estimation
+aide_wrapper_query!(
+    profile::token_estimate,
+    TokenEstimateQuery,
+    TokenEstimateResponse,
+    "Estimate token savings for a profile"
+);
+
+aide_wrapper_query!(
+    profile::capability_token_ledger,
+    TokenEstimateQuery,
+    CapabilityTokenLedgerResponse,
+    "Per-capability JSON payloads for client-side tokenizer (profile trimming)"
 );

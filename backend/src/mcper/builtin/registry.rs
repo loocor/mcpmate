@@ -7,8 +7,8 @@ use crate::clients::service::ClientConfigService;
 use crate::config::database::Database;
 use crate::core::pool::UpstreamConnectionPool;
 
-use super::{ClientService, ProfileService};
 use super::client::ClientBuiltinContext;
+use super::{ClientService, ProfileService};
 
 /// Trait for built-in MCP services that convert API capabilities
 #[async_trait::async_trait]

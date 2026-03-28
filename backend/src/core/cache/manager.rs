@@ -266,7 +266,11 @@ impl RedbCacheManager {
         operations.store_server_data(server_data)?;
 
         // Update L1 (memory) cache using composite key
-        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type(), server_data.scope());
+        let cache_key = self.generate_cache_key(
+            &server_data.server_id,
+            &server_data.instance_type(),
+            server_data.scope(),
+        );
         let mut memory_cache = self.memory_cache.write().await;
         memory_cache.put(cache_key, server_data.clone());
 

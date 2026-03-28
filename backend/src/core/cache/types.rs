@@ -33,7 +33,10 @@ impl CacheScope {
     /// # Arguments
     /// * `selection_key` - Cache scope key from ConnectionSelection::cache_scope_key()
     /// * `rules_fingerprint` - Fingerprint of the client's rule configuration
-    pub fn client_filtered(selection_key: String, rules_fingerprint: String) -> Self {
+    pub fn client_filtered(
+        selection_key: String,
+        rules_fingerprint: String,
+    ) -> Self {
         Self::ClientFiltered {
             selection_key,
             rules_fingerprint,
@@ -318,10 +321,7 @@ mod tests {
         };
 
         assert_eq!(raw.key_suffix(), "raw");
-        assert_eq!(
-            filtered.key_suffix(),
-            "filtered:srv_1#session:sess-123#fp-123:fp-123"
-        );
+        assert_eq!(filtered.key_suffix(), "filtered:srv_1#session:sess-123#fp-123:fp-123");
         assert_ne!(raw.key_suffix(), filtered.key_suffix());
     }
 }

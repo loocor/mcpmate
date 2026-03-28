@@ -497,7 +497,11 @@ pub async fn profile_manage(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
             audit_action,
-            if failed_count > 0 { crate::audit::AuditStatus::Failed } else { crate::audit::AuditStatus::Success },
+            if failed_count > 0 {
+                crate::audit::AuditStatus::Failed
+            } else {
+                crate::audit::AuditStatus::Success
+            },
             "POST",
             "/api/mcp/profile/manage",
             Some(started_at.elapsed().as_millis() as u64),

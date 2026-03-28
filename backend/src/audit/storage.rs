@@ -3,7 +3,10 @@ use base64::{Engine as _, engine::general_purpose};
 use serde_json::Value;
 use sqlx::{FromRow, Pool, QueryBuilder, Row, Sqlite};
 
-use crate::{audit::types::{AuditCursor, AuditCursorScope, AuditEventDto, AuditFilter, AuditListPage, AuditSortCursor}, config::audit_database::AuditDatabase};
+use crate::{
+    audit::types::{AuditCursor, AuditCursorScope, AuditEventDto, AuditFilter, AuditListPage, AuditSortCursor},
+    config::audit_database::AuditDatabase,
+};
 
 use super::policy::{AuditRetentionPolicy, AuditRetentionPolicySetting};
 
@@ -198,33 +201,41 @@ impl AuditStore {
             .collect::<Result<Vec<_>>>()?;
 
         let next_cursor = if has_more {
-            events.last().cloned().map(|event| {
-                encode_cursor(&AuditCursor {
-                    sort: AuditSortCursor {
-                        occurred_at_ms: event.occurred_at_ms,
-                        id: event.id.expect("stored audit event must have id"),
-                    },
-                    scope: AuditCursorScope {
-                        filters: normalized.scope_map(),
-                    },
+            events
+                .last()
+                .cloned()
+                .map(|event| {
+                    encode_cursor(&AuditCursor {
+                        sort: AuditSortCursor {
+                            occurred_at_ms: event.occurred_at_ms,
+                            id: event.id.expect("stored audit event must have id"),
+                        },
+                        scope: AuditCursorScope {
+                            filters: normalized.scope_map(),
+                        },
+                    })
                 })
-            }).transpose()?
+                .transpose()?
         } else {
             None
         };
 
-        Ok(AuditListPage { events: std::mem::take(&mut events), next_cursor })
+        Ok(AuditListPage {
+            events: std::mem::take(&mut events),
+            next_cursor,
+        })
     }
 
     pub async fn purge_older_than(
         &self,
         min_occurred_at_ms: i64,
     ) -> Result<u64> {
-        let ids = self.select_ids_for_purge(
-            "SELECT id FROM audit_events WHERE occurred_at_ms < ? ORDER BY occurred_at_ms ASC, id ASC",
-            Some(min_occurred_at_ms),
-        )
-        .await?;
+        let ids = self
+            .select_ids_for_purge(
+                "SELECT id FROM audit_events WHERE occurred_at_ms < ? ORDER BY occurred_at_ms ASC, id ASC",
+                Some(min_occurred_at_ms),
+            )
+            .await?;
         self.delete_ids(&ids).await
     }
 
@@ -258,8 +269,13 @@ impl AuditStore {
     ) -> Result<Vec<i64>> {
         let query = sqlx::query(sql);
         let query = if let Some(bind) = bind { query.bind(bind) } else { query };
-        let rows = query.fetch_all(&self.pool).await.context("Failed to select audit ids for purge")?;
-        rows.into_iter().map(|row| row.try_get::<i64, _>("id").context("Missing purge id")).collect()
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to select audit ids for purge")?;
+        rows.into_iter()
+            .map(|row| row.try_get::<i64, _>("id").context("Missing purge id"))
+            .collect()
     }
 
     async fn delete_ids(
@@ -270,7 +286,11 @@ impl AuditStore {
             return Ok(0);
         }
 
-        let mut tx = self.pool.begin().await.context("Failed to open audit purge transaction")?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("Failed to open audit purge transaction")?;
         let mut deleted = 0_u64;
         for id in ids {
             deleted += sqlx::query("DELETE FROM audit_events WHERE id = ?")
@@ -305,7 +325,10 @@ impl AuditStore {
         }
     }
 
-    pub async fn set_policy(&self, setting: &AuditRetentionPolicySetting) -> Result<()> {
+    pub async fn set_policy(
+        &self,
+        setting: &AuditRetentionPolicySetting,
+    ) -> Result<()> {
         let policy_str = policy_to_string(&setting.policy);
         let updated_at_ms = chrono::Utc::now().timestamp_millis();
 
@@ -386,7 +409,11 @@ impl TryFrom<AuditEventRow> for AuditEventDto {
             error_message: value.error_message,
             detail: value.detail,
             duration_ms: value.duration_ms.map(|value| value as u64),
-            data: value.data_json.map(|value| serde_json::from_str(&value)).transpose().context("Failed to decode audit data JSON")?,
+            data: value
+                .data_json
+                .map(|value| serde_json::from_str(&value))
+                .transpose()
+                .context("Failed to decode audit data JSON")?,
             task_id: value.task_id,
             related_task_id: value.related_task_id,
             progress_token: value.progress_token,
@@ -399,13 +426,19 @@ fn apply_filter(
     filter: &AuditFilter,
 ) {
     if let Some(category) = filter.category {
-        query.push(" AND category = ").push_bind(to_enum_string(category).expect("serialize category"));
+        query
+            .push(" AND category = ")
+            .push_bind(to_enum_string(category).expect("serialize category"));
     }
     if let Some(action) = filter.action {
-        query.push(" AND action = ").push_bind(to_enum_string(action).expect("serialize action"));
+        query
+            .push(" AND action = ")
+            .push_bind(to_enum_string(action).expect("serialize action"));
     }
     if let Some(status) = filter.status {
-        query.push(" AND status = ").push_bind(to_enum_string(status).expect("serialize status"));
+        query
+            .push(" AND status = ")
+            .push_bind(to_enum_string(status).expect("serialize status"));
     }
     bind_optional_string(query, "actor", filter.actor.clone());
     bind_optional_string(query, "client_id", filter.client_id.clone());
@@ -511,8 +544,8 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    use crate::audit::{AuditAction, AuditCategory, apply_retention_policy};
     use crate::audit::types::{AuditEvent, AuditStatus};
+    use crate::audit::{AuditAction, AuditCategory, apply_retention_policy};
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use tempfile::tempdir;
 
@@ -527,7 +560,11 @@ mod tests {
             .busy_timeout(std::time::Duration::from_millis(5_000))
             .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
             .foreign_keys(true);
-        let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await.expect("connect");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect");
         let store = AuditStore::new(pool);
         store.initialize().await.expect("initialize audit store");
         store
@@ -612,7 +649,10 @@ mod tests {
         let deleted_by_capacity = store.enforce_capacity(2).await.expect("purge capacity");
         assert_eq!(deleted_by_capacity, 1);
 
-        let remaining = store.list(&AuditFilter::default(), None, Some(10)).await.expect("remaining rows");
+        let remaining = store
+            .list(&AuditFilter::default(), None, Some(10))
+            .await
+            .expect("remaining rows");
         assert_eq!(remaining.events.len(), 2);
     }
 
@@ -626,8 +666,8 @@ mod tests {
     #[tokio::test]
     async fn policy_roundtrips_keep_days() {
         let store = setup_store().await;
-        let setting = AuditRetentionPolicySetting::new(AuditRetentionPolicy::KeepDays { days: 7 })
-            .with_sweep_interval(1800);
+        let setting =
+            AuditRetentionPolicySetting::new(AuditRetentionPolicy::KeepDays { days: 7 }).with_sweep_interval(1800);
         store.set_policy(&setting).await.expect("set policy");
 
         let loaded = store.get_policy().await.expect("get policy");
@@ -660,7 +700,9 @@ mod tests {
             store.insert(&event).await.expect("insert");
         }
 
-        let deleted = apply_retention_policy(&store, &AuditRetentionPolicy::Off).await.expect("apply");
+        let deleted = apply_retention_policy(&store, &AuditRetentionPolicy::Off)
+            .await
+            .expect("apply");
         assert_eq!(deleted, 0);
 
         let remaining = store.list(&AuditFilter::default(), None, Some(10)).await.expect("list");

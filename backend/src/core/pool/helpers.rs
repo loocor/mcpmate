@@ -4,11 +4,11 @@
 //! These methods provide convenient access patterns for getting and manipulating
 //! server instances, status queries, and connection state management.
 
+use crate::core::capability::{AffinityKey, ConnectionSelection};
 use crate::core::foundation::types::{
     ConnectionStatus, // status of the connection
     ErrorType,        // type of the error
 };
-use crate::core::capability::{AffinityKey, ConnectionSelection};
 use crate::core::pool::{ProductionRouteKey, UpstreamConnection};
 use anyhow::{Context, Result};
 use std::{collections::HashMap, time::Instant};
@@ -184,14 +184,12 @@ impl super::UpstreamConnectionPool {
     ) -> Result<String> {
         match &selection.affinity_key {
             AffinityKey::Default => self.select_default_instance_id(&selection.server_id),
-            AffinityKey::PerClient(client_id) => {
-                self.select_affinity_bound_instance_id(&selection.server_id, client_id)
-                    .or_else(|_| self.select_default_instance_id(&selection.server_id))
-            }
-            AffinityKey::PerSession(session_id) => {
-                self.select_affinity_bound_instance_id(&selection.server_id, session_id)
-                    .or_else(|_| self.select_default_instance_id(&selection.server_id))
-            }
+            AffinityKey::PerClient(client_id) => self
+                .select_affinity_bound_instance_id(&selection.server_id, client_id)
+                .or_else(|_| self.select_default_instance_id(&selection.server_id)),
+            AffinityKey::PerSession(session_id) => self
+                .select_affinity_bound_instance_id(&selection.server_id, session_id)
+                .or_else(|_| self.select_default_instance_id(&selection.server_id)),
         }
     }
 
@@ -205,20 +203,14 @@ impl super::UpstreamConnectionPool {
         match &selection.affinity_key {
             AffinityKey::Default => self.select_ready_default_instance_id(&selection.server_id),
             AffinityKey::PerClient(client_id) => {
-                let affinity_result = self.select_ready_affinity_bound_instance_id(
-                    &selection.server_id,
-                    client_id,
-                )?;
+                let affinity_result = self.select_ready_affinity_bound_instance_id(&selection.server_id, client_id)?;
                 if affinity_result.is_some() {
                     return Ok(affinity_result);
                 }
                 self.select_ready_default_instance_id(&selection.server_id)
             }
             AffinityKey::PerSession(session_id) => {
-                let affinity_result = self.select_ready_affinity_bound_instance_id(
-                    &selection.server_id,
-                    session_id,
-                )?;
+                let affinity_result = self.select_ready_affinity_bound_instance_id(&selection.server_id, session_id)?;
                 if affinity_result.is_some() {
                     return Ok(affinity_result);
                 }
@@ -237,10 +229,7 @@ impl super::UpstreamConnectionPool {
         &self,
         selection: &ConnectionSelection,
     ) -> Option<String> {
-        let route_key = ProductionRouteKey::new(
-            selection.server_id.clone(),
-            selection.affinity_key.clone(),
-        );
+        let route_key = ProductionRouteKey::new(selection.server_id.clone(), selection.affinity_key.clone());
         self.production_routes.get(&route_key).cloned()
     }
 
@@ -253,23 +242,25 @@ impl super::UpstreamConnectionPool {
         selection: &ConnectionSelection,
     ) -> String {
         let instance_id = super::UpstreamConnection::new(selection.server_id.clone()).id;
-        let route_key = ProductionRouteKey::new(
-            selection.server_id.clone(),
-            selection.affinity_key.clone(),
-        );
+        let route_key = ProductionRouteKey::new(selection.server_id.clone(), selection.affinity_key.clone());
 
         match &selection.affinity_key {
             AffinityKey::Default => {
-                let instances = self.connections
-                    .entry(selection.server_id.clone())
-                    .or_default();
-                instances.insert(instance_id.clone(), super::UpstreamConnection::new(selection.server_id.clone()));
+                let instances = self.connections.entry(selection.server_id.clone()).or_default();
+                instances.insert(
+                    instance_id.clone(),
+                    super::UpstreamConnection::new(selection.server_id.clone()),
+                );
             }
             AffinityKey::PerClient(bound_id) | AffinityKey::PerSession(bound_id) => {
-                let bound_instances = self.client_bound_connections
+                let bound_instances = self
+                    .client_bound_connections
                     .entry((selection.server_id.clone(), bound_id.clone()))
                     .or_default();
-                bound_instances.insert(instance_id.clone(), super::UpstreamConnection::new(selection.server_id.clone()));
+                bound_instances.insert(
+                    instance_id.clone(),
+                    super::UpstreamConnection::new(selection.server_id.clone()),
+                );
             }
         }
 
@@ -278,13 +269,21 @@ impl super::UpstreamConnectionPool {
     }
 
     /// Select instance ID from shared (default) connections.
-    fn select_default_instance_id(&self, server_id: &str) -> Result<String> {
+    fn select_default_instance_id(
+        &self,
+        server_id: &str,
+    ) -> Result<String> {
         self.get_default_instance_id(server_id)
     }
 
     /// Select instance ID from affinity-bound connections.
-    fn select_affinity_bound_instance_id(&self, server_id: &str, bound_id: &str) -> Result<String> {
-        let bound_instances = self.client_bound_connections
+    fn select_affinity_bound_instance_id(
+        &self,
+        server_id: &str,
+        bound_id: &str,
+    ) -> Result<String> {
+        let bound_instances = self
+            .client_bound_connections
             .get(&(server_id.to_string(), bound_id.to_string()))
             .context(format!(
                 "No affinity-bound instances for server '{}' bound to '{}'",
@@ -310,7 +309,10 @@ impl super::UpstreamConnectionPool {
     }
 
     /// Select a ready instance from shared (default) connections.
-    fn select_ready_default_instance_id(&self, server_id: &str) -> Result<Option<String>> {
+    fn select_ready_default_instance_id(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<String>> {
         let instances = self.connections.get(server_id);
         if let Some(instances) = instances {
             for (instance_id, conn) in instances {
@@ -323,8 +325,15 @@ impl super::UpstreamConnectionPool {
     }
 
     /// Select a ready instance from affinity-bound connections.
-    fn select_ready_affinity_bound_instance_id(&self, server_id: &str, bound_id: &str) -> Result<Option<String>> {
-        if let Some(bound_instances) = self.client_bound_connections.get(&(server_id.to_string(), bound_id.to_string())) {
+    fn select_ready_affinity_bound_instance_id(
+        &self,
+        server_id: &str,
+        bound_id: &str,
+    ) -> Result<Option<String>> {
+        if let Some(bound_instances) = self
+            .client_bound_connections
+            .get(&(server_id.to_string(), bound_id.to_string()))
+        {
             for (instance_id, conn) in bound_instances {
                 if conn.is_connected() && conn.service.is_some() {
                     return Ok(Some(instance_id.clone()));
@@ -335,7 +344,11 @@ impl super::UpstreamConnectionPool {
     }
 
     /// Check if an affinity-bound connection exists for the given server and bound ID.
-    pub fn has_affinity_bound_connection(&self, server_id: &str, bound_id: &str) -> bool {
+    pub fn has_affinity_bound_connection(
+        &self,
+        server_id: &str,
+        bound_id: &str,
+    ) -> bool {
         self.client_bound_connections
             .get(&(server_id.to_string(), bound_id.to_string()))
             .map(|instances| !instances.is_empty())
@@ -343,7 +356,11 @@ impl super::UpstreamConnectionPool {
     }
 
     /// Get affinity-bound connection count for a server and bound ID.
-    pub fn affinity_bound_connection_count(&self, server_id: &str, bound_id: &str) -> usize {
+    pub fn affinity_bound_connection_count(
+        &self,
+        server_id: &str,
+        bound_id: &str,
+    ) -> usize {
         self.client_bound_connections
             .get(&(server_id.to_string(), bound_id.to_string()))
             .map(|instances| instances.len())
@@ -588,14 +605,20 @@ impl super::UpstreamConnectionPool {
     }
 
     /// Remove all production routes pointing to a specific instance.
-    pub fn remove_production_routes_for_instance(&mut self, server_id: &str, instance_id: &str) {
-        self.production_routes.retain(|key, &mut ref id| {
-            key.server_id != server_id || id != instance_id
-        });
+    pub fn remove_production_routes_for_instance(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) {
+        self.production_routes
+            .retain(|key, &mut ref id| key.server_id != server_id || id != instance_id);
     }
 
     /// Remove all production routes for a server (regardless of instance).
-    pub fn remove_all_production_routes_for_server(&mut self, server_id: &str) {
+    pub fn remove_all_production_routes_for_server(
+        &mut self,
+        server_id: &str,
+    ) {
         self.production_routes.retain(|key, _| key.server_id != server_id);
     }
 
@@ -606,21 +629,31 @@ impl super::UpstreamConnectionPool {
         bound_id: &str,
         instance_id: &str,
     ) {
-        if let Some(instances) = self.client_bound_connections.get_mut(&(server_id.to_string(), bound_id.to_string())) {
+        if let Some(instances) = self
+            .client_bound_connections
+            .get_mut(&(server_id.to_string(), bound_id.to_string()))
+        {
             instances.remove(instance_id);
             if instances.is_empty() {
-                self.client_bound_connections.remove(&(server_id.to_string(), bound_id.to_string()));
+                self.client_bound_connections
+                    .remove(&(server_id.to_string(), bound_id.to_string()));
             }
         }
     }
 
     /// Remove all client-bound connections for a server (all bound IDs).
-    pub fn remove_all_client_bound_connections_for_server(&mut self, server_id: &str) {
+    pub fn remove_all_client_bound_connections_for_server(
+        &mut self,
+        server_id: &str,
+    ) {
         self.client_bound_connections.retain(|(sid, _), _| sid != server_id);
     }
 
     /// Get all bound IDs (client_id or session_id) for a server.
-    pub fn get_bound_ids_for_server(&self, server_id: &str) -> Vec<String> {
+    pub fn get_bound_ids_for_server(
+        &self,
+        server_id: &str,
+    ) -> Vec<String> {
         self.client_bound_connections
             .keys()
             .filter(|(sid, _)| sid == server_id)
@@ -629,7 +662,11 @@ impl super::UpstreamConnectionPool {
     }
 
     /// Clean up all affinity-related entries for a disconnected instance.
-    pub fn cleanup_disconnected_instance(&mut self, server_id: &str, instance_id: &str) {
+    pub fn cleanup_disconnected_instance(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) {
         self.remove_production_routes_for_instance(server_id, instance_id);
         let bound_ids: Vec<String> = self.get_bound_ids_for_server(server_id);
         for bound_id in bound_ids {
@@ -683,7 +720,8 @@ mod tests {
 
         // Set up a production route
         let route_key = ProductionRouteKey::shareable(server_id);
-        pool.production_routes.insert(route_key.clone(), instance_id.to_string());
+        pool.production_routes
+            .insert(route_key.clone(), instance_id.to_string());
 
         // Verify route exists
         assert_eq!(pool.production_routes.get(&route_key), Some(&instance_id.to_string()));
@@ -714,10 +752,7 @@ mod tests {
 
         // Verify client-bound instance exists
         assert!(pool.client_bound_connections.contains_key(&bound_key));
-        assert_eq!(
-            pool.client_bound_connections.get(&bound_key).unwrap().len(),
-            1
-        );
+        assert_eq!(pool.client_bound_connections.get(&bound_key).unwrap().len(), 1);
 
         // Clean up
         pool.cleanup_disconnected_instance(server_id, instance_id);
@@ -773,10 +808,7 @@ mod tests {
         // Server A route should be removed
         assert!(!pool.production_routes.contains_key(&route_a));
         // Server B route should remain
-        assert_eq!(
-            pool.production_routes.get(&route_b),
-            Some(&instance_b.to_string())
-        );
+        assert_eq!(pool.production_routes.get(&route_b), Some(&instance_b.to_string()));
     }
 
     #[tokio::test]

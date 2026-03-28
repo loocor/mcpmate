@@ -30,7 +30,10 @@ pub struct ProductionRouteKey {
 }
 
 impl ProductionRouteKey {
-    pub fn new(server_id: impl Into<String>, affinity_key: crate::core::capability::AffinityKey) -> Self {
+    pub fn new(
+        server_id: impl Into<String>,
+        affinity_key: crate::core::capability::AffinityKey,
+    ) -> Self {
         Self {
             server_id: server_id.into(),
             affinity_key,
@@ -43,13 +46,25 @@ impl ProductionRouteKey {
     }
 
     /// Create a route key for per-client affinity.
-    pub fn per_client(server_id: impl Into<String>, client_id: impl Into<String>) -> Self {
-        Self::new(server_id, crate::core::capability::AffinityKey::PerClient(client_id.into()))
+    pub fn per_client(
+        server_id: impl Into<String>,
+        client_id: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            server_id,
+            crate::core::capability::AffinityKey::PerClient(client_id.into()),
+        )
     }
 
     /// Create a route key for per-session affinity.
-    pub fn per_session(server_id: impl Into<String>, session_id: impl Into<String>) -> Self {
-        Self::new(server_id, crate::core::capability::AffinityKey::PerSession(session_id.into()))
+    pub fn per_session(
+        server_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            server_id,
+            crate::core::capability::AffinityKey::PerSession(session_id.into()),
+        )
     }
 }
 

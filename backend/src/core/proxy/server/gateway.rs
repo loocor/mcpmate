@@ -8,7 +8,6 @@ use crate::{
 };
 use anyhow::Context;
 use once_cell::sync::OnceCell;
-use serde_json::{Map, Value};
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, InitializeRequestParams,
     ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParams,
@@ -16,6 +15,7 @@ use rmcp::model::{
     UnsubscribeRequestParams,
 };
 use rmcp::{ServerHandler, service::RequestContext};
+use serde_json::{Map, Value};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -781,17 +781,19 @@ impl ProxyServer {
         data.insert("session_id".to_string(), Value::String(route.session_id.clone()));
         data.insert(
             "level".to_string(),
-            Value::String(match param.level {
-                rmcp::model::LoggingLevel::Debug => "debug",
-                rmcp::model::LoggingLevel::Info => "info",
-                rmcp::model::LoggingLevel::Notice => "notice",
-                rmcp::model::LoggingLevel::Warning => "warning",
-                rmcp::model::LoggingLevel::Error => "error",
-                rmcp::model::LoggingLevel::Critical => "critical",
-                rmcp::model::LoggingLevel::Alert => "alert",
-                rmcp::model::LoggingLevel::Emergency => "emergency",
-            }
-            .to_string()),
+            Value::String(
+                match param.level {
+                    rmcp::model::LoggingLevel::Debug => "debug",
+                    rmcp::model::LoggingLevel::Info => "info",
+                    rmcp::model::LoggingLevel::Notice => "notice",
+                    rmcp::model::LoggingLevel::Warning => "warning",
+                    rmcp::model::LoggingLevel::Error => "error",
+                    rmcp::model::LoggingLevel::Critical => "critical",
+                    rmcp::model::LoggingLevel::Alert => "alert",
+                    rmcp::model::LoggingLevel::Emergency => "emergency",
+                }
+                .to_string(),
+            ),
         );
         if let Some(logger) = param.logger.clone() {
             data.insert("logger".to_string(), Value::String(logger.to_string()));
@@ -864,8 +866,14 @@ impl ServerHandler for ProxyServer {
         }
 
         let mut data = Map::new();
-        data.insert("client_name".to_string(), Value::String(request.client_info.name.clone()));
-        data.insert("client_version".to_string(), Value::String(request.client_info.version.clone()));
+        data.insert(
+            "client_name".to_string(),
+            Value::String(request.client_info.name.clone()),
+        );
+        data.insert(
+            "client_version".to_string(),
+            Value::String(request.client_info.version.clone()),
+        );
         data.insert(
             "has_sampling".to_string(),
             Value::Bool(request.capabilities.sampling.is_some()),

@@ -108,7 +108,11 @@ mod tests {
             .busy_timeout(Duration::from_millis(5_000))
             .synchronous(SqliteSynchronous::Normal)
             .foreign_keys(true);
-        let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await.expect("connect");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect");
         let store = Arc::new(AuditStore::new(pool));
         AuditService::new(store).await.expect("audit service")
     }
@@ -129,7 +133,10 @@ mod tests {
             .expect("receive event");
         assert_eq!(received.action, AuditAction::ToolsCall);
 
-        let stored = service.list(&AuditFilter::default(), None, Some(10)).await.expect("list events");
+        let stored = service
+            .list(&AuditFilter::default(), None, Some(10))
+            .await
+            .expect("list events");
         assert_eq!(stored.events.len(), 1);
     }
 }

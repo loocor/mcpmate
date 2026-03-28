@@ -18,6 +18,7 @@ pub mod models;
 pub mod pool;
 pub mod profile;
 pub mod proxy;
+pub mod token_estimate;
 pub mod transport;
 
 pub use ai::{AiConfig, TextMcpExtractor, default_model_path, extract_mcp_config};

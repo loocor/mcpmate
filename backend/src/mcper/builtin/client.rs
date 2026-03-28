@@ -67,8 +67,7 @@ impl ClientService {
         };
 
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-            serde_json::to_string_pretty(&result)
-                .context("Failed to serialize client configuration response")?,
+            serde_json::to_string_pretty(&result).context("Failed to serialize client configuration response")?,
         )]))
     }
 
@@ -119,8 +118,7 @@ impl ClientService {
         summaries.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
 
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-            serde_json::to_string_pretty(&summaries)
-                .context("Failed to serialize profiles response")?,
+            serde_json::to_string_pretty(&summaries).context("Failed to serialize profiles response")?,
         )]))
     }
 
@@ -138,11 +136,7 @@ impl ClientService {
 
         let config = self
             .client_config_service
-            .update_capability_config_and_invalidate(
-                &context.client_id,
-                CapabilitySource::Profiles,
-                profile_ids,
-            )
+            .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, profile_ids)
             .await
             .map_err(|error| anyhow!(error.to_string()))?;
 
@@ -194,8 +188,7 @@ impl ClientService {
         };
 
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-            serde_json::to_string_pretty(&details)
-                .context("Failed to serialize custom profile details")?,
+            serde_json::to_string_pretty(&details).context("Failed to serialize custom profile details")?,
         )]))
     }
 }
@@ -210,7 +203,7 @@ impl BuiltinService for ClientService {
         vec![
             Tool::new(
                 "mcpmate_client_configuration_get",
-                "Get the current client's capability configuration (capability source, selected profiles, custom profile ID). Available for clients using 'profiles' or 'custom' capability source.",
+                "Get client capability config: source, selected profiles, custom profile ID (profiles/custom modes)",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -224,7 +217,7 @@ impl BuiltinService for ClientService {
             ),
             Tool::new(
                 "mcpmate_client_profiles_list",
-                "List available shared profiles for selection. Only available for clients using 'profiles' capability source.",
+                "List shared profiles for selection (profiles mode only)",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -238,7 +231,7 @@ impl BuiltinService for ClientService {
             ),
             Tool::new(
                 "mcpmate_client_profiles_select",
-                "Select shared profiles for the current client. Only available for clients using 'profiles' capability source. This updates the client's selected_profile_ids and invalidates the visibility cache.",
+                "Select profiles for client. Updates selection and refreshes visibility (profiles mode)",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -246,7 +239,7 @@ impl BuiltinService for ClientService {
                             "profile_ids": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "List of shared profile IDs to select for this client"
+                                "description": "Profile IDs to select"
                             }
                         },
                         "required": ["profile_ids"]
@@ -258,7 +251,7 @@ impl BuiltinService for ClientService {
             ),
             Tool::new(
                 "mcpmate_client_custom_profile_details",
-                "Get details of the client's custom profile. Only available for clients using 'custom' capability source. Returns servers, tools, prompts, and resources configured in the custom profile.",
+                "Get custom profile details: servers, tools, prompts, resources (custom mode only)",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -281,12 +274,10 @@ impl BuiltinService for ClientService {
             "mcpmate_client_configuration_get"
             | "mcpmate_client_profiles_list"
             | "mcpmate_client_profiles_select"
-            | "mcpmate_client_custom_profile_details" => {
-                Err(anyhow!(
-                    "Client-aware tool '{}' requires client context. Use call_tool_with_context instead.",
-                    request.name
-                ))
-            }
+            | "mcpmate_client_custom_profile_details" => Err(anyhow!(
+                "Client-aware tool '{}' requires client context. Use call_tool_with_context instead.",
+                request.name
+            )),
             _ => Err(anyhow!("Unknown tool: {}", request.name)),
         }
     }
@@ -298,7 +289,8 @@ impl BuiltinService for ClientService {
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
             "mcpmate_client_configuration_get" => {
-                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_client_configuration_get"))?;
+                let ctx =
+                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_client_configuration_get"))?;
                 self.client_configuration_get(ctx).await
             }
             "mcpmate_client_profiles_list" => {
@@ -306,14 +298,16 @@ impl BuiltinService for ClientService {
                 self.client_profiles_list(ctx).await
             }
             "mcpmate_client_profiles_select" => {
-                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_client_profiles_select"))?;
+                let ctx =
+                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_client_profiles_select"))?;
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
                 let params: ProfilesSelectParams =
                     serde_json::from_value(args).context("Invalid parameters for profiles_select")?;
                 self.client_profiles_select(ctx, params.profile_ids).await
             }
             "mcpmate_client_custom_profile_details" => {
-                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_client_custom_profile_details"))?;
+                let ctx = context
+                    .ok_or_else(|| anyhow!("Client context required for mcpmate_client_custom_profile_details"))?;
                 self.client_custom_profile_details(ctx).await
             }
             _ => Err(anyhow!("Unknown tool: {}", request.name)),

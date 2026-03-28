@@ -4,16 +4,21 @@
 // Re-export all public functions from submodules
 pub use self::{
     capabilities::{component_manage, prompts_list, resource_templates_list, resources_list, tools_list},
+    capability_token_ledger::capability_token_ledger,
     helpers::{get_profile_or_error, get_tool_or_error, get_tool_with_details_or_error},
     mgmt::{profile_create, profile_delete, profile_details, profile_list, profile_manage, profile_update},
     server::{server_manage, servers_list},
+    token_estimate::token_estimate,
 };
 
 // Submodules
 mod capabilities;
+mod capability_token_ledger;
 pub mod helpers;
 mod mgmt;
 mod server;
+mod token_estimate;
+mod unified_capability_query;
 
 // Common imports for all submodules
 pub(crate) mod common {

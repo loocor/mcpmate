@@ -249,12 +249,20 @@ mod tests {
                 .await
                 .expect("sqlite pool"),
         );
-        initialize_server_tables(pool.as_ref()).await.expect("init server tables");
-        initialize_profile_tables(pool.as_ref()).await.expect("init profile tables");
+        initialize_server_tables(pool.as_ref())
+            .await
+            .expect("init server tables");
+        initialize_profile_tables(pool.as_ref())
+            .await
+            .expect("init profile tables");
         initialize_client_table(pool.as_ref()).await.expect("init client table");
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
-        let source = Arc::new(FileTemplateSource::bootstrap(template_root).await.expect("template source"));
+        let source = Arc::new(
+            FileTemplateSource::bootstrap(template_root)
+                .await
+                .expect("template source"),
+        );
         let service = ClientConfigService::with_source(pool, source)
             .await
             .expect("client config service");
@@ -336,9 +344,11 @@ mod tests {
             .await
             .expect_err("empty profiles selection should fail");
 
-        assert!(error
-            .to_string()
-            .contains("profiles capability source requires at least one selected profile"));
+        assert!(
+            error
+                .to_string()
+                .contains("profiles capability source requires at least one selected profile")
+        );
     }
 
     #[tokio::test]

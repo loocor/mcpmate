@@ -262,9 +262,8 @@ impl ClientCapabilityConfig {
             .unwrap_or_default();
 
         let selected_profile_ids = if let Some(raw) = selected_profile_ids_json {
-            serde_json::from_str::<Vec<String>>(raw).map_err(|err| {
-                format!("invalid selected_profile_ids payload '{}': {}", raw, err)
-            })?
+            serde_json::from_str::<Vec<String>>(raw)
+                .map_err(|err| format!("invalid selected_profile_ids payload '{}': {}", raw, err))?
         } else {
             Vec::new()
         };

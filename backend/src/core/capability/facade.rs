@@ -86,5 +86,13 @@ pub async fn get_upstream_prompt(
     target_server_id: Option<&str>,
     connection_selection: Option<&crate::core::capability::ConnectionSelection>,
 ) -> anyhow::Result<rmcp::model::GetPromptResult> {
-    prompts::get_upstream_prompt(connection_pool, mapping, name, arguments, target_server_id, connection_selection).await
+    prompts::get_upstream_prompt(
+        connection_pool,
+        mapping,
+        name,
+        arguments,
+        target_server_id,
+        connection_selection,
+    )
+    .await
 }

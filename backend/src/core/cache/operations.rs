@@ -33,7 +33,11 @@ impl<'a> CacheOperations<'a> {
         server_data: &CachedServerData,
     ) -> Result<(), CacheError> {
         let write_txn = self.db.begin_write()?;
-        let cache_key = self.generate_cache_key(&server_data.server_id, &server_data.instance_type(), server_data.scope());
+        let cache_key = self.generate_cache_key(
+            &server_data.server_id,
+            &server_data.instance_type(),
+            server_data.scope(),
+        );
 
         {
             // Store main server data using composite key (server_id + instance_type)

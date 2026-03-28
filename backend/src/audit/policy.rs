@@ -113,7 +113,10 @@ impl AuditRetentionPolicySetting {
     }
 
     /// Creates a policy setting with a custom sweep interval.
-    pub fn with_sweep_interval(mut self, secs: u64) -> Self {
+    pub fn with_sweep_interval(
+        mut self,
+        secs: u64,
+    ) -> Self {
         self.sweep_interval_secs = secs;
         self
     }
@@ -134,7 +137,7 @@ pub async fn run_retention_worker(
     }
 
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(policy.sweep_interval_secs));
-    
+
     tracing::info!(
         policy = ?policy.policy,
         sweep_interval_secs = policy.sweep_interval_secs,
@@ -171,9 +174,8 @@ pub async fn apply_retention_policy(
 
     // Apply age-based retention first
     if let Some(days) = policy.max_age_days() {
-        let cutoff_ms = chrono::Utc::now().timestamp_millis()
-            - (days as i64 * 24 * 60 * 60 * 1000);
-        
+        let cutoff_ms = chrono::Utc::now().timestamp_millis() - (days as i64 * 24 * 60 * 60 * 1000);
+
         let deleted = store.purge_older_than(cutoff_ms).await?;
         if deleted > 0 {
             tracing::info!(
@@ -259,8 +261,7 @@ mod tests {
 
     #[test]
     fn setting_with_sweep_interval_customizes() {
-        let setting = AuditRetentionPolicySetting::new(AuditRetentionPolicy::Off)
-            .with_sweep_interval(7200);
+        let setting = AuditRetentionPolicySetting::new(AuditRetentionPolicy::Off).with_sweep_interval(7200);
         assert_eq!(setting.sweep_interval_secs, 7200);
     }
 
@@ -269,7 +270,7 @@ mod tests {
         let policy = AuditRetentionPolicy::Combined { days: 30, count: 10000 };
         let json = serde_json::to_string(&policy).unwrap();
         assert!(json.contains("combined"));
-        
+
         let parsed: AuditRetentionPolicy = serde_json::from_str(&json).unwrap();
         assert_eq!(policy, parsed);
     }
@@ -281,7 +282,7 @@ mod tests {
             sweep_interval_secs: 1800,
         };
         let json = serde_json::to_string(&setting).unwrap();
-        
+
         let parsed: AuditRetentionPolicySetting = serde_json::from_str(&json).unwrap();
         assert_eq!(setting.policy, parsed.policy);
         assert_eq!(setting.sweep_interval_secs, parsed.sweep_interval_secs);

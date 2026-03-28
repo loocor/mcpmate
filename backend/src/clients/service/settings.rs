@@ -309,9 +309,9 @@ impl ClientConfigService {
                 )));
             }
 
-            return profile.id.ok_or_else(|| {
-                ConfigError::DataAccessError(format!("Profile '{}' is missing an id", profile_name))
-            });
+            return profile
+                .id
+                .ok_or_else(|| ConfigError::DataAccessError(format!("Profile '{}' is missing an id", profile_name)));
         }
 
         let profile = Profile {

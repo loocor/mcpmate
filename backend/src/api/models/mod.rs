@@ -10,6 +10,7 @@ pub mod resp;
 pub mod runtime;
 pub mod server;
 pub mod system;
+pub mod token_estimate;
 
 // Re-export commonly used types for convenience
 pub use resp::{ErrorDetails, ErrorResp, ResponseConverter, SuccessResp};

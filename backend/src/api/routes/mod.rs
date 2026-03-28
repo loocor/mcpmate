@@ -207,10 +207,7 @@ async fn create_router_internal(
             "/inspector/events",
             get(crate::api::handlers::inspector::tool_call_events_ws),
         )
-        .route(
-            "/audit/events",
-            get(crate::api::handlers::audit::audit_events_ws),
-        )
+        .route("/audit/events", get(crate::api::handlers::audit::audit_events_ws))
         .with_state(state.clone());
 
     Router::new()

@@ -927,9 +927,18 @@ mod tests {
 
         // Regression test: managed URL must NOT be HTML-escaped
         // Handlebars {{url}} would escape '=' to '&#x3D;' breaking client_id query param
-        assert!(!rendered_url.contains("&#x3D;"), "URL must not contain HTML-escaped equals sign");
-        assert!(!rendered_url.contains("&#x26;"), "URL must not contain HTML-escaped ampersand");
-        assert!(rendered_url.contains("client_id=test-client"), "URL must contain literal client_id param");
+        assert!(
+            !rendered_url.contains("&#x3D;"),
+            "URL must not contain HTML-escaped equals sign"
+        );
+        assert!(
+            !rendered_url.contains("&#x26;"),
+            "URL must not contain HTML-escaped ampersand"
+        );
+        assert!(
+            rendered_url.contains("client_id=test-client"),
+            "URL must contain literal client_id param"
+        );
     }
 
     #[test]
@@ -948,8 +957,14 @@ mod tests {
             .expect("managed server")
             .expect("streamable http server");
 
-        assert_eq!(managed.headers.get("x-mcpmate-client-id").map(String::as_str), Some("test-client"));
-        assert_eq!(managed.headers.get("x-mcpmate-profile-id").map(String::as_str), Some("profile-123"));
+        assert_eq!(
+            managed.headers.get("x-mcpmate-client-id").map(String::as_str),
+            Some("test-client")
+        );
+        assert_eq!(
+            managed.headers.get("x-mcpmate-profile-id").map(String::as_str),
+            Some("profile-123")
+        );
         let url = managed.url.expect("managed url");
         assert!(url.contains("client_id=test-client"));
         assert!(url.contains("profile_id=profile-123"));

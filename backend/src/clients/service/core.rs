@@ -71,7 +71,6 @@ impl ClientStateRow {
         )
         .map_err(ConfigError::DataAccessError)
     }
-
 }
 
 /// Summarized view of a client template combined with detection and filesystem state

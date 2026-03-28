@@ -434,10 +434,12 @@ pub async fn read_upstream_resource(
                     affinity_key: selection.affinity_key.clone(),
                     routing_fingerprint: selection.routing_fingerprint.clone(),
                 };
-                pool.ensure_connected_with_selection(&scoped_selection).await.context(format!(
-                    "Failed to ensure scoped connection for server '{}' (resource '{}')",
-                    server_id, uri
-                ))?;
+                pool.ensure_connected_with_selection(&scoped_selection)
+                    .await
+                    .context(format!(
+                        "Failed to ensure scoped connection for server '{}' (resource '{}')",
+                        server_id, uri
+                    ))?;
                 let iid = pool.select_instance_id(&scoped_selection).map_err(|e| {
                     anyhow::anyhow!("Failed to select scoped instance for server '{}': {}", server_id, e)
                 })?;

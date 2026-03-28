@@ -53,11 +53,13 @@ pub struct ClientContext {
 
 impl ClientContext {
     pub fn runtime_identity(&self) -> Option<crate::core::capability::RuntimeIdentity> {
-        self.rules_fingerprint.clone().map(|rules_fingerprint| crate::core::capability::RuntimeIdentity {
-            client_id: self.client_id.clone(),
-            profile_id: self.profile_id.clone(),
-            rules_fingerprint,
-        })
+        self.rules_fingerprint
+            .clone()
+            .map(|rules_fingerprint| crate::core::capability::RuntimeIdentity {
+                client_id: self.client_id.clone(),
+                profile_id: self.profile_id.clone(),
+                rules_fingerprint,
+            })
     }
 
     pub fn connection_mode(&self) -> crate::core::capability::ConnectionMode {
@@ -77,11 +79,12 @@ impl ClientContext {
         &self,
         server_id: impl Into<String>,
     ) -> Option<crate::core::capability::ConnectionSelection> {
-        self.runtime_identity().map(|identity| crate::core::capability::ConnectionSelection {
-            server_id: server_id.into(),
-            affinity_key: self.connection_mode().affinity_key,
-            routing_fingerprint: Some(identity.rules_fingerprint),
-        })
+        self.runtime_identity()
+            .map(|identity| crate::core::capability::ConnectionSelection {
+                server_id: server_id.into(),
+                affinity_key: self.connection_mode().affinity_key,
+                routing_fingerprint: Some(identity.rules_fingerprint),
+            })
     }
 }
 
@@ -177,10 +180,8 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
         request: &InitializeRequestParams,
         context: &RequestContext<RoleServer>,
     ) -> Result<ClientContext> {
-        let client_context = resolve_initialize_context_parts(
-            context.extensions.get::<axum::http::request::Parts>(),
-            request,
-        )?;
+        let client_context =
+            resolve_initialize_context_parts(context.extensions.get::<axum::http::request::Parts>(), request)?;
 
         if let Some(observed) = client_context.observed_client_info.clone() {
             self.observed_clients.insert(client_context.client_id.clone(), observed);
@@ -201,10 +202,11 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
         session_id: &str,
         client_context: &ClientContext,
     ) -> Result<()> {
-        let observed_client_info = client_context
-            .observed_client_info
-            .clone()
-            .or_else(|| self.observed_clients.get(&client_context.client_id).map(|entry| entry.clone()));
+        let observed_client_info = client_context.observed_client_info.clone().or_else(|| {
+            self.observed_clients
+                .get(&client_context.client_id)
+                .map(|entry| entry.clone())
+        });
 
         if let Some(existing) = self.session_bindings.get(session_id) {
             if existing.client_id != client_context.client_id {
@@ -273,9 +275,8 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
             return Ok(bound);
         }
 
-        let session_id = extract_session_id(parts).ok_or_else(|| {
-            anyhow!("Managed downstream session is required before request context resolution")
-        })?;
+        let session_id = extract_session_id(parts)
+            .ok_or_else(|| anyhow!("Managed downstream session is required before request context resolution"))?;
         let peer_key = peer_context_key(context)?;
         let pending_client_context = self
             .pending_initializations
@@ -360,10 +361,13 @@ fn resolve_pending_session_context_parts(
     parts: &axum::http::request::Parts,
     initialize_context: &ClientContext,
 ) -> Result<ClientContext> {
-    let session_id = extract_session_id(parts).ok_or_else(|| {
-        anyhow!("Managed downstream session is required before request context resolution")
-    })?;
-    validate_request_identity_matches_context(parts, &initialize_context.client_id, initialize_context.profile_id.as_deref())?;
+    let session_id = extract_session_id(parts)
+        .ok_or_else(|| anyhow!("Managed downstream session is required before request context resolution"))?;
+    validate_request_identity_matches_context(
+        parts,
+        &initialize_context.client_id,
+        initialize_context.profile_id.as_deref(),
+    )?;
 
     Ok(ClientContext {
         client_id: initialize_context.client_id.clone(),
@@ -419,7 +423,8 @@ fn resolve_managed_context(
     parts: Option<&axum::http::request::Parts>,
     initialize: Option<&InitializeRequestParams>,
 ) -> Result<ClientContext> {
-    let parts = parts.ok_or_else(|| anyhow!("Managed downstream requests require MCPMate-managed HTTP side-band metadata"))?;
+    let parts =
+        parts.ok_or_else(|| anyhow!("Managed downstream requests require MCPMate-managed HTTP side-band metadata"))?;
     let session_id = extract_session_id(parts);
     let profile_id = resolve_managed_profile_id(parts)?;
     let observed_client_info = initialize.map(observe_client_info);
@@ -447,13 +452,12 @@ fn resolve_managed_context(
 }
 
 fn resolve_managed_client_id(parts: &axum::http::request::Parts) -> Result<(String, ClientIdentitySource)> {
-    resolve_optional_managed_client_id(parts)?.ok_or_else(|| {
-        anyhow!("Managed client_id side-band is required; clientInfo is observation-only")
-    })
+    resolve_optional_managed_client_id(parts)?
+        .ok_or_else(|| anyhow!("Managed client_id side-band is required; clientInfo is observation-only"))
 }
 
 fn resolve_optional_managed_client_id(
-    parts: &axum::http::request::Parts,
+    parts: &axum::http::request::Parts
 ) -> Result<Option<(String, ClientIdentitySource)>> {
     let query_client_id = extract_query_client_id(parts);
     let header_client_id = extract_header_client_id(parts);
@@ -708,7 +712,12 @@ mod tests {
 
     #[test]
     fn resolves_query_client_id_first() {
-        let parts = build_parts("/mcp?client_id=claude-desktop&profile_id=profile-a", Some("sess-123"), None, None);
+        let parts = build_parts(
+            "/mcp?client_id=claude-desktop&profile_id=profile-a",
+            Some("sess-123"),
+            None,
+            None,
+        );
         let initialize = build_initialize("curl");
 
         let context = resolve_initialize_context_parts(Some(&parts), &initialize).expect("managed context");
@@ -718,7 +727,10 @@ mod tests {
         assert_eq!(context.profile_id.as_deref(), Some("profile-a"));
         assert_eq!(context.source, ClientIdentitySource::ManagedQuery);
         assert_eq!(context.transport, ClientTransport::StreamableHttp);
-        assert_eq!(context.observed_client_info.as_ref().map(|info| info.name.as_str()), Some("curl"));
+        assert_eq!(
+            context.observed_client_info.as_ref().map(|info| info.name.as_str()),
+            Some("curl")
+        );
     }
 
     #[test]
@@ -738,7 +750,8 @@ mod tests {
         let parts = build_parts("/mcp", None, None, None);
         let initialize = build_initialize("custom-client");
 
-        let err = resolve_initialize_context_parts(Some(&parts), &initialize).expect_err("missing client id should fail");
+        let err =
+            resolve_initialize_context_parts(Some(&parts), &initialize).expect_err("missing client id should fail");
         assert!(err.to_string().contains("Managed client_id side-band is required"));
     }
 
@@ -780,7 +793,10 @@ mod tests {
         assert_eq!(context.profile_id.as_deref(), Some("profile-a"));
         assert_eq!(context.rules_fingerprint.as_deref(), Some("fp-123"));
         assert_eq!(context.source, ClientIdentitySource::SessionBinding);
-        assert_eq!(context.observed_client_info.as_ref().map(|info| info.name.as_str()), Some("bridge"));
+        assert_eq!(
+            context.observed_client_info.as_ref().map(|info| info.name.as_str()),
+            Some("bridge")
+        );
     }
 
     #[test]
@@ -799,7 +815,8 @@ mod tests {
         );
 
         let parts = build_parts("/mcp?client_id=cursor", Some("sess-123"), None, None);
-        let err = resolve_bound_request_context_parts(&parts, &session_bindings).expect_err("client mismatch should fail");
+        let err =
+            resolve_bound_request_context_parts(&parts, &session_bindings).expect_err("client mismatch should fail");
         assert!(err.to_string().contains("does not match session binding"));
     }
 
@@ -819,7 +836,8 @@ mod tests {
         );
 
         let parts = build_parts("/mcp?profile_id=profile-b", Some("sess-123"), None, None);
-        let err = resolve_bound_request_context_parts(&parts, &session_bindings).expect_err("profile mismatch should fail");
+        let err =
+            resolve_bound_request_context_parts(&parts, &session_bindings).expect_err("profile mismatch should fail");
         assert!(err.to_string().contains("does not match session binding"));
     }
 
@@ -847,7 +865,10 @@ mod tests {
         assert_eq!(context.profile_id.as_deref(), Some("profile-a"));
         assert_eq!(context.rules_fingerprint.as_deref(), Some("fp-123"));
         assert_eq!(context.source, ClientIdentitySource::SessionBinding);
-        assert_eq!(context.observed_client_info.as_ref().map(|info| info.name.as_str()), Some("bridge"));
+        assert_eq!(
+            context.observed_client_info.as_ref().map(|info| info.name.as_str()),
+            Some("bridge")
+        );
     }
 
     #[test]
@@ -863,7 +884,8 @@ mod tests {
         };
 
         let parts = build_parts("/mcp?client_id=cursor", Some("sess-123"), None, None);
-        let err = resolve_pending_session_context_parts(&parts, &initialize_context).expect_err("client mismatch should fail");
+        let err = resolve_pending_session_context_parts(&parts, &initialize_context)
+            .expect_err("client mismatch should fail");
         assert!(err.to_string().contains("does not match session binding"));
     }
 
@@ -880,7 +902,8 @@ mod tests {
         };
 
         let parts = build_parts("/mcp?profile_id=profile-b", Some("sess-123"), None, None);
-        let err = resolve_pending_session_context_parts(&parts, &initialize_context).expect_err("profile mismatch should fail");
+        let err = resolve_pending_session_context_parts(&parts, &initialize_context)
+            .expect_err("profile mismatch should fail");
         assert!(err.to_string().contains("does not match session binding"));
     }
 
@@ -907,7 +930,10 @@ mod tests {
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
         };
-        let err = resolver.bind_session("sess-123", &second).await.expect_err("rebinding should fail");
+        let err = resolver
+            .bind_session("sess-123", &second)
+            .await
+            .expect_err("rebinding should fail");
         assert!(err.to_string().contains("already bound to client_id"));
     }
 
@@ -944,7 +970,9 @@ mod tests {
         let selection = context.connection_selection("srv_1").expect("selection");
         assert_eq!(selection.server_id, "srv_1");
         assert_eq!(selection.routing_fingerprint.as_deref(), Some("fp-123"));
-        assert!(matches!(selection.affinity_key, crate::core::capability::AffinityKey::PerSession(ref id) if id == "sess-123"));
+        assert!(
+            matches!(selection.affinity_key, crate::core::capability::AffinityKey::PerSession(ref id) if id == "sess-123")
+        );
     }
 
     // ========================================
@@ -964,11 +992,23 @@ mod tests {
             observed_client_info: None,
         };
 
-        resolver.bind_session("sess-remove-test", &context).await.expect("bind should succeed");
-        assert!(resolver.session_bindings.contains_key("sess-remove-test"), "binding should exist after bind");
+        resolver
+            .bind_session("sess-remove-test", &context)
+            .await
+            .expect("bind should succeed");
+        assert!(
+            resolver.session_bindings.contains_key("sess-remove-test"),
+            "binding should exist after bind"
+        );
 
-        resolver.unbind_session("sess-remove-test").await.expect("unbind should succeed");
-        assert!(!resolver.session_bindings.contains_key("sess-remove-test"), "binding should be removed after unbind");
+        resolver
+            .unbind_session("sess-remove-test")
+            .await
+            .expect("unbind should succeed");
+        assert!(
+            !resolver.session_bindings.contains_key("sess-remove-test"),
+            "binding should be removed after unbind"
+        );
     }
 
     #[tokio::test]
@@ -992,9 +1032,15 @@ mod tests {
             observed_client_info: None,
         };
 
-        resolver.bind_session("sess-rebind", &context).await.expect("first bind should succeed");
+        resolver
+            .bind_session("sess-rebind", &context)
+            .await
+            .expect("first bind should succeed");
         // Rebinding with identical context should succeed (idempotent)
-        resolver.bind_session("sess-rebind", &context).await.expect("rebind with identical context should succeed");
+        resolver
+            .bind_session("sess-rebind", &context)
+            .await
+            .expect("rebind with identical context should succeed");
         assert!(resolver.session_bindings.contains_key("sess-rebind"));
     }
 
@@ -1016,9 +1062,15 @@ mod tests {
             observed_client_info: Some(observed.clone()),
         };
 
-        resolver.bind_session("sess-obs", &context).await.expect("bind should succeed");
+        resolver
+            .bind_session("sess-obs", &context)
+            .await
+            .expect("bind should succeed");
         let binding = resolver.session_bindings.get("sess-obs").expect("binding should exist");
-        assert_eq!(binding.observed_client_info.as_ref().map(|o| o.name.as_str()), Some("test-client"));
+        assert_eq!(
+            binding.observed_client_info.as_ref().map(|o| o.name.as_str()),
+            Some("test-client")
+        );
     }
 
     #[tokio::test]
@@ -1031,7 +1083,9 @@ mod tests {
             version: "2.0.0".to_string(),
             title: None,
         };
-        resolver.observed_clients.insert("client-cached".to_string(), observed.clone());
+        resolver
+            .observed_clients
+            .insert("client-cached".to_string(), observed.clone());
 
         // Bind a session WITHOUT observed_client_info - should pick up from cached
         let context = ClientContext {
@@ -1043,9 +1097,15 @@ mod tests {
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
         };
-        resolver.bind_session("sess-cached", &context).await.expect("bind should succeed");
+        resolver
+            .bind_session("sess-cached", &context)
+            .await
+            .expect("bind should succeed");
 
-        let binding = resolver.session_bindings.get("sess-cached").expect("binding should exist");
+        let binding = resolver
+            .session_bindings
+            .get("sess-cached")
+            .expect("binding should exist");
         assert_eq!(
             binding.observed_client_info.as_ref().map(|o| o.name.as_str()),
             Some("cached-client"),
@@ -1070,7 +1130,10 @@ mod tests {
         let peer_key = 0x1234_usize;
         resolver.pending_initializations.insert(peer_key, context.clone());
 
-        assert!(resolver.pending_initializations.contains_key(&peer_key), "pending context should be stored");
+        assert!(
+            resolver.pending_initializations.contains_key(&peer_key),
+            "pending context should be stored"
+        );
         let stored = resolver.pending_initializations.get(&peer_key).expect("should exist");
         assert_eq!(stored.client_id, "pending-client");
     }
@@ -1087,7 +1150,10 @@ mod tests {
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
         };
-        resolver.bind_session("sess-profile", &first).await.expect("first bind should succeed");
+        resolver
+            .bind_session("sess-profile", &first)
+            .await
+            .expect("first bind should succeed");
 
         let second = ClientContext {
             client_id: "same-client".to_string(),
@@ -1098,7 +1164,10 @@ mod tests {
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
         };
-        let err = resolver.bind_session("sess-profile", &second).await.expect_err("should reject profile mismatch");
+        let err = resolver
+            .bind_session("sess-profile", &second)
+            .await
+            .expect_err("should reject profile mismatch");
         assert!(err.to_string().contains("already bound to profile_id"));
     }
 
@@ -1114,7 +1183,10 @@ mod tests {
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
         };
-        resolver.bind_session("sess-fp", &first).await.expect("first bind should succeed");
+        resolver
+            .bind_session("sess-fp", &first)
+            .await
+            .expect("first bind should succeed");
 
         let second = ClientContext {
             client_id: "same-client".to_string(),
@@ -1125,7 +1197,10 @@ mod tests {
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
         };
-        let err = resolver.bind_session("sess-fp", &second).await.expect_err("should reject fingerprint mismatch");
+        let err = resolver
+            .bind_session("sess-fp", &second)
+            .await
+            .expect_err("should reject fingerprint mismatch");
         assert!(err.to_string().contains("already bound to rules_fingerprint"));
     }
 
@@ -1141,7 +1216,10 @@ mod tests {
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
         };
-        resolver.bind_session("sess-upgrade", &initial).await.expect("initial bind should succeed");
+        resolver
+            .bind_session("sess-upgrade", &initial)
+            .await
+            .expect("initial bind should succeed");
 
         let upgraded = ClientContext {
             client_id: "cursor".to_string(),
@@ -1152,9 +1230,15 @@ mod tests {
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
         };
-        resolver.bind_session("sess-upgrade", &upgraded).await.expect("upgrade bind should succeed");
+        resolver
+            .bind_session("sess-upgrade", &upgraded)
+            .await
+            .expect("upgrade bind should succeed");
 
-        let binding = resolver.session_bindings.get("sess-upgrade").expect("binding should exist");
+        let binding = resolver
+            .session_bindings
+            .get("sess-upgrade")
+            .expect("binding should exist");
         assert_eq!(binding.rules_fingerprint.as_deref(), Some("fp-123"));
     }
 
@@ -1170,7 +1254,10 @@ mod tests {
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
         };
-        resolver.bind_session("sess-downgrade", &initial).await.expect("initial bind should succeed");
+        resolver
+            .bind_session("sess-downgrade", &initial)
+            .await
+            .expect("initial bind should succeed");
 
         let downgrade = ClientContext {
             client_id: "cursor".to_string(),
@@ -1181,7 +1268,10 @@ mod tests {
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
         };
-        let err = resolver.bind_session("sess-downgrade", &downgrade).await.expect_err("should reject fingerprint downgrade");
+        let err = resolver
+            .bind_session("sess-downgrade", &downgrade)
+            .await
+            .expect_err("should reject fingerprint downgrade");
         assert!(err.to_string().contains("already bound to rules_fingerprint"));
     }
 
@@ -1198,13 +1288,19 @@ mod tests {
             observed_client_info: None,
         };
 
-        resolver.bind_session("sess-refresh", &context).await.expect("bind should succeed");
+        resolver
+            .bind_session("sess-refresh", &context)
+            .await
+            .expect("bind should succeed");
         resolver
             .refresh_session_rules_fingerprint("sess-refresh", "fp-new".to_string())
             .await
             .expect("refresh should succeed");
 
-        let binding = resolver.session_bindings.get("sess-refresh").expect("binding should exist");
+        let binding = resolver
+            .session_bindings
+            .get("sess-refresh")
+            .expect("binding should exist");
         assert_eq!(binding.rules_fingerprint.as_deref(), Some("fp-new"));
     }
 }

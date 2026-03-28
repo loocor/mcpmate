@@ -86,7 +86,7 @@ pub async fn manage_server(
                 started_at.elapsed().as_millis() as u64,
                 result.as_ref().err(),
             )
-                .await;
+            .await;
             result
         }
         ServerManageAction::Disable => {
@@ -107,7 +107,7 @@ pub async fn manage_server(
                 started_at.elapsed().as_millis() as u64,
                 result.as_ref().err(),
             )
-                .await;
+            .await;
             result
         }
     }

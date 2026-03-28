@@ -633,10 +633,7 @@ pub async fn import_servers(
         "skipped_count".to_string(),
         Value::from(response.0.skipped_count as u64),
     );
-    data.insert(
-        "failed_count".to_string(),
-        Value::from(response.0.failed_count as u64),
-    );
+    data.insert("failed_count".to_string(), Value::from(response.0.failed_count as u64));
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(

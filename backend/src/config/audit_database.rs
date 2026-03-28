@@ -1,7 +1,14 @@
-use std::{path::{Path, PathBuf}, str::FromStr, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
-use sqlx::{Pool, Sqlite, sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous}};
+use sqlx::{
+    Pool, Sqlite,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
+};
 
 use crate::common::paths::global_paths;
 
@@ -112,7 +119,11 @@ mod tests {
             .busy_timeout(Duration::from_millis(5_000))
             .synchronous(SqliteSynchronous::Normal)
             .foreign_keys(true);
-        let pool = SqlitePoolOptions::new().max_connections(5).connect_with(options).await.expect("connect");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(options)
+            .await
+            .expect("connect");
 
         let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
             .fetch_one(&pool)
@@ -134,7 +145,11 @@ mod tests {
             .busy_timeout(Duration::from_millis(5_000))
             .synchronous(SqliteSynchronous::Normal)
             .foreign_keys(true);
-        let pool = SqlitePoolOptions::new().max_connections(5).connect_with(options).await.expect("connect");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(options)
+            .await
+            .expect("connect");
 
         let timeout: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
             .fetch_one(&pool)

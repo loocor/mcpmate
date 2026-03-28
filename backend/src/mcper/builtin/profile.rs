@@ -164,7 +164,7 @@ impl BuiltinService for ProfileService {
         vec![
             Tool::new(
                 "mcpmate_profile_list",
-                "List available profiles with counts for each capability type",
+                "List profiles with capability counts",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -178,14 +178,14 @@ impl BuiltinService for ProfileService {
             ),
             Tool::new(
                 "mcpmate_profile_details",
-                "Get detailed servers, tools, prompts, and resources for a profile",
+                "Get profile details: servers, tools, prompts, resources",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
                         "properties": {
                             "profile_id": {
                                 "type": "string",
-                                "description": "The ID of the profile to inspect"
+                                "description": "Profile ID to inspect"
                             }
                         },
                         "required": ["profile_id"]
@@ -204,11 +204,11 @@ impl BuiltinService for ProfileService {
                         "properties": {
                             "profile_id": {
                                 "type": "string",
-                                "description": "The ID of the profile to switch"
+                                "description": "Profile ID to switch"
                             },
                             "activate": {
                                 "type": "boolean",
-                                "description": "Whether to activate (true) or deactivate (false) the profile"
+                                "description": "Activate (true) or deactivate (false)"
                             }
                         },
                         "required": ["profile_id", "activate"]

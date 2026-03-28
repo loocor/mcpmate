@@ -240,7 +240,10 @@ impl UpstreamConnectionPool {
         }
 
         for (server_id, bound_id) in self.client_bound_connections.keys().cloned().collect::<Vec<_>>() {
-            if let Some(instances) = self.client_bound_connections.get(&(server_id.clone(), bound_id.clone())) {
+            if let Some(instances) = self
+                .client_bound_connections
+                .get(&(server_id.clone(), bound_id.clone()))
+            {
                 for instance_id in instances.keys().cloned().collect::<Vec<_>>() {
                     if let Err(e) = self.disconnect(&server_id, &instance_id).await {
                         tracing::error!(
@@ -1116,7 +1119,8 @@ impl UpstreamConnectionPool {
             }
         }
 
-        let bound_keys: Vec<(String, String)> = self.client_bound_connections
+        let bound_keys: Vec<(String, String)> = self
+            .client_bound_connections
             .keys()
             .filter(|(sid, _)| sid == server_id)
             .cloned()

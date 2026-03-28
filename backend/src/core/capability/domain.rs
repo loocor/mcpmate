@@ -557,7 +557,12 @@ impl ConnectionSelection {
     pub fn cache_scope_key(&self) -> String {
         match &self.routing_fingerprint {
             Some(routing_fingerprint) => {
-                format!("{}#{}#{}", self.server_id, self.affinity_key_string(), routing_fingerprint)
+                format!(
+                    "{}#{}#{}",
+                    self.server_id,
+                    self.affinity_key_string(),
+                    routing_fingerprint
+                )
             }
             None => format!("{}#{}", self.server_id, self.affinity_key_string()),
         }

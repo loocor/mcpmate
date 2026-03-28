@@ -1,5 +1,5 @@
-pub mod audit;
 pub mod api;
+pub mod audit;
 pub mod clients;
 pub mod common;
 pub mod config;

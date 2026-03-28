@@ -626,14 +626,12 @@ pub async fn get_capability_config(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(ClientCapabilityConfigResp::success(
-        ClientCapabilityConfigData {
-            identifier: request.identifier,
-            capability_source: config.capability_source,
-            selected_profile_ids: config.selected_profile_ids,
-            custom_profile_id: config.custom_profile_id,
-        },
-    )))
+    Ok(Json(ClientCapabilityConfigResp::success(ClientCapabilityConfigData {
+        identifier: request.identifier,
+        capability_source: config.capability_source,
+        selected_profile_ids: config.selected_profile_ids,
+        custom_profile_id: config.custom_profile_id,
+    })))
 }
 
 async fn descriptor_to_client_info(
@@ -875,7 +873,10 @@ fn build_update_preview(
 mod tests {
     use super::*;
     use crate::api::routes::AppState;
-    use crate::clients::{CapabilitySource, source::{FileTemplateSource, TemplateRoot}};
+    use crate::clients::{
+        CapabilitySource,
+        source::{FileTemplateSource, TemplateRoot},
+    };
     use crate::common::profile::ProfileType;
     use crate::config::{
         client::init::initialize_client_table,
@@ -892,8 +893,8 @@ mod tests {
     };
     use crate::inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager};
     use crate::system::metrics::MetricsCollector;
-    use axum::extract::{Query, State};
     use axum::Json;
+    use axum::extract::{Query, State};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
@@ -929,7 +930,11 @@ mod tests {
         });
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
-        let template_source = Arc::new(FileTemplateSource::bootstrap(template_root).await.expect("template source"));
+        let template_source = Arc::new(
+            FileTemplateSource::bootstrap(template_root)
+                .await
+                .expect("template source"),
+        );
         let client_service = Arc::new(
             ClientConfigService::with_source(Arc::new(db_pool.clone()), template_source)
                 .await
@@ -966,7 +971,10 @@ mod tests {
         }
     }
 
-    async fn insert_shared_profile(pool: &sqlx::SqlitePool, name: &str) -> String {
+    async fn insert_shared_profile(
+        pool: &sqlx::SqlitePool,
+        name: &str,
+    ) -> String {
         let profile = Profile::new(name.to_string(), ProfileType::Shared);
         profile::upsert_profile(pool, &profile).await.expect("upsert profile")
     }
