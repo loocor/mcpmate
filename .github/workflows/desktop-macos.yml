@@ -1,0 +1,86 @@
+# Builds the MCPMate Tauri desktop app for macOS (DMG), without codesigning or notarization.
+# Artifacts are suitable for local testing or internal distribution; Gatekeeper may warn on open.
+
+name: Desktop (macOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Rust triples (comma-separated). Default builds Apple Silicon + Intel."
+        required: false
+        default: "aarch64-apple-darwin,x86_64-apple-darwin"
+  push:
+    branches: [main, dev]
+    paths:
+      - ".github/workflows/desktop-macos.yml"
+      - "desktop/**"
+      - "board/**"
+      - "backend/**"
+  pull_request:
+    paths:
+      - ".github/workflows/desktop-macos.yml"
+      - "desktop/**"
+      - "board/**"
+      - "backend/**"
+
+concurrency:
+  group: desktop-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            backend -> target
+            desktop/tauri/src-tauri -> target
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: board/package-lock.json
+
+      - name: Install Tauri CLI
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: tauri-cli
+          locked: true
+
+      - name: Build DMGs (no sign / no notarize)
+        working-directory: desktop/tauri
+        env:
+          INPUT_TARGETS: ${{ github.event.inputs.targets }}
+        run: |
+          chmod +x script/macos-build-tauri-release.sh
+          TARGETS="${INPUT_TARGETS:-aarch64-apple-darwin,x86_64-apple-darwin}"
+          ./script/macos-build-tauri-release.sh \
+            --targets "${TARGETS}" \
+            --bundles dmg \
+            --skip-notarize \
+            --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts"
+
+      - name: Upload DMG artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpmate-macos-dmg
+          path: desktop-macos-artifacts/*.dmg
+          if-no-files-found: error
+          retention-days: 14
