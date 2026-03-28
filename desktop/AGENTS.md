@@ -32,13 +32,13 @@ Reference implementation: `board/vite.config.ts` (lines 287-349)
 ### Development
 
 ```bash
-# From desktop/tauri directory
+# From desktop/src-tauri directory
 
 # Quick dev (requires board dev server)
 cargo tauri dev
 
 # Or manually start board first
-npm --prefix ../../board run dev -- --host 127.0.0.1 --port 5173
+bun --cwd ../../board run dev -- --host 127.0.0.1 --port 5173
 cargo tauri dev
 ```
 
@@ -46,7 +46,7 @@ cargo tauri dev
 
 ```bash
 # Build dashboard assets first
-npm --prefix ../../board run build
+bun --cwd ../../board run build
 
 # macOS builds (arm64 and x86_64)
 CI=true cargo tauri build --target aarch64-apple-darwin --bundles dmg
@@ -131,13 +131,13 @@ src-tauri/
 
 ```bash
 # Update backend
-cd ../../backend && cargo update
+cd ../backend && cargo update
 
 # Update Tauri
 cargo update -p tauri -p tauri-plugin-updater -p tauri-plugin-dialog -p tauri-plugin-opener
 
 # Update dashboard
-npm --prefix ../../board update
+bun --cwd ../../board update
 ```
 
 ## Release Process
@@ -145,7 +145,7 @@ npm --prefix ../../board update
 See `docs/desktop-release-guide.md` for full details. Key steps:
 
 1. Update version in `tauri.conf.json` and `Cargo.toml`
-2. Build dashboard: `npm --prefix ../../board run build`
+2. Build dashboard: `bun --cwd ../../board run build`
 3. Run release script: `./script/macos-build-tauri-release.sh`
 4. (macOS) Codesign & notarize: provide either Apple ID or API key creds via flags or environment.
    - Example (Apple ID): `./script/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --sign-identity "Developer ID Application: Your Org (TEAMID)" --apple-id you@example.com --apple-password abcd-efgh-ijkl-mnop --apple-team-id TEAMID`

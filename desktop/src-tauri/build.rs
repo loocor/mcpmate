@@ -111,7 +111,7 @@ fn ensure_bridge_sidecar() {
 
 fn backend_build_context() -> BackendBuildContext {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.join("../../..");
+    let workspace_root = manifest_dir.join("../..");
     let backend_dir = workspace_root.join("backend");
     let target = env::var("TARGET").expect("TARGET");
     let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());

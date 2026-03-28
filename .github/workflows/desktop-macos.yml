@@ -49,7 +49,7 @@ jobs:
         with:
           workspaces: |
             backend -> target
-            desktop/tauri/src-tauri -> target
+            desktop/src-tauri -> target
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -65,7 +65,7 @@ jobs:
           locked: true
 
       - name: Build DMGs (no sign / no notarize)
-        working-directory: desktop/tauri
+        working-directory: desktop
         env:
           INPUT_TARGETS: ${{ github.event.inputs.targets }}
         run: |

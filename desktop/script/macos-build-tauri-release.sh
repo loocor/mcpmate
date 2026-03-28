@@ -23,7 +23,7 @@ APPLE_API_KEY_PATH_OPT=""
 # market diagnostics and forwards front-end logs without user interaction.
 DIAG_DEFAULT=0
 
-# Load .env files from desktop/tauri so users don't need to pass flags each time.
+# Load .env files from desktop/ so users don't need to pass flags each time.
 load_env_files() {
   local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local tauri_dir="$(cd "${script_dir}/.." && pwd)"
@@ -160,7 +160,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-WORKSPACE_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
+WORKSPACE_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
 BACKEND_DIR="$(cd "$WORKSPACE_ROOT/backend" && pwd)"
 TAURI_SRC_DIR="$(cd "$ROOT_DIR/src-tauri" && pwd)"
 LICENSE_SCRIPT="$ROOT_DIR/script/generate-open-source-notices.sh"

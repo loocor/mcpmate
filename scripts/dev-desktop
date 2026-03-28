@@ -19,7 +19,7 @@ fi
 require_command cargo
 require_command bun
 
-TAURI_DIR="$(project_dir desktop/tauri)"
+TAURI_DIR="$(project_dir desktop/src-tauri)"
 
 print_section "backend dependency check"
 BACKEND_DIR="$(project_dir backend)"

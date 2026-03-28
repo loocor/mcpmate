@@ -9,7 +9,7 @@ Options:
   --output <path>         Override the output JSON file (default: board/public/open-source-notices.json)
   --board-dir <path>      Override the dashboard workspace directory (default: <repo>/board)
   --backend-dir <path>    Override the backend workspace directory (default: <repo>/backend)
-  --tauri-dir <path>      Override the Desktop Tauri src directory (default: <repo>/desktop/tauri/src-tauri)
+  --tauri-dir <path>      Override the Desktop Tauri src directory (default: <repo>/desktop/src-tauri)
   -h, --help              Show this help message
 USAGE
 }
@@ -26,11 +26,11 @@ require_cmd() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 BOARD_DIR="${PROJECT_ROOT}/board"
 BACKEND_DIR="${PROJECT_ROOT}/backend"
-TAURI_DIR="${PROJECT_ROOT}/desktop/tauri/src-tauri"
+TAURI_DIR="${PROJECT_ROOT}/desktop/src-tauri"
 OUTPUT_FILE="${BOARD_DIR}/public/open-source-notices.json"
 
 while [[ $# -gt 0 ]]; do

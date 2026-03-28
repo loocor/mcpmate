@@ -14,7 +14,7 @@ tauri = { version = "2", features = ["tray-icon", "wry", "image-png"] }
 tokio = { version = "1.44", features = ["macros", "rt-multi-thread", "time"] }
 tokio-util = "0.7"
 tracing = "0.1"
-mcpmate = { path = "../../../backend" }
+mcpmate = { path = "../../backend" }
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"

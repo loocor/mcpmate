@@ -5,14 +5,14 @@
 	"identifier": "desktop.mcp.umate.ai",
 	"build": {
 		"devUrl": "http://127.0.0.1:5173",
-		"frontendDist": "../../../board/dist",
+		"frontendDist": "../../board/dist",
 		"beforeDevCommand": {
-			"cwd": "../../../board",
+			"cwd": "../../board",
 			"script": "(command -v bun >/dev/null 2>&1 && bun run dev -- --host 127.0.0.1 --port 5173 || npm run dev -- --host 127.0.0.1 --port 5173)",
 			"wait": false
 		},
 		"beforeBuildCommand": {
-			"cwd": "../../../board",
+			"cwd": "../../board",
 			"script": "(command -v bun >/dev/null 2>&1 && bun run build || npm run build)"
 		}
 	},
@@ -40,8 +40,8 @@
 		"targets": ["app", "dmg"],
 		"icon": ["icons/icon.icns"],
 		"externalBin": [
-			"../../../backend/target/sidecars/bridge",
-			"../../../backend/target/sidecars/mcpmate-core"
+			"../../backend/target/sidecars/bridge",
+			"../../backend/target/sidecars/mcpmate-core"
 		],
 		"macOS": {
 			"entitlements": "entitlements.plist",
