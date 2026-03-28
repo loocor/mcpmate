@@ -9,6 +9,7 @@ node-compile-cache/
 .claude/
 .codex/
 .opencode/
+.sisyphus/
 
 # Cloudflare Wrangler cache
 .wrangler/
@@ -25,9 +26,7 @@ node-compile-cache/
 **/.env.local
 **/.env.*.local
 
-# Root helper artifacts
-mcpmate-board-dashboard.png
-
 # Auth backend & rmcp sdk
 auth/
 rmcp/
+docs/
