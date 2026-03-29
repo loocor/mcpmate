@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Cell, Pie, PieChart } from "recharts";
 import { Spinner } from "../../../components/ui/spinner";
@@ -14,10 +14,23 @@ const CHART_COLORS = {
 	emptyServers: "#94a3b8",
 };
 
-/** Fixed pixel size — avoids ResponsiveContainer stretching flex parents. */
-const CHART_SIZE = 64;
-const INNER_RADIUS = 17;
-const OUTER_RADIUS = 28;
+/** Default square size — avoids ResponsiveContainer stretching flex parents. */
+const DEFAULT_CHART_SIZE_PX = 64;
+const DEFAULT_INNER_RADIUS = 17;
+const DEFAULT_OUTER_RADIUS = 28;
+
+function chartRadiiForSize(chartSizePx: number): {
+	size: number;
+	innerRadius: number;
+	outerRadius: number;
+} {
+	const scale = chartSizePx / DEFAULT_CHART_SIZE_PX;
+	return {
+		size: chartSizePx,
+		innerRadius: Math.max(1, Math.round(DEFAULT_INNER_RADIUS * scale)),
+		outerRadius: Math.max(2, Math.round(DEFAULT_OUTER_RADIUS * scale)),
+	};
+}
 
 interface ProfileTokenUsageChartProps {
 	ledgerItems: CapabilityTokenLedgerRow[] | undefined;
@@ -35,11 +48,14 @@ interface ProfileTokenUsageChartProps {
 	 * Omit or leave undefined while profile server list is still loading.
 	 */
 	profileServerCount?: number;
+	/** Square pixel size for the donut (default 64). */
+	chartSizePx?: number;
 }
 
 /**
- * Shared profile token donut: used on the Profiles grid (`layout="chartOnly"`) and the profile detail header
- * (`layout="default"`). Token sums come from ledger payloads × live enable map, or legacy token-estimate on 404.
+ * Shared profile token donut: used on the Profiles grid (`layout="chartOnly"`), client configuration rows
+ * (optional `chartSizePx`), and the profile detail header (`layout="default"`). Token sums come from ledger
+ * payloads × live enable map, or legacy token-estimate on 404.
  */
 export function ProfileTokenUsageChart({
 	ledgerItems,
@@ -51,8 +67,17 @@ export function ProfileTokenUsageChart({
 	className,
 	layout = "default",
 	profileServerCount,
+	chartSizePx = DEFAULT_CHART_SIZE_PX,
 }: ProfileTokenUsageChartProps) {
 	const { t, i18n } = useTranslation();
+
+	const { size: chartSize, innerRadius, outerRadius } = useMemo(
+		() => chartRadiiForSize(chartSizePx),
+		[chartSizePx],
+	);
+
+	const centerPercentClass =
+		chartSizePx <= 56 ? "text-[10px]" : "text-[11px]";
 
 	const noServersInProfile =
 		typeof profileServerCount === "number" && profileServerCount === 0;
@@ -108,8 +133,8 @@ export function ProfileTokenUsageChart({
 	});
 
 	const shellStyle = {
-		width: CHART_SIZE,
-		height: CHART_SIZE,
+		width: chartSize,
+		height: chartSize,
 	} as const;
 
 	const visibleLabel = t("profiles:detail.tokenSavings.visibleTokens", {
@@ -188,8 +213,8 @@ export function ProfileTokenUsageChart({
 			aria-label={donutAriaLabel}
 		>
 			<PieChart
-				width={CHART_SIZE}
-				height={CHART_SIZE}
+				width={chartSize}
+				height={chartSize}
 				margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
 				className="shrink-0"
 			>
@@ -198,8 +223,8 @@ export function ProfileTokenUsageChart({
 					dataKey="value"
 					cx="50%"
 					cy="50%"
-					innerRadius={INNER_RADIUS}
-					outerRadius={OUTER_RADIUS}
+					innerRadius={innerRadius}
+					outerRadius={outerRadius}
 					strokeWidth={0}
 					paddingAngle={chartData.length > 1 ? 2 : 0}
 					isAnimationActive={false}
@@ -214,11 +239,21 @@ export function ProfileTokenUsageChart({
 				aria-hidden
 			>
 				{noServersInProfile ? (
-					<span className="text-[11px] font-semibold tabular-nums leading-none tracking-tight text-muted-foreground">
+					<span
+						className={cn(
+							"font-semibold tabular-nums leading-none tracking-tight text-muted-foreground",
+							centerPercentClass,
+						)}
+					>
 						-
 					</span>
 				) : (
-					<span className="text-[11px] font-semibold tabular-nums leading-none tracking-tight text-foreground">
+					<span
+						className={cn(
+							"font-semibold tabular-nums leading-none tracking-tight text-foreground",
+							centerPercentClass,
+						)}
+					>
 						{visiblePercent}%
 					</span>
 				)}
@@ -226,22 +261,28 @@ export function ProfileTokenUsageChart({
 		</div>
 	);
 
-	return (
-		<div
-			className={cn(
-				"inline-flex max-w-full shrink-0 items-center gap-2 sm:gap-3",
-				layout === "chartOnly" && "gap-0",
-				className,
-			)}
-		>
-			{noServersInProfile ? (
+	function renderMainContent(): ReactNode {
+		if (noServersInProfile) {
+			return (
 				<>
 					{donutBlock}
 					<span className="sr-only">{noServersAria}</span>
 				</>
-			) : isLoading ? (
-				<Spinner size="sm" />
-			) : isError ? (
+			);
+		}
+		if (isLoading) {
+			return (
+				<div
+					className="flex shrink-0 items-center justify-center"
+					style={shellStyle}
+					aria-hidden
+				>
+					<Spinner size="sm" />
+				</div>
+			);
+		}
+		if (isError) {
+			return (
 				<span
 					className={cn(
 						"leading-tight text-destructive",
@@ -252,24 +293,40 @@ export function ProfileTokenUsageChart({
 						defaultValue: "Failed to load token estimate.",
 					})}
 				</span>
-			) : chartData.length > 0 ? (
+			);
+		}
+		if (chartData.length > 0) {
+			return (
 				<>
 					{legendBlock}
 					{donutBlock}
 					<span className="sr-only">{percentLabel}</span>
 				</>
-			) : (
-				<div
-					className={cn(
-						"flex h-full w-full items-center justify-center text-center text-[9px] leading-tight text-muted-foreground",
-						layout === "chartOnly" ? "max-w-[4rem] px-0" : "max-w-[12rem] px-0.5",
-					)}
-				>
-					{t("profiles:detail.tokenSavings.noSavings", {
-						defaultValue: "No savings — all capabilities enabled",
-					})}
-				</div>
+			);
+		}
+		return (
+			<div
+				className={cn(
+					"flex h-full w-full items-center justify-center text-center text-[9px] leading-tight text-muted-foreground",
+					layout === "chartOnly" ? "max-w-[4rem] px-0" : "max-w-[12rem] px-0.5",
+				)}
+			>
+				{t("profiles:detail.tokenSavings.noSavings", {
+					defaultValue: "No savings — all capabilities enabled",
+				})}
+			</div>
+		);
+	}
+
+	return (
+		<div
+			className={cn(
+				"inline-flex max-w-full shrink-0 items-center gap-2 sm:gap-3",
+				layout === "chartOnly" && "gap-0",
+				className,
 			)}
+		>
+			{renderMainContent()}
 		</div>
 	);
 }
