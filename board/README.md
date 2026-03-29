@@ -44,7 +44,7 @@ MCPBoard serves as the frontend application for the MCPMate ecosystem, offering 
 - **Runtime Status**: Check installed runtimes and their versions
 - **Environment Integration**: Automatic environment variable configuration for seamless MCP server usage
 
-### MCP Market Integration
+### Market Integration
 - **Market Discovery**: Browse and discover MCP servers from integrated marketplaces (e.g., mcp.so)
 - **Server Installation**: One-click installation of servers from market listings
 - **Market Proxy**: Seamless integration with remote market portals through built-in proxy middleware
@@ -131,7 +131,7 @@ board/
 │   │   ├── clients/           # Client management pages
 │   │   ├── profile/           # Profile management pages
 │   │   ├── runtime/           # Runtime management page
-│   │   ├── market/            # MCP Market integration
+│   │   ├── market/            # Market integration
 │   │   └── settings/          # Settings page
 │   ├── lib/
 │   │   ├── api.ts             # Centralized API client

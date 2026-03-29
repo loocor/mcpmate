@@ -4,14 +4,14 @@ export const settingsTranslations = {
     tabs: {
       general: "General",
       appearance: "Appearance",
-      audit: "Audit Policy",
-      profile: "Profile Controls",
+      audit: "Audit",
+      profile: "Profile",
       system: "System",
-      serverControls: "Server Controls",
-      clientDefaults: "Client Controls",
-      market: "MCP Market",
+      serverControls: "Server",
+      clientDefaults: "Client",
+      market: "Market",
       developer: "Developer",
-      about: "About & Licenses",
+      about: "About",
     },
     system: {
       title: "System",
@@ -147,7 +147,7 @@ export const settingsTranslations = {
       },
     },
     servers: {
-      title: "Server Controls",
+      title: "Server",
       description: "Decide how server operations propagate across clients.",
       syncTitle: "Sync Global Start/Stop",
       syncDescription: "Push global enable state to managed clients instantly.",
@@ -159,7 +159,7 @@ export const settingsTranslations = {
         "Show paginated live logs on the Server detail page.",
     },
     clients: {
-      title: "Client Controls",
+      title: "Client",
       description:
         "Configure default rollout and backup behavior for client apps.",
       defaultVisibilityTitle: "Default Client Visibility",
@@ -184,7 +184,7 @@ export const settingsTranslations = {
         "Show paginated live logs on the Client detail page.",
     },
     profile: {
-      title: "Profile Controls",
+      title: "Profile",
       description: "Token estimates, profile detail logs, and related options.",
       liveLogsTitle: "Profile Detail Logs",
       liveLogsDescription:
@@ -216,7 +216,7 @@ export const settingsTranslations = {
         "Display raw JSON payloads under Details in capability lists (Server details and Uni‑Import preview).",
     },
     market: {
-      title: "MCP Market",
+      title: "Market",
       description:
         "Configure default market and manage hidden marketplace servers.",
       defaultMarketTitle: "Default Market",
@@ -303,11 +303,11 @@ export const settingsTranslations = {
     tabs: {
       general: "通用",
       appearance: "外观",
-      audit: "审计策略",
-      profile: "配置集控制",
+      audit: "审计",
+      profile: "配置集",
       system: "系统",
       serverControls: "服务器",
-      clientDefaults: "客户端控制",
+      clientDefaults: "客户端",
       market: "服务源",
       developer: "开发者",
       about: "关于",
@@ -452,7 +452,7 @@ export const settingsTranslations = {
       liveLogsDescription: "在服务器详情页显示分页现场日志。",
     },
     clients: {
-      title: "客户端控制",
+      title: "客户端",
       description: "配置客户端应用的默认部署和备份行为。",
       defaultVisibilityTitle: "默认显示内容",
       defaultVisibilityDescription:
@@ -472,7 +472,7 @@ export const settingsTranslations = {
       liveLogsDescription: "在客户端详情页显示分页现场日志。",
     },
     profile: {
-      title: "配置集控制",
+      title: "配置集",
       description: "Token 估算、配置集详情日志等选项。",
       liveLogsTitle: "配置集详情日志",
       liveLogsDescription: "在配置集详情页显示分页现场日志。",
@@ -531,7 +531,7 @@ export const settingsTranslations = {
       restore: "恢复",
     },
     audit: {
-      title: "审计策略",
+      title: "审计",
       description: "管理审计事件在数据库中的保留时长。",
       liveLogsTitle: "详情页现场日志",
       liveLogsDescription: "控制 Profile 详情页是否显示基于审计事件的分页日志。",

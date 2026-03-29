@@ -115,7 +115,7 @@ Page-specific translations require the namespace prefix (e.g., `settings:`, `das
 
 ```typescript
 // ✅ CORRECT - Use namespace prefix for page-specific translations
-t("settings:market.title", { defaultValue: "MCP Market" })
+t("settings:market.title", { defaultValue: "Market" })
 t("dashboard:overview.welcome", { defaultValue: "Welcome" })
 t("market:filters.category", { defaultValue: "Category" })
 ```
@@ -262,7 +262,7 @@ t("settings.title")              // WRONG - missing "settings:" prefix
 ✅ **Always use namespace prefix for page translations**
 ```typescript
 t("market:search.placeholder", { defaultValue: "Search..." })    // CORRECT
-t("settings:market.title", { defaultValue: "MCP Market" })       // CORRECT
+t("settings:market.title", { defaultValue: "Market" })       // CORRECT
 ```
 
 ❌ **Missing defaultValue**
@@ -272,7 +272,7 @@ t("settings:market.title")  // WRONG - missing fallback
 
 ✅ **Always provide defaultValue**
 ```typescript
-t("settings:market.title", { defaultValue: "MCP Market" })  // CORRECT
+t("settings:market.title", { defaultValue: "Market" })  // CORRECT
 ```
 
 ❌ **Incorrect TFunction type in hooks**

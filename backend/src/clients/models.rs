@@ -84,6 +84,10 @@ impl BackupPolicySetting {
                 policy: BackupPolicy::Off,
                 limit: None,
             },
+            Some("keep_last") => Self {
+                policy: BackupPolicy::KeepLast,
+                limit: None,
+            },
             Some("keep_n") => {
                 let normalized = limit.unwrap_or(30).max(1);
                 Self {
@@ -137,6 +141,10 @@ mod tests {
 
         let keep_n_default = BackupPolicySetting::from_pair(Some("keep_n"), None);
         assert_eq!(keep_n_default.limit, Some(30));
+
+        let keep_last = BackupPolicySetting::from_pair(Some("keep_last"), Some(99));
+        assert_eq!(keep_last.policy, BackupPolicy::KeepLast);
+        assert_eq!(keep_last.limit, None);
     }
 
     #[test]

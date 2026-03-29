@@ -18,7 +18,7 @@ export type ClientDefaultMode = "hosted" | "transparent";
 export type ClientListDefaultFilter = "all" | "detected" | "managed";
 export type ClientBackupStrategy = "keep_n" | "keep_last" | "none";
 export type MenuBarIconMode = "runtime" | "hidden";
-/** Default MCP Market portal selection (`official` or a registered third-party id). */
+/** Default Market portal selection (`official` or a registered third-party id). */
 export type DefaultMarket = string;
 
 export interface DashboardSettings {

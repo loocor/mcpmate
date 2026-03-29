@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { EntityCard } from "../../components/entity-card";
@@ -39,7 +39,7 @@ import {
 } from "../../components/ui/page-toolbar";
 import { Switch } from "../../components/ui/switch";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
-import { configSuitsApi, serversApi } from "../../lib/api";
+import { serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlSort, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
@@ -188,7 +188,6 @@ export function ServerListPage() {
 		setAddDragActive(false);
 	}, []);
 
-	const [searchParams] = useSearchParams();
 	const storedDefaultView = useAppStore((state) => state.dashboardSettings.defaultView);
 	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
 
@@ -343,41 +342,6 @@ export function ServerListPage() {
 			setSortedServers(initialSorted);
 		}
 	}, [serverListResponse?.servers, sortedServers.length, sortState]);
-
-	const { data: profileUsage } = useQuery<{ [serverId: string]: string[] }>({
-		queryKey: ["servers", "profile-usage"],
-		queryFn: async () => {
-			try {
-				const suits = await configSuitsApi.getAll();
-				const active = suits.suits.filter((s) => s.is_active);
-				const mapping: Record<string, string[]> = {};
-				await Promise.all(
-					active.map(async (suit) => {
-						try {
-							const res = await configSuitsApi.getServers(suit.id);
-							(res.servers || []).forEach((srv) => {
-								if (srv.enabled) {
-									if (!mapping[srv.id]) mapping[srv.id] = [];
-									mapping[srv.id].push(suit.name || suit.id);
-								}
-							});
-						} catch (error) {
-							console.error(
-								"Failed loading servers for profile",
-								suit.id,
-								error,
-							);
-						}
-					}),
-				);
-				return mapping;
-			} catch (error) {
-				console.error("Failed to resolve profile usage", error);
-				return {};
-			}
-		},
-		staleTime: 30000,
-	});
 
 	// Enable/disable server
 	async function toggleServerAsync(
@@ -565,8 +529,6 @@ export function ServerListPage() {
 	};
 
 	const getServerDescription = (server: ServerSummary) => {
-		const profileRefs = profileUsage?.[server.id] ?? [];
-
 		const serverTypeRaw = server.server_type || "";
 		const serverType = serverTypeRaw.toLowerCase();
 
@@ -587,36 +549,12 @@ export function ServerListPage() {
 			? `${metaDescription}${serverTypeRaw ? ` · ${serverTypeRaw}` : ""}`
 			: technicalLine;
 
-		// Second line: associated profiles, using title case
-		const profileNames =
-			profileRefs.length > 0
-				? profileRefs
-					.map(
-						(name) =>
-							name.charAt(0).toUpperCase() + name.slice(1).toLowerCase(),
-					)
-					.join(", ")
-				: t("entity.description.profilesNone", { defaultValue: "-" });
-		const secondLine = t("entity.description.profilesLabel", {
-			profiles: profileNames,
-			defaultValue: "Profiles: {{profiles}}",
-		});
-
-		// Return React element displayed in two lines
 		return (
-			<div className="space-y-1">
-				<div
-					className="text-sm text-slate-500 truncate max-w-[200px]"
-					title={firstLine}
-				>
-					{firstLine}
-				</div>
-				<div
-					className="text-sm text-slate-500 truncate max-w-[200px]"
-					title={secondLine}
-				>
-					{secondLine}
-				</div>
+			<div
+				className="text-sm text-slate-500 truncate max-w-[200px]"
+				title={firstLine}
+			>
+				{firstLine}
 			</div>
 		);
 	};
@@ -691,7 +629,6 @@ export function ServerListPage() {
 	};
 
 	const renderServerListItem = (server: ServerSummary) => {
-		const profileRefs = profileUsage?.[server.id] ?? [];
 		const serverInitial = (server.name || server.id || "S")
 			.slice(0, 1)
 			.toUpperCase();
@@ -768,19 +705,6 @@ export function ServerListPage() {
 				}}
 				titleBadges={[]}
 				stats={capabilityStats}
-				bottomTags={[
-					<span key="profiles">
-						{t("entity.bottomTags.profiles", {
-							profiles:
-								profileRefs.length > 0
-									? profileRefs.join(", ")
-									: t("entity.description.profilesNone", {
-										defaultValue: "-",
-									}),
-							defaultValue: "Profiles: {{profiles}}",
-						})}
-					</span>,
-				]}
 				statusBadge={
 					<StatusBadge
 						status={server.status}
@@ -807,9 +731,7 @@ export function ServerListPage() {
 								className="p-2"
 								onClick={(ev) => {
 									ev.stopPropagation();
-									const targetChannel =
-										profileRefs.length > 0 ? "proxy" : "native";
-									const url = `/servers/${encodeURIComponent(server.id)}?view=debug&channel=${targetChannel}`;
+									const url = `/servers/${encodeURIComponent(server.id)}?view=debug&channel=native`;
 									if (openDebugInNewWindow) {
 										if (typeof window !== "undefined") {
 											window.open(url, "_blank", "noopener,noreferrer");

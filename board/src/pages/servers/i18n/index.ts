@@ -112,8 +112,6 @@ export const serversTranslations = {
 		entity: {
 			description: {
 				serverLabel: "Server: {{name}}",
-				profilesLabel: "Profiles: {{profiles}}",
-				profilesNone: "-",
 			},
 			connectionTags: {
 				stdio: "STDIO",
@@ -129,9 +127,6 @@ export const serversTranslations = {
 				prompts: "Prompts",
 				resources: "Resources",
 				templates: "Templates",
-			},
-			bottomTags: {
-				profiles: "Profiles: {{profiles}}",
 			},
 		},
 			capabilityList: {
@@ -745,8 +740,6 @@ export const serversTranslations = {
 		entity: {
 			description: {
 				serverLabel: "服务器：{{name}}",
-				profilesLabel: "关联配置：{{profiles}}",
-				profilesNone: "-",
 			},
 			connectionTags: {
 				stdio: "STDIO",
@@ -762,9 +755,6 @@ export const serversTranslations = {
 				prompts: "提示",
 				resources: "资源",
 				templates: "模板",
-			},
-			bottomTags: {
-				profiles: "关联配置：{{profiles}}",
 			},
 		},
 			capabilityList: {
@@ -1354,8 +1344,6 @@ export const serversTranslations = {
 		entity: {
 			description: {
 				serverLabel: "サーバー: {{name}}",
-				profilesLabel: "関連プロファイル: {{profiles}}",
-				profilesNone: "-",
 			},
 			connectionTags: {
 				stdio: "STDIO",
@@ -1371,9 +1359,6 @@ export const serversTranslations = {
 				prompts: "プロンプト",
 				resources: "リソース",
 				templates: "テンプレート",
-			},
-			bottomTags: {
-				profiles: "関連プロファイル: {{profiles}}",
 			},
 		},
 		capabilityList: {
