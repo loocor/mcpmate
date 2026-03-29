@@ -832,18 +832,38 @@ async fn mcp_shell_manage_local_core_service(
     let action_name = format!("{:?}", action).to_lowercase();
 
     let audit_action = match (config.localhost_runtime_mode, action.clone()) {
-        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Start) => mcpmate::audit::AuditAction::LocalCoreServiceStart,
-        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Restart) => mcpmate::audit::AuditAction::LocalCoreServiceRestart,
-        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Stop) => mcpmate::audit::AuditAction::LocalCoreServiceStop,
-        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Install) => mcpmate::audit::AuditAction::LocalCoreServiceInstall,
-        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Uninstall) => mcpmate::audit::AuditAction::LocalCoreServiceUninstall,
-        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Status) => mcpmate::audit::AuditAction::RestRequest,
-        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Start) => mcpmate::audit::AuditAction::DesktopManagedCoreStart,
-        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => mcpmate::audit::AuditAction::DesktopManagedCoreRestart,
-        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Stop) => mcpmate::audit::AuditAction::DesktopManagedCoreStop,
-        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Status) => mcpmate::audit::AuditAction::RestRequest,
-        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Install)
-        | (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Uninstall) => mcpmate::audit::AuditAction::RestRequest,
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Start) => {
+            Some(mcpmate::audit::AuditAction::LocalCoreServiceStart)
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Restart) => {
+            Some(mcpmate::audit::AuditAction::LocalCoreServiceRestart)
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Stop) => {
+            Some(mcpmate::audit::AuditAction::LocalCoreServiceStop)
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Install) => {
+            Some(mcpmate::audit::AuditAction::LocalCoreServiceInstall)
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Uninstall) => {
+            Some(mcpmate::audit::AuditAction::LocalCoreServiceUninstall)
+        }
+        (LocalCoreRuntimeMode::Service, LocalCoreServiceAction::Status) => None,
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Start) => {
+            Some(mcpmate::audit::AuditAction::DesktopManagedCoreStart)
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => {
+            Some(mcpmate::audit::AuditAction::DesktopManagedCoreRestart)
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Stop) => {
+            Some(mcpmate::audit::AuditAction::DesktopManagedCoreStop)
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Status) => None,
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Install) => {
+            Some(mcpmate::audit::AuditAction::LocalCoreServiceInstall)
+        }
+        (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Uninstall) => {
+            Some(mcpmate::audit::AuditAction::LocalCoreServiceUninstall)
+        }
     };
 
     let view = match (config.localhost_runtime_mode, action.clone()) {
@@ -909,7 +929,7 @@ async fn mcp_shell_manage_local_core_service(
         | (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Uninstall) => {
             let message = "install/uninstall are only available in service mode".to_string();
             if let Err(err) = audit::emit_desktop_audit_event(
-                audit_action,
+                audit_action.expect("rejected desktop-managed action should have audit action"),
                 mcpmate::audit::AuditStatus::Failed,
                 Some(action_name.clone()),
                 Some("Rejected local core service action".to_string()),
@@ -931,7 +951,7 @@ async fn mcp_shell_manage_local_core_service(
         .await
         .map_err(|err| err.to_string())?;
 
-    if !matches!(action, LocalCoreServiceAction::Status) {
+    if let Some(audit_action) = audit_action {
         if let Err(err) = audit::emit_desktop_audit_event(
             audit_action,
             mcpmate::audit::AuditStatus::Success,
