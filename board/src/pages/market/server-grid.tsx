@@ -20,6 +20,7 @@ export function ServerGrid({
 	onPreviousPage,
 	onFirstPage,
 	onLastPage,
+	onGoToPage,
 	onItemsPerPageChange,
 	isPaginationActionLoading,
 }: ServerGridProps) {
@@ -115,6 +116,9 @@ export function ServerGrid({
 					isLoading={isInitialLoading || isPageLoading || isPaginationActionLoading}
 					itemsPerPage={pagination.itemsPerPage}
 					currentPageItemCount={servers.length}
+					totalPages={pagination.totalPages}
+					disableLastPageWhenTotalUnknown
+					onGoToPage={onGoToPage}
 					onItemsPerPageChange={onItemsPerPageChange}
 					onPreviousPage={onPreviousPage}
 					onFirstPage={onFirstPage}

@@ -1,5 +1,6 @@
 import type {
 	ApiResponse,
+	AuditEventDetailsResp,
 	AuditListData,
 	AuditListResp,
 	AuditPolicyResp,
@@ -1355,6 +1356,11 @@ export const auditApi = {
 		if (query?.session_id) qs.set("session_id", query.session_id);
 		const resp = await fetchApi<AuditListResp>(`/api/audit/events?${qs}`);
 		return extractApiData<AuditListData>(resp);
+	},
+	details: async (id: number) => {
+		const qs = new URLSearchParams({ id: String(id) });
+		const resp = await fetchApi<AuditEventDetailsResp>(`/api/audit/events/details?${qs}`);
+		return extractApiData(resp).event;
 	},
 	eventsWsUrl: () => {
 		const wsBase = resolveWebSocketUrl();

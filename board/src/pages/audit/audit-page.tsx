@@ -1,5 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw, Search, Filter, AlertCircle, Inbox } from "lucide-react";
+import {
+	RefreshCw,
+	Search,
+	Filter,
+	AlertCircle,
+	Inbox,
+	ChevronRight,
+	ChevronDown,
+	X,
+} from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "../../components/ui/badge";
@@ -19,6 +28,8 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError } from "../../lib/notify";
 import type { AuditCategory, AuditEventRecord, AuditStatus } from "../../lib/types";
 import { formatLocalDateTime } from "../../lib/utils";
+import { AuditEventDetailDrawer } from "./components/audit-event-detail-drawer";
+import { AuditEventDetails } from "./components/audit-event-details";
 
 const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
@@ -31,52 +42,92 @@ const CATEGORY_OPTIONS: AuditCategory[] = [
 	"profile_config",
 	"client_config",
 	"runtime_control",
-	"capability_control",
-	"rest_api",
+	"management",
 ];
 
 const STATUS_OPTIONS: AuditStatus[] = ["success", "failed", "cancelled"];
 
+/** Fixed-width gutter so ChevronRight/ChevronDown swaps do not shift the layout */
+const EXPAND_COL_BASE = "box-border w-10 min-w-10 max-w-10 px-0 pl-1 pr-2";
+const EXPAND_COL_TH_CLASS = `${EXPAND_COL_BASE} py-2 align-middle`;
+const EXPAND_COL_TD_CLASS = `${EXPAND_COL_BASE} py-3 align-middle`;
+const EXPAND_COL_SPACER_CLASS = `${EXPAND_COL_BASE} border-b-0 p-0 align-middle`;
+
+/** Distributes width so Target absorbs remainder; ellipsis relies on min-w-0 + truncate inside cells */
+function AuditEventsTableColgroup() {
+	return (
+		<colgroup>
+			<col className="w-10" />
+			<col className="w-[11rem]" />
+			<col className="w-[9.5rem]" />
+			<col className="w-[9.5rem]" />
+			<col className="w-[6.5rem]" />
+			<col />
+			<col className="w-[9rem]" />
+		</colgroup>
+	);
+}
+
 function EventRowSkeleton() {
 	return (
-		<tr className="border-b">
-			<td className="py-2 pr-4">
+		<tr className="border-b align-middle">
+			<td className={EXPAND_COL_TD_CLASS}>
+				<span className="inline-flex h-8 w-8 shrink-0 items-center justify-center">
+					<div className="h-4 w-4 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
+				</span>
+			</td>
+			<td className="py-3 pr-4 align-middle">
 				<div className="h-4 w-32 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
 			</td>
-			<td className="py-2 pr-4">
+			<td className="py-3 pr-4 align-middle">
 				<div className="h-4 w-20 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
 			</td>
-			<td className="py-2 pr-4">
+			<td className="py-3 pr-4 align-middle">
 				<div className="h-4 w-24 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
 			</td>
-			<td className="py-2 pr-4">
+			<td className="py-3 pr-4 align-middle">
 				<div className="h-5 w-16 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
 			</td>
-			<td className="py-2 pr-4">
-				<div className="h-4 w-40 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
+			<td className="min-w-0 max-w-0 py-3 pr-4 align-middle">
+				<div className="h-4 w-full max-w-full bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
 			</td>
-			<td className="py-2 pr-4">
-				<div className="h-4 w-12 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
-			</td>
-			<td className="py-2">
-				<div className="h-6 w-16 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
+			<td className="py-3 pl-2 pr-4 align-middle text-right tabular-nums">
+				<div className="ml-auto h-4 w-12 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
 			</td>
 		</tr>
 	);
 }
 
 function EventsTableSkeleton() {
+	const { t } = useTranslation("audit");
 	return (
-		<table className="w-full text-sm">
+		<table className="w-full table-fixed text-sm">
+			<AuditEventsTableColgroup />
 			<thead className="sticky top-0 z-[1] bg-white dark:bg-slate-900">
 				<tr className="border-b border-slate-200 text-left text-muted-foreground dark:border-slate-700">
-					<th className="py-2 pr-4">Timestamp</th>
-					<th className="py-2 pr-4">Action</th>
-					<th className="py-2 pr-4">Category</th>
-					<th className="py-2 pr-4">Status</th>
-					<th className="py-2 pr-4">Target</th>
-					<th className="py-2 pr-4">Duration</th>
-					<th className="py-2" />
+					<th scope="col" className={`${EXPAND_COL_TH_CLASS} font-normal`}>
+						<span className="sr-only">
+							{t("audit:headers.expandColumn", { defaultValue: "Expand row" })}
+						</span>
+					</th>
+					<th className="py-2 pr-4 whitespace-nowrap">
+						{t("audit:headers.timestamp", { defaultValue: "Timestamp" })}
+					</th>
+					<th className="py-2 pr-4 whitespace-nowrap">
+						{t("audit:headers.action", { defaultValue: "Action" })}
+					</th>
+					<th className="py-2 pr-4 whitespace-nowrap">
+						{t("audit:headers.category", { defaultValue: "Category" })}
+					</th>
+					<th className="py-2 pr-4 whitespace-nowrap">
+						{t("audit:headers.status", { defaultValue: "Status" })}
+					</th>
+					<th className="min-w-0 py-2 pr-4">
+						{t("audit:headers.target", { defaultValue: "Target" })}
+					</th>
+					<th className="whitespace-nowrap py-2 pl-2 pr-4 text-right font-normal">
+						{t("audit:headers.duration", { defaultValue: "Duration (ms)" })}
+					</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -128,12 +179,15 @@ export function AuditPage() {
 	const [pageCursors, setPageCursors] = useState<string[]>([]);
 	const [currentPageIndex, setCurrentPageIndex] = useState(0);
 	const [liveEvents, setLiveEvents] = useState<AuditEventRecord[]>([]);
-	const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+	const [expandedRowKey, setExpandedRowKey] = useState<string | null>(null);
+	const [drawerEventId, setDrawerEventId] = useState<number | null>(null);
+	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [connectionState, setConnectionState] = useState<"live" | "disconnected">("disconnected");
 	const [isPaginationActionLoading, setIsPaginationActionLoading] = useState(false);
 
 	const currentCursor = pageCursors[currentPageIndex];
 
+	/** REST loads one cursor page per request (refresh included); smaller page sizes reduce SQLite work. */
 	const query = useQuery({
 		queryKey: ["audit", "events", currentCursor, category, status, pageSize],
 		queryFn: async () =>
@@ -161,9 +215,10 @@ export function AuditPage() {
 	useEffect(() => {
 		setPageCursors([]);
 		setCurrentPageIndex(0);
-		setExpandedRows({});
+		setExpandedRowKey(null);
 	}, [category, status, pageSize]);
 
+	/** WS sends one JSON event per message (incremental), not a full list. */
 	useEffect(() => {
 		const socket = new WebSocket(auditApi.eventsWsUrl());
 		socket.onopen = () => setConnectionState("live");
@@ -204,6 +259,17 @@ export function AuditPage() {
 		}
 
 		return displayEvents.filter((event) => {
+			const categoryKey =
+				event.category === ("capability_control" as AuditCategory)
+					? "profile_config"
+					: event.category;
+			const actionLabel = t(`audit:actionValues.${event.action}`, {
+				defaultValue: event.action,
+			}).toLowerCase();
+			const categoryLabel = t(`audit:categoryValues.${categoryKey}`, {
+				defaultValue: categoryKey,
+			}).toLowerCase();
+
 			const haystacks = [
 				event.target,
 				event.route,
@@ -212,6 +278,8 @@ export function AuditPage() {
 				event.client_id,
 				event.session_id,
 				event.action,
+				actionLabel,
+				categoryLabel,
 				event.mcp_method,
 			]
 				.filter(Boolean)
@@ -219,10 +287,28 @@ export function AuditPage() {
 
 			return haystacks.some((value) => value.includes(keyword));
 		});
-	}, [displayEvents, search]);
+		// i18n.language: recomputed translated action/category labels must participate in filtering after locale switch.
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language is intentional (see board/AGENTS.md i18n hook deps)
+	}, [displayEvents, i18n.language, search, t]);
 
 	const toggleExpanded = useCallback((key: string) => {
-		setExpandedRows((current) => ({ ...current, [key]: !current[key] }));
+		setExpandedRowKey((current) => (current === key ? null : key));
+	}, []);
+
+	const handleRowToggle = useCallback(
+		(event: React.MouseEvent<HTMLTableRowElement>, rowKey: string) => {
+			const target = event.target as HTMLElement;
+			if (target.closest("a, button, summary")) {
+				return;
+			}
+			toggleExpanded(rowKey);
+		},
+		[toggleExpanded],
+	);
+
+	const openRawDetails = useCallback((eventId: number) => {
+		setDrawerEventId(eventId);
+		setDrawerOpen(true);
 	}, []);
 
 	const handleNextPage = useCallback(() => {
@@ -234,20 +320,20 @@ export function AuditPage() {
 				return next;
 			});
 			setCurrentPageIndex((prev) => prev + 1);
-			setExpandedRows({});
+			setExpandedRowKey(null);
 		}
 	}, [query.data, currentPageIndex]);
 
 	const handlePrevPage = useCallback(() => {
 		if (currentPageIndex > 0) {
 			setCurrentPageIndex((prev) => prev - 1);
-			setExpandedRows({});
+			setExpandedRowKey(null);
 		}
 	}, [currentPageIndex]);
 
 	const handleFirstPage = useCallback(() => {
 		setCurrentPageIndex(0);
-		setExpandedRows({});
+		setExpandedRowKey(null);
 	}, []);
 
 	const handleLastPage = useCallback(async () => {
@@ -257,7 +343,7 @@ export function AuditPage() {
 
 		setIsPaginationActionLoading(true);
 		try {
-			let nextCursor: string | undefined = query.data.next_cursor;
+			let nextCursor: string | undefined = query.data.next_cursor ?? undefined;
 			let targetPageIndex = currentPageIndex;
 			const nextPageCursors = [...pageCursors];
 
@@ -270,30 +356,117 @@ export function AuditPage() {
 					category: category !== ALL_CATEGORIES ? category : undefined,
 					status: status !== ALL_STATUSES ? status : undefined,
 				});
-				nextCursor = page.next_cursor;
+				nextCursor = page.next_cursor ?? undefined;
 			}
 
 			setPageCursors(nextPageCursors);
 			setCurrentPageIndex(targetPageIndex);
-			setExpandedRows({});
+			setExpandedRowKey(null);
 		} finally {
 			setIsPaginationActionLoading(false);
 		}
 	}, [category, currentPageIndex, pageCursors, pageSize, query.data?.next_cursor, status]);
 
+	const auditTotalPages = useMemo(() => {
+		if (query.data?.next_cursor) {
+			return null;
+		}
+		return currentPageIndex + 1;
+	}, [currentPageIndex, query.data?.next_cursor]);
+
+	const handleGoToPage = useCallback(
+		async (targetPage: number) => {
+			const p = Math.max(1, Math.floor(Number(targetPage)));
+			const targetIndex = p - 1;
+			if (targetIndex === currentPageIndex) {
+				return;
+			}
+			if (targetIndex === 0) {
+				handleFirstPage();
+				return;
+			}
+			if (targetIndex < currentPageIndex) {
+				if (targetIndex > 0 && pageCursors[targetIndex] === undefined) {
+					handleFirstPage();
+					return;
+				}
+				setCurrentPageIndex(targetIndex);
+				setExpandedRowKey(null);
+				return;
+			}
+			if (pageCursors[targetIndex] !== undefined) {
+				setCurrentPageIndex(targetIndex);
+				setExpandedRowKey(null);
+				return;
+			}
+			let nextCursor: string | undefined = query.data?.next_cursor ?? undefined;
+			if (!nextCursor) {
+				return;
+			}
+			setIsPaginationActionLoading(true);
+			try {
+				const nextCursors = [...pageCursors];
+				let idx = currentPageIndex;
+				while (idx < targetIndex && nextCursor) {
+					idx += 1;
+					nextCursors[idx] = nextCursor;
+					const page = await auditApi.list({
+						limit: pageSize,
+						cursor: nextCursor,
+						category: category !== ALL_CATEGORIES ? category : undefined,
+						status: status !== ALL_STATUSES ? status : undefined,
+					});
+					nextCursor = page.next_cursor ?? undefined;
+				}
+				setPageCursors(nextCursors);
+				if (nextCursors[targetIndex] !== undefined && idx === targetIndex) {
+					setCurrentPageIndex(targetIndex);
+				} else if (idx > currentPageIndex && nextCursors[idx] !== undefined) {
+					setCurrentPageIndex(idx);
+				}
+				setExpandedRowKey(null);
+			} finally {
+				setIsPaginationActionLoading(false);
+			}
+		},
+		[
+			category,
+			currentPageIndex,
+			handleFirstPage,
+			pageCursors,
+			pageSize,
+			query.data?.next_cursor,
+			status,
+		],
+	);
+
 	const renderStatusBadge = useCallback(
 		(value: AuditStatus) => {
-			const variant =
-				value === "success"
-					? "success"
-					: value === "failed"
-						? "destructive"
-						: "warning";
+			let variant: "success" | "destructive" | "warning" = "warning";
+			if (value === "success") {
+				variant = "success";
+			} else if (value === "failed") {
+				variant = "destructive";
+			}
 			return (
 				<Badge variant={variant}>
 					{t(`audit:statusValues.${value}`, { defaultValue: value })}
 				</Badge>
 			);
+		},
+		[t],
+	);
+
+	const renderCategoryCell = useCallback(
+		(event: AuditEventRecord) => {
+			const categoryKey =
+				event.category === ("capability_control" as AuditCategory)
+					? "profile_config"
+					: event.category;
+			const primary = t(`audit:categoryValues.${categoryKey}`, {
+				defaultValue: categoryKey,
+			});
+			return <span className="block min-w-0 truncate whitespace-nowrap">{primary}</span>;
 		},
 		[t],
 	);
@@ -328,45 +501,59 @@ export function AuditPage() {
 								: t("audit:states.disconnected", { defaultValue: "Disconnected" })}
 						</span>
 					</div>
-					<div className="flex flex-col gap-3 pt-2 md:flex-row">
-						<Input
-							value={search}
-							onChange={(event) => setSearch(event.target.value)}
-							placeholder={t("audit:filters.search", {
-								defaultValue: "Search target, route, server, profile, or client",
-							})}
-							className="md:max-w-sm"
-						/>
-						<Select value={category} onValueChange={setCategory}>
-							<SelectTrigger className="md:w-[200px]">
-								<SelectValue placeholder={t("audit:filters.allCategories", { defaultValue: "All categories" })} />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value={ALL_CATEGORIES}>
-									{t("audit:filters.allCategories", { defaultValue: "All categories" })}
-								</SelectItem>
-								{CATEGORY_OPTIONS.map((option) => (
-									<SelectItem key={option} value={option}>
-										{t(`audit:categoryValues.${option}`, { defaultValue: option })}
+					<div className="flex flex-col gap-3 pt-2 md:flex-row md:items-center md:gap-3">
+						<div className="relative min-w-0 w-full flex-1">
+							<Input
+								value={search}
+								onChange={(event) => setSearch(event.target.value)}
+								placeholder={t("audit:filters.search", {
+									defaultValue: "Search target, route, server, profile, or client",
+								})}
+								className="w-full pr-10"
+							/>
+							{search.trim().length > 0 ? (
+								<button
+									type="button"
+									className="absolute right-1.5 top-1/2 z-[1] flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+									onClick={() => setSearch("")}
+									aria-label={t("audit:filters.clearSearch", { defaultValue: "Clear search" })}
+								>
+									<X className="h-4 w-4 shrink-0" aria-hidden />
+								</button>
+							) : null}
+						</div>
+						<div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-3 md:w-auto">
+							<Select value={category} onValueChange={setCategory}>
+								<SelectTrigger className="w-[200px] max-w-full">
+									<SelectValue placeholder={t("audit:filters.allCategories", { defaultValue: "All categories" })} />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value={ALL_CATEGORIES}>
+										{t("audit:filters.allCategories", { defaultValue: "All categories" })}
 									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-						<Select value={status} onValueChange={setStatus}>
-							<SelectTrigger className="md:w-[180px]">
-								<SelectValue placeholder={t("audit:filters.allStatuses", { defaultValue: "All statuses" })} />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value={ALL_STATUSES}>
-									{t("audit:filters.allStatuses", { defaultValue: "All statuses" })}
-								</SelectItem>
-								{STATUS_OPTIONS.map((option) => (
-									<SelectItem key={option} value={option}>
-										{t(`audit:statusValues.${option}`, { defaultValue: option })}
+									{CATEGORY_OPTIONS.map((option) => (
+										<SelectItem key={option} value={option}>
+											{t(`audit:categoryValues.${option}`, { defaultValue: option })}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							<Select value={status} onValueChange={setStatus}>
+								<SelectTrigger className="w-[180px] max-w-full">
+									<SelectValue placeholder={t("audit:filters.allStatuses", { defaultValue: "All statuses" })} />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value={ALL_STATUSES}>
+										{t("audit:filters.allStatuses", { defaultValue: "All statuses" })}
 									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+									{STATUS_OPTIONS.map((option) => (
+										<SelectItem key={option} value={option}>
+											{t(`audit:statusValues.${option}`, { defaultValue: option })}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
 					</div>
 				</CardHeader>
 				<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -390,61 +577,78 @@ export function AuditPage() {
 						</div>
 					) : (
 						<div className="min-h-0 flex-1 overflow-auto overscroll-contain">
-							<table className="w-full text-sm">
+							<table className="w-full table-fixed text-sm">
+								<AuditEventsTableColgroup />
 								<thead className="sticky top-0 z-[1] bg-white dark:bg-slate-900">
 									<tr className="border-b border-slate-200 text-left text-muted-foreground dark:border-slate-700">
-										<th className="py-2 pr-4">{t("audit:headers.timestamp", { defaultValue: "Timestamp" })}</th>
-										<th className="py-2 pr-4">{t("audit:headers.action", { defaultValue: "Action" })}</th>
-										<th className="py-2 pr-4">{t("audit:headers.category", { defaultValue: "Category" })}</th>
-										<th className="py-2 pr-4">{t("audit:headers.status", { defaultValue: "Status" })}</th>
-										<th className="py-2 pr-4">{t("audit:headers.target", { defaultValue: "Target" })}</th>
-										<th className="py-2 pr-4">{t("audit:headers.duration", { defaultValue: "Duration" })}</th>
-										<th className="py-2" />
+										<th scope="col" className={`${EXPAND_COL_TH_CLASS} font-normal`}>
+											<span className="sr-only">
+												{t("audit:headers.expandColumn", { defaultValue: "Expand row" })}
+											</span>
+										</th>
+										<th className="py-2 pr-4 whitespace-nowrap">
+											{t("audit:headers.timestamp", { defaultValue: "Timestamp" })}
+										</th>
+										<th className="py-2 pr-4 whitespace-nowrap">
+											{t("audit:headers.action", { defaultValue: "Action" })}
+										</th>
+										<th className="py-2 pr-4 whitespace-nowrap">
+											{t("audit:headers.category", { defaultValue: "Category" })}
+										</th>
+										<th className="py-2 pr-4 whitespace-nowrap">
+											{t("audit:headers.status", { defaultValue: "Status" })}
+										</th>
+										<th className="min-w-0 py-2 pr-4">
+											{t("audit:headers.target", { defaultValue: "Target" })}
+										</th>
+										<th className="whitespace-nowrap py-2 pl-2 pr-4 text-right font-normal">
+											{t("audit:headers.duration", { defaultValue: "Duration (ms)" })}
+										</th>
 									</tr>
 								</thead>
 								<tbody>
 									{filteredEvents.map((event) => {
 										const rowKey = toEventKey(event);
-										const expanded = expandedRows[rowKey] ?? false;
+										const expanded = expandedRowKey === rowKey;
 										return (
 											<Fragment key={rowKey}>
-												<tr className="border-b align-middle">
-													<td className="py-2 pr-4 whitespace-nowrap">
-														{formatLocalDateTime(new Date(event.occurred_at_ms).toISOString(), i18n.language)}
+												<tr
+													className="border-b align-middle odd:bg-background even:bg-slate-50/50 hover:bg-slate-100/70 dark:even:bg-slate-900/40 dark:hover:bg-slate-800/60 cursor-pointer"
+													onClick={(clickEvent) => handleRowToggle(clickEvent, rowKey)}
+												>
+													<td className={`${EXPAND_COL_TD_CLASS} text-muted-foreground`}>
+														<span className="inline-flex h-8 w-8 shrink-0 items-center justify-center">
+															{expanded ? (
+																<ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+															) : (
+																<ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
+															)}
+														</span>
 													</td>
-													<td className="py-2 pr-4">{t(`audit:actionValues.${event.action}`, { defaultValue: event.action })}</td>
-													<td className="py-2 pr-4">
-														{t(`audit:categoryValues.${event.category}`, { defaultValue: event.category })}
+													<td className="py-3 pr-4 align-middle whitespace-nowrap">
+														{formatLocalDateTime(event.occurred_at_ms)}
 													</td>
-													<td className="py-2 pr-4">{renderStatusBadge(event.status)}</td>
-													<td className="py-2 pr-4 max-w-[260px] truncate">
-														{event.target ?? event.route ?? event.server_id ?? event.profile_id ?? event.client_id ?? "—"}
+													<td className="overflow-hidden py-3 pr-4 align-middle">
+														<span className="block min-w-0 truncate whitespace-nowrap">
+															{t(`audit:actionValues.${event.action}`, { defaultValue: event.action })}
+														</span>
 													</td>
-													<td className="py-2 pr-4">{event.duration_ms != null ? `${event.duration_ms}ms` : "—"}</td>
-													<td className="py-2 text-right">
-														<Button variant="ghost" size="sm" onClick={() => toggleExpanded(rowKey)}>
-															{t("audit:labels.details", { defaultValue: "Details" })}
-														</Button>
+													<td className="overflow-hidden py-3 pr-4 align-middle">{renderCategoryCell(event)}</td>
+													<td className="py-3 pr-4 align-middle whitespace-nowrap">{renderStatusBadge(event.status)}</td>
+													<td className="min-w-0 max-w-0 py-3 pr-4 align-middle">
+														<div className="truncate">
+															{event.target ?? event.route ?? event.server_id ?? event.profile_id ?? event.client_id ?? "—"}
+														</div>
+													</td>
+													<td className="py-3 pl-2 pr-4 align-middle text-right tabular-nums">
+														{event.duration_ms != null ? String(event.duration_ms) : "—"}
 													</td>
 												</tr>
 												{expanded ? (
-													<tr className="border-b bg-slate-50 dark:bg-slate-900/50 last:border-0">
-														<td colSpan={7} className="p-4">
-															<div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
-																<div><strong>{t("audit:details.route", { defaultValue: "Route" })}:</strong> {event.route ?? "—"}</div>
-																<div><strong>{t("audit:details.mcpMethod", { defaultValue: "MCP Method" })}:</strong> {event.mcp_method ?? "—"}</div>
-																<div><strong>{t("audit:details.clientId", { defaultValue: "Client ID" })}:</strong> {event.client_id ?? "—"}</div>
-																<div><strong>{t("audit:details.profileId", { defaultValue: "Profile ID" })}:</strong> {event.profile_id ?? "—"}</div>
-																<div><strong>{t("audit:details.serverId", { defaultValue: "Server ID" })}:</strong> {event.server_id ?? "—"}</div>
-																<div><strong>{t("audit:details.sessionId", { defaultValue: "Session ID" })}:</strong> {event.session_id ?? "—"}</div>
-																<div><strong>{t("audit:details.requestId", { defaultValue: "Request ID" })}:</strong> {event.request_id ?? "—"}</div>
-																<div><strong>{t("audit:details.protocol", { defaultValue: "Protocol" })}:</strong> {event.protocol_version ?? "—"}</div>
-																<div className="md:col-span-2"><strong>{t("audit:details.error", { defaultValue: "Error" })}:</strong> {event.error_message ?? "—"}</div>
-																<div className="md:col-span-2">
-																	<strong>{t("audit:details.data", { defaultValue: "Data" })}:</strong>
-																	<pre className="mt-2 overflow-x-auto rounded-md bg-background p-3 text-[11px] leading-5 text-foreground">{event.data ? JSON.stringify(event.data, null, 2) : "—"}</pre>
-																</div>
-															</div>
+													<tr className="border-b bg-slate-100/80 dark:bg-slate-900/70 last:border-0">
+														<td className={EXPAND_COL_SPACER_CLASS} />
+														<td colSpan={6} className="p-4">
+															<AuditEventDetails event={event} t={t} onOpenRawDetails={openRawDetails} />
 														</td>
 													</tr>
 												) : null}
@@ -463,6 +667,9 @@ export function AuditPage() {
 						isLoading={query.isFetching || isPaginationActionLoading}
 						itemsPerPage={pageSize}
 						currentPageItemCount={filteredEvents.length}
+						totalPages={auditTotalPages}
+						disableLastPageWhenTotalUnknown
+						onGoToPage={handleGoToPage}
 						onItemsPerPageChange={setPageSize}
 						onPreviousPage={handlePrevPage}
 						onFirstPage={handleFirstPage}
@@ -473,6 +680,7 @@ export function AuditPage() {
 					/>
 				</CardContent>
 			</Card>
+			<AuditEventDetailDrawer open={drawerOpen} onOpenChange={setDrawerOpen} eventId={drawerEventId} />
 		</div>
 	);
 }

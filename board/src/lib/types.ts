@@ -227,16 +227,13 @@ export type AuditCategory =
   | "mcp_request"
   | "server_config"
   | "profile_config"
-  | "capability_control"
-  | "rest_api"
+  | "management"
   | "client_config"
   | "runtime_control";
 
 export type AuditStatus = "success" | "failed" | "cancelled";
-export type AuditStatus = "success" | "failed" | "cancelled";
 
 export type AuditAction =
-  | "rest_request"
   | "initialize"
   | "tools_list"
   | "tools_call"
@@ -278,7 +275,20 @@ export type AuditAction =
   | "desktop_managed_core_restart"
   | "desktop_managed_core_stop"
   | "capability_grant"
-  | "capability_revoke";
+  | "capability_revoke"
+  | "profile_server_enable"
+  | "profile_server_disable"
+  | "profile_server_remove"
+  | "server_instance_disconnect"
+  | "server_instance_force_disconnect"
+  | "server_instance_reconnect"
+  | "server_instance_reset_reconnect"
+  | "server_instance_recover"
+  | "server_instance_cancel"
+  | "server_cache_reset"
+  | "runtime_install"
+  | "runtime_cache_reset"
+  | "audit_policy_update";
 
 
 export interface AuditEventRecord {
@@ -290,8 +300,11 @@ export interface AuditEventRecord {
   actor?: string | null;
   request_id?: string | null;
   client_id?: string | null;
+  client_name?: string | null;
   profile_id?: string | null;
+  profile_name?: string | null;
   server_id?: string | null;
+  server_name?: string | null;
   session_id?: string | null;
   protocol_version?: string | null;
   http_method?: string | null;
@@ -315,6 +328,12 @@ export interface AuditListData {
 }
 
 export interface AuditListResp extends ApiResponse<AuditListData> {}
+
+export interface AuditEventDetailsData {
+  event: AuditEventRecord;
+}
+
+export interface AuditEventDetailsResp extends ApiResponse<AuditEventDetailsData> {}
 
 export type AuditRetentionPolicy =
   | "off"

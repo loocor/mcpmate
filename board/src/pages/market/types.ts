@@ -39,6 +39,7 @@ export interface ServerGridProps {
 		hasPreviousPage: boolean;
 		hasNextPage: boolean;
 		itemsPerPage: number;
+		totalPages: number | null;
 	};
 	onServerPreview: (server: RegistryServerEntry) => void;
 	onServerHide: (server: RegistryServerEntry) => void;
@@ -47,6 +48,7 @@ export interface ServerGridProps {
 	onPreviousPage: () => void;
 	onFirstPage: () => void;
 	onLastPage: () => Promise<void>;
+	onGoToPage: (page: number) => Promise<void>;
 	onItemsPerPageChange: (itemsPerPage: number) => void;
 	isPaginationActionLoading: boolean;
 }
@@ -72,11 +74,13 @@ export interface UseMarketDataReturn {
 		hasPreviousPage: boolean;
 		hasNextPage: boolean;
 		itemsPerPage: number;
+		totalPages: number | null;
 	};
 	onNextPage: () => void;
 	onPreviousPage: () => void;
 	onFirstPage: () => void;
 	onLastPage: () => Promise<void>;
+	onGoToPage: (page: number) => Promise<void>;
 	onItemsPerPageChange: (itemsPerPage: number) => void;
 	isPaginationActionLoading: boolean;
 	onRefresh: () => void;

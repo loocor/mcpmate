@@ -183,6 +183,78 @@ export function useMarketData(
 		}
 	}, [itemsPerPage, pagination, registryQuery.data?.metadata?.nextCursor, search]);
 
+	const handleGoToPage = useCallback(
+		async (targetPage: number) => {
+			const p = Math.max(1, Math.floor(targetPage));
+			if (p === pagination.currentPage) {
+				return;
+			}
+			if (p === 1) {
+				handleFirstPage();
+				return;
+			}
+			if (p < pagination.currentPage) {
+				const hist = pagination.cursorHistory;
+				if (p <= hist.length) {
+					pagination.setPaginationState(p, hist.slice(0, p), true);
+					window.scrollTo({ top: 0, behavior: "smooth" });
+				} else {
+					handleFirstPage();
+				}
+				return;
+			}
+			if (!registryQuery.data?.metadata?.nextCursor) {
+				return;
+			}
+
+			setIsPaginationActionLoading(true);
+			try {
+				let nextCursor: string | undefined = registryQuery.data.metadata.nextCursor;
+				let targetPagePtr = pagination.currentPage;
+				const history = [...pagination.cursorHistory];
+
+				while (nextCursor && targetPagePtr < p) {
+					if (history.length < targetPagePtr + 1) {
+						history.push(nextCursor);
+					} else {
+						history[targetPagePtr] = nextCursor;
+					}
+					targetPagePtr += 1;
+
+					const result = await fetchRegistryServers({
+						cursor: nextCursor,
+						search: search || undefined,
+						limit: itemsPerPage,
+					});
+					nextCursor = result.metadata.nextCursor ?? undefined;
+				}
+
+				if (targetPagePtr !== p) {
+					pagination.setPaginationState(targetPagePtr, history, Boolean(nextCursor));
+					window.scrollTo({ top: 0, behavior: "smooth" });
+					return;
+				}
+
+				pagination.setPaginationState(p, history, Boolean(nextCursor));
+				window.scrollTo({ top: 0, behavior: "smooth" });
+			} finally {
+				setIsPaginationActionLoading(false);
+			}
+		},
+		[
+			handleFirstPage,
+			itemsPerPage,
+			pagination,
+			registryQuery.data?.metadata?.nextCursor,
+			search,
+		],
+	);
+
+	const totalPages =
+		registryQuery.data && !registryQuery.data.metadata?.nextCursor
+			? pagination.currentPage
+			: null;
+
 	return {
 		servers: sortedServers,
 		sortedServers,
@@ -195,11 +267,13 @@ export function useMarketData(
 			hasPreviousPage: pagination.hasPreviousPage,
 			hasNextPage: pagination.hasNextPage,
 			itemsPerPage: pagination.itemsPerPage,
+			totalPages,
 		},
 		onNextPage: handleNextPage,
 		onPreviousPage: handlePreviousPage,
 		onFirstPage: handleFirstPage,
 		onLastPage: handleLastPage,
+		onGoToPage: handleGoToPage,
 		onItemsPerPageChange: handleItemsPerPageChange,
 		isPaginationActionLoading,
 		onRefresh: handleRefresh,

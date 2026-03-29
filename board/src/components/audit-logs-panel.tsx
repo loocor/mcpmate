@@ -41,6 +41,11 @@ interface AuditLogsPanelProps {
 	onFirstPage: () => void;
 	onNextPage: () => void;
 	onLastPage: () => void;
+	/** When known (e.g. last page), show “of N”; omit when unknown (cursor APIs). */
+	totalPages?: number | null;
+	/** When known, include in the left “showing … of total” line. */
+	totalItemCount?: number | null;
+	onGoToPage?: (page: number) => void | Promise<void>;
 	expandLabel: string;
 	collapseLabel: string;
 	defaultExpanded?: boolean;
@@ -71,6 +76,9 @@ export function AuditLogsPanel({
 	onFirstPage,
 	onNextPage,
 	onLastPage,
+	totalPages,
+	totalItemCount,
+	onGoToPage,
 	expandLabel,
 	collapseLabel,
 	defaultExpanded = false,
@@ -164,6 +172,9 @@ export function AuditLogsPanel({
 						isLoading={isFetching || isPaginationActionLoading}
 						itemsPerPage={itemsPerPage}
 						currentPageItemCount={rows.length}
+						totalPages={totalPages}
+						totalItemCount={totalItemCount}
+						onGoToPage={onGoToPage}
 						onItemsPerPageChange={onItemsPerPageChange}
 						onPreviousPage={onPreviousPage}
 						onFirstPage={onFirstPage}

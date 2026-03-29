@@ -43,6 +43,7 @@ export function MarketPage() {
 		onPreviousPage,
 		onFirstPage,
 		onLastPage,
+		onGoToPage,
 		onItemsPerPageChange,
 		isPaginationActionLoading,
 		onRefresh,
@@ -241,6 +242,7 @@ export function MarketPage() {
 					onPreviousPage={onPreviousPage}
 					onFirstPage={onFirstPage}
 					onLastPage={onLastPage}
+					onGoToPage={onGoToPage}
 					onItemsPerPageChange={onItemsPerPageChange}
 					isPaginationActionLoading={isPaginationActionLoading}
 				/>
