@@ -152,6 +152,11 @@ const APPLICATION_MODE_CONFIG = [
 
 const CLIENT_MODE_CONFIG = [
 	{
+		value: "smart" as const,
+		labelKey: "settings:options.clientMode.smart",
+		fallback: "Smart",
+	},
+	{
 		value: "hosted" as const,
 		labelKey: "settings:options.clientMode.hosted",
 		fallback: "Hosted",

@@ -14,7 +14,7 @@ export type MarketPortalMeta = MarketPortalDefinition;
 export type DashboardDefaultView = "list" | "grid";
 export type DashboardAppMode = "express" | "expert";
 export type DashboardLanguage = "en" | "zh-cn" | "ja";
-export type ClientDefaultMode = "hosted" | "transparent";
+export type ClientDefaultMode = "smart" | "hosted" | "transparent";
 export type ClientListDefaultFilter = "all" | "detected" | "managed";
 export type ClientBackupStrategy = "keep_n" | "keep_last" | "none";
 export type MenuBarIconMode = "runtime" | "hidden";
@@ -99,7 +99,7 @@ const defaultDashboardSettings: DashboardSettings = {
 	showDefaultHeaders: true,
 	menuBarIconMode: "runtime",
 	showDockIcon: true,
-	clientDefaultMode: "hosted",
+	clientDefaultMode: "smart",
 	clientListDefaultFilter: "all",
 	clientBackupStrategy: "keep_n",
 	clientBackupLimit: 5,
@@ -211,6 +211,7 @@ function normalizeDashboardSettings(
 	}
 
 	if (
+		patch.clientDefaultMode === "smart" ||
 		patch.clientDefaultMode === "hosted" ||
 		patch.clientDefaultMode === "transparent"
 	) {

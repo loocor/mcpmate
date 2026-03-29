@@ -133,6 +133,7 @@ export const settingsTranslations = {
         expert: "Expert",
       },
       clientMode: {
+        smart: "Smart",
         hosted: "Hosted",
         transparent: "Transparent",
       },
@@ -428,6 +429,7 @@ export const settingsTranslations = {
         expert: "专业",
       },
       clientMode: {
+        smart: "Smart",
         hosted: "托管",
         transparent: "透明",
       },
@@ -706,6 +708,7 @@ export const settingsTranslations = {
         expert: "エキスパート",
       },
       clientMode: {
+        smart: "Smart",
         hosted: "ホスト",
         transparent: "トランスペアレント",
       },
