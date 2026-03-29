@@ -104,8 +104,8 @@ Unified audit trail for operational and security events:
 
 Light and dark themes use the same layout; status cards and the metrics chart adapt to the selected appearance.
 
-| Light                                           | Dark                                                |
-| ----------------------------------------------- | --------------------------------------------------- |
+| Light                                      | Dark                                           |
+| ------------------------------------------ | ---------------------------------------------- |
 | ![Dashboard light](./assets/dashboard.png) | ![Dashboard dark](./assets/dashboard-dark.png) |
 
 ### Server Management
@@ -142,11 +142,11 @@ Configure management mode and capability source for each AI client.
 
 ![Client Configuration](./assets/client-configuration.png)
 
-### MCP Market
+### Market
 
 Browse the official MCP registry and install servers without leaving the app.
 
-![MCP Market](./assets/market.png)
+![Market](./assets/market.png)
 
 ### Tool Inspector
 
