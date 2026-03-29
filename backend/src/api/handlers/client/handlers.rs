@@ -854,6 +854,7 @@ fn build_render_options(request: &ClientConfigUpdateReq) -> ClientRenderOptions 
 
 fn map_mode(mode: ClientConfigMode) -> ConfigMode {
     match mode {
+        ClientConfigMode::Smart => ConfigMode::Managed,
         ClientConfigMode::Hosted => ConfigMode::Managed,
         ClientConfigMode::Transparent => ConfigMode::Native,
     }

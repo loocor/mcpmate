@@ -8,25 +8,48 @@ use rmcp::model::{CallToolRequest, CallToolRequestParams, CallToolResult, Client
 use rmcp::service::PeerRequestOptions;
 use rmcp::service::RequestContext;
 
-/// Determines whether a builtin tool should be visible/invocable for a given
-/// capability source. Profile management tools are only available for clients
-/// using the Activated capability source. Client-aware tools are available
-/// for their respective capability sources.
-fn builtin_tool_allowed_for_capability_source(
+fn builtin_tool_allowed(
+    config_mode: Option<&str>,
     capability_source: CapabilitySource,
     tool_name: &str,
 ) -> bool {
-    let is_profile_tool = tool_name.starts_with("mcpmate_profile_");
-    let is_client_tool = tool_name.starts_with("mcpmate_client_");
+    if matches!(tool_name, "mcpmate_profile_list" | "mcpmate_profile_preview") {
+        return true;
+    }
+
+    if matches!(config_mode, Some("smart")) {
+        return matches!(
+            tool_name,
+            "mcpmate_profile_list"
+                | "mcpmate_profile_preview"
+                | "mcpmate_scope_get"
+                | "mcpmate_scope_set"
+                | "mcpmate_scope_add"
+                | "mcpmate_scope_remove"
+        );
+    }
+
+    let is_profile_tool = matches!(
+        tool_name,
+        "mcpmate_profile_enable" | "mcpmate_profile_disable" | "mcpmate_profile_activate_only"
+    );
+    let is_client_tool = matches!(
+        tool_name,
+        "mcpmate_scope_get"
+            | "mcpmate_scope_set"
+            | "mcpmate_scope_add"
+            | "mcpmate_scope_remove"
+            | "mcpmate_client_custom_profile_details"
+    );
 
     if is_profile_tool {
         capability_source == CapabilitySource::Activated
     } else if is_client_tool {
         match tool_name {
-            "mcpmate_client_configuration_get" => {
+            "mcpmate_scope_get" => {
                 matches!(capability_source, CapabilitySource::Profiles | CapabilitySource::Custom)
             }
-            "mcpmate_client_profiles_list" | "mcpmate_client_profiles_select" => {
+            "mcpmate_scope_set" | "mcpmate_scope_add" | "mcpmate_scope_remove" => {
                 capability_source == CapabilitySource::Profiles
             }
             "mcpmate_client_custom_profile_details" => capability_source == CapabilitySource::Custom,
@@ -35,6 +58,40 @@ fn builtin_tool_allowed_for_capability_source(
     } else {
         true
     }
+}
+
+fn next_smart_workspace_for_request(
+    current: &crate::clients::models::ClientCapabilityConfig,
+    request: &CallToolRequestParams,
+) -> crate::clients::models::ClientCapabilityConfig {
+    let mut next = current.clone();
+    next.capability_source = CapabilitySource::Profiles;
+    next.custom_profile_id = None;
+
+    let profile_ids = request
+        .arguments
+        .as_ref()
+        .and_then(|args| args.get("profile_ids"))
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
+        .unwrap_or_default();
+
+    match request.name.as_ref() {
+        "mcpmate_scope_set" => {
+            next.selected_profile_ids = profile_ids;
+        }
+        "mcpmate_scope_add" => {
+            next.selected_profile_ids.extend(profile_ids);
+            next.selected_profile_ids.sort();
+            next.selected_profile_ids.dedup();
+        }
+        "mcpmate_scope_remove" => {
+            next.selected_profile_ids.retain(|current| !profile_ids.contains(current));
+        }
+        _ => {}
+    }
+
+    next
 }
 
 pub(super) async fn list_tools(
@@ -114,16 +171,14 @@ pub(super) async fn list_tools(
     tools = vis.filter_tools_with_snapshot(&snapshot, tools);
 
     let capability_config = vis
-        .resolve_capability_config(&client.client_id)
+        .resolve_capability_config_for_client(&client)
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
     let builtin_tools = server
         .builtin_services
         .tools()
         .into_iter()
-        .filter(|tool| {
-            builtin_tool_allowed_for_capability_source(capability_config.capability_source, tool.name.as_ref())
-        })
+        .filter(|tool| builtin_tool_allowed(client.config_mode.as_deref(), capability_config.capability_source, tool.name.as_ref()))
         .collect::<Vec<_>>();
     tracing::debug!("Including {} builtin service tools", builtin_tools.len());
     tools.extend(builtin_tools);
@@ -160,7 +215,14 @@ pub(super) async fn call_tool(
     );
 
     let is_profile_tool = request.name.starts_with("mcpmate_profile_");
-    let is_client_tool = request.name.starts_with("mcpmate_client_");
+    let is_client_tool = matches!(
+        request.name.as_ref(),
+        "mcpmate_scope_get"
+            | "mcpmate_scope_set"
+            | "mcpmate_scope_add"
+            | "mcpmate_scope_remove"
+            | "mcpmate_client_custom_profile_details"
+    );
 
     if is_profile_tool || is_client_tool {
         let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
@@ -168,11 +230,11 @@ pub(super) async fn call_tool(
             server.profile_service.clone(),
         );
         let capability_config = vis
-            .resolve_capability_config(&client.client_id)
+            .resolve_capability_config_for_client(&client)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        if !builtin_tool_allowed_for_capability_source(capability_config.capability_source, &request.name) {
+        if !builtin_tool_allowed(client.config_mode.as_deref(), capability_config.capability_source, &request.name) {
             let message = if is_profile_tool {
                 "profile management tools are only available for clients using the activated capability source"
             } else {
@@ -184,9 +246,10 @@ pub(super) async fn call_tool(
         if is_client_tool {
             let builtin_context = ClientBuiltinContext {
                 client_id: client.client_id.clone(),
+                config_mode: client.config_mode.clone(),
                 capability_source: capability_config.capability_source,
-                selected_profile_ids: capability_config.selected_profile_ids,
-                custom_profile_id: capability_config.custom_profile_id,
+                selected_profile_ids: capability_config.selected_profile_ids.clone(),
+                custom_profile_id: capability_config.custom_profile_id.clone(),
             };
 
             if let Some(result) = server
@@ -201,11 +264,26 @@ pub(super) async fn call_tool(
                 );
                 return match result {
                     Ok(call_result) => {
-                        if request.name == "mcpmate_client_profiles_select" {
+                        if matches!(
+                            request.name.as_ref(),
+                            "mcpmate_profile_enable"
+                                | "mcpmate_profile_disable"
+                                | "mcpmate_profile_activate_only"
+                                | "mcpmate_scope_set"
+                                | "mcpmate_scope_add"
+                                | "mcpmate_scope_remove"
+                        ) {
                             if let Some(session_id) = client.session_id.as_deref() {
-                                server
-                                    .refresh_bound_session_runtime_identity(session_id, &client.client_id)
-                                    .await?;
+                                if matches!(client.config_mode.as_deref(), Some("smart")) {
+                                    let workspace = next_smart_workspace_for_request(&capability_config, &request);
+                                    server
+                                        .update_smart_session_workspace(session_id, &client.client_id, workspace)
+                                        .await?;
+                                } else {
+                                    server
+                                        .refresh_bound_session_runtime_identity(session_id, &client.client_id)
+                                        .await?;
+                                }
                             }
                         }
                         Ok(call_result)
@@ -231,7 +309,19 @@ pub(super) async fn call_tool(
             "ProxyServer::call_tool handled by builtin service"
         );
         return match result {
-            Ok(call_result) => Ok(call_result),
+            Ok(call_result) => {
+                if matches!(
+                    request.name.as_ref(),
+                    "mcpmate_profile_enable" | "mcpmate_profile_disable" | "mcpmate_profile_activate_only"
+                ) {
+                    if let Some(session_id) = client.session_id.as_deref() {
+                        server
+                            .refresh_bound_session_runtime_identity(session_id, &client.client_id)
+                            .await?;
+                    }
+                }
+                Ok(call_result)
+            }
             Err(e) => {
                 tracing::error!(
                     call_id = %call_id,
@@ -446,28 +536,28 @@ pub(super) async fn call_tool(
 
 #[cfg(test)]
 mod tests {
-    use super::builtin_tool_allowed_for_capability_source;
+    use super::builtin_tool_allowed;
     use crate::clients::models::CapabilitySource;
 
     #[test]
     fn profile_tools_are_only_available_for_activated_capability_source() {
         let profile_tools = [
-            "mcpmate_profile_list",
-            "mcpmate_profile_details",
-            "mcpmate_profile_switch",
+            "mcpmate_profile_enable",
+            "mcpmate_profile_disable",
+            "mcpmate_profile_activate_only",
         ];
 
         for tool in profile_tools {
             assert!(
-                builtin_tool_allowed_for_capability_source(CapabilitySource::Activated, tool),
+                builtin_tool_allowed(None, CapabilitySource::Activated, tool),
                 "{tool} should be available for Activated"
             );
             assert!(
-                !builtin_tool_allowed_for_capability_source(CapabilitySource::Profiles, tool),
+                !builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
                 "{tool} should NOT be available for Profiles"
             );
             assert!(
-                !builtin_tool_allowed_for_capability_source(CapabilitySource::Custom, tool),
+                !builtin_tool_allowed(None, CapabilitySource::Custom, tool),
                 "{tool} should NOT be available for Custom"
             );
         }
@@ -475,19 +565,24 @@ mod tests {
 
     #[test]
     fn non_profile_tools_are_available_for_all_capability_sources() {
-        let other_tools = ["some_other_tool", "another_mcpmate_service"];
+        let other_tools = [
+            "mcpmate_profile_list",
+            "mcpmate_profile_preview",
+            "some_other_tool",
+            "another_mcpmate_service",
+        ];
 
         for tool in other_tools {
             assert!(
-                builtin_tool_allowed_for_capability_source(CapabilitySource::Activated, tool),
+                builtin_tool_allowed(None, CapabilitySource::Activated, tool),
                 "{tool} should be available for Activated"
             );
             assert!(
-                builtin_tool_allowed_for_capability_source(CapabilitySource::Profiles, tool),
+                builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
                 "{tool} should be available for Profiles"
             );
             assert!(
-                builtin_tool_allowed_for_capability_source(CapabilitySource::Custom, tool),
+                builtin_tool_allowed(None, CapabilitySource::Custom, tool),
                 "{tool} should be available for Custom"
             );
         }
@@ -495,37 +590,41 @@ mod tests {
 
     #[test]
     fn client_configuration_get_is_available_for_profiles_and_custom() {
-        let tool = "mcpmate_client_configuration_get";
+        let tool = "mcpmate_scope_get";
 
         assert!(
-            !builtin_tool_allowed_for_capability_source(CapabilitySource::Activated, tool),
+            !builtin_tool_allowed(None, CapabilitySource::Activated, tool),
             "{tool} should NOT be available for Activated"
         );
         assert!(
-            builtin_tool_allowed_for_capability_source(CapabilitySource::Profiles, tool),
+            builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
             "{tool} should be available for Profiles"
         );
         assert!(
-            builtin_tool_allowed_for_capability_source(CapabilitySource::Custom, tool),
+            builtin_tool_allowed(None, CapabilitySource::Custom, tool),
             "{tool} should be available for Custom"
         );
     }
 
     #[test]
     fn client_profiles_tools_are_only_available_for_profiles_source() {
-        let profiles_tools = ["mcpmate_client_profiles_list", "mcpmate_client_profiles_select"];
+        let profiles_tools = [
+            "mcpmate_scope_set",
+            "mcpmate_scope_add",
+            "mcpmate_scope_remove",
+        ];
 
         for tool in profiles_tools {
             assert!(
-                !builtin_tool_allowed_for_capability_source(CapabilitySource::Activated, tool),
+                !builtin_tool_allowed(None, CapabilitySource::Activated, tool),
                 "{tool} should NOT be available for Activated"
             );
             assert!(
-                builtin_tool_allowed_for_capability_source(CapabilitySource::Profiles, tool),
+                builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
                 "{tool} should be available for Profiles"
             );
             assert!(
-                !builtin_tool_allowed_for_capability_source(CapabilitySource::Custom, tool),
+                !builtin_tool_allowed(None, CapabilitySource::Custom, tool),
                 "{tool} should NOT be available for Custom"
             );
         }
@@ -536,16 +635,26 @@ mod tests {
         let tool = "mcpmate_client_custom_profile_details";
 
         assert!(
-            !builtin_tool_allowed_for_capability_source(CapabilitySource::Activated, tool),
+            !builtin_tool_allowed(None, CapabilitySource::Activated, tool),
             "{tool} should NOT be available for Activated"
         );
         assert!(
-            !builtin_tool_allowed_for_capability_source(CapabilitySource::Profiles, tool),
+            !builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
             "{tool} should NOT be available for Profiles"
         );
         assert!(
-            builtin_tool_allowed_for_capability_source(CapabilitySource::Custom, tool),
+            builtin_tool_allowed(None, CapabilitySource::Custom, tool),
             "{tool} should be available for Custom"
         );
+    }
+
+    #[test]
+    fn smart_mode_only_exposes_client_workspace_tools() {
+        assert!(builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_profile_list"));
+        assert!(builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_profile_preview"));
+        assert!(builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_scope_set"));
+        assert!(builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_scope_add"));
+        assert!(!builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_profile_enable"));
+        assert!(!builtin_tool_allowed(Some("smart"), CapabilitySource::Custom, "mcpmate_client_custom_profile_details"));
     }
 }

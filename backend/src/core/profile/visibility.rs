@@ -15,6 +15,14 @@ use crate::core::proxy::server::ClientContext;
 
 static VISIBILITY_SNAPSHOT_CACHE: Lazy<DashMap<String, CachedSnapshot>> = Lazy::new(DashMap::new);
 
+fn smart_default_workspace() -> ClientCapabilityConfig {
+    ClientCapabilityConfig {
+        capability_source: CapabilitySource::Profiles,
+        selected_profile_ids: Vec::new(),
+        custom_profile_id: None,
+    }
+}
+
 pub fn invalidate_visibility_cache(client_id: &str) {
     VISIBILITY_SNAPSHOT_CACHE.remove(client_id);
     tracing::debug!(client_id = %client_id, "Invalidated visibility snapshot cache");
@@ -199,8 +207,17 @@ impl ProfileVisibilityService {
         &self,
         client_context: &ClientContext,
     ) -> Result<VisibilitySnapshot> {
-        self.resolve_snapshot(&client_context.client_id, client_context.profile_id.as_deref())
-            .await
+        let capability_config = self.resolve_capability_config_for_client(client_context).await?;
+        let cache_key = if matches!(client_context.config_mode.as_deref(), Some("smart")) {
+            format!(
+                "smart::{}::{}",
+                client_context.client_id,
+                client_context.session_id.clone().unwrap_or_default()
+            )
+        } else {
+            client_context.client_id.clone()
+        };
+        self.resolve_snapshot_from_config(&cache_key, &client_context.client_id, &capability_config).await
     }
 
     async fn compute_config_fingerprint(
@@ -215,6 +232,98 @@ impl ProfileVisibilityService {
         client_id: &str,
     ) -> Result<ClientCapabilityConfig> {
         self.load_client_capability_config(client_id, None).await
+    }
+
+    pub async fn resolve_capability_config_for_client(
+        &self,
+        client_context: &ClientContext,
+    ) -> Result<ClientCapabilityConfig> {
+        if matches!(client_context.config_mode.as_deref(), Some("smart")) {
+            return Ok(client_context.smart_workspace.clone().unwrap_or_else(smart_default_workspace));
+        }
+
+        self.load_client_capability_config(&client_context.client_id, client_context.profile_id.as_deref())
+            .await
+    }
+
+    async fn resolve_snapshot_from_config(
+        &self,
+        cache_key: &str,
+        client_id: &str,
+        capability_config: &ClientCapabilityConfig,
+    ) -> Result<VisibilitySnapshot> {
+        let db = self
+            .db
+            .as_ref()
+            .context("Profile visibility requires database access")?;
+
+        let rules_fingerprint_pre = self.compute_config_fingerprint(capability_config).await?;
+
+        if let Some(cached) = VISIBILITY_SNAPSHOT_CACHE.get(cache_key) {
+            if cached.snapshot.rules_fingerprint == rules_fingerprint_pre {
+                tracing::debug!(cache_key = %cache_key, fingerprint = %rules_fingerprint_pre, "Visibility snapshot cache hit");
+                return Ok(cached.snapshot.clone());
+            }
+        }
+
+        let profile_ids = self.resolve_profile_ids(&db.pool, capability_config).await?;
+        let server_ids = self
+            .resolve_server_ids(&db.pool, capability_config.capability_source, &profile_ids)
+            .await?;
+
+        let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(&db.pool, &server_ids, &profile_ids).await?;
+        let (allowed_resources, has_resource_policy) = self
+            .resolve_allowed_resources(&db.pool, &server_ids, &profile_ids)
+            .await?;
+        let (allowed_resource_templates, allowed_resource_prefixes, has_resource_template_policy) = self
+            .resolve_allowed_resource_templates(&db.pool, &server_ids, &profile_ids)
+            .await?;
+        let (allowed_prompts, has_prompt_policy) = self
+            .resolve_allowed_prompts(&db.pool, &server_ids, &profile_ids)
+            .await?;
+
+        let rules_fingerprint = compute_rules_fingerprint(
+            capability_config,
+            &profile_ids,
+            &server_ids,
+            &allowed_tools,
+            &allowed_resources,
+            &allowed_resource_templates,
+            &allowed_resource_prefixes,
+            &allowed_prompts,
+            [
+                has_tool_policy,
+                has_resource_policy,
+                has_resource_template_policy,
+                has_prompt_policy,
+            ],
+        );
+
+        let snapshot = VisibilitySnapshot {
+            client_id: client_id.to_string(),
+            rules_fingerprint,
+            profile_ids,
+            server_ids,
+            allowed_tools,
+            allowed_resources,
+            allowed_resource_templates,
+            allowed_prompts,
+            allowed_resource_prefixes,
+            has_tool_policy,
+            has_resource_policy,
+            has_resource_template_policy,
+            has_prompt_policy,
+        };
+
+        VISIBILITY_SNAPSHOT_CACHE.insert(
+            cache_key.to_string(),
+            CachedSnapshot {
+                snapshot: snapshot.clone(),
+                cached_at: std::time::Instant::now(),
+            },
+        );
+
+        Ok(snapshot)
     }
 
     pub async fn filter_tools_for_client(

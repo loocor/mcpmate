@@ -11,6 +11,8 @@ const DEFAULT_CAPABILITY_SOURCE: &str = "activated";
 pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Initializing client management table");
 
+    migrate_client_table_for_smart_mode(pool).await?;
+
     sqlx::query(&format!(
         r#"
         CREATE TABLE IF NOT EXISTS {table} (
@@ -18,8 +20,8 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             name TEXT NOT NULL,
             identifier TEXT NOT NULL UNIQUE,
             managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
-            -- Management mode: hosted|transparent
-            config_mode TEXT NOT NULL DEFAULT 'hosted' CHECK (config_mode IN ('hosted','transparent')),
+            -- Management mode: smart|hosted|transparent
+            config_mode TEXT NOT NULL DEFAULT 'hosted' CHECK (config_mode IN ('smart','hosted','transparent')),
             -- Transport protocol: auto|stdio|streamable_http (default: auto)
             transport TEXT NOT NULL DEFAULT 'auto' CHECK (
                 transport IN ('auto', 'stdio', 'streamable_http')
@@ -74,6 +76,114 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
 
     tracing::debug!("{} table initialized", tables::CLIENT);
     Ok(())
+}
+
+async fn migrate_client_table_for_smart_mode(pool: &Pool<Sqlite>) -> Result<()> {
+    let table_exists: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='{}'",
+        tables::CLIENT
+    ))
+    .fetch_optional(pool)
+    .await?;
+
+    if table_exists.is_none() {
+        return Ok(());
+    }
+
+    let create_sql: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='{}'",
+        tables::CLIENT
+    ))
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(create_sql) = create_sql else {
+        return Ok(());
+    };
+
+    if create_sql.contains("'smart'") {
+        return Ok(());
+    }
+
+    tracing::info!("Migrating {} table to support smart config_mode", tables::CLIENT);
+
+    let migration_result = async {
+        let mut tx = pool.begin().await?;
+        let temp_table = format!("{}_smart_migration", tables::CLIENT);
+
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE {temp_table} (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                identifier TEXT NOT NULL UNIQUE,
+                managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
+                config_mode TEXT NOT NULL DEFAULT 'hosted' CHECK (config_mode IN ('smart','hosted','transparent')),
+                transport TEXT NOT NULL DEFAULT 'auto' CHECK (
+                    transport IN ('auto', 'stdio', 'streamable_http')
+                ),
+                client_version TEXT,
+                backup_policy TEXT NOT NULL DEFAULT '{default_policy}' CHECK (
+                    backup_policy IN ('keep_last', 'keep_n', 'off')
+                ),
+                backup_limit INTEGER DEFAULT 30,
+                capability_source TEXT NOT NULL DEFAULT '{default_capability_source}' CHECK (
+                    capability_source IN ('activated', 'profiles', 'custom')
+                ),
+                selected_profile_ids TEXT,
+                custom_profile_id TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+            temp_table = temp_table,
+            default_policy = DEFAULT_BACKUP_POLICY,
+            default_capability_source = DEFAULT_CAPABILITY_SOURCE,
+        ))
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            r#"
+            INSERT INTO {temp_table} (
+                id, name, identifier, managed, config_mode, transport, client_version,
+                backup_policy, backup_limit, capability_source, selected_profile_ids,
+                custom_profile_id, created_at, updated_at
+            )
+            SELECT
+                id, name, identifier, managed, config_mode, transport, client_version,
+                backup_policy, backup_limit, capability_source, selected_profile_ids,
+                custom_profile_id, created_at, updated_at
+            FROM {table}
+            "#,
+            temp_table = temp_table,
+            table = tables::CLIENT,
+        ))
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!("DROP TABLE {table}", table = tables::CLIENT))
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(&format!(
+            "ALTER TABLE {temp_table} RENAME TO {table}",
+            temp_table = temp_table,
+            table = tables::CLIENT,
+        ))
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok::<(), sqlx::Error>(())
+    }
+    .await;
+
+    match migration_result {
+        Ok(()) => Ok(()),
+        Err(error) => Err(anyhow::anyhow!(error)),
+    }
 }
 
 async fn ensure_column(

@@ -11,6 +11,8 @@ use rmcp::{
 };
 use std::sync::Arc;
 
+use crate::clients::models::ClientCapabilityConfig;
+
 const MANAGED_CLIENT_ID_HEADER: &str = "x-mcpmate-client-id";
 const MANAGED_PROFILE_ID_HEADER: &str = "x-mcpmate-profile-id";
 
@@ -45,6 +47,8 @@ pub struct ClientContext {
     pub client_id: String,
     pub session_id: Option<String>,
     pub profile_id: Option<String>,
+    pub config_mode: Option<String>,
+    pub smart_workspace: Option<ClientCapabilityConfig>,
     pub rules_fingerprint: Option<String>,
     pub transport: ClientTransport,
     pub source: ClientIdentitySource,
@@ -106,6 +110,8 @@ pub struct SessionBinding {
     pub session_id: String,
     pub client_id: String,
     pub profile_id: Option<String>,
+    pub config_mode: Option<String>,
+    pub smart_workspace: Option<ClientCapabilityConfig>,
     pub rules_fingerprint: Option<String>,
     pub source: ClientIdentitySource,
     pub observed_client_info: Option<ObservedClientInfo>,
@@ -164,6 +170,12 @@ pub trait ManagedClientContextResolver: Send + Sync {
         &self,
         session_id: &str,
         rules_fingerprint: String,
+    ) -> Result<()>;
+
+    async fn set_smart_workspace(
+        &self,
+        session_id: &str,
+        workspace: Option<ClientCapabilityConfig>,
     ) -> Result<()>;
 }
 
@@ -253,6 +265,8 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
                 session_id: session_id.to_string(),
                 client_id: client_context.client_id.clone(),
                 profile_id: client_context.profile_id.clone(),
+                config_mode: client_context.config_mode.clone(),
+                smart_workspace: client_context.smart_workspace.clone(),
                 rules_fingerprint: client_context.rules_fingerprint.clone(),
                 source: client_context.source,
                 observed_client_info,
@@ -319,6 +333,19 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
         binding.rules_fingerprint = Some(rules_fingerprint);
         Ok(())
     }
+
+    async fn set_smart_workspace(
+        &self,
+        session_id: &str,
+        workspace: Option<ClientCapabilityConfig>,
+    ) -> Result<()> {
+        let mut binding = self
+            .session_bindings
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("Managed session '{}' is not bound", session_id))?;
+        binding.smart_workspace = workspace;
+        Ok(())
+    }
 }
 
 pub fn resolve_initialize_context_parts(
@@ -350,6 +377,8 @@ fn resolve_bound_request_context_parts(
         client_id: binding.client_id.clone(),
         session_id: Some(session_id),
         profile_id: binding.profile_id.clone(),
+        config_mode: binding.config_mode.clone(),
+        smart_workspace: binding.smart_workspace.clone(),
         rules_fingerprint: binding.rules_fingerprint.clone(),
         transport: transport_from_parts(Some(parts)),
         source: ClientIdentitySource::SessionBinding,
@@ -373,6 +402,8 @@ fn resolve_pending_session_context_parts(
         client_id: initialize_context.client_id.clone(),
         session_id: Some(session_id),
         profile_id: initialize_context.profile_id.clone(),
+        config_mode: initialize_context.config_mode.clone(),
+        smart_workspace: initialize_context.smart_workspace.clone(),
         rules_fingerprint: initialize_context.rules_fingerprint.clone(),
         transport: transport_from_parts(Some(parts)),
         source: ClientIdentitySource::SessionBinding,
@@ -444,6 +475,8 @@ fn resolve_managed_context(
         client_id,
         session_id,
         profile_id,
+        config_mode: None,
+        smart_workspace: None,
         rules_fingerprint: None,
         transport: transport_from_parts(Some(parts)),
         source,
@@ -773,6 +806,8 @@ mod tests {
                 session_id: "sess-123".to_string(),
                 client_id: "claude-code".to_string(),
                 profile_id: Some("profile-a".to_string()),
+                config_mode: Some("hosted".to_string()),
+                smart_workspace: None,
                 rules_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: Some(ObservedClientInfo {
@@ -808,6 +843,8 @@ mod tests {
                 session_id: "sess-123".to_string(),
                 client_id: "claude-code".to_string(),
                 profile_id: Some("profile-a".to_string()),
+                config_mode: Some("hosted".to_string()),
+                smart_workspace: None,
                 rules_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
@@ -829,6 +866,8 @@ mod tests {
                 session_id: "sess-123".to_string(),
                 client_id: "claude-code".to_string(),
                 profile_id: Some("profile-a".to_string()),
+                config_mode: Some("hosted".to_string()),
+                smart_workspace: None,
                 rules_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
@@ -847,6 +886,8 @@ mod tests {
             client_id: "claude-code".to_string(),
             session_id: None,
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -877,6 +918,8 @@ mod tests {
             client_id: "claude-code".to_string(),
             session_id: None,
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -895,6 +938,8 @@ mod tests {
             client_id: "claude-code".to_string(),
             session_id: None,
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -914,6 +959,8 @@ mod tests {
             client_id: "claude-code".to_string(),
             session_id: Some("sess-123".to_string()),
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -925,6 +972,8 @@ mod tests {
             client_id: "cursor".to_string(),
             session_id: Some("sess-123".to_string()),
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -943,6 +992,8 @@ mod tests {
             client_id: "claude-code".to_string(),
             session_id: Some("sess-123".to_string()),
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::Other,
             source: ClientIdentitySource::ManagedQuery,
@@ -961,6 +1012,8 @@ mod tests {
             client_id: "claude-code".to_string(),
             session_id: Some("sess-123".to_string()),
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::Other,
             source: ClientIdentitySource::ManagedQuery,
@@ -986,6 +1039,8 @@ mod tests {
             client_id: "test-client".to_string(),
             session_id: Some("sess-remove-test".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1026,6 +1081,8 @@ mod tests {
             client_id: "test-client".to_string(),
             session_id: Some("sess-rebind".to_string()),
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1056,6 +1113,8 @@ mod tests {
             client_id: "client-obs".to_string(),
             session_id: Some("sess-obs".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1092,6 +1151,8 @@ mod tests {
             client_id: "client-cached".to_string(),
             session_id: Some("sess-cached".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1120,6 +1181,8 @@ mod tests {
             client_id: "pending-client".to_string(),
             session_id: None, // No session ID
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::Other,
             source: ClientIdentitySource::ManagedQuery,
@@ -1145,6 +1208,8 @@ mod tests {
             client_id: "same-client".to_string(),
             session_id: Some("sess-profile".to_string()),
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1159,6 +1224,8 @@ mod tests {
             client_id: "same-client".to_string(),
             session_id: Some("sess-profile".to_string()),
             profile_id: Some("profile-b".to_string()), // Different profile
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1178,6 +1245,8 @@ mod tests {
             client_id: "same-client".to_string(),
             session_id: Some("sess-fp".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-alpha".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1192,6 +1261,8 @@ mod tests {
             client_id: "same-client".to_string(),
             session_id: Some("sess-fp".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-beta".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1211,6 +1282,8 @@ mod tests {
             client_id: "cursor".to_string(),
             session_id: Some("sess-upgrade".to_string()),
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -1225,6 +1298,8 @@ mod tests {
             client_id: "cursor".to_string(),
             session_id: Some("sess-upgrade".to_string()),
             profile_id: Some("profile-a".to_string()),
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -1249,6 +1324,8 @@ mod tests {
             client_id: "cursor".to_string(),
             session_id: Some("sess-downgrade".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-original".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -1263,6 +1340,8 @@ mod tests {
             client_id: "cursor".to_string(),
             session_id: Some("sess-downgrade".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
@@ -1282,6 +1361,8 @@ mod tests {
             client_id: "cursor".to_string(),
             session_id: Some("sess-refresh".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: Some("fp-old".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,

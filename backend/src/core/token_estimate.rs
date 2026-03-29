@@ -158,11 +158,6 @@ pub fn estimate_resource_template_tokens(template: &ResourceTemplate) -> u32 {
 
 /// Calculate builtin tool overhead for a given capability source mode.
 ///
-/// MCPMate injects builtin tools based on the client's capability source mode:
-/// - **Activated**: 3 tools (profile list, details, switch)
-/// - **Profiles**: 6-7 tools (profile tools + client config, profiles list, select, and optionally custom profile details)
-/// - **Custom**: 5 tools (profile tools + client config, custom profile details)
-///
 /// # Arguments
 /// * `capability_source` - The capability source mode.
 /// * `has_custom_profile` - Whether a custom profile exists (only relevant for Profiles mode).
@@ -192,17 +187,20 @@ fn create_builtin_tools_for_mode(
     // Profile tools (always included)
     let profile_tools = vec![
         create_profile_list_tool(),
-        create_profile_details_tool(),
-        create_profile_switch_tool(),
+        create_profile_preview_tool(),
+        create_profile_enable_tool(),
+        create_profile_disable_tool(),
+        create_profile_activate_only_tool(),
     ];
 
     match capability_source {
         CapabilitySource::Activated => profile_tools,
         CapabilitySource::Profiles => {
             let mut tools = profile_tools;
-            tools.push(create_client_configuration_get_tool());
-            tools.push(create_client_profiles_list_tool());
-            tools.push(create_client_profiles_select_tool());
+            tools.push(create_scope_get_tool());
+            tools.push(create_scope_set_tool());
+            tools.push(create_scope_add_tool());
+            tools.push(create_scope_remove_tool());
             if has_custom_profile {
                 tools.push(create_client_custom_profile_details_tool());
             }
@@ -210,7 +208,7 @@ fn create_builtin_tools_for_mode(
         }
         CapabilitySource::Custom => {
             let mut tools = profile_tools;
-            tools.push(create_client_configuration_get_tool());
+            tools.push(create_scope_get_tool());
             tools.push(create_client_custom_profile_details_tool());
             tools
         }
@@ -236,10 +234,10 @@ fn create_profile_list_tool() -> Tool {
     )
 }
 
-fn create_profile_details_tool() -> Tool {
+fn create_profile_preview_tool() -> Tool {
     Tool::new(
-        "mcpmate_profile_details",
-        "Get profile details: servers, tools, prompts, resources",
+        "mcpmate_profile_preview",
+        "Preview a profile with lightweight capability details for one reusable scene.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -258,24 +256,20 @@ fn create_profile_details_tool() -> Tool {
     )
 }
 
-fn create_profile_switch_tool() -> Tool {
+fn create_profile_enable_tool() -> Tool {
     Tool::new(
-        "mcpmate_profile_switch",
-        "Activate or deactivate a profile",
+        "mcpmate_profile_enable",
+        "Enable a profile. If the target profile is exclusive, other non-default profiles may be disabled by profile rules.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
                 "properties": {
                     "profile_id": {
                         "type": "string",
-                        "description": "Profile ID to switch"
-                    },
-                    "activate": {
-                        "type": "boolean",
-                        "description": "Activate (true) or deactivate (false)"
+                        "description": "Profile ID to enable"
                     }
                 },
-                "required": ["profile_id", "activate"]
+                "required": ["profile_id"]
             })
             .as_object()
             .unwrap()
@@ -284,10 +278,54 @@ fn create_profile_switch_tool() -> Tool {
     )
 }
 
-fn create_client_configuration_get_tool() -> Tool {
+fn create_profile_disable_tool() -> Tool {
     Tool::new(
-        "mcpmate_client_configuration_get",
-        "Get client capability config: source, selected profiles, custom profile ID (profiles/custom modes)",
+        "mcpmate_profile_disable",
+        "Disable a profile and remove it from the active working set.",
+        Arc::new(
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Profile ID to disable"
+                    }
+                },
+                "required": ["profile_id"]
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ),
+    )
+}
+
+fn create_profile_activate_only_tool() -> Tool {
+    Tool::new(
+        "mcpmate_profile_activate_only",
+        "Switch to a single shared scene by keeping only this profile active among non-default profiles.",
+        Arc::new(
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Profile ID to keep as the only active non-default profile"
+                    }
+                },
+                "required": ["profile_id"]
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ),
+    )
+}
+
+fn create_scope_get_tool() -> Tool {
+    Tool::new(
+        "mcpmate_scope_get",
+        "Get the current scope for this client session, including mode, source, selected profiles, and custom profile ID when present.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -301,27 +339,10 @@ fn create_client_configuration_get_tool() -> Tool {
     )
 }
 
-fn create_client_profiles_list_tool() -> Tool {
+fn create_scope_set_tool() -> Tool {
     Tool::new(
-        "mcpmate_client_profiles_list",
-        "List shared profiles for selection (profiles mode only)",
-        Arc::new(
-            serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "required": []
-            })
-            .as_object()
-            .unwrap()
-            .clone(),
-        ),
-    )
-}
-
-fn create_client_profiles_select_tool() -> Tool {
-    Tool::new(
-        "mcpmate_client_profiles_select",
-        "Select profiles for client. Updates selection and refreshes visibility (profiles mode)",
+        "mcpmate_scope_set",
+        "Replace the current scope with an exact list of shared profiles. Use this to switch to a single scene or exact set.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -329,7 +350,53 @@ fn create_client_profiles_select_tool() -> Tool {
                     "profile_ids": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Profile IDs to select"
+                        "description": "Shared profile IDs to keep in the working set"
+                    }
+                },
+                "required": ["profile_ids"]
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ),
+    )
+}
+
+fn create_scope_add_tool() -> Tool {
+    Tool::new(
+        "mcpmate_scope_add",
+        "Add shared profiles to the current scope without replacing the existing selection.",
+        Arc::new(
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "profile_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Shared profile IDs to add to the working set"
+                    }
+                },
+                "required": ["profile_ids"]
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ),
+    )
+}
+
+fn create_scope_remove_tool() -> Tool {
+    Tool::new(
+        "mcpmate_scope_remove",
+        "Remove shared profiles from the current scope without deleting the profile definitions themselves.",
+        Arc::new(
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "profile_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Shared profile IDs to remove from the working set"
                     }
                 },
                 "required": ["profile_ids"]
@@ -395,7 +462,7 @@ mod tests {
 
     #[test]
     fn test_estimate_tool_tokens_complex_schema() {
-        let tool = create_profile_switch_tool();
+        let tool = create_profile_activate_only_tool();
         let tokens = estimate_tool_tokens(&tool);
 
         // Profile switch tool has a more complex schema with two properties
@@ -461,7 +528,7 @@ mod tests {
     fn test_builtin_overhead_activated_mode() {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Activated, false);
 
-        assert_eq!(overhead.tool_count, 3, "Activated mode should have 3 tools");
+        assert_eq!(overhead.tool_count, 5, "Activated mode should have 5 tools");
         assert_eq!(overhead.mode, "activated");
         assert!(overhead.tokens > 0, "Token count should be positive");
     }
@@ -471,8 +538,8 @@ mod tests {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Profiles, false);
 
         assert_eq!(
-            overhead.tool_count, 6,
-            "Profiles mode without custom profile should have 6 tools"
+            overhead.tool_count, 9,
+            "Profiles mode without custom profile should have 9 tools"
         );
         assert_eq!(overhead.mode, "profiles");
         assert!(overhead.tokens > 0, "Token count should be positive");
@@ -483,8 +550,8 @@ mod tests {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Profiles, true);
 
         assert_eq!(
-            overhead.tool_count, 7,
-            "Profiles mode with custom profile should have 7 tools"
+            overhead.tool_count, 10,
+            "Profiles mode with custom profile should have 10 tools"
         );
         assert_eq!(overhead.mode, "profiles");
         assert!(overhead.tokens > 0, "Token count should be positive");
@@ -494,7 +561,7 @@ mod tests {
     fn test_builtin_overhead_custom_mode() {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Custom, false);
 
-        assert_eq!(overhead.tool_count, 5, "Custom mode should have 5 tools");
+        assert_eq!(overhead.tool_count, 7, "Custom mode should have 7 tools");
         assert_eq!(overhead.mode, "custom");
         assert!(overhead.tokens > 0, "Token count should be positive");
     }
@@ -526,11 +593,14 @@ mod tests {
         // Test that all builtin tools fall within expected token ranges
         let tools = vec![
             create_profile_list_tool(),
-            create_profile_details_tool(),
-            create_profile_switch_tool(),
-            create_client_configuration_get_tool(),
-            create_client_profiles_list_tool(),
-            create_client_profiles_select_tool(),
+            create_profile_preview_tool(),
+            create_profile_enable_tool(),
+            create_profile_disable_tool(),
+            create_profile_activate_only_tool(),
+            create_scope_get_tool(),
+            create_scope_set_tool(),
+            create_scope_add_tool(),
+            create_scope_remove_tool(),
             create_client_custom_profile_details_tool(),
         ];
 

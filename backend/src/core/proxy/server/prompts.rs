@@ -1,10 +1,19 @@
 use super::*;
 use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
+use crate::mcper::builtin::ClientBuiltinContext;
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{GetPromptRequestParams, GetPromptResult, ListPromptsResult, PaginatedRequestParams};
 use rmcp::service::RequestContext;
 use std::collections::HashSet;
+
+fn builtin_prompt_allowed(config_mode: Option<&str>, prompt_name: &str) -> bool {
+    matches!(config_mode, Some("smart"))
+        && matches!(
+            prompt_name,
+            "mcpmate_smart_mode_guide" | "mcpmate_smart_mode_next_actions"
+        )
+}
 
 pub(super) async fn list_prompts(
     server: &ProxyServer,
@@ -93,6 +102,14 @@ pub(super) async fn list_prompts(
 
     prompts = vis.filter_prompts_with_snapshot(&snapshot, prompts);
 
+    let builtin_prompts = server.builtin_services.prompts();
+    tracing::debug!("Including {} builtin service prompts", builtin_prompts.len());
+    prompts.extend(
+        builtin_prompts
+            .into_iter()
+            .filter(|prompt| builtin_prompt_allowed(client.config_mode.as_deref(), prompt.name.as_ref())),
+    );
+
     // Apply pagination
     let page = server.paginator.paginate_prompts(&_request, prompts)?;
 
@@ -116,6 +133,32 @@ pub(super) async fn get_prompt(
 ) -> Result<GetPromptResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
     tracing::debug!("Getting prompt: {}", request.name);
+
+    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    let capability_config = vis
+        .resolve_capability_config_for_client(&client)
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    let builtin_context = ClientBuiltinContext {
+        client_id: client.client_id.clone(),
+        config_mode: client.config_mode.clone(),
+        capability_source: capability_config.capability_source,
+        selected_profile_ids: capability_config.selected_profile_ids,
+        custom_profile_id: capability_config.custom_profile_id,
+    };
+
+    if builtin_prompt_allowed(client.config_mode.as_deref(), request.name.as_ref()) {
+        if let Some(result) = server
+            .builtin_services
+            .get_prompt_with_context(&request, Some(&builtin_context))
+            .await
+        {
+        return result.map_err(|e| McpError::internal_error(e.to_string(), None));
+        }
+    }
 
     let mut lookup_name = request.name.clone();
     let mut server_filter: Option<String> = None;
@@ -160,10 +203,6 @@ pub(super) async fn get_prompt(
         request.name.clone()
     };
 
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
     let snapshot = vis
         .resolve_snapshot_for_client(&client)
         .await

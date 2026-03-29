@@ -158,6 +158,27 @@ impl ProxyServer {
         &self,
         mut client: ClientContext,
     ) -> Result<ClientContext, rmcp::ErrorData> {
+        if client.config_mode.is_none() {
+            let db = self
+                .database
+                .as_ref()
+                .ok_or_else(|| rmcp::ErrorData::internal_error("Database not available".to_string(), None))?;
+            let config_mode: Option<String> = sqlx::query_scalar("SELECT config_mode FROM client WHERE identifier = ?")
+                .bind(&client.client_id)
+                .fetch_optional(&db.pool)
+                .await
+                .map_err(|error| self.map_client_context_error(error.into()))?;
+            client.config_mode = Some(config_mode.unwrap_or_else(|| "hosted".to_string()));
+        }
+
+        if matches!(client.config_mode.as_deref(), Some("smart")) && client.smart_workspace.is_none() {
+            client.smart_workspace = Some(crate::clients::models::ClientCapabilityConfig {
+                capability_source: crate::clients::models::CapabilitySource::Profiles,
+                selected_profile_ids: Vec::new(),
+                custom_profile_id: None,
+            });
+        }
+
         if client.rules_fingerprint.is_some() {
             return Ok(client);
         }
@@ -207,15 +228,46 @@ impl ProxyServer {
             self.database.clone(),
             self.profile_service.clone(),
         );
-        let snapshot = vis
-            .resolve_snapshot(client_id, None)
-            .await
-            .map_err(|error| self.map_client_context_error(error))?;
+
+        let snapshot = if let Some(binding) = self.client_context_resolver.session_bindings.get(session_id) {
+            let client = ClientContext {
+                client_id: binding.client_id.clone(),
+                session_id: Some(session_id.to_string()),
+                profile_id: binding.profile_id.clone(),
+                config_mode: binding.config_mode.clone(),
+                smart_workspace: binding.smart_workspace.clone(),
+                rules_fingerprint: binding.rules_fingerprint.clone(),
+                transport: crate::core::proxy::server::common::ClientTransport::StreamableHttp,
+                source: crate::core::proxy::server::common::ClientIdentitySource::SessionBinding,
+                observed_client_info: binding.observed_client_info.clone(),
+            };
+            vis.resolve_snapshot_for_client(&client)
+                .await
+                .map_err(|error| self.map_client_context_error(error))?
+        } else {
+            vis.resolve_snapshot(client_id, None)
+                .await
+                .map_err(|error| self.map_client_context_error(error))?
+        };
 
         self.client_context_resolver
             .refresh_session_rules_fingerprint(session_id, snapshot.rules_fingerprint)
             .await
             .map_err(|error| self.map_client_context_error(error))
+    }
+
+    pub async fn update_smart_session_workspace(
+        &self,
+        session_id: &str,
+        client_id: &str,
+        workspace: crate::clients::models::ClientCapabilityConfig,
+    ) -> Result<(), rmcp::ErrorData> {
+        self.client_context_resolver
+            .set_smart_workspace(session_id, Some(workspace))
+            .await
+            .map_err(|error| self.map_client_context_error(error))?;
+
+        self.refresh_bound_session_runtime_identity(session_id, client_id).await
     }
 
     /// Remove all state associated with a downstream session.
@@ -1409,6 +1461,8 @@ mod tests {
             client_id: "client-1".to_string(),
             session_id: Some(session_id.to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1472,6 +1526,8 @@ mod tests {
             client_id: "no-session".to_string(),
             session_id: None,
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1487,6 +1543,8 @@ mod tests {
             client_id: "with-session".to_string(),
             session_id: Some("sess-123".to_string()),
             profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            smart_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,

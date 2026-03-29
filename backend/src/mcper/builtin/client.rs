@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt,
+    PromptMessage, PromptMessageRole, Tool,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -9,13 +12,13 @@ use crate::{
     clients::{models::CapabilitySource, service::ClientConfigService},
     config::{
         database::Database,
-        profile::{self},
+        profile,
     },
     core::pool::UpstreamConnectionPool,
 };
 
 use super::{
-    helpers::{load_profile_capability_counts, load_profile_detail_components},
+    helpers::load_profile_detail_components,
     registry::BuiltinService,
     types::{PromptDetail, ResourceDetail, ServerDetail, ToolDetail},
 };
@@ -23,6 +26,7 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct ClientBuiltinContext {
     pub client_id: String,
+    pub config_mode: Option<String>,
     pub capability_source: CapabilitySource,
     pub selected_profile_ids: Vec<String>,
     pub custom_profile_id: Option<String>,
@@ -47,12 +51,13 @@ impl ClientService {
         }
     }
 
-    async fn client_configuration_get(
+    async fn scope_get(
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<CallToolResult> {
         let result = ClientConfigurationResponse {
             client_id: context.client_id.clone(),
+            config_mode: context.config_mode.clone().unwrap_or_else(|| "hosted".to_string()),
             capability_source: context.capability_source.as_str().to_string(),
             selected_profile_ids: if matches!(context.capability_source, CapabilitySource::Profiles) {
                 Some(context.selected_profile_ids.clone())
@@ -71,81 +76,130 @@ impl ClientService {
         )]))
     }
 
-    async fn client_profiles_list(
-        &self,
-        context: &ClientBuiltinContext,
-    ) -> Result<CallToolResult> {
-        if !matches!(context.capability_source, CapabilitySource::Profiles) {
-            return Err(anyhow!(
-                "client_profiles_list is only available for clients using 'profiles' capability source. Current source: {}",
-                context.capability_source.as_str()
-            ));
-        }
-
-        let profiles = profile::get_all_profile(&self.database.pool)
-            .await
-            .context("Failed to list profiles")?;
-
-        let shared_profiles: Vec<_> = profiles
-            .into_iter()
-            .filter(|p| p.profile_type == crate::common::profile::ProfileType::Shared)
-            .collect();
-
-        let mut summaries = Vec::new();
-
-        for prof in shared_profiles {
-            let Some(profile_id) = prof.id.clone() else {
-                continue;
-            };
-
-            let counts = load_profile_capability_counts(&self.database.pool, &profile_id).await?;
-
-            let is_selected = context.selected_profile_ids.contains(&profile_id);
-
-            summaries.push(ProfileSummary {
-                id: profile_id,
-                name: prof.name.clone(),
-                description: prof.description.clone(),
-                is_active: prof.is_active,
-                is_selected,
-                server_count: counts.server_count,
-                tool_count: counts.tool_count,
-                prompt_count: counts.prompt_count,
-                resource_count: counts.resource_count,
-            });
-        }
-
-        summaries.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
-
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-            serde_json::to_string_pretty(&summaries).context("Failed to serialize profiles response")?,
-        )]))
-    }
-
-    async fn client_profiles_select(
+    async fn scope_set(
         &self,
         context: &ClientBuiltinContext,
         profile_ids: Vec<String>,
     ) -> Result<CallToolResult> {
         if !matches!(context.capability_source, CapabilitySource::Profiles) {
             return Err(anyhow!(
-                "client_profiles_select is only available for clients using 'profiles' capability source. Current source: {}",
+                "scope_set is only available for clients using 'profiles' capability source. Current source: {}",
                 context.capability_source.as_str()
             ));
         }
 
-        let config = self
-            .client_config_service
-            .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, profile_ids)
-            .await
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let selected_profile_ids = if matches!(context.config_mode.as_deref(), Some("smart")) {
+            profile_ids
+        } else {
+            self.client_config_service
+                .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, profile_ids)
+                .await
+                .map_err(|error| anyhow!(error.to_string()))?
+                .selected_profile_ids
+        };
 
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
-                "message": format!("Selected {} profile(s) for client '{}'", config.selected_profile_ids.len(), context.client_id),
-                "client_id": context.client_id,
-                "selected_profile_ids": config.selected_profile_ids,
+                    "message": format!(
+                        "Updated the client working set to {} selected profile(s) for '{}'",
+                        selected_profile_ids.len(),
+                        context.client_id
+                    ),
+                    "client_id": context.client_id,
+                    "selected_profile_ids": selected_profile_ids,
+                    "refresh_required": true,
+                    "refresh_hint": "If your client does not refresh tools automatically after MCP notifications, re-fetch tools/list now.",
+                }))
+            .context("Failed to serialize response")?,
+        )]))
+    }
+
+    async fn scope_add(
+        &self,
+        context: &ClientBuiltinContext,
+        profile_ids: Vec<String>,
+    ) -> Result<CallToolResult> {
+        if !matches!(context.capability_source, CapabilitySource::Profiles) {
+            return Err(anyhow!(
+                "scope_add is only available for clients using 'profiles' capability source. Current source: {}",
+                context.capability_source.as_str()
+            ));
+        }
+
+        let mut merged = context.selected_profile_ids.clone();
+        merged.extend(profile_ids);
+        merged.sort();
+        merged.dedup();
+
+        let selected_profile_ids = if matches!(context.config_mode.as_deref(), Some("smart")) {
+            merged
+        } else {
+            self.client_config_service
+                .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, merged)
+                .await
+                .map_err(|error| anyhow!(error.to_string()))?
+                .selected_profile_ids
+        };
+
+        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": true,
+                    "message": format!(
+                        "Added profile(s) to the client working set. '{}' now has {} selected profile(s)",
+                        context.client_id,
+                        selected_profile_ids.len()
+                    ),
+                    "client_id": context.client_id,
+                    "selected_profile_ids": selected_profile_ids,
+                    "refresh_required": true,
+                "refresh_hint": "If your client does not refresh tools automatically after MCP notifications, re-fetch tools/list now.",
+            }))
+            .context("Failed to serialize response")?,
+        )]))
+    }
+
+    async fn scope_remove(
+        &self,
+        context: &ClientBuiltinContext,
+        profile_ids: Vec<String>,
+    ) -> Result<CallToolResult> {
+        if !matches!(context.capability_source, CapabilitySource::Profiles) {
+            return Err(anyhow!(
+                "scope_remove is only available for clients using 'profiles' capability source. Current source: {}",
+                context.capability_source.as_str()
+            ));
+        }
+
+        let remaining = context
+            .selected_profile_ids
+            .iter()
+            .filter(|current| !profile_ids.contains(current))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let selected_profile_ids = if matches!(context.config_mode.as_deref(), Some("smart")) {
+            remaining
+        } else {
+            self.client_config_service
+                .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, remaining)
+                .await
+                .map_err(|error| anyhow!(error.to_string()))?
+                .selected_profile_ids
+        };
+
+        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": true,
+                    "message": format!(
+                        "Removed profile(s) from the current working set without deleting the profile definitions. '{}' now has {} selected profile(s)",
+                        context.client_id,
+                        selected_profile_ids.len()
+                    ),
+                    "client_id": context.client_id,
+                    "selected_profile_ids": selected_profile_ids,
+                    "refresh_required": true,
+                "refresh_hint": "If your client does not refresh tools automatically after MCP notifications, re-fetch tools/list now.",
             }))
             .context("Failed to serialize response")?,
         )]))
@@ -191,6 +245,97 @@ impl ClientService {
             serde_json::to_string_pretty(&details).context("Failed to serialize custom profile details")?,
         )]))
     }
+
+    fn smart_mode_guide_prompt() -> Prompt {
+        Prompt::new(
+            "mcpmate_smart_mode_guide",
+            Some("Explain how Smart Mode works and when to use switch, add, remove, or custom state tools."),
+            None,
+        )
+    }
+
+    fn smart_mode_next_actions_prompt() -> Prompt {
+        Prompt::new(
+            "mcpmate_smart_mode_next_actions",
+            Some("Summarize the current client working state and recommend the next Smart Mode tool to call."),
+            None,
+        )
+    }
+
+    fn build_smart_mode_guide(
+        &self,
+        context: &ClientBuiltinContext,
+    ) -> GetPromptResult {
+        let content = format!(
+            concat!(
+                "You are helping a user operate MCPMate Smart Mode for client '{client_id}'.\n\n",
+                "Smart Mode concepts:\n",
+                "1. Smart Mode is session-scoped and starts with builtin MCP control-plane tools only.\n",
+                "2. There is no second-level selector in the UI for Smart Mode.\n",
+                "3. Shared scenes are added to the current session working set through builtin tools.\n\n",
+                "Current capability source: {capability_source}.\n",
+                "Selected shared profiles: {selected_profiles}.\n",
+                "Custom profile id: {custom_profile_id}.\n\n",
+                "Tool guidance:\n",
+                "- Use mcpmate_scope_set to switch to an exact working set, such as frontend only.\n",
+                "- Use mcpmate_scope_add to add another shared scene, such as also enabling backend.\n",
+                "- Use mcpmate_scope_remove to remove scenes from the current working set without deleting the profiles themselves.\n",
+                "- Smart Mode changes stay inside the current MCP session and reset when the session ends.\n\n",
+                "After any tool that changes capability visibility, if the client does not refresh tools automatically, ask it to re-fetch tools/list."
+            ),
+            client_id = context.client_id,
+            capability_source = context.capability_source.as_str(),
+            selected_profiles = if context.selected_profile_ids.is_empty() {
+                "(none)".to_string()
+            } else {
+                context.selected_profile_ids.join(", ")
+            },
+            custom_profile_id = context.custom_profile_id.clone().unwrap_or_else(|| "(none)".to_string()),
+        );
+
+        GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
+            .with_description("Smart Mode guide for the current client")
+    }
+
+    fn build_smart_mode_next_actions(
+        &self,
+        context: &ClientBuiltinContext,
+    ) -> GetPromptResult {
+        let next_action = match context.capability_source {
+            CapabilitySource::Activated => "Use mcpmate_scope_set to choose an exact shared-scene working set for this Smart session.",
+            CapabilitySource::Profiles => {
+                "Use mcpmate_scope_set for an exact working set, mcpmate_scope_add to add scenes, or mcpmate_scope_remove to remove them from the current working set."
+            }
+            CapabilitySource::Custom => "Smart Mode does not persist custom overlays. Prefer shared-scene working set tools for this session.",
+        };
+
+        let content = format!(
+            concat!(
+                "Client: {client_id}\n",
+                "Capability source: {capability_source}\n",
+                "Selected shared profiles: {selected_profiles}\n",
+                "Custom profile id: {custom_profile_id}\n\n",
+                "Recommended next action:\n",
+                "{next_action}\n\n",
+                "If the user says 'switch to frontend', prefer an exact replace operation.\n",
+                "If the user says 'also enable backend', prefer an additive operation.\n",
+                "If a tool changes visible capabilities, ask the client to re-fetch tools/list when auto-refresh is not reliable.\n",
+                "Smart Mode resets when the MCP session ends; promote to Hosted if the user wants durable behavior."
+            ),
+            client_id = context.client_id,
+            capability_source = context.capability_source.as_str(),
+            selected_profiles = if context.selected_profile_ids.is_empty() {
+                "(none)".to_string()
+            } else {
+                context.selected_profile_ids.join(", ")
+            },
+            custom_profile_id = context.custom_profile_id.clone().unwrap_or_else(|| "(none)".to_string()),
+            next_action = next_action,
+        );
+
+        GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
+            .with_description("Recommended Smart Mode next actions for the current client")
+    }
 }
 
 #[async_trait::async_trait]
@@ -202,8 +347,8 @@ impl BuiltinService for ClientService {
     fn tools(&self) -> Vec<Tool> {
         vec![
             Tool::new(
-                "mcpmate_client_configuration_get",
-                "Get client capability config: source, selected profiles, custom profile ID (profiles/custom modes)",
+                "mcpmate_scope_get",
+                "Get the current working state for this client session, including mode, working-set source, selected shared profiles, and custom profile ID if present.",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -216,22 +361,8 @@ impl BuiltinService for ClientService {
                 ),
             ),
             Tool::new(
-                "mcpmate_client_profiles_list",
-                "List shared profiles for selection (profiles mode only)",
-                std::sync::Arc::new(
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                ),
-            ),
-            Tool::new(
-                "mcpmate_client_profiles_select",
-                "Select profiles for client. Updates selection and refreshes visibility (profiles mode)",
+                "mcpmate_scope_set",
+                "Replace the current client working set with an exact list of shared profiles (profiles mode only). Use this to switch to a single scene or exact set.",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -239,7 +370,47 @@ impl BuiltinService for ClientService {
                             "profile_ids": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Profile IDs to select"
+                                "description": "Shared profile IDs to keep in the working set"
+                            }
+                        },
+                        "required": ["profile_ids"]
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+            ),
+            Tool::new(
+                "mcpmate_scope_add",
+                "Add shared profiles to the current client working set without replacing the existing selection (profiles mode only).",
+                std::sync::Arc::new(
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "profile_ids": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Shared profile IDs to add to the working set"
+                            }
+                        },
+                        "required": ["profile_ids"]
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+            ),
+            Tool::new(
+                "mcpmate_scope_remove",
+                "Remove shared profiles from the current working set without deleting the profile definitions themselves (profiles mode only).",
+                std::sync::Arc::new(
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "profile_ids": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Shared profile IDs to remove from the working set"
                             }
                         },
                         "required": ["profile_ids"]
@@ -266,14 +437,21 @@ impl BuiltinService for ClientService {
         ]
     }
 
+    fn prompts(&self) -> Vec<Prompt> {
+        vec![
+            Self::smart_mode_guide_prompt(),
+            Self::smart_mode_next_actions_prompt(),
+        ]
+    }
+
     async fn call_tool(
         &self,
         request: &CallToolRequestParams,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            "mcpmate_client_configuration_get"
-            | "mcpmate_client_profiles_list"
-            | "mcpmate_client_profiles_select"
+            "mcpmate_scope_get" | "mcpmate_scope_set"
+            | "mcpmate_scope_add"
+            | "mcpmate_scope_remove"
             | "mcpmate_client_custom_profile_details" => Err(anyhow!(
                 "Client-aware tool '{}' requires client context. Use call_tool_with_context instead.",
                 request.name
@@ -288,22 +466,34 @@ impl BuiltinService for ClientService {
         context: Option<&ClientBuiltinContext>,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            "mcpmate_client_configuration_get" => {
+            "mcpmate_scope_get" => {
                 let ctx =
-                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_client_configuration_get"))?;
-                self.client_configuration_get(ctx).await
+                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_get"))?;
+                self.scope_get(ctx).await
             }
-            "mcpmate_client_profiles_list" => {
-                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_client_profiles_list"))?;
-                self.client_profiles_list(ctx).await
-            }
-            "mcpmate_client_profiles_select" => {
+            "mcpmate_scope_set" => {
                 let ctx =
-                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_client_profiles_select"))?;
+                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_set"))?;
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
                 let params: ProfilesSelectParams =
-                    serde_json::from_value(args).context("Invalid parameters for profiles_select")?;
-                self.client_profiles_select(ctx, params.profile_ids).await
+                    serde_json::from_value(args).context("Invalid parameters for scope_set")?;
+                self.scope_set(ctx, params.profile_ids).await
+            }
+            "mcpmate_scope_add" => {
+                let ctx =
+                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_add"))?;
+                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
+                let params: ProfilesSelectParams =
+                    serde_json::from_value(args).context("Invalid parameters for scope_add")?;
+                self.scope_add(ctx, params.profile_ids).await
+            }
+            "mcpmate_scope_remove" => {
+                let ctx =
+                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_remove"))?;
+                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
+                let params: ProfilesSelectParams =
+                    serde_json::from_value(args).context("Invalid parameters for scope_remove")?;
+                self.scope_remove(ctx, params.profile_ids).await
             }
             "mcpmate_client_custom_profile_details" => {
                 let ctx = context
@@ -311,6 +501,20 @@ impl BuiltinService for ClientService {
                 self.client_custom_profile_details(ctx).await
             }
             _ => Err(anyhow!("Unknown tool: {}", request.name)),
+        }
+    }
+
+    async fn get_prompt_with_context(
+        &self,
+        request: &GetPromptRequestParams,
+        context: Option<&ClientBuiltinContext>,
+    ) -> Result<GetPromptResult> {
+        let ctx = context.ok_or_else(|| anyhow!("Client context required for builtin Smart Mode prompts"))?;
+
+        match request.name.as_ref() {
+            "mcpmate_smart_mode_guide" => Ok(self.build_smart_mode_guide(ctx)),
+            "mcpmate_smart_mode_next_actions" => Ok(self.build_smart_mode_next_actions(ctx)),
+            _ => Err(anyhow!("Unknown prompt: {}", request.name)),
         }
     }
 }
@@ -323,22 +527,10 @@ struct ProfilesSelectParams {
 #[derive(Debug, Serialize)]
 struct ClientConfigurationResponse {
     client_id: String,
+    config_mode: String,
     capability_source: String,
     selected_profile_ids: Option<Vec<String>>,
     custom_profile_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ProfileSummary {
-    id: String,
-    name: String,
-    description: Option<String>,
-    is_active: bool,
-    is_selected: bool,
-    server_count: u32,
-    tool_count: u32,
-    prompt_count: u32,
-    resource_count: u32,
 }
 
 #[derive(Debug, Serialize)]
