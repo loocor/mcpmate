@@ -19,6 +19,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { SchemaTable } from "./schema-table";
+import {
+	CAPABILITY_DETAILS_CLASS,
+	CAPABILITY_SUMMARY_CLASS,
+} from "./capability-disclosure-classes";
 
 type CapabilityKind = "tools" | "resources" | "prompts" | "templates";
 type ContextType = "server" | "profile";
@@ -365,14 +369,14 @@ export function CapabilityList<T = CapabilityRecord>({
 
 		const detailsBlock = hasDetails ? (
 			<details
-				className="mt-2"
+				className={CAPABILITY_DETAILS_CLASS}
 				open={!!openMap[id]}
 				onToggle={(e) => {
 					const isOpen = (e.currentTarget as HTMLDetailsElement).open;
 					setOpenMap((prev) => ({ ...prev, [id]: isOpen }));
 				}}
 			>
-				<summary className="cursor-pointer text-xs text-slate-500">
+				<summary className={CAPABILITY_SUMMARY_CLASS}>
 					{t("servers:capabilityList.detailsToggle", {
 						defaultValue: "Details",
 					})}

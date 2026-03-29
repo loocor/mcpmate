@@ -120,6 +120,7 @@ export const clientsTranslations = {
 				labels: {
 					configPath: "Config Path",
 					lastModified: "Last Modified",
+					supportedTransports: "Supported Transports",
 					homepage: "Homepage",
 					docs: "Docs",
 					support: "Support",
@@ -505,6 +506,7 @@ export const clientsTranslations = {
 				labels: {
 					configPath: "配置路径",
 					lastModified: "最近修改",
+					supportedTransports: "传输协议",
 					homepage: "主页",
 					docs: "文档",
 					support: "支持",
@@ -881,6 +883,7 @@ export const clientsTranslations = {
 				labels: {
 					configPath: "設定パス",
 					lastModified: "最終更新",
+					supportedTransports: "対応トランスポート",
 					homepage: "ホームページ",
 					docs: "ドキュメント",
 					support: "サポート",

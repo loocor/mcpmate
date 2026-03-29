@@ -867,7 +867,7 @@ export function SettingsPage() {
 						<Server className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.serverControls", {
-								defaultValue: "Server Controls",
+								defaultValue: "Server",
 							})}
 						</span>
 					</TabsTrigger>
@@ -875,20 +875,20 @@ export function SettingsPage() {
 						<AppWindow className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.clientDefaults", {
-								defaultValue: "Client Controls",
+								defaultValue: "Client",
 							})}
 						</span>
 					</TabsTrigger>
 					<TabsTrigger value="profile" className={tabTriggerClass}>
 						<Sliders className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
-							{t("settings:tabs.profile", { defaultValue: "Profile Controls" })}
+							{t("settings:tabs.profile", { defaultValue: "Profile" })}
 						</span>
 					</TabsTrigger>
 					<TabsTrigger value="market" className={tabTriggerClass}>
 						<Store className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
-							{t("settings:tabs.market", { defaultValue: "MCP Market" })}
+							{t("settings:tabs.market", { defaultValue: "Market" })}
 						</span>
 					</TabsTrigger>
 					<TabsTrigger value="develop" className={tabTriggerClass}>
@@ -900,7 +900,7 @@ export function SettingsPage() {
 					<TabsTrigger value="audit" className={tabTriggerClass}>
 						<FileSearch className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
-							{t("settings:tabs.audit", { defaultValue: "Audit Policy" })}
+							{t("settings:tabs.audit", { defaultValue: "Audit" })}
 						</span>
 					</TabsTrigger>
 					<TabsTrigger value="system" className={tabTriggerClass}>
@@ -913,7 +913,7 @@ export function SettingsPage() {
 						<TabsTrigger value="about" className={tabTriggerClass}>
 							<BookText className="h-4 w-4 shrink-0" />
 							<span className="hidden md:inline truncate">
-								{t("settings:tabs.about", { defaultValue: "About & Licenses" })}
+								{t("settings:tabs.about", { defaultValue: "About" })}
 							</span>
 						</TabsTrigger>
 					)}
@@ -1186,7 +1186,7 @@ export function SettingsPage() {
 							<CardHeader>
 								<CardTitle>
 									{t("settings:servers.title", {
-										defaultValue: "Server Controls",
+										defaultValue: "Server",
 									})}
 								</CardTitle>
 								<CardDescription>
@@ -1507,7 +1507,7 @@ export function SettingsPage() {
 					</TabsContent>
 
 					{/* System tab: Backend ports configuration */}
-										<TabsContent value="audit" className="mt-0 h-full">
+					<TabsContent value="audit" className="mt-0 h-full">
 						<Card className="h-full">
 							<CardHeader>
 								<CardTitle>
@@ -1616,171 +1616,171 @@ export function SettingsPage() {
 								<CardTitle>
 									{t("settings:system.title", { defaultValue: "System" })}
 								</CardTitle>
-							<CardDescription>
-								{t("settings:system.description", {
-									defaultValue:
-										"Manage how MCPMate Desktop connects to and controls its service, including runtime mode and local ports.",
-								})}
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-5">
-							<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-								<div className="space-y-1.5">
-									<h3 className={settingItemTitleClass}>
-										{t("settings:system.sourceTitle", {
-											defaultValue: "Service Target",
-										})}
-									</h3>
-									<p className={settingItemDescriptionClass}>
-										{t("settings:system.sourceDescription", {
-											defaultValue:
-												"Choose whether Desktop should attach to the built-in local service or a remote service endpoint.",
-										})}
-									</p>
-								</div>
-								<div className="flex sm:justify-end">
-									<div className="w-56">
-										<Segment
-											value={coreSource}
-											onValueChange={(value) => {
-												if (value === "localhost") {
-													setCoreSource("localhost");
-												}
-											}}
-											options={sourceOptions}
-											showDots={false}
-										/>
-									</div>
-								</div>
-							</div>
-
-							{coreSource === "remote" ? (
+								<CardDescription>
+									{t("settings:system.description", {
+										defaultValue:
+											"Manage how MCPMate Desktop connects to and controls its service, including runtime mode and local ports.",
+									})}
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-5">
 								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
 									<div className="space-y-1.5">
 										<h3 className={settingItemTitleClass}>
-											{t("settings:system.remoteUrlTitle", {
-												defaultValue: "Remote Core URL",
+											{t("settings:system.sourceTitle", {
+												defaultValue: "Service Target",
 											})}
 										</h3>
 										<p className={settingItemDescriptionClass}>
-											{t("settings:system.remoteUrlDescription", {
+											{t("settings:system.sourceDescription", {
 												defaultValue:
-													"Store the remote core endpoint for future attach support. This phase still prioritizes localhost service management.",
+													"Choose whether Desktop should attach to the built-in local service or a remote service endpoint.",
 											})}
 										</p>
 									</div>
 									<div className="flex sm:justify-end">
-										<Input
-											id="remote-core-url"
-											type="url"
-											value={remoteBaseUrl}
-											onChange={(event) => setRemoteBaseUrl(event.target.value)}
-											placeholder={t("settings:system.remoteUrlPlaceholder", {
-												defaultValue: "https://your-core.example.com",
-											})}
-											className="w-full sm:w-80"
-										/>
-									</div>
-								</div>
-							) : null}
-
-							{coreSource === "localhost" ? (
-								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-									<div className="space-y-1.5">
-										<h3 className={settingItemTitleClass}>
-											{t("settings:system.runtimeModeTitle", {
-												defaultValue: "Local Runtime Mode",
-											})}
-										</h3>
-									<p className={settingItemDescriptionClass}>
-										{t("settings:system.runtimeModeDescription", {
-											defaultValue:
-												"Choose whether localhost core is managed as an OS service or tied to the MCPMate desktop lifecycle.",
-										})}
-										{isTauriShell ? (
-											<>
-												{" "}
-												<button
-													type="button"
-													onClick={() => setServiceStatusExpanded((prev) => !prev)}
-													className="inline-flex whitespace-nowrap text-xs font-semibold text-sky-600 hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300"
-												>
-													{serviceStatusExpanded
-														? t("settings:system.lessToggle", { defaultValue: "Less" })
-														: t("settings:system.moreToggle", { defaultValue: "More" })}
-												</button>
-											</>
-										) : null}
-									</p>
-								</div>
-									<div className="flex sm:justify-end">
-									<div className="w-56">
+										<div className="w-56">
 											<Segment
-												value={localhostRuntimeMode}
-												onValueChange={(value) =>
-													setLocalhostRuntimeMode(
-														value as "service" | "desktop_managed",
-													)
-												}
-												options={runtimeModeOptions}
+												value={coreSource}
+												onValueChange={(value) => {
+													if (value === "localhost") {
+														setCoreSource("localhost");
+													}
+												}}
+												options={sourceOptions}
 												showDots={false}
 											/>
 										</div>
 									</div>
 								</div>
-							) : null}
 
-							{isTauriShell && coreSource === "localhost" && serviceStatusExpanded ? (
-								<div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
-									<div className="flex items-start justify-between gap-4">
-										<div className="space-y-0.5">
-											<p className="text-sm font-medium text-slate-900 dark:text-slate-100">
-												{t("settings:system.serviceStatusTitle", {
-													defaultValue: "Local Service Status",
+								{coreSource === "remote" ? (
+									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+										<div className="space-y-1.5">
+											<h3 className={settingItemTitleClass}>
+												{t("settings:system.remoteUrlTitle", {
+													defaultValue: "Remote Core URL",
 												})}
-											</p>
-											<p className="text-sm text-slate-600 dark:text-slate-300">
-												{localService.label}
-											</p>
-											<p className="text-xs text-muted-foreground">
-												{t("settings:system.runtimeModeCurrent", {
-													defaultValue: "Current runtime mode: {{value}}",
-													value: currentRuntimeModeLabel,
-												})}{" "}
-												{" · "}
-												{t("settings:system.serviceLevel", {
-													defaultValue: "Service level: {{value}}",
-													value: localService.level,
+											</h3>
+											<p className={settingItemDescriptionClass}>
+												{t("settings:system.remoteUrlDescription", {
+													defaultValue:
+														"Store the remote core endpoint for future attach support. This phase still prioritizes localhost service management.",
 												})}
-											</p>
-											<p className="text-xs leading-5 text-muted-foreground">
-												{localService.detail ||
-													t("settings:system.serviceStatusFallback", {
-														defaultValue:
-															"The desktop will attach to the configured localhost core service when it is available.",
-													})}
 											</p>
 										</div>
-										{localhostRuntimeMode === "service" ? (
-											<div className="flex shrink-0 items-center gap-2">
-											<Button
-												variant={localService.installed ? "destructive" : "secondary"}
-												disabled={busyAction !== null}
-												onClick={() =>
-													void manageLocalCore(serviceInstallAction)
-												}
-											>
-												{serviceInstallIcon}
-												{serviceInstallLabel}
-												</Button>
-											</div>
-										) : null}
+										<div className="flex sm:justify-end">
+											<Input
+												id="remote-core-url"
+												type="url"
+												value={remoteBaseUrl}
+												onChange={(event) => setRemoteBaseUrl(event.target.value)}
+												placeholder={t("settings:system.remoteUrlPlaceholder", {
+													defaultValue: "https://your-core.example.com",
+												})}
+												className="w-full sm:w-80"
+											/>
+										</div>
 									</div>
-								</div>
-							) : null}
+								) : null}
 
-							{/* Row: API Port */}
-							<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+								{coreSource === "localhost" ? (
+									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+										<div className="space-y-1.5">
+											<h3 className={settingItemTitleClass}>
+												{t("settings:system.runtimeModeTitle", {
+													defaultValue: "Local Runtime Mode",
+												})}
+											</h3>
+											<p className={settingItemDescriptionClass}>
+												{t("settings:system.runtimeModeDescription", {
+													defaultValue:
+														"Choose whether localhost core is managed as an OS service or tied to the MCPMate desktop lifecycle.",
+												})}
+												{isTauriShell ? (
+													<>
+														{" "}
+														<button
+															type="button"
+															onClick={() => setServiceStatusExpanded((prev) => !prev)}
+															className="inline-flex whitespace-nowrap text-xs font-semibold text-sky-600 hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300"
+														>
+															{serviceStatusExpanded
+																? t("settings:system.lessToggle", { defaultValue: "Less" })
+																: t("settings:system.moreToggle", { defaultValue: "More" })}
+														</button>
+													</>
+												) : null}
+											</p>
+										</div>
+										<div className="flex sm:justify-end">
+											<div className="w-56">
+												<Segment
+													value={localhostRuntimeMode}
+													onValueChange={(value) =>
+														setLocalhostRuntimeMode(
+															value as "service" | "desktop_managed",
+														)
+													}
+													options={runtimeModeOptions}
+													showDots={false}
+												/>
+											</div>
+										</div>
+									</div>
+								) : null}
+
+								{isTauriShell && coreSource === "localhost" && serviceStatusExpanded ? (
+									<div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+										<div className="flex items-start justify-between gap-4">
+											<div className="space-y-0.5">
+												<p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+													{t("settings:system.serviceStatusTitle", {
+														defaultValue: "Local Service Status",
+													})}
+												</p>
+												<p className="text-sm text-slate-600 dark:text-slate-300">
+													{localService.label}
+												</p>
+												<p className="text-xs text-muted-foreground">
+													{t("settings:system.runtimeModeCurrent", {
+														defaultValue: "Current runtime mode: {{value}}",
+														value: currentRuntimeModeLabel,
+													})}{" "}
+													{" · "}
+													{t("settings:system.serviceLevel", {
+														defaultValue: "Service level: {{value}}",
+														value: localService.level,
+													})}
+												</p>
+												<p className="text-xs leading-5 text-muted-foreground">
+													{localService.detail ||
+														t("settings:system.serviceStatusFallback", {
+															defaultValue:
+																"The desktop will attach to the configured localhost core service when it is available.",
+														})}
+												</p>
+											</div>
+											{localhostRuntimeMode === "service" ? (
+												<div className="flex shrink-0 items-center gap-2">
+													<Button
+														variant={localService.installed ? "destructive" : "secondary"}
+														disabled={busyAction !== null}
+														onClick={() =>
+															void manageLocalCore(serviceInstallAction)
+														}
+													>
+														{serviceInstallIcon}
+														{serviceInstallLabel}
+													</Button>
+												</div>
+											) : null}
+										</div>
+									</div>
+								) : null}
+
+								{/* Row: API Port */}
+								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
 									<div className="space-y-1.5">
 										<h3 className={settingItemTitleClass}>
 											{t("settings:system.apiPortTitle", {
@@ -1848,8 +1848,8 @@ export function SettingsPage() {
 											<Button
 												variant="secondary"
 												onClick={() => loadRuntimePorts()}
-											disabled={loadingPorts || applyBusy}
-										>
+												disabled={loadingPorts || applyBusy}
+											>
 												{loadingPorts
 													? t("loading", { defaultValue: "Loading…" })
 													: t("reload", { defaultValue: "Reload" })}
@@ -2169,7 +2169,7 @@ function MarketBlacklistCard({
 		<Card className="h-full">
 			<CardHeader>
 				<CardTitle>
-					{t("settings:market.title", { defaultValue: "MCP Market" })}
+					{t("settings:market.title", { defaultValue: "Market" })}
 				</CardTitle>
 				<CardDescription>
 					{t("settings:market.description", {
@@ -2331,7 +2331,7 @@ function MarketBlacklistCard({
 								})}
 							</p>
 						</div>
-						<Button asChild variant="outline" size="sm" className="w-[12.75rem]">
+						<Button asChild variant="outline" size="sm" className="w-52 shrink-0">
 							<a
 								href={CHROME_EXTENSION_PLACEHOLDER_URL}
 								target="_blank"
@@ -2360,7 +2360,7 @@ function MarketBlacklistCard({
 								})}
 							</p>
 						</div>
-						<Button asChild variant="outline" size="sm" className="w-[12.75rem]">
+						<Button asChild variant="outline" size="sm" className="w-52 shrink-0">
 							<a
 								href={EDGE_EXTENSION_PLACEHOLDER_URL}
 								target="_blank"

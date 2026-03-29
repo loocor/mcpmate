@@ -1,6 +1,15 @@
-import { useMemo } from "react";
+import {
+	useMemo,
+	useRef,
+	type MouseEvent,
+	type ReactNode,
+	type Ref,
+} from "react";
 import type { TFunction } from "i18next";
-import { Button } from "../../../components/ui/button";
+import {
+	CAPABILITY_DETAILS_CLASS,
+	CAPABILITY_SUMMARY_CLASS,
+} from "../../../components/capability-disclosure-classes";
 import { JsonCodeBlock } from "../../../components/json-code-block";
 import { Link } from "react-router-dom";
 import type { AuditEventRecord } from "../../../lib/types";
@@ -61,11 +70,38 @@ function isPresent(value: unknown): boolean {
 	return true;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		return null;
+function getRawDataOnOpenDrawer(
+	event: AuditEventRecord,
+	onOpenRawDetails?: (eventId: number) => void,
+): (() => void) | undefined {
+	if (event.category === "mcp_request" && !isMcpDrawerAction(event.action)) {
+		return undefined;
 	}
-	return value as Record<string, unknown>;
+	return rawDetailsOpener(event.id, onOpenRawDetails);
+}
+
+function getRawDataPresentation(
+	data: unknown,
+	onOpenDrawer?: () => void,
+): { hasRawData: boolean; useDrawer: boolean } {
+	if (!isPresent(data)) {
+		return { hasRawData: false, useDrawer: false };
+	}
+	const rawText = JSON.stringify(data, null, 2);
+	const useDrawer =
+		rawText.length > RAW_DATA_INLINE_CHAR_LIMIT && !!onOpenDrawer;
+	return { hasRawData: true, useDrawer };
+}
+
+function isInteractivePanelTarget(el: HTMLElement | null): boolean {
+	if (!el) return false;
+	const selector = "button, a, input, textarea, select, [role=button]";
+	let cur: HTMLElement | null = el;
+	while (cur && cur !== document.body) {
+		if (cur.matches?.(selector)) return true;
+		cur = cur.parentElement;
+	}
+	return false;
 }
 
 function DetailField(props: {
@@ -148,50 +184,13 @@ function AuditEntityLinkFields(props: {
 	);
 }
 
-function StructuredDataSection(props: { t: TFunction; data: unknown }) {
-	const { t, data } = props;
-	const record = asRecord(data);
-	if (!record) {
-		return null;
-	}
-
-	const entries = Object.entries(record).filter(
-		([key, value]) => isPresent(value) && key !== "components" && !Array.isArray(value),
-	);
-	if (entries.length === 0) {
-		return null;
-	}
-
-	return (
-		<div className="md:col-span-2">
-			<strong>
-				{t("audit:details.structuredData", {
-					defaultValue: "Structured fields",
-				})}
-				:
-			</strong>
-			<div className="mt-2 grid gap-2 md:grid-cols-2">
-				{entries.map(([key, value]) => (
-					<div key={key}>
-						<strong>{key}:</strong>{" "}
-						{typeof value === "string" ? (
-							value
-						) : (
-							JSON.stringify(value)
-						)}
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
-
 function RawDataSection(props: {
 	t: TFunction;
 	data: unknown;
 	onOpenDrawer?: () => void;
+	rawDetailsRef?: Ref<HTMLDetailsElement>;
 }) {
-	const { t, data, onOpenDrawer } = props;
+	const { t, data, onOpenDrawer, rawDetailsRef } = props;
 	const rawText = useMemo(() => {
 		if (!isPresent(data)) {
 			return "";
@@ -205,33 +204,36 @@ function RawDataSection(props: {
 
 	const useDrawer = rawText.length > RAW_DATA_INLINE_CHAR_LIMIT && !!onOpenDrawer;
 
+	const rawLabel = t("audit:details.rawData", { defaultValue: "Raw data" });
+
 	return (
 		<div className="md:col-span-2">
 			{useDrawer ? (
 				<>
-					<div className="flex items-center justify-between gap-3">
-						<strong>{t("audit:details.rawData", { defaultValue: "Raw data" })}:</strong>
-						<Button
-							variant="ghost"
-							size="sm"
-							className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-							onClick={onOpenDrawer}
+					<details
+						ref={rawDetailsRef}
+						className={CAPABILITY_DETAILS_CLASS}
+					>
+						<summary
+							className={CAPABILITY_SUMMARY_CLASS}
+							onClick={(e) => {
+								e.preventDefault();
+								onOpenDrawer?.();
+							}}
 						>
-							{t("audit:details.openRawDataDrawer", { defaultValue: "More" })}
-						</Button>
-					</div>
-					<p className="mt-2 text-xs text-muted-foreground">
+							{rawLabel}
+						</summary>
+					</details>
+					<p className="mt-2 text-xs text-slate-500">
 						{t("audit:details.rawDataMovedToDrawer", {
 							defaultValue: "Raw data is large, open it in the detail drawer.",
 						})}
 					</p>
 				</>
 			) : (
-				<details className="mt-2">
-					<summary className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
-						<strong>{t("audit:details.rawData", { defaultValue: "Raw data" })}:</strong>
-					</summary>
-					<div className="mt-2 overflow-hidden">
+				<details ref={rawDetailsRef} className={CAPABILITY_DETAILS_CLASS}>
+					<summary className={CAPABILITY_SUMMARY_CLASS}>{rawLabel}</summary>
+					<div className="mt-2 space-y-2 overflow-hidden">
 						<JsonCodeBlock code={rawText} />
 					</div>
 				</details>
@@ -244,14 +246,15 @@ function ManagementDetails(props: {
 	event: AuditEventRecord;
 	t: TFunction;
 	onOpenRawDetails?: (eventId: number) => void;
+	rawDetailsRef?: Ref<HTMLDetailsElement>;
 }) {
-	const { event, t, onOpenRawDetails } = props;
+	const { event, t, onOpenRawDetails, rawDetailsRef } = props;
 	const managementScopeKey = getManagementSubLabelKey(event.action);
 	const managementScopeLabel =
 		managementScopeKey != null
 			? t(`audit:managementSubLabels.${managementScopeKey}`, {
-					defaultValue: managementScopeKey,
-				})
+				defaultValue: managementScopeKey,
+			})
 			: undefined;
 
 	return (
@@ -281,11 +284,11 @@ function ManagementDetails(props: {
 				value={event.error_message}
 				className="md:col-span-2"
 			/>
-			<StructuredDataSection t={t} data={event.data} />
 			<RawDataSection
 				t={t}
 				data={event.data}
 				onOpenDrawer={rawDetailsOpener(event.id, onOpenRawDetails)}
+				rawDetailsRef={rawDetailsRef}
 			/>
 		</div>
 	);
@@ -295,12 +298,16 @@ function McpRequestDetails(props: {
 	event: AuditEventRecord;
 	t: TFunction;
 	onOpenRawDetails?: (eventId: number) => void;
+	rawDetailsRef?: Ref<HTMLDetailsElement>;
 }) {
-	const { event, t, onOpenRawDetails } = props;
+	const { event, t, onOpenRawDetails, rawDetailsRef } = props;
 	const supportsDrawer = isMcpDrawerAction(event.action);
 	const payloadEventId = event.id;
 	const showOpenPayloadButton =
 		payloadEventId != null && onOpenRawDetails != null && supportsDrawer;
+	const openRequestPayload = showOpenPayloadButton
+		? rawDetailsOpener(payloadEventId, onOpenRawDetails)
+		: undefined;
 	return (
 		<div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
 			<DetailField label={t("audit:details.mcpMethod", { defaultValue: "MCP Method" })} value={event.mcp_method} />
@@ -328,30 +335,28 @@ function McpRequestDetails(props: {
 				value={event.error_message}
 				className="md:col-span-2"
 			/>
-			{showOpenPayloadButton ? (
-				<div className="md:col-span-2 flex justify-start">
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-						onClick={() => {
-							if (payloadEventId == null || onOpenRawDetails == null) {
-								return;
-							}
-							onOpenRawDetails(payloadEventId);
-						}}
-					>
-						{t("audit:details.openRequestPayload", {
-							defaultValue: "More",
-						})}
-					</Button>
+			{openRequestPayload ? (
+				<div className="md:col-span-2">
+					<details className={CAPABILITY_DETAILS_CLASS}>
+						<summary
+							className={CAPABILITY_SUMMARY_CLASS}
+							onClick={(e) => {
+								e.preventDefault();
+								openRequestPayload();
+							}}
+						>
+							{t("audit:details.openRequestPayload", {
+								defaultValue: "Request payload",
+							})}
+						</summary>
+					</details>
 				</div>
 			) : null}
-			<StructuredDataSection t={t} data={event.data} />
 			<RawDataSection
 				t={t}
 				data={event.data}
 				onOpenDrawer={supportsDrawer ? rawDetailsOpener(event.id, onOpenRawDetails) : undefined}
+				rawDetailsRef={rawDetailsRef}
 			/>
 		</div>
 	);
@@ -361,8 +366,9 @@ function RestLikeDetails(props: {
 	event: AuditEventRecord;
 	t: TFunction;
 	onOpenRawDetails?: (eventId: number) => void;
+	rawDetailsRef?: Ref<HTMLDetailsElement>;
 }) {
-	const { event, t, onOpenRawDetails } = props;
+	const { event, t, onOpenRawDetails, rawDetailsRef } = props;
 	return (
 		<div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
 			<DetailField label={t("audit:details.route", { defaultValue: "Route" })} value={event.route} />
@@ -388,11 +394,11 @@ function RestLikeDetails(props: {
 				value={event.error_message}
 				className="md:col-span-2"
 			/>
-			<StructuredDataSection t={t} data={event.data} />
 			<RawDataSection
 				t={t}
 				data={event.data}
 				onOpenDrawer={rawDetailsOpener(event.id, onOpenRawDetails)}
+				rawDetailsRef={rawDetailsRef}
 			/>
 		</div>
 	);
@@ -404,13 +410,68 @@ export function AuditEventDetails(props: {
 	onOpenRawDetails?: (eventId: number) => void;
 }) {
 	const { event, t, onOpenRawDetails } = props;
+	const rawDetailsRef = useRef<HTMLDetailsElement>(null);
+	const onOpenDrawer = getRawDataOnOpenDrawer(event, onOpenRawDetails);
+	const { hasRawData, useDrawer } = getRawDataPresentation(event.data, onOpenDrawer);
 
+	const handleExpandedPanelClick = (e: MouseEvent<HTMLDivElement>) => {
+		if (!hasRawData) return;
+		const sel =
+			typeof window !== "undefined" ? window.getSelection()?.toString() : "";
+		if (sel?.trim()) return;
+		const target = e.target as HTMLElement;
+		if (isInteractivePanelTarget(target)) return;
+		if (target.closest("details")) return;
+
+		if (useDrawer) {
+			onOpenDrawer?.();
+		} else {
+			const d = rawDetailsRef.current;
+			if (d) {
+				d.open = !d.open;
+			}
+		}
+	};
+
+	let body: ReactNode;
 	switch (event.category) {
 		case "management":
-			return <ManagementDetails event={event} t={t} onOpenRawDetails={onOpenRawDetails} />;
+			body = (
+				<ManagementDetails
+					event={event}
+					t={t}
+					onOpenRawDetails={onOpenRawDetails}
+					rawDetailsRef={rawDetailsRef}
+				/>
+			);
+			break;
 		case "mcp_request":
-			return <McpRequestDetails event={event} t={t} onOpenRawDetails={onOpenRawDetails} />;
+			body = (
+				<McpRequestDetails
+					event={event}
+					t={t}
+					onOpenRawDetails={onOpenRawDetails}
+					rawDetailsRef={rawDetailsRef}
+				/>
+			);
+			break;
 		default:
-			return <RestLikeDetails event={event} t={t} onOpenRawDetails={onOpenRawDetails} />;
+			body = (
+				<RestLikeDetails
+					event={event}
+					t={t}
+					onOpenRawDetails={onOpenRawDetails}
+					rawDetailsRef={rawDetailsRef}
+				/>
+			);
 	}
+
+	return (
+		<div
+			className={hasRawData ? "cursor-pointer" : undefined}
+			onClick={handleExpandedPanelClick}
+		>
+			{body}
+		</div>
+	);
 }

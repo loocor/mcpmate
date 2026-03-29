@@ -965,6 +965,9 @@ export function ProfileDetailPage() {
 							isError={tokenChartSource.isError}
 							enabledByComponentId={enabledByComponentId}
 							estimateMethod={profileTokenEstimateMethod}
+							profileServerCount={
+								isLoadingServers ? undefined : servers.length
+							}
 						/>
 					) : null}
 				</div>

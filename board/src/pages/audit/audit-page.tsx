@@ -647,7 +647,8 @@ export function AuditPage() {
 												{expanded ? (
 													<tr className="border-b bg-slate-100/80 dark:bg-slate-900/70 last:border-0">
 														<td className={EXPAND_COL_SPACER_CLASS} />
-														<td colSpan={6} className="p-4">
+														{/* pl-0: align detail panel start with timestamp column (row cells use py-3 pr-4, no pl) */}
+														<td colSpan={6} className="py-4 pr-4 pl-0 align-top">
 															<AuditEventDetails event={event} t={t} onOpenRawDetails={openRawDetails} />
 														</td>
 													</tr>

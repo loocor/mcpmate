@@ -13,9 +13,9 @@ import {
 	Wrench,
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { EntityCard } from "../../components/entity-card";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
 import { EmptyState, PageLayout } from "../../components/page-layout";
@@ -30,7 +30,7 @@ import {
 	CardHeader,
 } from "../../components/ui/card";
 import { PageToolbar } from "../../components/ui/page-toolbar";
-import { Switch } from "../../components/ui/switch";
+import { ProfileSuitGridCard } from "./components/profile-suit-grid-card";
 import { configSuitsApi, serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlView } from "../../lib/hooks/use-url-state";
@@ -68,9 +68,40 @@ type SuitStats = {
 	enabledPrompts: number;
 };
 
+type SuitStatsWithEnableMap = SuitStats & {
+	enabledByComponentId: Map<string, boolean>;
+};
+
+function buildEnabledByComponentId(
+	servers: Array<{ id: string; enabled: boolean }>,
+	tools: Array<{ id: string; enabled: boolean }>,
+	resources: Array<{ id: string; enabled: boolean }>,
+	prompts: Array<{ id: string; enabled: boolean }>,
+	templates: Array<{ id: string; enabled: boolean }>,
+): Map<string, boolean> {
+	const m = new Map<string, boolean>();
+	for (const s of servers) {
+		m.set(s.id, s.enabled);
+	}
+	for (const item of tools) {
+		m.set(item.id, item.enabled);
+	}
+	for (const r of resources) {
+		m.set(r.id, r.enabled);
+	}
+	for (const p of prompts) {
+		m.set(p.id, p.enabled);
+	}
+	for (const tmpl of templates) {
+		m.set(tmpl.id, tmpl.enabled);
+	}
+	return m;
+}
+
 function formatSuitDisplayName(
-	name?: string | null,
-	fallback?: string,
+	name: string | null | undefined,
+	fallback: string | undefined,
+	t: TFunction,
 ): string {
 	const raw = typeof name === "string" ? name.trim() : "";
 	if (raw.length > 0) {
@@ -122,12 +153,7 @@ export function ProfilePage() {
 		error: suitsError,
 	} = useQuery({
 		queryKey: ["configSuits"],
-		queryFn: async () => {
-			console.log("Fetching config suits...");
-			const result = await configSuitsApi.getAll();
-			console.log("Config suits response:", result);
-			return result;
-		},
+		queryFn: () => configSuitsApi.getAll(),
 		retry: 1,
 		refetchInterval: 30000,
 	});
@@ -255,21 +281,17 @@ export function ProfilePage() {
 		}
 	};
 
-	const orderedSuits = useMemo(
-		() => arrangeSuitsWithDefaultAnchor(suits),
-		[suits],
-	);
-
 	const suitStatQueries = useQueries({
-		queries: orderedSuits.map((suit) => ({
+		queries: suits.map((suit) => ({
 			queryKey: ["configSuitStats", suit.id] as const,
-			queryFn: async (): Promise<SuitStats> => {
-				const [serversRes, toolsRes, resourcesRes, promptsRes] =
+			queryFn: async (): Promise<SuitStatsWithEnableMap> => {
+				const [serversRes, toolsRes, resourcesRes, promptsRes, templatesRes] =
 					await Promise.allSettled([
 						configSuitsApi.getServers(suit.id),
 						configSuitsApi.getTools(suit.id),
 						configSuitsApi.getResources(suit.id),
 						configSuitsApi.getPrompts(suit.id),
+						configSuitsApi.getResourceTemplates(suit.id),
 					]);
 
 				const servers =
@@ -311,6 +333,25 @@ export function ProfilePage() {
 					);
 				}
 
+				const templates =
+					templatesRes.status === "fulfilled"
+						? templatesRes.value.templates || []
+						: [];
+				if (templatesRes.status === "rejected") {
+					console.error(
+						"Failed to fetch profile resource templates stats",
+						templatesRes.reason,
+					);
+				}
+
+				const enabledByComponentId = buildEnabledByComponentId(
+					servers,
+					tools,
+					resources,
+					prompts,
+					templates,
+				);
+
 				return {
 					totalServers: servers.length,
 					enabledServers: servers.filter((server) => server.enabled).length,
@@ -321,6 +362,7 @@ export function ProfilePage() {
 						.length,
 					totalPrompts: prompts.length,
 					enabledPrompts: prompts.filter((prompt) => prompt.enabled).length,
+					enabledByComponentId,
 				};
 			},
 			enabled: !!suit.id,
@@ -455,8 +497,10 @@ export function ProfilePage() {
 			return sum;
 		}, 0);
 
-	const getSuitStats = (index: number) => {
-		const statsQuery = suitStatQueries[index];
+	const getSuitStatsForSuitId = (suitId: string) => {
+		const statsIndex = suits.findIndex((s) => s.id === suitId);
+		const statsQuery =
+			statsIndex >= 0 ? suitStatQueries[statsIndex] : undefined;
 		const stats = statsQuery?.data;
 		const statsLoading = Boolean(
 			statsQuery?.isFetching || statsQuery?.isLoading,
@@ -467,15 +511,17 @@ export function ProfilePage() {
 			const safeTotal = typeof total === "number" ? total : 0;
 			return `${safeEnabled}/${safeTotal}`;
 		};
-		return { stats, statsLoading, formatCount };
+		const enabledByComponentId =
+			stats?.enabledByComponentId ?? new Map<string, boolean>();
+		return { stats, statsLoading, formatCount, enabledByComponentId };
 	};
 
 	const isTogglePending =
 		activateSuitMutation.isPending || deactivateSuitMutation.isPending;
 
-	const renderSuitListItem = (suit: ConfigSuit, index: number) => {
-		const { stats, formatCount } = getSuitStats(index);
-		const displayName = formatSuitDisplayName(suit.name, suit.id);
+	const renderSuitListItem = (suit: ConfigSuit) => {
+		const { stats, formatCount } = getSuitStatsForSuitId(suit.id);
+		const displayName = formatSuitDisplayName(suit.name, suit.id, t);
 		const avatarInitial = displayName.charAt(0).toUpperCase() || "P";
 		const suitRole = suit.role ?? "user";
 		const isDefaultAnchor = suitRole === "default_anchor";
@@ -552,9 +598,10 @@ export function ProfilePage() {
 		);
 	};
 
-	const renderSuitCard = (suit: ConfigSuit, index: number) => {
-		const { stats, formatCount } = getSuitStats(index);
-		const displayName = formatSuitDisplayName(suit.name, suit.id);
+	const renderSuitCard = (suit: ConfigSuit) => {
+		const { stats, formatCount, enabledByComponentId, statsLoading } =
+			getSuitStatsForSuitId(suit.id);
+		const displayName = formatSuitDisplayName(suit.name, suit.id, t);
 		const avatarInitial = displayName.charAt(0).toUpperCase() || "P";
 		const suitRole = suit.role ?? "user";
 		const isDefaultAnchor = suitRole === "default_anchor";
@@ -578,44 +625,20 @@ export function ProfilePage() {
 		];
 
 		return (
-			<EntityCard
+			<ProfileSuitGridCard
 				key={suit.id}
-				id={suit.id}
-				title={displayName}
-				description={suit.description}
-				avatar={{
-					fallback: avatarInitial,
-				}}
-				topRightBadge={
-					isDefaultAnchor ? (
-						<Badge variant="outline" className="shrink-0">
-							{t("profiles:badges.defaultAnchor", {
-								defaultValue: "Default Anchor",
-							})}
-						</Badge>
-					) : suit.is_default ? (
-						<Badge variant="outline" className="shrink-0">
-							{t("profiles:badges.inDefault", { defaultValue: "In Default" })}
-						</Badge>
-					) : undefined
+				suit={suit}
+				statItems={statItems}
+				displayName={displayName}
+				avatarInitial={avatarInitial}
+				isDefaultAnchor={isDefaultAnchor}
+				isTogglePending={isTogglePending}
+				onNavigate={() => navigate(`/profiles/${suit.id}`)}
+				onToggle={() => handleSuitToggle(suit)}
+				enabledByComponentId={enabledByComponentId}
+				profileServerCount={
+					statsLoading ? undefined : stats?.totalServers
 				}
-				stats={statItems}
-				bottomLeft={
-					<Badge variant={suit.is_active ? "default" : "secondary"}>
-						{t(`profiles:suitTypes.${suit.suit_type}`, {
-							defaultValue: suit.suit_type,
-						})}
-					</Badge>
-				}
-				bottomRight={
-					<Switch
-						checked={suit.is_active}
-						onCheckedChange={() => handleSuitToggle(suit)}
-						disabled={isTogglePending || isDefaultAnchor}
-						onClick={(e) => e.stopPropagation()}
-					/>
-				}
-				onClick={() => navigate(`/profiles/${suit.id}`)}
 			/>
 		);
 	};
@@ -640,7 +663,7 @@ export function ProfilePage() {
 			title: t("profiles:stats.servers", { defaultValue: "Servers" }),
 			value:
 				activeSuitServersQueries.some((query) => query.isLoading) ||
-				isLoadingSuits
+					isLoadingSuits
 					? "..."
 					: `${enabledServersCount}/${totalServersInSuit}`,
 			description: t("profiles:stats.running", { defaultValue: "running" }),
@@ -650,7 +673,7 @@ export function ProfilePage() {
 			title: t("profiles:stats.tools", { defaultValue: "Tools" }),
 			value:
 				activeSuitToolsQueries.some((query) => query.isLoading) ||
-				isLoadingSuits
+					isLoadingSuits
 					? "..."
 					: `${enabledToolsCount}/${totalToolsInSuit}`,
 			description: t("profiles:stats.enabled", { defaultValue: "enabled" }),
@@ -660,8 +683,8 @@ export function ProfilePage() {
 			title: t("profiles:stats.instances", { defaultValue: "Instances" }),
 			value:
 				isLoadingAllServers ||
-				activeSuitServersQueries.some((query) => query.isLoading) ||
-				isLoadingSuits
+					activeSuitServersQueries.some((query) => query.isLoading) ||
+					isLoadingSuits
 					? "..."
 					: `${readyInstances}/${totalInstances}`,
 			description: t("profiles:stats.ready", { defaultValue: "ready" }),
@@ -673,63 +696,63 @@ export function ProfilePage() {
 	const loadingSkeleton =
 		viewMode === "grid"
 			? Array.from({ length: 6 }, (_, index) => {
-					const cardId = `loading-grid-${index}`;
-					return (
-						<Card
-							key={cardId}
-							className="animate-pulse border border-slate-200 dark:border-slate-700"
-						>
-							<CardHeader className="space-y-2">
-								<div className="h-5 w-32 rounded bg-slate-200 dark:bg-slate-800"></div>
-								<div className="h-4 w-48 rounded bg-slate-200 dark:bg-slate-800"></div>
-							</CardHeader>
-							<CardContent className="space-y-4">
-								<div className="grid grid-cols-4 gap-x-6 gap-y-2">
-									{Array.from({ length: 4 }, (__, statIndex) => {
-										const labelId = `${cardId}-label-${statIndex}`;
-										return (
-											<div
-												key={labelId}
-												className="h-3 w-16 rounded bg-slate-200 dark:bg-slate-800"
-											></div>
-										);
-									})}
-									{Array.from({ length: 4 }, (__, statIndex) => {
-										const valueId = `${cardId}-value-${statIndex}`;
-										return (
-											<div
-												key={valueId}
-												className="h-5 w-20 rounded bg-slate-200 dark:bg-slate-800"
-											></div>
-										);
-									})}
-								</div>
-							</CardContent>
-							<CardFooter className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 dark:border-slate-700">
-								<div className="h-5 w-20 rounded-full bg-slate-200 dark:bg-slate-800"></div>
-								<div className="flex items-center gap-2">
-									<div className="h-3 w-14 rounded bg-slate-200 dark:bg-slate-800"></div>
-									<div className="h-6 w-12 rounded bg-slate-200 dark:bg-slate-800"></div>
-								</div>
-							</CardFooter>
-						</Card>
-					);
-				})
-			: Array.from({ length: 3 }, (_, id) => {
-					const suitId = `loading-suit-${id}`;
-					return (
-						<div
-							key={suitId}
-							className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
-						>
-							<div className="space-y-1">
-								<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-								<div className="h-4 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+				const cardId = `loading-grid-${index}`;
+				return (
+					<Card
+						key={cardId}
+						className="animate-pulse border border-slate-200 dark:border-slate-700"
+					>
+						<CardHeader className="space-y-2">
+							<div className="h-5 w-32 rounded bg-slate-200 dark:bg-slate-800"></div>
+							<div className="h-4 w-48 rounded bg-slate-200 dark:bg-slate-800"></div>
+						</CardHeader>
+						<CardContent className="space-y-4">
+							<div className="grid grid-cols-4 gap-x-6 gap-y-2">
+								{Array.from({ length: 4 }, (__, statIndex) => {
+									const labelId = `${cardId}-label-${statIndex}`;
+									return (
+										<div
+											key={labelId}
+											className="h-3 w-16 rounded bg-slate-200 dark:bg-slate-800"
+										></div>
+									);
+								})}
+								{Array.from({ length: 4 }, (__, statIndex) => {
+									const valueId = `${cardId}-value-${statIndex}`;
+									return (
+										<div
+											key={valueId}
+											className="h-5 w-20 rounded bg-slate-200 dark:bg-slate-800"
+										></div>
+									);
+								})}
 							</div>
-							<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+						</CardContent>
+						<CardFooter className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 dark:border-slate-700">
+							<div className="h-5 w-20 rounded-full bg-slate-200 dark:bg-slate-800"></div>
+							<div className="flex items-center gap-2">
+								<div className="h-3 w-14 rounded bg-slate-200 dark:bg-slate-800"></div>
+								<div className="h-6 w-12 rounded bg-slate-200 dark:bg-slate-800"></div>
+							</div>
+						</CardFooter>
+					</Card>
+				);
+			})
+			: Array.from({ length: 3 }, (_, id) => {
+				const suitId = `loading-suit-${id}`;
+				return (
+					<div
+						key={suitId}
+						className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
+					>
+						<div className="space-y-1">
+							<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+							<div className="h-4 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
 						</div>
-					);
-				});
+						<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+					</div>
+				);
+			});
 
 	// 工具栏配置
 	const toolbarConfig = {
