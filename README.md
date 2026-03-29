@@ -1,5 +1,7 @@
 # MCPMate
 
+[![SafeSkill 82/100](https://img.shields.io/badge/SafeSkill-82%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/loocor-mcpmate)
+
 [中文](./README_CN.md) | **English**
 
 <p align="center">
