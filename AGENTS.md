@@ -154,7 +154,7 @@
 - Keep backend tests inside `#[cfg(test)]` using `mockall`, `wiremock`, or `serial_test`; seed fixtures via APIs or migrations—never edit `~/.mcpmate/mcpmate.db` by hand.
 - Inspector loop always uses two terminals: Terminal A runs `cargo run` from `backend/`; Terminal B issues `npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http --method tools/list`, `prompts/list`, `resources/list`, and `--method tools/call --tool-name mcpmate_profile_list`.
 - Acceptance criteria from the testing guide:
-  - List responses return within ~5s, log entries appear on Terminal A, and built-in tools (e.g., `mcpmate_profile_list`, `mcpmate_profile_details`) are present.
+- List responses return within ~5s, log entries appear on Terminal A, and built-in tools (e.g., `mcpmate_profile_list`, `mcpmate_profile_preview`) are present.
   - Server/profile toggles in SQLite must reflect immediately in Inspector output; use the provided SQL snippets to verify enable flags before and after toggles.
   - Cache checks: clear REDB to confirm first-call MISS and subsequent HIT, respect the 5-minute TTL, and ensure profile signature changes invalidate cache instantly.
   - Performance probes: run the concurrency loop (10 parallel `tools/list` calls) to watch for lock warnings and execute health-check observation runs (5–10 minutes) to confirm adaptive polling.
