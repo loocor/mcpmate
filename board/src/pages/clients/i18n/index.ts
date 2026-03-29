@@ -231,6 +231,7 @@ export const clientsTranslations = {
 				},
 				labels: {
 					noDescription: "No description",
+					openProfileDetail: "Open profile details",
 					servers: "Servers",
 					tools: "Tools",
 					resources: "Resources",
@@ -624,6 +625,7 @@ export const clientsTranslations = {
 				},
 				labels: {
 					noDescription: "暂无描述",
+					openProfileDetail: "打开配置集详情",
 					servers: "服务器",
 					tools: "工具",
 					resources: "资源",
@@ -1016,6 +1018,7 @@ export const clientsTranslations = {
 				},
 				labels: {
 					noDescription: "説明なし",
+					openProfileDetail: "プロファイルの詳細を開く",
 					servers: "サーバー",
 					tools: "ツール",
 					resources: "リソース",

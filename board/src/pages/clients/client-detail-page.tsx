@@ -8,7 +8,6 @@ import {
 	Check,
 	Download,
 	HardDrive,
-	Info,
 	Pencil,
 	Play,
 	Plus,
@@ -19,7 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import {
 	CapsuleStripeList,
@@ -79,6 +78,7 @@ import type {
 	ConfigSuit,
 } from "../../lib/types";
 import { formatBackupTime } from "../../lib/utils";
+import { ConfigurationProfileTokenChart } from "./components/configuration-profile-token-chart";
 
 const arrangeProfilesWithDefaultFirst = (items: ConfigSuit[] = []) => {
 	if (!items.length) {
@@ -166,7 +166,7 @@ export function ClientDetailPage() {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	usePageTranslations("clients");
-	const { t } = useTranslation("clients");
+	const { t, i18n } = useTranslation("clients");
 	const showClientLiveLogs = useAppStore(
 		(state) => state.dashboardSettings.showClientLiveLogs,
 	);
@@ -341,16 +341,35 @@ export function ClientDetailPage() {
 		queries: capabilityProfileIds.map((profileId) => ({
 			queryKey: ["profile-capabilities", profileId],
 			queryFn: async () => {
-				const [serversRes, toolsRes, resourcesRes, promptsRes] =
+				const [serversRes, toolsRes, resourcesRes, promptsRes, templatesRes] =
 					await Promise.all([
 						configSuitsApi.getServers(profileId),
 						configSuitsApi.getTools(profileId),
 						configSuitsApi.getResources(profileId),
 						configSuitsApi.getPrompts(profileId),
+						configSuitsApi.getResourceTemplates(profileId),
 					]);
+
+				const enabledByComponentId = new Map<string, boolean>();
+				for (const s of serversRes?.servers ?? []) {
+					enabledByComponentId.set(s.id, Boolean(s.enabled));
+				}
+				for (const tool of toolsRes?.tools ?? []) {
+					enabledByComponentId.set(tool.id, Boolean(tool.enabled));
+				}
+				for (const r of resourcesRes?.resources ?? []) {
+					enabledByComponentId.set(r.id, Boolean(r.enabled));
+				}
+				for (const p of promptsRes?.prompts ?? []) {
+					enabledByComponentId.set(p.id, Boolean(p.enabled));
+				}
+				for (const tmpl of templatesRes?.templates ?? []) {
+					enabledByComponentId.set(tmpl.id, Boolean(tmpl.enabled));
+				}
 
 				return {
 					profileId,
+					enabledByComponentId,
 					servers: {
 						total: serversRes?.servers?.length || 0,
 						enabled:
@@ -361,7 +380,7 @@ export function ClientDetailPage() {
 					tools: {
 						total: toolsRes?.tools?.length || 0,
 						enabled:
-							toolsRes?.tools?.filter((t: { enabled?: boolean }) => t.enabled)
+							toolsRes?.tools?.filter((tool: { enabled?: boolean }) => tool.enabled)
 								.length || 0,
 					},
 					resources: {
@@ -411,6 +430,51 @@ export function ClientDetailPage() {
 			allowed.has(transportOption),
 		);
 	}, [configDetails?.supported_transports]);
+
+	const configurationSourceSegmentOptions = useMemo(
+		() => {
+			const statusOrUndefined = (raw: string) => {
+				const trimmed = raw.trim();
+				return trimmed.length > 0 ? trimmed : undefined;
+			};
+			return [
+				{
+					value: "default",
+					label: t("detail.configuration.sections.source.options.default", {
+						defaultValue: "Active",
+					}),
+					status: statusOrUndefined(
+						t("detail.configuration.sections.source.statusLabel.default", {
+							defaultValue: "",
+						}),
+					),
+				},
+				{
+					value: "profile",
+					label: t("detail.configuration.sections.source.options.profile", {
+						defaultValue: "Profiles",
+					}),
+					status: statusOrUndefined(
+						t("detail.configuration.sections.source.statusLabel.profile", {
+							defaultValue: "",
+						}),
+					),
+				},
+				{
+					value: "custom",
+					label: t("detail.configuration.sections.source.options.custom", {
+						defaultValue: "Customize",
+					}),
+					status: statusOrUndefined(
+						t("detail.configuration.sections.source.statusLabel.custom", {
+							defaultValue: "",
+						}),
+					),
+				},
+			];
+		},
+		[t, i18n.language],
+	);
 
 	const templateMeta = configDetails?.template;
 	const detailDescription =
@@ -629,6 +693,50 @@ export function ClientDetailPage() {
 					</span>
 				))}
 			</div>
+		);
+	};
+
+	const getConfigurationProfileTokenSlot = (
+		profile: ConfigSuit,
+		stopPropagationOnNavigate: boolean,
+	) => {
+		const capData = profileCapabilities.get(profile.id);
+		const capIdx = capabilityProfileIds.indexOf(profile.id);
+		const capQuery =
+			capIdx >= 0 ? profileCapabilitiesQueries[capIdx] : undefined;
+
+		if (capQuery?.isError) {
+			return (
+				<Link
+					to={`/profiles/${profile.id}`}
+					onClick={
+						stopPropagationOnNavigate ? (e) => e.stopPropagation() : undefined
+					}
+					className="text-xs text-destructive underline underline-offset-2"
+				>
+					{t("detail.configuration.labels.openProfileDetail", {
+						defaultValue: "Open profile details",
+					})}
+				</Link>
+			);
+		}
+
+		if (!capData) {
+			return (
+				<div
+					className="h-14 w-14 shrink-0 animate-pulse rounded-full bg-muted/50"
+					aria-hidden
+				/>
+			);
+		}
+
+		return (
+			<ConfigurationProfileTokenChart
+				profileId={profile.id}
+				enabledByComponentId={capData.enabledByComponentId}
+				profileServerCount={capData.servers.total}
+				stopPropagationOnNavigate={stopPropagationOnNavigate}
+			/>
 		);
 	};
 
@@ -1541,11 +1649,7 @@ export function ClientDetailPage() {
 														onValueChange={(v) =>
 															setSelectedConfig(v as ClientCapabilitySourceSelection)
 														}
-														options={[
-															{ value: "default", label: t("detail.configuration.sections.source.options.default", { defaultValue: "Active" }), status: t("detail.configuration.sections.source.statusLabel.default", { defaultValue: "" }) || undefined },
-															{ value: "profile", label: t("detail.configuration.sections.source.options.profile", { defaultValue: "Profiles" }), status: t("detail.configuration.sections.source.statusLabel.profile", { defaultValue: "" }) || undefined },
-															{ value: "custom", label: t("detail.configuration.sections.source.options.custom", { defaultValue: "Customize" }), status: t("detail.configuration.sections.source.statusLabel.custom", { defaultValue: "" }) || undefined },
-														]}
+														options={configurationSourceSegmentOptions}
 														showDots={true}
 														className="w-full"
 													/>
@@ -1661,15 +1765,8 @@ export function ClientDetailPage() {
 																						</div>
 																						{capabilities && renderProfileCapabilitySummary(capabilities)}
 																					</div>
-																					<div className="ml-auto flex items-center gap-2">
-																						<Button
-																							variant="ghost"
-																							size="sm"
-																							className="h-6 w-6 p-0"
-																							onClick={() => navigate(`/profiles/${profile.id}`)}
-																						>
-																							<Info className="h-3 w-3" />
-																						</Button>
+																					<div className="ml-auto flex shrink-0 items-center gap-2">
+																						{getConfigurationProfileTokenSlot(profile, false)}
 																					</div>
 																				</div>
 																			</CapsuleStripeListItem>
@@ -1715,17 +1812,8 @@ export function ClientDetailPage() {
 																						</div>
 																						{capabilities && renderProfileCapabilitySummary(capabilities)}
 																					</div>
-																					<div className="ml-auto flex items-center gap-2">
-																						<Button
-																							variant="ghost"
-																							size="sm"
-																							className="h-6 w-6 p-0"
-																							onClick={() =>
-																								navigate(`/profiles/${profile.id}`)
-																							}
-																						>
-																							<Info className="h-3 w-3" />
-																						</Button>
+																					<div className="ml-auto flex shrink-0 items-center gap-2">
+																						{getConfigurationProfileTokenSlot(profile, false)}
 																					</div>
 																				</div>
 																			</CapsuleStripeListItem>
@@ -1797,18 +1885,8 @@ export function ClientDetailPage() {
 																						</div>
 																						{capabilities && renderProfileCapabilitySummary(capabilities)}
 																					</div>
-																					<div className="ml-auto flex items-center gap-2">
-																						<Button
-																							variant="ghost"
-																							size="sm"
-																							className="h-6 w-6 p-0"
-																							onClick={(e) => {
-																								e.stopPropagation();
-																								navigate(`/profiles/${profile.id}`);
-																							}}
-																						>
-																							<Info className="h-3 w-3" />
-																						</Button>
+																					<div className="ml-auto flex shrink-0 items-center gap-2">
+																						{getConfigurationProfileTokenSlot(profile, true)}
 																					</div>
 																				</div>
 																			</CapsuleStripeListItem>
