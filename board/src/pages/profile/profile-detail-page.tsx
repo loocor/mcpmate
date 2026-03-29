@@ -107,6 +107,9 @@ export function ProfileDetailPage() {
 	const showProfileLiveLogs = useAppStore(
 		(state) => state.dashboardSettings.showProfileLiveLogs,
 	);
+	const profileTokenEstimateMethod = useAppStore(
+		(state) => state.dashboardSettings.profileTokenEstimateMethod,
+	);
 	const validDetailTabs = useMemo(
 		() =>
 			["overview", "servers", "tools", "prompts", "resources", "templates"],
@@ -961,6 +964,7 @@ export function ProfileDetailPage() {
 							isLoading={tokenChartSource.isLoading}
 							isError={tokenChartSource.isError}
 							enabledByComponentId={enabledByComponentId}
+							estimateMethod={profileTokenEstimateMethod}
 						/>
 					) : null}
 				</div>

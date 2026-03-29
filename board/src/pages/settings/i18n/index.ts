@@ -185,11 +185,15 @@ export const settingsTranslations = {
     },
     profile: {
       title: "Profile Controls",
-      description:
-        "Configure profile detail behavior and live diagnostics visibility.",
+      description: "Token estimates, profile detail logs, and related options.",
       liveLogsTitle: "Profile Detail Logs",
       liveLogsDescription:
         "Show paginated live logs on the Profile detail page.",
+      tokenEstimateTitle: "Profile token estimate",
+      tokenEstimateDescription:
+        "Tokenizer used for profile capability size on the chart and dashboard.",
+      tokenEstimateOpenAI: "OpenAI (cl100k_base)",
+      tokenEstimateAnthropic: "Anthropic Claude",
     },
     developer: {
       title: "Developer",
@@ -469,9 +473,14 @@ export const settingsTranslations = {
     },
     profile: {
       title: "配置集控制",
-      description: "配置配置集详情页行为与现场诊断可见性。",
+      description: "Token 估算、配置集详情日志等选项。",
       liveLogsTitle: "配置集详情日志",
       liveLogsDescription: "在配置集详情页显示分页现场日志。",
+      tokenEstimateTitle: "Profile token 估算",
+      tokenEstimateDescription:
+        "用于估算能力规模的分词方式（详情页图表与仪表盘）。",
+      tokenEstimateOpenAI: "OpenAI（cl100k_base）",
+      tokenEstimateAnthropic: "Anthropic Claude",
     },
     developer: {
       title: "开发者",
@@ -750,11 +759,15 @@ export const settingsTranslations = {
     },
     profile: {
       title: "プロファイル管理",
-      description:
-        "プロファイル詳細ページの挙動とライブログ表示を設定します。",
+      description: "トークン推定、詳細ログなどプロファイル関連のオプション。",
       liveLogsTitle: "プロファイル詳細ログ",
       liveLogsDescription:
         "プロファイル詳細ページにページング対応ライブログを表示します。",
+      tokenEstimateTitle: "プロファイルのトークン推定",
+      tokenEstimateDescription:
+        "能力サイズ推定に使うトークナイザ（チャートとダッシュボード）。",
+      tokenEstimateOpenAI: "OpenAI（cl100k_base）",
+      tokenEstimateAnthropic: "Anthropic Claude",
     },
     developer: {
       title: "開発者",

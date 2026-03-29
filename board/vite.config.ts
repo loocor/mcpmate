@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
+import topLevelAwait from "vite-plugin-top-level-await";
+import wasm from "vite-plugin-wasm";
 import { defineConfig } from "vite";
 
 const packageJson = JSON.parse(
@@ -65,7 +67,7 @@ export default defineConfig({
 	define: {
 		"import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
 	},
-	plugins: [react()],
+	plugins: [react(), wasm(), topLevelAwait()],
 	resolve: {
 		alias: {
 			"@": path.resolve(__dirname, "./src"),

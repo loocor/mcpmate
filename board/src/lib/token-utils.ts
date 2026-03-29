@@ -4,9 +4,15 @@
  * Uses gpt-tokenizer for accurate token counting based on cl100k_base
  * encoding (GPT-4/3.5-turbo). This provides credible token estimates
  * that match what users would see in actual LLM contexts.
+ *
+ * Profile trimming charts can alternatively use Anthropic's published BPE
+ * (`claude-token-count.ts`, tiktoken/lite) for Claude-oriented estimates.
  */
 
-import { encode, decode, encodeChat } from 'gpt-tokenizer';
+import { encode, decode, encodeChat } from "gpt-tokenizer";
+
+import { countClaudeTokens } from "./claude-token-count";
+import type { ProfileTokenEstimateMethod } from "./profile-token-estimate-method";
 
 /**
  * Count tokens in a text string using cl100k_base encoding.
@@ -18,6 +24,25 @@ export function countTokens(text: string | undefined | null): number {
     return encode(text).length;
   } catch {
     // Fallback to approximation if encoding fails
+    return Math.ceil(text.length / 4);
+  }
+}
+
+/**
+ * Token count for serialized capability JSON, using the dashboard-selected
+ * profile estimate method (OpenAI cl100k vs Anthropic Claude).
+ */
+export function countTokensForProfileEstimate(
+  text: string | undefined | null,
+  method: ProfileTokenEstimateMethod,
+): number {
+  if (!text) return 0;
+  try {
+    if (method === "anthropic_claude") {
+      return countClaudeTokens(text);
+    }
+    return encode(text).length;
+  } catch {
     return Math.ceil(text.length / 4);
   }
 }

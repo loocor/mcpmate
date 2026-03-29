@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import type { MarketPortalDefinition } from "../pages/market/portal-registry";
 import { isTauriEnvironmentSync } from "./platform";
+import type { ProfileTokenEstimateMethod } from "./profile-token-estimate-method";
+import {
+	isProfileTokenEstimateMethod,
+	PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT,
+} from "./profile-token-estimate-method";
 import type { Theme } from "./types";
 
 /** Persisted third-party market portal metadata (re-export shape for market UI). */
@@ -38,6 +43,8 @@ export interface DashboardSettings {
 	showClientLiveLogs: boolean;
 	showServerLiveLogs: boolean;
 	showProfileLiveLogs: boolean;
+	/** Tokenizer used for profile capability payload estimates (ledger + dashboard charts). */
+	profileTokenEstimateMethod: ProfileTokenEstimateMethod;
 	defaultMarket: DefaultMarket;
 	marketPortals: Record<string, MarketPortalMeta>;
 }
@@ -102,6 +109,7 @@ const defaultDashboardSettings: DashboardSettings = {
 	showClientLiveLogs: true,
 	showServerLiveLogs: true,
 	showProfileLiveLogs: true,
+	profileTokenEstimateMethod: PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT,
 	defaultMarket: "official",
 	marketPortals: {},
 };
@@ -192,6 +200,10 @@ function normalizeDashboardSettings(
 
 	if (typeof patch.showProfileLiveLogs === "boolean") {
 		next.showProfileLiveLogs = patch.showProfileLiveLogs;
+	}
+
+	if (isProfileTokenEstimateMethod(patch.profileTokenEstimateMethod)) {
+		next.profileTokenEstimateMethod = patch.profileTokenEstimateMethod;
 	}
 
 	if (typeof patch.enableMarketBlacklist === "boolean") {

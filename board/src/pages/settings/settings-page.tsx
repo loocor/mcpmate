@@ -1,3 +1,4 @@
+import { isProfileTokenEstimateMethod } from "../../lib/profile-token-estimate-method";
 import type { AuditRetentionPolicy } from "../../lib/types";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -1435,11 +1436,51 @@ export function SettingsPage() {
 								<CardDescription>
 									{t("settings:profile.description", {
 										defaultValue:
-											"Configure profile detail behavior and live diagnostics visibility.",
+											"Token estimates, profile detail logs, and related options.",
 									})}
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-5">
+								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+									<div className="space-y-1.5">
+										<h3 className="text-base font-medium">
+											{t("settings:profile.tokenEstimateTitle", {
+												defaultValue: "Profile token estimate",
+											})}
+										</h3>
+										<p className="text-sm text-muted-foreground">
+											{t("settings:profile.tokenEstimateDescription", {
+												defaultValue:
+													"Tokenizer used for profile capability size on the chart and dashboard.",
+											})}
+										</p>
+									</div>
+									<div className="flex sm:justify-end">
+										<Select
+											value={dashboardSettings.profileTokenEstimateMethod}
+											onValueChange={(value) => {
+												if (!isProfileTokenEstimateMethod(value)) return;
+												setDashboardSetting("profileTokenEstimateMethod", value);
+											}}
+										>
+											<SelectTrigger className="w-full sm:w-72">
+												<SelectValue />
+											</SelectTrigger>
+											<SelectContent>
+												<SelectItem value="openai_cl100k">
+													{t("settings:profile.tokenEstimateOpenAI", {
+														defaultValue: "OpenAI (cl100k_base)",
+													})}
+												</SelectItem>
+												<SelectItem value="anthropic_claude">
+													{t("settings:profile.tokenEstimateAnthropic", {
+														defaultValue: "Anthropic Claude",
+													})}
+												</SelectItem>
+											</SelectContent>
+										</Select>
+									</div>
+								</div>
 								<div className="flex items-center justify-between gap-4">
 									<div className="space-y-0.5">
 										<h3 className="text-base font-medium">

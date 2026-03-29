@@ -26,6 +26,7 @@ import {
 } from "./dashboard-chart-area";
 import { auditApi, capabilityTokenLedgerApi, configSuitsApi } from "../lib/api";
 import { computeProfileLedgerTokens } from "../lib/profile-token-ledger";
+import { useAppStore } from "../lib/store";
 import {
   formatTokenCount,
 } from "../lib/token-utils";
@@ -136,6 +137,9 @@ function TokenLegend({ payload }: { payload?: Array<{ value?: string; color?: st
 
 export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps) {
   const { t } = useTranslation("dashboard");
+  const profileTokenEstimateMethod = useAppStore(
+    (state) => state.dashboardSettings.profileTokenEstimateMethod,
+  );
 
   const [history, setHistory] = useState<HistoryPoint[]>(() => {
     if (typeof window === "undefined") return [];
@@ -178,7 +182,10 @@ export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps)
     () =>
       activeProfiles.map((profile, index) => {
         const ledgerItems = profileLedgerQueries[index]?.data?.items;
-        const { totalTokens, visibleTokens } = computeProfileLedgerTokens(ledgerItems);
+        const { totalTokens, visibleTokens } = computeProfileLedgerTokens(
+          ledgerItems,
+          profileTokenEstimateMethod,
+        );
         return {
           profileId: profile.id,
           totalTokens,
@@ -186,7 +193,7 @@ export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps)
           savedTokens: Math.max(0, totalTokens - visibleTokens),
         };
       }),
-    [activeProfiles, profileLedgerQueries],
+    [activeProfiles, profileLedgerQueries, profileTokenEstimateMethod],
   );
 
   const savingsStats = useMemo<GlobalSavingsStats | null>(() => {

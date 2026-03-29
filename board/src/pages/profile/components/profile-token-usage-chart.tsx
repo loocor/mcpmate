@@ -1,9 +1,11 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Cell, Pie, PieChart, Tooltip } from "recharts";
+import { Cell, Pie, PieChart } from "recharts";
 import { Spinner } from "../../../components/ui/spinner";
+import type { ProfileTokenEstimateMethod } from "../../../lib/profile-token-estimate-method";
 import { computeProfileTrimTokens } from "../../../lib/profile-token-ledger";
 import type { CapabilityTokenLedgerRow, TokenEstimateResponse } from "../../../lib/types";
+import { cn } from "../../../lib/utils";
 
 const CHART_COLORS = {
 	visible: "#22c55e",
@@ -22,11 +24,12 @@ interface ProfileTokenUsageChartProps {
 	isLoading: boolean;
 	isError: boolean;
 	enabledByComponentId: ReadonlyMap<string, boolean>;
+	estimateMethod: ProfileTokenEstimateMethod;
 	className?: string;
 }
 
 /**
- * Header donut: cl100k sums from ledger payloads × live enable map, or token-estimate fallback on 404.
+ * Header donut: tokenizer sums from ledger payloads × live enable map, or legacy token-estimate fallback on 404.
  */
 export function ProfileTokenUsageChart({
 	ledgerItems,
@@ -34,6 +37,7 @@ export function ProfileTokenUsageChart({
 	isLoading,
 	isError,
 	enabledByComponentId,
+	estimateMethod,
 	className,
 }: ProfileTokenUsageChartProps) {
 	const { t, i18n } = useTranslation();
@@ -45,12 +49,18 @@ export function ProfileTokenUsageChart({
 				visibleTokens: fallbackEstimate.visible_tokens,
 			};
 		}
-		return computeProfileTrimTokens(ledgerItems, enabledByComponentId);
-	}, [fallbackEstimate, ledgerItems, enabledByComponentId]);
+		return computeProfileTrimTokens(
+			ledgerItems,
+			enabledByComponentId,
+			estimateMethod,
+		);
+	}, [fallbackEstimate, ledgerItems, enabledByComponentId, estimateMethod]);
 
 	const disabledTokens = Math.max(0, totalTokens - visibleTokens);
 	const visiblePercent =
 		totalTokens > 0 ? Math.round((visibleTokens / totalTokens) * 100) : 0;
+	const disabledPercent =
+		totalTokens > 0 ? Math.round((disabledTokens / totalTokens) * 100) : 0;
 
 	const formatNumber = (value: number) =>
 		new Intl.NumberFormat(i18n.language).format(value);
@@ -61,97 +71,136 @@ export function ProfileTokenUsageChart({
 		}
 		return [
 			{
-				name: t("profiles:detail.tokenSavings.visible", {
-					defaultValue: "Currently Exposed",
-				}),
+				name: "visible",
 				value: visibleTokens,
 				fill: CHART_COLORS.visible,
 			},
 			{
-				name: t("profiles:detail.tokenSavings.saved", {
-					defaultValue: "Filtered Out",
-				}),
+				name: "saved",
 				value: disabledTokens,
 				fill: CHART_COLORS.disabled,
 			},
 		].filter((item) => item.value > 0);
-	}, [totalTokens, visibleTokens, disabledTokens, t, i18n.language]);
+	}, [totalTokens, visibleTokens, disabledTokens]);
 
 	const percentLabel = t("profiles:detail.tokenSavings.exposedPercentAria", {
-		defaultValue: "{{percent}}% of estimated context is currently exposed",
+		defaultValue:
+			"About {{percent}}% of estimated profile tokens are in use",
 		percent: visiblePercent,
 	});
-
-	const shellClass = [
-		"relative inline-flex shrink-0 items-center justify-center",
-		className,
-	]
-		.filter(Boolean)
-		.join(" ");
 
 	const shellStyle = {
 		width: CHART_SIZE,
 		height: CHART_SIZE,
 	} as const;
 
+	const visibleLabel = t("profiles:detail.tokenSavings.visibleTokens", {
+		defaultValue: "Tokens in use",
+	});
+	const savedLabel = t("profiles:detail.tokenSavings.savedTokens", {
+		defaultValue: "Saved tokens",
+	});
+
 	return (
-		<div className={shellClass} style={shellStyle}>
+		<div
+			className={cn(
+				"inline-flex max-w-full shrink-0 items-center gap-2 sm:gap-3",
+				className,
+			)}
+		>
 			{isLoading ? (
 				<Spinner size="sm" />
 			) : isError ? (
-				<span className="max-w-[4.5rem] text-center text-[9px] leading-tight text-destructive">
+				<span className="max-w-[10rem] text-[9px] leading-tight text-destructive">
 					{t("profiles:detail.tokenSavings.error", {
 						defaultValue: "Failed to load token estimate.",
 					})}
 				</span>
 			) : chartData.length > 0 ? (
 				<>
-					<PieChart
-						width={CHART_SIZE}
-						height={CHART_SIZE}
-						margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
-						className="shrink-0"
-					>
-						<Pie
-							data={chartData}
-							dataKey="value"
-							cx="50%"
-							cy="50%"
-							innerRadius={INNER_RADIUS}
-							outerRadius={OUTER_RADIUS}
-							strokeWidth={0}
-							paddingAngle={chartData.length > 1 ? 2 : 0}
-							isAnimationActive={false}
-						>
-							{chartData.map((entry) => (
-								<Cell key={entry.name} fill={entry.fill} />
-							))}
-						</Pie>
-						<Tooltip
-							formatter={(value: number) => formatNumber(value)}
-							contentStyle={{
-								backgroundColor: "hsl(var(--popover))",
-								border: "1px solid hsl(var(--border))",
-								borderRadius: "8px",
-								fontSize: "12px",
-							}}
-						/>
-					</PieChart>
 					<div
-						className="pointer-events-none absolute inset-0 flex items-center justify-center"
-						aria-hidden
+						className="flex min-w-0 flex-col gap-1 border-r border-border/60 pr-2 sm:pr-3"
+						aria-label={percentLabel}
 					>
-						<span
-							className="text-[11px] font-semibold tabular-nums leading-none tracking-tight text-foreground"
-							title={percentLabel}
+						<div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight">
+							<span
+								className="h-2 w-2 shrink-0 rounded-full ring-1 ring-border/60"
+								style={{ backgroundColor: CHART_COLORS.visible }}
+								aria-hidden
+							/>
+							<span className="min-w-0 truncate text-muted-foreground">
+								{visibleLabel}
+							</span>
+							<span
+								className="mx-0.5 hidden h-px min-w-[6px] flex-1 bg-border/80 sm:block"
+								aria-hidden
+							/>
+							<span className="shrink-0 tabular-nums font-medium text-foreground">
+								{formatNumber(visibleTokens)}
+							</span>
+							<span className="shrink-0 tabular-nums text-muted-foreground">
+								({visiblePercent}%)
+							</span>
+						</div>
+						{disabledTokens > 0 ? (
+							<div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight">
+								<span
+									className="h-2 w-2 shrink-0 rounded-full ring-1 ring-border/60"
+									style={{ backgroundColor: CHART_COLORS.disabled }}
+									aria-hidden
+								/>
+								<span className="min-w-0 truncate text-muted-foreground">
+									{savedLabel}
+								</span>
+								<span
+									className="mx-0.5 hidden h-px min-w-[6px] flex-1 bg-border/80 sm:block"
+									aria-hidden
+								/>
+								<span className="shrink-0 tabular-nums font-medium text-foreground">
+									{formatNumber(disabledTokens)}
+								</span>
+								<span className="shrink-0 tabular-nums text-muted-foreground">
+									({disabledPercent}%)
+								</span>
+							</div>
+						) : null}
+					</div>
+					<div className="relative shrink-0" style={shellStyle}>
+						<PieChart
+							width={CHART_SIZE}
+							height={CHART_SIZE}
+							margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
+							className="shrink-0"
 						>
-							{visiblePercent}%
-						</span>
+							<Pie
+								data={chartData}
+								dataKey="value"
+								cx="50%"
+								cy="50%"
+								innerRadius={INNER_RADIUS}
+								outerRadius={OUTER_RADIUS}
+								strokeWidth={0}
+								paddingAngle={chartData.length > 1 ? 2 : 0}
+								isAnimationActive={false}
+							>
+								{chartData.map((entry) => (
+									<Cell key={entry.name} fill={entry.fill} />
+								))}
+							</Pie>
+						</PieChart>
+						<div
+							className="pointer-events-none absolute inset-0 flex items-center justify-center"
+							aria-hidden
+						>
+							<span className="text-[11px] font-semibold tabular-nums leading-none tracking-tight text-foreground">
+								{visiblePercent}%
+							</span>
+						</div>
 					</div>
 					<span className="sr-only">{percentLabel}</span>
 				</>
 			) : (
-				<div className="flex h-full w-full items-center justify-center px-0.5 text-center text-[9px] leading-tight text-muted-foreground">
+				<div className="flex h-full w-full max-w-[12rem] items-center justify-center px-0.5 text-center text-[9px] leading-tight text-muted-foreground">
 					{t("profiles:detail.tokenSavings.noSavings", {
 						defaultValue: "No savings — all capabilities enabled",
 					})}

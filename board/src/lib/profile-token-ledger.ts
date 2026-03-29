@@ -1,4 +1,6 @@
-import { countTokens } from "./token-utils";
+import type { ProfileTokenEstimateMethod } from "./profile-token-estimate-method";
+import { PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT } from "./profile-token-estimate-method";
+import { countTokensForProfileEstimate } from "./token-utils";
 import type { CapabilityTokenLedgerRow } from "./types";
 
 function extractLedgerPayloadBody(payloadJson: string): Record<string, unknown> | null {
@@ -31,6 +33,7 @@ function isLedgerRowEnabled(row: CapabilityTokenLedgerRow): boolean {
 function computeLedgerTokens(
 	ledger: CapabilityTokenLedgerRow[] | undefined,
 	isRowVisible: (row: CapabilityTokenLedgerRow) => boolean,
+	estimateMethod: ProfileTokenEstimateMethod,
 ): { totalTokens: number; visibleTokens: number } {
 	if (!ledger?.length) {
 		return { totalTokens: 0, visibleTokens: 0 };
@@ -40,7 +43,10 @@ function computeLedgerTokens(
 	let visibleTokens = 0;
 
 	for (const row of ledger) {
-		const rowTokens = countTokens(row.payload_json);
+		const rowTokens = countTokensForProfileEstimate(
+			row.payload_json,
+			estimateMethod,
+		);
 		totalTokens += rowTokens;
 
 		if (isRowVisible(row)) {
@@ -57,10 +63,12 @@ function computeLedgerTokens(
  */
 export function computeProfileLedgerTokens(
 	ledger: CapabilityTokenLedgerRow[] | undefined,
+	estimateMethod: ProfileTokenEstimateMethod = PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT,
 ): { totalTokens: number; visibleTokens: number } {
 	return computeLedgerTokens(
 		ledger,
 		(row) => row.server_enabled_in_profile && isLedgerRowEnabled(row),
+		estimateMethod,
 	);
 }
 
@@ -71,11 +79,16 @@ export function computeProfileLedgerTokens(
 export function computeProfileTrimTokens(
 	ledger: CapabilityTokenLedgerRow[] | undefined,
 	enabledByComponentId: ReadonlyMap<string, boolean>,
+	estimateMethod: ProfileTokenEstimateMethod = PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT,
 ): { totalTokens: number; visibleTokens: number } {
-	return computeLedgerTokens(ledger, (row) => {
-		if (!row.server_enabled_in_profile) {
-			return false;
-		}
-		return enabledByComponentId.get(row.profile_row_id) ?? false;
-	});
+	return computeLedgerTokens(
+		ledger,
+		(row) => {
+			if (!row.server_enabled_in_profile) {
+				return false;
+			}
+			return enabledByComponentId.get(row.profile_row_id) ?? false;
+		},
+		estimateMethod,
+	);
 }
