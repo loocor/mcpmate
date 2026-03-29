@@ -70,8 +70,8 @@ export function Sidebar() {
           {sidebarOpen ? (
             <>
               {/* Brand: show logo + title when expanded */}
-              <img
-                src="https://mcp.umate.ai/logo.svg"
+				<img
+					src="/logo.svg"
                 alt="MCPMate"
                 className={cn(
                   "h-6 w-6 object-contain transition",
@@ -105,8 +105,8 @@ export function Sidebar() {
                 defaultValue: "Expand sidebar",
               })}
             >
-              <img
-                src="https://mcp.umate.ai/logo.svg"
+				<img
+					src="/logo.svg"
                 alt="MCPMate"
                 className="h-6 w-6 object-contain dark:invert dark:brightness-0"
               />

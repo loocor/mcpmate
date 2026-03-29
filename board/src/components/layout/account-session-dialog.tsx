@@ -267,7 +267,7 @@ export function AccountSessionDialog({ sidebarOpen }: AccountSessionDialogProps)
 
 					<div className="mb-8 flex items-center gap-2.5">
 						<img
-							src="https://mcp.umate.ai/logo.svg"
+							src="/logo.svg"
 							alt=""
 							className="h-8 w-8 object-contain dark:invert dark:brightness-0"
 						/>
