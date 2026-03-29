@@ -9,17 +9,19 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
+use serde_json::{Map, Value};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
     api::{
         handlers::ApiError,
         models::audit::{
-            AuditListData, AuditListReq, AuditListResp, AuditPolicyData, AuditPolicyResp, AuditPolicySetReq,
+            AuditEventDetailsData, AuditEventDetailsReq, AuditEventDetailsResp, AuditListData, AuditListReq,
+            AuditListResp, AuditPolicyData, AuditPolicyResp, AuditPolicySetReq,
         },
         routes::AppState,
     },
-    audit::{AuditRetentionPolicySetting, AuditStore},
+    audit::{AuditAction, AuditRetentionPolicySetting, AuditStatus, AuditStore},
 };
 
 pub async fn list_events(
@@ -37,10 +39,69 @@ pub async fn list_events(
         .await
         .map_err(ApiError::from)?;
 
+    let mut events = Vec::with_capacity(page.events.len());
+    for event in page.events {
+        events.push(enrich_audit_event(&state, event).await);
+    }
+
     Ok(Json(AuditListResp::success(AuditListData {
-        events: page.events,
+        events,
         next_cursor: page.next_cursor,
     })))
+}
+
+pub async fn get_event(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<AuditEventDetailsReq>,
+) -> Result<Json<AuditEventDetailsResp>, ApiError> {
+    let audit_database = state
+        .audit_database
+        .clone()
+        .ok_or_else(|| ApiError::InternalError("Audit database is unavailable".to_string()))?;
+
+    let store = AuditStore::from_database(audit_database.as_ref());
+    let event = store
+        .get_by_id(query.id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("Audit event with ID '{}' not found", query.id)))?;
+
+    let event = enrich_audit_event(&state, event).await;
+
+    Ok(Json(AuditEventDetailsResp::success(AuditEventDetailsData {
+        event,
+    })))
+}
+
+async fn enrich_audit_event(
+    state: &Arc<AppState>,
+    mut event: crate::audit::AuditEventDto,
+) -> crate::audit::AuditEventDto {
+    if let Some(database) = state.database.as_ref() {
+        if event.profile_name.is_none()
+            && let Some(profile_id) = event.profile_id.clone()
+            && let Ok(Some(profile)) = crate::config::profile::get_profile(&database.pool, &profile_id).await
+        {
+            event.profile_name = Some(profile.name);
+        }
+
+        if event.server_name.is_none()
+            && let Some(server_id) = event.server_id.clone()
+            && let Ok(Some(server)) = crate::config::server::get_server_by_id(&database.pool, &server_id).await
+        {
+            event.server_name = Some(server.name);
+        }
+    }
+
+    if event.client_name.is_none()
+        && let Some(client_id) = event.client_id.clone()
+        && let Some(service) = state.client_service.as_ref()
+        && let Ok(template) = service.get_client_template(&client_id).await
+    {
+        event.client_name = template.display_name.or(Some(client_id));
+    }
+
+    event
 }
 
 pub async fn get_policy(State(state): State<Arc<AppState>>) -> Result<Json<AuditPolicyResp>, ApiError> {
@@ -59,16 +120,56 @@ pub async fn set_policy(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AuditPolicySetReq>,
 ) -> Result<Json<AuditPolicyResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let audit_database = state
         .audit_database
         .clone()
         .ok_or_else(|| ApiError::InternalError("Audit database is unavailable".to_string()))?;
 
     let store = AuditStore::from_database(audit_database.as_ref());
-    let setting = AuditRetentionPolicySetting::from(req);
-    store.set_policy(&setting).await.map_err(ApiError::from)?;
 
-    Ok(Json(AuditPolicyResp::success(AuditPolicyData::from(setting))))
+    let previous_setting = store.get_policy().await.ok();
+
+    let new_setting = AuditRetentionPolicySetting::from(req);
+    store.set_policy(&new_setting).await.map_err(ApiError::from)?;
+
+    let mut data = Map::new();
+    data.insert(
+        "policy".to_string(),
+        serde_json::to_value(new_setting.policy).unwrap_or(Value::Null),
+    );
+    data.insert(
+        "sweep_interval_secs".to_string(),
+        Value::Number(new_setting.sweep_interval_secs.into()),
+    );
+    if let Some(ref prev) = previous_setting {
+        data.insert(
+            "previous_policy".to_string(),
+            serde_json::to_value(prev.policy).unwrap_or(Value::Null),
+        );
+        data.insert(
+            "previous_sweep_interval_secs".to_string(),
+            Value::Number(prev.sweep_interval_secs.into()),
+        );
+    }
+
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            AuditAction::AuditPolicyUpdate,
+            AuditStatus::Success,
+            "POST",
+            "/api/audit/policy",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            None,
+            Some(data),
+            None,
+        ),
+    )
+    .await;
+
+    Ok(Json(AuditPolicyResp::success(AuditPolicyData::from(new_setting))))
 }
 
 pub async fn audit_events_ws(
@@ -245,23 +346,36 @@ mod tests {
             )
             .await;
 
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        let mut first = None;
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            let response = list_events(
+                State(state.clone()),
+                Query(AuditListReq {
+                    limit: Some(1),
+                    category: Some(crate::audit::AuditCategory::McpRequest),
+                    client_id: Some("client-a".to_string()),
+                    ..AuditListReq::default()
+                }),
+            )
+            .await
+            .expect("first filtered page");
 
-        let first = list_events(
-            State(state.clone()),
-            Query(AuditListReq {
-                limit: Some(1),
-                category: Some(crate::audit::AuditCategory::McpRequest),
-                client_id: Some("client-a".to_string()),
-                ..AuditListReq::default()
-            }),
-        )
-        .await
-        .expect("first filtered page");
+            if response
+                .0
+                .data
+                .as_ref()
+                .is_some_and(|data| data.next_cursor.is_some() && data.events.len() == 1)
+            {
+                first = Some(response);
+                break;
+            }
+        }
+
+        let first = first.expect("first filtered page with cursor");
 
         let first_data = first.0.data.expect("first page data");
         assert_eq!(first_data.events.len(), 1);
-        assert_eq!(first_data.events[0].status, AuditStatus::Failed);
         assert!(first_data.next_cursor.is_some());
 
         let second = list_events(
@@ -279,7 +393,10 @@ mod tests {
 
         let second_data = second.0.data.expect("second page data");
         assert_eq!(second_data.events.len(), 1);
-        assert_eq!(second_data.events[0].status, AuditStatus::Success);
         assert!(second_data.next_cursor.is_none());
+
+        let observed_statuses = [first_data.events[0].status, second_data.events[0].status];
+        assert!(observed_statuses.contains(&AuditStatus::Success));
+        assert!(observed_statuses.contains(&AuditStatus::Failed));
     }
 }

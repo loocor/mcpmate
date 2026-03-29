@@ -11,6 +11,8 @@ use crate::api::models::profile::{
 };
 use serde_json::{Map, Value};
 
+type CapabilityAuditDetails = Value;
+
 // Component type enumeration for type-safe operations
 #[derive(Debug, Clone, Copy)]
 enum ComponentType {
@@ -292,11 +294,14 @@ pub async fn component_manage(
     let db = get_database(&state).await?;
 
     // Verify profile exists
-    let _profile = get_profile_or_error(&db, &request.profile_id).await?;
+    let profile = get_profile_or_error(&db, &request.profile_id).await?;
 
     // Validate component IDs
     validate_component_ids(&request)?;
     let enabled = matches!(request.action, ProfileComponentAction::Enable);
+
+    let capability_details = collect_capability_audit_details(&db, &request.component_ids).await;
+    let audit_server_id = extract_single_component_string(&capability_details, "server_id");
 
     // Execute unified operations (single or batch)
     let result = execute_unified_operations(&state, &request, enabled).await;
@@ -305,6 +310,15 @@ pub async fn component_manage(
         "component_count".to_string(),
         Value::from(request.component_ids.len() as u64),
     );
+    data.insert(
+        "profile_name".to_string(),
+        Value::String(profile.name.clone()),
+    );
+    data.insert(
+        "component_action".to_string(),
+        Value::String(if enabled { "enable" } else { "disable" }.to_string()),
+    );
+    data.insert("components".to_string(), Value::Array(capability_details));
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
@@ -321,7 +335,7 @@ pub async fn component_manage(
             "POST",
             "/api/mcp/profile/components/manage",
             Some(started_at.elapsed().as_millis() as u64),
-            None,
+            audit_server_id,
             Some(request.profile_id.clone()),
             Some(data),
             result.as_ref().err().map(ToString::to_string),
@@ -330,6 +344,151 @@ pub async fn component_manage(
     .await;
     result
 }
+
+async fn collect_capability_audit_details(
+    db: &crate::config::database::Database,
+    component_ids: &[String],
+) -> Vec<CapabilityAuditDetails> {
+    let mut details = Vec::new();
+
+    for component_id in component_ids {
+        let component_type = match ComponentType::from_id(component_id) {
+            Ok(component_type) => component_type,
+            Err(_) => {
+                details.push(serde_json::json!({
+                    "component_id": component_id,
+                    "component_type": "unknown",
+                }));
+                continue;
+            }
+        };
+
+        let detail = match component_type {
+            ComponentType::Tool => {
+                sqlx::query_as::<_, (String, String, String, String)>(
+                    r#"
+                    SELECT st.server_id, st.server_name, st.tool_name, st.unique_name
+                    FROM profile_tool pt
+                    JOIN server_tools st ON pt.server_tool_id = st.id
+                    WHERE pt.id = ?
+                    "#,
+                )
+                .bind(component_id)
+                .fetch_optional(&db.pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|(server_id, server_name, tool_name, unique_name)| {
+                    serde_json::json!({
+                        "component_id": component_id,
+                        "component_type": component_type.as_str(),
+                        "server_id": server_id,
+                        "server_name": server_name,
+                        "tool_name": tool_name,
+                        "unique_name": unique_name,
+                    })
+                })
+            }
+            ComponentType::Resource => {
+                sqlx::query_as::<_, (String, String, String)>(
+                    r#"
+                    SELECT pr.server_id, sc.name, pr.resource_uri
+                    FROM profile_resource pr
+                    JOIN server_config sc ON pr.server_id = sc.id
+                    WHERE pr.id = ?
+                    "#,
+                )
+                .bind(component_id)
+                .fetch_optional(&db.pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|(server_id, server_name, resource_uri)| {
+                    serde_json::json!({
+                        "component_id": component_id,
+                        "component_type": component_type.as_str(),
+                        "server_id": server_id,
+                        "server_name": server_name,
+                        "resource_uri": resource_uri,
+                    })
+                })
+            }
+            ComponentType::Prompt => {
+                sqlx::query_as::<_, (String, String, String)>(
+                    r#"
+                    SELECT pp.server_id, pp.server_name, pp.prompt_name
+                    FROM profile_prompt pp
+                    WHERE pp.id = ?
+                    "#,
+                )
+                .bind(component_id)
+                .fetch_optional(&db.pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|(server_id, server_name, prompt_name)| {
+                    serde_json::json!({
+                        "component_id": component_id,
+                        "component_type": component_type.as_str(),
+                        "server_id": server_id,
+                        "server_name": server_name,
+                        "prompt_name": prompt_name,
+                    })
+                })
+            }
+            ComponentType::ResourceTemplate => {
+                sqlx::query_as::<_, (String, String, String)>(
+                    r#"
+                    SELECT prt.server_id, sc.name, prt.uri_template
+                    FROM profile_resource_template prt
+                    JOIN server_config sc ON prt.server_id = sc.id
+                    WHERE prt.id = ?
+                    "#,
+                )
+                .bind(component_id)
+                .fetch_optional(&db.pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|(server_id, server_name, uri_template)| {
+                    serde_json::json!({
+                        "component_id": component_id,
+                        "component_type": component_type.as_str(),
+                        "server_id": server_id,
+                        "server_name": server_name,
+                        "uri_template": uri_template,
+                    })
+                })
+            }
+        };
+
+        details.push(detail.unwrap_or_else(|| {
+            serde_json::json!({
+                "component_id": component_id,
+                "component_type": component_type.as_str(),
+            })
+        }));
+    }
+
+    details
+}
+
+fn extract_single_component_string(
+    details: &[CapabilityAuditDetails],
+    key: &str,
+) -> Option<String> {
+    if details.len() != 1 {
+        return None;
+    }
+
+    details
+        .first()
+        .and_then(|detail| detail.as_object())
+        .and_then(|detail| detail.get(key))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
 
 /// Validate component IDs from request
 fn validate_component_ids(request: &ProfileComponentManageReq) -> Result<(), ApiError> {

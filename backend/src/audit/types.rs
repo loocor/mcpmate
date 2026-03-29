@@ -20,7 +20,7 @@ pub enum AuditCategory {
     ClientConfig,
     RuntimeControl,
     CapabilityControl,
-    RestApi,
+    Management,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
@@ -34,7 +34,6 @@ pub enum AuditStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditAction {
-    RestRequest,
     Initialize,
     ToolsList,
     ToolsCall,
@@ -77,6 +76,24 @@ pub enum AuditAction {
     DesktopManagedCoreStop,
     CapabilityGrant,
     CapabilityRevoke,
+    // Profile server management
+    ProfileServerEnable,
+    ProfileServerDisable,
+    ProfileServerRemove,
+    // Server instance management
+    ServerInstanceDisconnect,
+    ServerInstanceForceDisconnect,
+    ServerInstanceReconnect,
+    ServerInstanceResetReconnect,
+    ServerInstanceRecover,
+    ServerInstanceCancel,
+    // Server capability cache
+    ServerCacheReset,
+    // Runtime management
+    RuntimeInstall,
+    RuntimeCacheReset,
+    // Audit configuration
+    AuditPolicyUpdate,
 }
 
 impl AuditAction {
@@ -121,9 +138,21 @@ impl AuditAction {
             | Self::LocalCoreServiceUninstall
             | Self::DesktopManagedCoreStart
             | Self::DesktopManagedCoreRestart
-            | Self::DesktopManagedCoreStop => AuditCategory::RuntimeControl,
-            Self::CapabilityGrant | Self::CapabilityRevoke => AuditCategory::CapabilityControl,
-            Self::RestRequest => AuditCategory::RestApi,
+            | Self::DesktopManagedCoreStop
+            | Self::RuntimeInstall
+            | Self::RuntimeCacheReset
+            | Self::AuditPolicyUpdate => AuditCategory::Management,
+            Self::CapabilityGrant | Self::CapabilityRevoke => AuditCategory::ProfileConfig,
+            Self::ProfileServerEnable | Self::ProfileServerDisable | Self::ProfileServerRemove => {
+                AuditCategory::ProfileConfig
+            }
+            Self::ServerInstanceDisconnect
+            | Self::ServerInstanceForceDisconnect
+            | Self::ServerInstanceReconnect
+            | Self::ServerInstanceResetReconnect
+            | Self::ServerInstanceRecover
+            | Self::ServerInstanceCancel
+            | Self::ServerCacheReset => AuditCategory::ServerConfig,
         }
     }
 }
@@ -142,9 +171,15 @@ pub struct AuditEventDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub server_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,15 +216,18 @@ impl Default for AuditEventDto {
     fn default() -> Self {
         Self {
             id: None,
-            category: AuditCategory::RestApi,
-            action: AuditAction::RestRequest,
+            category: AuditCategory::Management,
+            action: AuditAction::AuditPolicyUpdate,
             status: AuditStatus::Success,
             occurred_at_ms: 0,
             actor: None,
             request_id: None,
             client_id: None,
+            client_name: None,
             profile_id: None,
+            profile_name: None,
             server_id: None,
+            server_name: None,
             session_id: None,
             protocol_version: None,
             http_method: None,
@@ -569,11 +607,9 @@ mod tests {
         assert_eq!(AuditAction::ToolsCall.category(), AuditCategory::McpRequest);
         assert_eq!(AuditAction::ServerEnable.category(), AuditCategory::ServerConfig);
         assert_eq!(AuditAction::ProfileActivate.category(), AuditCategory::ProfileConfig);
-        assert_eq!(
-            AuditAction::CapabilityGrant.category(),
-            AuditCategory::CapabilityControl
-        );
-        assert_eq!(AuditAction::RestRequest.category(), AuditCategory::RestApi);
+        assert_eq!(AuditAction::RuntimeInstall.category(), AuditCategory::Management);
+        assert_eq!(AuditAction::AuditPolicyUpdate.category(), AuditCategory::Management);
+        assert_eq!(AuditAction::CapabilityGrant.category(), AuditCategory::ProfileConfig);
     }
 
     #[test]
@@ -600,7 +636,7 @@ mod tests {
     #[test]
     fn truncates_oversized_fields() {
         let oversized = "你".repeat(MAX_STRING_LEN + 20);
-        let event = AuditEvent::new(AuditAction::RestRequest, AuditStatus::Failed)
+        let event = AuditEvent::new(AuditAction::AuditPolicyUpdate, AuditStatus::Failed)
             .with_actor(oversized.clone())
             .with_error(None::<String>, oversized)
             .build();

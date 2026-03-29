@@ -9,12 +9,21 @@ use crate::{
     aide_wrapper, aide_wrapper_payload, aide_wrapper_query,
     api::{
         handlers::audit,
-        models::audit::{AuditListReq, AuditListResp, AuditPolicyResp, AuditPolicySetReq},
+        models::audit::{
+            AuditEventDetailsReq, AuditEventDetailsResp, AuditListReq, AuditListResp, AuditPolicyResp,
+            AuditPolicySetReq,
+        },
         routes::AppState,
     },
 };
 
 aide_wrapper_query!(audit::list_events, AuditListReq, AuditListResp, "List audit events");
+aide_wrapper_query!(
+    audit::get_event,
+    AuditEventDetailsReq,
+    AuditEventDetailsResp,
+    "Get audit event details"
+);
 aide_wrapper!(audit::get_policy, AuditPolicyResp, "Get audit retention policy");
 aide_wrapper_payload!(
     audit::set_policy,
@@ -26,6 +35,7 @@ aide_wrapper_payload!(
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/audit/events", get_with(list_events_aide, list_events_docs))
+        .api_route("/audit/events/details", get_with(get_event_aide, get_event_docs))
         .api_route("/audit/policy", get_with(get_policy_aide, get_policy_docs))
         .api_route("/audit/policy", post_with(set_policy_aide, set_policy_docs))
         .with_state(state)

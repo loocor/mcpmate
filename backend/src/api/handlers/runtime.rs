@@ -3,12 +3,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{Json, extract::State, http::StatusCode};
-
+use serde_json::{Map, Value};
 use tokio::{process::Command as AsyncCommand, task};
 use walkdir::WalkDir;
 
 use crate::{
     api::{models::runtime::*, routes::AppState},
+    audit::{AuditAction, AuditStatus},
     common::{RuntimeType, paths::global_paths},
     runtime::{RuntimeInstaller, RuntimeManager},
 };
@@ -17,8 +18,54 @@ pub async fn install(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<RuntimeInstallReq>,
 ) -> Result<Json<RuntimeInstallResp>, StatusCode> {
-    let result = runtime_install_core(&request, &app_state).await?;
-    Ok(Json(result))
+    let started_at = std::time::Instant::now();
+    let runtime_type = request.runtime_type.clone();
+
+    let result = runtime_install_core(&request, &app_state).await;
+
+    let (audit_status, audit_error) = match &result {
+        Ok(resp) => {
+            if resp.data.as_ref().map(|d| d.success).unwrap_or(false) {
+                (AuditStatus::Success, None)
+            } else {
+                (AuditStatus::Failed, resp.data.as_ref().and_then(|d| {
+                    if d.success {
+                        None
+                    } else {
+                        Some(d.message.clone())
+                    }
+                }))
+            }
+        }
+        Err(e) => (AuditStatus::Failed, Some(e.to_string())),
+    };
+
+    let mut data = Map::new();
+    data.insert("runtime_type".to_string(), Value::String(runtime_type.clone()));
+    if let Ok(ref resp) = result {
+        if let Some(ref inner) = resp.data {
+            data.insert("success".to_string(), Value::Bool(inner.success));
+            data.insert("message".to_string(), Value::String(inner.message.clone()));
+        }
+    }
+
+    crate::audit::interceptor::emit_event(
+        app_state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            AuditAction::RuntimeInstall,
+            audit_status,
+            "POST",
+            "/api/runtime/install",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            None,
+            Some(data),
+            audit_error,
+        ),
+    )
+    .await;
+
+    result.map(Json)
 }
 
 pub async fn status(State(app_state): State<Arc<AppState>>) -> Result<Json<RuntimeStatusResp>, StatusCode> {
@@ -35,8 +82,47 @@ pub async fn reset_cache(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<RuntimeCacheResetReq>,
 ) -> Result<Json<RuntimeCacheResetResp>, StatusCode> {
-    let result = reset_cache_core(&request, &app_state).await?;
-    Ok(Json(result))
+    let started_at = std::time::Instant::now();
+    let cache_type = request.cache_type.clone();
+
+    let result = reset_cache_core(&request, &app_state).await;
+
+    let (audit_status, audit_error) = match &result {
+        Ok(resp) => {
+            if resp.data.as_ref().map(|d| d.success).unwrap_or(false) {
+                (AuditStatus::Success, None)
+            } else {
+                (AuditStatus::Failed, None)
+            }
+        }
+        Err(e) => (AuditStatus::Failed, Some(e.to_string())),
+    };
+
+    let mut data = Map::new();
+    data.insert("cache_type".to_string(), Value::String(cache_type));
+    if let Ok(ref resp) = result {
+        if let Some(ref inner) = resp.data {
+            data.insert("success".to_string(), Value::Bool(inner.success));
+        }
+    }
+
+    crate::audit::interceptor::emit_event(
+        app_state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            AuditAction::RuntimeCacheReset,
+            audit_status,
+            "POST",
+            "/api/runtime/cache/reset",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            None,
+            Some(data),
+            audit_error,
+        ),
+    )
+    .await;
+
+    result.map(Json)
 }
 
 async fn runtime_install_core(

@@ -58,6 +58,22 @@ pub struct AuditListData {
 
 api_resp!(AuditListResp, AuditListData, "Audit list response");
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct AuditEventDetailsReq {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct AuditEventDetailsData {
+    pub event: AuditEventDto,
+}
+
+api_resp!(
+    AuditEventDetailsResp,
+    AuditEventDetailsData,
+    "Audit event details response"
+);
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct AuditPolicyData {
     pub policy: AuditRetentionPolicy,

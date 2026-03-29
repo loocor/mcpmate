@@ -4,6 +4,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{Json, extract::State};
+use serde_json::{Map, Value};
 
 use super::ApiError;
 use crate::api::models::system::ManagementActionResp;
@@ -11,6 +12,7 @@ use crate::api::{
     models::system::{SystemMetricsResp, SystemPortsResp, SystemStatusResp},
     routes::AppState,
 };
+use crate::audit::{AuditAction, AuditStatus};
 use crate::system::config::get_runtime_port_config;
 
 /// Get system status
@@ -174,16 +176,71 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> Result<Json<Syst
 
 /// Management: graceful shutdown (delegates to management handlers)
 pub async fn shutdown(State(state): State<Arc<AppState>>) -> Result<Json<ManagementActionResp>, ApiError> {
+    let started_at = std::time::Instant::now();
+
     let Some(proxy) = state.http_proxy.clone() else {
+        crate::audit::interceptor::emit_event(
+            state.audit_service.as_ref(),
+            crate::audit::interceptor::build_rest_event(
+                AuditAction::LocalCoreServiceStop,
+                AuditStatus::Failed,
+                "POST",
+                "/api/system/shutdown",
+                Some(started_at.elapsed().as_millis() as u64),
+                None,
+                None,
+                None,
+                Some("Proxy server not available".to_string()),
+            ),
+        )
+        .await;
         return Err(ApiError::InternalError("Proxy server not available".into()));
     };
 
+    let mut errors = Vec::new();
+
     if let Err(err) = proxy.initiate_shutdown().await {
         tracing::warn!(error = %err, "Failed to initiate proxy shutdown");
+        errors.push(format!("initiate_shutdown: {err}"));
     }
     if let Err(err) = proxy.complete_shutdown().await {
         tracing::warn!(error = %err, "Failed to complete proxy shutdown");
+        errors.push(format!("complete_shutdown: {err}"));
     }
+
+    let mut data = Map::new();
+    data.insert("operation".to_string(), Value::String("shutdown".to_string()));
+    data.insert("error_count".to_string(), Value::from(errors.len() as u64));
+    if !errors.is_empty() {
+        data.insert(
+            "errors".to_string(),
+            Value::Array(errors.iter().cloned().map(Value::String).collect()),
+        );
+    }
+
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            AuditAction::LocalCoreServiceStop,
+            if errors.is_empty() {
+                AuditStatus::Success
+            } else {
+                AuditStatus::Failed
+            },
+            "POST",
+            "/api/system/shutdown",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            None,
+            Some(data),
+            if errors.is_empty() {
+                None
+            } else {
+                Some(errors.join("; "))
+            },
+        ),
+    )
+    .await;
 
     Ok(Json(ManagementActionResp::shutting_down()))
 }
@@ -192,20 +249,42 @@ pub async fn shutdown(State(state): State<Arc<AppState>>) -> Result<Json<Managem
 pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<ManagementActionResp>, ApiError> {
     use std::{net::SocketAddr, time::Duration};
 
+    let started_at = std::time::Instant::now();
+
     let Some(proxy) = state.http_proxy.clone() else {
+        crate::audit::interceptor::emit_event(
+            state.audit_service.as_ref(),
+            crate::audit::interceptor::build_rest_event(
+                AuditAction::LocalCoreServiceRestart,
+                AuditStatus::Failed,
+                "POST",
+                "/api/system/restart",
+                Some(started_at.elapsed().as_millis() as u64),
+                None,
+                None,
+                None,
+                Some("Proxy server not available".to_string()),
+            ),
+        )
+        .await;
         return Err(ApiError::InternalError("Proxy server not available".into()));
     };
+
+    let mut errors = Vec::new();
 
     // Clear capabilities cache as part of restart to force fresh capability discovery
     if let Err(e) = state.redb_cache.clear_all().await {
         tracing::warn!(error = %e, "Failed to clear capabilities cache during restart");
+        errors.push(format!("clear_cache: {e}"));
     }
 
     if let Err(err) = proxy.initiate_shutdown().await {
         tracing::warn!(error = %err, "Failed to initiate proxy shutdown before restart");
+        errors.push(format!("initiate_shutdown: {err}"));
     }
     if let Err(err) = proxy.complete_shutdown().await {
         tracing::warn!(error = %err, "Failed to complete proxy shutdown before restart");
+        errors.push(format!("complete_shutdown: {err}"));
     }
 
     tokio::time::sleep(Duration::from_millis(150)).await;
@@ -215,9 +294,71 @@ pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<Manageme
         .parse()
         .map_err(|e| ApiError::InternalError(format!("Invalid MCP bind address: {}", e)))?;
 
-    match proxy.start_unified(bind_address).await {
-        Ok(_handle) => Ok(Json(ManagementActionResp::restarted(mcp_port, "uni"))),
-        Err(err) => Err(ApiError::InternalError(format!("Failed to restart proxy: {}", err))),
+    let start_result = proxy.start_unified(bind_address).await;
+
+    let mut data = Map::new();
+    data.insert("operation".to_string(), Value::String("restart".to_string()));
+    data.insert("mcp_port".to_string(), Value::from(mcp_port));
+    data.insert("error_count".to_string(), Value::from(errors.len() as u64));
+    if !errors.is_empty() {
+        data.insert(
+            "errors".to_string(),
+            Value::Array(errors.iter().cloned().map(Value::String).collect()),
+        );
+    }
+
+    match start_result {
+        Ok(_handle) => {
+            crate::audit::interceptor::emit_event(
+                state.audit_service.as_ref(),
+                crate::audit::interceptor::build_rest_event(
+                    AuditAction::LocalCoreServiceRestart,
+                    if errors.is_empty() {
+                        AuditStatus::Success
+                    } else {
+                        AuditStatus::Failed
+                    },
+                    "POST",
+                    "/api/system/restart",
+                    Some(started_at.elapsed().as_millis() as u64),
+                    None,
+                    None,
+                    Some(data),
+                    if errors.is_empty() {
+                        None
+                    } else {
+                        Some(errors.join("; "))
+                    },
+                ),
+            )
+            .await;
+            Ok(Json(ManagementActionResp::restarted(mcp_port, "uni")))
+        }
+        Err(err) => {
+            errors.push(format!("start_unified: {err}"));
+            let mut failed_data = data;
+            failed_data.insert(
+                "errors".to_string(),
+                Value::Array(errors.iter().cloned().map(Value::String).collect()),
+            );
+            failed_data.insert("error_count".to_string(), Value::from(errors.len() as u64));
+            crate::audit::interceptor::emit_event(
+                state.audit_service.as_ref(),
+                crate::audit::interceptor::build_rest_event(
+                    AuditAction::LocalCoreServiceRestart,
+                    AuditStatus::Failed,
+                    "POST",
+                    "/api/system/restart",
+                    Some(started_at.elapsed().as_millis() as u64),
+                    None,
+                    None,
+                    Some(failed_data),
+                    Some(errors.join("; ")),
+                ),
+            )
+            .await;
+            Err(ApiError::InternalError(format!("Failed to restart proxy: {}", err)))
+        }
     }
 }
 

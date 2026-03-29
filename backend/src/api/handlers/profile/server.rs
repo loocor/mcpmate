@@ -6,6 +6,8 @@ use crate::api::models::profile::{
     ProfileComponentAction, ProfileComponentListReq, ProfileComponentManageReq, ProfileServerManageData,
     ProfileServerManageResp, ProfileServerResp, ProfileServersListData, ProfileServersListResp,
 };
+use crate::audit::{AuditAction, AuditStatus};
+use serde_json::{Map, Value};
 
 /// Invalidate profile cache if merge service is available
 async fn invalidate_profile_cache(state: &Arc<AppState>) {
@@ -81,6 +83,7 @@ pub async fn server_manage(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ProfileComponentManageReq>,
 ) -> Result<Json<ProfileServerManageResp>, ApiError> {
+    let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
 
     // Verify profile exists
@@ -98,7 +101,7 @@ pub async fn server_manage(
     let _server = crate::api::handlers::server::common::get_server_or_error(&db.pool, component_id).await?;
 
     // Perform the action
-    let (result, status) = match request.action {
+    let (audit_action, result, status) = match request.action {
         ProfileComponentAction::Enable => {
             // Add server to profile (this enables it)
             crate::config::profile::add_server_to_profile(&db.pool, &request.profile_id, component_id, true)
@@ -125,7 +128,7 @@ pub async fn server_manage(
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to add server capabilities: {e}")))?;
 
-            ("enabled", "active")
+            (AuditAction::ProfileServerEnable, "enabled", "active")
         }
         ProfileComponentAction::Disable => {
             // Disable server in profile
@@ -143,7 +146,7 @@ pub async fn server_manage(
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to disable server capabilities: {e}")))?;
 
-            ("disabled", "inactive")
+            (AuditAction::ProfileServerDisable, "disabled", "inactive")
         }
         ProfileComponentAction::Remove => {
             // Remove server from profile completely
@@ -161,7 +164,7 @@ pub async fn server_manage(
             .await
             .map_err(|e| ApiError::InternalError(format!("Failed to remove server capabilities: {e}")))?;
 
-            ("removed", "removed")
+            (AuditAction::ProfileServerRemove, "removed", "removed")
         }
     };
 
@@ -169,7 +172,7 @@ pub async fn server_manage(
     invalidate_profile_cache(&state).await;
 
     let response = ProfileServerManageData {
-        profile_id: request.profile_id,
+        profile_id: request.profile_id.clone(),
         results: vec![crate::api::models::profile::ComponentOperationResult {
             component_id: component_id.clone(),
             component_type: "server".to_string(),
@@ -181,6 +184,27 @@ pub async fn server_manage(
         status: status.to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
+
+    // Emit audit event
+    let mut data = Map::new();
+    data.insert("profile_id".to_string(), Value::String(request.profile_id.clone()));
+    data.insert("server_id".to_string(), Value::String(component_id.clone()));
+    data.insert("action".to_string(), Value::String(result.to_string()));
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            audit_action,
+            AuditStatus::Success,
+            "POST",
+            "/api/mcp/profile/servers/manage",
+            Some(started_at.elapsed().as_millis() as u64),
+            Some(component_id.clone()),
+            Some(request.profile_id.clone()),
+            Some(data),
+            None,
+        ),
+    )
+    .await;
 
     Ok(Json(ProfileServerManageResp::success(response)))
 }

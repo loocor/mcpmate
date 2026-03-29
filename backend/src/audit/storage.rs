@@ -169,6 +169,7 @@ impl AuditStore {
         }
 
         let page_limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as i64;
+
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT id, category, action, status, occurred_at_ms, actor, request_id, client_id, profile_id, server_id, session_id, protocol_version, http_method, route, mcp_method, target, direction, error_code, error_message, detail, duration_ms, data_json, task_id, related_task_id, progress_token FROM audit_events WHERE 1 = 1",
         );
@@ -224,6 +225,21 @@ impl AuditStore {
             events: std::mem::take(&mut events),
             next_cursor,
         })
+    }
+
+    pub async fn get_by_id(
+        &self,
+        id: i64,
+    ) -> Result<Option<AuditEventDto>> {
+        let row = sqlx::query_as::<_, AuditEventRow>(
+            "SELECT id, category, action, status, occurred_at_ms, actor, request_id, client_id, profile_id, server_id, session_id, protocol_version, http_method, route, mcp_method, target, direction, error_code, error_message, detail, duration_ms, data_json, task_id, related_task_id, progress_token FROM audit_events WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to fetch audit event by id")?;
+
+        row.map(AuditEventDto::try_from).transpose()
     }
 
     pub async fn purge_older_than(
@@ -396,8 +412,11 @@ impl TryFrom<AuditEventRow> for AuditEventDto {
             actor: value.actor,
             request_id: value.request_id,
             client_id: value.client_id,
+            client_name: None,
             profile_id: value.profile_id,
+            profile_name: None,
             server_id: value.server_id,
+            server_name: None,
             session_id: value.session_id,
             protocol_version: value.protocol_version,
             http_method: value.http_method,

@@ -338,6 +338,18 @@ impl ProxyServer {
         }
     }
 
+    fn protocol_version_from_context(
+        &self,
+        context: &RequestContext<rmcp::RoleServer>,
+    ) -> Option<String> {
+        context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.headers.get("MCP-Protocol-Version"))
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string)
+    }
+
     pub fn new(config: Arc<crate::core::models::Config>) -> Self {
         let mut pool = UpstreamConnectionPool::new(config.clone(), None);
         pool.initialize();
@@ -875,6 +887,10 @@ impl ServerHandler for ProxyServer {
             Value::String(request.client_info.version.clone()),
         );
         data.insert(
+            "has_roots".to_string(),
+            Value::Bool(request.capabilities.roots.is_some()),
+        );
+        data.insert(
             "has_sampling".to_string(),
             Value::Bool(request.capabilities.sampling.is_some()),
         );
@@ -1002,6 +1018,8 @@ impl ServerHandler for ProxyServer {
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
+        let request_data = _request.as_ref().map(paginated_request_data);
+        let protocol_version = self.protocol_version_from_context(&_context);
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
         let result = super::tools::list_tools(self, _request, _context).await;
@@ -1011,6 +1029,13 @@ impl ServerHandler for ProxyServer {
             audit_client.as_ref(),
             None,
             started_at.elapsed().as_millis() as u64,
+            McpAuditExtras {
+                data: request_data,
+                protocol_version,
+                request_id: None,
+                progress_token: None,
+                detail: None,
+            },
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
@@ -1025,6 +1050,12 @@ impl ServerHandler for ProxyServer {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
         let target = Some(request.name.to_string());
+        let protocol_version = self.protocol_version_from_context(&_context);
+        let mut request_data = Map::new();
+        request_data.insert("tool_name".to_string(), Value::String(request.name.to_string()));
+        if let Some(arguments) = request.arguments.clone() {
+            request_data.insert("arguments".to_string(), Value::Object(arguments));
+        }
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
         let result = super::tools::call_tool(self, request, _context).await;
@@ -1034,6 +1065,13 @@ impl ServerHandler for ProxyServer {
             audit_client.as_ref(),
             target,
             started_at.elapsed().as_millis() as u64,
+            McpAuditExtras {
+                data: Some(request_data),
+                protocol_version,
+                request_id: None,
+                progress_token: None,
+                detail: Some("Called MCP tool".to_string()),
+            },
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
@@ -1047,6 +1085,8 @@ impl ServerHandler for ProxyServer {
     ) -> Result<ListResourcesResult, rmcp::ErrorData> {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
+        let request_data = _request.as_ref().map(paginated_request_data);
+        let protocol_version = self.protocol_version_from_context(&_context);
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
         let result = super::resources::list_resources(self, _request, _context).await;
@@ -1056,6 +1096,13 @@ impl ServerHandler for ProxyServer {
             audit_client.as_ref(),
             None,
             started_at.elapsed().as_millis() as u64,
+            McpAuditExtras {
+                data: request_data,
+                protocol_version,
+                request_id: None,
+                progress_token: None,
+                detail: None,
+            },
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
@@ -1080,6 +1127,9 @@ impl ServerHandler for ProxyServer {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
         let target = Some(request.uri.to_string());
+        let protocol_version = self.protocol_version_from_context(&_context);
+        let mut request_data = Map::new();
+        request_data.insert("resource_uri".to_string(), Value::String(request.uri.to_string()));
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
         let result = super::resources::read_resource(self, request, _context).await;
@@ -1089,6 +1139,13 @@ impl ServerHandler for ProxyServer {
             audit_client.as_ref(),
             target,
             started_at.elapsed().as_millis() as u64,
+            McpAuditExtras {
+                data: Some(request_data),
+                protocol_version,
+                request_id: None,
+                progress_token: None,
+                detail: Some("Read MCP resource".to_string()),
+            },
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
@@ -1102,6 +1159,8 @@ impl ServerHandler for ProxyServer {
     ) -> Result<ListPromptsResult, rmcp::ErrorData> {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
+        let request_data = _request.as_ref().map(paginated_request_data);
+        let protocol_version = self.protocol_version_from_context(&_context);
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
         let result = super::prompts::list_prompts(self, _request, _context).await;
@@ -1111,6 +1170,13 @@ impl ServerHandler for ProxyServer {
             audit_client.as_ref(),
             None,
             started_at.elapsed().as_millis() as u64,
+            McpAuditExtras {
+                data: request_data,
+                protocol_version,
+                request_id: None,
+                progress_token: None,
+                detail: None,
+            },
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
@@ -1125,6 +1191,12 @@ impl ServerHandler for ProxyServer {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
         let target = Some(request.name.to_string());
+        let protocol_version = self.protocol_version_from_context(&_context);
+        let mut request_data = Map::new();
+        request_data.insert("prompt_name".to_string(), Value::String(request.name.to_string()));
+        if let Some(arguments) = request.arguments.clone() {
+            request_data.insert("arguments".to_string(), Value::Object(arguments));
+        }
         self.enforce_mcp_protocol_header(&_context)?;
         self.enforce_origin_if_present(&_context)?;
         let result = super::prompts::get_prompt(self, request, _context).await;
@@ -1134,11 +1206,26 @@ impl ServerHandler for ProxyServer {
             audit_client.as_ref(),
             target,
             started_at.elapsed().as_millis() as u64,
+            McpAuditExtras {
+                data: Some(request_data),
+                protocol_version,
+                request_id: None,
+                progress_token: None,
+                detail: Some("Get MCP prompt".to_string()),
+            },
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
         result
     }
+}
+
+struct McpAuditExtras {
+    data: Option<Map<String, Value>>,
+    protocol_version: Option<String>,
+    request_id: Option<String>,
+    progress_token: Option<String>,
+    detail: Option<String>,
 }
 
 async fn emit_mcp_result(
@@ -1147,6 +1234,7 @@ async fn emit_mcp_result(
     client: Option<&ClientContext>,
     target: Option<String>,
     duration_ms: u64,
+    extras: McpAuditExtras,
     error_message: Option<String>,
 ) {
     let status = if error_message.is_some() {
@@ -1154,20 +1242,57 @@ async fn emit_mcp_result(
     } else {
         crate::audit::AuditStatus::Success
     };
-    crate::audit::interceptor::emit_event(
-        server.audit_service.as_ref(),
-        crate::audit::interceptor::build_mcp_event(
-            action,
-            status,
-            client,
-            None,
-            target,
-            Some(duration_ms),
-            None,
-            error_message,
-        ),
-    )
-    .await;
+    let mut event = crate::audit::AuditEvent::new(action, status)
+        .with_mcp_method(crate::audit::interceptor::mcp_method_name(action))
+        .with_direction("client_to_server")
+        .with_duration_ms(duration_ms);
+    if let Some(client) = client {
+        event = apply_client_audit_context(event, client);
+    }
+    if let Some(target) = target {
+        event = event.with_target(target);
+    }
+    if let Some(protocol_version) = extras.protocol_version {
+        event = event.with_protocol_version(protocol_version);
+    }
+    if let Some(data) = extras.data {
+        event = event.with_mcp_data(data);
+    }
+    if let Some(request_id) = extras.request_id {
+        event = event.with_request_id(request_id);
+    }
+    if let Some(progress_token) = extras.progress_token {
+        event = event.with_task_metadata(None, None, Some(progress_token));
+    }
+    if let Some(detail) = extras.detail {
+        event = event.with_detail(detail);
+    }
+    if let Some(error_message) = error_message {
+        event = event.with_error(None::<String>, error_message);
+    }
+    crate::audit::interceptor::emit_event(server.audit_service.as_ref(), event.build()).await;
+}
+
+fn paginated_request_data(request: &rmcp::model::PaginatedRequestParams) -> Map<String, Value> {
+    let mut data = Map::new();
+    if let Some(cursor) = request.cursor.clone() {
+        data.insert("cursor".to_string(), Value::String(cursor));
+    }
+    data
+}
+
+fn apply_client_audit_context(
+    mut event: crate::audit::AuditEvent,
+    client: &ClientContext,
+) -> crate::audit::AuditEvent {
+    event = event.with_client_id(client.client_id.clone());
+    if let Some(profile_id) = &client.profile_id {
+        event = event.with_profile_id(profile_id.clone());
+    }
+    if let Some(session_id) = &client.session_id {
+        event = event.with_session_id(session_id.clone());
+    }
+    event
 }
 
 #[cfg(test)]

@@ -182,6 +182,7 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport 
 - `docs/readme.md` — Documentation structure guide
 - `docs/progress.md` — Development progress and MCP validation
 - `docs/features/` — Feature specifications
+- `docs/features/inspector-batch-orchestration.md` — Inspector batch orchestration and parity roadmap
 - `docs/schema/` — Database schema documentation
 
 ## MCP Protocol

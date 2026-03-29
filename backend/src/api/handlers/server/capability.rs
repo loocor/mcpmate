@@ -16,6 +16,7 @@ use axum::{
     http::StatusCode,
 };
 use rmcp::model::Icon;
+use serde_json::{Map, Value};
 use sqlx::{Pool, Sqlite};
 use std::{collections::HashMap, sync::Arc};
 
@@ -28,6 +29,7 @@ use crate::api::models::cache::{
     CacheResetResp, CacheStorageStats, CacheTablesCount, CacheViewType,
 };
 use crate::api::routes::AppState;
+use crate::audit::{AuditAction, AuditStatus};
 
 #[derive(Debug, Clone, Copy)]
 pub enum CapabilityType {
@@ -151,8 +153,42 @@ pub async fn server_cache_detail(
 
 /// Clear the cached capability data for all servers.
 pub async fn server_cache_reset(State(state): State<Arc<AppState>>) -> Result<Json<CacheResetResp>, StatusCode> {
-    let result = cache_reset_core(&state).await?;
-    Ok(Json(result))
+    let started_at = std::time::Instant::now();
+
+    let result = cache_reset_core(&state).await;
+
+    let (audit_status, audit_error) = match &result {
+        Ok(_) => (AuditStatus::Success, None),
+        Err(e) => (AuditStatus::Failed, Some(e.to_string())),
+    };
+
+    let mut data = Map::new();
+    if let Ok(ref response) = result {
+        if let Some(ref inner) = response.data {
+            data.insert("success".to_string(), Value::Bool(inner.success));
+            if let Some(ref msg) = inner.message {
+                data.insert("message".to_string(), Value::String(msg.clone()));
+            }
+        }
+    }
+
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            AuditAction::ServerCacheReset,
+            audit_status,
+            "POST",
+            "/api/mcp/servers/cache/reset",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            None,
+            Some(data),
+            audit_error,
+        ),
+    )
+    .await;
+
+    result.map(Json)
 }
 
 const DEFAULT_LIMIT: usize = 50;

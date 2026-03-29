@@ -217,6 +217,22 @@ impl<'de> serde::Deserialize<'de> for InstanceAction {
     }
 }
 
+impl std::fmt::Display for InstanceAction {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            InstanceAction::Disconnect => write!(f, "disconnect"),
+            InstanceAction::ForceDisconnect => write!(f, "force_disconnect"),
+            InstanceAction::Reconnect => write!(f, "reconnect"),
+            InstanceAction::ResetReconnect => write!(f, "reset_reconnect"),
+            InstanceAction::Recover => write!(f, "recover"),
+            InstanceAction::Cancel => write!(f, "cancel"),
+        }
+    }
+}
+
 // API Model
 //
 

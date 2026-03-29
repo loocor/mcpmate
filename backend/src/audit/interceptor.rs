@@ -96,7 +96,7 @@ fn apply_common_fields(
     event
 }
 
-fn mcp_method_name(action: AuditAction) -> &'static str {
+pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
     match action {
         AuditAction::Initialize => "initialize",
         AuditAction::ToolsList => "tools/list",
@@ -109,8 +109,7 @@ fn mcp_method_name(action: AuditAction) -> &'static str {
         AuditAction::NotificationCancelled => "notifications/cancelled",
         AuditAction::LoggingSetLevel => "logging/setLevel",
         AuditAction::NotificationMessage => "notifications/message",
-        AuditAction::RestRequest
-        | AuditAction::ServerCreate
+        AuditAction::ServerCreate
         | AuditAction::ServerImport
         | AuditAction::ServerUpdate
         | AuditAction::ServerDelete
@@ -121,6 +120,16 @@ fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::ProfileDelete
         | AuditAction::ProfileActivate
         | AuditAction::ProfileDeactivate
+        | AuditAction::ProfileServerEnable
+        | AuditAction::ProfileServerDisable
+        | AuditAction::ProfileServerRemove
+        | AuditAction::ServerInstanceDisconnect
+        | AuditAction::ServerInstanceForceDisconnect
+        | AuditAction::ServerInstanceReconnect
+        | AuditAction::ServerInstanceResetReconnect
+        | AuditAction::ServerInstanceRecover
+        | AuditAction::ServerInstanceCancel
+        | AuditAction::ServerCacheReset
         | AuditAction::ClientManageEnable
         | AuditAction::ClientManageDisable
         | AuditAction::ClientSettingsUpdate
@@ -139,7 +148,10 @@ fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::DesktopManagedCoreStart
         | AuditAction::DesktopManagedCoreRestart
         | AuditAction::DesktopManagedCoreStop
+        | AuditAction::RuntimeInstall
+        | AuditAction::RuntimeCacheReset
         | AuditAction::CapabilityGrant
-        | AuditAction::CapabilityRevoke => "",
+        | AuditAction::CapabilityRevoke
+        | AuditAction::AuditPolicyUpdate => "",
     }
 }

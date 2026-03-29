@@ -9,6 +9,7 @@ use axum::{
 };
 
 use crate::api::handlers::ApiError;
+use crate::audit::{AuditAction, AuditStatus};
 use crate::{
     api::{
         models::server::{
@@ -23,6 +24,7 @@ use crate::{
         pool::UpstreamConnection,
     },
 };
+use serde_json::{Map, Value};
 
 /// Get the allowed operations for a connection
 fn get_allowed_operations(conn: &UpstreamConnection) -> Vec<String> {
@@ -191,17 +193,55 @@ pub async fn manage_instance(
     State(state): State<Arc<AppState>>,
     Json(request): Json<InstanceManageReq>,
 ) -> Result<Json<ServerOperationData>, ApiError> {
+    let started_at = std::time::Instant::now();
     let name = request.server.clone();
     let id = request.instance.clone();
 
-    match request.action {
-        InstanceAction::Disconnect => disconnect_core(State(state), name, id).await,
-        InstanceAction::ForceDisconnect => force_disconnect_core(State(state), name, id).await,
-        InstanceAction::Reconnect => reconnect_core(State(state), name, id).await,
-        InstanceAction::ResetReconnect => reset_reconnect_core(State(state), name, id).await,
-        InstanceAction::Recover => recover_instance_core(State(state), name, id).await,
-        InstanceAction::Cancel => cancel_core(State(state), name, id).await,
-    }
+    let audit_action = match request.action {
+        InstanceAction::Disconnect => AuditAction::ServerInstanceDisconnect,
+        InstanceAction::ForceDisconnect => AuditAction::ServerInstanceForceDisconnect,
+        InstanceAction::Reconnect => AuditAction::ServerInstanceReconnect,
+        InstanceAction::ResetReconnect => AuditAction::ServerInstanceResetReconnect,
+        InstanceAction::Recover => AuditAction::ServerInstanceRecover,
+        InstanceAction::Cancel => AuditAction::ServerInstanceCancel,
+    };
+
+    let result = match request.action {
+        InstanceAction::Disconnect => disconnect_core(State(state.clone()), name.clone(), id.clone()).await,
+        InstanceAction::ForceDisconnect => force_disconnect_core(State(state.clone()), name.clone(), id.clone()).await,
+        InstanceAction::Reconnect => reconnect_core(State(state.clone()), name.clone(), id.clone()).await,
+        InstanceAction::ResetReconnect => reset_reconnect_core(State(state.clone()), name.clone(), id.clone()).await,
+        InstanceAction::Recover => recover_instance_core(State(state.clone()), name.clone(), id.clone()).await,
+        InstanceAction::Cancel => cancel_core(State(state.clone()), name.clone(), id.clone()).await,
+    };
+
+    let (audit_status, audit_error) = match &result {
+        Ok(_response) => (AuditStatus::Success, None),
+        Err(e) => (AuditStatus::Failed, Some(e.to_string())),
+    };
+
+    let mut data = Map::new();
+    data.insert("server_name".to_string(), Value::String(name.clone()));
+    data.insert("instance_id".to_string(), Value::String(id.clone()));
+    data.insert("action".to_string(), Value::String(request.action.to_string()));
+
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            audit_action,
+            audit_status,
+            "POST",
+            "/api/mcp/servers/instances/manage",
+            Some(started_at.elapsed().as_millis() as u64),
+            Some(name),
+            None,
+            Some(data),
+            audit_error,
+        ),
+    )
+    .await;
+
+    result
 }
 
 /// Disconnect an instance (legacy function for backwards compatibility)
