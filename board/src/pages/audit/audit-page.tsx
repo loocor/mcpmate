@@ -1,20 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-	RefreshCw,
-	Search,
-	Filter,
-	AlertCircle,
-	Inbox,
-	ChevronRight,
-	ChevronDown,
-	X,
-} from "lucide-react";
+import { RefreshCw, Search, AlertCircle, Inbox, ChevronRight, ChevronDown, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "../../components/ui/badge";
 import { Pagination } from "../../components/pagination";
 import { Button } from "../../components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import {
 	Select,
@@ -442,11 +433,16 @@ export function AuditPage() {
 
 	const renderStatusBadge = useCallback(
 		(value: AuditStatus) => {
-			let variant: "success" | "destructive" | "warning" = "warning";
-			if (value === "success") {
-				variant = "success";
-			} else if (value === "failed") {
-				variant = "destructive";
+			let variant: "success" | "destructive" | "warning";
+			switch (value) {
+				case "success":
+					variant = "success";
+					break;
+				case "failed":
+					variant = "destructive";
+					break;
+				default:
+					variant = "warning";
 			}
 			return (
 				<Badge variant={variant}>
@@ -473,43 +469,22 @@ export function AuditPage() {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
-			<div className="flex shrink-0 items-center gap-2 min-w-0">
-				<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
-					{t("audit:title", {
-						defaultValue: "Inspect audit events across REST and MCP flows",
-					})}
-				</p>
-				<div className="flex items-center gap-2 flex-shrink-0">
-					<Button variant="outline" size="sm" onClick={() => query.refetch()} disabled={query.isFetching}>
-						<RefreshCw className={`mr-2 h-4 w-4 ${query.isFetching ? "animate-spin" : ""}`} />
-						{t("audit:buttons.refresh", { defaultValue: "Refresh" })}
-					</Button>
-				</div>
-			</div>
-
-			<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-				<CardHeader className="shrink-0">
-					<div className="flex items-center justify-between gap-2">
-						<CardTitle className="flex items-center gap-2">
-							<Filter className="h-5 w-5" />
-							{t("audit:filters.title", { defaultValue: "Audit Events" })}
-						</CardTitle>
-						<span className="text-xs text-muted-foreground">
-							{t("audit:labels.liveStatus", { defaultValue: "Connection" })}:{" "}
-							{connectionState === "live"
-								? t("audit:states.live", { defaultValue: "Live" })
-								: t("audit:states.disconnected", { defaultValue: "Disconnected" })}
-						</span>
-					</div>
-					<div className="flex flex-col gap-3 pt-2 md:flex-row md:items-center md:gap-3">
-						<div className="relative min-w-0 w-full flex-1">
+			<div className="sticky top-0 z-10 -mx-1 rounded-b-xl px-1 backdrop-blur">
+				<div className="flex items-center gap-2 min-w-0">
+					<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
+						{t("audit:description", {
+							defaultValue: "Inspect audit events across REST and MCP flows",
+						})}
+					</p>
+					<div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+						<div className="relative min-w-0 w-full sm:w-56 sm:shrink-0">
 							<Input
 								value={search}
 								onChange={(event) => setSearch(event.target.value)}
 								placeholder={t("audit:filters.search", {
 									defaultValue: "Search target, route, server, profile, or client",
 								})}
-								className="w-full pr-10"
+								className="h-9 w-full pr-10"
 							/>
 							{search.trim().length > 0 ? (
 								<button
@@ -522,41 +497,53 @@ export function AuditPage() {
 								</button>
 							) : null}
 						</div>
-						<div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-3 md:w-auto">
-							<Select value={category} onValueChange={setCategory}>
-								<SelectTrigger className="w-[200px] max-w-full">
-									<SelectValue placeholder={t("audit:filters.allCategories", { defaultValue: "All categories" })} />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value={ALL_CATEGORIES}>
-										{t("audit:filters.allCategories", { defaultValue: "All categories" })}
+						<Select value={category} onValueChange={setCategory}>
+							<SelectTrigger className="h-9 w-full sm:w-[160px]">
+								<SelectValue placeholder={t("audit:filters.allCategories", { defaultValue: "All categories" })} />
+							</SelectTrigger>
+							<SelectContent align="end">
+								<SelectItem value={ALL_CATEGORIES}>
+									{t("audit:filters.allCategories", { defaultValue: "All categories" })}
+								</SelectItem>
+								{CATEGORY_OPTIONS.map((option) => (
+									<SelectItem key={option} value={option}>
+										{t(`audit:categoryValues.${option}`, { defaultValue: option })}
 									</SelectItem>
-									{CATEGORY_OPTIONS.map((option) => (
-										<SelectItem key={option} value={option}>
-											{t(`audit:categoryValues.${option}`, { defaultValue: option })}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-							<Select value={status} onValueChange={setStatus}>
-								<SelectTrigger className="w-[180px] max-w-full">
-									<SelectValue placeholder={t("audit:filters.allStatuses", { defaultValue: "All statuses" })} />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value={ALL_STATUSES}>
-										{t("audit:filters.allStatuses", { defaultValue: "All statuses" })}
+								))}
+							</SelectContent>
+						</Select>
+						<Select value={status} onValueChange={setStatus}>
+							<SelectTrigger className="h-9 w-full sm:w-[120px]">
+								<SelectValue placeholder={t("audit:filters.allStatuses", { defaultValue: "All statuses" })} />
+							</SelectTrigger>
+							<SelectContent align="end">
+								<SelectItem value={ALL_STATUSES}>
+									{t("audit:filters.allStatuses", { defaultValue: "All statuses" })}
+								</SelectItem>
+								{STATUS_OPTIONS.map((option) => (
+									<SelectItem key={option} value={option}>
+										{t(`audit:statusValues.${option}`, { defaultValue: option })}
 									</SelectItem>
-									{STATUS_OPTIONS.map((option) => (
-										<SelectItem key={option} value={option}>
-											{t(`audit:statusValues.${option}`, { defaultValue: option })}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
+								))}
+							</SelectContent>
+						</Select>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="h-9 w-9 shrink-0 p-0"
+							onClick={() => query.refetch()}
+							disabled={query.isFetching}
+							title={t("audit:buttons.refresh", { defaultValue: "Refresh" })}
+						>
+							<RefreshCw className={`h-4 w-4 ${query.isFetching ? "animate-spin" : ""}`} />
+						</Button>
 					</div>
-				</CardHeader>
-				<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
+				</div>
+			</div>
+
+			<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+				<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
 					{query.isLoading && displayEvents.length === 0 ? (
 						<div className="min-h-0 flex-1 overflow-auto overscroll-contain">
 							<EventsTableSkeleton />
@@ -677,6 +664,14 @@ export function AuditPage() {
 						onLastPage={handleLastPage}
 						pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
 						className="mt-4 shrink-0 border-t border-slate-200 pt-4 dark:border-slate-700"
+						centerSlot={
+							<span className="whitespace-nowrap">
+								{t("audit:labels.liveStatus", { defaultValue: "Connection" })}:{" "}
+								{connectionState === "live"
+									? t("audit:states.live", { defaultValue: "Live" })
+									: t("audit:states.disconnected", { defaultValue: "Disconnected" })}
+							</span>
+						}
 					/>
 				</CardContent>
 			</Card>

@@ -146,25 +146,28 @@ export const clientsTranslations = {
 					mode: {
 						title: "1. Management Mode",
 						descriptions: {
+							smart:
+								"Smart starts with builtin MCP tools only and keeps its working set inside the current session.",
 							hosted:
-								"MCPMate provisions a dedicated MCP server for this client and enables advanced MCPMate features.",
+								"Hosted keeps a durable managed configuration for this client and remembers the selected working state.",
 							transparent:
 								"MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
-							none: "MCPMate does not manage this client's configuration.",
 						},
 						options: {
+							smart: "Smart",
 							hosted: "Hosted",
 							transparent: "Transparent",
-							none: "None",
 						},
 					},
 					source: {
-						title: "2. Capability Source",
-						titleTransparent: "2. Server Source",
+						title: "2. Configuration",
+						titleTransparent: "2. Configuration",
 						descriptions: {
-							default: "Use all currently activated profiles.",
-							profile: "Select specific shared profiles to include.",
-							custom: "Use customized configuration settings.",
+							smart:
+								"Builtin MCP tools will select profiles on demand from the configured library during the current session.",
+							default: "Review the profiles that are currently active for this client runtime.",
+							profile: "Browse the shared scene library and choose the exact working set for this client.",
+							custom: "Create client-specific adjustments on top of the current smart-mode working state.",
 							transparentDefault:
 								"Write the servers from all currently activated profiles directly into this client's MCP configuration.",
 							transparentProfile:
@@ -173,7 +176,7 @@ export const clientsTranslations = {
 								"Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
 						},
 						options: {
-							default: "Activated",
+							default: "Active",
 							profile: "Profiles",
 							custom: "Customize",
 						},
@@ -184,14 +187,16 @@ export const clientsTranslations = {
 						},
 					},
 					profiles: {
-						title: "3. Profiles List",
+						title: "3. Profiles",
 						descriptions: {
+							smart:
+								"Profiles shown here are the configured sources Smart Mode can draw from during the current session.",
 							default:
-								"When the activated source is selected, configure all currently activated profiles. Checkboxes are locked to keep the selection consistent.",
+								"Review the profiles that are already active for this client runtime. This view is read-only to keep the active scene set consistent.",
 							profile:
-								"Select which shared profiles to include in this client's configuration.",
+								"Choose the reusable shared profiles that define this client's working set.",
 							custom:
-								"Create and maintain a customized configuration for the current application.",
+								"Create and maintain client-specific overrides for the current working state.",
 							transparentDefault:
 								"Transparent mode will write the enabled servers from all currently activated profiles directly into this client's MCP configuration.",
 							transparentProfile:
@@ -199,19 +204,27 @@ export const clientsTranslations = {
 							transparentCustom:
 								"Transparent mode uses only the enabled servers from this client-specific custom profile when writing the MCP configuration.",
 						},
-						modeNone:
-							'Configuration mode is set to "none" - no profiles need to be applied',
 						empty: {
 							active: "No active profiles found",
 							shared: "No shared profiles found",
 						},
 						ghost: {
-							titleCustom: "Customize the profile",
-							titleDefault: "Add a new profile",
-							subtitleCustom: "Create and manage host application profile",
+							titleCustom: "Customize current state",
+							titleDefault: "Open profiles library",
+							subtitleCustom: "Create and manage client-specific overrides for the current workspace",
 							subtitleCustomTransparent:
 								"Configure which servers should be written into this client directly.",
-							subtitleDefault: "Click to navigate to profile management page",
+							subtitleDefault: "Browse reusable shared scenes and edit them from the profiles page",
+						},
+					},
+					smart: {
+						title: "2. Configuration",
+						description:
+							"Smart starts with builtin MCP tools only. It keeps the working set inside the current MCP session and resets when the session ends.",
+						items: {
+							builtinOnly: "Builtin tools only",
+							sessionScoped: "Session-scoped workspace",
+							noFurtherSetup: "No further setup in the dashboard",
 						},
 					},
 				},
@@ -530,37 +543,39 @@ export const clientsTranslations = {
 					mode: {
 						title: "1. 管理模式",
 						descriptions: {
+							smart:
+								"Smart 模式初始仅提供内建 MCP 工具，并将工作集保留在当前会话中。",
 							hosted:
-								"将为该客户端配置唯一 MCP Server，并可使用 MCPMate 各高级特性。",
+								"Hosted 会为该客户端保留持久化托管配置，并记住当前选择的工作状态。",
 							transparent:
 								"MCPMate 会将所选配置集中的服务器直接写入该客户端的 MCP 配置，且不会保留 capabilities 层级的控制。",
-							none: "MCPMate 不管理该客户端配置。",
 						},
 						options: {
-							hosted: "托管模式",
+							smart: "Smart",
+							hosted: "Hosted",
 							transparent: "透明模式",
-							none: "无",
 						},
 					},
-				source: {
-					title: "2. 能力来源",
-					titleTransparent: "2. 服务器来源",
-					descriptions: {
-						default: "使用所有已激活的配置集。",
-						profile: "选择特定共享配置集。",
-						custom: "使用自定义配置设置。",
+					source: {
+						title: "2. 配置详情",
+						titleTransparent: "2. 配置详情",
+						descriptions: {
+							smart: "当前会话中，内建 MCP 工具会从已配置的场景库中按需挑选 Profiles。",
+							default: "查看当前已对该客户端运行态生效的配置集。",
+							profile: "浏览共享场景库，并为该客户端选择精确的工作集。",
+							custom: "在当前 Smart 模式工作状态之上创建客户端专属调整。",
 						transparentDefault:
 							"将当前所有已激活配置集中的服务器直接写入该客户端的 MCP 配置。",
 						transparentProfile:
 							"将所选共享配置集中的服务器直接写入该客户端的 MCP 配置。",
 						transparentCustom:
 							"将该客户端专属自定义配置集中的服务器直接写入该客户端的 MCP 配置。",
-					},
-					options: {
-						default: "已激活",
-						profile: "配置集",
-						custom: "自定义",
-					},
+						},
+						options: {
+							default: "Active",
+							profile: "Profiles",
+							custom: "Customize",
+						},
 					statusLabel: {
 						default: "",
 						profile: "",
@@ -568,12 +583,13 @@ export const clientsTranslations = {
 					},
 				},
 					profiles: {
-						title: "3. 配置集列表",
+						title: "3. Profiles",
 						descriptions: {
+							smart: "此处展示的是 Smart 模式在当前会话中可按需使用的已配置 Profiles。",
 							default:
-								"选择已激活来源时，将配置所有当前激活的配置集，复选项将保持锁定。",
-							profile: "选择要包含在该客户端配置中的共享配置集。",
-							custom: "为当前应用创建并维护自定义配置。",
+								"查看当前已对该客户端运行态生效的配置集。为保持场景一致性，此视图为只读。",
+							profile: "选择定义该客户端工作集的可复用共享配置集。",
+							custom: "为当前工作状态创建并维护客户端专属覆盖项。",
 							transparentDefault:
 								"透明模式会将当前所有已激活配置集中已启用的服务器直接写入该客户端的 MCP 配置。",
 							transparentProfile:
@@ -581,17 +597,26 @@ export const clientsTranslations = {
 							transparentCustom:
 								"透明模式在写入 MCP 配置时，仅使用该客户端专属自定义配置集中已启用的服务器。",
 						},
-						modeNone: "配置模式为“无”——无需应用任何配置集",
 						empty: {
 							active: "未找到已激活的配置集",
 							shared: "未找到共享配置集",
 						},
 						ghost: {
-							titleCustom: "自定义配置集",
-							titleDefault: "新增配置集",
-							subtitleCustom: "创建并管理宿主应用配置集",
+							titleCustom: "自定义当前状态",
+							titleDefault: "打开场景库",
+							subtitleCustom: "为当前工作集创建并管理客户端专属覆盖项",
 							subtitleCustomTransparent: "配置哪些服务器会被直接写入当前客户端。",
-							subtitleDefault: "点击前往配置集管理页面",
+							subtitleDefault: "浏览可复用共享场景，并在配置集页面中维护它们",
+						},
+					},
+					smart: {
+						title: "2. 配置详情",
+						description:
+							"Smart 模式初始仅提供内建 MCP 工具。它会将工作集保留在当前 MCP 会话中，并在会话结束后自动重置。",
+						items: {
+							builtinOnly: "仅内建工具",
+							sessionScoped: "会话级工作集",
+							noFurtherSetup: "仪表板中无需进一步设置",
 						},
 					},
 				},
@@ -906,37 +931,40 @@ export const clientsTranslations = {
 					mode: {
 						title: "1. 管理モード",
 						descriptions: {
+							smart:
+								"Smart は内蔵 MCP ツールのみで開始し、ワークセットを現在のセッション内に保持します。",
 							hosted:
-								"このクライアント専用の MCP サーバーを構成し、MCPMate の高度な機能を利用できるようにします。",
+								"Hosted はこのクライアントの持続的な管理設定を保持し、現在のワーク状態を記憶します。",
 							transparent:
 								"MCPMate は選択したプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込み、capability 単位の制御は保持しません。",
-							none: "MCPMate はこのクライアントを管理しません。",
 						},
 						options: {
-							hosted: "ホステッドモード",
+							smart: "Smart",
+							hosted: "Hosted",
 							transparent: "トランスペアレントモード",
-							none: "なし",
 						},
 					},
-				source: {
-					title: "2. 機能ソース",
-					titleTransparent: "2. サーバーソース",
-					descriptions: {
-						default: "現在有効なプロファイルをすべて使用します。",
-						profile: "含める共有プロファイルを選択します。",
-						custom: "カスタム設定を使用します。",
+					source: {
+						title: "2. 設定",
+						titleTransparent: "2. 設定",
+						descriptions: {
+							smart:
+								"現在のセッションでは、内蔵 MCP ツールが設定済みプロファイルライブラリから必要な Profiles を動的に選択します。",
+							default: "このクライアントの実行時に現在有効なプロファイルを確認します。",
+							profile: "共有シーンライブラリを参照し、このクライアントの正確なワークセットを選択します。",
+							custom: "現在の Smart Mode ワーク状態の上にクライアント専用の調整を作成します。",
 						transparentDefault:
 							"現在有効なすべてのプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
 						transparentProfile:
 							"選択した共有プロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
 						transparentCustom:
 							"このクライアント専用のカスタムプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
-					},
-					options: {
-						default: "有効化済み",
-						profile: "プロファイル",
-						custom: "カスタマイズ",
-					},
+						},
+						options: {
+							default: "Active",
+							profile: "Profiles",
+							custom: "Customize",
+						},
 					statusLabel: {
 						default: "",
 						profile: "",
@@ -944,12 +972,14 @@ export const clientsTranslations = {
 					},
 				},
 					profiles: {
-						title: "3. プロファイル一覧",
+						title: "3. Profiles",
 						descriptions: {
+							smart:
+								"ここには、Smart モードが現在のセッションで必要に応じて利用できる設定済み Profiles が表示されます。",
 							default:
-								"有効化ソースでは、現在有効なプロファイルがすべて適用されます。チェックボックスは固定されます。",
-							profile: "このクライアントに含める共有プロファイルを選択します。",
-							custom: "このアプリ向けのカスタム設定を作成・維持します。",
+								"このクライアントの実行時にすでに有効なプロファイルを確認します。シーンの一貫性を保つため、このビューは読み取り専用です。",
+							profile: "このクライアントのワークセットを定義する再利用可能な共有プロファイルを選択します。",
+							custom: "現在のワーク状態に対するクライアント専用オーバーライドを作成・維持します。",
 							transparentDefault:
 								"トランスペアレントモードでは、現在有効なすべてのプロファイルの有効化されたサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
 							transparentProfile:
@@ -957,18 +987,27 @@ export const clientsTranslations = {
 							transparentCustom:
 								"トランスペアレントモードで MCP 設定を書き込む際は、このクライアント専用カスタムプロファイルの有効化されたサーバーのみを使用します。",
 						},
-						modeNone: "モードが『なし』のためプロファイルは適用されません",
 						empty: {
 							active: "有効なプロファイルが見つかりません",
 							shared: "共有プロファイルが見つかりません",
 						},
 						ghost: {
-							titleCustom: "プロファイルをカスタマイズ",
-							titleDefault: "新しいプロファイルを追加",
-							subtitleCustom: "ホストアプリ用プロファイルを作成・管理",
+							titleCustom: "現在の状態をカスタマイズ",
+							titleDefault: "プロファイルライブラリを開く",
+							subtitleCustom: "現在のワークスペースに対するクライアント専用オーバーライドを作成・管理",
 							subtitleCustomTransparent:
 								"このクライアントへ直接書き込むサーバーを設定します。",
-							subtitleDefault: "プロファイル管理ページへ移動",
+							subtitleDefault: "再利用可能な共有シーンを参照し、プロファイルページで編集します",
+						},
+					},
+					smart: {
+						title: "2. 設定",
+						description:
+							"Smart は内蔵 MCP ツールのみで開始します。ワークセットは現在の MCP セッションに保持され、セッション終了時に自動的にリセットされます。",
+						items: {
+							builtinOnly: "内蔵ツールのみ",
+							sessionScoped: "セッション単位のワークスペース",
+							noFurtherSetup: "ダッシュボードで追加設定は不要",
 						},
 					},
 				},

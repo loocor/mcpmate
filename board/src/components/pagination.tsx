@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -89,6 +89,10 @@ interface PaginationProps {
 	 * Additional CSS classes
 	 */
 	className?: string;
+	/**
+	 * Optional content centered between the summary/page indicator (left) and navigation controls (right).
+	 */
+	centerSlot?: ReactNode;
 }
 
 const ICON_BTN = "h-8 w-8 shrink-0";
@@ -252,6 +256,7 @@ export function Pagination({
 	hasLastPage,
 	pageSizeOptions = [10, 20, 50, 100],
 	className,
+	centerSlot,
 }: PaginationProps) {
 	const { t } = useTranslation();
 	const summaryId = useId();
@@ -276,14 +281,22 @@ export function Pagination({
 		[onItemsPerPageChange],
 	);
 
+	const hasCenterSlot = centerSlot != null;
+
 	return (
 		<div
 			className={cn(
-				"flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
+				"flex flex-col gap-3 sm:flex-row sm:items-center",
+				hasCenterSlot ? "sm:gap-2" : "sm:justify-between",
 				className,
 			)}
 		>
-			<div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-baseline sm:gap-6">
+			<div
+				className={cn(
+					"flex min-w-0 flex-col gap-2 sm:flex-row sm:items-baseline sm:gap-6",
+					hasCenterSlot && "sm:min-w-0 sm:flex-1 sm:justify-start",
+				)}
+			>
 				<PaginationSummary summaryId={summaryId} totalItemCount={totalItemCount} />
 				<PageIndicator
 					currentPage={currentPage}
@@ -294,7 +307,18 @@ export function Pagination({
 				/>
 			</div>
 
-			<div className="flex flex-wrap items-center justify-end gap-1">
+			{hasCenterSlot ? (
+				<div className="flex shrink-0 items-center justify-center px-1 text-xs text-muted-foreground sm:px-2">
+					{centerSlot}
+				</div>
+			) : null}
+
+			<div
+				className={cn(
+					"flex flex-wrap items-center gap-1",
+					hasCenterSlot ? "sm:min-w-0 sm:flex-1 sm:justify-end" : "justify-end",
+				)}
+			>
 				<Button
 					type="button"
 					variant="outline"

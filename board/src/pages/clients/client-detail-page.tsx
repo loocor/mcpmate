@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import {
 	CapsuleStripeList,
@@ -165,7 +165,6 @@ export function ClientDetailPage() {
 	const { identifier } = useParams<{ identifier: string }>();
 	const qc = useQueryClient();
 	const navigate = useNavigate();
-	useSearchParams();
 	usePageTranslations("clients");
 	const { t } = useTranslation("clients");
 	const showClientLiveLogs = useAppStore(
@@ -197,6 +196,10 @@ export function ClientDetailPage() {
 		[clientsData?.client, identifier],
 	);
 
+	const limitId = useId();
+	const [mode, setMode] = useState<ClientConfigMode>("hosted");
+	const [transport, setTransport] = useState<string>("auto");
+
 	useEffect(() => {
 		if (!currentClient) {
 			return;
@@ -204,7 +207,14 @@ export function ClientDetailPage() {
 		setDisplayName(currentClient.display_name || "");
 		setDetected(!!currentClient.detected);
 		if (typeof currentClient.config_mode === "string") {
-			setMode(currentClient.config_mode as ClientConfigMode);
+			const configMode = currentClient.config_mode;
+			if (configMode === "smart") {
+				setMode("smart");
+			} else if (configMode === "transparent") {
+				setMode("transparent");
+			} else {
+				setMode("hosted");
+			}
 		}
 		setTransport(
 			typeof currentClient.transport === "string"
@@ -213,9 +223,6 @@ export function ClientDetailPage() {
 		);
 	}, [currentClient]);
 
-	const limitId = useId();
-	const [mode, setMode] = useState<ClientConfigMode>("hosted");
-	const [transport, setTransport] = useState<string>("auto");
 	const [selectedConfig, setSelectedConfig] =
 		useState<ClientCapabilitySourceSelection>("default");
 	const [policyOpen, setPolicyOpen] = useState(false);
@@ -320,10 +327,7 @@ export function ClientDetailPage() {
 
 	const capabilityProfileIds = useMemo(() => {
 		const ids = new Set<string>();
-		for (const profile of activeProfiles) {
-			ids.add(profile.id);
-		}
-		for (const profile of sharedProfiles) {
+		for (const profile of [...activeProfiles, ...sharedProfiles]) {
 			ids.add(profile.id);
 		}
 		if (customProfileId) {
@@ -645,9 +649,10 @@ export function ClientDetailPage() {
 				identifier,
 				config_mode: mode,
 			});
-			const capabilityData = await clientsApi.updateCapabilityConfig(
-				buildCapabilityConfigPayload(),
-			);
+			const capabilityData =
+				mode === "smart"
+					? effectiveCapabilityConfig
+					: await clientsApi.updateCapabilityConfig(buildCapabilityConfigPayload());
 			if (!capabilityData) {
 				throw new Error(
 					t("detail.configuration.errors.capabilityConfigMissing", {
@@ -660,13 +665,11 @@ export function ClientDetailPage() {
 			const data = await clientsApi.applyConfig({
 				identifier,
 				mode,
-				selected_config: buildApplySelectedConfig(capabilityData),
+				selected_config:
+					mode === "smart" ? "default" : buildApplySelectedConfig(capabilityData),
 				preview,
 			});
 			return { data: data ?? null, preview };
-		},
-		onMutate: () => {
-			// No longer needed since we removed the result display
 		},
 		onSuccess: ({ data, preview }) => {
 			if (preview) {
@@ -1413,7 +1416,15 @@ export function ClientDetailPage() {
 																"detail.configuration.sections.mode.descriptions.hosted",
 																{
 																	defaultValue:
-																		"MCPMate provisions a dedicated MCP server for this client and enables advanced MCPMate features.",
+																		"Hosted keeps a durable managed configuration for this client and remembers the selected working state.",
+																},
+															)}
+														{mode === "smart" &&
+															t(
+																"detail.configuration.sections.mode.descriptions.smart",
+																{
+																	defaultValue:
+																		"Smart starts with builtin control-plane tools only and keeps its workspace inside the current MCP session.",
 																},
 															)}
 														{mode === "transparent" &&
@@ -1424,20 +1435,19 @@ export function ClientDetailPage() {
 																		"MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
 																},
 															)}
-														{mode === "none" &&
-															t(
-																"detail.configuration.sections.mode.descriptions.none",
-																{
-																	defaultValue:
-																		"MCPMate does not manage this client's configuration.",
-																},
-															)}
 													</p>
 												</div>
 												<Segment
 													value={mode}
 													onValueChange={(v) => setMode(v as ClientConfigMode)}
 													options={[
+														{
+															value: "smart",
+															label: t(
+																"detail.configuration.sections.mode.options.smart",
+																{ defaultValue: "Smart" },
+															),
+														},
 														{
 															value: "hosted",
 															label: t(
@@ -1452,13 +1462,6 @@ export function ClientDetailPage() {
 																{ defaultValue: "Transparent" },
 															),
 														},
-														{
-															value: "none",
-															label: t(
-																"detail.configuration.sections.mode.options.none",
-																{ defaultValue: "None" },
-															),
-														},
 													]}
 													showDots={true}
 													className="w-full"
@@ -1469,15 +1472,19 @@ export function ClientDetailPage() {
 											<div className="space-y-3">
 												<div className="space-y-1">
 													<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-														{mode === "transparent"
-															? t("detail.configuration.sections.source.titleTransparent", {
-																defaultValue: "2. Server Source",
-															})
-															: t("detail.configuration.sections.source.title", {
-																defaultValue: "2. Capability Source",
-															})}
+														{t("detail.configuration.sections.source.title", {
+															defaultValue: "2. Configuration",
+														})}
 													</h4>
 													<p className="text-xs text-slate-500 leading-relaxed">
+														{mode === "smart" &&
+															t(
+																"detail.configuration.sections.source.descriptions.smart",
+																{
+																	defaultValue:
+																		"Builtin MCP tools will select profiles on demand from the configured library during the current session.",
+																},
+															)}
 														{mode === "transparent" && selectedConfig === "default" &&
 															t(
 																"detail.configuration.sections.source.descriptions.transparentDefault",
@@ -1502,95 +1509,67 @@ export function ClientDetailPage() {
 																		"Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
 																},
 															)}
-														{mode !== "transparent" && selectedConfig === "default" &&
+														{mode === "hosted" && selectedConfig === "default" &&
 															t(
 																"detail.configuration.sections.source.descriptions.default",
 																{
 																	defaultValue:
-																		"Use all currently activated profiles.",
+																		"Review the profiles that are currently active for this client runtime.",
 																},
 															)}
-														{mode !== "transparent" && selectedConfig === "profile" &&
+														{mode === "hosted" && selectedConfig === "profile" &&
 															t(
 																"detail.configuration.sections.source.descriptions.profile",
 																{
 																	defaultValue:
-																		"Select specific shared profiles to include.",
+																		"Browse the shared scene library and choose the exact working set for this client.",
 																},
 															)}
-														{mode !== "transparent" && selectedConfig === "custom" &&
+														{mode === "hosted" && selectedConfig === "custom" &&
 															t(
 																"detail.configuration.sections.source.descriptions.custom",
 																{
 																	defaultValue:
-																		"Use customized configuration settings.",
+																		"Create client-specific adjustments on top of the current smart-mode working state.",
 																},
 															)}
 													</p>
 												</div>
-												<Segment
-													value={selectedConfig}
-													onValueChange={(v) =>
-														setSelectedConfig(v as ClientCapabilitySourceSelection)
-													}
-													options={[
-														{
-															value: "default",
-															label: t(
-																"detail.configuration.sections.source.options.default",
-																{ defaultValue: "Activated" },
-															),
-															status:
-																t(
-																	"detail.configuration.sections.source.statusLabel.default",
-																	{ defaultValue: "" },
-																) || undefined,
-														},
-														{
-															value: "profile",
-															label: t(
-																"detail.configuration.sections.source.options.profile",
-																{ defaultValue: "Profiles" },
-															),
-															status:
-																t(
-																	"detail.configuration.sections.source.statusLabel.profile",
-																	{ defaultValue: "" },
-																) || undefined,
-														},
-														{
-															value: "custom",
-															label: t(
-																"detail.configuration.sections.source.options.custom",
-																{ defaultValue: "Customize" },
-															),
-															status:
-																t(
-																	"detail.configuration.sections.source.statusLabel.custom",
-																	{ defaultValue: "" },
-																) || undefined,
-														},
-													]}
-													showDots={true}
-													className="w-full"
-													disabled={mode === "none"}
-												/>
+												{mode !== "smart" && (
+													<Segment
+														value={selectedConfig}
+														onValueChange={(v) =>
+															setSelectedConfig(v as ClientCapabilitySourceSelection)
+														}
+														options={[
+															{ value: "default", label: t("detail.configuration.sections.source.options.default", { defaultValue: "Active" }), status: t("detail.configuration.sections.source.statusLabel.default", { defaultValue: "" }) || undefined },
+															{ value: "profile", label: t("detail.configuration.sections.source.options.profile", { defaultValue: "Profiles" }), status: t("detail.configuration.sections.source.statusLabel.profile", { defaultValue: "" }) || undefined },
+															{ value: "custom", label: t("detail.configuration.sections.source.options.custom", { defaultValue: "Customize" }), status: t("detail.configuration.sections.source.statusLabel.custom", { defaultValue: "" }) || undefined },
+														]}
+														showDots={true}
+														className="w-full"
+													/>
+												)}
 											</div>
 										</div>
 
 										{/* Right side - Profiles List (6/10) */}
-										{(mode === "hosted" ||
-											mode === "transparent" ||
-											mode === "none") && (
-												<div
-													className={`col-span-6 ${mode === "none" ? "opacity-50 pointer-events-none" : ""}`}
-												>
+										{(mode === "smart" || mode === "hosted" || mode === "transparent") && (
+												<div className="col-span-6">
 													<div className="mb-3">
 														<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
 															{t("detail.configuration.sections.profiles.title", {
-																defaultValue: "3. Profiles List",
+																defaultValue: "3. Profiles",
 															})}
 														</h4>
+														{mode === "smart" && (
+															<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+																{t("detail.configuration.sections.profiles.descriptions.smart", {
+																	defaultValue:
+																		"Profiles shown here are the configured sources Smart Mode can draw from during the current session.",
+																})}
+															</p>
+														)}
 														{/* Dynamic description based on source */}
 														{selectedConfig === "default" && (
 															<p className="text-xs text-slate-500 mt-1 leading-relaxed">
@@ -1606,7 +1585,7 @@ export function ClientDetailPage() {
 																		"detail.configuration.sections.profiles.descriptions.default",
 																		{
 																			defaultValue:
-																				"When the activated source is selected, configure all currently activated profiles. Checkboxes are locked to keep the selection consistent.",
+																				"Review the profiles that are already active for this client runtime. This view is read-only to keep the active scene set consistent.",
 																		},
 																	)}
 															</p>
@@ -1625,7 +1604,7 @@ export function ClientDetailPage() {
 																		"detail.configuration.sections.profiles.descriptions.profile",
 																		{
 																			defaultValue:
-																				"Select which shared profiles to include in this client's configuration.",
+																				"Choose the reusable shared profiles that define this client's working set.",
 																		},
 																	)}
 															</p>
@@ -1644,7 +1623,7 @@ export function ClientDetailPage() {
 																		"detail.configuration.sections.profiles.descriptions.custom",
 																		{
 																			defaultValue:
-																				"Create and maintain a customized configuration for the current application.",
+																				"Create and maintain client-specific overrides for the current working state.",
 																		},
 																	)}
 															</p>
@@ -1660,19 +1639,52 @@ export function ClientDetailPage() {
 																/>
 															))}
 														</div>
-													) : mode === "none" ? (
-														<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-															{t(
-																"detail.configuration.sections.profiles.modeNone",
-																{
-																	defaultValue:
-																		'Configuration mode is set to "none" - no profiles need to be applied',
-																},
-															)}
-														</div>
 													) : (
 														<CapsuleStripeList>
-															{selectedConfig === "default" ? (
+															{mode === "smart" ? (
+																sharedProfiles.length > 0 ? (
+																	sharedProfiles.map((profile) => {
+																		const capabilities = profileCapabilities.get(profile.id);
+																		return (
+																			<CapsuleStripeListItem key={profile.id} className="cursor-default">
+																				<div className="flex w-full items-center gap-3">
+																					<div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-300 bg-slate-100 dark:border-slate-600 dark:bg-slate-700">
+																						<Check className="h-3 w-3 text-slate-500" />
+																					</div>
+																					<div className="flex-1 min-w-0">
+																						<div className="font-medium text-sm truncate">{profile.name}</div>
+																						<div className="text-xs text-slate-500 truncate">
+																							{profile.description ||
+																								t("detail.configuration.labels.noDescription", {
+																									defaultValue: "No description",
+																								})}
+																						</div>
+																						{capabilities && renderProfileCapabilitySummary(capabilities)}
+																					</div>
+																					<div className="ml-auto flex items-center gap-2">
+																						<Button
+																							variant="ghost"
+																							size="sm"
+																							className="h-6 w-6 p-0"
+																							onClick={() => navigate(`/profiles/${profile.id}`)}
+																						>
+																							<Info className="h-3 w-3" />
+																						</Button>
+																					</div>
+																				</div>
+																			</CapsuleStripeListItem>
+																		);
+																	})
+																) : (
+																	<CapsuleStripeListItem>
+																		<div className="text-sm text-slate-500 py-4 text-center w-full">
+																			{t("detail.configuration.sections.profiles.empty.shared", {
+																				defaultValue: "No shared profiles found",
+																			})}
+																		</div>
+																	</CapsuleStripeListItem>
+																)
+															) : selectedConfig === "default" ? (
 																// Show active profiles for default source
 																activeProfiles.length > 0 ? (
 																	activeProfiles.map((profile) => {
@@ -1816,25 +1828,26 @@ export function ClientDetailPage() {
 																)
 															) : null}
 
-															<CapsuleStripeListItem
-																interactive
-																className={
-																	selectedConfig === "custom" && customProfileId
-																		? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
-																		: "border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
-																}
-																onClick={() => {
-																	if (selectedConfig === "custom") {
-																		if (customProfileId) {
-																			navigate(`/profiles/${customProfileId}?mode=custom`);
-																		} else {
-																			applyMutation.mutate({ preview: false });
-																		}
-																	} else {
-																		navigate("/profiles");
+															{mode !== "smart" && (
+																<CapsuleStripeListItem
+																	interactive
+																	className={
+																		selectedConfig === "custom" && customProfileId
+																			? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
+																			: "border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
 																	}
-																}}
-															>
+																	onClick={() => {
+																		if (selectedConfig === "custom") {
+																			if (customProfileId) {
+																				navigate(`/profiles/${customProfileId}?mode=custom`);
+																			} else {
+																				applyMutation.mutate({ preview: false });
+																			}
+																		} else {
+																			navigate("/profiles");
+																		}
+																	}}
+																>
 																<div className="flex w-full items-center gap-3">
 																	<div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedConfig === "custom" && customProfileId
 																			? "border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800"
@@ -1848,46 +1861,47 @@ export function ClientDetailPage() {
 																	</div>
 																	<div className="flex-1 min-w-0">
 																		<div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
-																			{selectedConfig === "custom"
-																				? t(
-																					"detail.configuration.sections.profiles.ghost.titleCustom",
-																					{
-																						defaultValue: customProfileId
-																							? "Manage custom profile"
-																							: "Create custom profile",
-																					},
-																				)
-																				: t(
-																					"detail.configuration.sections.profiles.ghost.titleDefault",
-																					{ defaultValue: "Add a new profile" },
-																				)}
+																	{selectedConfig === "custom"
+																		? t(
+																			"detail.configuration.sections.profiles.ghost.titleCustom",
+																			{
+																				defaultValue: customProfileId
+																					? "Customize current state"
+																					: "Create custom workspace",
+																			},
+																		)
+																		: t(
+																			"detail.configuration.sections.profiles.ghost.titleDefault",
+																			{ defaultValue: "Open profiles library" },
+																		)}
 																		</div>
 																		<div className="text-xs text-slate-400 dark:text-slate-600 truncate">
-																			{selectedConfig === "custom"
-																				? t(
-																					mode === "transparent"
-																						? "detail.configuration.sections.profiles.ghost.subtitleCustomTransparent"
-																						: "detail.configuration.sections.profiles.ghost.subtitleCustom",
-																					{
-																						defaultValue: customProfileId
-																							? "Configure this client-specific custom profile"
-																							: "Create a client-specific custom profile now",
-																					},
-																				)
-																				: t(
-																					"detail.configuration.sections.profiles.ghost.subtitleDefault",
-																					{
-																						defaultValue:
-																							"Click to navigate to profile management page",
-																					},
-																				)}
+																	{selectedConfig === "custom"
+																		? t(
+																			mode === "transparent"
+																				? "detail.configuration.sections.profiles.ghost.subtitleCustomTransparent"
+																				: "detail.configuration.sections.profiles.ghost.subtitleCustom",
+																			{
+																				defaultValue: customProfileId
+																					? "Adjust client-specific capabilities on top of the current workspace"
+																					: "Create client-specific overrides for this workspace",
+																			},
+																		)
+																		: t(
+																			"detail.configuration.sections.profiles.ghost.subtitleDefault",
+																			{
+																				defaultValue:
+																					"Browse reusable shared scenes and edit them from the profiles page",
+																			},
+																		)}
 																		</div>
 																		{customProfileCapabilities
 																			? renderProfileCapabilitySummary(customProfileCapabilities)
 																			: null}
 																	</div>
 																</div>
-															</CapsuleStripeListItem>
+																</CapsuleStripeListItem>
+															)}
 														</CapsuleStripeList>
 													)}
 												</div>

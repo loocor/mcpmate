@@ -963,7 +963,7 @@ export interface ClientManageResp {
 }
 
 // Client config details
-export type ClientConfigMode = "hosted" | "transparent" | "none" | string;
+export type ClientConfigMode = "smart" | "hosted" | "transparent" | string;
 export type ClientCapabilitySourceSelection =
   | "default"
   | "profile"

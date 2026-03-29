@@ -167,7 +167,7 @@ export function Header() {
 
   return (
     <header
-      className={`fixed top-0 right-0 z-30 flex h-16 items-center border-b border-slate-200 bg-white px-4 dark:border-slate-700 dark:bg-slate-900 ${
+      className={`fixed top-0 right-0 z-30 flex h-16 items-center border-b border-border bg-card px-4 ${
         sidebarOpen ? "left-64" : "left-16"
       } transition-all duration-300 ease-in-out`}
     >
@@ -176,14 +176,14 @@ export function Header() {
         <div className="flex items-center gap-3">
           {/* Page title or Back button */}
           {isMainRoute ? (
-            <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">
+            <h1 className="text-xl font-semibold text-foreground">
               {pageTitle}
             </h1>
           ) : (
             <button
               type="button"
               onClick={handleBack}
-              className="flex items-center gap-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+              className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
             >
               <ArrowLeft className="h-4 w-4" />
               {t("header.back", { defaultValue: "Back" })}
@@ -199,7 +199,7 @@ export function Header() {
                 <button
                   type="button"
                   onClick={handleFeedbackClick}
-                  className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+                  className="p-2 text-muted-foreground hover:text-foreground transition-colors"
                   aria-label={feedbackLabel}
                 >
                   <MessageSquare size={20} />
@@ -212,7 +212,7 @@ export function Header() {
                 <button
                   type="button"
                   onClick={handleDocsClick}
-                  className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+                  className="p-2 text-muted-foreground hover:text-foreground transition-colors"
                   aria-label={docsLabel}
                 >
                   <BookOpen size={20} />
@@ -226,7 +226,7 @@ export function Header() {
                   type="button"
                   onClick={toggleTheme}
                   aria-label={themeLabel}
-                  className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+                  className="p-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
                 </button>

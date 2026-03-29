@@ -1,6 +1,6 @@
 export const auditTranslations = {
   en: {
-    title: "Inspect audit events across REST and MCP flows",
+    description: "Inspect audit events across REST and MCP flows",
     headers: {
       expandColumn: "Expand row",
       timestamp: "Timestamp",
@@ -138,7 +138,7 @@ export const auditTranslations = {
     },
   },
   "zh-CN": {
-    title: "查看 REST 与 MCP 流程中的审计事件",
+    description: "查看 REST 与 MCP 流程中的审计事件",
     headers: {
       expandColumn: "展开行",
       timestamp: "时间",
@@ -275,7 +275,7 @@ export const auditTranslations = {
     },
   },
   "ja-JP": {
-    title: "REST と MCP フローの監査イベントを確認",
+    description: "REST と MCP フローの監査イベントを確認",
     headers: {
       expandColumn: "行を展開",
       timestamp: "時刻",

@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -10,7 +10,6 @@ import {
 	SelectValue,
 } from "../../components/ui/select";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
-import { cn } from "../../lib/utils";
 import type { MarketSearchProps } from "./types";
 
 export function MarketSearch({
@@ -53,10 +52,16 @@ export function MarketSearch({
 				</SelectContent>
 			</Select>
 
-			{/* Refresh Button */}
-			<Button variant="outline" size="sm" onClick={onRefresh} className="gap-2">
-				<Loader2 className={cn("h-4 w-4", isLoading)} />
-				{t("market:buttons.refresh", { defaultValue: "Refresh" })}
+			<Button
+				type="button"
+				variant="outline"
+				size="sm"
+				className="h-9 w-9 shrink-0 p-0"
+				onClick={onRefresh}
+				disabled={isLoading}
+				title={t("market:buttons.refresh", { defaultValue: "Refresh" })}
+			>
+				<RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
 			</Button>
 		</div>
 	);
