@@ -84,9 +84,8 @@ const Segment = React.forwardRef<
 											"w-3 h-3 rounded-full border-2 transition-all",
 											"border-slate-400 bg-transparent",
 											"dark:border-slate-500",
-											value === option.value && "border-primary bg-primary",
 											value === option.value &&
-												"dark:border-primary dark:bg-primary",
+												"border-primary bg-primary dark:border-primary dark:bg-primary",
 											option.disabled && "opacity-50",
 										)}
 									/>
