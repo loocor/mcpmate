@@ -74,6 +74,46 @@ impl WarpSqliteStorage {
             .await
             .map_err(|e| ConfigError::DataAccessError(e.to_string()))
     }
+
+    /// Remove oldest `warp.backup.*.sqlite` files next to the live DB so total count stays within retention.
+    async fn prune_warp_sqlite_backups(
+        db_path: &std::path::Path,
+        retention: usize,
+    ) -> ConfigResult<()> {
+        let parent = db_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let mut read_dir = tokio::fs::read_dir(parent)
+            .await
+            .map_err(|e| ConfigError::FileOperationError(e.to_string()))?;
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        loop {
+            match read_dir.next_entry().await {
+                Ok(Some(entry)) => {
+                    let path = entry.path();
+                    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    if fname.starts_with("warp.backup.") && fname.ends_with(".sqlite") {
+                        files.push(path);
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => return Err(ConfigError::FileOperationError(e.to_string())),
+            }
+        }
+        if files.len() <= retention {
+            return Ok(());
+        }
+        files.sort();
+        let remove_count = files.len() - retention;
+        for path in files.into_iter().take(remove_count) {
+            if let Err(err) = tokio::fs::remove_file(&path).await {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "Failed to remove old Warp SQLite backup during retention prune"
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "warp-sqlite")]
@@ -240,6 +280,13 @@ impl ConfigStorage for WarpSqliteStorage {
         // Ensure changes visible to readers when in WAL
         let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await;
         let _ = sqlx::query("PRAGMA optimize").execute(&pool).await;
+
+        if policy.should_backup() {
+            if let Some(limit) = policy.retention_limit() {
+                Self::prune_warp_sqlite_backups(&path, limit).await?;
+            }
+        }
+
         Ok(backup_path)
     }
 
