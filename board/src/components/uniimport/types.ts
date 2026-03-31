@@ -158,6 +158,10 @@ export interface ServerInstallManualFormProps {
 	onClose: () => void;
 	onSubmit: (draft: ServerInstallDraft) => Promise<void> | void;
 	onSubmitMultiple?: (drafts: ServerInstallDraft[]) => Promise<void> | void;
+	/** Optional callback to refresh the server from the registry */
+	onRefreshFromRegistry?: () => void;
+	/** Whether the server is currently being refreshed from the registry */
+	isRefreshingRegistry?: boolean;
 	/**
 	 * Controls whether the form behaves as a creation flow, edit experience, or market import.
 	 * Edit mode disables ingest-only UX like drag & drop and forces JSON view to be read-only.

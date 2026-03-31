@@ -3,6 +3,7 @@ import type { RegistryServerEntry } from "../../lib/types";
 export interface MarketCardProps {
 	server: RegistryServerEntry;
 	onPreview: (server: RegistryServerEntry) => void;
+	onInstall: (server: RegistryServerEntry) => void;
 	onHide: (server: RegistryServerEntry) => void;
 	enableBlacklist: boolean;
 }
@@ -42,6 +43,7 @@ export interface ServerGridProps {
 		totalPages: number | null;
 	};
 	onServerPreview: (server: RegistryServerEntry) => void;
+	onServerInstall: (server: RegistryServerEntry) => void;
 	onServerHide: (server: RegistryServerEntry) => void;
 	enableBlacklist: boolean;
 	onNextPage: () => void;
@@ -58,8 +60,10 @@ export interface MarketSearchProps {
 	onSearchChange: (value: string) => void;
 	sort: SortOption;
 	onSortChange: (value: SortOption) => void;
-	onRefresh: () => void;
 	isLoading: boolean;
+	lastSyncedAt?: string;
+	onSync: () => Promise<void>;
+	isSyncing: boolean;
 }
 
 export interface UseMarketDataReturn {
@@ -84,4 +88,7 @@ export interface UseMarketDataReturn {
 	onItemsPerPageChange: (itemsPerPage: number) => void;
 	isPaginationActionLoading: boolean;
 	onRefresh: () => void;
+	lastSyncedAt?: string;
+	onSync: () => Promise<void>;
+	isSyncing: boolean;
 }

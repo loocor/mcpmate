@@ -1,5 +1,11 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ClipboardPaste, Loader2, RotateCcw, Target } from "lucide-react";
+import {
+	ClipboardPaste,
+	Loader2,
+	RotateCcw,
+	Target,
+	RefreshCw,
+} from "lucide-react";
 import {
 	forwardRef,
 	useCallback,
@@ -64,6 +70,8 @@ export const ServerInstallManualForm = forwardRef<
 			onClose,
 			onSubmit,
 			onSubmitMultiple,
+			onRefreshFromRegistry,
+			isRefreshingRegistry,
 			mode = "create",
 			initialDraft,
 			allowJsonEditing,
@@ -734,7 +742,6 @@ export const ServerInstallManualForm = forwardRef<
 				setIsDropZoneCollapsed(true);
 				setIngestMessage(ingestMessages.success);
 				setIngestError(null);
-				setActiveTab("core");
 			},
 			getCurrentDraft: () => {
 				const values = getValues();
@@ -1206,33 +1213,50 @@ export const ServerInstallManualForm = forwardRef<
 								>
 									{cancelLabel}
 								</Button>
-								{isMarketMode ? (
-									<Button
-										type="button"
-										onClick={onPreview}
-										disabled={isSubmitting}
-									>
-										{isSubmitting ? (
-											<>
+								<div className="flex items-center gap-3">
+									{onRefreshFromRegistry && activeTab === "meta" && (
+										<Button
+											type="button"
+											variant="outline"
+											onClick={onRefreshFromRegistry}
+											disabled={isSubmitting || isRefreshingRegistry}
+										>
+											{isRefreshingRegistry ? (
 												<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-												{previewingLabel}
-											</>
-										) : (
-											previewLabel
-										)}
-									</Button>
-								) : (
-									<Button type="submit" disabled={isSubmitting}>
-										{isSubmitting ? (
-											<>
-												<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-												{pendingButtonLabel}
-											</>
-										) : (
-											submitButtonLabel
-										)}
-									</Button>
-								)}
+											) : (
+												<RefreshCw className="mr-2 h-4 w-4" />
+											)}
+											{t("manual.refreshFromRegistry", { defaultValue: "Refresh from Registry" })}
+										</Button>
+									)}
+									{isMarketMode ? (
+										<Button
+											type="button"
+											onClick={onPreview}
+											disabled={isSubmitting}
+										>
+											{isSubmitting ? (
+												<>
+													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+													{previewingLabel}
+												</>
+											) : (
+												previewLabel
+											)}
+										</Button>
+									) : (
+										<Button type="submit" disabled={isSubmitting}>
+											{isSubmitting ? (
+												<>
+													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+													{pendingButtonLabel}
+												</>
+											) : (
+												submitButtonLabel
+											)}
+										</Button>
+									)}
+								</div>
 							</div>
 						</DrawerFooter>
 					</form>

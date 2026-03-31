@@ -14,6 +14,7 @@ export function ServerGrid({
 	isEmpty,
 	pagination,
 	onServerPreview,
+	onServerInstall,
 	onServerHide,
 	enableBlacklist,
 	onNextPage,
@@ -98,6 +99,7 @@ export function ServerGrid({
 									key={`${server.name}-${server.version}`}
 									server={server}
 									onPreview={onServerPreview}
+									onInstall={onServerInstall}
 									onHide={onServerHide}
 									enableBlacklist={enableBlacklist}
 								/>

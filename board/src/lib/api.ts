@@ -447,6 +447,15 @@ export const serializeMetaForApi = (
 		payload.extras = meta.extras;
 	}
 
+	if (Array.isArray(meta.icons) && meta.icons.length > 0) {
+		payload.icons = meta.icons.map((icon) => {
+			const normalized: Record<string, string> = { src: icon.src };
+			if (icon.mimeType) normalized.mimeType = icon.mimeType;
+			if (icon.sizes) normalized.sizes = icon.sizes;
+			return normalized;
+		});
+	}
+
 	return Object.keys(payload).length > 0 ? payload : undefined;
 };
 
@@ -812,6 +821,71 @@ export const serversApi = {
 				instances: [],
 			};
 		}
+	},
+
+	refreshRegistryMetadata: async (id: string): Promise<ServerDetail> => {
+		const resp = await fetchApi<ServerDetailsResp>(
+			`/api/mcp/registry/servers/refresh`,
+			{
+				method: "POST",
+				body: JSON.stringify({ id }),
+			},
+		);
+		const data = extractApiData(resp) as Record<string, unknown>;
+		const enhanced = enrichServerRecord(data);
+		const enabledValue =
+			typeof enhanced?.enabled === "boolean"
+				? enhanced.enabled
+				: typeof enhanced?.globally_enabled === "boolean"
+					? enhanced.globally_enabled
+					: undefined;
+		const instances = Array.isArray(enhanced?.instances)
+			? (enhanced.instances as InstanceSummary[])
+			: [];
+		const detailRecord = enhanced as Record<string, unknown>;
+		const registryServerId = asStringOrNull(
+			detailRecord.registry_server_id ?? detailRecord.registryServerId,
+		);
+		const serverType =
+			toTrimmedString(detailRecord.server_type as string | undefined) ??
+			toTrimmedString(detailRecord.kind as string | undefined);
+		return {
+			id: asOptionalString(detailRecord.id) ?? id,
+			name: asOptionalString(detailRecord.name) ?? id,
+			status:
+				(typeof enhanced?.status === "string" && enhanced.status) || "unknown",
+			server_type: serverType,
+			registry_server_id: registryServerId,
+			enabled: enabledValue,
+			globally_enabled:
+				typeof enhanced?.globally_enabled === "boolean"
+					? enhanced.globally_enabled
+					: undefined,
+			enabled_in_suits:
+				typeof enhanced?.enabled_in_suits === "boolean"
+					? enhanced.enabled_in_suits
+					: undefined,
+			enabled_in_profile:
+				typeof enhanced?.enabled_in_profile === "boolean"
+					? enhanced.enabled_in_profile
+					: undefined,
+			instances,
+			command: asOptionalString(detailRecord.command),
+			args: Array.isArray(enhanced?.args)
+				? (enhanced.args as string[])
+				: undefined,
+			env:
+				typeof enhanced?.env === "object" && enhanced?.env !== null
+					? (enhanced.env as Record<string, string>)
+					: undefined,
+			url: typeof enhanced?.url === "string" ? enhanced.url : undefined,
+			headers:
+				typeof enhanced?.headers === "object" && enhanced?.headers !== null
+					? (enhanced.headers as Record<string, string>)
+					: undefined,
+			meta: enhanced?.meta,
+			icons: enhanced?.icons,
+		};
 	},
 
 	getInstances: async (serverId: string) => {

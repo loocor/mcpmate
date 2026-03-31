@@ -153,7 +153,7 @@ export function MetaFields({
 			<div className="flex items-center gap-4">
 				<Label htmlFor={metaRepositoryId} className="w-20 text-right">
 					{t("manual.fields.meta.repo.id.label", {
-						defaultValue: "Repository Entry ID",
+						defaultValue: "Repository Entry ID (Metadata)",
 					})}
 				</Label>
 				<div className="flex-1">
@@ -161,7 +161,7 @@ export function MetaFields({
 						id={metaRepositoryId}
 						{...register("meta_repository_id")}
 						placeholder={t("manual.fields.meta.repo.id.placeholder", {
-							defaultValue: "Optional identifier",
+							defaultValue: "Optional metadata identifier",
 						})}
 					/>
 				</div>

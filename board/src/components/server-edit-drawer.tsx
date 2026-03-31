@@ -1,4 +1,6 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { notifySuccess, notifyError } from "../lib/notify";
 import type { ServerInstallDraft } from "../hooks/use-server-install-pipeline";
 import type {
 	MCPServerConfig,
@@ -6,7 +8,8 @@ import type {
 	ServerIcon,
 	ServerMetaInfo,
 } from "../lib/types";
-import { ServerInstallManualForm } from "./server-uni-import";
+import { serversApi } from "../lib/api";
+import { ServerInstallManualForm, type ServerInstallManualFormHandle } from "./server-uni-import";
 
 interface ServerEditDrawerProps {
 	server: ServerDetail | null;
@@ -37,19 +40,18 @@ const trim = (value?: string | null): string | undefined => {
 const sanitizeRecord = (
 	record?: Record<string, string> | null,
 ): Record<string, string> | undefined => {
-	if (!record) return undefined;
-	const next: Record<string, string> = {};
-	for (const [rawKey, rawValue] of Object.entries(record)) {
-		const key = rawKey?.trim();
-		if (!key) continue;
-		const value = rawValue == null ? "" : String(rawValue).trim();
-		next[key] = value;
-	}
-	return Object.keys(next).length ? next : undefined;
+	return sanitizeStringRecord(record, true);
 };
 
 const sanitizeParams = (
 	record?: Record<string, string> | null,
+): Record<string, string> | undefined => {
+	return sanitizeStringRecord(record, false);
+};
+
+const sanitizeStringRecord = (
+	record: Record<string, string> | null | undefined,
+	trimValue: boolean,
 ): Record<string, string> | undefined => {
 	if (!record) return undefined;
 	const next: Record<string, string> = {};
@@ -57,9 +59,41 @@ const sanitizeParams = (
 		const key = rawKey?.trim();
 		if (!key) continue;
 		const value = rawValue == null ? "" : String(rawValue);
-		next[key] = value;
+		next[key] = trimValue ? value.trim() : value;
 	}
 	return Object.keys(next).length ? next : undefined;
+};
+
+const buildRepositoryPayload = (
+	repository?: ServerMetaInfo["repository"],
+): NonNullable<ServerMetaInfo["repository"]> | undefined => {
+	if (!repository) return undefined;
+	const repoPayload: NonNullable<ServerMetaInfo["repository"]> = {};
+	const url = trim(repository.url ?? undefined);
+	const source = trim(repository.source ?? undefined);
+	const subfolder = trim(repository.subfolder ?? undefined);
+	const id = trim(repository.id ?? undefined);
+	if (url) repoPayload.url = url;
+	if (source) repoPayload.source = source;
+	if (subfolder) repoPayload.subfolder = subfolder;
+	if (id) repoPayload.id = id;
+	return Object.keys(repoPayload).length ? repoPayload : undefined;
+};
+
+const mergeRefreshedMeta = (
+	currentMeta: ServerInstallDraft["meta"],
+	refreshedMeta: ServerMetaInfo,
+): ServerInstallDraft["meta"] => {
+	return {
+		...currentMeta,
+		description: refreshedMeta.description ?? currentMeta?.description,
+		version: refreshedMeta.version ?? currentMeta?.version,
+		websiteUrl: refreshedMeta.websiteUrl ?? currentMeta?.websiteUrl,
+		repository: refreshedMeta.repository ?? currentMeta?.repository,
+		icons: refreshedMeta.icons ?? currentMeta?.icons,
+		_meta: refreshedMeta._meta ?? currentMeta?._meta,
+		extras: refreshedMeta.extras ?? currentMeta?.extras,
+	};
 };
 
 const buildMetaFromServer = (
@@ -75,21 +109,8 @@ const buildMetaFromServer = (
 	if (version) meta.version = version;
 	if (websiteUrl) meta.websiteUrl = websiteUrl;
 
-	const repository = source?.repository ?? undefined;
-	if (repository) {
-		const repoPayload: NonNullable<ServerMetaInfo["repository"]> = {};
-		const url = trim(repository.url ?? undefined);
-		const repoSource = trim(repository.source ?? undefined);
-		const subfolder = trim(repository.subfolder ?? undefined);
-		const id = trim(repository.id ?? undefined);
-		if (url) repoPayload.url = url;
-		if (repoSource) repoPayload.source = repoSource;
-		if (subfolder) repoPayload.subfolder = subfolder;
-		if (id) repoPayload.id = id;
-		if (Object.keys(repoPayload).length) {
-			meta.repository = repoPayload;
-		}
-	}
+	const repository = buildRepositoryPayload(source?.repository ?? undefined);
+	if (repository) meta.repository = repository;
 
 	if (source?._meta) meta._meta = source._meta;
 	if (source?.extras) meta.extras = source.extras;
@@ -215,21 +236,8 @@ const buildMetaPayload = (
 	if (version) payload.version = version;
 	if (websiteUrl) payload.websiteUrl = websiteUrl;
 
-	const repository = meta.repository;
-	if (repository) {
-		const repoPayload: NonNullable<ServerMetaInfo["repository"]> = {};
-		const url = trim(repository.url ?? undefined);
-		const source = trim(repository.source ?? undefined);
-		const subfolder = trim(repository.subfolder ?? undefined);
-		const id = trim(repository.id ?? undefined);
-		if (url) repoPayload.url = url;
-		if (source) repoPayload.source = source;
-		if (subfolder) repoPayload.subfolder = subfolder;
-		if (id) repoPayload.id = id;
-		if (Object.keys(repoPayload).length) {
-			payload.repository = repoPayload;
-		}
-	}
+	const repository = buildRepositoryPayload(meta.repository);
+	if (repository) payload.repository = repository;
 
 	if (meta._meta) payload._meta = meta._meta;
 	if (meta.extras) payload.extras = meta.extras;
@@ -270,6 +278,10 @@ export function ServerEditDrawer({
 	onSubmit,
 	onUpdated,
 }: ServerEditDrawerProps) {
+	const { t } = useTranslation("servers");
+	const formRef = useRef<ServerInstallManualFormHandle>(null);
+	const [isRefreshing, setIsRefreshing] = useState(false);
+
 	const initialDraft = useMemo(
 		() => (server ? convertServerDetailToDraft(server) : null),
 		[server],
@@ -285,14 +297,47 @@ export function ServerEditDrawer({
 		[onSubmit, onUpdated, server],
 	);
 
+	const handleRefreshFromRegistry = useCallback(async () => {
+		if (!server?.registry_server_id || !server.id) return;
+		try {
+			setIsRefreshing(true);
+			const currentDraft = formRef.current?.getCurrentDraft();
+			if (!currentDraft) return;
+
+			const refreshed = await serversApi.refreshRegistryMetadata(server.id);
+			const refreshedMeta = refreshed.meta;
+			if (!refreshedMeta) {
+				notifyError(
+					t("manual.refresh.notFound", { defaultValue: "Server not found in registry" }),
+				);
+				return;
+			}
+
+			const nextDraft: ServerInstallDraft = {
+				...currentDraft,
+				meta: mergeRefreshedMeta(currentDraft.meta, refreshedMeta),
+			};
+
+			formRef.current?.loadDraft(nextDraft);
+			notifySuccess(t("manual.refresh.success", { defaultValue: "Metadata refreshed from registry" }));
+		} catch (error) {
+			notifyError(t("manual.refresh.error", { defaultValue: "Failed to refresh metadata" }), String(error));
+		} finally {
+			setIsRefreshing(false);
+		}
+	}, [server, t]);
+
 	return (
 		<ServerInstallManualForm
+			ref={formRef}
 			isOpen={isOpen}
 			onClose={onClose}
 			onSubmit={handleSubmit}
 			mode="edit"
 			allowJsonEditing={false}
 			initialDraft={initialDraft ?? undefined}
+			onRefreshFromRegistry={server?.registry_server_id ? handleRefreshFromRegistry : undefined}
+			isRefreshingRegistry={isRefreshing}
 		/>
 	);
 }

@@ -1,5 +1,5 @@
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
-import { getOfficialMeta } from "../../lib/registry";
+import { getCanonicalRegistryServerId } from "../../lib/registry";
 import type { RegistryServerEntry } from "../../lib/types";
 import type { RemoteOption } from "./types";
 
@@ -39,11 +39,7 @@ export function formatServerName(raw: string) {
 }
 
 export function getRegistryIdentity(server: RegistryServerEntry): string {
-	const official = getOfficialMeta(server);
-	if (official?.serverId) {
-		return official.serverId;
-	}
-	return `${server.name}@${server.version}`;
+	return getCanonicalRegistryServerId(server);
 }
 
 // Market mode helper functions

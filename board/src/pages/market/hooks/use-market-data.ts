@@ -1,7 +1,11 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useCursorPagination } from "../../../hooks/use-cursor-pagination";
-import { fetchRegistryServers, getOfficialMeta } from "../../../lib/registry";
+import {
+	fetchCachedRegistryServers,
+	getOfficialMeta,
+	syncRegistry,
+} from "../../../lib/registry";
 import { useAppStore } from "../../../lib/store";
 import type { RegistryServerEntry } from "../../../lib/types";
 import type { UseMarketDataReturn } from "../types";
@@ -19,7 +23,6 @@ export function useMarketData(
 	);
 
 	const handlePaginationReset = useCallback(() => {
-		// Clear query cache when resetting pagination
 		queryClient.removeQueries({ queryKey: ["market", "registry"] });
 	}, [queryClient]);
 
@@ -31,7 +34,7 @@ export function useMarketData(
 	const registryQuery = useQuery({
 		queryKey: ["market", "registry", search, pagination.currentPage, itemsPerPage],
 		queryFn: async () => {
-			const result = await fetchRegistryServers({
+			const result = await fetchCachedRegistryServers({
 				cursor: pagination.currentCursor,
 				search: search || undefined,
 				limit: pagination.itemsPerPage,
@@ -42,6 +45,15 @@ export function useMarketData(
 		staleTime: 1000 * 60 * 5,
 	});
 
+	const syncMutation = useMutation({
+		mutationFn: async () => {
+			await syncRegistry();
+			queryClient.removeQueries({ queryKey: ["market", "registry"] });
+			return registryQuery.refetch();
+		},
+		onSuccess: () => {},
+	});
+
 	// Update pagination state when query data changes
 	useEffect(() => {
 		if (registryQuery.data?.metadata) {
@@ -49,7 +61,7 @@ export function useMarketData(
 				Boolean(registryQuery.data.metadata.nextCursor),
 			);
 		}
-	}, [registryQuery.data?.metadata, pagination.setHasNextPage]);
+	}, [registryQuery.data?.metadata, pagination]);
 
 	const blacklistIds = useMemo(() => {
 		return new Set(marketBlacklist.map((entry) => entry.serverId));
@@ -119,7 +131,7 @@ export function useMarketData(
 
 	const handleRefresh = useCallback(() => {
 		queryClient.removeQueries({ queryKey: ["market", "registry"] });
-		registryQuery.refetch();
+		void registryQuery.refetch();
 	}, [queryClient, registryQuery]);
 
 	const handleNextPage = useCallback(() => {
@@ -168,12 +180,12 @@ export function useMarketData(
 				}
 				targetPage += 1;
 
-				const result = await fetchRegistryServers({
+				const result = await fetchCachedRegistryServers({
 					cursor: nextCursor,
 					search: search || undefined,
 					limit: itemsPerPage,
 				});
-				nextCursor = result.metadata.nextCursor;
+				nextCursor = result.metadata?.nextCursor;
 			}
 
 			pagination.setPaginationState(targetPage, history, false);
@@ -221,12 +233,12 @@ export function useMarketData(
 					}
 					targetPagePtr += 1;
 
-					const result = await fetchRegistryServers({
+					const result = await fetchCachedRegistryServers({
 						cursor: nextCursor,
 						search: search || undefined,
 						limit: itemsPerPage,
 					});
-					nextCursor = result.metadata.nextCursor ?? undefined;
+					nextCursor = result.metadata?.nextCursor ?? undefined;
 				}
 
 				if (targetPagePtr !== p) {
@@ -277,5 +289,10 @@ export function useMarketData(
 		onItemsPerPageChange: handleItemsPerPageChange,
 		isPaginationActionLoading,
 		onRefresh: handleRefresh,
+		lastSyncedAt: registryQuery.data?.last_synced_at,
+		onSync: async () => {
+			await syncMutation.mutateAsync();
+		},
+		isSyncing: syncMutation.isPending,
 	};
 }

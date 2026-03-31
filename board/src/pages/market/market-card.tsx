@@ -1,7 +1,9 @@
-import { ExternalLink, EyeOff, Plug } from "lucide-react";
+import { ExternalLink, EyeOff, Plug, Download } from "lucide-react";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Avatar, AvatarFallback } from "../../components/ui/avatar";
 import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import {
 	Card,
 	CardDescription,
@@ -22,10 +24,13 @@ import {
 export function MarketCard({
 	server,
 	onPreview,
+	onInstall,
 	onHide,
 	enableBlacklist,
 }: MarketCardProps) {
+	const { t } = useTranslation("market");
 	const official = getOfficialMeta(server);
+
 	const transportBadges = useMemo(() => {
 		const set = new Set(
 			(server.remotes ?? [])
@@ -43,9 +48,9 @@ export function MarketCard({
 	}, [server.packages, server.remotes]);
 
 	const publishedLabel = official?.updatedAt ?? official?.publishedAt;
-    const absoluteTimestamp = publishedLabel
-        ? formatLocalDateTime(publishedLabel)
-        : null;
+	const absoluteTimestamp = publishedLabel
+		? formatLocalDateTime(publishedLabel)
+		: null;
 	const displayName = formatServerName(server.name);
 
 	const supportsPreview = useMemo(() => hasPreviewableOption(server), [server]);
@@ -53,12 +58,18 @@ export function MarketCard({
 	const handleCardClick = () => {
 		if (!supportsPreview) {
 			notifyInfo(
-				"Preview unavailable",
-				"This registry entry does not expose a previewable transport option.",
+				t("notifications.previewUnavailable", { defaultValue: "Preview unavailable" }),
+				t("notifications.noPreviewableTransport", { defaultValue: "This registry entry does not expose a previewable transport option." }),
 			);
 			return;
 		}
 		onPreview(server);
+	};
+
+	const handleInstall = (e: React.MouseEvent | React.KeyboardEvent) => {
+		e.stopPropagation();
+		e.preventDefault();
+		onInstall(server);
 	};
 
 	return (
@@ -116,19 +127,19 @@ export function MarketCard({
 
 						{/* 版本和更新时间 - 与标题左对齐 */}
 						<div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-							<span>{`Version ${server.version}`}</span>
-                        {absoluteTimestamp && (
-                            <>
-                                <span>•</span>
-                                <span>Updated {absoluteTimestamp}</span>
-                            </>
-                        )}
+							<span>{t("server.version", { defaultValue: "Version {{version}}", version: server.version })}</span>
+						{absoluteTimestamp && (
+							<>
+								<span>•</span>
+								<span>{t("server.updated", { defaultValue: "Updated {{time}}", time: absoluteTimestamp })}</span>
+							</>
+						)}
 						</div>
 
 						{/* 描述 - 与标题左对齐 */}
 						<div className="h-15 flex items-start">
 							<CardDescription className="text-sm text-slate-500 line-clamp-3 leading-5">
-								{truncate(server.description, 320) || "N/A"}
+								{truncate(server.description, 320) || t("server.na", { defaultValue: "N/A" })}
 							</CardDescription>
 						</div>
 					</div>
@@ -162,7 +173,16 @@ export function MarketCard({
 						</div>
 					)}
 				</div>
-				<div className="flex items-center gap-3">
+				<div className="flex items-center gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						className="h-7 px-2 text-xs"
+						onClick={handleInstall}
+					>
+						<Download className="h-3 w-3 mr-1" />
+						{t("buttons.install", { defaultValue: "Install" })}
+					</Button>
 					<button
 						type="button"
 						onClick={(event) => {
@@ -172,8 +192,8 @@ export function MarketCard({
 								window.open(target, "_blank", "noopener,noreferrer");
 							} else {
 								notifyInfo(
-									"Registry entry",
-									"No external project URL provided for this server.",
+									t("notifications.registryEntry", { defaultValue: "Registry entry" }),
+									t("notifications.noProjectUrl", { defaultValue: "No external project URL provided for this server." }),
 								);
 							}
 						}}
@@ -186,14 +206,14 @@ export function MarketCard({
 									window.open(target, "_blank", "noopener,noreferrer");
 								} else {
 									notifyInfo(
-										"Registry entry",
-										"No external project URL provided for this server.",
+										t("notifications.registryEntry", { defaultValue: "Registry entry" }),
+										t("notifications.noProjectUrl", { defaultValue: "No external project URL provided for this server." }),
 									);
 								}
 							}
 						}}
 						className={cn(
-							"inline-flex items-center justify-center rounded-full border border-transparent bg-transparent h-5 w-5 text-primary transition hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+							"inline-flex items-center justify-center rounded-full border border-transparent bg-transparent h-7 w-7 text-primary transition hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
 							!server.repository?.url && !server.websiteUrl
 								? "cursor-not-allowed opacity-60"
 								: "",

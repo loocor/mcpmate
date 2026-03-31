@@ -5,6 +5,7 @@ export const marketTranslations = {
 		buttons: {
 			refresh: "Refresh",
 			top: "Top",
+			install: "Install",
 		},
 		search: {
 			placeholder: "Search by server name",
@@ -21,6 +22,15 @@ export const marketTranslations = {
 			importFailed: "Import failed",
 			reviewImportedSnippet:
 				"Review the imported snippet before completing the setup.",
+			previewUnavailable: "Preview unavailable",
+			noPreviewableTransport: "This registry entry does not expose a previewable transport option.",
+			noProjectUrl: "No external project URL provided for this server.",
+			registryEntry: "Registry entry",
+		},
+		server: {
+			version: "Version {{version}}",
+			updated: "Updated {{time}}",
+			na: "N/A",
 		},
 		emptyState: {
 			noEntriesMatched:
@@ -38,6 +48,33 @@ export const marketTranslations = {
 			packageInstallation: "Package installation",
 		},
 		officialRegistry: "Official MCP Registry",
+		detail: {
+			repositoryRegistrySection: "Repository & Registry",
+			repositorySection: "Repository & Project",
+			repositorySource: "Repository source",
+			repositorySubfolder: "Repository subfolder",
+			repositoryId: "Repository Entry ID (Metadata)",
+			repositoryIdHint:
+				"Repository Entry ID is optional repository metadata and is not used as the managed server linkage key.",
+			registryMeta: "Registry metadata",
+			officialStatus: "Official status",
+			publishedAt: "Published at",
+			updatedAt: "Updated at",
+			versionId: "Version ID",
+			serverId: "Registry ID (Canonical Key)",
+			registryIdHint:
+				"MCPMate links managed servers by official server.name (official.serverId is treated as an alias only when equivalent).",
+			service: "Service",
+			runtime: "Runtime",
+			description: "Description",
+			readme: "README",
+			readmeLoading: "Loading README...",
+			readmeUnavailable: "README is unavailable because repository URL is missing.",
+			readmeUnsupported: "README preview currently supports GitHub repositories only.",
+			readmeFetchFailed: "Failed to load README content.",
+			readmeEmpty: "README content is empty.",
+			splitResize: "Resize registry and README panels",
+		},
 	},
     "zh-CN": {
         title: "浏览并获取 MCP 服务源",
@@ -45,6 +82,7 @@ export const marketTranslations = {
 		buttons: {
 			refresh: "刷新",
 			top: "顶部",
+			install: "安装",
 		},
 		search: {
 			placeholder: "按服务器名称搜索",
@@ -59,7 +97,16 @@ export const marketTranslations = {
 			serverHidden: "服务器已隐藏",
 			configurationDetected: "检测到配置",
 			importFailed: "导入失败",
-			reviewImportedSnippet: "在完成设置之前，请查看导入的代码片段。",
+			reviewImportedSnippet: "请在完成设置之前检查导入的代码片段。",
+			previewUnavailable: "无法预览",
+			noPreviewableTransport: "此注册表项未提供可预览的传输选项。",
+			noProjectUrl: "此服务器未提供外部项目 URL。",
+			registryEntry: "注册表项",
+		},
+		server: {
+			version: "版本 {{version}}",
+			updated: "更新于 {{time}}",
+			na: "无",
 		},
 		emptyState: {
 			noEntriesMatched:
@@ -77,6 +124,33 @@ export const marketTranslations = {
 			packageInstallation: "包安装",
 		},
 		officialRegistry: "官方 MCP 注册中心",
+		detail: {
+			repositoryRegistrySection: "仓库与注册信息",
+			repositorySection: "仓库与项目",
+			repositorySource: "仓库来源",
+			repositorySubfolder: "仓库子目录",
+			repositoryId: "仓库条目 ID（元数据）",
+			repositoryIdHint:
+				"仓库条目 ID 仅用于仓库元数据展示，不作为托管服务器关联官方注册表的主键。",
+			registryMeta: "注册表元数据",
+			officialStatus: "官方状态",
+			publishedAt: "发布时间",
+			updatedAt: "更新时间",
+			versionId: "版本 ID",
+			serverId: "注册表 ID（主关联键）",
+			registryIdHint:
+				"MCPMate 以官方 server.name 作为托管服务器关联键（仅在等价时将 official.serverId 视为别名）。",
+			service: "服务",
+			runtime: "运行时",
+			description: "描述",
+			readme: "README",
+			readmeLoading: "正在加载 README...",
+			readmeUnavailable: "缺少仓库 URL，无法加载 README。",
+			readmeUnsupported: "README 预览当前仅支持 GitHub 仓库。",
+			readmeFetchFailed: "加载 README 内容失败。",
+			readmeEmpty: "README 内容为空。",
+			splitResize: "左右拖动调整仓库信息与 README 区域宽度",
+		},
 	},
     "ja-JP": {
         title: "MCP サーバーを探索・インストール",
@@ -84,6 +158,7 @@ export const marketTranslations = {
 		buttons: {
 			refresh: "更新",
 			top: "トップ",
+			install: "インストール",
 		},
 		search: {
 			placeholder: "サーバー名で検索",
@@ -95,11 +170,20 @@ export const marketTranslations = {
 			failedToLoadRegistry: "レジストリの読み込みに失敗しました",
 		},
 		notifications: {
-			serverHidden: "サーバーが非表示になりました",
-			configurationDetected: "設定が検出されました",
+			serverHidden: "サーバーを非表示にしました",
+			configurationDetected: "構成が検出されました",
 			importFailed: "インポートに失敗しました",
 			reviewImportedSnippet:
-				"設定を完了する前に、インポートされたスニペットを確認してください。",
+				"セットアップを完了する前に、インポートされたスニペットを確認してください。",
+			previewUnavailable: "プレビューを利用できません",
+			noPreviewableTransport: "このレジストリエントリはプレビュー可能なトランスポートオプションを公開していません。",
+			noProjectUrl: "このサーバーには外部プロジェクトURLが提供されていません。",
+			registryEntry: "レジストリエントリ",
+		},
+		server: {
+			version: "バージョン {{version}}",
+			updated: "更新日 {{time}}",
+			na: "N/A",
 		},
 		emptyState: {
 			noEntriesMatched:
@@ -118,5 +202,32 @@ export const marketTranslations = {
 			packageInstallation: "パッケージインストール",
 		},
 		officialRegistry: "公式 MCP レジストリ",
+		detail: {
+			repositoryRegistrySection: "リポジトリとレジストリ情報",
+			repositorySection: "リポジトリとプロジェクト",
+			repositorySource: "リポジトリソース",
+			repositorySubfolder: "リポジトリサブフォルダ",
+			repositoryId: "リポジトリエントリ ID（メタデータ）",
+			repositoryIdHint:
+				"リポジトリエントリ ID はリポジトリメタデータ専用であり、管理対象サーバーと公式レジストリの関連キーには使われません。",
+			registryMeta: "レジストリメタデータ",
+			officialStatus: "公式ステータス",
+			publishedAt: "公開日時",
+			updatedAt: "更新日時",
+			versionId: "バージョン ID",
+			serverId: "レジストリ ID（正規キー）",
+			registryIdHint:
+				"MCPMate は公式 server.name を関連キーとして使用し、official.serverId は同値の場合のみ別名として扱います。",
+			service: "サービス",
+			runtime: "ランタイム",
+			description: "説明",
+			readme: "README",
+			readmeLoading: "README を読み込み中...",
+			readmeUnavailable: "リポジトリ URL がないため README を読み込めません。",
+			readmeUnsupported: "README プレビューは現在 GitHub リポジトリのみ対応しています。",
+			readmeFetchFailed: "README の読み込みに失敗しました。",
+			readmeEmpty: "README の内容が空です。",
+			splitResize: "ドラッグしてレジストリ情報と README の幅を調整",
+		},
 	},
 } as const;

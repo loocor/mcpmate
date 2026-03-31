@@ -17,13 +17,23 @@ export function MarketSearch({
 	onSearchChange,
 	sort,
 	onSortChange,
-	onRefresh,
 	isLoading,
+	lastSyncedAt,
+	onSync,
+	isSyncing,
 }: MarketSearchProps) {
 	const { t } = useTranslation();
 	usePageTranslations("market");
 	return (
 		<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+			{lastSyncedAt ? (
+				<div className="text-xs text-slate-500 mr-2">
+					{t("market:search.lastSyncedAt", {
+						defaultValue: "Last synced: {{time}}",
+						time: new Date(lastSyncedAt).toLocaleString(),
+					})}
+				</div>
+			) : null}
 			<div className="flex-1 sm:flex-none">
 				<Input
 					value={search}
@@ -57,11 +67,13 @@ export function MarketSearch({
 				variant="outline"
 				size="sm"
 				className="h-9 w-9 shrink-0 p-0"
-				onClick={onRefresh}
-				disabled={isLoading}
-				title={t("market:buttons.refresh", { defaultValue: "Refresh" })}
+				onClick={() => {
+					void onSync();
+				}}
+				disabled={isLoading || isSyncing}
+				title={t("market:buttons.refresh", { defaultValue: "Refresh & Sync" })}
 			>
-				<RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+				<RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
 			</Button>
 		</div>
 	);

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-26T17:21:31Z",
+  "generatedAt": "2026-03-30T14:50:25Z",
   "sections": [
     {
       "id": "backend",
@@ -1218,6 +1218,16 @@
           "licenseFile": ""
         },
         {
+          "name": "gpt-tokenizer",
+          "version": "3.4.0",
+          "license": "MIT",
+          "repository": "https://github.com/niieani/gpt-tokenizer.git",
+          "homepage": "https://github.com/niieani/gpt-tokenizer#readme",
+          "description": "A pure JavaScript implementation of a BPE tokenizer (Encoder/Decoder) for GPT-2 / GPT-3 / GPT-4 and other OpenAI models",
+          "author": "Bazyli Brzoska <npm@invent.life> (https://github.com/niieani)",
+          "licenseFile": ""
+        },
+        {
           "name": "i18next",
           "version": "25.5.3",
           "license": "MIT",
@@ -1265,6 +1275,16 @@
           "homepage": "https://lucide.dev",
           "description": "A Lucide icon library package for React applications",
           "author": "Eric Fennis",
+          "licenseFile": ""
+        },
+        {
+          "name": "prism-react-renderer",
+          "version": "2.4.1",
+          "license": "MIT",
+          "repository": "https://github.com/FormidableLabs/prism-react-renderer",
+          "homepage": "",
+          "description": "Renders highlighted Prism output using React",
+          "author": "",
           "licenseFile": ""
         },
         {
@@ -1345,6 +1365,16 @@
           "homepage": "",
           "description": "A Tailwind CSS plugin for creating beautiful animations.",
           "author": "Jamie Kyle <me@thejameskyle.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tiktoken",
+          "version": "1.0.22",
+          "license": "MIT",
+          "repository": "https://github.com/dqbd/tiktoken",
+          "homepage": "",
+          "description": "JS/WASM bindings for tiktoken",
+          "author": "",
           "licenseFile": ""
         },
         {

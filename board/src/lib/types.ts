@@ -17,6 +17,8 @@ export interface RegistryOfficialMeta {
   publishedAt?: string | null;
   updatedAt?: string | null;
   isLatest?: boolean | null;
+  serverId?: string | null;
+  versionId?: string | null;
 }
 
 export interface RegistryMetaPayload {
@@ -127,14 +129,6 @@ export interface RegistryPackage {
   runtimeArguments?: RegistryPackageArgument[] | null;
 }
 
-export interface RegistryOfficialMeta {
-  serverId: string;
-  versionId: string;
-  publishedAt: string;
-  updatedAt?: string;
-  isLatest?: boolean;
-}
-
 export interface RegistryServerMeta {
   "io.modelcontextprotocol.registry/official"?: RegistryOfficialMeta;
   "io.modelcontextprotocol.registry/publisher-provided"?: Record<
@@ -146,14 +140,17 @@ export interface RegistryServerMeta {
 
 export interface RegistryServerEntry {
   name: string;
+  title?: string;
   description?: string;
   version: string;
   status?: string;
-  repository?: { url?: string; source?: string; subfolder?: string };
+  repository?: RegistryRepositoryInfo | null;
   websiteUrl?: string;
+  icons?: ServerIcon[];
   remotes?: RegistryTransport[] | null;
   packages?: RegistryPackage[] | null;
   _meta?: RegistryServerMeta;
+  extras?: Record<string, unknown> | null;
   $schema?: string;
 }
 

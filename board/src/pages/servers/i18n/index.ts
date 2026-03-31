@@ -361,6 +361,12 @@ export const serversTranslations = {
 				tipPrefix: "Tip: press",
 				tipSuffix: "to paste instantly.",
 			},
+			refreshFromRegistry: "Refresh from Registry",
+			refresh: {
+				success: "Metadata refreshed from registry",
+				error: "Failed to refresh metadata",
+				notFound: "Server not found in registry",
+			},
 			viewMode: {
 				form: "Form",
 				json: "JSON",
@@ -466,8 +472,8 @@ export const serversTranslations = {
 							placeholder: "Optional subfolder",
 						},
 						id: {
-							label: "Repository Entry ID",
-							placeholder: "Optional identifier",
+							label: "Repository Entry ID (Metadata)",
+							placeholder: "Optional metadata identifier",
 						},
 					},
 					description: {
@@ -986,6 +992,12 @@ export const serversTranslations = {
 				tipPrefix: "提示：按下",
 				tipSuffix: "即可快速粘贴。",
 			},
+			refreshFromRegistry: "从注册表刷新",
+			refresh: {
+				success: "已从注册表刷新元数据",
+				error: "刷新元数据失败",
+				notFound: "在注册表中未找到该服务器",
+			},
 			viewMode: {
 				form: "表单",
 				json: "JSON",
@@ -1090,8 +1102,8 @@ export const serversTranslations = {
 							placeholder: "可选子目录",
 						},
 						id: {
-							label: "仓库条目 ID",
-							placeholder: "可选标识",
+							label: "仓库条目 ID（元数据）",
+							placeholder: "可选元数据标识",
 						},
 					},
 					description: {
@@ -1599,6 +1611,12 @@ export const serversTranslations = {
 				tipPrefix: "ヒント：",
 				tipSuffix: "を押すとすぐに貼り付けできます。",
 			},
+			refreshFromRegistry: "レジストリから更新",
+			refresh: {
+				success: "レジストリからメタデータを更新しました",
+				error: "メタデータの更新に失敗しました",
+				notFound: "レジストリにサーバーが見つかりません",
+			},
 			viewMode: {
 				form: "フォーム",
 				json: "JSON",
@@ -1703,8 +1721,8 @@ export const serversTranslations = {
 							placeholder: "任意のサブフォルダ",
 						},
 						id: {
-							label: "リポジトリ ID",
-							placeholder: "任意の識別子",
+							label: "リポジトリエントリ ID（メタデータ）",
+							placeholder: "任意のメタデータ識別子",
 						},
 					},
 					description: {
