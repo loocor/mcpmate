@@ -150,6 +150,11 @@ Configure management mode and capability source for each AI client.
 
 Browse the official MCP registry and install servers without leaving the app.
 
+- Canonical linkage key: `registry_server_id` (official `server.name`)
+- `official.serverId` is treated as an alias only when equivalent to `server.name`
+- `Repository Entry ID` is preserved as metadata only
+- See docs: [Market registry linkage keys](./docs/features/market-registry-linkage.md)
+
 ![Market](./assets/market.png)
 
 ### Tool Inspector

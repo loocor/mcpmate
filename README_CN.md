@@ -150,6 +150,11 @@ runtime list
 
 在应用内浏览官方 MCP 注册中心并安装服务器。
 
+- 主关联键：`registry_server_id`（对应官方 `server.name`）
+- `official.serverId` 仅在与 `server.name` 等价时作为别名使用
+- `Repository Entry ID` 仅作为仓库元数据保留，不参与托管服务器关联主链路
+- 详见文档：[Market registry linkage keys](./docs/features/market-registry-linkage.md)
+
 ![Market](./assets/market.png)
 
 ### 工具检视器
