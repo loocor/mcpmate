@@ -10,6 +10,10 @@
 
 MCPMate is a comprehensive Model Context Protocol (MCP) management center designed to simplify configuration, reduce resource consumption, and enhance security across the MCP ecosystem.
 
+This is not a brand-new project. I started shaping MCPMate around May 2024, paused active development around October, and recently came back to it with a clearer conviction: as the hype around skills- and CLI-shaped workflows settles into a more reflective phase, the long-term, irreplaceable value of MCP becomes easier to see.
+
+MCPMate was previously developed in private and is now being reopened in public. The direction I care about most at this stage is usability: building on MCPMate’s earlier profile-based approach for removing redundant capabilities in specific scenarios, and continuing to extend its hosted mode toward a more progressively disclosed smart mode (last year I referred to it as a more “aggressive hosted” mode, though the name itself felt somewhat awkward). One goal is to bring some of the lower-friction and lower first-token-cost qualities that people appreciated in skills- and CLI-shaped experiences into MCP itself.
+
 ## Table of Contents
 
 - [Why MCPMate?](#why-mcpmate)
