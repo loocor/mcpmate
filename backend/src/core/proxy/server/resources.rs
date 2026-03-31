@@ -15,6 +15,13 @@ pub(super) async fn list_resources(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourcesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
+    if matches!(client.config_mode.as_deref(), Some("smart")) {
+        return Ok(ListResourcesResult {
+            resources: Vec::new(),
+            next_cursor: None,
+            ..Default::default()
+        });
+    }
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
         server.database.clone(),
         server.profile_service.clone(),
@@ -118,6 +125,13 @@ pub(super) async fn list_resource_templates(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourceTemplatesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
+    if matches!(client.config_mode.as_deref(), Some("smart")) {
+        return Ok(ListResourceTemplatesResult {
+            resource_templates: Vec::new(),
+            next_cursor: None,
+            ..Default::default()
+        });
+    }
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
         server.database.clone(),
         server.profile_service.clone(),
@@ -237,6 +251,12 @@ pub(super) async fn read_resource(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ReadResourceResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
+    if matches!(client.config_mode.as_deref(), Some("smart")) {
+        return Err(McpError::invalid_params(
+            "Smart mode does not expose resources directly; use UCAN broker tools instead".to_string(),
+            None,
+        ));
+    }
     tracing::debug!("Reading resource: {}", request.uri);
 
     let mut lookup_uri = request.uri.clone();

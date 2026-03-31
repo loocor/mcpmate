@@ -171,14 +171,6 @@ impl ProxyServer {
             client.config_mode = Some(config_mode.unwrap_or_else(|| "hosted".to_string()));
         }
 
-        if matches!(client.config_mode.as_deref(), Some("smart")) && client.smart_workspace.is_none() {
-            client.smart_workspace = Some(crate::clients::models::ClientCapabilityConfig {
-                capability_source: crate::clients::models::CapabilitySource::Profiles,
-                selected_profile_ids: Vec::new(),
-                custom_profile_id: None,
-            });
-        }
-
         if client.rules_fingerprint.is_some() {
             return Ok(client);
         }

@@ -7,12 +7,12 @@ use rmcp::model::{GetPromptRequestParams, GetPromptResult, ListPromptsResult, Pa
 use rmcp::service::RequestContext;
 use std::collections::HashSet;
 
-fn builtin_prompt_allowed(config_mode: Option<&str>, prompt_name: &str) -> bool {
-    matches!(config_mode, Some("smart"))
-        && matches!(
-            prompt_name,
-            "mcpmate_smart_mode_guide" | "mcpmate_smart_mode_next_actions"
-        )
+fn builtin_prompt_allowed(
+    config_mode: Option<&str>,
+    prompt_name: &str,
+) -> bool {
+    let _ = (config_mode, prompt_name);
+    false
 }
 
 pub(super) async fn list_prompts(
@@ -21,6 +21,13 @@ pub(super) async fn list_prompts(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListPromptsResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
+    if matches!(client.config_mode.as_deref(), Some("smart")) {
+        return Ok(ListPromptsResult {
+            prompts: Vec::new(),
+            next_cursor: None,
+            ..Default::default()
+        });
+    }
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
         server.database.clone(),
         server.profile_service.clone(),
@@ -132,6 +139,12 @@ pub(super) async fn get_prompt(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<GetPromptResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
+    if matches!(client.config_mode.as_deref(), Some("smart")) {
+        return Err(McpError::invalid_params(
+            "Smart mode does not expose prompts directly; use UCAN broker tools instead".to_string(),
+            None,
+        ));
+    }
     tracing::debug!("Getting prompt: {}", request.name);
 
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
@@ -144,10 +157,12 @@ pub(super) async fn get_prompt(
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
     let builtin_context = ClientBuiltinContext {
         client_id: client.client_id.clone(),
+        session_id: client.session_id.clone(),
         config_mode: client.config_mode.clone(),
         capability_source: capability_config.capability_source,
         selected_profile_ids: capability_config.selected_profile_ids,
         custom_profile_id: capability_config.custom_profile_id,
+        smart_workspace: client.smart_workspace.clone(),
     };
 
     if builtin_prompt_allowed(client.config_mode.as_deref(), request.name.as_ref()) {
@@ -156,7 +171,7 @@ pub(super) async fn get_prompt(
             .get_prompt_with_context(&request, Some(&builtin_context))
             .await
         {
-        return result.map_err(|e| McpError::internal_error(e.to_string(), None));
+            return result.map_err(|e| McpError::internal_error(e.to_string(), None));
         }
     }
 

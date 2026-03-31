@@ -28,13 +28,12 @@ pub async fn install(
             if resp.data.as_ref().map(|d| d.success).unwrap_or(false) {
                 (AuditStatus::Success, None)
             } else {
-                (AuditStatus::Failed, resp.data.as_ref().and_then(|d| {
-                    if d.success {
-                        None
-                    } else {
-                        Some(d.message.clone())
-                    }
-                }))
+                (
+                    AuditStatus::Failed,
+                    resp.data
+                        .as_ref()
+                        .and_then(|d| if d.success { None } else { Some(d.message.clone()) }),
+                )
             }
         }
         Err(e) => (AuditStatus::Failed, Some(e.to_string())),

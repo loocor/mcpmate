@@ -68,9 +68,7 @@ pub async fn get_event(
 
     let event = enrich_audit_event(&state, event).await;
 
-    Ok(Json(AuditEventDetailsResp::success(AuditEventDetailsData {
-        event,
-    })))
+    Ok(Json(AuditEventDetailsResp::success(AuditEventDetailsData { event })))
 }
 
 async fn enrich_audit_event(

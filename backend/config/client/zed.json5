@@ -1,5 +1,5 @@
-// Zed client template definition,
-// Zed currently only supports stdio
+// Zed client template definition
+// Zed currently uses stdio bridge mode for MCPMate-managed connections
 {
   identifier: "zed",
   display_name: "Zed",

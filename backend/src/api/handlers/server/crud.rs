@@ -13,11 +13,13 @@ use crate::{
     },
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
-    config::server::{ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import_batch},
+    config::server::{
+        ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import_batch,
+        import::server_meta_from_payload,
+    },
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
-        models::ServerMeta,
         profile,
         server::{self},
     },
@@ -142,29 +144,8 @@ async fn upsert_meta_payload(
     server_id: &str,
     payload: &ServerMetaPayload,
 ) -> Result<(), ApiError> {
-    let mut meta = ServerMeta::new(server_id.to_owned());
-    meta.description = payload.description.clone();
-    meta.website = payload.website_url.clone();
-    meta.registry_version = payload.version.clone();
-    meta.repository = payload
-        .repository
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|err| ApiError::BadRequest(format!("Failed to serialize repository metadata: {err}")))?;
-    meta.registry_meta_json = payload
-        .meta
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|err| ApiError::BadRequest(format!("Failed to serialize registry meta block: {err}")))?;
-    meta.extras_json = payload
-        .extras
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|err| ApiError::BadRequest(format!("Failed to serialize extras metadata: {err}")))?;
-    meta.icons_json = None;
+    let mut meta = server_meta_from_payload(server_id, payload)
+        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
     meta.server_version = None;
     meta.protocol_version = None;
 

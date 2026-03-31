@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 
+use mcpmate::config::registry::start_registry_sync_service;
 use mcpmate::core::proxy::{
     Args,
     init::{setup_audit_database, setup_database, setup_logging, setup_proxy_server_with_params},
@@ -35,6 +36,12 @@ async fn main() -> Result<()> {
     // Setup database
     let db = setup_database().await?;
     let audit_db = setup_audit_database().await?;
+
+    // Start registry sync service (background task)
+    let registry_pool = db.pool.clone();
+    tokio::spawn(async move {
+        start_registry_sync_service(registry_pool);
+    });
 
     // Setup proxy server with startup parameters
     let (proxy_arc1, proxy_arc2) = setup_proxy_server_with_params(db, audit_db, &startup_mode).await?;

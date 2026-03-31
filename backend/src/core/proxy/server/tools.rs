@@ -13,20 +13,15 @@ fn builtin_tool_allowed(
     capability_source: CapabilitySource,
     tool_name: &str,
 ) -> bool {
-    if matches!(tool_name, "mcpmate_profile_list" | "mcpmate_profile_preview") {
-        return true;
-    }
-
     if matches!(config_mode, Some("smart")) {
         return matches!(
             tool_name,
-            "mcpmate_profile_list"
-                | "mcpmate_profile_preview"
-                | "mcpmate_scope_get"
-                | "mcpmate_scope_set"
-                | "mcpmate_scope_add"
-                | "mcpmate_scope_remove"
+            "mcpmate_ucan_catalog" | "mcpmate_ucan_details" | "mcpmate_ucan_call"
         );
+    }
+
+    if matches!(tool_name, "mcpmate_profile_list" | "mcpmate_profile_preview") {
+        return true;
     }
 
     let is_profile_tool = matches!(
@@ -86,7 +81,8 @@ fn next_smart_workspace_for_request(
             next.selected_profile_ids.dedup();
         }
         "mcpmate_scope_remove" => {
-            next.selected_profile_ids.retain(|current| !profile_ids.contains(current));
+            next.selected_profile_ids
+                .retain(|current| !profile_ids.contains(current));
         }
         _ => {}
     }
@@ -100,6 +96,7 @@ pub(super) async fn list_tools(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<rmcp::model::ListToolsResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
+    let smart_mode = matches!(client.config_mode.as_deref(), Some("smart"));
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
         server.database.clone(),
         server.profile_service.clone(),
@@ -115,56 +112,59 @@ pub(super) async fn list_tools(
         .collect::<std::collections::HashSet<_>>();
     let mut tools: Vec<rmcp::model::Tool> = Vec::new();
 
-    if let Some(db) = &server.database {
-        let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            r#"
+    if !smart_mode {
+        if let Some(db) = &server.database {
+            let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
+                r#"
             SELECT sc.id, sc.name, sc.capabilities
             FROM server_config sc
             WHERE sc.enabled = 1
             ORDER BY sc.name, sc.id
             "#,
-        )
-        .fetch_all(&db.pool)
-        .await
-        .unwrap_or_default();
-
-        let redb = &server.redb_cache;
-        let pool = &server.connection_pool;
-
-        let mut tasks = Vec::new();
-        for (server_id, _server_name, capabilities) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
-                continue;
-            }
-            if !super::supports_capability(capabilities.as_deref(), crate::core::capability::CapabilityType::Tools) {
-                continue;
-            }
-            let ctx = crate::core::capability::runtime::ListCtx {
-                capability: crate::core::capability::CapabilityType::Tools,
-                server_id: server_id.clone(),
-                refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
-                validation_session: None,
-                runtime_identity: client.runtime_identity(),
-                connection_selection: client.connection_selection(server_id.clone()),
-            };
-            let redb = redb.clone();
-            let pool = pool.clone();
-            let db = db.clone();
-            tasks.push(async move {
-                match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
-                    Ok(result) => result.items.into_tools().unwrap_or_default(),
-                    Err(_) => Vec::new(),
-                }
-            });
-        }
-
-        for mut v in futures::stream::iter(tasks)
-            .buffer_unordered(crate::core::capability::facade::concurrency_limit())
-            .collect::<Vec<_>>()
+            )
+            .fetch_all(&db.pool)
             .await
-        {
-            tools.append(&mut v);
+            .unwrap_or_default();
+
+            let redb = &server.redb_cache;
+            let pool = &server.connection_pool;
+
+            let mut tasks = Vec::new();
+            for (server_id, _server_name, capabilities) in enabled_servers {
+                if !visible_server_ids.contains(&server_id) {
+                    continue;
+                }
+                if !super::supports_capability(capabilities.as_deref(), crate::core::capability::CapabilityType::Tools)
+                {
+                    continue;
+                }
+                let ctx = crate::core::capability::runtime::ListCtx {
+                    capability: crate::core::capability::CapabilityType::Tools,
+                    server_id: server_id.clone(),
+                    refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
+                    timeout: Some(std::time::Duration::from_secs(10)),
+                    validation_session: None,
+                    runtime_identity: client.runtime_identity(),
+                    connection_selection: client.connection_selection(server_id.clone()),
+                };
+                let redb = redb.clone();
+                let pool = pool.clone();
+                let db = db.clone();
+                tasks.push(async move {
+                    match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
+                        Ok(result) => result.items.into_tools().unwrap_or_default(),
+                        Err(_) => Vec::new(),
+                    }
+                });
+            }
+
+            for mut v in futures::stream::iter(tasks)
+                .buffer_unordered(crate::core::capability::facade::concurrency_limit())
+                .collect::<Vec<_>>()
+                .await
+            {
+                tools.append(&mut v);
+            }
         }
     }
 
@@ -178,7 +178,13 @@ pub(super) async fn list_tools(
         .builtin_services
         .tools()
         .into_iter()
-        .filter(|tool| builtin_tool_allowed(client.config_mode.as_deref(), capability_config.capability_source, tool.name.as_ref()))
+        .filter(|tool| {
+            builtin_tool_allowed(
+                client.config_mode.as_deref(),
+                capability_config.capability_source,
+                tool.name.as_ref(),
+            )
+        })
         .collect::<Vec<_>>();
     tracing::debug!("Including {} builtin service tools", builtin_tools.len());
     tools.extend(builtin_tools);
@@ -222,6 +228,9 @@ pub(super) async fn call_tool(
             | "mcpmate_scope_add"
             | "mcpmate_scope_remove"
             | "mcpmate_client_custom_profile_details"
+            | "mcpmate_ucan_catalog"
+            | "mcpmate_ucan_details"
+            | "mcpmate_ucan_call"
     );
 
     if is_profile_tool || is_client_tool {
@@ -234,7 +243,11 @@ pub(super) async fn call_tool(
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        if !builtin_tool_allowed(client.config_mode.as_deref(), capability_config.capability_source, &request.name) {
+        if !builtin_tool_allowed(
+            client.config_mode.as_deref(),
+            capability_config.capability_source,
+            &request.name,
+        ) {
             let message = if is_profile_tool {
                 "profile management tools are only available for clients using the activated capability source"
             } else {
@@ -246,10 +259,12 @@ pub(super) async fn call_tool(
         if is_client_tool {
             let builtin_context = ClientBuiltinContext {
                 client_id: client.client_id.clone(),
+                session_id: client.session_id.clone(),
                 config_mode: client.config_mode.clone(),
                 capability_source: capability_config.capability_source,
                 selected_profile_ids: capability_config.selected_profile_ids.clone(),
                 custom_profile_id: capability_config.custom_profile_id.clone(),
+                smart_workspace: client.smart_workspace.clone(),
             };
 
             if let Some(result) = server
@@ -608,11 +623,7 @@ mod tests {
 
     #[test]
     fn client_profiles_tools_are_only_available_for_profiles_source() {
-        let profiles_tools = [
-            "mcpmate_scope_set",
-            "mcpmate_scope_add",
-            "mcpmate_scope_remove",
-        ];
+        let profiles_tools = ["mcpmate_scope_set", "mcpmate_scope_add", "mcpmate_scope_remove"];
 
         for tool in profiles_tools {
             assert!(
@@ -650,11 +661,35 @@ mod tests {
 
     #[test]
     fn smart_mode_only_exposes_client_workspace_tools() {
-        assert!(builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_profile_list"));
-        assert!(builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_profile_preview"));
-        assert!(builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_scope_set"));
-        assert!(builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_scope_add"));
-        assert!(!builtin_tool_allowed(Some("smart"), CapabilitySource::Profiles, "mcpmate_profile_enable"));
-        assert!(!builtin_tool_allowed(Some("smart"), CapabilitySource::Custom, "mcpmate_client_custom_profile_details"));
+        assert!(builtin_tool_allowed(
+            Some("smart"),
+            CapabilitySource::Profiles,
+            "mcpmate_ucan_catalog"
+        ));
+        assert!(builtin_tool_allowed(
+            Some("smart"),
+            CapabilitySource::Profiles,
+            "mcpmate_ucan_details"
+        ));
+        assert!(builtin_tool_allowed(
+            Some("smart"),
+            CapabilitySource::Profiles,
+            "mcpmate_ucan_call"
+        ));
+        assert!(!builtin_tool_allowed(
+            Some("smart"),
+            CapabilitySource::Profiles,
+            "mcpmate_profile_enable"
+        ));
+        assert!(!builtin_tool_allowed(
+            Some("smart"),
+            CapabilitySource::Profiles,
+            "mcpmate_profile_list"
+        ));
+        assert!(!builtin_tool_allowed(
+            Some("smart"),
+            CapabilitySource::Custom,
+            "mcpmate_client_custom_profile_details"
+        ));
     }
 }

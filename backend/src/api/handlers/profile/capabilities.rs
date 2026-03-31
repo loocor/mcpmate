@@ -310,10 +310,7 @@ pub async fn component_manage(
         "component_count".to_string(),
         Value::from(request.component_ids.len() as u64),
     );
-    data.insert(
-        "profile_name".to_string(),
-        Value::String(profile.name.clone()),
-    );
+    data.insert("profile_name".to_string(), Value::String(profile.name.clone()));
     data.insert(
         "component_action".to_string(),
         Value::String(if enabled { "enable" } else { "disable" }.to_string()),
@@ -364,102 +361,94 @@ async fn collect_capability_audit_details(
         };
 
         let detail = match component_type {
-            ComponentType::Tool => {
-                sqlx::query_as::<_, (String, String, String, String)>(
-                    r#"
+            ComponentType::Tool => sqlx::query_as::<_, (String, String, String, String)>(
+                r#"
                     SELECT st.server_id, st.server_name, st.tool_name, st.unique_name
                     FROM profile_tool pt
                     JOIN server_tools st ON pt.server_tool_id = st.id
                     WHERE pt.id = ?
                     "#,
-                )
-                .bind(component_id)
-                .fetch_optional(&db.pool)
-                .await
-                .ok()
-                .flatten()
-                .map(|(server_id, server_name, tool_name, unique_name)| {
-                    serde_json::json!({
-                        "component_id": component_id,
-                        "component_type": component_type.as_str(),
-                        "server_id": server_id,
-                        "server_name": server_name,
-                        "tool_name": tool_name,
-                        "unique_name": unique_name,
-                    })
+            )
+            .bind(component_id)
+            .fetch_optional(&db.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|(server_id, server_name, tool_name, unique_name)| {
+                serde_json::json!({
+                    "component_id": component_id,
+                    "component_type": component_type.as_str(),
+                    "server_id": server_id,
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                    "unique_name": unique_name,
                 })
-            }
-            ComponentType::Resource => {
-                sqlx::query_as::<_, (String, String, String)>(
-                    r#"
+            }),
+            ComponentType::Resource => sqlx::query_as::<_, (String, String, String)>(
+                r#"
                     SELECT pr.server_id, sc.name, pr.resource_uri
                     FROM profile_resource pr
                     JOIN server_config sc ON pr.server_id = sc.id
                     WHERE pr.id = ?
                     "#,
-                )
-                .bind(component_id)
-                .fetch_optional(&db.pool)
-                .await
-                .ok()
-                .flatten()
-                .map(|(server_id, server_name, resource_uri)| {
-                    serde_json::json!({
-                        "component_id": component_id,
-                        "component_type": component_type.as_str(),
-                        "server_id": server_id,
-                        "server_name": server_name,
-                        "resource_uri": resource_uri,
-                    })
+            )
+            .bind(component_id)
+            .fetch_optional(&db.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|(server_id, server_name, resource_uri)| {
+                serde_json::json!({
+                    "component_id": component_id,
+                    "component_type": component_type.as_str(),
+                    "server_id": server_id,
+                    "server_name": server_name,
+                    "resource_uri": resource_uri,
                 })
-            }
-            ComponentType::Prompt => {
-                sqlx::query_as::<_, (String, String, String)>(
-                    r#"
+            }),
+            ComponentType::Prompt => sqlx::query_as::<_, (String, String, String)>(
+                r#"
                     SELECT pp.server_id, pp.server_name, pp.prompt_name
                     FROM profile_prompt pp
                     WHERE pp.id = ?
                     "#,
-                )
-                .bind(component_id)
-                .fetch_optional(&db.pool)
-                .await
-                .ok()
-                .flatten()
-                .map(|(server_id, server_name, prompt_name)| {
-                    serde_json::json!({
-                        "component_id": component_id,
-                        "component_type": component_type.as_str(),
-                        "server_id": server_id,
-                        "server_name": server_name,
-                        "prompt_name": prompt_name,
-                    })
+            )
+            .bind(component_id)
+            .fetch_optional(&db.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|(server_id, server_name, prompt_name)| {
+                serde_json::json!({
+                    "component_id": component_id,
+                    "component_type": component_type.as_str(),
+                    "server_id": server_id,
+                    "server_name": server_name,
+                    "prompt_name": prompt_name,
                 })
-            }
-            ComponentType::ResourceTemplate => {
-                sqlx::query_as::<_, (String, String, String)>(
-                    r#"
+            }),
+            ComponentType::ResourceTemplate => sqlx::query_as::<_, (String, String, String)>(
+                r#"
                     SELECT prt.server_id, sc.name, prt.uri_template
                     FROM profile_resource_template prt
                     JOIN server_config sc ON prt.server_id = sc.id
                     WHERE prt.id = ?
                     "#,
-                )
-                .bind(component_id)
-                .fetch_optional(&db.pool)
-                .await
-                .ok()
-                .flatten()
-                .map(|(server_id, server_name, uri_template)| {
-                    serde_json::json!({
-                        "component_id": component_id,
-                        "component_type": component_type.as_str(),
-                        "server_id": server_id,
-                        "server_name": server_name,
-                        "uri_template": uri_template,
-                    })
+            )
+            .bind(component_id)
+            .fetch_optional(&db.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|(server_id, server_name, uri_template)| {
+                serde_json::json!({
+                    "component_id": component_id,
+                    "component_type": component_type.as_str(),
+                    "server_id": server_id,
+                    "server_name": server_name,
+                    "uri_template": uri_template,
                 })
-            }
+            }),
         };
 
         details.push(detail.unwrap_or_else(|| {
@@ -488,7 +477,6 @@ fn extract_single_component_string(
         .and_then(|value| value.as_str())
         .map(ToString::to_string)
 }
-
 
 /// Validate component IDs from request
 fn validate_component_ids(request: &ProfileComponentManageReq) -> Result<(), ApiError> {

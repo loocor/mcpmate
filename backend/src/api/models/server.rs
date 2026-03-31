@@ -351,7 +351,7 @@ pub struct RegistryRepositoryInfo {
     #[schemars(description = "Optional repository subfolder containing the server manifest")]
     pub subfolder: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Stable identifier for the repository entry")]
+    #[schemars(description = "Optional repository metadata identifier (not used as managed-server linkage key)")]
     pub id: Option<String>,
 }
 
@@ -416,6 +416,9 @@ pub struct ServerMetaPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Raw manifest or auxiliary metadata that should round-trip without interpretation")]
     pub extras: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Icon metadata that should round-trip through managed server persistence")]
+    pub icons: Option<Vec<ServerIcon>>,
 }
 
 /// API representation of an MCP icon payload
@@ -712,8 +715,9 @@ pub struct ServerCreateReq {
     #[schemars(description = "Whether to enable this server in the specified profiles")]
     pub enabled: Option<bool>,
 
-    /// Registry server id (if sourced from official registry)
-    #[schemars(description = "Registry server identifier from MCP official registry")]
+    #[schemars(
+        description = "Canonical registry server identifier (official `server.name`; `official.serverId` alias only when equivalent) used to link managed servers"
+    )]
     pub registry_server_id: Option<String>,
 
     /// Optional metadata block for this server
@@ -772,8 +776,9 @@ pub struct ServerUpdateReq {
     #[schemars(description = "Whether to enable this server in the specified profiles")]
     pub enabled: Option<bool>,
 
-    /// Registry server id (optional update)
-    #[schemars(description = "Registry server identifier from MCP official registry")]
+    #[schemars(
+        description = "Canonical registry server identifier (official `server.name`; `official.serverId` alias only when equivalent) used to link managed servers"
+    )]
     pub registry_server_id: Option<String>,
 
     /// Optional metadata update payload
@@ -816,7 +821,9 @@ pub struct ServersImportConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
 
-    /// Registry server id (if sourced from official registry)
+    #[schemars(
+        description = "Canonical registry server identifier (official `server.name`; `official.serverId` alias only when equivalent) used to link managed servers"
+    )]
     pub registry_server_id: Option<String>,
     /// Optional metadata payload aligned with registry schema
     #[serde(skip_serializing_if = "Option::is_none")]

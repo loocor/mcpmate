@@ -15,6 +15,15 @@ use crate::{
 };
 use axum::http::StatusCode;
 
+pub(crate) fn parse_server_icons(raw: &str) -> Result<Option<Vec<ServerIcon>>, serde_json::Error> {
+    if let Ok(list) = serde_json::from_str::<Vec<ServerIcon>>(raw) {
+        return Ok((!list.is_empty()).then_some(list));
+    }
+
+    let legacy = serde_json::from_str::<Vec<rmcp::model::Icon>>(raw)?;
+    Ok((!legacy.is_empty()).then_some(legacy.into_iter().map(ServerIcon::from).collect()))
+}
+
 /// Connection pool access manager
 ///
 /// Provides standardized access to the connection pool with timeout handling,
@@ -198,9 +207,8 @@ pub async fn get_complete_server_details(
         match server::get_server_meta(pool, server_id).await {
             Ok(Some(server_meta)) => {
                 let icons = match server_meta.icons_json.as_deref() {
-                    Some(raw) => match serde_json::from_str::<Vec<rmcp::model::Icon>>(raw) {
-                        Ok(list) if !list.is_empty() => Some(list.into_iter().map(ServerIcon::from).collect()),
-                        Ok(_) => None,
+                    Some(raw) => match parse_server_icons(raw) {
+                        Ok(list) => list,
                         Err(err) => {
                             tracing::warn!("Failed to parse icons for server '{}': {}", server_name, err);
                             None

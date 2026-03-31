@@ -4,7 +4,7 @@
 use super::{common, shared::*};
 use crate::api::models::server::{
     InstanceListData, InstanceListReq, InstanceListResp, InstanceSummary, ServerCapabilitySummary, ServerDetailsData,
-    ServerDetailsReq, ServerDetailsResp, ServerIcon, ServerListData, ServerListReq, ServerListResp, ServerMetaInfo,
+    ServerDetailsReq, ServerDetailsResp, ServerListData, ServerListReq, ServerListResp, ServerMetaInfo,
 };
 use axum::http::StatusCode;
 use sqlx::{Pool, Row, Sqlite};
@@ -549,9 +549,8 @@ async fn load_server_meta_map(
 
 fn build_server_meta_info(server_meta: crate::config::models::ServerMeta) -> Option<ServerMetaInfo> {
     let icons = match server_meta.icons_json.as_deref() {
-        Some(raw) => match serde_json::from_str::<Vec<rmcp::model::Icon>>(raw) {
-            Ok(list) if !list.is_empty() => Some(list.into_iter().map(ServerIcon::from).collect()),
-            Ok(_) => None,
+        Some(raw) => match crate::api::handlers::server::common::parse_server_icons(raw) {
+            Ok(list) => list,
             Err(error) => {
                 tracing::warn!(error = %error, server_id = %server_meta.server_id, "Failed to parse icons for server list");
                 None

@@ -3,6 +3,7 @@
 
 use crate::config::client::init::initialize_client_table;
 use crate::config::profile::init::initialize_profile_tables;
+use crate::config::registry::init::initialize_registry_cache_table;
 use crate::config::server::init::initialize_server_tables;
 use anyhow::Result;
 use sqlx::{Pool, Sqlite};
@@ -23,6 +24,10 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     // Initialize profile-related tables
     tracing::debug!("Initializing profile-related tables");
     initialize_profile_tables(pool).await?;
+
+    // Initialize registry cache table
+    tracing::debug!("Initializing registry cache table");
+    initialize_registry_cache_table(pool).await?;
 
     tracing::info!("Database initialization completed successfully");
     Ok(())

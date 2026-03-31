@@ -2,13 +2,16 @@
 // Provides a single entrypoint used by: server API import, client config import, and first-run config import.
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::api::models::server::{ServerMetaPayload, ServersImportConfig};
+use crate::api::models::server::{RegistryRepositoryInfo, ServerIcon, ServerMetaPayload, ServersImportConfig};
 use crate::common::server::ServerType;
 use crate::config::models::{Server, ServerMeta};
+use crate::config::registry::cache::RegistryCacheEntry;
+use crate::config::registry::RegistryCacheService;
 use crate::config::server as server_ops;
 use crate::config::server::{args, env, fingerprint, get_all_servers, upsert_server};
 
@@ -356,11 +359,24 @@ pub async fn import_batch(
     Ok(outcome)
 }
 
-async fn upsert_import_meta(
+pub(crate) async fn upsert_import_meta(
     db_pool: &Pool<Sqlite>,
     server_id: &str,
     payload: &ServerMetaPayload,
 ) -> Result<()> {
+    let meta = server_meta_from_payload(server_id, payload)?;
+
+    server_ops::upsert_server_meta(db_pool, &meta)
+        .await
+        .context("Failed to persist server metadata during import")?;
+
+    Ok(())
+}
+
+pub(crate) fn server_meta_from_payload(
+    server_id: &str,
+    payload: &ServerMetaPayload,
+) -> Result<ServerMeta> {
     let mut meta = ServerMeta::new(server_id.to_owned());
     meta.description = payload.description.clone();
     meta.website = payload.website_url.clone();
@@ -383,12 +399,14 @@ async fn upsert_import_meta(
         .map(serde_json::to_string)
         .transpose()
         .context("Failed to serialize extras metadata for import")?;
+    meta.icons_json = payload
+        .icons
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .context("Failed to serialize server icons for import")?;
 
-    server_ops::upsert_server_meta(db_pool, &meta)
-        .await
-        .context("Failed to persist server metadata during import")?;
-
-    Ok(())
+    Ok(meta)
 }
 
 fn normalize_args_env(
@@ -516,3 +534,540 @@ fn validate_server_config(
 }
 
 // Fingerprint helpers for stdio servers live in fingerprint.rs
+
+// ========================= Registry Import =========================
+
+/// Package type for registry servers
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackageType {
+    Npm,
+    Pypi,
+}
+
+/// Package information extracted from registry cache
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryPackage {
+    pub name: Option<String>,
+    pub version: Option<String>,
+}
+
+/// Remote information extracted from registry cache
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryRemote {
+    pub url: Option<String>,
+    pub r#type: Option<String>,
+}
+
+/// Result of converting a registry package to import config
+#[derive(Debug, Clone)]
+pub struct PackageImportConfig {
+    pub kind: String,
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub url: Option<String>,
+}
+
+/// Convert npm package to import configuration
+/// npm packages use: npx -y <identifier>@<version>
+pub fn npm_package_to_import_config(identifier: &str, version: Option<&str>) -> PackageImportConfig {
+    let full_identifier = match version {
+        Some(v) => format!("{}@{}", identifier, v),
+        None => identifier.to_string(),
+    };
+    PackageImportConfig {
+        kind: "stdio".to_string(),
+        command: Some("npx".to_string()),
+        args: Some(vec!["-y".to_string(), full_identifier]),
+        url: None,
+    }
+}
+
+/// Convert pypi package to import configuration
+/// pypi packages use: uvx <identifier>==<version>
+pub fn pypi_package_to_import_config(identifier: &str, version: Option<&str>) -> PackageImportConfig {
+    let full_identifier = match version {
+        Some(v) => format!("{}=={}", identifier, v),
+        None => identifier.to_string(),
+    };
+    PackageImportConfig {
+        kind: "stdio".to_string(),
+        command: Some("uvx".to_string()),
+        args: Some(vec![full_identifier]),
+        url: None,
+    }
+}
+
+/// Convert remote URL to import configuration
+/// remotes use streamable_http transport
+pub fn remote_to_import_config(url: &str) -> PackageImportConfig {
+    PackageImportConfig {
+        kind: "streamable_http".to_string(),
+        command: None,
+        args: None,
+        url: Some(url.to_string()),
+    }
+}
+
+/// Detect package type from registry package name
+/// npm packages typically start with @ or don't have a specific prefix
+/// pypi packages are typically just the package name
+pub fn detect_package_type(package_name: &str) -> Option<PackageType> {
+    // Check for npm scoped packages (e.g., @modelcontextprotocol/server-filesystem)
+    if package_name.starts_with('@') {
+        return Some(PackageType::Npm);
+    }
+    
+    // Check for common npm package patterns
+    if package_name.contains('/') && !package_name.contains("://") {
+        // Could be a scoped package without @ prefix (unusual but possible)
+        return Some(PackageType::Npm);
+    }
+    
+    // Default to npm for MCP packages (most common)
+    // This is a heuristic - in practice, the registry should provide type info
+    Some(PackageType::Npm)
+}
+
+/// Parse packages_json from registry cache entry
+fn parse_packages(packages_json: Option<&str>) -> Result<Vec<RegistryPackage>> {
+    match packages_json {
+        Some(json) if !json.is_empty() => {
+            serde_json::from_str(json).context("Failed to parse packages JSON")
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Parse remotes_json from registry cache entry
+fn parse_remotes(remotes_json: Option<&str>) -> Result<Vec<RegistryRemote>> {
+    match remotes_json {
+        Some(json) if !json.is_empty() => {
+            serde_json::from_str(json).context("Failed to parse remotes JSON")
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Convert registry cache entry to import configuration
+/// Priority: remotes > packages (remotes are preferred for HTTP-based servers)
+pub fn registry_entry_to_import_config(
+    entry: &RegistryCacheEntry,
+    preferred_version: Option<&str>,
+) -> Result<Option<PackageImportConfig>> {
+    // First, check for remotes (HTTP-based servers)
+    let remotes = parse_remotes(entry.remotes_json.as_deref())?;
+    if let Some(remote) = remotes.first() {
+        if let Some(url) = &remote.url {
+            return Ok(Some(remote_to_import_config(url)));
+        }
+    }
+    
+    // Then, check for packages (stdio-based servers)
+    let packages = parse_packages(entry.packages_json.as_deref())?;
+    if let Some(package) = packages.first() {
+        let name = package.name.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Package name is required for stdio server")
+        })?;
+        
+        // Use preferred version if provided, otherwise use package version
+        let version = preferred_version
+            .or(package.version.as_deref());
+        
+        // Detect package type
+        let package_type = detect_package_type(name)
+            .unwrap_or(PackageType::Npm);
+        
+        let config = match package_type {
+            PackageType::Npm => npm_package_to_import_config(name, version),
+            PackageType::Pypi => pypi_package_to_import_config(name, version),
+        };
+        
+        return Ok(Some(config));
+    }
+    
+    // No packages or remotes found
+    Ok(None)
+}
+
+fn parse_registry_icons(raw: Option<&str>) -> Option<Vec<ServerIcon>> {
+    #[derive(Deserialize)]
+    struct RegistryCacheIcon {
+        #[serde(default)]
+        url: Option<String>,
+    }
+
+    let raw = raw?;
+    let icons = serde_json::from_str::<Vec<RegistryCacheIcon>>(raw).ok()?;
+    let icons: Vec<ServerIcon> = icons
+        .into_iter()
+        .filter_map(|icon| {
+            let src = icon.url?.trim().to_string();
+            if src.is_empty() {
+                None
+            } else {
+                Some(ServerIcon {
+                    src,
+                    mime_type: None,
+                    sizes: None,
+                })
+            }
+        })
+        .collect();
+
+    if icons.is_empty() {
+        None
+    } else {
+        Some(icons)
+    }
+}
+
+fn parse_repository(raw: Option<&str>) -> Option<RegistryRepositoryInfo> {
+    raw.and_then(|source| serde_json::from_str(source).ok())
+}
+
+fn build_registry_extras(entry: &RegistryCacheEntry) -> Option<serde_json::Value> {
+    let mut object = serde_json::Map::new();
+
+    if let Some(title) = entry.title.as_ref().filter(|value| !value.trim().is_empty()) {
+        object.insert("title".to_string(), serde_json::Value::String(title.clone()));
+    }
+
+    if let Some(packages_json) = entry.packages_json.as_ref().filter(|value| !value.trim().is_empty()) {
+        if let Ok(packages) = serde_json::from_str::<serde_json::Value>(packages_json) {
+            object.insert("packages".to_string(), packages);
+        }
+    }
+
+    if let Some(remotes_json) = entry.remotes_json.as_ref().filter(|value| !value.trim().is_empty()) {
+        if let Ok(remotes) = serde_json::from_str::<serde_json::Value>(remotes_json) {
+            object.insert("remotes".to_string(), remotes);
+        }
+    }
+
+    if !entry.status.trim().is_empty() {
+        object.insert("status".to_string(), serde_json::Value::String(entry.status.clone()));
+    }
+
+    if let Some(published_at) = entry.published_at {
+        object.insert(
+            "publishedAt".to_string(),
+            serde_json::Value::String(published_at.to_rfc3339()),
+        );
+    }
+
+    if let Some(updated_at) = entry.updated_at {
+        object.insert(
+            "updatedAt".to_string(),
+            serde_json::Value::String(updated_at.to_rfc3339()),
+        );
+    }
+
+    if object.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(object))
+    }
+}
+
+/// Build ServerMetaPayload from registry cache entry
+pub(crate) fn build_meta_from_entry(entry: &RegistryCacheEntry) -> ServerMetaPayload {
+    ServerMetaPayload {
+        description: entry.description.clone(),
+        version: Some(entry.version.clone()),
+        website_url: entry.website_url.clone(),
+        repository: parse_repository(entry.repository_json.as_deref()),
+        meta: entry.meta_json.as_ref().and_then(|m| serde_json::from_str(m).ok()),
+        extras: build_registry_extras(entry),
+        icons: parse_registry_icons(entry.icons_json.as_deref()),
+    }
+}
+
+/// Import a server from registry cache
+/// 
+/// # Arguments
+/// * `db_pool` - Database pool for persistence
+/// * `connection_pool` - Connection pool for capability sync
+/// * `redb_cache` - Cache manager for capabilities
+/// * `cache_service` - Registry cache service
+/// * `name` - Server name in registry
+/// * `version` - Optional version (defaults to latest cached version)
+/// * `opts` - Import options
+/// 
+/// # Returns
+/// * `Ok(ImportOutcome)` - Import result
+/// * `Err` - If server not found or import failed
+pub async fn import_from_registry(
+    db_pool: &Pool<Sqlite>,
+    connection_pool: &Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
+    redb_cache: &Arc<RedbCacheManager>,
+    cache_service: &RegistryCacheService,
+    name: &str,
+    version: Option<&str>,
+    opts: ImportOptions,
+) -> Result<ImportOutcome> {
+    tracing::info!(
+        target: "mcpmate::config::server::import",
+        name = %name,
+        version = ?version,
+        "Importing server from registry"
+    );
+    
+    // Fetch from cache
+    let entry = cache_service
+        .get_by_name(name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in registry cache", name))?;
+    
+    // Check if server is active
+    if entry.status != "active" {
+        return Err(anyhow::anyhow!(
+            "Server '{}' is not active (status: {})",
+            name,
+            entry.status
+        ));
+    }
+    
+    // Convert to import config
+    let import_config = registry_entry_to_import_config(&entry, version)?
+        .ok_or_else(|| anyhow::anyhow!(
+            "Server '{}' has no valid packages or remotes configuration",
+            name
+        ))?;
+    
+    // Build ServersImportConfig
+    let config = ServersImportConfig {
+        kind: import_config.kind,
+        command: import_config.command,
+        args: import_config.args,
+        url: import_config.url,
+        env: None,
+        headers: None,
+        registry_server_id: Some(name.to_string()),
+        meta: Some(build_meta_from_entry(&entry)),
+    };
+    
+    // Build items map
+    let mut items = HashMap::new();
+    items.insert(name.to_string(), config);
+    
+    // Call import_batch
+    import_batch(db_pool, connection_pool, redb_cache, items, opts).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_npm_package_to_import_config_with_version() {
+        let config = npm_package_to_import_config("@modelcontextprotocol/server-filesystem", Some("1.0.0"));
+        assert_eq!(config.kind, "stdio");
+        assert_eq!(config.command, Some("npx".to_string()));
+        assert_eq!(config.args, Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem@1.0.0".to_string()]));
+        assert!(config.url.is_none());
+    }
+
+    #[test]
+    fn test_npm_package_to_import_config_without_version() {
+        let config = npm_package_to_import_config("@modelcontextprotocol/server-filesystem", None);
+        assert_eq!(config.kind, "stdio");
+        assert_eq!(config.command, Some("npx".to_string()));
+        assert_eq!(config.args, Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]));
+    }
+
+    #[test]
+    fn test_pypi_package_to_import_config_with_version() {
+        let config = pypi_package_to_import_config("mcp-server-filesystem", Some("1.0.0"));
+        assert_eq!(config.kind, "stdio");
+        assert_eq!(config.command, Some("uvx".to_string()));
+        assert_eq!(config.args, Some(vec!["mcp-server-filesystem==1.0.0".to_string()]));
+        assert!(config.url.is_none());
+    }
+
+    #[test]
+    fn test_pypi_package_to_import_config_without_version() {
+        let config = pypi_package_to_import_config("mcp-server-filesystem", None);
+        assert_eq!(config.kind, "stdio");
+        assert_eq!(config.command, Some("uvx".to_string()));
+        assert_eq!(config.args, Some(vec!["mcp-server-filesystem".to_string()]));
+    }
+
+    #[test]
+    fn test_remote_to_import_config() {
+        let config = remote_to_import_config("https://api.example.com/mcp");
+        assert_eq!(config.kind, "streamable_http");
+        assert!(config.command.is_none());
+        assert!(config.args.is_none());
+        assert_eq!(config.url, Some("https://api.example.com/mcp".to_string()));
+    }
+
+    #[test]
+    fn test_detect_package_type_scoped_npm() {
+        assert_eq!(detect_package_type("@modelcontextprotocol/server-filesystem"), Some(PackageType::Npm));
+    }
+
+    #[test]
+    fn test_detect_package_type_regular_npm() {
+        // Default to npm for most packages
+        assert_eq!(detect_package_type("mcp-server-filesystem"), Some(PackageType::Npm));
+    }
+
+    #[test]
+    fn test_parse_packages_valid_json() {
+        let json = r#"[{"name": "@scope/package", "version": "1.0.0"}]"#;
+        let packages = parse_packages(Some(json)).unwrap();
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, Some("@scope/package".to_string()));
+        assert_eq!(packages[0].version, Some("1.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_packages_empty_json() {
+        let packages = parse_packages(Some("[]")).unwrap();
+        assert!(packages.is_empty());
+    }
+
+    #[test]
+    fn test_parse_packages_none() {
+        let packages = parse_packages(None).unwrap();
+        assert!(packages.is_empty());
+    }
+
+    #[test]
+    fn test_parse_remotes_valid_json() {
+        let json = r#"[{"url": "https://api.example.com/mcp", "type": "http"}]"#;
+        let remotes = parse_remotes(Some(json)).unwrap();
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].url, Some("https://api.example.com/mcp".to_string()));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_with_remote() {
+        let entry = RegistryCacheEntry {
+            server_name: "test-server".to_string(),
+            version: "1.0.0".to_string(),
+            schema_url: None,
+            title: None,
+            description: None,
+            packages_json: Some(r#"[{"name": "test-pkg"}]"#.to_string()),
+            remotes_json: Some(r#"[{"url": "https://api.example.com/mcp"}]"#.to_string()),
+            icons_json: None,
+            meta_json: None,
+            website_url: None,
+            repository_json: None,
+            status: "active".to_string(),
+            published_at: None,
+            updated_at: None,
+            synced_at: chrono::Utc::now(),
+        };
+        
+        let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
+        // Remotes take priority
+        assert_eq!(config.kind, "streamable_http");
+        assert_eq!(config.url, Some("https://api.example.com/mcp".to_string()));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_with_npm_package() {
+        let entry = RegistryCacheEntry {
+            server_name: "test-server".to_string(),
+            version: "1.0.0".to_string(),
+            schema_url: None,
+            title: None,
+            description: None,
+            packages_json: Some(r#"[{"name": "@scope/package", "version": "1.0.0"}]"#.to_string()),
+            remotes_json: None,
+            icons_json: None,
+            meta_json: None,
+            website_url: None,
+            repository_json: None,
+            status: "active".to_string(),
+            published_at: None,
+            updated_at: None,
+            synced_at: chrono::Utc::now(),
+        };
+        
+        let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
+        assert_eq!(config.kind, "stdio");
+        assert_eq!(config.command, Some("npx".to_string()));
+        assert_eq!(config.args, Some(vec!["-y".to_string(), "@scope/package@1.0.0".to_string()]));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_with_preferred_version() {
+        let entry = RegistryCacheEntry {
+            server_name: "test-server".to_string(),
+            version: "1.0.0".to_string(),
+            schema_url: None,
+            title: None,
+            description: None,
+            packages_json: Some(r#"[{"name": "@scope/package", "version": "1.0.0"}]"#.to_string()),
+            remotes_json: None,
+            icons_json: None,
+            meta_json: None,
+            website_url: None,
+            repository_json: None,
+            status: "active".to_string(),
+            published_at: None,
+            updated_at: None,
+            synced_at: chrono::Utc::now(),
+        };
+        
+        let config = registry_entry_to_import_config(&entry, Some("2.0.0")).unwrap().unwrap();
+        assert_eq!(config.args, Some(vec!["-y".to_string(), "@scope/package@2.0.0".to_string()]));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_no_packages_or_remotes() {
+        let entry = RegistryCacheEntry {
+            server_name: "test-server".to_string(),
+            version: "1.0.0".to_string(),
+            schema_url: None,
+            title: None,
+            description: None,
+            packages_json: None,
+            remotes_json: None,
+            icons_json: None,
+            meta_json: None,
+            website_url: None,
+            repository_json: None,
+            status: "active".to_string(),
+            published_at: None,
+            updated_at: None,
+            synced_at: chrono::Utc::now(),
+        };
+        
+        let config = registry_entry_to_import_config(&entry, None).unwrap();
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn test_build_meta_from_entry() {
+        let entry = RegistryCacheEntry {
+            server_name: "test-server".to_string(),
+            version: "1.0.0".to_string(),
+            schema_url: Some("https://modelcontextprotocol.io/schema/server.schema.json".to_string()),
+            title: Some("Test Server".to_string()),
+            description: Some("A test server".to_string()),
+            packages_json: Some(r#"[{"name":"@scope/package","version":"1.0.0"}]"#.to_string()),
+            remotes_json: Some(r#"[{"url":"https://example.com/mcp","type":"streamable_http"}]"#.to_string()),
+            icons_json: Some(r#"[{"url":"https://example.com/icon.png"}]"#.to_string()),
+            meta_json: Some(r#"{"io.modelcontextprotocol.registry/official": {"status": "published"}}"#.to_string()),
+            website_url: Some("https://example.com/server".to_string()),
+            repository_json: Some(r#"{"url":"https://github.com/example/test-server","source":"github"}"#.to_string()),
+            status: "active".to_string(),
+            published_at: Some(chrono::Utc::now()),
+            updated_at: Some(chrono::Utc::now()),
+            synced_at: chrono::Utc::now(),
+        };
+        
+        let meta = build_meta_from_entry(&entry);
+        assert_eq!(meta.description, Some("A test server".to_string()));
+        assert_eq!(meta.version, Some("1.0.0".to_string()));
+        assert_eq!(meta.website_url.as_deref(), Some("https://example.com/server"));
+        assert_eq!(meta.repository.as_ref().and_then(|repo| repo.source.as_deref()), Some("github"));
+        assert!(meta.meta.is_some());
+        assert_eq!(meta.icons.as_ref().map(Vec::len), Some(1));
+        assert!(meta.extras.is_some());
+    }
+}

@@ -15,14 +15,6 @@ use crate::core::proxy::server::ClientContext;
 
 static VISIBILITY_SNAPSHOT_CACHE: Lazy<DashMap<String, CachedSnapshot>> = Lazy::new(DashMap::new);
 
-fn smart_default_workspace() -> ClientCapabilityConfig {
-    ClientCapabilityConfig {
-        capability_source: CapabilitySource::Profiles,
-        selected_profile_ids: Vec::new(),
-        custom_profile_id: None,
-    }
-}
-
 pub fn invalidate_visibility_cache(client_id: &str) {
     VISIBILITY_SNAPSHOT_CACHE.remove(client_id);
     tracing::debug!(client_id = %client_id, "Invalidated visibility snapshot cache");
@@ -207,7 +199,6 @@ impl ProfileVisibilityService {
         &self,
         client_context: &ClientContext,
     ) -> Result<VisibilitySnapshot> {
-        let capability_config = self.resolve_capability_config_for_client(client_context).await?;
         let cache_key = if matches!(client_context.config_mode.as_deref(), Some("smart")) {
             format!(
                 "smart::{}::{}",
@@ -217,7 +208,14 @@ impl ProfileVisibilityService {
         } else {
             client_context.client_id.clone()
         };
-        self.resolve_snapshot_from_config(&cache_key, &client_context.client_id, &capability_config).await
+
+        if matches!(client_context.config_mode.as_deref(), Some("smart")) {
+            return self.resolve_smart_snapshot(&cache_key, &client_context.client_id).await;
+        }
+
+        let capability_config = self.resolve_capability_config_for_client(client_context).await?;
+        self.resolve_snapshot_from_config(&cache_key, &client_context.client_id, &capability_config)
+            .await
     }
 
     async fn compute_config_fingerprint(
@@ -239,7 +237,7 @@ impl ProfileVisibilityService {
         client_context: &ClientContext,
     ) -> Result<ClientCapabilityConfig> {
         if matches!(client_context.config_mode.as_deref(), Some("smart")) {
-            return Ok(client_context.smart_workspace.clone().unwrap_or_else(smart_default_workspace));
+            return Ok(Self::active_capability_config());
         }
 
         self.load_client_capability_config(&client_context.client_id, client_context.profile_id.as_deref())
@@ -284,6 +282,86 @@ impl ProfileVisibilityService {
 
         let rules_fingerprint = compute_rules_fingerprint(
             capability_config,
+            &profile_ids,
+            &server_ids,
+            &allowed_tools,
+            &allowed_resources,
+            &allowed_resource_templates,
+            &allowed_resource_prefixes,
+            &allowed_prompts,
+            [
+                has_tool_policy,
+                has_resource_policy,
+                has_resource_template_policy,
+                has_prompt_policy,
+            ],
+        );
+
+        let snapshot = VisibilitySnapshot {
+            client_id: client_id.to_string(),
+            rules_fingerprint,
+            profile_ids,
+            server_ids,
+            allowed_tools,
+            allowed_resources,
+            allowed_resource_templates,
+            allowed_prompts,
+            allowed_resource_prefixes,
+            has_tool_policy,
+            has_resource_policy,
+            has_resource_template_policy,
+            has_prompt_policy,
+        };
+
+        VISIBILITY_SNAPSHOT_CACHE.insert(
+            cache_key.to_string(),
+            CachedSnapshot {
+                snapshot: snapshot.clone(),
+                cached_at: std::time::Instant::now(),
+            },
+        );
+
+        Ok(snapshot)
+    }
+
+    async fn resolve_smart_snapshot(
+        &self,
+        cache_key: &str,
+        client_id: &str,
+    ) -> Result<VisibilitySnapshot> {
+        let db = self
+            .db
+            .as_ref()
+            .context("Profile visibility requires database access")?;
+
+        let capability_config = Self::active_capability_config();
+        let rules_fingerprint_pre = self.compute_config_fingerprint(&capability_config).await?;
+
+        if let Some(cached) = VISIBILITY_SNAPSHOT_CACHE.get(cache_key)
+            && cached.snapshot.rules_fingerprint == rules_fingerprint_pre
+        {
+            tracing::debug!(cache_key = %cache_key, fingerprint = %rules_fingerprint_pre, "Smart visibility snapshot cache hit");
+            return Ok(cached.snapshot.clone());
+        }
+
+        let profile_ids = Vec::new();
+        let server_ids = self
+            .resolve_server_ids(&db.pool, CapabilitySource::Activated, &profile_ids)
+            .await?;
+
+        let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(&db.pool, &server_ids, &profile_ids).await?;
+        let (allowed_resources, has_resource_policy) = self
+            .resolve_allowed_resources(&db.pool, &server_ids, &profile_ids)
+            .await?;
+        let (allowed_resource_templates, allowed_resource_prefixes, has_resource_template_policy) = self
+            .resolve_allowed_resource_templates(&db.pool, &server_ids, &profile_ids)
+            .await?;
+        let (allowed_prompts, has_prompt_policy) = self
+            .resolve_allowed_prompts(&db.pool, &server_ids, &profile_ids)
+            .await?;
+
+        let rules_fingerprint = compute_rules_fingerprint(
+            &capability_config,
             &profile_ids,
             &server_ids,
             &allowed_tools,
@@ -1487,5 +1565,72 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn smart_snapshot_ignores_client_profile_selection_and_sees_all_enabled_servers() {
+        let (_temp_dir, db, service) = create_visibility_service().await;
+
+        let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
+        let selected_profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
+        let active_server_id = insert_server(&db, "active-server", "tools,prompts,resources").await;
+        let selected_server_id = insert_server(&db, "selected-server", "tools,prompts,resources").await;
+
+        profile::add_server_to_profile(&db.pool, &active_profile_id, &active_server_id, true)
+            .await
+            .expect("add active server");
+        profile::add_server_to_profile(&db.pool, &selected_profile_id, &selected_server_id, true)
+            .await
+            .expect("add selected server");
+
+        let active_tool = seed_tool(
+            &db,
+            &active_profile_id,
+            &active_server_id,
+            "active-server",
+            "tool_active",
+        )
+        .await;
+        let selected_tool = seed_tool(
+            &db,
+            &selected_profile_id,
+            &selected_server_id,
+            "selected-server",
+            "tool_selected",
+        )
+        .await;
+
+        insert_client_config(
+            &db,
+            "client-smart",
+            CapabilitySource::Profiles,
+            vec![selected_profile_id.clone()],
+            None,
+        )
+        .await;
+
+        let client = ClientContext {
+            client_id: "client-smart".to_string(),
+            session_id: Some("smart-session".to_string()),
+            profile_id: None,
+            config_mode: Some("smart".to_string()),
+            smart_workspace: None,
+            rules_fingerprint: None,
+            transport: crate::core::proxy::server::ClientTransport::Other,
+            source: crate::core::proxy::server::ClientIdentitySource::SessionBinding,
+            observed_client_info: None,
+        };
+
+        let snapshot = service
+            .resolve_snapshot_for_client(&client)
+            .await
+            .expect("resolve smart snapshot");
+
+        assert!(snapshot.profile_ids.is_empty());
+        assert_eq!(snapshot.server_ids.len(), 2);
+        assert!(snapshot.server_ids.contains(&active_server_id));
+        assert!(snapshot.server_ids.contains(&selected_server_id));
+        assert!(snapshot.allowed_tools.contains(&active_tool));
+        assert!(snapshot.allowed_tools.contains(&selected_tool));
     }
 }
