@@ -2,18 +2,18 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt,
-    PromptMessage, PromptMessageRole, Tool,
+    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt, PromptMessage,
+    PromptMessageRole, Tool,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::{
-    clients::{models::CapabilitySource, service::ClientConfigService},
-    config::{
-        database::Database,
-        profile,
+    clients::{
+        models::{CapabilitySource, ClientCapabilityConfig},
+        service::ClientConfigService,
     },
+    config::{database::Database, profile},
     core::pool::UpstreamConnectionPool,
 };
 
@@ -26,10 +26,12 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct ClientBuiltinContext {
     pub client_id: String,
+    pub session_id: Option<String>,
     pub config_mode: Option<String>,
     pub capability_source: CapabilitySource,
     pub selected_profile_ids: Vec<String>,
     pub custom_profile_id: Option<String>,
+    pub smart_workspace: Option<ClientCapabilityConfig>,
 }
 
 pub struct ClientService {
@@ -290,7 +292,10 @@ impl ClientService {
             } else {
                 context.selected_profile_ids.join(", ")
             },
-            custom_profile_id = context.custom_profile_id.clone().unwrap_or_else(|| "(none)".to_string()),
+            custom_profile_id = context
+                .custom_profile_id
+                .clone()
+                .unwrap_or_else(|| "(none)".to_string()),
         );
 
         GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
@@ -302,11 +307,15 @@ impl ClientService {
         context: &ClientBuiltinContext,
     ) -> GetPromptResult {
         let next_action = match context.capability_source {
-            CapabilitySource::Activated => "Use mcpmate_scope_set to choose an exact shared-scene working set for this Smart session.",
+            CapabilitySource::Activated => {
+                "Use mcpmate_scope_set to choose an exact shared-scene working set for this Smart session."
+            }
             CapabilitySource::Profiles => {
                 "Use mcpmate_scope_set for an exact working set, mcpmate_scope_add to add scenes, or mcpmate_scope_remove to remove them from the current working set."
             }
-            CapabilitySource::Custom => "Smart Mode does not persist custom overlays. Prefer shared-scene working set tools for this session.",
+            CapabilitySource::Custom => {
+                "Smart Mode does not persist custom overlays. Prefer shared-scene working set tools for this session."
+            }
         };
 
         let content = format!(
@@ -329,7 +338,10 @@ impl ClientService {
             } else {
                 context.selected_profile_ids.join(", ")
             },
-            custom_profile_id = context.custom_profile_id.clone().unwrap_or_else(|| "(none)".to_string()),
+            custom_profile_id = context
+                .custom_profile_id
+                .clone()
+                .unwrap_or_else(|| "(none)".to_string()),
             next_action = next_action,
         );
 
@@ -438,10 +450,7 @@ impl BuiltinService for ClientService {
     }
 
     fn prompts(&self) -> Vec<Prompt> {
-        vec![
-            Self::smart_mode_guide_prompt(),
-            Self::smart_mode_next_actions_prompt(),
-        ]
+        vec![Self::smart_mode_guide_prompt(), Self::smart_mode_next_actions_prompt()]
     }
 
     async fn call_tool(
@@ -449,7 +458,8 @@ impl BuiltinService for ClientService {
         request: &CallToolRequestParams,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            "mcpmate_scope_get" | "mcpmate_scope_set"
+            "mcpmate_scope_get"
+            | "mcpmate_scope_set"
             | "mcpmate_scope_add"
             | "mcpmate_scope_remove"
             | "mcpmate_client_custom_profile_details" => Err(anyhow!(
@@ -467,29 +477,25 @@ impl BuiltinService for ClientService {
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
             "mcpmate_scope_get" => {
-                let ctx =
-                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_get"))?;
+                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_get"))?;
                 self.scope_get(ctx).await
             }
             "mcpmate_scope_set" => {
-                let ctx =
-                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_set"))?;
+                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_set"))?;
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
                 let params: ProfilesSelectParams =
                     serde_json::from_value(args).context("Invalid parameters for scope_set")?;
                 self.scope_set(ctx, params.profile_ids).await
             }
             "mcpmate_scope_add" => {
-                let ctx =
-                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_add"))?;
+                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_add"))?;
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
                 let params: ProfilesSelectParams =
                     serde_json::from_value(args).context("Invalid parameters for scope_add")?;
                 self.scope_add(ctx, params.profile_ids).await
             }
             "mcpmate_scope_remove" => {
-                let ctx =
-                    context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_remove"))?;
+                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_remove"))?;
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
                 let params: ProfilesSelectParams =
                     serde_json::from_value(args).context("Invalid parameters for scope_remove")?;

@@ -1,0 +1,61 @@
+{
+  catalog_tool_description: "MCPMATE CAPABILITY ENTRYPOINT (ALWAYS START HERE).\nGoal: discover the best capability before any execution.\nDo: call mcpmate_ucan_catalog first, scan current page, then choose one candidate.\nNever skip to mcpmate_ucan_call without mcpmate_ucan_details.\nWorkflow: catalog → details → call.\nPagination: use small page_size, move page-by-page to reduce token cost and keep ranking stable.",
+  details_tool_description: "MCPMATE CAPABILITY INSPECTOR (STEP 2).\nGoal: understand exactly how one selected capability should be called.\nInput must come from catalog: capability_kind + capability_name.\nUse detail_level=summary first; switch to full only when argument construction is still ambiguous.\nOutput includes workflow_hints + call_requirements.\nWorkflow: after details is clear, continue to mcpmate_ucan_call.",
+  call_tool_description: "MCPMATE CAPABILITY EXECUTOR (STEP 3).\nGoal: execute one capability selected from catalog and verified by details.\nRequired: capability_kind + capability_name from catalog.\nArguments: provide arguments for tool/prompt; omit or use {} for resource.\nIf execution fails, return to details(detail_level=full), correct arguments, then retry.\nWorkflow: do not use call as discovery; use catalog and details first.",
+  catalog_stale_hint: "Catalog reflects currently enabled and reachable server capabilities. If server status changed, call mcpmate_ucan_catalog again before making a final selection.",
+  error_recovery_hint: "Recovery path: 1) verify capability_name + capability_kind from catalog, 2) inspect same capability via details(detail_level=full), 3) satisfy call_requirements.required_arguments, 4) retry call with corrected arguments.",
+  catalog_usage: "Recommended sequence: 1) mcpmate_ucan_catalog(page=1,page_size=10~20) 2) choose one candidate 3) mcpmate_ucan_details(detail_level=summary) 4) if needed, mcpmate_ucan_details(detail_level=full) 5) mcpmate_ucan_call. This sequence improves selection accuracy and first-call success.",
+  catalog_format: [
+    "capability_name",
+    "capability_kind",
+    "summary",
+    "action",
+    "next_step",
+    "server_id",
+    "server_name",
+    "interaction_mode",
+    "detail_hint",
+    "registry_enriched",
+    "registry_category",
+  ],
+  catalog_page_size_default: 20,
+  catalog_page_size_max: 50,
+  // Enable registry metadata enrichment for catalog entries
+  // When true, catalog entries include registry_enriched and registry_category fields
+  catalog_enrich_from_registry: true,
+  // Multi-factor sorting weights for catalog relevance ranking
+  // Lower values = higher priority (sorted first)
+  catalog_sort_weights: {
+    // Capability kind weights: tools first, then prompts, resources, resource_templates
+    kind: {
+      tool: 0,
+      prompt: 1,
+      resource: 2,
+      resource_template: 3,
+    },
+    // Server health weights: ready servers first, then reconnecting, then other states
+    health: {
+      ready: 0,
+      reconnecting: 1,
+      other: 2,
+    },
+  },
+  // Workflow hints for each capability kind (shown in details response)
+  workflow_hints: {
+    tool: [
+      "Use mcpmate_ucan_details(detail_level=summary) first, then mcpmate_ucan_details(detail_level=full) only if needed.",
+      "Fill all required_arguments before mcpmate_ucan_call.",
+    ],
+    prompt: [
+      "Prompts are executed through mcpmate_ucan_call with prompt arguments.",
+      "Use call_requirements.required_arguments to avoid retries.",
+    ],
+    resource: [
+      "Inspect resource details first, then call mcpmate_ucan_call with omitted arguments or {}.",
+    ],
+    resource_template: [
+      "Templates are not directly invocable.",
+      "Use template output as URI guidance; call only concrete resources that appear in catalog.",
+    ],
+  },
+}

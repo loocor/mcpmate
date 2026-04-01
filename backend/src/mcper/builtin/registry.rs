@@ -1,7 +1,5 @@
 use anyhow::Result;
-use rmcp::model::{
-    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt, Tool,
-};
+use rmcp::model::{CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt, Tool};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -10,7 +8,7 @@ use crate::config::database::Database;
 use crate::core::pool::UpstreamConnectionPool;
 
 use super::client::ClientBuiltinContext;
-use super::{ClientService, ProfileService};
+use super::{BrokerService, ClientService, ProfileService};
 
 /// Trait for built-in MCP services that convert API capabilities
 #[async_trait::async_trait]
@@ -152,9 +150,15 @@ impl BuiltinServiceRegistry {
         client_config_service: Arc<ClientConfigService>,
     ) -> Self {
         let profile_service = Arc::new(ProfileService::new(database.clone(), connection_pool.clone()));
-        let client_service = Arc::new(ClientService::new(database, connection_pool, client_config_service));
+        let client_service = Arc::new(ClientService::new(
+            database.clone(),
+            connection_pool.clone(),
+            client_config_service,
+        ));
+        let broker_service = Arc::new(BrokerService::new(database, connection_pool));
         self.add_service(profile_service);
         self.add_service(client_service);
+        self.add_service(broker_service);
         self
     }
 }
