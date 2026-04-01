@@ -85,17 +85,13 @@ async fn ensure_column(
 
 /// Verify registry_cache table exists
 pub async fn verify_registry_cache_table(pool: &Pool<Sqlite>) -> Result<()> {
-    let exists: Option<(i32,)> = sqlx::query_as(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-    )
-    .bind(REGISTRY_CACHE_TABLE)
-    .fetch_optional(pool)
-    .await?;
+    let exists: Option<(i32,)> = sqlx::query_as("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+        .bind(REGISTRY_CACHE_TABLE)
+        .fetch_optional(pool)
+        .await?;
 
     if exists.is_none() {
-        return Err(anyhow::anyhow!(
-            "registry_cache table not found after creation"
-        ));
+        return Err(anyhow::anyhow!("registry_cache table not found after creation"));
     }
 
     tracing::debug!("Verified registry_cache table exists");
@@ -105,8 +101,8 @@ pub async fn verify_registry_cache_table(pool: &Pool<Sqlite>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_test_db() -> SqlitePool {
         SqlitePoolOptions::new()

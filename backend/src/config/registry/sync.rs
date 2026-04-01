@@ -11,8 +11,8 @@ use sqlx::Pool;
 use sqlx::Sqlite;
 use tracing;
 
-use super::cache::RegistryCacheEntry;
 use super::RegistryCacheService;
+use super::cache::RegistryCacheEntry;
 
 const REGISTRY_API_URL: &str = "https://registry.modelcontextprotocol.io/v0.1/servers";
 const SYNC_INTERVAL_SECS: u64 = 3600; // 1 hour
@@ -155,10 +155,7 @@ impl RegistrySyncService {
         }
 
         // Convert to cache entries and sync
-        let entries: Vec<RegistryCacheEntry> = all_servers
-            .iter()
-            .map(|s| self.server_to_entry(s))
-            .collect();
+        let entries: Vec<RegistryCacheEntry> = all_servers.iter().map(|s| self.server_to_entry(s)).collect();
 
         let total_synced = self.cache_service.sync_incremental(&entries).await?;
 
@@ -183,10 +180,7 @@ impl RegistrySyncService {
             return self.sync_all().await;
         }
 
-        tracing::info!(
-            "Starting incremental registry sync since {:?}",
-            updated_since
-        );
+        tracing::info!("Starting incremental registry sync since {:?}", updated_since);
 
         let mut all_servers = Vec::new();
         let mut cursor: Option<String> = None;
@@ -203,10 +197,7 @@ impl RegistrySyncService {
             }
         }
 
-        let entries: Vec<RegistryCacheEntry> = all_servers
-            .iter()
-            .map(|s| self.server_to_entry(s))
-            .collect();
+        let entries: Vec<RegistryCacheEntry> = all_servers.iter().map(|s| self.server_to_entry(s)).collect();
 
         let count = self.cache_service.sync_incremental(&entries).await?;
         tracing::info!("Incremental sync completed: {} servers updated", count);
@@ -215,7 +206,10 @@ impl RegistrySyncService {
     }
 
     /// Fetch servers from registry API
-    async fn fetch_servers(&self, cursor: Option<&str>) -> Result<RegistryResponse> {
+    async fn fetch_servers(
+        &self,
+        cursor: Option<&str>,
+    ) -> Result<RegistryResponse> {
         self.fetch_servers_with_params(cursor, None, None).await
     }
 
@@ -225,8 +219,7 @@ impl RegistrySyncService {
         cursor: Option<&str>,
         updated_since: Option<&str>,
     ) -> Result<RegistryResponse> {
-        self.fetch_servers_with_params(cursor, updated_since, None)
-            .await
+        self.fetch_servers_with_params(cursor, updated_since, None).await
     }
 
     /// Fetch servers with all parameters
@@ -256,10 +249,7 @@ impl RegistrySyncService {
             .with_context(|| "Failed to fetch from registry API")?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Registry API returned status {}",
-                response.status()
-            ));
+            return Err(anyhow::anyhow!("Registry API returned status {}", response.status()));
         }
 
         let data: RegistryResponse = response
@@ -271,7 +261,10 @@ impl RegistrySyncService {
     }
 
     /// Convert registry server to cache entry
-    fn server_to_entry(&self, envelope: &RegistryServerEnvelope) -> RegistryCacheEntry {
+    fn server_to_entry(
+        &self,
+        envelope: &RegistryServerEnvelope,
+    ) -> RegistryCacheEntry {
         let server = &envelope.server;
         RegistryCacheEntry {
             server_name: server.name.clone(),
@@ -288,7 +281,10 @@ impl RegistrySyncService {
                 .or(server.meta.as_ref())
                 .and_then(|m| serde_json::to_string(m).ok()),
             website_url: server.website_url.clone(),
-            repository_json: server.repository.as_ref().and_then(|repo| serde_json::to_string(repo).ok()),
+            repository_json: server
+                .repository
+                .as_ref()
+                .and_then(|repo| serde_json::to_string(repo).ok()),
             status: server.status.clone().unwrap_or_else(|| "active".to_string()),
             published_at: server.published_at,
             updated_at: server.updated_at,

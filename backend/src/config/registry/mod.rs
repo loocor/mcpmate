@@ -6,4 +6,4 @@ pub mod init;
 pub mod sync;
 
 pub use cache::RegistryCacheService;
-pub use sync::{start_registry_sync_service, RegistryServer, RegistrySyncService};
+pub use sync::{RegistryServer, RegistrySyncService, start_registry_sync_service};

@@ -11,7 +11,7 @@ use crate::api::routes::AppState;
 use crate::config::registry::cache::RegistryCacheEntry;
 use crate::config::registry::sync::{RegistryPackage as CachedRegistryPackage, RegistryRemote as CachedRegistryRemote};
 use crate::config::registry::{RegistryCacheService, RegistrySyncService};
-use crate::config::server::import::{build_meta_from_entry, import_from_registry, upsert_import_meta, ImportOptions};
+use crate::config::server::import::{ImportOptions, build_meta_from_entry, import_from_registry, upsert_import_meta};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct RegistryServersQuery {
@@ -210,17 +210,12 @@ pub async fn list_cached_servers(
 
     Ok(Json(CachedRegistryServersResponse {
         servers,
-        metadata: CachedRegistryMetadata {
-            next_cursor,
-            count,
-        },
+        metadata: CachedRegistryMetadata { next_cursor, count },
         last_synced_at,
     }))
 }
 
-pub async fn sync_registry(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<RegistrySyncResponse>, ApiError> {
+pub async fn sync_registry(State(state): State<Arc<AppState>>) -> Result<Json<RegistrySyncResponse>, ApiError> {
     let db = state
         .database
         .as_ref()
@@ -277,10 +272,7 @@ fn cache_entry_to_server_wrapper(entry: RegistryCacheEntry) -> CachedRegistrySer
         if let Some(existing) = metadata.get("io.modelcontextprotocol.registry/official") {
             merge_json_values(&mut official_value, existing.clone());
         }
-        metadata.insert(
-            "io.modelcontextprotocol.registry/official".to_string(),
-            official_value,
-        );
+        metadata.insert("io.modelcontextprotocol.registry/official".to_string(), official_value);
     }
 
     CachedRegistryServerWrapper {
@@ -305,21 +297,24 @@ fn cache_entry_to_server_wrapper(entry: RegistryCacheEntry) -> CachedRegistrySer
     }
 }
 
-fn merge_json_values(target: &mut Value, source: Value) {
-	match (target, source) {
-		(Value::Object(target_map), Value::Object(source_map)) => {
-			for (key, value) in source_map {
-				target_map.entry(key).or_insert(value);
-			}
-		}
-		(target_value, source_value) => {
-			*target_value = source_value;
-		}
-	}
+fn merge_json_values(
+    target: &mut Value,
+    source: Value,
+) {
+    match (target, source) {
+        (Value::Object(target_map), Value::Object(source_map)) => {
+            for (key, value) in source_map {
+                target_map.entry(key).or_insert(value);
+            }
+        }
+        (target_value, source_value) => {
+            *target_value = source_value;
+        }
+    }
 }
 
 fn parse_json_value(raw: Option<&str>) -> Option<Value> {
-	raw.and_then(|source| serde_json::from_str::<Value>(source).ok())
+    raw.and_then(|source| serde_json::from_str::<Value>(source).ok())
 }
 
 fn parse_meta_object(raw: Option<&str>) -> Option<serde_json::Map<String, Value>> {
@@ -375,33 +370,29 @@ fn parse_packages(raw: Option<&str>) -> Option<Vec<CachedRegistryPackagePayload>
         })
         .collect();
 
-    if packages.is_empty() {
-        None
-    } else {
-        Some(packages)
-    }
+    if packages.is_empty() { None } else { Some(packages) }
 }
 
 fn parse_icons(raw: Option<&str>) -> Option<Vec<CachedRegistryIcon>> {
-	let parsed = raw.and_then(|source| serde_json::from_str::<Vec<CachedRegistryRemoteIcon>>(source).ok())?;
-	let icons: Vec<CachedRegistryIcon> = parsed
-		.into_iter()
-		.filter_map(|icon| {
-			let src = icon.url?.trim().to_string();
-			if src.is_empty() {
-				return None;
-			}
-			Some(CachedRegistryIcon { src, alt: icon.alt })
-		})
-		.collect();
+    let parsed = raw.and_then(|source| serde_json::from_str::<Vec<CachedRegistryRemoteIcon>>(source).ok())?;
+    let icons: Vec<CachedRegistryIcon> = parsed
+        .into_iter()
+        .filter_map(|icon| {
+            let src = icon.url?.trim().to_string();
+            if src.is_empty() {
+                return None;
+            }
+            Some(CachedRegistryIcon { src, alt: icon.alt })
+        })
+        .collect();
 
-	if icons.is_empty() { None } else { Some(icons) }
+    if icons.is_empty() { None } else { Some(icons) }
 }
 
 #[derive(Debug, Deserialize)]
 struct CachedRegistryRemoteIcon {
-	url: Option<String>,
-	alt: Option<String>,
+    url: Option<String>,
+    alt: Option<String>,
 }
 
 pub async fn list_servers(
@@ -510,22 +501,34 @@ pub async fn install_server(
                 name: s.name.clone(),
                 reason: match s.reason {
                     crate::config::server::import::SkipReason::DuplicateName => "duplicate_name".to_string(),
-                    crate::config::server::import::SkipReason::DuplicateFingerprint => "duplicate_fingerprint".to_string(),
-                    crate::config::server::import::SkipReason::UrlQueryMismatch { .. } => "url_query_mismatch".to_string(),
+                    crate::config::server::import::SkipReason::DuplicateFingerprint => {
+                        "duplicate_fingerprint".to_string()
+                    }
+                    crate::config::server::import::SkipReason::UrlQueryMismatch { .. } => {
+                        "url_query_mismatch".to_string()
+                    }
                 },
                 existing_query: match &s.reason {
-                    crate::config::server::import::SkipReason::UrlQueryMismatch { existing_query, .. } => existing_query.clone(),
+                    crate::config::server::import::SkipReason::UrlQueryMismatch { existing_query, .. } => {
+                        existing_query.clone()
+                    }
                     _ => None,
                 },
                 incoming_query: match &s.reason {
-                    crate::config::server::import::SkipReason::UrlQueryMismatch { incoming_query, .. } => incoming_query.clone(),
+                    crate::config::server::import::SkipReason::UrlQueryMismatch { incoming_query, .. } => {
+                        incoming_query.clone()
+                    }
                     _ => None,
                 },
             })
             .collect(),
         failed_count,
         failed_servers: outcome.failed.keys().cloned().collect(),
-        error_details: if outcome.failed.is_empty() { None } else { Some(outcome.failed) },
+        error_details: if outcome.failed.is_empty() {
+            None
+        } else {
+            Some(outcome.failed)
+        },
     };
 
     let message = if request.dry_run {
@@ -748,7 +751,9 @@ mod tests {
             schema_url: Some("https://modelcontextprotocol.io/schema/server.schema.json".to_string()),
             title: Some("Filesystem".to_string()),
             description: Some("File operations".to_string()),
-            packages_json: Some(r#"[{"name":"@modelcontextprotocol/server-filesystem","version":"1.2.3"}]"#.to_string()),
+            packages_json: Some(
+                r#"[{"name":"@modelcontextprotocol/server-filesystem","version":"1.2.3"}]"#.to_string(),
+            ),
             remotes_json: Some(r#"[{"url":"https://example.com/mcp","type":"streamable_http"}]"#.to_string()),
             icons_json: None,
             meta_json: Some(r#"{"custom":true}"#.to_string()),
@@ -820,7 +825,9 @@ mod tests {
                 icons_json: None,
                 meta_json: None,
                 website_url: Some("https://cached.example".to_string()),
-                repository_json: Some(r#"{"url":"https://github.com/example/cached-server","source":"github"}"#.to_string()),
+                repository_json: Some(
+                    r#"{"url":"https://github.com/example/cached-server","source":"github"}"#.to_string(),
+                ),
                 status: "active".to_string(),
                 published_at: Some(Utc::now()),
                 updated_at: Some(Utc::now()),
@@ -874,9 +881,7 @@ mod tests {
                 ),
                 remotes_json: Some(r#"[{"url":"https://example.com/mcp","type":"streamable_http"}]"#.to_string()),
                 icons_json: Some(r#"[{"url":"https://example.com/icon.png"}]"#.to_string()),
-                meta_json: Some(
-                    r#"{"io.modelcontextprotocol.registry/official":{"status":"active"}}"#.to_string(),
-                ),
+                meta_json: Some(r#"{"io.modelcontextprotocol.registry/official":{"status":"active"}}"#.to_string()),
                 website_url: Some("https://example.com/filesystem".to_string()),
                 repository_json: Some(
                     r#"{"url":"https://github.com/example/filesystem","source":"github"}"#.to_string(),
@@ -890,16 +895,16 @@ mod tests {
             .expect("seed registry cache");
 
         let server_id = seed_managed_server(&context.pool, "official-filesystem").await;
-        let response = refresh_managed_server_metadata(
-            State(context.state),
-            Json(ServerIdReq { id: server_id }),
-        )
-        .await
-        .expect("refresh managed server metadata");
+        let response = refresh_managed_server_metadata(State(context.state), Json(ServerIdReq { id: server_id }))
+            .await
+            .expect("refresh managed server metadata");
 
         let meta = response.0.data.expect("response payload").meta.expect("server meta");
         assert_eq!(meta.website_url.as_deref(), Some("https://example.com/filesystem"));
-        assert_eq!(meta.repository.as_ref().and_then(|repo| repo.source.as_deref()), Some("github"));
+        assert_eq!(
+            meta.repository.as_ref().and_then(|repo| repo.source.as_deref()),
+            Some("github")
+        );
         assert_eq!(meta.icons.as_ref().map(Vec::len), Some(1));
         assert_eq!(meta.version.as_deref(), Some("2.1.0"));
         assert!(meta.meta.is_some());
@@ -920,9 +925,7 @@ mod tests {
                 packages_json: None,
                 remotes_json: None,
                 icons_json: None,
-                meta_json: Some(
-                    r#"{"io.modelcontextprotocol.registry/official":{"status":"active"}}"#.to_string(),
-                ),
+                meta_json: Some(r#"{"io.modelcontextprotocol.registry/official":{"status":"active"}}"#.to_string()),
                 website_url: Some("https://example.com/filesystem".to_string()),
                 repository_json: Some(
                     r#"{"url":"https://github.com/example/filesystem","source":"github"}"#.to_string(),
@@ -980,12 +983,8 @@ mod tests {
         initialize_registry_cache_table(&pool)
             .await
             .expect("init registry cache table");
-        initialize_server_tables(&pool)
-            .await
-            .expect("init server tables");
-        initialize_profile_tables(&pool)
-            .await
-            .expect("init profile tables");
+        initialize_server_tables(&pool).await.expect("init server tables");
+        initialize_profile_tables(&pool).await.expect("init profile tables");
 
         let database = Arc::new(Database {
             pool: pool.clone(),
@@ -1003,10 +1002,11 @@ mod tests {
         }
     }
 
-    fn build_app_state(cache_path: PathBuf, database: Option<Arc<Database>>) -> AppState {
-        let redb_cache = Arc::new(
-            RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"),
-        );
+    fn build_app_state(
+        cache_path: PathBuf,
+        database: Option<Arc<Database>>,
+    ) -> AppState {
+        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
 
         AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
@@ -1045,8 +1045,6 @@ mod tests {
             updated_at: None,
         };
 
-        server::upsert_server(pool, &server)
-            .await
-            .expect("seed managed server")
+        server::upsert_server(pool, &server).await.expect("seed managed server")
     }
 }

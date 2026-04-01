@@ -14,8 +14,8 @@ use crate::{
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
     config::server::{
-        ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import_batch,
-        import::server_meta_from_payload,
+        ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import::server_meta_from_payload,
+        import_batch,
     },
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
@@ -144,8 +144,7 @@ async fn upsert_meta_payload(
     server_id: &str,
     payload: &ServerMetaPayload,
 ) -> Result<(), ApiError> {
-    let mut meta = server_meta_from_payload(server_id, payload)
-        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
+    let mut meta = server_meta_from_payload(server_id, payload).map_err(|err| ApiError::BadRequest(err.to_string()))?;
     meta.server_version = None;
     meta.protocol_version = None;
 

@@ -57,7 +57,10 @@ impl RegistryCacheService {
     }
 
     /// Upsert a cache entry (insert or update)
-    pub async fn upsert(&self, entry: &RegistryCacheEntry) -> Result<()> {
+    pub async fn upsert(
+        &self,
+        entry: &RegistryCacheEntry,
+    ) -> Result<()> {
         tracing::debug!("Upserting registry cache entry: {}", entry.server_name);
 
         sqlx::query(
@@ -109,22 +112,26 @@ impl RegistryCacheService {
     }
 
     /// Get a cache entry by server name
-    pub async fn get_by_name(&self, name: &str) -> Result<Option<RegistryCacheEntry>> {
+    pub async fn get_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<RegistryCacheEntry>> {
         tracing::debug!("Getting registry cache entry by name: {}", name);
 
-        let entry = sqlx::query_as::<_, RegistryCacheEntry>(
-            "SELECT * FROM registry_cache WHERE server_name = ?",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await
-        .with_context(|| format!("Failed to get registry cache entry: {}", name))?;
+        let entry = sqlx::query_as::<_, RegistryCacheEntry>("SELECT * FROM registry_cache WHERE server_name = ?")
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .with_context(|| format!("Failed to get registry cache entry: {}", name))?;
 
         Ok(entry)
     }
 
     /// Get all cache entries with optional status filter
-    pub async fn list_all(&self, status: Option<&str>) -> Result<Vec<RegistryCacheEntry>> {
+    pub async fn list_all(
+        &self,
+        status: Option<&str>,
+    ) -> Result<Vec<RegistryCacheEntry>> {
         tracing::debug!("Listing all registry cache entries with status: {:?}", status);
 
         let entries = match status {
@@ -137,11 +144,9 @@ impl RegistryCacheService {
                 .await
             }
             None => {
-                sqlx::query_as::<_, RegistryCacheEntry>(
-                    "SELECT * FROM registry_cache ORDER BY server_name",
-                )
-                .fetch_all(&self.pool)
-                .await
+                sqlx::query_as::<_, RegistryCacheEntry>("SELECT * FROM registry_cache ORDER BY server_name")
+                    .fetch_all(&self.pool)
+                    .await
             }
         }
         .with_context(|| "Failed to list registry cache entries")?;
@@ -156,7 +161,12 @@ impl RegistryCacheService {
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<SearchResult> {
-        tracing::debug!("Searching registry cache: query='{}', limit={}, cursor={:?}", query, limit, cursor);
+        tracing::debug!(
+            "Searching registry cache: query='{}', limit={}, cursor={:?}",
+            query,
+            limit,
+            cursor
+        );
 
         let search_pattern = format!("%{}%", query.to_lowercase());
 
@@ -231,18 +241,19 @@ impl RegistryCacheService {
     pub async fn last_sync_time(&self) -> Result<Option<DateTime<Utc>>> {
         tracing::debug!("Getting last sync time");
 
-        let time: Option<DateTime<Utc>> = sqlx::query_scalar(
-            "SELECT MAX(synced_at) FROM registry_cache",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .with_context(|| "Failed to get last sync time")?;
+        let time: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT MAX(synced_at) FROM registry_cache")
+            .fetch_one(&self.pool)
+            .await
+            .with_context(|| "Failed to get last sync time")?;
 
         Ok(time)
     }
 
     /// Sync entries from registry data (incremental update)
-    pub async fn sync_incremental(&self, entries: &[RegistryCacheEntry]) -> Result<usize> {
+    pub async fn sync_incremental(
+        &self,
+        entries: &[RegistryCacheEntry],
+    ) -> Result<usize> {
         tracing::info!("Syncing {} registry cache entries", entries.len());
 
         let mut count = 0;
@@ -256,7 +267,10 @@ impl RegistryCacheService {
     }
 
     /// Mark entries as deleted that are no longer in the registry
-    pub async fn mark_deleted(&self, active_names: &[&str]) -> Result<usize> {
+    pub async fn mark_deleted(
+        &self,
+        active_names: &[&str],
+    ) -> Result<usize> {
         tracing::debug!("Marking deleted entries, active names: {}", active_names.len());
 
         if active_names.is_empty() {
@@ -317,8 +331,8 @@ impl RegistryCacheService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_test_db() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -335,7 +349,10 @@ mod tests {
         pool
     }
 
-    fn create_test_entry(name: &str, version: &str) -> RegistryCacheEntry {
+    fn create_test_entry(
+        name: &str,
+        version: &str,
+    ) -> RegistryCacheEntry {
         RegistryCacheEntry {
             server_name: name.to_string(),
             version: version.to_string(),
@@ -347,7 +364,9 @@ mod tests {
             icons_json: Some("[]".to_string()),
             meta_json: Some("{}".to_string()),
             website_url: Some(format!("https://{}.example.com", name)),
-            repository_json: Some(format!(r#"{{"url":"https://github.com/example/{name}","source":"github"}}"#)),
+            repository_json: Some(format!(
+                r#"{{"url":"https://github.com/example/{name}","source":"github"}}"#
+            )),
             status: "active".to_string(),
             published_at: None,
             updated_at: None,
@@ -472,7 +491,10 @@ mod tests {
         assert!(result.next_cursor.is_some());
 
         // Search with cursor
-        let result2 = service.search_local("server", 2, result.next_cursor.as_deref()).await.unwrap();
+        let result2 = service
+            .search_local("server", 2, result.next_cursor.as_deref())
+            .await
+            .unwrap();
         assert_eq!(result2.servers.len(), 2);
     }
 

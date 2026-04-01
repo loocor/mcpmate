@@ -10,8 +10,8 @@ use std::sync::Arc;
 use crate::api::models::server::{RegistryRepositoryInfo, ServerIcon, ServerMetaPayload, ServersImportConfig};
 use crate::common::server::ServerType;
 use crate::config::models::{Server, ServerMeta};
-use crate::config::registry::cache::RegistryCacheEntry;
 use crate::config::registry::RegistryCacheService;
+use crate::config::registry::cache::RegistryCacheEntry;
 use crate::config::server as server_ops;
 use crate::config::server::{args, env, fingerprint, get_all_servers, upsert_server};
 
@@ -569,7 +569,10 @@ pub struct PackageImportConfig {
 
 /// Convert npm package to import configuration
 /// npm packages use: npx -y <identifier>@<version>
-pub fn npm_package_to_import_config(identifier: &str, version: Option<&str>) -> PackageImportConfig {
+pub fn npm_package_to_import_config(
+    identifier: &str,
+    version: Option<&str>,
+) -> PackageImportConfig {
     let full_identifier = match version {
         Some(v) => format!("{}@{}", identifier, v),
         None => identifier.to_string(),
@@ -584,7 +587,10 @@ pub fn npm_package_to_import_config(identifier: &str, version: Option<&str>) -> 
 
 /// Convert pypi package to import configuration
 /// pypi packages use: uvx <identifier>==<version>
-pub fn pypi_package_to_import_config(identifier: &str, version: Option<&str>) -> PackageImportConfig {
+pub fn pypi_package_to_import_config(
+    identifier: &str,
+    version: Option<&str>,
+) -> PackageImportConfig {
     let full_identifier = match version {
         Some(v) => format!("{}=={}", identifier, v),
         None => identifier.to_string(),
@@ -616,13 +622,13 @@ pub fn detect_package_type(package_name: &str) -> Option<PackageType> {
     if package_name.starts_with('@') {
         return Some(PackageType::Npm);
     }
-    
+
     // Check for common npm package patterns
     if package_name.contains('/') && !package_name.contains("://") {
         // Could be a scoped package without @ prefix (unusual but possible)
         return Some(PackageType::Npm);
     }
-    
+
     // Default to npm for MCP packages (most common)
     // This is a heuristic - in practice, the registry should provide type info
     Some(PackageType::Npm)
@@ -631,9 +637,7 @@ pub fn detect_package_type(package_name: &str) -> Option<PackageType> {
 /// Parse packages_json from registry cache entry
 fn parse_packages(packages_json: Option<&str>) -> Result<Vec<RegistryPackage>> {
     match packages_json {
-        Some(json) if !json.is_empty() => {
-            serde_json::from_str(json).context("Failed to parse packages JSON")
-        }
+        Some(json) if !json.is_empty() => serde_json::from_str(json).context("Failed to parse packages JSON"),
         _ => Ok(Vec::new()),
     }
 }
@@ -641,9 +645,7 @@ fn parse_packages(packages_json: Option<&str>) -> Result<Vec<RegistryPackage>> {
 /// Parse remotes_json from registry cache entry
 fn parse_remotes(remotes_json: Option<&str>) -> Result<Vec<RegistryRemote>> {
     match remotes_json {
-        Some(json) if !json.is_empty() => {
-            serde_json::from_str(json).context("Failed to parse remotes JSON")
-        }
+        Some(json) if !json.is_empty() => serde_json::from_str(json).context("Failed to parse remotes JSON"),
         _ => Ok(Vec::new()),
     }
 }
@@ -661,30 +663,29 @@ pub fn registry_entry_to_import_config(
             return Ok(Some(remote_to_import_config(url)));
         }
     }
-    
+
     // Then, check for packages (stdio-based servers)
     let packages = parse_packages(entry.packages_json.as_deref())?;
     if let Some(package) = packages.first() {
-        let name = package.name.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Package name is required for stdio server")
-        })?;
-        
+        let name = package
+            .name
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Package name is required for stdio server"))?;
+
         // Use preferred version if provided, otherwise use package version
-        let version = preferred_version
-            .or(package.version.as_deref());
-        
+        let version = preferred_version.or(package.version.as_deref());
+
         // Detect package type
-        let package_type = detect_package_type(name)
-            .unwrap_or(PackageType::Npm);
-        
+        let package_type = detect_package_type(name).unwrap_or(PackageType::Npm);
+
         let config = match package_type {
             PackageType::Npm => npm_package_to_import_config(name, version),
             PackageType::Pypi => pypi_package_to_import_config(name, version),
         };
-        
+
         return Ok(Some(config));
     }
-    
+
     // No packages or remotes found
     Ok(None)
 }
@@ -714,11 +715,7 @@ fn parse_registry_icons(raw: Option<&str>) -> Option<Vec<ServerIcon>> {
         })
         .collect();
 
-    if icons.is_empty() {
-        None
-    } else {
-        Some(icons)
-    }
+    if icons.is_empty() { None } else { Some(icons) }
 }
 
 fn parse_repository(raw: Option<&str>) -> Option<RegistryRepositoryInfo> {
@@ -783,7 +780,7 @@ pub(crate) fn build_meta_from_entry(entry: &RegistryCacheEntry) -> ServerMetaPay
 }
 
 /// Import a server from registry cache
-/// 
+///
 /// # Arguments
 /// * `db_pool` - Database pool for persistence
 /// * `connection_pool` - Connection pool for capability sync
@@ -792,7 +789,7 @@ pub(crate) fn build_meta_from_entry(entry: &RegistryCacheEntry) -> ServerMetaPay
 /// * `name` - Server name in registry
 /// * `version` - Optional version (defaults to latest cached version)
 /// * `opts` - Import options
-/// 
+///
 /// # Returns
 /// * `Ok(ImportOutcome)` - Import result
 /// * `Err` - If server not found or import failed
@@ -811,13 +808,13 @@ pub async fn import_from_registry(
         version = ?version,
         "Importing server from registry"
     );
-    
+
     // Fetch from cache
     let entry = cache_service
         .get_by_name(name)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in registry cache", name))?;
-    
+
     // Check if server is active
     if entry.status != "active" {
         return Err(anyhow::anyhow!(
@@ -826,14 +823,11 @@ pub async fn import_from_registry(
             entry.status
         ));
     }
-    
+
     // Convert to import config
     let import_config = registry_entry_to_import_config(&entry, version)?
-        .ok_or_else(|| anyhow::anyhow!(
-            "Server '{}' has no valid packages or remotes configuration",
-            name
-        ))?;
-    
+        .ok_or_else(|| anyhow::anyhow!("Server '{}' has no valid packages or remotes configuration", name))?;
+
     // Build ServersImportConfig
     let config = ServersImportConfig {
         kind: import_config.kind,
@@ -845,11 +839,11 @@ pub async fn import_from_registry(
         registry_server_id: Some(name.to_string()),
         meta: Some(build_meta_from_entry(&entry)),
     };
-    
+
     // Build items map
     let mut items = HashMap::new();
     items.insert(name.to_string(), config);
-    
+
     // Call import_batch
     import_batch(db_pool, connection_pool, redb_cache, items, opts).await
 }
@@ -863,7 +857,13 @@ mod tests {
         let config = npm_package_to_import_config("@modelcontextprotocol/server-filesystem", Some("1.0.0"));
         assert_eq!(config.kind, "stdio");
         assert_eq!(config.command, Some("npx".to_string()));
-        assert_eq!(config.args, Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem@1.0.0".to_string()]));
+        assert_eq!(
+            config.args,
+            Some(vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-filesystem@1.0.0".to_string()
+            ])
+        );
         assert!(config.url.is_none());
     }
 
@@ -872,7 +872,13 @@ mod tests {
         let config = npm_package_to_import_config("@modelcontextprotocol/server-filesystem", None);
         assert_eq!(config.kind, "stdio");
         assert_eq!(config.command, Some("npx".to_string()));
-        assert_eq!(config.args, Some(vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string()]));
+        assert_eq!(
+            config.args,
+            Some(vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-filesystem".to_string()
+            ])
+        );
     }
 
     #[test]
@@ -903,7 +909,10 @@ mod tests {
 
     #[test]
     fn test_detect_package_type_scoped_npm() {
-        assert_eq!(detect_package_type("@modelcontextprotocol/server-filesystem"), Some(PackageType::Npm));
+        assert_eq!(
+            detect_package_type("@modelcontextprotocol/server-filesystem"),
+            Some(PackageType::Npm)
+        );
     }
 
     #[test]
@@ -960,7 +969,7 @@ mod tests {
             updated_at: None,
             synced_at: chrono::Utc::now(),
         };
-        
+
         let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
         // Remotes take priority
         assert_eq!(config.kind, "streamable_http");
@@ -986,11 +995,14 @@ mod tests {
             updated_at: None,
             synced_at: chrono::Utc::now(),
         };
-        
+
         let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
         assert_eq!(config.kind, "stdio");
         assert_eq!(config.command, Some("npx".to_string()));
-        assert_eq!(config.args, Some(vec!["-y".to_string(), "@scope/package@1.0.0".to_string()]));
+        assert_eq!(
+            config.args,
+            Some(vec!["-y".to_string(), "@scope/package@1.0.0".to_string()])
+        );
     }
 
     #[test]
@@ -1012,9 +1024,12 @@ mod tests {
             updated_at: None,
             synced_at: chrono::Utc::now(),
         };
-        
+
         let config = registry_entry_to_import_config(&entry, Some("2.0.0")).unwrap().unwrap();
-        assert_eq!(config.args, Some(vec!["-y".to_string(), "@scope/package@2.0.0".to_string()]));
+        assert_eq!(
+            config.args,
+            Some(vec!["-y".to_string(), "@scope/package@2.0.0".to_string()])
+        );
     }
 
     #[test]
@@ -1036,7 +1051,7 @@ mod tests {
             updated_at: None,
             synced_at: chrono::Utc::now(),
         };
-        
+
         let config = registry_entry_to_import_config(&entry, None).unwrap();
         assert!(config.is_none());
     }
@@ -1060,12 +1075,15 @@ mod tests {
             updated_at: Some(chrono::Utc::now()),
             synced_at: chrono::Utc::now(),
         };
-        
+
         let meta = build_meta_from_entry(&entry);
         assert_eq!(meta.description, Some("A test server".to_string()));
         assert_eq!(meta.version, Some("1.0.0".to_string()));
         assert_eq!(meta.website_url.as_deref(), Some("https://example.com/server"));
-        assert_eq!(meta.repository.as_ref().and_then(|repo| repo.source.as_deref()), Some("github"));
+        assert_eq!(
+            meta.repository.as_ref().and_then(|repo| repo.source.as_deref()),
+            Some("github")
+        );
         assert!(meta.meta.is_some());
         assert_eq!(meta.icons.as_ref().map(Vec::len), Some(1));
         assert!(meta.extras.is_some());
