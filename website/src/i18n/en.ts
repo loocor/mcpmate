@@ -111,7 +111,7 @@ const en = {
 	"value.creators.p1":
 		"Package working modes as shared profiles instead of re-tuning every client one toggle at a time.",
 	"value.creators.p2":
-		"Let compatible clients switch profiles or client selections through MCPMate's built-in MCP tools.",
+		"Let compatible clients switch shared profiles through MCPMate's built-in MCP tools when they explicitly use Hosted + Profiles mode.",
 	"value.creators.p3":
 		"Keep only the capabilities a task actually needs in view to reduce noise and token waste.",
 	"value.creators.diagram": "Creator Flow",
@@ -119,7 +119,7 @@ const en = {
 	"value.managers.p1":
 		"Choose hosted mode for MCPMate-managed control or transparent mode for direct native client output.",
 	"value.managers.p2":
-		"Let one client follow activated profiles, selected shared profiles, or a client-specific custom profile.",
+		"Let one client either follow the active shared profile set as a read-only default, switch explicit shared profiles in Hosted + Profiles mode, or use a client-specific custom profile where supported.",
 	"value.managers.p3":
 		"Keep compatibility escape hatches without giving up a richer managed path for most users.",
 	"value.managers.diagram": "Team Consistency",
@@ -212,7 +212,7 @@ const en = {
 		"MCPMate combines profile-based capability control, flexible client rollout modes, import preview, and live inspection in one local-first control plane.",
 	"faq.compatible.title": "Can I use MCPMate with my existing MCP tools?",
 	"faq.compatible.answer":
-		"Yes. MCPMate works with MCP-compatible clients and also gives you a managed path and a transparent path, so you can choose between deeper MCPMate control and direct native client output.",
+		"Yes. MCPMate works with MCP-compatible clients and gives you Unify, hosted, and transparent paths, so you can choose between session-local UCAN control, deeper managed control, and direct native client output.",
 
 	// Notice ribbon (site updating)
 	"notice.construction.ribbon": "Updating",
