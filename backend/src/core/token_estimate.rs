@@ -184,34 +184,18 @@ fn create_builtin_tools_for_mode(
     capability_source: &CapabilitySource,
     has_custom_profile: bool,
 ) -> Vec<Tool> {
-    // Profile tools (always included)
-    let profile_tools = vec![
-        create_profile_list_tool(),
-        create_profile_preview_tool(),
-        create_profile_enable_tool(),
-        create_profile_disable_tool(),
-        create_profile_activate_only_tool(),
-    ];
-
     match capability_source {
-        CapabilitySource::Activated => profile_tools,
+        CapabilitySource::Activated => Vec::new(),
         CapabilitySource::Profiles => {
-            let mut tools = profile_tools;
-            tools.push(create_scope_get_tool());
+            let mut tools = vec![create_profile_list_tool(), create_profile_preview_tool()];
             tools.push(create_scope_set_tool());
             tools.push(create_scope_add_tool());
             tools.push(create_scope_remove_tool());
-            if has_custom_profile {
-                tools.push(create_client_custom_profile_details_tool());
-            }
             tools
         }
-        CapabilitySource::Custom => {
-            let mut tools = profile_tools;
-            tools.push(create_scope_get_tool());
-            tools.push(create_client_custom_profile_details_tool());
-            tools
-        }
+        CapabilitySource::Custom => has_custom_profile
+            .then_some(vec![create_client_custom_profile_details_tool()])
+            .unwrap_or_default(),
     }
 }
 
@@ -256,6 +240,7 @@ fn create_profile_preview_tool() -> Tool {
     )
 }
 
+#[cfg(test)]
 fn create_profile_enable_tool() -> Tool {
     Tool::new(
         "mcpmate_profile_enable",
@@ -278,6 +263,7 @@ fn create_profile_enable_tool() -> Tool {
     )
 }
 
+#[cfg(test)]
 fn create_profile_disable_tool() -> Tool {
     Tool::new(
         "mcpmate_profile_disable",
@@ -300,6 +286,7 @@ fn create_profile_disable_tool() -> Tool {
     )
 }
 
+#[cfg(test)]
 fn create_profile_activate_only_tool() -> Tool {
     Tool::new(
         "mcpmate_profile_activate_only",
@@ -322,10 +309,11 @@ fn create_profile_activate_only_tool() -> Tool {
     )
 }
 
+#[cfg(test)]
 fn create_scope_get_tool() -> Tool {
     Tool::new(
         "mcpmate_scope_get",
-        "Get the current scope for this client session, including mode, source, selected profiles, and custom profile ID when present.",
+        "Get the current effective scope for this client, including mode, source, selected profiles, and custom profile ID when present.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -342,7 +330,7 @@ fn create_scope_get_tool() -> Tool {
 fn create_scope_set_tool() -> Tool {
     Tool::new(
         "mcpmate_scope_set",
-        "Replace the current scope with an exact list of shared profiles. Use this to switch to a single scene or exact set.",
+        "Replace the effective profile scope with an exact list of shared profiles. Use this to switch to a single scene or exact set.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -350,7 +338,7 @@ fn create_scope_set_tool() -> Tool {
                     "profile_ids": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Shared profile IDs to keep in the working set"
+                        "description": "Shared profile IDs to keep in the effective profile scope"
                     }
                 },
                 "required": ["profile_ids"]
@@ -365,7 +353,7 @@ fn create_scope_set_tool() -> Tool {
 fn create_scope_add_tool() -> Tool {
     Tool::new(
         "mcpmate_scope_add",
-        "Add shared profiles to the current scope without replacing the existing selection.",
+        "Add shared profiles to the effective profile scope without replacing the existing selection.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -373,7 +361,7 @@ fn create_scope_add_tool() -> Tool {
                     "profile_ids": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Shared profile IDs to add to the working set"
+                        "description": "Shared profile IDs to add to the effective profile scope"
                     }
                 },
                 "required": ["profile_ids"]
@@ -388,7 +376,7 @@ fn create_scope_add_tool() -> Tool {
 fn create_scope_remove_tool() -> Tool {
     Tool::new(
         "mcpmate_scope_remove",
-        "Remove shared profiles from the current scope without deleting the profile definitions themselves.",
+        "Remove shared profiles from the effective profile scope without deleting the profile definitions themselves.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -396,7 +384,7 @@ fn create_scope_remove_tool() -> Tool {
                     "profile_ids": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Shared profile IDs to remove from the working set"
+                        "description": "Shared profile IDs to remove from the effective profile scope"
                     }
                 },
                 "required": ["profile_ids"]
@@ -528,9 +516,9 @@ mod tests {
     fn test_builtin_overhead_activated_mode() {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Activated, false);
 
-        assert_eq!(overhead.tool_count, 5, "Activated mode should have 5 tools");
+        assert_eq!(overhead.tool_count, 0, "Activated mode should have 0 tools");
         assert_eq!(overhead.mode, "activated");
-        assert!(overhead.tokens > 0, "Token count should be positive");
+        assert_eq!(overhead.tokens, 0, "Activated mode should have no builtin overhead");
     }
 
     #[test]
@@ -538,8 +526,8 @@ mod tests {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Profiles, false);
 
         assert_eq!(
-            overhead.tool_count, 9,
-            "Profiles mode without custom profile should have 9 tools"
+            overhead.tool_count, 5,
+            "Profiles mode without custom profile should have 5 tools"
         );
         assert_eq!(overhead.mode, "profiles");
         assert!(overhead.tokens > 0, "Token count should be positive");
@@ -550,8 +538,8 @@ mod tests {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Profiles, true);
 
         assert_eq!(
-            overhead.tool_count, 10,
-            "Profiles mode with custom profile should have 10 tools"
+            overhead.tool_count, 5,
+            "Profiles mode with custom profile should still have 5 tools"
         );
         assert_eq!(overhead.mode, "profiles");
         assert!(overhead.tokens > 0, "Token count should be positive");
@@ -561,9 +549,15 @@ mod tests {
     fn test_builtin_overhead_custom_mode() {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Custom, false);
 
-        assert_eq!(overhead.tool_count, 7, "Custom mode should have 7 tools");
+        assert_eq!(
+            overhead.tool_count, 0,
+            "Custom mode without custom profile should have 0 tools"
+        );
         assert_eq!(overhead.mode, "custom");
-        assert!(overhead.tokens > 0, "Token count should be positive");
+        assert_eq!(
+            overhead.tokens, 0,
+            "Custom mode without custom profile should have no builtin overhead"
+        );
     }
 
     #[test]
@@ -578,13 +572,13 @@ mod tests {
             activated.tokens < profiles_no_custom.tokens,
             "Activated should have fewer tokens than Profiles without custom"
         );
-        assert!(
-            profiles_no_custom.tokens < profiles_with_custom.tokens,
-            "Profiles without custom should have fewer tokens than Profiles with custom"
+        assert_eq!(
+            profiles_no_custom.tokens, profiles_with_custom.tokens,
+            "Profiles with and without custom profile should have the same builtin overhead"
         );
         assert!(
             custom.tokens < profiles_with_custom.tokens,
-            "Custom should have fewer tokens than Profiles with custom"
+            "Custom should have fewer tokens than Profiles"
         );
     }
 

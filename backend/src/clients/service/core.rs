@@ -41,7 +41,7 @@ pub(super) struct ClientStateRow {
     pub(super) identifier: String,
     pub(super) name: String,
     pub(super) managed: i64,
-    pub(super) config_mode: String,
+    pub(super) config_mode: Option<String>,
     pub(super) transport: Option<String>,
     pub(super) client_version: Option<String>,
     pub(super) backup_policy: Option<String>,

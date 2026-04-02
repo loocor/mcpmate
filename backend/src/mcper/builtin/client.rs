@@ -31,7 +31,7 @@ pub struct ClientBuiltinContext {
     pub capability_source: CapabilitySource,
     pub selected_profile_ids: Vec<String>,
     pub custom_profile_id: Option<String>,
-    pub smart_workspace: Option<ClientCapabilityConfig>,
+    pub unify_workspace: Option<ClientCapabilityConfig>,
 }
 
 pub struct ClientService {
@@ -59,7 +59,7 @@ impl ClientService {
     ) -> Result<CallToolResult> {
         let result = ClientConfigurationResponse {
             client_id: context.client_id.clone(),
-            config_mode: context.config_mode.clone().unwrap_or_else(|| "hosted".to_string()),
+            config_mode: context.config_mode.clone().unwrap_or_else(|| "unify".to_string()),
             capability_source: context.capability_source.as_str().to_string(),
             selected_profile_ids: if matches!(context.capability_source, CapabilitySource::Profiles) {
                 Some(context.selected_profile_ids.clone())
@@ -90,21 +90,18 @@ impl ClientService {
             ));
         }
 
-        let selected_profile_ids = if matches!(context.config_mode.as_deref(), Some("smart")) {
-            profile_ids
-        } else {
-            self.client_config_service
-                .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, profile_ids)
-                .await
-                .map_err(|error| anyhow!(error.to_string()))?
-                .selected_profile_ids
-        };
+        let selected_profile_ids = self
+            .client_config_service
+            .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, profile_ids)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?
+            .selected_profile_ids;
 
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
-                        "Updated the client working set to {} selected profile(s) for '{}'",
+                        "Updated the effective profile scope to {} selected profile(s) for '{}'",
                         selected_profile_ids.len(),
                         context.client_id
                     ),
@@ -134,21 +131,18 @@ impl ClientService {
         merged.sort();
         merged.dedup();
 
-        let selected_profile_ids = if matches!(context.config_mode.as_deref(), Some("smart")) {
-            merged
-        } else {
-            self.client_config_service
-                .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, merged)
-                .await
-                .map_err(|error| anyhow!(error.to_string()))?
-                .selected_profile_ids
-        };
+        let selected_profile_ids = self
+            .client_config_service
+            .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, merged)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?
+            .selected_profile_ids;
 
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
-                        "Added profile(s) to the client working set. '{}' now has {} selected profile(s)",
+                        "Added profile(s) to the effective profile scope. '{}' now has {} selected profile(s)",
                         context.client_id,
                         selected_profile_ids.len()
                     ),
@@ -180,21 +174,18 @@ impl ClientService {
             .cloned()
             .collect::<Vec<_>>();
 
-        let selected_profile_ids = if matches!(context.config_mode.as_deref(), Some("smart")) {
-            remaining
-        } else {
-            self.client_config_service
-                .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, remaining)
-                .await
-                .map_err(|error| anyhow!(error.to_string()))?
-                .selected_profile_ids
-        };
+        let selected_profile_ids = self
+            .client_config_service
+            .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, remaining)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?
+            .selected_profile_ids;
 
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
-                        "Removed profile(s) from the current working set without deleting the profile definitions. '{}' now has {} selected profile(s)",
+                        "Removed profile(s) from the effective profile scope without deleting the profile definitions. '{}' now has {} selected profile(s)",
                         context.client_id,
                         selected_profile_ids.len()
                     ),
@@ -248,105 +239,82 @@ impl ClientService {
         )]))
     }
 
-    fn smart_mode_guide_prompt() -> Prompt {
+    fn unify_mode_guide_prompt() -> Prompt {
         Prompt::new(
-            "mcpmate_smart_mode_guide",
-            Some("Explain how Smart Mode works and when to use switch, add, remove, or custom state tools."),
+            "mcpmate_unify_mode_guide",
+        Some("Explain how Unify Mode works and when to use builtin UCAN tools."),
             None,
         )
     }
 
-    fn smart_mode_next_actions_prompt() -> Prompt {
+    fn unify_mode_next_actions_prompt() -> Prompt {
         Prompt::new(
-            "mcpmate_smart_mode_next_actions",
-            Some("Summarize the current client working state and recommend the next Smart Mode tool to call."),
+            "mcpmate_unify_mode_next_actions",
+        Some("Summarize the current Unify Mode state and recommend the next builtin UCAN tool to call."),
             None,
         )
     }
 
-    fn build_smart_mode_guide(
+    fn build_unify_mode_guide(
         &self,
         context: &ClientBuiltinContext,
     ) -> GetPromptResult {
         let content = format!(
             concat!(
-                "You are helping a user operate MCPMate Smart Mode for client '{client_id}'.\n\n",
-                "Smart Mode concepts:\n",
-                "1. Smart Mode is session-scoped and starts with builtin MCP control-plane tools only.\n",
-                "2. There is no second-level selector in the UI for Smart Mode.\n",
-                "3. Shared scenes are added to the current session working set through builtin tools.\n\n",
-                "Current capability source: {capability_source}.\n",
-                "Selected shared profiles: {selected_profiles}.\n",
-                "Custom profile id: {custom_profile_id}.\n\n",
+        "You are helping a user operate MCPMate Unify Mode for client '{client_id}'.\n\n",
+        "Unify Mode concepts:\n",
+        "1. Unify Mode is session-scoped and starts with builtin MCP control-plane tools only.\n",
+        "2. Unify Mode uses globally enabled servers rather than profile selection.\n",
+        "3. There is no second-level profile selector in the UI for Unify Mode.\n\n",
                 "Tool guidance:\n",
-                "- Use mcpmate_scope_set to switch to an exact working set, such as frontend only.\n",
-                "- Use mcpmate_scope_add to add another shared scene, such as also enabling backend.\n",
-                "- Use mcpmate_scope_remove to remove scenes from the current working set without deleting the profiles themselves.\n",
-                "- Smart Mode changes stay inside the current MCP session and reset when the session ends.\n\n",
+                "- Use mcpmate_ucan_catalog to browse capabilities from globally enabled servers.\n",
+                "- Use mcpmate_ucan_details to inspect one capability before calling it.\n",
+        "- Use mcpmate_ucan_call to invoke a capability through Unify Mode.\n",
+                "- If the user needs durable or profile-scoped selection, move to Hosted or Transparent mode instead.\n\n",
                 "After any tool that changes capability visibility, if the client does not refresh tools automatically, ask it to re-fetch tools/list."
             ),
             client_id = context.client_id,
-            capability_source = context.capability_source.as_str(),
-            selected_profiles = if context.selected_profile_ids.is_empty() {
-                "(none)".to_string()
-            } else {
-                context.selected_profile_ids.join(", ")
-            },
-            custom_profile_id = context
-                .custom_profile_id
-                .clone()
-                .unwrap_or_else(|| "(none)".to_string()),
         );
 
         GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
-            .with_description("Smart Mode guide for the current client")
+        .with_description("Unify Mode guide for the current client")
     }
 
-    fn build_smart_mode_next_actions(
+    fn build_unify_mode_next_actions(
         &self,
         context: &ClientBuiltinContext,
     ) -> GetPromptResult {
         let next_action = match context.capability_source {
             CapabilitySource::Activated => {
-                "Use mcpmate_scope_set to choose an exact shared-scene working set for this Smart session."
+                "Use mcpmate_ucan_catalog to browse the currently available capabilities from globally enabled servers."
             }
             CapabilitySource::Profiles => {
-                "Use mcpmate_scope_set for an exact working set, mcpmate_scope_add to add scenes, or mcpmate_scope_remove to remove them from the current working set."
+                "Use mcpmate_ucan_catalog and mcpmate_ucan_details to inspect capabilities before calling them."
             }
             CapabilitySource::Custom => {
-                "Smart Mode does not persist custom overlays. Prefer shared-scene working set tools for this session."
+        "Unify Mode does not use profile-scoped overlays. Prefer Hosted or Transparent mode for profile selection."
             }
         };
 
         let content = format!(
             concat!(
                 "Client: {client_id}\n",
-                "Capability source: {capability_source}\n",
-                "Selected shared profiles: {selected_profiles}\n",
-                "Custom profile id: {custom_profile_id}\n\n",
+        "Mode: Unify\n",
+                "Capability source: {capability_source}\n\n",
                 "Recommended next action:\n",
                 "{next_action}\n\n",
-                "If the user says 'switch to frontend', prefer an exact replace operation.\n",
-                "If the user says 'also enable backend', prefer an additive operation.\n",
+                "If the user asks what is available, start with mcpmate_ucan_catalog.\n",
+                "If the user asks for one specific tool, inspect it with mcpmate_ucan_details before calling when needed.\n",
                 "If a tool changes visible capabilities, ask the client to re-fetch tools/list when auto-refresh is not reliable.\n",
-                "Smart Mode resets when the MCP session ends; promote to Hosted if the user wants durable behavior."
+        "Unify Mode resets when the MCP session ends; promote to Hosted if the user wants durable profile-based behavior."
             ),
             client_id = context.client_id,
             capability_source = context.capability_source.as_str(),
-            selected_profiles = if context.selected_profile_ids.is_empty() {
-                "(none)".to_string()
-            } else {
-                context.selected_profile_ids.join(", ")
-            },
-            custom_profile_id = context
-                .custom_profile_id
-                .clone()
-                .unwrap_or_else(|| "(none)".to_string()),
             next_action = next_action,
         );
 
         GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
-            .with_description("Recommended Smart Mode next actions for the current client")
+        .with_description("Recommended Unify Mode next actions for the current client")
     }
 }
 
@@ -360,7 +328,7 @@ impl BuiltinService for ClientService {
         vec![
             Tool::new(
                 "mcpmate_scope_get",
-                "Get the current working state for this client session, including mode, working-set source, selected shared profiles, and custom profile ID if present.",
+                "Get the current effective scope for this client, including mode, capability source, selected shared profiles, and custom profile ID if present.",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -374,7 +342,7 @@ impl BuiltinService for ClientService {
             ),
             Tool::new(
                 "mcpmate_scope_set",
-                "Replace the current client working set with an exact list of shared profiles (profiles mode only). Use this to switch to a single scene or exact set.",
+                "Replace the effective profile scope with an exact list of shared profiles (profiles mode only). Use this to switch to a single scene or exact set.",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -382,7 +350,7 @@ impl BuiltinService for ClientService {
                             "profile_ids": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Shared profile IDs to keep in the working set"
+                                "description": "Shared profile IDs to keep in the effective profile scope"
                             }
                         },
                         "required": ["profile_ids"]
@@ -394,7 +362,7 @@ impl BuiltinService for ClientService {
             ),
             Tool::new(
                 "mcpmate_scope_add",
-                "Add shared profiles to the current client working set without replacing the existing selection (profiles mode only).",
+                "Add shared profiles to the effective profile scope without replacing the existing selection (profiles mode only).",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -402,7 +370,7 @@ impl BuiltinService for ClientService {
                             "profile_ids": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Shared profile IDs to add to the working set"
+                                "description": "Shared profile IDs to add to the effective profile scope"
                             }
                         },
                         "required": ["profile_ids"]
@@ -414,7 +382,7 @@ impl BuiltinService for ClientService {
             ),
             Tool::new(
                 "mcpmate_scope_remove",
-                "Remove shared profiles from the current working set without deleting the profile definitions themselves (profiles mode only).",
+                "Remove shared profiles from the effective profile scope without deleting the profile definitions themselves (profiles mode only).",
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -422,7 +390,7 @@ impl BuiltinService for ClientService {
                             "profile_ids": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Shared profile IDs to remove from the working set"
+                                "description": "Shared profile IDs to remove from the effective profile scope"
                             }
                         },
                         "required": ["profile_ids"]
@@ -450,7 +418,7 @@ impl BuiltinService for ClientService {
     }
 
     fn prompts(&self) -> Vec<Prompt> {
-        vec![Self::smart_mode_guide_prompt(), Self::smart_mode_next_actions_prompt()]
+        vec![Self::unify_mode_guide_prompt(), Self::unify_mode_next_actions_prompt()]
     }
 
     async fn call_tool(
@@ -515,11 +483,11 @@ impl BuiltinService for ClientService {
         request: &GetPromptRequestParams,
         context: Option<&ClientBuiltinContext>,
     ) -> Result<GetPromptResult> {
-        let ctx = context.ok_or_else(|| anyhow!("Client context required for builtin Smart Mode prompts"))?;
+        let ctx = context.ok_or_else(|| anyhow!("Client context required for builtin Unify Mode prompts"))?;
 
         match request.name.as_ref() {
-            "mcpmate_smart_mode_guide" => Ok(self.build_smart_mode_guide(ctx)),
-            "mcpmate_smart_mode_next_actions" => Ok(self.build_smart_mode_next_actions(ctx)),
+            "mcpmate_unify_mode_guide" => Ok(self.build_unify_mode_guide(ctx)),
+            "mcpmate_unify_mode_next_actions" => Ok(self.build_unify_mode_next_actions(ctx)),
             _ => Err(anyhow!("Unknown prompt: {}", request.name)),
         }
     }

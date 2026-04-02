@@ -5,6 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::macros::resp::api_resp;
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "System status response")]
 pub struct SystemStatusResp {
@@ -151,4 +153,24 @@ impl ManagementActionResp {
             transport: Some(transport.to_string()),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "System default client management mode payload")]
+pub struct SystemDefaultClientModeData {
+    #[schemars(description = "Default mode for unrecognized or unconfigured clients")]
+    pub default_config_mode: String,
+}
+
+api_resp!(
+    SystemDefaultClientModeResp,
+    SystemDefaultClientModeData,
+    "System default client management mode response"
+);
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Request to update system default client management mode")]
+pub struct SystemDefaultClientModeReq {
+    #[schemars(description = "Default mode: unify|hosted|transparent")]
+    pub default_config_mode: String,
 }

@@ -529,7 +529,7 @@ pub async fn update_settings(
             );
             StatusCode::INTERNAL_SERVER_ERROR
         })?
-        .unwrap_or(("hosted".into(), "auto".into(), None));
+        .unwrap_or((None, "auto".into(), None));
 
     let data = crate::api::models::client::ClientSettingsUpdateData {
         identifier: request.identifier,
@@ -705,7 +705,7 @@ async fn descriptor_to_client_info(
             .get_client_settings(&template.identifier)
             .await
             .ok()
-            .and_then(|o| o.map(|(mode, _, _)| mode)),
+            .and_then(|o| o.and_then(|(mode, _, _)| mode)),
         transport: service
             .get_client_settings(&template.identifier)
             .await
@@ -854,7 +854,7 @@ fn build_render_options(request: &ClientConfigUpdateReq) -> ClientRenderOptions 
 
 fn map_mode(mode: ClientConfigMode) -> ConfigMode {
     match mode {
-        ClientConfigMode::Smart => ConfigMode::Managed,
+        ClientConfigMode::Unify => ConfigMode::Managed,
         ClientConfigMode::Hosted => ConfigMode::Managed,
         ClientConfigMode::Transparent => ConfigMode::Native,
     }

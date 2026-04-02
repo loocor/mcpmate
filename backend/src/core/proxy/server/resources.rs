@@ -15,7 +15,7 @@ pub(super) async fn list_resources(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourcesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("smart")) {
+    if matches!(client.config_mode.as_deref(), Some("unify")) {
         return Ok(ListResourcesResult {
             resources: Vec::new(),
             next_cursor: None,
@@ -125,7 +125,7 @@ pub(super) async fn list_resource_templates(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourceTemplatesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("smart")) {
+    if matches!(client.config_mode.as_deref(), Some("unify")) {
         return Ok(ListResourceTemplatesResult {
             resource_templates: Vec::new(),
             next_cursor: None,
@@ -251,9 +251,9 @@ pub(super) async fn read_resource(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ReadResourceResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("smart")) {
+    if matches!(client.config_mode.as_deref(), Some("unify")) {
         return Err(McpError::invalid_params(
-            "Smart mode does not expose resources directly; use UCAN broker tools instead".to_string(),
+            "Unify mode does not expose resources directly; use UCAN broker tools instead".to_string(),
             None,
         ));
     }

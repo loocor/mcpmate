@@ -1040,10 +1040,13 @@ impl UpstreamConnectionPool {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
-        let (_, config) = crate::core::foundation::loader::load_servers_from_active_profile(db).await?;
+        let config = crate::core::foundation::loader::load_pool_base_config(db).await?;
 
         let Some(_server_config) = config.mcp_servers.get(server_id) else {
-            return Err(anyhow::anyhow!("Server '{}' not found in active profile", server_id));
+            return Err(anyhow::anyhow!(
+                "Server '{}' not found in pool base configuration",
+                server_id
+            ));
         };
 
         self.set_config(Arc::new(config))?;

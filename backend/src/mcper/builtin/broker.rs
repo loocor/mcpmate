@@ -1075,7 +1075,7 @@ impl BrokerService {
         };
 
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&response).context("Failed to serialize Smart tool catalog")?,
+            serde_json::to_string_pretty(&response).context("Failed to serialize Unify tool catalog")?,
         )]))
     }
 
@@ -1169,7 +1169,7 @@ impl BrokerService {
                         server_name: prompt.server_name,
                         detail_level,
                         details: prompt_details_value(&prompt.prompt, detail_level)
-                            .context("Failed to serialize Smart prompt details")?,
+            .context("Failed to serialize Unify prompt details")?,
                         workflow_hints,
                         related_capabilities: related,
                         argument_tips,
@@ -1197,7 +1197,7 @@ impl BrokerService {
                         server_name: resource.server_name,
                         detail_level,
                         details: resource_details_value(&resource.resource, detail_level)
-                            .context("Failed to serialize Smart resource details")?,
+            .context("Failed to serialize Unify resource details")?,
                         workflow_hints,
                         related_capabilities: related,
                         argument_tips: Vec::new(),
@@ -1230,7 +1230,7 @@ impl BrokerService {
                             server_name: template.server_name,
                             detail_level,
                             details: resource_template_details_value(&template.resource_template, detail_level)
-                                .context("Failed to serialize Smart resource template details")?,
+            .context("Failed to serialize Unify resource template details")?,
                             workflow_hints,
                             related_capabilities: related,
                             argument_tips: Vec::new(),
@@ -1256,7 +1256,7 @@ impl BrokerService {
         };
 
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&response).context("Failed to serialize Smart tool details")?,
+            serde_json::to_string_pretty(&response).context("Failed to serialize Unify tool details")?,
         )]))
     }
 
@@ -1388,7 +1388,7 @@ impl BrokerService {
         let snapshot = visibility
             .resolve_snapshot_for_client(&client_context)
             .await
-            .context("Failed to resolve Smart visibility snapshot")?;
+            .context("Failed to resolve Unify visibility snapshot")?;
 
         if visibility
             .assert_tool_allowed_with_snapshot(&snapshot, tool_name)
@@ -1434,7 +1434,7 @@ impl BrokerService {
                 },
             )
             .await
-            .context("Failed to send Smart broker tool call")?;
+            .context("Failed to send Unify broker tool call")?;
 
         match handle.await_response().await {
             Ok(rmcp::model::ServerResult::CallToolResult(result)) => Ok(result),
@@ -1461,11 +1461,11 @@ impl BrokerService {
         let snapshot = visibility
             .resolve_snapshot_for_client(&client_context)
             .await
-            .context("Failed to resolve Smart visibility snapshot")?;
+            .context("Failed to resolve Unify visibility snapshot")?;
         let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
 
         let enabled_servers = self
-            .load_enabled_servers("Failed to load enabled servers for Smart catalog")
+            .load_enabled_servers("Failed to load enabled servers for Unify catalog")
             .await?;
 
         let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
@@ -1555,11 +1555,11 @@ impl BrokerService {
         let snapshot = visibility
             .resolve_snapshot_for_client(&client_context)
             .await
-            .context("Failed to resolve Smart visibility snapshot")?;
+            .context("Failed to resolve Unify visibility snapshot")?;
         let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
 
         let enabled_servers = self
-            .load_enabled_servers("Failed to load enabled servers for Smart prompt catalog")
+            .load_enabled_servers("Failed to load enabled servers for Unify prompt catalog")
             .await?;
 
         let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
@@ -1657,11 +1657,11 @@ impl BrokerService {
         let snapshot = visibility
             .resolve_snapshot_for_client(&client_context)
             .await
-            .context("Failed to resolve Smart visibility snapshot")?;
+            .context("Failed to resolve Unify visibility snapshot")?;
         let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
 
         let enabled_servers = self
-            .load_enabled_servers("Failed to load enabled servers for Smart resource catalog")
+            .load_enabled_servers("Failed to load enabled servers for Unify resource catalog")
             .await?;
 
         let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
@@ -1764,11 +1764,11 @@ impl BrokerService {
         let snapshot = visibility
             .resolve_snapshot_for_client(&client_context)
             .await
-            .context("Failed to resolve Smart visibility snapshot")?;
+            .context("Failed to resolve Unify visibility snapshot")?;
         let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
 
         let enabled_servers = self
-            .load_enabled_servers("Failed to load enabled servers for Smart resource template catalog")
+            .load_enabled_servers("Failed to load enabled servers for Unify resource template catalog")
             .await?;
 
         let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
@@ -1890,7 +1890,7 @@ impl BrokerService {
         let snapshot = visibility
             .resolve_snapshot_for_client(&client_context)
             .await
-            .context("Failed to resolve Smart visibility snapshot")?;
+            .context("Failed to resolve Unify visibility snapshot")?;
         if visibility
             .assert_prompt_allowed_with_snapshot(&snapshot, prompt_name)
             .await
@@ -1936,7 +1936,7 @@ impl BrokerService {
         .await
         {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(
-                serde_json::to_string_pretty(&result).context("Failed to serialize Smart prompt result")?,
+            serde_json::to_string_pretty(&result).context("Failed to serialize Unify prompt result")?,
             )])),
             Err(e) => Ok(UcanError::upstream_error("prompt", prompt_name, &e.to_string()).to_call_tool_result()),
         }
@@ -1952,7 +1952,7 @@ impl BrokerService {
         let snapshot = visibility
             .resolve_snapshot_for_client(&client_context)
             .await
-            .context("Failed to resolve Smart visibility snapshot")?;
+            .context("Failed to resolve Unify visibility snapshot")?;
         if visibility
             .assert_resource_allowed_with_snapshot(&snapshot, resource_uri)
             .await
@@ -2001,7 +2001,7 @@ impl BrokerService {
         .await
         {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(
-                serde_json::to_string_pretty(&result).context("Failed to serialize Smart resource result")?,
+            serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
             )])),
             Err(e) => Ok(UcanError::upstream_error("resource", resource_uri, &e.to_string()).to_call_tool_result()),
         }
@@ -2055,12 +2055,12 @@ impl BrokerService {
                 pool_guard
                     .ensure_connected_with_selection(&selection)
                     .await
-                    .with_context(|| format!("Failed to connect Smart broker to server '{}'", server_id))?;
+            .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
             } else {
                 pool_guard
                     .ensure_connected(server_id)
                     .await
-                    .with_context(|| format!("Failed to connect Smart broker to server '{}'", server_id))?;
+            .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
             }
         }
 
@@ -2270,7 +2270,7 @@ impl ClientBuiltinContext {
             session_id: self.session_id.clone(),
             profile_id: None,
             config_mode: self.config_mode.clone(),
-            smart_workspace: self.smart_workspace.clone(),
+            unify_workspace: self.unify_workspace.clone(),
             rules_fingerprint: None,
             transport: ClientTransport::Other,
             source: ClientIdentitySource::SessionBinding,

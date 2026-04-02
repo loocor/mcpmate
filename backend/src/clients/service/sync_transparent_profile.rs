@@ -3,6 +3,7 @@
 use super::core::{ClientConfigService, ClientRenderOptions};
 use crate::clients::error::ConfigResult;
 use crate::clients::models::ConfigMode;
+use crate::config::client::init::resolve_default_client_config_mode;
 
 impl ClientConfigService {
     /// For each managed client in **transparent** mode, re-render and apply the native configuration
@@ -19,6 +20,9 @@ impl ClientConfigService {
     ) -> ConfigResult<()> {
         let states = self.fetch_client_states().await?;
         let descriptors = self.list_clients(false).await?;
+        let default_config_mode = resolve_default_client_config_mode(&self.db_pool)
+            .await
+            .unwrap_or_else(|_| "unify".to_string());
 
         let mut ok = 0usize;
         let mut failures = std::collections::HashMap::new();
@@ -31,8 +35,8 @@ impl ClientConfigService {
 
             let config_mode = states
                 .get(&client_id)
-                .map(|s| s.config_mode.as_str())
-                .unwrap_or("hosted");
+                .and_then(|s| s.config_mode.as_deref())
+                .unwrap_or(default_config_mode.as_str());
             if !config_mode.eq_ignore_ascii_case("transparent") {
                 continue;
             }

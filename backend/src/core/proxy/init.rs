@@ -22,7 +22,6 @@ pub fn setup_logging(args: &Args) -> Result<()> {
     // Once the audit logging subsystem is implemented, remove MCPMATE_LOG_TO_FILE,
     // the MultiWriter, and all file-path handling here.
     use crate::common::constants::{defaults, env_vars};
-    // Create environment filter with smart defaults
     let (env_filter, log_config_msg) = if let Ok(rust_log) = std::env::var("RUST_LOG") {
         // If RUST_LOG is set, respect it completely - no overrides
         let msg = format!("Using RUST_LOG environment variable: {} (full control)", rust_log);
@@ -212,7 +211,7 @@ pub async fn setup_proxy_server_with_params(
     startup_mode: &StartupMode,
 ) -> Result<(Arc<ProxyServer>, Arc<ProxyServer>)> {
     // Load configuration from database using core loader with startup parameters
-    let config = loader::load_server_config_with_params(&db, startup_mode).await?;
+    let config = loader::load_pool_base_config_with_params(&db, startup_mode).await?;
 
     tracing::info!(
         "Loaded configuration from database with startup mode: {:?}",
@@ -269,4 +268,66 @@ pub async fn setup_proxy_server_with_params(
 /// Setup proxy server with database and configuration using core modules (legacy function for backward compatibility)
 pub async fn setup_proxy_server(db: Database) -> Result<(Arc<ProxyServer>, Arc<ProxyServer>)> {
     setup_proxy_server_with_params(db, None, &StartupMode::Default).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::initialization::run_initialization;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tempfile::TempDir;
+
+    async fn create_test_database() -> (TempDir, Database) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        run_initialization(&pool).await.expect("initialize schema");
+        let db_path = temp_dir.path().join("test.db");
+
+        (temp_dir, Database { pool, path: db_path })
+    }
+
+    async fn insert_server(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+        name: &str,
+        enabled: bool,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO server_config (id, name, server_type, command, enabled)
+            VALUES (?, ?, 'stdio', 'demo-command', ?)
+            "#,
+        )
+        .bind(server_id)
+        .bind(name)
+        .bind(enabled)
+        .execute(pool)
+        .await
+        .expect("insert server");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn setup_proxy_server_default_mode_seeds_pool_from_globally_enabled_servers() {
+        let (_temp_dir, db) = create_test_database().await;
+        insert_server(&db.pool, "server-global", "Global Server", true).await;
+
+        let (proxy, _) = setup_proxy_server_with_params(db, None, &StartupMode::Default)
+            .await
+            .expect("setup proxy server");
+
+        let pool = proxy.connection_pool.lock().await;
+
+        assert!(pool.config.mcp_servers.contains_key("server-global"));
+        assert!(pool.connections.contains_key("server-global"));
+    }
 }

@@ -159,16 +159,7 @@ impl ProxyServer {
         mut client: ClientContext,
     ) -> Result<ClientContext, rmcp::ErrorData> {
         if client.config_mode.is_none() {
-            let db = self
-                .database
-                .as_ref()
-                .ok_or_else(|| rmcp::ErrorData::internal_error("Database not available".to_string(), None))?;
-            let config_mode: Option<String> = sqlx::query_scalar("SELECT config_mode FROM client WHERE identifier = ?")
-                .bind(&client.client_id)
-                .fetch_optional(&db.pool)
-                .await
-                .map_err(|error| self.map_client_context_error(error.into()))?;
-            client.config_mode = Some(config_mode.unwrap_or_else(|| "hosted".to_string()));
+            client.config_mode = Some(self.resolve_effective_config_mode(&client.client_id).await?);
         }
 
         if client.rules_fingerprint.is_some() {
@@ -185,6 +176,28 @@ impl ProxyServer {
             .map_err(|error| self.map_client_context_error(error))?;
         client.rules_fingerprint = Some(snapshot.rules_fingerprint);
         Ok(client)
+    }
+
+    async fn resolve_effective_config_mode(
+        &self,
+        client_id: &str,
+    ) -> Result<String, rmcp::ErrorData> {
+        let db = self
+            .database
+            .as_ref()
+            .ok_or_else(|| rmcp::ErrorData::internal_error("Database not available".to_string(), None))?;
+        let explicit_mode: Option<String> = sqlx::query_scalar("SELECT config_mode FROM client WHERE identifier = ?")
+            .bind(client_id)
+            .fetch_optional(&db.pool)
+            .await
+            .map_err(|error| self.map_client_context_error(error.into()))?;
+
+        match explicit_mode.filter(|mode| !mode.trim().is_empty()) {
+            Some(mode) => Ok(mode),
+            None => crate::config::client::init::resolve_default_client_config_mode(&db.pool)
+                .await
+                .map_err(|error| self.map_client_context_error(error)),
+        }
     }
 
     pub async fn register_downstream_client(
@@ -227,7 +240,7 @@ impl ProxyServer {
                 session_id: Some(session_id.to_string()),
                 profile_id: binding.profile_id.clone(),
                 config_mode: binding.config_mode.clone(),
-                smart_workspace: binding.smart_workspace.clone(),
+            unify_workspace: binding.unify_workspace.clone(),
                 rules_fingerprint: binding.rules_fingerprint.clone(),
                 transport: crate::core::proxy::server::common::ClientTransport::StreamableHttp,
                 source: crate::core::proxy::server::common::ClientIdentitySource::SessionBinding,
@@ -248,14 +261,14 @@ impl ProxyServer {
             .map_err(|error| self.map_client_context_error(error))
     }
 
-    pub async fn update_smart_session_workspace(
+    pub async fn update_unify_session_workspace(
         &self,
         session_id: &str,
         client_id: &str,
         workspace: crate::clients::models::ClientCapabilityConfig,
     ) -> Result<(), rmcp::ErrorData> {
         self.client_context_resolver
-            .set_smart_workspace(session_id, Some(workspace))
+            .set_unify_workspace(session_id, Some(workspace))
             .await
             .map_err(|error| self.map_client_context_error(error))?;
 
@@ -1342,7 +1355,12 @@ fn apply_client_audit_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::client::init::initialize_client_table;
+    use crate::config::database::Database;
+    use crate::core::models::Config;
     use crate::core::proxy::server::common::{ClientIdentitySource, ClientTransport};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tempfile::TempDir;
 
     struct TestServerState {
         downstream_clients: Arc<dashmap::DashMap<String, rmcp::service::Peer<rmcp::RoleServer>>>,
@@ -1358,6 +1376,31 @@ mod tests {
             server_resource_index: Arc::new(dashmap::DashMap::new()),
             session_bindings: Arc::new(SessionBoundClientContextResolver::new()),
         }
+    }
+
+    async fn create_mode_resolution_test_server() -> (TempDir, sqlx::SqlitePool, ProxyServer) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        initialize_client_table(&pool).await.expect("init client table");
+
+        let database = Arc::new(Database {
+            pool: pool.clone(),
+            path: temp_dir.path().join("test.db"),
+        });
+
+        let mut server = ProxyServer::new(Arc::new(Config::default()));
+        server.database = Some(database);
+
+        (temp_dir, pool, server)
     }
 
     async fn cleanup_session_state(
@@ -1454,7 +1497,7 @@ mod tests {
             session_id: Some(session_id.to_string()),
             profile_id: None,
             config_mode: Some("hosted".to_string()),
-            smart_workspace: None,
+            unify_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1519,7 +1562,7 @@ mod tests {
             session_id: None,
             profile_id: None,
             config_mode: Some("hosted".to_string()),
-            smart_workspace: None,
+            unify_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1536,7 +1579,7 @@ mod tests {
             session_id: Some("sess-123".to_string()),
             profile_id: None,
             config_mode: Some("hosted".to_string()),
-            smart_workspace: None,
+            unify_workspace: None,
             rules_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
@@ -1544,5 +1587,93 @@ mod tests {
         };
 
         assert_eq!(context_with_session.session_id.as_deref(), Some("sess-123"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolve_effective_config_mode_prefers_explicit_client_mode() {
+        let (_temp_dir, pool, server) = create_mode_resolution_test_server().await;
+
+        sqlx::query("UPDATE client_runtime_settings SET value = ? WHERE key = ?")
+            .bind("transparent")
+            .bind("default_config_mode")
+            .execute(&pool)
+            .await
+            .expect("set default mode");
+
+        sqlx::query(
+            r#"
+            INSERT INTO client (id, name, identifier, managed, config_mode, backup_policy, backup_limit)
+            VALUES (?, ?, ?, 1, ?, 'keep_n', 30)
+            "#,
+        )
+        .bind(crate::generate_id!("clnt"))
+        .bind("Recognized Client")
+        .bind("recognized-client")
+        .bind("unify")
+        .execute(&pool)
+        .await
+        .expect("insert client row");
+
+        let mode = server
+            .resolve_effective_config_mode("recognized-client")
+            .await
+            .expect("resolve config mode");
+
+        assert_eq!(mode, "unify");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolve_effective_config_mode_uses_settings_default_for_recognized_client_without_explicit_mode() {
+        let (_temp_dir, pool, server) = create_mode_resolution_test_server().await;
+
+        sqlx::query("UPDATE client_runtime_settings SET value = ? WHERE key = ?")
+            .bind("transparent")
+            .bind("default_config_mode")
+            .execute(&pool)
+            .await
+            .expect("set default mode");
+
+        sqlx::query(
+            r#"
+            INSERT INTO client (id, name, identifier, managed, config_mode, backup_policy, backup_limit)
+            VALUES (?, ?, ?, 1, ?, 'keep_n', 30)
+            "#,
+        )
+        .bind(crate::generate_id!("clnt"))
+        .bind("Recognized Client Without Explicit Mode")
+        .bind("recognized-client-with-default")
+        .bind(Option::<String>::None)
+        .execute(&pool)
+        .await
+        .expect("insert client row with null mode");
+
+        let mode = server
+            .resolve_effective_config_mode("recognized-client-with-default")
+            .await
+            .expect("resolve config mode");
+
+        assert_eq!(mode, "transparent");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolve_effective_config_mode_uses_settings_default_for_unrecognized_client() {
+        let (_temp_dir, pool, server) = create_mode_resolution_test_server().await;
+
+        sqlx::query("UPDATE client_runtime_settings SET value = ? WHERE key = ?")
+            .bind("transparent")
+            .bind("default_config_mode")
+            .execute(&pool)
+            .await
+            .expect("set default mode");
+
+        let mode = server
+            .resolve_effective_config_mode("manual-unrecognized-client")
+            .await
+            .expect("resolve config mode");
+
+        assert_eq!(mode, "transparent");
     }
 }

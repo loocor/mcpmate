@@ -53,8 +53,7 @@ impl ServerSyncManager {
     ) -> Result<()> {
         tracing::debug!("Starting server synchronization from active profile");
 
-        // Step 1: Load current active configuration
-        let config = self.load_active_configuration().await?;
+        let config = self.load_pool_base_configuration().await?;
 
         // Step 2: Update connection pool configuration
         pool.set_config(Arc::new(config))?;
@@ -69,13 +68,12 @@ impl ServerSyncManager {
         Ok(())
     }
 
-    /// Load the current active configuration from database
-    async fn load_active_configuration(&self) -> Result<Config> {
-        tracing::debug!("Loading server configuration from active profile");
+    async fn load_pool_base_configuration(&self) -> Result<Config> {
+        tracing::debug!("Loading server configuration from globally enabled pool base source");
 
-        let (_, config) = crate::core::foundation::loader::load_servers_from_active_profile(&self.database)
+        let config = crate::core::foundation::loader::load_pool_base_config(&self.database)
             .await
-            .context("Failed to load servers from active profile")?;
+            .context("Failed to load pool base configuration")?;
 
         tracing::debug!("Loaded configuration with {} servers", config.mcp_servers.len());
         Ok(config)
@@ -185,6 +183,69 @@ impl ServerSyncManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::initialization::run_initialization, core::models::Config};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tempfile::TempDir;
+
+    async fn create_test_database() -> (TempDir, Arc<Database>) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        run_initialization(&pool).await.expect("initialize schema");
+        let db_path = temp_dir.path().join("test.db");
+
+        (temp_dir, Arc::new(Database { pool, path: db_path }))
+    }
+
+    async fn insert_server(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+        name: &str,
+        enabled: bool,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO server_config (id, name, server_type, command, enabled)
+            VALUES (?, ?, 'stdio', 'demo-command', ?)
+            "#,
+        )
+        .bind(server_id)
+        .bind(name)
+        .bind(enabled)
+        .execute(pool)
+        .await
+        .expect("insert server");
+    }
+
+    #[tokio::test]
+    async fn sync_servers_registers_globally_enabled_server_without_profile_membership() {
+        let (_temp_dir, database) = create_test_database().await;
+        insert_server(&database.pool, "server-global", "Global Server", true).await;
+
+        let mut pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()));
+        let sync_manager = ServerSyncManager::new(database);
+
+        sync_manager
+            .sync_servers_from_active_profile(&mut pool)
+            .await
+            .expect("sync servers");
+
+        assert!(pool.config.mcp_servers.contains_key("server-global"));
+        assert!(pool.connections.contains_key("server-global"));
     }
 }
 

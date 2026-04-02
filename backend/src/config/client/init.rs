@@ -6,12 +6,17 @@ use crate::common::constants::database::tables;
 
 const DEFAULT_BACKUP_POLICY: &str = "keep_n";
 const DEFAULT_CAPABILITY_SOURCE: &str = "activated";
+pub(crate) const CLIENT_RUNTIME_SETTINGS_TABLE: &str = "client_runtime_settings";
+pub(crate) const DEFAULT_CONFIG_MODE_SETTING_KEY: &str = "default_config_mode";
+pub(crate) const DEFAULT_CONFIG_MODE: &str = "unify";
+const OPTIONAL_CONFIG_MODE_SCHEMA_FRAGMENT: &str =
+    "config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent'))";
 
 /// Initialize client management table (identifier-managed/policy metadata)
 pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Initializing client management table");
 
-    migrate_client_table_for_smart_mode(pool).await?;
+    migrate_client_table_for_optional_config_mode(pool).await?;
 
     sqlx::query(&format!(
         r#"
@@ -20,8 +25,8 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             name TEXT NOT NULL,
             identifier TEXT NOT NULL UNIQUE,
             managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
-            -- Management mode: smart|hosted|transparent
-            config_mode TEXT NOT NULL DEFAULT 'hosted' CHECK (config_mode IN ('smart','hosted','transparent')),
+            -- Management mode: unify|hosted|transparent; NULL means use default mode
+            config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
             -- Transport protocol: auto|stdio|streamable_http (default: auto)
             transport TEXT NOT NULL DEFAULT 'auto' CHECK (
                 transport IN ('auto', 'stdio', 'streamable_http')
@@ -63,6 +68,47 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     ensure_column(pool, tables::CLIENT, "custom_profile_id", "TEXT").await?;
 
     sqlx::query(&format!(
+        r#"
+        CREATE TABLE IF NOT EXISTS {table} (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+                CHECK (key != '{default_mode_key}' OR value IN ('unify', 'hosted', 'transparent'))
+        )
+        "#,
+        table = CLIENT_RUNTIME_SETTINGS_TABLE,
+        default_mode_key = DEFAULT_CONFIG_MODE_SETTING_KEY,
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create {} table: {}", CLIENT_RUNTIME_SETTINGS_TABLE, e);
+        anyhow::anyhow!("Failed to create {} table: {}", CLIENT_RUNTIME_SETTINGS_TABLE, e)
+    })?;
+
+    sqlx::query(&format!(
+        "INSERT OR IGNORE INTO {table} (key, value) VALUES (?, ?)",
+        table = CLIENT_RUNTIME_SETTINGS_TABLE,
+    ))
+    .bind(DEFAULT_CONFIG_MODE_SETTING_KEY)
+    .bind(DEFAULT_CONFIG_MODE)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            "Failed to initialize {}.{}: {}",
+            CLIENT_RUNTIME_SETTINGS_TABLE,
+            DEFAULT_CONFIG_MODE_SETTING_KEY,
+            e
+        );
+        anyhow::anyhow!(
+            "Failed to initialize {}.{}: {}",
+            CLIENT_RUNTIME_SETTINGS_TABLE,
+            DEFAULT_CONFIG_MODE_SETTING_KEY,
+            e
+        )
+    })?;
+
+    sqlx::query(&format!(
         "UPDATE {table} SET capability_source = ? WHERE capability_source IS NULL OR capability_source = ''",
         table = tables::CLIENT
     ))
@@ -74,11 +120,55 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         anyhow::anyhow!("Failed to backfill {} capability_source: {}", tables::CLIENT, e)
     })?;
 
+    sqlx::query(&format!(
+        "UPDATE {table} SET config_mode = NULL WHERE config_mode = ''",
+        table = tables::CLIENT
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to normalize {} config_mode: {}", tables::CLIENT, e);
+        anyhow::anyhow!("Failed to normalize {} config_mode: {}", tables::CLIENT, e)
+    })?;
+
     tracing::debug!("{} table initialized", tables::CLIENT);
     Ok(())
 }
 
-async fn migrate_client_table_for_smart_mode(pool: &Pool<Sqlite>) -> Result<()> {
+pub async fn resolve_default_client_config_mode(pool: &Pool<Sqlite>) -> Result<String> {
+    let mode: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT value FROM {table} WHERE key = ?",
+        table = CLIENT_RUNTIME_SETTINGS_TABLE,
+    ))
+    .bind(DEFAULT_CONFIG_MODE_SETTING_KEY)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(mode.unwrap_or_else(|| DEFAULT_CONFIG_MODE.to_string()))
+}
+
+pub async fn set_default_client_config_mode(
+    pool: &Pool<Sqlite>,
+    mode: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        matches!(mode, "unify" | "hosted" | "transparent"),
+        "invalid default client config mode: {mode}"
+    );
+
+    sqlx::query(&format!(
+        "INSERT INTO {table} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        table = CLIENT_RUNTIME_SETTINGS_TABLE,
+    ))
+    .bind(DEFAULT_CONFIG_MODE_SETTING_KEY)
+    .bind(mode)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> Result<()> {
     let table_exists: Option<String> = sqlx::query_scalar(&format!(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='{}'",
         tables::CLIENT
@@ -101,15 +191,20 @@ async fn migrate_client_table_for_smart_mode(pool: &Pool<Sqlite>) -> Result<()> 
         return Ok(());
     };
 
-    if create_sql.contains("'smart'") {
+    if create_sql.contains(OPTIONAL_CONFIG_MODE_SCHEMA_FRAGMENT)
+        && !create_sql.contains("config_mode TEXT NOT NULL DEFAULT 'hosted'")
+    {
         return Ok(());
     }
 
-    tracing::info!("Migrating {} table to support smart config_mode", tables::CLIENT);
+    tracing::info!(
+        "Migrating {} table to allow unset config_mode for default-mode fallback",
+        tables::CLIENT
+    );
 
     let migration_result = async {
         let mut tx = pool.begin().await?;
-        let temp_table = format!("{}_smart_migration", tables::CLIENT);
+        let temp_table = format!("{}_config_mode_nullable", tables::CLIENT);
 
         sqlx::query(&format!(
             r#"
@@ -118,7 +213,7 @@ async fn migrate_client_table_for_smart_mode(pool: &Pool<Sqlite>) -> Result<()> 
                 name TEXT NOT NULL,
                 identifier TEXT NOT NULL UNIQUE,
                 managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
-                config_mode TEXT NOT NULL DEFAULT 'hosted' CHECK (config_mode IN ('smart','hosted','transparent')),
+                config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
                 transport TEXT NOT NULL DEFAULT 'auto' CHECK (
                     transport IN ('auto', 'stdio', 'streamable_http')
                 ),
@@ -151,7 +246,8 @@ async fn migrate_client_table_for_smart_mode(pool: &Pool<Sqlite>) -> Result<()> 
                 custom_profile_id, created_at, updated_at
             )
             SELECT
-                id, name, identifier, managed, config_mode, transport, client_version,
+                id, name, identifier, managed,
+                config_mode, transport, client_version,
                 backup_policy, backup_limit, capability_source, selected_profile_ids,
                 custom_profile_id, created_at, updated_at
             FROM {table}
@@ -212,5 +308,61 @@ async fn ensure_column(
             tracing::error!("Failed to add column {}.{}: {}", table, column, e);
             Err(anyhow::anyhow!("Failed to add column {}.{}: {}", table, column, e))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{initialize_client_table, resolve_default_client_config_mode, set_default_client_config_mode};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_pool() -> sqlx::Pool<sqlx::Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("failed to create sqlite pool");
+
+        initialize_client_table(&pool)
+            .await
+            .expect("failed to initialize client tables");
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn default_client_config_mode_defaults_to_unify() {
+        let pool = setup_pool().await;
+
+        let mode = resolve_default_client_config_mode(&pool)
+            .await
+            .expect("failed to resolve default client config mode");
+
+        assert_eq!(mode, "unify");
+    }
+
+    #[tokio::test]
+    async fn default_client_config_mode_can_be_updated_and_read_back() {
+        let pool = setup_pool().await;
+
+        set_default_client_config_mode(&pool, "unify")
+            .await
+            .expect("failed to persist unify mode");
+        assert_eq!(
+            resolve_default_client_config_mode(&pool)
+                .await
+                .expect("failed to resolve unify mode"),
+            "unify"
+        );
+
+        set_default_client_config_mode(&pool, "transparent")
+            .await
+            .expect("failed to persist transparent mode");
+        assert_eq!(
+            resolve_default_client_config_mode(&pool)
+                .await
+                .expect("failed to resolve transparent mode"),
+            "transparent"
+        );
     }
 }

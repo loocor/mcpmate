@@ -9,10 +9,12 @@ use aide::axum::{
 };
 
 use super::AppState;
-use crate::aide_wrapper;
 use crate::api::handlers::system;
-use crate::api::models::system::ManagementActionResp;
-use crate::api::models::system::{SystemMetricsResp, SystemPortsResp, SystemStatusResp};
+use crate::api::models::system::{
+    ManagementActionResp, SystemDefaultClientModeReq, SystemDefaultClientModeResp, SystemMetricsResp, SystemPortsResp,
+    SystemStatusResp,
+};
+use crate::{aide_wrapper, aide_wrapper_payload};
 
 // Generate aide-compatible wrappers for system handlers
 aide_wrapper!(
@@ -33,6 +35,19 @@ aide_wrapper!(
     "Get runtime REST and MCP listener ports"
 );
 
+aide_wrapper!(
+    system::get_default_client_mode,
+    SystemDefaultClientModeResp,
+    "Get default client management mode used for unrecognized or unconfigured clients"
+);
+
+aide_wrapper_payload!(
+    system::set_default_client_mode,
+    SystemDefaultClientModeReq,
+    SystemDefaultClientModeResp,
+    "Set default client management mode used for unrecognized or unconfigured clients"
+);
+
 // Management controls under system group for consistency
 aide_wrapper!(
     system::shutdown,
@@ -51,6 +66,11 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/system/status", get_with(get_status_aide, get_status_docs))
         .api_route("/system/ports", get_with(get_ports_aide, get_ports_docs))
+        .api_route(
+            "/system/client-default-mode",
+            get_with(get_default_client_mode_aide, get_default_client_mode_docs)
+                .post_with(set_default_client_mode_aide, set_default_client_mode_docs),
+        )
         .api_route("/system/metrics", get_with(get_metrics_aide, get_metrics_docs))
         .api_route("/system/shutdown", post_with(shutdown_aide, shutdown_docs))
         .api_route("/system/restart", post_with(restart_aide, restart_docs))

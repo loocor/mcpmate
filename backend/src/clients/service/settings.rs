@@ -181,7 +181,7 @@ impl ClientConfigService {
     pub async fn get_client_settings(
         &self,
         identifier: &str,
-    ) -> ConfigResult<Option<(String, String, Option<String>)>> {
+    ) -> ConfigResult<Option<(Option<String>, String, Option<String>)>> {
         let state = self.fetch_state(identifier).await?;
 
         if state.is_none() {

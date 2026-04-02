@@ -4,6 +4,7 @@ use super::core::{ClientConfigService, ClientRenderOptions};
 use crate::clients::error::ConfigResult;
 use crate::clients::models::ConfigMode;
 use crate::clients::source::ClientConfigSource;
+use crate::config::client::init::resolve_default_client_config_mode;
 
 /// Outcome of [`ClientConfigService::reapply_hosted_managed_clients_after_mcp_port_change`].
 #[derive(Debug, Default, Clone)]
@@ -29,6 +30,9 @@ impl ClientConfigService {
     ) -> ConfigResult<HostedClientReapplySummary> {
         let states = self.fetch_client_states().await?;
         let templates = self.template_source.list_client().await?;
+        let default_config_mode = resolve_default_client_config_mode(&self.db_pool)
+            .await
+            .unwrap_or_else(|_| "unify".to_string());
 
         let mut summary = HostedClientReapplySummary::default();
 
@@ -39,7 +43,9 @@ impl ClientConfigService {
                 continue;
             }
 
-            let config_mode = state.map(|s| s.config_mode.as_str()).unwrap_or("hosted");
+            let config_mode = state
+                .and_then(|s| s.config_mode.as_deref())
+                .unwrap_or(default_config_mode.as_str());
             if config_mode.eq_ignore_ascii_case("transparent") {
                 continue;
             }

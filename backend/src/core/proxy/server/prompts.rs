@@ -21,7 +21,7 @@ pub(super) async fn list_prompts(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListPromptsResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("smart")) {
+    if matches!(client.config_mode.as_deref(), Some("unify")) {
         return Ok(ListPromptsResult {
             prompts: Vec::new(),
             next_cursor: None,
@@ -139,9 +139,9 @@ pub(super) async fn get_prompt(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<GetPromptResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("smart")) {
+    if matches!(client.config_mode.as_deref(), Some("unify")) {
         return Err(McpError::invalid_params(
-            "Smart mode does not expose prompts directly; use UCAN broker tools instead".to_string(),
+            "Unify mode does not expose prompts directly; use UCAN broker tools instead".to_string(),
             None,
         ));
     }
@@ -162,7 +162,7 @@ pub(super) async fn get_prompt(
         capability_source: capability_config.capability_source,
         selected_profile_ids: capability_config.selected_profile_ids,
         custom_profile_id: capability_config.custom_profile_id,
-        smart_workspace: client.smart_workspace.clone(),
+            unify_workspace: client.unify_workspace.clone(),
     };
 
     if builtin_prompt_allowed(client.config_mode.as_deref(), request.name.as_ref()) {

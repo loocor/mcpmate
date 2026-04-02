@@ -154,7 +154,7 @@ impl CapabilityService {
 
             if !retried_with_validation {
                 let mut pool = self.pool.lock().await;
-                pool.ensure_connected(&ctx.server_id).await?;
+                ensure_list_connection(&mut pool, ctx).await?;
                 drop(pool);
 
                 result = crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await?;
@@ -178,5 +178,94 @@ impl CapabilityService {
 
         crate::core::capability::resolver::upsert(server_id, &server.name).await;
         Ok(server.name)
+    }
+}
+
+async fn ensure_list_connection(
+    pool: &mut UpstreamConnectionPool,
+    ctx: &crate::core::capability::runtime::ListCtx,
+) -> Result<()> {
+    if let Some(selection) = ctx.connection_selection.as_ref() {
+        pool.ensure_connected_with_selection(selection).await?;
+    } else {
+        pool.ensure_connected(&ctx.server_id).await?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_list_connection;
+    use crate::common::server::ServerType;
+    use crate::core::capability::runtime::ListCtx;
+    use crate::core::capability::{AffinityKey, CapabilityType, ConnectionSelection};
+    use crate::core::models::{Config, MCPServerConfig};
+    use crate::core::pool::UpstreamConnectionPool;
+    use std::{collections::HashMap, sync::Arc};
+
+    fn create_test_pool() -> UpstreamConnectionPool {
+        let mut mcp_servers = HashMap::new();
+        mcp_servers.insert(
+            "srv-visible".to_string(),
+            MCPServerConfig {
+                kind: ServerType::Stdio,
+                command: Some("command-that-should-not-exist-mcpmate".to_string()),
+                args: Some(vec!["--test".to_string()]),
+                headers: None,
+                url: None,
+                env: None,
+            },
+        );
+
+        UpstreamConnectionPool::new(
+            Arc::new(Config {
+                mcp_servers,
+                pagination: None,
+            }),
+            None,
+        )
+    }
+
+    fn make_list_ctx(connection_selection: Option<ConnectionSelection>) -> ListCtx {
+        ListCtx {
+            capability: CapabilityType::Tools,
+            server_id: "srv-visible".to_string(),
+            refresh: None,
+            timeout: None,
+            validation_session: None,
+            runtime_identity: None,
+            connection_selection,
+        }
+    }
+
+    #[tokio::test]
+    async fn ensure_list_connection_uses_scoped_selection_when_available() {
+        let mut pool = create_test_pool();
+        let ctx = make_list_ctx(Some(ConnectionSelection {
+            server_id: "srv-visible".to_string(),
+            affinity_key: AffinityKey::PerSession("session-effective-scope".to_string()),
+            routing_fingerprint: Some("fp-effective-scope".to_string()),
+        }));
+
+        let result = ensure_list_connection(&mut pool, &ctx).await;
+        assert!(result.is_err(), "connection should fail with fake command");
+
+        assert_eq!(pool.production_route_count(), 1);
+        assert!(pool.has_affinity_bound_connection("srv-visible", "session-effective-scope"));
+        assert_eq!(pool.client_bound_connection_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn ensure_list_connection_falls_back_to_default_route_without_selection() {
+        let mut pool = create_test_pool();
+        let ctx = make_list_ctx(None);
+
+        let result = ensure_list_connection(&mut pool, &ctx).await;
+        assert!(result.is_err(), "connection should fail with fake command");
+
+        assert_eq!(pool.production_route_count(), 1);
+        assert_eq!(pool.client_bound_connection_count(), 0);
+        assert!(pool.connections.contains_key("srv-visible"));
     }
 }

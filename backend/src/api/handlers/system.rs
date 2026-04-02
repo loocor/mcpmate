@@ -9,11 +9,44 @@ use serde_json::{Map, Value};
 use super::ApiError;
 use crate::api::models::system::ManagementActionResp;
 use crate::api::{
-    models::system::{SystemMetricsResp, SystemPortsResp, SystemStatusResp},
+    models::system::{
+        SystemDefaultClientModeData, SystemDefaultClientModeReq, SystemDefaultClientModeResp, SystemMetricsResp,
+        SystemPortsResp, SystemStatusResp,
+    },
     routes::AppState,
 };
 use crate::audit::{AuditAction, AuditStatus};
 use crate::system::config::get_runtime_port_config;
+
+const PROXY_NOT_AVAILABLE_ERROR: &str = "Proxy server not available";
+
+fn build_management_action_data(
+    operation: &str,
+    errors: &[String],
+) -> Map<String, Value> {
+    let mut data = Map::new();
+    data.insert("operation".to_string(), Value::String(operation.to_string()));
+    data.insert("error_count".to_string(), Value::from(errors.len() as u64));
+    if !errors.is_empty() {
+        data.insert(
+            "errors".to_string(),
+            Value::Array(errors.iter().cloned().map(Value::String).collect()),
+        );
+    }
+    data
+}
+
+fn audit_status_for_errors(errors: &[String]) -> AuditStatus {
+    if errors.is_empty() {
+        AuditStatus::Success
+    } else {
+        AuditStatus::Failed
+    }
+}
+
+fn joined_errors(errors: &[String]) -> Option<String> {
+    (!errors.is_empty()).then(|| errors.join("; "))
+}
 
 /// Get system status
 pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<SystemStatusResp>, ApiError> {
@@ -68,6 +101,65 @@ pub async fn get_ports(State(_state): State<Arc<AppState>>) -> Result<Json<Syste
         api_url: cfg.api_url(),
         mcp_http_url: cfg.mcp_http_url(),
     }))
+}
+
+pub async fn get_default_client_mode(
+    State(state): State<Arc<AppState>>
+) -> Result<Json<SystemDefaultClientModeResp>, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".into()))?;
+
+    let default_config_mode = crate::config::client::init::resolve_default_client_config_mode(&db.pool)
+        .await
+        .map_err(|err| ApiError::InternalError(err.to_string()))?;
+
+    Ok(Json(SystemDefaultClientModeResp::success(
+        SystemDefaultClientModeData { default_config_mode },
+    )))
+}
+
+pub async fn set_default_client_mode(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SystemDefaultClientModeReq>,
+) -> Result<Json<SystemDefaultClientModeResp>, ApiError> {
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("Database not available".into()))?;
+
+    crate::config::client::init::set_default_client_config_mode(&db.pool, &request.default_config_mode)
+        .await
+        .map_err(|err| ApiError::InternalError(err.to_string()))?;
+
+    let mut data = Map::new();
+    data.insert(
+        "default_config_mode".to_string(),
+        Value::String(request.default_config_mode.clone()),
+    );
+
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            AuditAction::ClientSettingsUpdate,
+            AuditStatus::Success,
+            "POST",
+            "/api/system/client-default-mode",
+            None,
+            None,
+            None,
+            Some(data),
+            None,
+        ),
+    )
+    .await;
+
+    Ok(Json(SystemDefaultClientModeResp::success(
+        SystemDefaultClientModeData {
+            default_config_mode: request.default_config_mode,
+        },
+    )))
 }
 
 /// Get system metrics
@@ -190,11 +282,11 @@ pub async fn shutdown(State(state): State<Arc<AppState>>) -> Result<Json<Managem
                 None,
                 None,
                 None,
-                Some("Proxy server not available".to_string()),
+                Some(PROXY_NOT_AVAILABLE_ERROR.to_string()),
             ),
         )
         .await;
-        return Err(ApiError::InternalError("Proxy server not available".into()));
+        return Err(ApiError::InternalError(PROXY_NOT_AVAILABLE_ERROR.into()));
     };
 
     let mut errors = Vec::new();
@@ -208,36 +300,20 @@ pub async fn shutdown(State(state): State<Arc<AppState>>) -> Result<Json<Managem
         errors.push(format!("complete_shutdown: {err}"));
     }
 
-    let mut data = Map::new();
-    data.insert("operation".to_string(), Value::String("shutdown".to_string()));
-    data.insert("error_count".to_string(), Value::from(errors.len() as u64));
-    if !errors.is_empty() {
-        data.insert(
-            "errors".to_string(),
-            Value::Array(errors.iter().cloned().map(Value::String).collect()),
-        );
-    }
+    let data = build_management_action_data("shutdown", &errors);
 
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
             AuditAction::LocalCoreServiceStop,
-            if errors.is_empty() {
-                AuditStatus::Success
-            } else {
-                AuditStatus::Failed
-            },
+            audit_status_for_errors(&errors),
             "POST",
             "/api/system/shutdown",
             Some(started_at.elapsed().as_millis() as u64),
             None,
             None,
             Some(data),
-            if errors.is_empty() {
-                None
-            } else {
-                Some(errors.join("; "))
-            },
+            joined_errors(&errors),
         ),
     )
     .await;
@@ -263,11 +339,11 @@ pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<Manageme
                 None,
                 None,
                 None,
-                Some("Proxy server not available".to_string()),
+                Some(PROXY_NOT_AVAILABLE_ERROR.to_string()),
             ),
         )
         .await;
-        return Err(ApiError::InternalError("Proxy server not available".into()));
+        return Err(ApiError::InternalError(PROXY_NOT_AVAILABLE_ERROR.into()));
     };
 
     let mut errors = Vec::new();
@@ -296,16 +372,8 @@ pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<Manageme
 
     let start_result = proxy.start_unified(bind_address).await;
 
-    let mut data = Map::new();
-    data.insert("operation".to_string(), Value::String("restart".to_string()));
+    let mut data = build_management_action_data("restart", &errors);
     data.insert("mcp_port".to_string(), Value::from(mcp_port));
-    data.insert("error_count".to_string(), Value::from(errors.len() as u64));
-    if !errors.is_empty() {
-        data.insert(
-            "errors".to_string(),
-            Value::Array(errors.iter().cloned().map(Value::String).collect()),
-        );
-    }
 
     match start_result {
         Ok(_handle) => {
@@ -313,22 +381,14 @@ pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<Manageme
                 state.audit_service.as_ref(),
                 crate::audit::interceptor::build_rest_event(
                     AuditAction::LocalCoreServiceRestart,
-                    if errors.is_empty() {
-                        AuditStatus::Success
-                    } else {
-                        AuditStatus::Failed
-                    },
+                    audit_status_for_errors(&errors),
                     "POST",
                     "/api/system/restart",
                     Some(started_at.elapsed().as_millis() as u64),
                     None,
                     None,
                     Some(data),
-                    if errors.is_empty() {
-                        None
-                    } else {
-                        Some(errors.join("; "))
-                    },
+                    joined_errors(&errors),
                 ),
             )
             .await;

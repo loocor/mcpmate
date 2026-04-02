@@ -199,9 +199,9 @@ impl ProfileVisibilityService {
         &self,
         client_context: &ClientContext,
     ) -> Result<VisibilitySnapshot> {
-        let cache_key = if matches!(client_context.config_mode.as_deref(), Some("smart")) {
+        let cache_key = if matches!(client_context.config_mode.as_deref(), Some("unify")) {
             format!(
-                "smart::{}::{}",
+                "unify::{}::{}",
                 client_context.client_id,
                 client_context.session_id.clone().unwrap_or_default()
             )
@@ -209,8 +209,8 @@ impl ProfileVisibilityService {
             client_context.client_id.clone()
         };
 
-        if matches!(client_context.config_mode.as_deref(), Some("smart")) {
-            return self.resolve_smart_snapshot(&cache_key, &client_context.client_id).await;
+        if matches!(client_context.config_mode.as_deref(), Some("unify")) {
+            return self.resolve_unify_snapshot(&cache_key, &client_context.client_id).await;
         }
 
         let capability_config = self.resolve_capability_config_for_client(client_context).await?;
@@ -236,7 +236,7 @@ impl ProfileVisibilityService {
         &self,
         client_context: &ClientContext,
     ) -> Result<ClientCapabilityConfig> {
-        if matches!(client_context.config_mode.as_deref(), Some("smart")) {
+        if matches!(client_context.config_mode.as_deref(), Some("unify")) {
             return Ok(Self::active_capability_config());
         }
 
@@ -324,7 +324,7 @@ impl ProfileVisibilityService {
         Ok(snapshot)
     }
 
-    async fn resolve_smart_snapshot(
+    async fn resolve_unify_snapshot(
         &self,
         cache_key: &str,
         client_id: &str,
@@ -340,14 +340,12 @@ impl ProfileVisibilityService {
         if let Some(cached) = VISIBILITY_SNAPSHOT_CACHE.get(cache_key)
             && cached.snapshot.rules_fingerprint == rules_fingerprint_pre
         {
-            tracing::debug!(cache_key = %cache_key, fingerprint = %rules_fingerprint_pre, "Smart visibility snapshot cache hit");
+            tracing::debug!(cache_key = %cache_key, fingerprint = %rules_fingerprint_pre, "Unify visibility snapshot cache hit");
             return Ok(cached.snapshot.clone());
         }
 
         let profile_ids = Vec::new();
-        let server_ids = self
-            .resolve_server_ids(&db.pool, CapabilitySource::Activated, &profile_ids)
-            .await?;
+        let server_ids = self.resolve_globally_enabled_server_ids(&db.pool).await?;
 
         let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(&db.pool, &server_ids, &profile_ids).await?;
         let (allowed_resources, has_resource_policy) = self
@@ -715,17 +713,7 @@ impl ProfileVisibilityService {
     ) -> Result<Vec<String>> {
         let mut server_ids = if profile_ids.is_empty() {
             if capability_source == CapabilitySource::Activated {
-                sqlx::query_scalar::<_, String>(
-                    r#"
-                    SELECT id
-                    FROM server_config
-                    WHERE enabled = 1
-                    ORDER BY name, id
-                    "#,
-                )
-                .fetch_all(pool)
-                .await
-                .context("Failed to load enabled servers for activated mode")?
+                self.resolve_globally_enabled_server_ids(pool).await?
             } else {
                 Vec::new()
             }
@@ -752,6 +740,27 @@ impl ProfileVisibilityService {
                 .await
                 .context("Failed to resolve visible servers for client snapshot")?
         };
+
+        server_ids.sort();
+        server_ids.dedup();
+        Ok(server_ids)
+    }
+
+    async fn resolve_globally_enabled_server_ids(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+    ) -> Result<Vec<String>> {
+        let mut server_ids = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT id
+            FROM server_config
+            WHERE enabled = 1
+            ORDER BY name, id
+            "#,
+        )
+        .fetch_all(pool)
+        .await
+        .context("Failed to load globally enabled servers for visibility snapshot")?;
 
         server_ids.sort();
         server_ids.dedup();
@@ -1568,41 +1577,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn smart_snapshot_ignores_client_profile_selection_and_sees_all_enabled_servers() {
+    async fn unify_snapshot_uses_globally_enabled_servers_without_profile_semantics() {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
         let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
         let selected_profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
-        let active_server_id = insert_server(&db, "active-server", "tools,prompts,resources").await;
-        let selected_server_id = insert_server(&db, "selected-server", "tools,prompts,resources").await;
+        let disabled_server_id = insert_server(&db, "disabled-server", "tools,prompts,resources").await;
+        let enabled_server_id = insert_server(&db, "enabled-server", "tools,prompts,resources").await;
 
-        profile::add_server_to_profile(&db.pool, &active_profile_id, &active_server_id, true)
+        profile::add_server_to_profile(&db.pool, &active_profile_id, &disabled_server_id, true)
             .await
             .expect("add active server");
-        profile::add_server_to_profile(&db.pool, &selected_profile_id, &selected_server_id, true)
+        profile::add_server_to_profile(&db.pool, &selected_profile_id, &enabled_server_id, true)
             .await
             .expect("add selected server");
 
-        let active_tool = seed_tool(
+        let disabled_tool = seed_tool(
             &db,
             &active_profile_id,
-            &active_server_id,
-            "active-server",
-            "tool_active",
+            &disabled_server_id,
+            "disabled-server",
+            "tool_disabled",
         )
         .await;
-        let selected_tool = seed_tool(
+        let enabled_tool = seed_tool(
             &db,
             &selected_profile_id,
-            &selected_server_id,
-            "selected-server",
-            "tool_selected",
+            &enabled_server_id,
+            "enabled-server",
+            "tool_enabled",
         )
         .await;
 
+        sqlx::query(
+            r#"
+            UPDATE server_config
+            SET enabled = 0
+            WHERE id = ?
+            "#,
+        )
+        .bind(&disabled_server_id)
+        .execute(&db.pool)
+        .await
+        .expect("disable active-profile server globally");
+
         insert_client_config(
             &db,
-            "client-smart",
+            "client-unify",
             CapabilitySource::Profiles,
             vec![selected_profile_id.clone()],
             None,
@@ -1610,11 +1631,11 @@ mod tests {
         .await;
 
         let client = ClientContext {
-            client_id: "client-smart".to_string(),
-            session_id: Some("smart-session".to_string()),
+            client_id: "client-unify".to_string(),
+            session_id: Some("unify-session".to_string()),
             profile_id: None,
-            config_mode: Some("smart".to_string()),
-            smart_workspace: None,
+            config_mode: Some("unify".to_string()),
+            unify_workspace: None,
             rules_fingerprint: None,
             transport: crate::core::proxy::server::ClientTransport::Other,
             source: crate::core::proxy::server::ClientIdentitySource::SessionBinding,
@@ -1624,13 +1645,11 @@ mod tests {
         let snapshot = service
             .resolve_snapshot_for_client(&client)
             .await
-            .expect("resolve smart snapshot");
+            .expect("resolve unify snapshot");
 
         assert!(snapshot.profile_ids.is_empty());
-        assert_eq!(snapshot.server_ids.len(), 2);
-        assert!(snapshot.server_ids.contains(&active_server_id));
-        assert!(snapshot.server_ids.contains(&selected_server_id));
-        assert!(snapshot.allowed_tools.contains(&active_tool));
-        assert!(snapshot.allowed_tools.contains(&selected_tool));
+        assert_eq!(snapshot.server_ids, vec![enabled_server_id]);
+        assert!(snapshot.allowed_tools.contains(&enabled_tool));
+        assert!(!snapshot.allowed_tools.contains(&disabled_tool));
     }
 }

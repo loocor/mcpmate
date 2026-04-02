@@ -85,7 +85,7 @@ pub struct ClientInfo {
     #[schemars(description = "Support or community URL for the client application")]
     #[serde(default)]
     pub support_url: Option<String>,
-    #[schemars(description = "Configuration management mode: smart, hosted, or transparent")]
+    #[schemars(description = "Configuration management mode: unify, hosted, or transparent")]
     pub config_mode: Option<String>,
     #[schemars(description = "Preferred or resolved transport: streamable_http|stdio")]
     #[serde(default)]
@@ -118,11 +118,11 @@ pub struct ClientInfo {
 
 #[derive(Debug, Clone, Serialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
-#[schemars(description = "Configuration mode - smart, hosted, or transparent")]
+#[schemars(description = "Configuration mode - unify, hosted, or transparent")]
 pub enum ClientConfigMode {
-    #[schemars(description = "Session-scoped Smart Mode using only builtin MCP control-plane tools")]
-    Smart,
+    #[schemars(description = "Session-scoped Unify Mode using only builtin MCP control-plane tools")]
     #[default]
+    Unify,
     #[schemars(description = "MCPMate manages the client through a durable hosted endpoint")]
     Hosted,
     #[schemars(
@@ -138,11 +138,11 @@ impl<'de> serde::Deserialize<'de> for ClientConfigMode {
     {
         let s = String::deserialize(deserializer)?;
         match s.to_ascii_lowercase().as_str() {
-            "smart" => Ok(ClientConfigMode::Smart),
+            "unify" => Ok(ClientConfigMode::Unify),
             "hosted" => Ok(ClientConfigMode::Hosted),
             "transparent" => Ok(ClientConfigMode::Transparent),
             other => Err(serde::de::Error::custom(format!(
-                "invalid mode '{}', allowed: smart|hosted|transparent (case-insensitive)",
+                "invalid mode '{}', allowed: unify|hosted|transparent (case-insensitive)",
                 other
             ))),
         }
@@ -481,7 +481,7 @@ api_resp!(
 pub struct ClientSettingsUpdateReq {
     #[schemars(description = "Client identifier")]
     pub identifier: String,
-    #[schemars(description = "Management mode: smart|hosted|transparent")]
+    #[schemars(description = "Management mode: unify|hosted|transparent")]
     #[serde(default)]
     pub config_mode: Option<String>,
     #[schemars(
@@ -498,7 +498,8 @@ pub struct ClientSettingsUpdateReq {
 #[schemars(description = "Client settings update response body")]
 pub struct ClientSettingsUpdateData {
     pub identifier: String,
-    pub config_mode: String,
+    #[serde(default)]
+    pub config_mode: Option<String>,
     pub transport: String,
     #[serde(default)]
     pub client_version: Option<String>,
@@ -561,7 +562,7 @@ pub struct ClientConfigUpdateReq {
     #[schemars(description = "Client identifier")]
     pub identifier: String,
     #[serde(default)]
-    #[schemars(description = "Configuration mode - smart, hosted, or transparent (default: hosted)")]
+    #[schemars(description = "Configuration mode - unify, hosted, or transparent (default: unify)")]
     pub mode: ClientConfigMode,
     #[serde(default = "super::default_true")]
     #[schemars(description = "Whether to only preview changes without applying them (default: true)")]

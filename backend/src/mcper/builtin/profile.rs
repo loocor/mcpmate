@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::{
+    common::profile::ProfileType,
     config::{
         database::Database,
         profile::{self},
@@ -41,6 +42,10 @@ impl ProfileService {
         }
     }
 
+    fn is_switchable_shared_profile(profile_type: &ProfileType) -> bool {
+        matches!(profile_type, ProfileType::Shared)
+    }
+
     async fn profile_list(&self) -> Result<CallToolResult> {
         let profiles = profile::get_all_profile(&self.database.pool)
             .await
@@ -49,6 +54,10 @@ impl ProfileService {
         let mut summaries = Vec::new();
 
         for prof in profiles {
+            if !Self::is_switchable_shared_profile(&prof.profile_type) {
+                continue;
+            }
+
             let Some(profile_id) = prof.id.clone() else {
                 tracing::warn!("Found profile '{}' without ID, skipping", prof.name);
                 continue;
@@ -84,6 +93,13 @@ impl ProfileService {
             .await
             .context("Failed to get profile")?
             .ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
+
+        if !Self::is_switchable_shared_profile(&profile.profile_type) {
+            return Err(anyhow::anyhow!(
+                "Profile '{}' is not a shared profile and cannot be previewed for hosted profile selection",
+                profile_id
+            ));
+        }
 
         let detail_components = load_profile_detail_components(&self.database.pool, &profile_id).await?;
 
@@ -406,4 +422,17 @@ struct ProfilePreview {
     tools: Vec<ToolDetail>,
     prompts: Vec<PromptDetail>,
     resources: Vec<ResourceDetail>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProfileService;
+    use crate::common::profile::ProfileType;
+
+    #[test]
+    fn switchable_profiles_only_include_shared_type() {
+        assert!(ProfileService::is_switchable_shared_profile(&ProfileType::Shared));
+        assert!(!ProfileService::is_switchable_shared_profile(&ProfileType::HostApp));
+        assert!(!ProfileService::is_switchable_shared_profile(&ProfileType::Scenario));
+    }
 }
