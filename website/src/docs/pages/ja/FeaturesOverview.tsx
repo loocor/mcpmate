@@ -63,7 +63,7 @@ export default function FeaturesOverview() {
 			<h3>エコシステム</h3>
 			<ul>
 				<li>
-					<strong>インラインマーケットプレイス:</strong> 組み込みの公式MCPレジストリ — アプリから離れることなくサーバーを検索してインストール
+					<strong>マーケット導入フロー:</strong> 公式 MCP レジストリのカードから MCPMate の導入フローへ進み、アプリを離れずに確認と追加を行えます
 				</li>
 			</ul>
 

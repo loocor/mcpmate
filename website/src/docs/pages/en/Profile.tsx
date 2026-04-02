@@ -101,24 +101,17 @@ export default function Profile() {
 				<Li>They make it easier to keep expensive tools, prompts, and resources out of sessions that do not need them.</Li>
 			</Ul>
 
-			<H2>Switching without opening MCPMate</H2>
+			<H2>Shared profiles in client workflows</H2>
 			<P>
-				MCPMate ships built-in MCP tools for profiles and client profile selection.
-				When a client is configured to expose them, the model inside tools such as
-				Cursor or Cherry Studio can switch profiles or choose shared profiles from
-				conversation context instead of requiring you to reopen MCPMate&apos;s UI.
+				Profiles are the reusable working sets that client workflows can point at.
+				In Hosted rollouts they support durable switching, and in broader client
+				management flows they define which servers and capabilities should be
+				visible without rebuilding the same setup over and over.
 			</P>
-			<Callout type="info" title="Natural language is the trigger, MCP tools do the work">
-				There is no separate language parser just for profile switching. The practical
-				experience comes from the client model calling MCPMate&apos;s built-in profile or
-				client-selection tools when those tools are visible in the current mode.
-			</Callout>
-
-			<Callout type="info" title="Compared with Claude Code">
-				Claude Code officially documents on-demand loading for skills and MCP schemas,
-				plus automatic tool choice inside its agent loop. MCPMate reaches a similar
-				outcome of reducing unnecessary capability exposure, but through profile-based
-				switching rather than Claude Code&apos;s schema-loading and permission model.
+			<Callout type="info" title="Why this matters operationally">
+				The value is consistency: prepare a reusable working set once, then reuse
+				it across clients instead of re-tuning servers, tools, prompts, and
+				resources one by one.
 			</Callout>
 
 			<H2>Activation workflow</H2>

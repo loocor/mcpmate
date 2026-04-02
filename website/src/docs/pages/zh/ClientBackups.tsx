@@ -10,7 +10,7 @@ export default function ClientBackupsZH() {
 			</P>
 			<H2>什么时候最重要</H2>
 			<Ul>
-				<Li>从透明模式切换到托管模式之前。</Li>
+				<Li>在统一模式、托管模式、透明模式之间切换之前。</Li>
 				<Li>从客户端已有配置导入之后。</Li>
 				<Li>需要快速回退而不想手工重建旧配置时。</Li>
 			</Ul>

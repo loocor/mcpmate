@@ -67,16 +67,12 @@ export default function ProfileZH() {
 				<Li>不需要的工具、提示词与资源不会长期挂在会话里，更容易控制开销和干扰。</Li>
 			</Ul>
 
-			<H2>不打开 MCPMate 也能切换</H2>
+			<H2>共享配置集如何进入客户端工作流</H2>
 			<P>
-				MCPMate 内建了 profile 相关的 MCP 工具，以及面向客户端的共享 profile 选择工具。只要当前客户端模式允许暴露这些工具，像 Cursor、Cherry Studio 这样的环境里就可以通过对话触发 profile 切换或共享 profile 选择，而不必重新回到 MCPMate 界面操作。
+				配置集是客户端工作流可以直接引用的可复用工作集。在托管路径里，它支持持久化切换；在更广义的客户端管理流程里，它决定哪些服务器与能力应该被暴露出来，而不是让你一次次重复搭建同一套组合。
 			</P>
-			<Callout type="info" title="自然语言只是入口，真正执行的是 MCP 工具">
-				这里没有单独的“自然语言切换解析器”。实际体验来自模型在当前模式下能够调用 MCPMate 内建的 profile / client profile 工具，因此你可以用一句话完成切换。
-			</Callout>
-
-			<Callout type="info" title="和 Claude Code 的关系怎么理解">
-				Claude Code 官方文档强调的是 skills 与 MCP schema 的按需加载，以及 agent loop 里的自动工具选择。MCPMate 达到的是相近的结果——减少无关能力长期暴露——但实现方式是 profile 切换，而不是 Claude Code 那套 schema 加载与权限分类机制。
+			<Callout type="info" title="它真正解决的是一致性问题">
+				先准备好可复用的工作集，再在多个客户端之间复用，比反复逐项调整服务器、工具、提示词与资源更稳定，也更容易维护。
 			</Callout>
 
 			<H2>激活流程</H2>

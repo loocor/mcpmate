@@ -5,7 +5,7 @@ import DocLayout from "../../layout/DocLayout";
 export default function Logs() {
 	return (
 		<DocLayout
-			meta={{ title: "Logs", description: "Diagnostics and audit logs" }}
+			meta={{ title: "Audit Logs", description: "Audit events and operational traces" }}
 		>
 			<P>
 				The Audit Logs page provides a unified timeline of MCPMate operations so
@@ -18,7 +18,7 @@ export default function Logs() {
 				<Li>Profile lifecycle actions: create, update, activate, deactivate.</Li>
 				<Li>Client-side operations: apply profile, backup, restore, mode updates.</Li>
 				<Li>Server operations: create/import/update/toggle plus capability refreshes.</Li>
-				<Li>Security-relevant records surfaced by the audit subsystem.</Li>
+				<Li>Audit-backed events surfaced from management, runtime, and detail-log views.</Li>
 			</Ul>
 
 			<H2>How to use the page</H2>

@@ -34,9 +34,9 @@ export default function Tools() {
 					server.
 				</Li>
 				<Li>
-					<strong>Client</strong> &mdash; managed clients receive the merged set
-					from active profiles; transparent mode only reflects what you wrote to
-					disk.
+					<strong>Client</strong> &mdash; Hosted clients receive the merged set from
+					active profiles, Unify starts from builtin tools in the current session,
+					and Transparent mode only reflects what you wrote to disk.
 				</Li>
 			</Ul>
 

@@ -67,7 +67,7 @@ export default function FeaturesOverview() {
 			<h3>生态系统</h3>
 			<ul>
 				<li>
-					<strong>内联商城：</strong>内建官方 MCP 注册中心，无需离开应用即可发现和安装服务器
+					<strong>服务源安装流程：</strong>从官方 MCP 注册中心的卡片进入 MCPMate 安装流程，无需离开应用即可完成检查与导入
 				</li>
 			</ul>
 

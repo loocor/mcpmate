@@ -90,7 +90,7 @@ const en = {
 	"features.bridge": "Protocol Bridging",
 	"features.bridge.desc":
 		"Connect stdio-based clients to Streamable HTTP services without modifying the client.",
-	"features.marketplace": "Inline Marketplace",
+	"features.marketplace": "Market Install Flow",
 	"features.marketplace.desc":
 		"Browse registry entries, import them into preview, and keep discovery close to operations.",
 	"features.templates": "Granular Controls",
@@ -117,7 +117,7 @@ const en = {
 	"value.creators.diagram": "Creator Flow",
 	"value.managers.title": "Roll out flexibly across clients",
 	"value.managers.p1":
-		"Choose hosted mode for MCPMate-managed control or transparent mode for direct native client output.",
+		"Choose Hosted mode for MCPMate-managed control or Transparent mode for direct native client output.",
 	"value.managers.p2":
 		"Let one client either follow the active shared profile set as a read-only default, switch explicit shared profiles in Hosted + Profiles mode, or use a client-specific custom profile where supported.",
 	"value.managers.p3":
@@ -148,7 +148,7 @@ const en = {
 	"arch.values.security.desc":
 		"Local-first boundaries with explicit control over what gets exposed.",
 	"arch.values.security.p1": "Capability-level exposure through profiles and client selection",
-	"arch.values.security.p2": "Transparent mode when direct native output is the safer fit",
+	"arch.values.security.p2": "Use Transparent mode when direct native output is the safer fit",
 	"arch.values.security.p3": "Audit and validation surfaces before broad rollout",
 
 	// Contact
@@ -212,7 +212,7 @@ const en = {
 		"MCPMate combines profile-based capability control, flexible client rollout modes, import preview, and live inspection in one local-first control plane.",
 	"faq.compatible.title": "Can I use MCPMate with my existing MCP tools?",
 	"faq.compatible.answer":
-		"Yes. MCPMate works with MCP-compatible clients and gives you Unify, hosted, and transparent paths, so you can choose between session-local UCAN control, deeper managed control, and direct native client output.",
+		"Yes. MCPMate works with MCP-compatible clients and gives you Unify, Hosted, and Transparent paths, so you can choose between session-local UCAN control, deeper managed control, and direct native client output.",
 
 	// Notice ribbon (site updating)
 	"notice.construction.ribbon": "Updating",

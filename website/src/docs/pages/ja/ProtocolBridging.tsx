@@ -46,7 +46,7 @@ export default function ProtocolBridging() {
 			<h2>実用的なデプロイメントパターン</h2>
 			<ul>
 				<li>安定したホストでMCPMateのコアサービスを実行します。</li>
-				<li>stdioのみのクライアントをブリッジまたはHostedクライアントモードで接続します。</li>
+				<li>stdio のみのクライアントをブリッジまたは Hosted クライアントモードで接続します。</li>
 				<li>最新の統合のためにStreamable HTTPエンドポイントを公開します。</li>
 			</ul>
 		</DocLayout>

@@ -76,7 +76,7 @@ export const docsNav: DocNav[] = [
 					{
 						id: "marketplace",
 						path: "/docs/en/marketplace",
-						title: "Inline Marketplace",
+						title: "Market Install Flow",
 						component: () => import("./pages/en/Marketplace"),
 					},
 					{
@@ -331,7 +331,7 @@ export const docsNav: DocNav[] = [
 					{
 						id: "marketplace",
 						path: "/docs/zh/marketplace",
-						title: "内联商城",
+						title: "服务源安装流程",
 						component: () => import("./pages/zh/Marketplace"),
 					},
 					{
@@ -582,7 +582,7 @@ export const docsNav: DocNav[] = [
 					{
 						id: "marketplace",
 						path: "/docs/ja/marketplace",
-						title: "インラインマーケット",
+						title: "マーケット導入フロー",
 						component: () => import("./pages/ja/Marketplace"),
 					},
 					{

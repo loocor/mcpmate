@@ -6,55 +6,49 @@ export default function Marketplace() {
 	return (
 		<DocLayout
 			meta={{
-				title: "内联商城",
-				description: "内建官方 MCP 注册中心，不用东奔西走找服务",
+				title: "服务源安装流程",
+				description: "从服务源卡片进入 MCPMate 安装向导的流程说明",
 			}}
 		>
 			<P>
-				MCPMate 包含一个集成市场，可以访问官方 MCP 注册中心。无需离开应用程序即可发现、安装和配置新的 MCP 服务器。
+				本页说明你在服务源中选中一个注册中心卡片后会发生什么。MCPMate 会打开与手动导入共用的安装向导，让你在保存前检查传输方式、规范化清单，以及服务器后续应加入哪些配置集。
 			</P>
 
 			<DocScreenshot
 				lightSrc="/screenshot/market-light.png"
 				darkSrc="/screenshot/market-dark.png"
-				alt="内联商城：浏览官方 MCP 注册中心"
+				alt="服务源安装流程：浏览官方 MCP 注册中心卡片"
 			/>
 
-			<h2>功能特性</h2>
+			<h2>这条流程能解决什么</h2>
 			<ul>
 				<li>
-					<strong>统一搜索：</strong>搜索官方注册中心
+					<strong>服务源到安装的衔接：</strong>从服务源卡片直接进入引导式安装向导
 				</li>
 				<li>
-					<strong>一键安装：</strong>直接从市场安装服务器
+					<strong>规范化预览：</strong>在保存前确认传输方式与清单细节
 				</li>
 				<li>
-					<strong>自动配置：</strong>服务器会自动添加到您的活动配置集
+					<strong>受控投放：</strong>先把服务器加入工作区，再决定哪些配置集需要暴露它
 				</li>
 				<li>
-					<strong>版本管理：</strong>在新版本可用时更新服务器
-				</li>
-				<li>
-					<strong>评分与评论：</strong>在安装前查看社区反馈
+					<strong>一致的导入路径：</strong>服务源安装与拖拽导入共享同一条后续流程
 				</li>
 			</ul>
 
-			<h2>支持的注册中心</h2>
-			<ul>
-				<li>
-					<strong>官方 MCP 注册中心：</strong>Anthropic 的官方服务器集合
-				</li>
-			</ul>
+			<h2>它在整体流程中的位置</h2>
+			<P>
+				服务源负责浏览官方 MCP 注册中心；当你决定继续安装时，就会进入这条安装流程，对服务器细节做最后确认，再落到服务器列表中。
+			</P>
 
 			<h2>优势</h2>
 			<P>
-				无需手动搜索 GitHub
-				或文档站点、浏览安装说明和编辑配置文件，市场将整个过程简化为几次点击。
+				你不必在注册中心页面、代码片段与本地配置文件之间来回跳转；MCPMate 把发现、检查与安装串成了一条连续流程。
 			</P>
 
 			<H3>新增 MCP 服务器向导</H3>
 			<P>
-				从注册卡片安装时会打开引导流程：配置传输方式、预览规范化后的清单，再导入到目标配置集。
+				从注册卡片安装时会打开引导流程：配置传输方式、预览规范化后的清单、保存服务器，然后再从“服务器”或“配置集”页面决定它应该加入哪些配置集。
 			</P>
 			<DocScreenshot
 				lightSrc="/screenshot/market-add-server-light.png"

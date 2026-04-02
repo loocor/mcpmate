@@ -14,7 +14,7 @@ export default function Prompts() {
 			<H2>How prompt visibility is controlled</H2>
 			<Ul>
 				<Li>Enable or disable servers and capabilities in a profile.</Li>
-				<Li>Apply that profile to clients in Hosted mode for live switching.</Li>
+				<Li>Apply that profile to clients in Hosted mode for live switching; Unify uses session-local builtin tools instead of dashboard-side profile switching.</Li>
 				<Li>Validate prompt exposure from server detail and Inspector views.</Li>
 			</Ul>
 

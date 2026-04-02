@@ -46,7 +46,7 @@ export default function ContextSwitching() {
 			<H2>Operational tips</H2>
 			<Ul>
 				<Li>Keep one default anchor profile always active as your safe baseline.</Li>
-				<Li>Use Hosted mode when you need instant profile switching in clients.</Li>
+				<Li>Use Hosted mode when you need instant profile switching in clients; use Unify mode when you want session-local builtin control instead.</Li>
 				<Li>For separated deployments, verify API connectivity before switching.</Li>
 				<Li>After major changes, verify effects in Audit Logs and client pages.</Li>
 			</Ul>

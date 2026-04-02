@@ -39,7 +39,7 @@ const Roadmap = () => {
     <Section
       id="roadmap"
       title="Roadmap"
-      subtitle="Our journey to build the ultimate MCP management center."
+      subtitle="How MCPMate is evolving as a local control plane for MCP operations."
       centered
     >
       <div className="max-w-3xl mx-auto mt-12">
@@ -59,25 +59,25 @@ const Roadmap = () => {
 
         <RoadmapItem
           title="MCPMate Desktop - Beta"
-          description="First beta release of the cross-platform desktop application with basic server management capabilities."
+          description="First beta release of the desktop application, bringing the web dashboard and local core service into a more complete day-to-day control plane."
           date="Q3 2025 - In Progress"
         />
 
         <RoadmapItem
           title="Resource Management"
-          description="Advanced resource management features including process monitoring, resource usage tracking, and automatic optimization."
+          description="Further runtime and operational tooling for monitoring, inspection, and day-to-day maintenance across MCP services."
           date="Q4 2025 - Planned"
         />
 
         <RoadmapItem
           title="AI-Powered Configuration"
-          description="Smart configuration management with AI-assisted setup, automated optimization, and intelligent resource allocation."
+          description="Smarter setup and configuration flows that reduce manual import, rollout, and maintenance work."
           date="Q1 2026 - Planned"
         />
 
         <RoadmapItem
           title="Team Collaboration"
-          description="Enterprise features including multi-user support, shared configurations, and team management capabilities."
+          description="More collaborative rollout, sharing, and governance workflows for teams operating MCPMate together."
           date="Q2 2026 - Planned"
         />
       </div>

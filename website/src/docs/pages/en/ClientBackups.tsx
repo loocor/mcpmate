@@ -18,7 +18,7 @@ export default function ClientBackups() {
 
 			<H2>When backups matter most</H2>
 			<Ul>
-				<Li>Before switching a client from transparent to hosted mode.</Li>
+				<Li>Before switching a client between Transparent, Hosted, and Unify modes.</Li>
 				<Li>After importing configuration from an existing client file.</Li>
 				<Li>When a rollout needs a fast rollback without reconstructing edits by hand.</Li>
 			</Ul>
