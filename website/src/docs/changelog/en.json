@@ -1,5 +1,72 @@
 [
 	{
+		"version": "0.1.8",
+		"date": "2026-04-02",
+		"highlights": [
+			"Renamed Smart mode to Unify and finalized Unify, Hosted, and Transparent client management semantics across backend, dashboard, and website documentation."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Backend runtime semantics now align on Unify mode, with default client management mode persisted through system settings APIs."
+			},
+			{
+				"type": "feat",
+				"text": "Dashboard client flows now reflect the finalized Unify naming, clearer Hosted boundaries, and backend-backed default mode settings."
+			},
+			{
+				"type": "docs",
+				"text": "Website terminology and docs were refreshed to match the finalized Unify / Hosted / Transparent model and current frontend wording."
+			}
+		]
+	},
+	{
+		"version": "0.1.7",
+		"date": "2026-04-01",
+		"highlights": [
+			"Expanded the official MCP Registry flow with cached metadata, richer market detail pages, and stronger capability brokering for session-local client workflows."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Backend now caches official MCP Registry metadata locally and keeps import-related server metadata synchronized after refresh and import flows."
+			},
+			{
+				"type": "feat",
+				"text": "Dashboard Market pages now expose richer registry-backed detail views, README presentation, and a more polished install flow."
+			},
+			{
+				"type": "feat",
+				"text": "Capability brokering was extended for session-local Smart workflows so they can route upstream capability access more reliably."
+			}
+		]
+	},
+	{
+		"version": "0.1.6",
+		"date": "2026-03-30",
+		"highlights": [
+			"Added the new Smart (session-local) client management mode, deeper audit detail UX, and token estimate visualizations across profiles and client configuration views."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Client management gained the new Smart (session-local) mode, including runtime support, dashboard settings, and related client/audit UI updates."
+			},
+			{
+				"type": "feat",
+				"text": "Audit workflows now include richer detail drawers, shared cursor-friendly pagination, and broader event taxonomy coverage."
+			},
+			{
+				"type": "feat",
+				"text": "Profiles and client configuration views now surface token estimate charts, configurable chart sizing, and supporting dashboard token-savings UI."
+			},
+			{
+				"type": "feat",
+				"text": "Client backup retention now supports a keep_last policy for SQLite-backed client config snapshots."
+			}
+		]
+	},
+	{
 		"version": "0.1.5",
 		"date": "2026-03-27",
 		"highlights": [
@@ -137,7 +204,7 @@
 			},
 			{
 				"type": "feat",
-				"text": "Profiles panel enables composing server/tool bundles and applying them to hosted clients for in-place switching."
+				"text": "Profiles panel enables composing server/tool bundles and applying them to Hosted clients for in-place switching."
 			},
 			{
 				"type": "feat",
@@ -157,7 +224,7 @@
 			},
 			{
 				"type": "note",
-				"text": "Hosted client mode supports in-place profile switching; transparent mode only writes configuration files."
+				"text": "Hosted mode supports in-place profile switching, Unify mode keeps control session-local through builtin tools, and Transparent mode only writes configuration files."
 			},
 			{
 				"type": "known",
