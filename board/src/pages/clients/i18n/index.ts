@@ -147,15 +147,15 @@ export const clientsTranslations = {
 					mode: {
 						title: "1. Management Mode",
 						descriptions: {
-							smart:
-								"Smart starts with builtin MCP tools only and keeps its working set inside the current session.",
+						unify:
+							"Unify starts with builtin MCP tools only and works with capabilities from globally enabled servers during the current session.",
 							hosted:
 								"Hosted keeps a durable managed configuration for this client and remembers the selected working state.",
 							transparent:
 								"MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
 						},
 						options: {
-							smart: "Smart",
+						unify: "Unify",
 							hosted: "Hosted",
 							transparent: "Transparent",
 						},
@@ -164,11 +164,11 @@ export const clientsTranslations = {
 						title: "2. Configuration",
 						titleTransparent: "2. Configuration",
 						descriptions: {
-							smart:
-								"Builtin MCP tools will select profiles on demand from the configured library during the current session.",
+						unify:
+							"Unify does not use dashboard profile selection. Use the builtin UCAN tools during the session to browse and call capabilities from globally enabled servers.",
 							default: "Review the profiles that are currently active for this client runtime.",
 							profile: "Browse the shared scene library and choose the exact working set for this client.",
-							custom: "Create client-specific adjustments on top of the current smart-mode working state.",
+						custom: "Create client-specific adjustments on top of the current unify-mode working state.",
 							transparentDefault:
 								"Write the servers from all currently activated profiles directly into this client's MCP configuration.",
 							transparentProfile:
@@ -190,8 +190,8 @@ export const clientsTranslations = {
 					profiles: {
 						title: "3. Profiles",
 						descriptions: {
-							smart:
-								"Profiles shown here are the configured sources Smart Mode can draw from during the current session.",
+						unify:
+							"Unify does not maintain a profile working set here. Use profiles for Hosted or Transparent workflows instead.",
 							default:
 								"Review the profiles that are already active for this client runtime. This view is read-only to keep the active scene set consistent.",
 							profile:
@@ -218,13 +218,13 @@ export const clientsTranslations = {
 							subtitleDefault: "Browse reusable shared scenes and edit them from the profiles page",
 						},
 					},
-					smart: {
+					unify: {
 						title: "2. Configuration",
 						description:
-							"Smart starts with builtin MCP tools only. It keeps the working set inside the current MCP session and resets when the session ends.",
+							"Unify starts with builtin MCP tools only. It uses session-local builtin tooling to browse capabilities from globally enabled servers and resets when the session ends.",
 						items: {
 							builtinOnly: "Builtin tools only",
-							sessionScoped: "Session-scoped workspace",
+							sessionScoped: "Session-local builtin flow",
 							noFurtherSetup: "No further setup in the dashboard",
 						},
 					},
@@ -546,15 +546,15 @@ export const clientsTranslations = {
 					mode: {
 						title: "1. 管理模式",
 						descriptions: {
-							smart:
-								"Smart 模式初始仅提供内建 MCP 工具，并将工作集保留在当前会话中。",
+						unify:
+							"统一模式初始仅提供内建 MCP 工具，并在当前会话中面向全局启用服务器的 capabilities 工作。",
 							hosted:
 								"Hosted 会为该客户端保留持久化托管配置，并记住当前选择的工作状态。",
 							transparent:
 								"MCPMate 会将所选配置集中的服务器直接写入该客户端的 MCP 配置，且不会保留 capabilities 层级的控制。",
 						},
 						options: {
-							smart: "Smart",
+						unify: "统一模式",
 							hosted: "Hosted",
 							transparent: "透明模式",
 						},
@@ -563,10 +563,10 @@ export const clientsTranslations = {
 						title: "2. 配置详情",
 						titleTransparent: "2. 配置详情",
 						descriptions: {
-							smart: "当前会话中，内建 MCP 工具会从已配置的场景库中按需挑选 Profiles。",
+						unify: "统一模式不使用仪表板中的 Profile 选择。请在当前会话内通过内建 UCAN 工具浏览并调用来自全局启用服务器的 capabilities。",
 							default: "查看当前已对该客户端运行态生效的配置集。",
 							profile: "浏览共享场景库，并为该客户端选择精确的工作集。",
-							custom: "在当前 Smart 模式工作状态之上创建客户端专属调整。",
+						custom: "在当前统一模式工作状态之上创建客户端专属调整。",
 						transparentDefault:
 							"将当前所有已激活配置集中的服务器直接写入该客户端的 MCP 配置。",
 						transparentProfile:
@@ -588,7 +588,7 @@ export const clientsTranslations = {
 					profiles: {
 						title: "3. Profiles",
 						descriptions: {
-							smart: "此处展示的是 Smart 模式在当前会话中可按需使用的已配置 Profiles。",
+						unify: "统一模式不会在这里维护 Profile 工作集。Profiles 仅用于 Hosted 或 Transparent 工作流。",
 							default:
 								"查看当前已对该客户端运行态生效的配置集。为保持场景一致性，此视图为只读。",
 							profile: "选择定义该客户端工作集的可复用共享配置集。",
@@ -612,13 +612,13 @@ export const clientsTranslations = {
 							subtitleDefault: "浏览可复用共享场景，并在配置集页面中维护它们",
 						},
 					},
-					smart: {
+					unify: {
 						title: "2. 配置详情",
 						description:
-							"Smart 模式初始仅提供内建 MCP 工具。它会将工作集保留在当前 MCP 会话中，并在会话结束后自动重置。",
+							"统一模式初始仅提供内建 MCP 工具。它会在当前 MCP 会话中通过会话内建工具浏览全局启用服务器的 capabilities，并在会话结束后自动重置。",
 						items: {
 							builtinOnly: "仅内建工具",
-							sessionScoped: "会话级工作集",
+							sessionScoped: "会话内建流程",
 							noFurtherSetup: "仪表板中无需进一步设置",
 						},
 					},
@@ -936,15 +936,15 @@ export const clientsTranslations = {
 					mode: {
 						title: "1. 管理モード",
 						descriptions: {
-							smart:
-								"Smart は内蔵 MCP ツールのみで開始し、ワークセットを現在のセッション内に保持します。",
+						unify:
+							"Unify は内蔵 MCP ツールのみで開始し、現在のセッションではグローバルに有効なサーバーの capability を扱います。",
 							hosted:
 								"Hosted はこのクライアントの持続的な管理設定を保持し、現在のワーク状態を記憶します。",
 							transparent:
 								"MCPMate は選択したプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込み、capability 単位の制御は保持しません。",
 						},
 						options: {
-							smart: "Smart",
+						unify: "Unify",
 							hosted: "Hosted",
 							transparent: "トランスペアレントモード",
 						},
@@ -953,11 +953,11 @@ export const clientsTranslations = {
 						title: "2. 設定",
 						titleTransparent: "2. 設定",
 						descriptions: {
-							smart:
-								"現在のセッションでは、内蔵 MCP ツールが設定済みプロファイルライブラリから必要な Profiles を動的に選択します。",
+						unify:
+							"Unify ではダッシュボード上のプロファイル選択を使いません。現在のセッションでは、内蔵 UCAN ツールでグローバルに有効なサーバーの capability を参照・呼び出します。",
 							default: "このクライアントの実行時に現在有効なプロファイルを確認します。",
 							profile: "共有シーンライブラリを参照し、このクライアントの正確なワークセットを選択します。",
-							custom: "現在の Smart Mode ワーク状態の上にクライアント専用の調整を作成します。",
+						custom: "現在の Unify Mode ワーク状態の上にクライアント専用の調整を作成します。",
 						transparentDefault:
 							"現在有効なすべてのプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
 						transparentProfile:
@@ -979,8 +979,8 @@ export const clientsTranslations = {
 					profiles: {
 						title: "3. Profiles",
 						descriptions: {
-							smart:
-								"ここには、Smart モードが現在のセッションで必要に応じて利用できる設定済み Profiles が表示されます。",
+						unify:
+							"Unify はここでプロファイルのワークセットを維持しません。Profiles は Hosted または Transparent のワークフローで使用します。",
 							default:
 								"このクライアントの実行時にすでに有効なプロファイルを確認します。シーンの一貫性を保つため、このビューは読み取り専用です。",
 							profile: "このクライアントのワークセットを定義する再利用可能な共有プロファイルを選択します。",
@@ -1005,13 +1005,13 @@ export const clientsTranslations = {
 							subtitleDefault: "再利用可能な共有シーンを参照し、プロファイルページで編集します",
 						},
 					},
-					smart: {
+					unify: {
 						title: "2. 設定",
 						description:
-							"Smart は内蔵 MCP ツールのみで開始します。ワークセットは現在の MCP セッションに保持され、セッション終了時に自動的にリセットされます。",
+							"Unify は内蔵 MCP ツールのみで開始します。現在の MCP セッションでは、セッション内の内蔵フローでグローバルに有効なサーバーの capability を参照し、終了時に自動的にリセットされます。",
 						items: {
 							builtinOnly: "内蔵ツールのみ",
-							sessionScoped: "セッション単位のワークスペース",
+							sessionScoped: "セッション内の内蔵フロー",
 							noFurtherSetup: "ダッシュボードで追加設定は不要",
 						},
 					},

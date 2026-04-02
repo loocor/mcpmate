@@ -1,14 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	BadgeCheck,
 	Bug,
 	Check,
 	Edit3,
+	Eye,
 	Play,
 	RefreshCw,
 	Square,
 	Trash2,
-	Eye,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -88,6 +87,15 @@ const formatProfileTypeLabel = (value?: string | null) =>
 		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 		.join(" ") ?? "";
 
+const PROFILE_DETAIL_TABS = [
+	"overview",
+	"servers",
+	"tools",
+	"prompts",
+	"resources",
+	"templates",
+];
+
 export function ProfileDetailPage() {
 	const { t } = useTranslation();
 	usePageTranslations("profiles");
@@ -110,15 +118,10 @@ export function ProfileDetailPage() {
 	const profileTokenEstimateMethod = useAppStore(
 		(state) => state.dashboardSettings.profileTokenEstimateMethod,
 	);
-	const validDetailTabs = useMemo(
-		() =>
-			["overview", "servers", "tools", "prompts", "resources", "templates"],
-		[showProfileLiveLogs],
-	);
 	const { activeTab, setActiveTab } = useUrlTab({
 		paramName: "tab",
 		defaultTab: "overview",
-		validTabs: validDetailTabs,
+		validTabs: PROFILE_DETAIL_TABS,
 	});
 
 	const mode = searchParams.get("mode");
@@ -556,28 +559,6 @@ export function ProfileDetailPage() {
 		},
 	});
 
-	const toggleDefaultMutation = useMutation({
-		mutationFn: (nextDefault: boolean) =>
-			configSuitsApi.updateSuit(profileId!, { is_default: nextDefault }),
-		onSuccess: (_response, nextDefault) => {
-			queryClient.invalidateQueries({ queryKey: ["configSuit", profileId] });
-			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
-			notifySuccess(
-				t("profiles:detail.messages.defaultBundleUpdated", { defaultValue: "Default bundle updated" }),
-				nextDefault
-					? t("profiles:detail.messages.defaultBundleUpdatedDescription", { defaultValue: "Profile is now part of the default bundle" })
-					: t("profiles:detail.messages.defaultBundleRemovedDescription", { defaultValue: "Profile removed from the default bundle" }),
-			);
-		},
-		onError: (error, nextDefault) => {
-			notifyError(
-				t("profiles:detail.messages.defaultUpdateFailed", { defaultValue: "Default update failed" }),
-				`Failed to ${nextDefault ? "set" : "remove"} default: ${error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		},
-	});
-
 	// Delete profile mutation
 	const deleteSuitMutation = useMutation({
 		mutationFn: () => {
@@ -726,23 +707,6 @@ export function ProfileDetailPage() {
 	const isDefaultAnchor = suitRole === "default_anchor";
 	const isHostApp = suit?.suit_type === "host_app";
 	const isCustomMode = mode === "custom";
-	const defaultButtonDisabled =
-		!suit || isDefaultAnchor || toggleDefaultMutation.isPending;
-	const defaultButtonLabel = !suit
-		? t("profiles:badges.defaultAnchor", { defaultValue: "Default" })
-		: isDefaultAnchor
-			? t("profiles:badges.defaultAnchor", { defaultValue: "Default Anchor" })
-			: suit.is_default
-				? t("profiles:detail.buttons.leaveDefault", { defaultValue: "Leave Default" })
-				: t("profiles:detail.buttons.joinDefault", { defaultValue: "Join Default" });
-	const defaultButtonIcon = suit?.is_default ? (
-		<BadgeCheck
-			className={`h-4 w-4 ${toggleDefaultMutation.isPending ? "animate-spin" : ""
-				}`}
-		/>
-	) : (
-		<Square className="h-4 w-4" />
-	);
 
 	const handleSuitToggle = () => {
 		if (isDefaultAnchor) {
@@ -753,14 +717,6 @@ export function ProfileDetailPage() {
 		} else {
 			activateSuitMutation.mutate();
 		}
-	};
-
-	const handleDefaultToggle = () => {
-		if (!suit || isDefaultAnchor || toggleDefaultMutation.isPending) {
-			return;
-		}
-		const nextDefault = !suit.is_default;
-		toggleDefaultMutation.mutate(nextDefault);
 	};
 
 	const handleRefreshAll = () => {
@@ -1089,20 +1045,7 @@ export function ProfileDetailPage() {
 													<Edit3 className="h-4 w-4" />
 													{t("profiles:detail.buttons.edit", { defaultValue: "Edit" })}
 												</Button>
-												{!isHostApp && !isCustomMode && (
-													<Button
-														variant="outline"
-														size="sm"
-														onClick={handleDefaultToggle}
-														disabled={defaultButtonDisabled}
-														className="gap-2"
-														aria-pressed={suit?.is_default ?? false}
-													>
-														{defaultButtonIcon}
-														{defaultButtonLabel}
-													</Button>
-												)}
-												{suitRole === "user" && !isHostApp && !isCustomMode && (
+										{suitRole === "user" && !isHostApp && !isCustomMode && (
 													<Button
 														variant="outline"
 														size="sm"

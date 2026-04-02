@@ -1566,6 +1566,27 @@ export const toolsApi = {
 export const systemApi = {
 	getStatus: () => fetchApi<SystemStatus>("/api/system/status"),
 	getMetrics: () => fetchApi<SystemMetrics>("/api/system/metrics"),
+	getDefaultClientMode: async (): Promise<{
+		default_config_mode: "unify" | "hosted" | "transparent";
+	}> => {
+		const response = await fetchApi<
+			ApiWrapper<{
+				default_config_mode: "unify" | "hosted" | "transparent";
+			}>
+		>("/api/system/client-default-mode");
+		return extractApiData(response);
+	},
+	setDefaultClientMode: async (default_config_mode: "unify" | "hosted" | "transparent") => {
+		const response = await fetchApi<
+			ApiWrapper<{
+				default_config_mode: "unify" | "hosted" | "transparent";
+			}>
+		>("/api/system/client-default-mode", {
+			method: "POST",
+			body: JSON.stringify({ default_config_mode }),
+		});
+		return extractApiData(response);
+	},
 
 	shutdown: () =>
 		fetchApi<{ status: string; message?: string }>("/api/system/shutdown", {

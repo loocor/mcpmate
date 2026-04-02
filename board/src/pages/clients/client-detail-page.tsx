@@ -170,6 +170,9 @@ export function ClientDetailPage() {
 	const showClientLiveLogs = useAppStore(
 		(state) => state.dashboardSettings.showClientLiveLogs,
 	);
+	const clientDefaultMode = useAppStore(
+		(state) => state.dashboardSettings.clientDefaultMode,
+	);
 	const [displayName, setDisplayName] = useState("");
 	const [selectedBackups, setSelectedBackups] = useState<string[]>([]);
 	const [detected, setDetected] = useState<boolean>(false);
@@ -208,20 +211,22 @@ export function ClientDetailPage() {
 		setDetected(!!currentClient.detected);
 		if (typeof currentClient.config_mode === "string") {
 			const configMode = currentClient.config_mode;
-			if (configMode === "smart") {
-				setMode("smart");
+			if (configMode === "unify") {
+				setMode("unify");
 			} else if (configMode === "transparent") {
 				setMode("transparent");
 			} else {
 				setMode("hosted");
 			}
+		} else {
+			setMode(clientDefaultMode);
 		}
 		setTransport(
 			typeof currentClient.transport === "string"
 				? currentClient.transport
 				: "auto",
 		);
-	}, [currentClient]);
+	}, [clientDefaultMode, currentClient]);
 
 	const [selectedConfig, setSelectedConfig] =
 		useState<ClientCapabilitySourceSelection>("default");
@@ -758,7 +763,7 @@ export function ClientDetailPage() {
 				config_mode: mode,
 			});
 			const capabilityData =
-				mode === "smart"
+		mode === "unify"
 					? effectiveCapabilityConfig
 					: await clientsApi.updateCapabilityConfig(buildCapabilityConfigPayload());
 			if (!capabilityData) {
@@ -774,7 +779,7 @@ export function ClientDetailPage() {
 				identifier,
 				mode,
 				selected_config:
-					mode === "smart" ? "default" : buildApplySelectedConfig(capabilityData),
+		mode === "unify" ? "default" : buildApplySelectedConfig(capabilityData),
 				preview,
 			});
 			return { data: data ?? null, preview };
@@ -1527,12 +1532,12 @@ export function ClientDetailPage() {
 																		"Hosted keeps a durable managed configuration for this client and remembers the selected working state.",
 																},
 															)}
-														{mode === "smart" &&
+							{mode === "unify" &&
 															t(
-																"detail.configuration.sections.mode.descriptions.smart",
+									"detail.configuration.sections.mode.descriptions.unify",
 																{
 																	defaultValue:
-																		"Smart starts with builtin control-plane tools only and keeps its workspace inside the current MCP session.",
+									"Unify starts with builtin control-plane tools only and keeps its workspace inside the current MCP session.",
 																},
 															)}
 														{mode === "transparent" &&
@@ -1550,10 +1555,10 @@ export function ClientDetailPage() {
 													onValueChange={(v) => setMode(v as ClientConfigMode)}
 													options={[
 														{
-															value: "smart",
+								value: "unify",
 															label: t(
-																"detail.configuration.sections.mode.options.smart",
-																{ defaultValue: "Smart" },
+								"detail.configuration.sections.mode.options.unify",
+								{ defaultValue: "Unify" },
 															),
 														},
 														{
@@ -1585,14 +1590,14 @@ export function ClientDetailPage() {
 														})}
 													</h4>
 													<p className="text-xs text-slate-500 leading-relaxed">
-														{mode === "smart" &&
-															t(
-																"detail.configuration.sections.source.descriptions.smart",
-																{
-																	defaultValue:
-																		"Builtin MCP tools will select profiles on demand from the configured library during the current session.",
-																},
-															)}
+								{mode === "unify" &&
+									t(
+										"detail.configuration.sections.source.descriptions.unify",
+										{
+											defaultValue:
+												"Builtin MCP tools will browse and call capabilities from globally enabled servers during the current session.",
+										},
+									)}
 														{mode === "transparent" && selectedConfig === "default" &&
 															t(
 																"detail.configuration.sections.source.descriptions.transparentDefault",
@@ -1638,12 +1643,12 @@ export function ClientDetailPage() {
 																"detail.configuration.sections.source.descriptions.custom",
 																{
 																	defaultValue:
-																		"Create client-specific adjustments on top of the current smart-mode working state.",
+											"Create client-specific adjustments on top of the current unify-mode working state.",
 																},
 															)}
 													</p>
 												</div>
-												{mode !== "smart" && (
+								{mode !== "unify" && (
 													<Segment
 														value={selectedConfig}
 														onValueChange={(v) =>
@@ -1658,7 +1663,7 @@ export function ClientDetailPage() {
 										</div>
 
 										{/* Right side - Profiles List (6/10) */}
-										{(mode === "smart" || mode === "hosted" || mode === "transparent") && (
+										{(mode === "unify" || mode === "hosted" || mode === "transparent") && (
 												<div className="col-span-6">
 													<div className="mb-3">
 														<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -1666,14 +1671,14 @@ export function ClientDetailPage() {
 																defaultValue: "3. Profiles",
 															})}
 														</h4>
-														{mode === "smart" && (
-															<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-																{t("detail.configuration.sections.profiles.descriptions.smart", {
-																	defaultValue:
-																		"Profiles shown here are the configured sources Smart Mode can draw from during the current session.",
-																})}
-															</p>
-														)}
+											{mode === "unify" && (
+												<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+													{t("detail.configuration.sections.profiles.descriptions.unify", {
+														defaultValue:
+															"Profiles shown here are the configured sources Unify Mode can draw from during the current session.",
+													})}
+												</p>
+											)}
 														{/* Dynamic description based on source */}
 														{selectedConfig === "default" && (
 															<p className="text-xs text-slate-500 mt-1 leading-relaxed">
@@ -1745,7 +1750,7 @@ export function ClientDetailPage() {
 														</div>
 													) : (
 														<CapsuleStripeList>
-															{mode === "smart" ? (
+											{mode === "unify" ? (
 																sharedProfiles.length > 0 ? (
 																	sharedProfiles.map((profile) => {
 																		const capabilities = profileCapabilities.get(profile.id);
@@ -1906,7 +1911,7 @@ export function ClientDetailPage() {
 																)
 															) : null}
 
-															{mode !== "smart" && (
+											{mode !== "unify" && (
 																<CapsuleStripeListItem
 																	interactive
 																	className={

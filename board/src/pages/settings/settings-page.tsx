@@ -60,6 +60,7 @@ import {
 	API_BASE_URL,
 	notificationsService,
 	setApiBaseUrl,
+	systemApi,
 } from "../../lib/api";
 import {
 	type DesktopCoreSourceResponse,
@@ -152,9 +153,9 @@ const APPLICATION_MODE_CONFIG = [
 
 const CLIENT_MODE_CONFIG = [
 	{
-		value: "smart" as const,
-		labelKey: "settings:options.clientMode.smart",
-		fallback: "Smart",
+		value: "unify" as const,
+		labelKey: "settings:options.clientMode.unify",
+		fallback: "Unify",
 	},
 	{
 		value: "hosted" as const,
@@ -256,6 +257,19 @@ function getServiceInstallLabel(params: {
 	});
 }
 
+function buildSettingsTabSearchParams(
+	searchParams: URLSearchParams,
+	value: string,
+): URLSearchParams {
+	const next = new URLSearchParams(searchParams);
+	if (value === "about") {
+		next.set("tab", "about");
+	} else {
+		next.delete("tab");
+	}
+	return next;
+}
+
 export function SettingsPage() {
 	usePageTranslations("settings");
 	const queryClient = useQueryClient();
@@ -337,6 +351,11 @@ export function SettingsPage() {
 		queryFn: () => auditApi.getPolicy(),
 	});
 
+	const defaultClientModeQuery = useQuery({
+		queryKey: ["system", "default-client-mode"],
+		queryFn: () => systemApi.getDefaultClientMode(),
+	});
+
 	useEffect(() => {
 		if (policyQuery.data) {
 			const p = policyQuery.data.policy;
@@ -357,6 +376,15 @@ export function SettingsPage() {
 		}
 	}, [policyQuery.data]);
 
+	useEffect(() => {
+		if (defaultClientModeQuery.data?.default_config_mode) {
+			setDashboardSetting(
+				"clientDefaultMode",
+				defaultClientModeQuery.data.default_config_mode,
+			);
+		}
+	}, [defaultClientModeQuery.data, setDashboardSetting]);
+
 	const policyMutation = useMutation({
 		mutationFn: (data: { policy: AuditRetentionPolicy; sweep_interval_secs: number }) =>
 			auditApi.setPolicy(data),
@@ -366,6 +394,33 @@ export function SettingsPage() {
 		},
 		onError: (e) => {
 			notifyError(t("settings:audit.saveFailed", { defaultValue: "Failed to save policy" }), String(e));
+		},
+	});
+
+	const defaultClientModeMutation = useMutation({
+		mutationFn: (mode: ClientDefaultMode) => systemApi.setDefaultClientMode(mode),
+		onSuccess: (data) => {
+			setDashboardSetting("clientDefaultMode", data.default_config_mode);
+			notifySuccess(
+				t("settings:clients.modeTitle", {
+					defaultValue: "Client Management Mode",
+				}),
+				t("settings:system.applySuccessDescription", {
+					source: data.default_config_mode,
+					apiPort: effectiveApiPort,
+					mcpPort: effectiveMcpPort,
+					defaultValue: "Default mode updated to {{source}}.",
+				}),
+			);
+			void defaultClientModeQuery.refetch();
+		},
+		onError: (error) => {
+			notifyError(
+				t("settings:clients.modeTitle", {
+					defaultValue: "Client Management Mode",
+				}),
+				stringifyError(error),
+			);
 		},
 	});
 
@@ -387,7 +442,6 @@ export function SettingsPage() {
 		}
 		policyMutation.mutate({ policy, sweep_interval_secs: sweepInterval });
 	}, [policyType, policyDays, policyCount, sweepInterval, policyMutation]);
-
 
 	const applyCoreSourceView = useCallback(
 		(response: DesktopCoreSourceResponse) => {
@@ -830,12 +884,7 @@ export function SettingsPage() {
 	const handleTabChange = useCallback(
 		(value: string) => {
 			setActiveTab(value);
-			const next = new URLSearchParams(searchParams);
-			if (value === "about") {
-				next.set("tab", "about");
-			} else {
-				next.delete("tab");
-			}
+			const next = buildSettingsTabSearchParams(searchParams, value);
 			setSearchParams(next, { replace: true });
 		},
 		[searchParams, setSearchParams],
@@ -1304,17 +1353,15 @@ export function SettingsPage() {
 										</p>
 									</div>
 									<div className="w-64">
-										<Segment
-											options={clientModeOptions}
-											value={dashboardSettings.clientDefaultMode}
-											onValueChange={(value) =>
-												setDashboardSetting(
-													"clientDefaultMode",
-													value as ClientDefaultMode,
-												)
-											}
-											showDots={false}
-										/>
+									<Segment
+										options={clientModeOptions}
+										value={dashboardSettings.clientDefaultMode}
+										onValueChange={(value) =>
+											defaultClientModeMutation.mutate(value as ClientDefaultMode)
+										}
+										disabled={defaultClientModeMutation.isPending}
+										showDots={false}
+									/>
 									</div>
 								</div>
 
