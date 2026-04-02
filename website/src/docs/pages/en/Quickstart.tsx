@@ -112,7 +112,8 @@ export default function Quickstart() {
 				</Li>
 				<Li>
 					Set the client to <strong>Hosted</strong> mode to enable in-place profile switching from MCPMate.
-					Transparent mode only writes configuration files and cannot toggle profiles live.
+					 Use <strong>Unify</strong> mode when you want session-local builtin control instead of dashboard-managed profile switching.
+					 <strong>Transparent</strong> mode only writes configuration files and cannot toggle profiles live.
 				</Li>
 				<Li>Select the profile you prepared and apply it. Launch your editor and trigger an MCP command to confirm the tools appear.</Li>
 			</Ul>

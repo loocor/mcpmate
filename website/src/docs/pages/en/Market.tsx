@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
@@ -13,9 +12,9 @@ export default function MarketEN() {
 			}}
 		>
 			<P>
-				The Market connects MCPMate to curated registries of MCP servers. From
-				here you can browse official listings, add your own portals, preview
-				metadata, and send candidates straight into the install wizard.
+				The Market connects MCPMate to the official MCP Registry. From here you
+				can browse listings, preview metadata, hide noisy entries, and send
+				candidates straight into the install wizard.
 			</P>
 
 			<DocScreenshot
@@ -27,7 +26,7 @@ export default function MarketEN() {
 			<H2>Registry & data</H2>
 			<Ul>
 				<Li>
-					The Market lists the official MCPMate registry. Search (with debounced
+					The Market lists the official MCP Registry. Search (with debounced
 					input) and sorting (Recent, Alphabetical) run client-side against
 					cached pages while the app streams additional pages on demand.
 				</Li>
@@ -38,9 +37,8 @@ export default function MarketEN() {
 					<code>mcpmate://import/server</code> on the desktop app.
 				</Li>
 				<Li>
-					Remote connectors surface under <em>Remote</em> options; they represent
-					predefined endpoints (Git repos, zip bundles, etc.) that can be
-					imported with one click.
+					Use Settings → <strong>MCP Market</strong> to choose the default
+					market, manage hidden entries, and review browser extension shortcuts.
 				</Li>
 			</Ul>
 
@@ -57,7 +55,7 @@ export default function MarketEN() {
 			<P>
 				Use the &ldquo;Hide&rdquo; action to move entries into your local market
 				blacklist. Hidden servers disappear from the grid but remain recoverable
-				from Settings → Marketplace should you need them later.
+				from Settings → MCP Market should you need them later.
 			</P>
 
 			<H2>Blacklist</H2>
@@ -69,8 +67,8 @@ export default function MarketEN() {
 			<Callout type="info" title="Relationship with Servers page">
 				Every installation flows through the same <strong>Server Install
 					Wizard</strong> used for drag-and-drop imports. Anything you add from the
-				Market immediately appears in the Servers list, where you can enable it
-				per profile and monitor connectivity.
+				Market immediately appears in the Servers list, where you can review the
+				configuration, enable it globally, and then add it to the right profiles.
 			</Callout>
 		</DocLayout>
 	);

@@ -19,7 +19,7 @@ export default function ClientAppsZH() {
 			<H2>文档导航</H2>
 			<Ul>
 				<Li><strong>详情概览</strong> 解释状态徽标、检测结果、文档链接、传输方式与当前服务器卡片。</Li>
-				<Li><strong>配置管理</strong> 解释托管 / 透明模式、能力来源、应用流程与导入预览。</Li>
+				<Li><strong>配置管理</strong> 解释统一模式 / 托管模式 / 透明模式、能力来源、应用流程与导入预览。</Li>
 				<Li><strong>备份与恢复</strong> 解释保留策略、回滚、批量删除与恢复场景。</Li>
 			</Ul>
 
@@ -56,7 +56,7 @@ export default function ClientAppsZH() {
 					<strong>概览</strong>：检测状态、托管开关、应用配置集等操作，以及打开 MCP 配置目录等快捷入口。
 				</Li>
 				<Li>
-					<strong>配置</strong>：展示 MCPMate 将为该客户端写入的 MCP 服务、从客户端导入配置，以及托管/透明模式相关说明。
+					<strong>配置</strong>：展示 MCPMate 将为该客户端写入的 MCP 服务、从客户端导入配置，以及统一模式 / 托管模式 / 透明模式相关说明。
 				</Li>
 				<Li>
 					<strong>备份</strong>：应用配置集或导入时生成的轮转快照；可恢复、批量删除，或在成功后刷新列表。

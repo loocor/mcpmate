@@ -7,7 +7,7 @@ export default function MarketZH() {
 	return (
 		<DocLayout meta={{ title: "服务源", description: "浏览与管理社区服务器" }}>
 			<P>
-				服务源展示 MCPMate 官方注册表，可搜索、排序并将候选项送往安装向导。
+				服务源接入的是官方 MCP 注册中心。你可以在这里搜索条目、预览元数据、隐藏噪声项，并把候选服务器直接送入安装向导。
 			</P>
 
 			<DocScreenshot
@@ -27,8 +27,7 @@ export default function MarketZH() {
 					<code>mcpmate://import/server</code> 唤起桌面端。
 				</Li>
 				<Li>
-					远程连接器会显示在“Remote”区域，通常是预先配置好的 URL/Git
-					仓库，可一键进入安装流程。
+					可在设置 → <strong>MCP 市场</strong> 中指定默认服务源、管理隐藏条目，并查看浏览器扩展入口。
 				</Li>
 			</Ul>
 
@@ -42,8 +41,7 @@ export default function MarketZH() {
 
 			<H3>隐藏与黑名单</H3>
 			<P>
-				选择“隐藏”后条目会加入本地黑名单，从官方列表中移除。可在设置 → MCP
-				市场搜索并恢复这些条目。
+				选择“隐藏”后条目会加入本地黑名单，从官方列表中移除。可在设置 → MCP 市场中搜索并恢复这些条目。
 			</P>
 
 			<H2>黑名单</H2>
@@ -52,7 +50,7 @@ export default function MarketZH() {
 			</P>
 
 			<Callout type="info" title="与服务器页面的联动">
-				所有在市场完成的导入都会经过相同的服务器安装向导，并立即出现在服务器列表中，随后即可针对配置集启用或禁用、查看连接状态。
+				所有在市场完成的导入都会经过相同的服务器安装向导，并立即出现在服务器列表中；随后你可以先检查配置、做全局启停，再加入合适的配置集。
 			</Callout>
 		</DocLayout>
 	);

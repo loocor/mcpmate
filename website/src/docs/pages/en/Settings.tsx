@@ -28,7 +28,7 @@ export default function Settings() {
 			<Ul>
 				<Li>
 					<strong>General</strong> &mdash; set the default list/grid view,
-					pick the operation mode (guided vs. advanced), and choose the dashboard
+					pick the application mode (Express vs. Expert), and choose the dashboard
 					language (English, Simplified Chinese, or Japanese).
 				</Li>
 				<Li>
@@ -42,8 +42,8 @@ export default function Settings() {
 					the default profile.
 				</Li>
 				<Li>
-					<strong>Client Defaults</strong> &mdash; configure hosted vs.
-					transparent modes, default visibility filters, backup strategies, and
+					<strong>Client Defaults</strong> &mdash; configure Unify, Hosted, and
+					Transparent modes, default visibility filters, backup strategies, and
 					backup limits for editor configs.
 				</Li>
 				<Li>
@@ -75,8 +75,8 @@ export default function Settings() {
 
 			<H3>Coordinate client rollouts</H3>
 			<P>
-				Under Client Defaults, set how new editors should behave (Hosted vs.
-				Transparent), what filter the Clients page should use on load, and how
+				Under Client Defaults, set how new editors should behave (Unify, Hosted,
+				or Transparent), what filter the Clients page should use on load, and how
 				many configuration backups to keep. These values feed the store consumed
 				by the Clients page toolbar.
 			</P>
@@ -120,8 +120,8 @@ export default function Settings() {
 			</Callout>
 
 			<Callout type="info" title="Why port settings are worth documenting">
-				The codebase includes dedicated support for reapplying hosted, managed client
-				configs after MCP port changes, and separate transparent-client sync paths for
+				The codebase includes dedicated support for reapplying Hosted managed client
+				configs after MCP port changes, and separate Transparent-client sync paths for
 				profile-driven native renders. The practical takeaway is that managed rollout
 				is designed to avoid hand-editing every client when local runtime details move.
 			</Callout>

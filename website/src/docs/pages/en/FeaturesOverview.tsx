@@ -76,7 +76,7 @@ export default function FeaturesOverview() {
 			<h3>Ecosystem</h3>
 			<ul>
 				<li>
-					<strong>Inline Marketplace:</strong> Built-in official MCP registry —
+					<strong>Market Install Flow:</strong> Guided handoff from the official MCP Registry into MCPMate's install flow —
 					discover and install servers without leaving the app
 				</li>
 			</ul>

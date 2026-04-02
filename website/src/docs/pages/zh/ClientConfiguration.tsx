@@ -10,26 +10,28 @@ export default function ClientConfigurationZH() {
 			</P>
 			<H2>关键选择</H2>
 			<Ul>
+				<Li><strong>统一模式</strong> 适合希望通过内建 MCP / UCAN 工具进行会话内控制、且不维护仪表板侧客户端工作集的场景。</Li>
 				<Li><strong>托管模式</strong> 适合需要实时切换与更细控制的场景。</Li>
 				<Li><strong>透明模式</strong> 适合必须直接写客户端配置文件的兼容场景，但会减少 MCPMate 的精细控制价值。</Li>
-				<Li><strong>None</strong> 表示这个客户端不由 MCPMate 管理。</Li>
-				<Li><strong>能力来源</strong> 决定客户端跟随已激活配置集、所选共享配置集，还是客户端专属的自定义配置集。</Li>
+				<Li><strong>能力来源</strong> 决定托管模式或透明模式下，客户端跟随已激活配置集、所选共享配置集，还是客户端专属的自定义配置集。</Li>
 			</Ul>
 			<H2>三种模式真正意味着什么</H2>
 			<Ul>
+				<Li><strong>统一模式</strong> 初始只提供内建 MCP 工具，会在当前会话中通过内建流程浏览全局启用服务器的 capabilities，并在会话结束后自动重置。</Li>
 				<Li><strong>托管模式</strong> 会让客户端只面对 MCPMate 提供的统一入口，因此 profile 切换、可见性控制与策略判断都还能保留在中间层。</Li>
 				<Li><strong>透明模式</strong> 会把启用的 server 直接写进客户端自己的 MCP 配置，更适合兼容性或特殊场景。</Li>
-				<Li><strong>None</strong> 是完全退出受管配置的路径。</Li>
 			</Ul>
-			<H2>来源选择和模式是两层决策</H2>
+			<H2>来源选择适用于托管模式与透明模式</H2>
 			<Ul>
+				<Li><strong>统一模式</strong> 不使用这里的仪表板配置集选择。请在当前会话内通过内建 UCAN 工具浏览并调用来自全局启用服务器的 capabilities。</Li>
 				<Li><strong>Activated</strong> 跟随全局当前已激活的配置集。</Li>
 				<Li><strong>Profiles</strong> 允许某个客户端单独选择一组共享配置集，而不完全跟着全局活动集走。</Li>
 				<Li><strong>Customize</strong> 会创建或复用这个客户端自己的专属配置集。</Li>
 			</Ul>
 			<H2>推荐流程</H2>
 			<Ul>
-				<Li>先选择管理模式，再决定能力来源。</Li>
+				<Li>先在统一模式、托管模式、透明模式之间选定管理路径，再决定是否需要能力来源选择。</Li>
+				<Li>只有在托管模式或透明模式下，才需要继续选择能力来源。</Li>
 				<Li>覆盖写入前先看导入预览，避免误覆盖已有配置。</Li>
 				<Li>应用前回到概览确认客户端已被正确检测。</Li>
 			</Ul>

@@ -84,7 +84,7 @@ const zh = {
 	"features.bridge": "协议桥接",
 	"features.bridge.desc":
 		"无需修改客户端即可将基于 stdio 的客户端连接到 Streamable HTTP 服务",
-	"features.marketplace": "内联商城",
+	"features.marketplace": "服务源安装流程",
 	"features.marketplace.desc":
 		"把发现、导入与后续运维放在同一条链路里，不必到处找再手动搬运。",
 	"features.templates": "精细控制",
@@ -101,12 +101,12 @@ const zh = {
 		"MCPMate 面向的是那些希望 MCP 真正可运营，而不只是“理论上能接起来”的人。",
 	"value.creators.title": "按意图切换，而不是按文件折腾",
 	"value.creators.p1": "把工作模式打包成共享配置集，而不是每次都重新勾服务器、工具和提示词。",
-	"value.creators.p2": "在兼容客户端里，当客户端明确使用 Hosted + Profiles 模式时，可以通过 MCPMate 内建 MCP 工具切换共享配置集。",
+	"value.creators.p2": "在兼容客户端里，当客户端明确使用托管模式 + 配置集时，可以通过 MCPMate 内建 MCP 工具切换共享配置集。",
 	"value.creators.p3": "把当前任务真正需要的能力留在会话里，减少噪声，也更容易控制 token 成本。",
 	"value.creators.diagram": "创作流程",
 	"value.managers.title": "在不同客户端之间灵活投放",
 	"value.managers.p1": "需要更强控制时用托管模式；需要直接写原生客户端配置时用透明模式。",
-	"value.managers.p2": "一个客户端可以只读跟随当前已激活的共享配置集，也可以在 Hosted + Profiles 模式下显式切换共享配置集，或在受支持场景下使用自己的专属配置集。",
+	"value.managers.p2": "一个客户端可以只读跟随当前已激活的共享配置集，也可以在托管模式 + 配置集下显式切换共享配置集，或在受支持场景下使用自己的专属配置集。",
 	"value.managers.p3": "保留兼容性退路，同时让大多数场景仍然走受管路径。",
 	"value.managers.diagram": "团队一致性",
 	"value.owners.title": "更清晰地在本地运营",
@@ -192,7 +192,7 @@ const zh = {
 		"MCPMate 把配置集能力控制、客户端投放模式、导入预览和实时检视组合成了一个本地优先的控制平面，而不是只做“把 MCP 接上”。",
 	"faq.compatible.title": "我可以将 MCPMate 与现有的 MCP 工具一起使用吗？",
 	"faq.compatible.answer":
-		"可以。MCPMate 既支持和现有 MCP 客户端协同工作，也提供统一模式、hosted、transparent 三条路径，让你在会话内 UCAN 控制、更强托管控制与原生输出之间自行选择。",
+		"可以。MCPMate 既支持和现有 MCP 客户端协同工作，也提供统一模式、托管模式、透明模式三条路径，让你在会话内 UCAN 控制、更强托管控制与原生输出之间自行选择。",
 
 	// 站点更新提示斜角标
 	"notice.construction.ribbon": "建设中",

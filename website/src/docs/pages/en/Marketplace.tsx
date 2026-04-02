@@ -1,4 +1,3 @@
-import React from "react";
 import DocLayout from "../../layout/DocLayout";
 import { H3, P } from "../../components/Headings";
 import DocScreenshot from "../../components/DocScreenshot";
@@ -7,15 +6,16 @@ export default function Marketplace() {
 	return (
 		<DocLayout
 			meta={{
-				title: "Inline Marketplace",
+				title: "Market Install Flow",
 				description:
-					"Built-in official MCP registry - discover servers without leaving the app",
+					"How registry cards flow into MCPMate's install wizard",
 			}}
 		>
 			<P>
-				MCPMate includes an integrated marketplace that provides access to the
-				official MCP registry. Discover, install, and
-				configure new MCP servers without ever leaving the 			application.
+				This flow explains what happens after you choose a registry card in the
+				Market. MCPMate opens the same install wizard used by manual imports so
+				you can review transport, normalize the manifest, and decide where the
+				server belongs before saving.
 			</P>
 
 			<DocScreenshot
@@ -24,48 +24,40 @@ export default function Marketplace() {
 				alt="Inline marketplace browsing the official MCP registry"
 			/>
 
-			<h2>Features</h2>
+			<h2>What the flow gives you</h2>
 			<ul>
 				<li>
-					<strong>Unified Search:</strong> Search the official registry
+					<strong>Registry-to-install handoff:</strong> Start from Market cards and continue in the guided install wizard
 				</li>
 				<li>
-					<strong>One-Click Install:</strong> Install servers directly from the
-					marketplace
+					<strong>Normalized preview:</strong> Review transport and manifest details before saving
 				</li>
 				<li>
-					<strong>Automatic Configuration:</strong> Servers are automatically
-					added to your active profile
+					<strong>Controlled rollout:</strong> Add the server first, then decide which profiles should expose it
 				</li>
 				<li>
-					<strong>Version Management:</strong> Update servers when new versions
-					are available
-				</li>
-				<li>
-					<strong>Ratings & Reviews:</strong> See community feedback before
-					installing
+					<strong>Consistent import path:</strong> Market installs and drag-and-drop imports share the same downstream flow
 				</li>
 			</ul>
 
-			<h2>Supported Registries</h2>
-			<ul>
-				<li>
-					<strong>Official MCP Registry:</strong> Anthropic's official server
-					collection
-				</li>
-			</ul>
+			<h2>Where it fits</h2>
+			<P>
+				Use Market when you want to browse the official registry inside MCPMate,
+				and use this install flow when you are ready to inspect the server details
+				before it lands in Servers.
+			</P>
 
 			<h2>Benefits</h2>
 			<P>
-				Instead of manually searching GitHub or documentation sites, browsing
-				installation instructions, and editing configuration files, the
-				marketplace streamlines the entire process into a few clicks.
+				Instead of jumping between registry pages, snippets, and local config
+				files, MCPMate keeps discovery and installation in one guided path.
 			</P>
 
 			<H3>Add MCP Server wizard</H3>
 			<P>
-				Installing from a registry card opens the guided flow: configure transport,
-				preview the normalized manifest, then import into the desired profile.
+				Installing from a registry card opens the guided flow: configure
+				transport, preview the normalized manifest, save the server, then add it
+				to the desired profiles from the Servers or Profiles pages.
 			</P>
 			<DocScreenshot
 				lightSrc="/screenshot/market-add-server-light.png"

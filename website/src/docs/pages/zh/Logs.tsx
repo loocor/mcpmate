@@ -4,7 +4,7 @@ import Callout from "../../components/Callout";
 
 export default function LogsZH() {
 	return (
-		<DocLayout meta={{ title: "日志", description: "诊断与审计日志" }}>
+		<DocLayout meta={{ title: "审计日志", description: "审计事件与运维轨迹" }}>
 			<P>
 				审计日志页面提供统一时间线，用于追踪 MCPMate 中“谁在何时对哪个对象执行了什么操作”。
 			</P>
@@ -14,7 +14,7 @@ export default function LogsZH() {
 				<Li>配置集生命周期：创建、更新、激活、停用等。</Li>
 				<Li>客户端操作：应用配置、备份、恢复、模式调整等。</Li>
 				<Li>服务器操作：创建/导入/更新/启停，以及能力刷新行为。</Li>
-				<Li>由审计子系统输出的安全相关事件。</Li>
+				<Li>由审计事件支撑的管理、运行时与详情日志记录。</Li>
 			</Ul>
 
 			<H2>使用方式</H2>

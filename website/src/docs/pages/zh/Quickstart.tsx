@@ -84,7 +84,7 @@ export default function QuickstartZH() {
 			<Ul>
 				<Li>确认客户端在 <strong>客户端</strong> 页面显示为 <strong>已检测</strong>。</Li>
 				<Li>
-					将客户端设置为 <strong>托管（Hosted）</strong> 模式，即可在 MCPMate 内直接切换配置集；透明模式仅会写入配置文件，不支持就地切换。
+					将客户端设置为 <strong>托管模式</strong>，即可在 MCPMate 内直接切换配置集；若希望改用会话内建控制而不是仪表盘侧配置集切换，可选择 <strong>统一模式</strong>；<strong>透明模式</strong> 仅会写入配置文件，不支持就地切换。
 				</Li>
 				<Li>在客户端页面选择要应用的配置集，随后回到编辑器中执行 MCP 命令验证工具是否出现。</Li>
 			</Ul>
