@@ -7,6 +7,9 @@ import {
 	RefreshCw,
 	Server,
 	Target,
+	Lock,
+	Unlock,
+	AlertTriangle
 } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -19,6 +22,7 @@ import { ErrorDisplay } from "../../components/error-display";
 import { ListGridContainer } from "../../components/list-grid-container";
 import { EmptyState, PageLayout } from "../../components/page-layout";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
+import { ServerAuthBadge } from "../../components/server-auth-badge";
 import { ServerInstallWizard } from "../../components/uniimport/server-install-wizard";
 import type { ServerInstallManualFormHandle } from "../../components/uniimport/types";
 import { StatsCards } from "../../components/stats-cards";
@@ -625,6 +629,43 @@ export function ServerListPage() {
 			);
 		}
 
+		if (server.oauth_status) {
+			if (server.oauth_status === "Connected") {
+				tags.push(
+					<span
+						key="oauth"
+						className="flex items-center gap-1 text-xs text-green-600"
+						data-decorative
+					>
+						<Unlock className="h-3 w-3" />
+						{t("entity.connectionTags.authConnected", { defaultValue: "Authorized" })}
+					</span>,
+				);
+			} else if (server.oauth_status === "Expired") {
+				tags.push(
+					<span
+						key="oauth"
+						className="flex items-center gap-1 text-xs text-amber-600"
+						data-decorative
+					>
+						<AlertTriangle className="h-3 w-3" />
+						{t("entity.connectionTags.authExpired", { defaultValue: "Auth Expired" })}
+					</span>,
+				);
+			} else if (server.oauth_status === "Disconnected") {
+				tags.push(
+					<span
+						key="oauth"
+						className="flex items-center gap-1 text-xs text-slate-500"
+						data-decorative
+					>
+						<Lock className="h-3 w-3" />
+						{t("entity.connectionTags.authDisconnected", { defaultValue: "Login Required" })}
+					</span>,
+				);
+			}
+		}
+
 		return tags;
 	};
 
@@ -696,6 +737,10 @@ export function ServerListPage() {
 				description={
 					<div className="flex items-center gap-2">
 						{getConnectionTypeTags(server)}
+						<ServerAuthBadge
+							authMode={server.auth_mode}
+							oauthStatus={server.oauth_status}
+						/>
 					</div>
 				}
 				avatar={{
@@ -823,7 +868,16 @@ export function ServerListPage() {
 					alt: iconSrc ? iconAlt : undefined,
 					fallback: serverInitial,
 				}}
-				topRightBadge={getConnectionTypeTags(server)}
+				topRightBadge={
+					<div className="flex items-center gap-2">
+						{getConnectionTypeTags(server)}
+						<ServerAuthBadge
+							authMode={server.auth_mode}
+							oauthStatus={server.oauth_status}
+							showLabel={false}
+						/>
+					</div>
+				}
 				stats={cardStats}
 				bottomLeft={
 					<StatusBadge

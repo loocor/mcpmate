@@ -1,10 +1,10 @@
 use crate::api::handlers::client;
 use crate::api::models::client::{
-    ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq,
-    ClientBackupPolicyResp, ClientBackupPolicySetReq, ClientCapabilityConfigReq, ClientCapabilityConfigResp,
-    ClientCheckReq, ClientCheckResp, ClientConfigImportReq, ClientConfigImportResp, ClientConfigReq, ClientConfigResp,
-    ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientManageReq, ClientManageResp,
-    ClientSettingsUpdateReq, ClientSettingsUpdateResp,
+    ApprovalRequest, ApprovalResponse, ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp,
+    ClientBackupOperateReq, ClientBackupPolicyReq, ClientBackupPolicyResp, ClientBackupPolicySetReq,
+    ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckReq, ClientCheckResp, ClientConfigImportReq,
+    ClientConfigImportResp, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq,
+    ClientConfigUpdateResp, ClientManageReq, ClientManageResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -118,6 +118,27 @@ aide_wrapper_payload!(
     "Set backup retention policy for a client"
 );
 
+aide_wrapper_payload!(
+    client::approve_client,
+    ApprovalRequest,
+    ApprovalResponse,
+    "Approve a pending client"
+);
+
+aide_wrapper_payload!(
+    client::reject_client,
+    ApprovalRequest,
+    ApprovalResponse,
+    "Reject a pending client"
+);
+
+aide_wrapper_payload!(
+    client::suspend_client,
+    ApprovalRequest,
+    ApprovalResponse,
+    "Suspend a client to disable management"
+);
+
 /// Create client management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     // Build routes then attach a per-request template-reload middleware
@@ -152,6 +173,18 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             "/client/backups/policy",
             get_with(get_backup_policy_aide, get_backup_policy_docs)
                 .post_with(set_backup_policy_aide, set_backup_policy_docs),
+        )
+        .api_route(
+            "/client/manage/approve",
+            post_with(approve_client_aide, approve_client_docs),
+        )
+        .api_route(
+            "/client/manage/reject",
+            post_with(reject_client_aide, reject_client_docs),
+        )
+        .api_route(
+            "/client/manage/suspend",
+            post_with(suspend_client_aide, suspend_client_docs),
         )
         .with_state(state.clone());
 

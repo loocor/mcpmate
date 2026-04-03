@@ -276,6 +276,7 @@ mod tests {
             client_service: None::<Arc<ClientConfigService>>,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            oauth_manager: None,
         })
     }
 

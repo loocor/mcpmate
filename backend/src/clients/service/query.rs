@@ -231,7 +231,7 @@ mod tests {
     use crate::clients::source::{FileTemplateSource, TemplateRoot};
     use crate::common::profile::ProfileType;
     use crate::config::{
-        client::init::initialize_client_table,
+        client::init::{initialize_client_table, initialize_system_settings_table},
         models::Profile,
         profile::{self, init::initialize_profile_tables},
         server::init::initialize_server_tables,
@@ -256,6 +256,9 @@ mod tests {
             .await
             .expect("init profile tables");
         initialize_client_table(pool.as_ref()).await.expect("init client table");
+        initialize_system_settings_table(pool.as_ref())
+            .await
+            .expect("init system settings table");
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
         let source = Arc::new(

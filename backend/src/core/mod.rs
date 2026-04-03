@@ -15,6 +15,7 @@ pub mod capability;
 pub mod events;
 pub mod foundation;
 pub mod models;
+pub mod oauth;
 pub mod pool;
 pub mod profile;
 pub mod proxy;

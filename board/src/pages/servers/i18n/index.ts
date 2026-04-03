@@ -288,6 +288,73 @@ export const serversTranslations = {
 					emptyFetched: "No {{label}} returned.",
 					emptyPrompt: "Run {{label}} list to fetch live data.",
 				},
+				oauth: {
+					title: "OAuth Authorization",
+					description:
+						"Configure and connect OAuth for this hosted MCP server before using it in the main workflow.",
+					loading: "Refreshing OAuth status…",
+					state: {
+						notConfigured: "Not configured",
+						disconnected: "Disconnected",
+						connected: "Connected",
+						expired: "Expired",
+					},
+					fields: {
+						authorizationEndpoint: "Authorization endpoint",
+						tokenEndpoint: "Token endpoint",
+						clientId: "Client ID",
+						clientSecret: "Client secret",
+						clientSecretPlaceholderExisting:
+							"Leave blank to keep the stored secret",
+						clientSecretPlaceholderNew: "Optional for public clients",
+						scopes: "Scopes",
+						redirectUri: "Redirect URI",
+					},
+					actions: {
+						save: "Save settings",
+						connect: "Connect with OAuth",
+						reconnect: "Reconnect OAuth",
+						revoke: "Revoke token",
+					},
+					summary: {
+						configured: "Configured",
+						clientSecret: "Client secret",
+						stored: "Stored",
+						notSet: "Not set",
+						expiresAt: "Expires at",
+						notAvailable: "Not available",
+					},
+					manualOverride: {
+						title: "Manual Authorization header is active",
+						description:
+							"This server already has an Authorization header in its transport settings, so that manual value will take precedence over the stored OAuth token.",
+					},
+					notifications: {
+						savedTitle: "OAuth settings saved",
+						savedMessage:
+							"The server OAuth configuration has been updated.",
+						saveFailedTitle: "Failed to save OAuth settings",
+						connectFailedTitle: "Unable to start OAuth",
+						revokedTitle: "OAuth token revoked",
+						revokedMessage:
+							"Stored OAuth credentials were removed for this server.",
+						revokeFailedTitle: "Failed to revoke OAuth",
+					},
+				},
+			},
+		},
+		oauth: {
+			callback: {
+				title: "OAuth Authorization",
+				processing: "Completing authorization, please wait...",
+				success:
+					"Authorization successful. Returning to the server detail page...",
+				error: "Authorization failed.",
+				back: "Back to servers",
+			},
+			errors: {
+				missingParams: "Missing required OAuth parameters.",
+				callbackFailed: "OAuth callback processing failed.",
 			},
 		},
 		instanceDetail: {
@@ -920,6 +987,70 @@ export const serversTranslations = {
 					emptyFetched: "未返回任何 {{label}}。",
 					emptyPrompt: "运行 {{label}} 列表以获取最新数据。",
 				},
+				oauth: {
+					title: "OAuth 授权",
+					description:
+						"请先为这个托管 MCP 服务器配置并连接 OAuth，再进入主业务流程使用。",
+					loading: "正在刷新 OAuth 状态…",
+					state: {
+						notConfigured: "未配置",
+						disconnected: "未连接",
+						connected: "已连接",
+						expired: "已过期",
+					},
+					fields: {
+						authorizationEndpoint: "授权端点",
+						tokenEndpoint: "令牌端点",
+						clientId: "Client ID",
+						clientSecret: "Client Secret",
+						clientSecretPlaceholderExisting:
+							"留空以保留当前已存储的密钥",
+						clientSecretPlaceholderNew: "公开客户端可选填",
+						scopes: "Scopes",
+						redirectUri: "回调 URI",
+					},
+					actions: {
+						save: "保存设置",
+						connect: "使用 OAuth 连接",
+						reconnect: "重新连接 OAuth",
+						revoke: "撤销令牌",
+					},
+					summary: {
+						configured: "已配置",
+						clientSecret: "Client Secret",
+						stored: "已存储",
+						notSet: "未设置",
+						expiresAt: "过期时间",
+						notAvailable: "暂无",
+					},
+					manualOverride: {
+						title: "当前启用了手动 Authorization Header",
+						description:
+							"这个服务器的传输设置里已经配置了 Authorization Header，因此手动值会优先于已存储的 OAuth 令牌生效。",
+					},
+					notifications: {
+						savedTitle: "OAuth 设置已保存",
+						savedMessage: "该服务器的 OAuth 配置已更新。",
+						saveFailedTitle: "保存 OAuth 设置失败",
+						connectFailedTitle: "无法启动 OAuth",
+						revokedTitle: "OAuth 令牌已撤销",
+						revokedMessage: "该服务器保存的 OAuth 凭据已移除。",
+						revokeFailedTitle: "撤销 OAuth 失败",
+					},
+				},
+			},
+		},
+		oauth: {
+			callback: {
+				title: "OAuth 授权",
+				processing: "正在完成授权，请稍候...",
+				success: "授权成功，正在返回服务器详情页...",
+				error: "授权失败。",
+				back: "返回服务器列表",
+			},
+			errors: {
+				missingParams: "缺少必需的 OAuth 参数。",
+				callbackFailed: "OAuth 回调处理失败。",
 			},
 		},
 		instanceDetail: {
@@ -1534,6 +1665,72 @@ export const serversTranslations = {
 					emptyPrompt:
 						"{{label}} リストを実行して最新データを取得してください。",
 				},
+				oauth: {
+					title: "OAuth 認可",
+					description:
+						"このホスト型 MCP サーバーをメインフローで使う前に、OAuth を設定して接続してください。",
+					loading: "OAuth 状態を更新しています…",
+					state: {
+						notConfigured: "未設定",
+						disconnected: "未接続",
+						connected: "接続済み",
+						expired: "期限切れ",
+					},
+					fields: {
+						authorizationEndpoint: "認可エンドポイント",
+						tokenEndpoint: "トークンエンドポイント",
+						clientId: "Client ID",
+						clientSecret: "Client Secret",
+						clientSecretPlaceholderExisting:
+							"空欄のまま保存すると既存のシークレットを保持します",
+						clientSecretPlaceholderNew: "公開クライアントでは任意です",
+						scopes: "Scopes",
+						redirectUri: "リダイレクト URI",
+					},
+					actions: {
+						save: "設定を保存",
+						connect: "OAuth で接続",
+						reconnect: "OAuth を再接続",
+						revoke: "トークンを削除",
+					},
+					summary: {
+						configured: "設定済み",
+						clientSecret: "Client Secret",
+						stored: "保存済み",
+						notSet: "未設定",
+						expiresAt: "有効期限",
+						notAvailable: "なし",
+					},
+					manualOverride: {
+						title: "手動の Authorization ヘッダーが有効です",
+						description:
+							"このサーバーの転送設定にはすでに Authorization ヘッダーがあるため、保存済みの OAuth トークンより手動値が優先されます。",
+					},
+					notifications: {
+						savedTitle: "OAuth 設定を保存しました",
+						savedMessage:
+							"このサーバーの OAuth 設定を更新しました。",
+						saveFailedTitle: "OAuth 設定の保存に失敗しました",
+						connectFailedTitle: "OAuth を開始できませんでした",
+						revokedTitle: "OAuth トークンを削除しました",
+						revokedMessage:
+							"このサーバーに保存されていた OAuth 資格情報を削除しました。",
+						revokeFailedTitle: "OAuth の削除に失敗しました",
+					},
+				},
+			},
+		},
+		oauth: {
+			callback: {
+				title: "OAuth 認可",
+				processing: "認可を完了しています。しばらくお待ちください...",
+				success: "認可が完了しました。サーバー詳細ページへ戻ります...",
+				error: "認可に失敗しました。",
+				back: "サーバー一覧へ戻る",
+			},
+			errors: {
+				missingParams: "必要な OAuth パラメータが不足しています。",
+				callbackFailed: "OAuth コールバックの処理に失敗しました。",
 			},
 		},
 		instanceDetail: {

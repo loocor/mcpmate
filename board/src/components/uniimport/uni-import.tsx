@@ -43,6 +43,7 @@ import {
 	StdioAdvanced,
 	UrlParams,
 } from "./form-fields";
+import { ServerAuthSection } from "./server-auth-section";
 import {
 	useFormState,
 	useFormSubmission,
@@ -77,6 +78,8 @@ export const ServerInstallManualForm = forwardRef<
 			allowJsonEditing,
 			onPreview,
 			allowProgrammaticIngest = false,
+			serverId,
+			onInitiateOAuth,
 		}: ServerInstallManualFormProps,
 		ref,
 	) => {
@@ -1096,6 +1099,16 @@ export const ServerInstallManualForm = forwardRef<
 												urlInputRef={urlInputRef}
 												viewMode={viewMode}
 											/>
+
+									{serverId && onInitiateOAuth ? (
+										<ServerAuthSection
+											serverId={serverId}
+											isStdio={isStdio}
+											viewMode={viewMode}
+											isNewServer={false}
+											onInitiateOAuth={onInitiateOAuth}
+										/>
+									) : null}
 
 											<StdioAdvanced
 												viewMode={viewMode}

@@ -55,6 +55,8 @@ export interface ServerSummary {
   name: string;
   server_type?: string;
   status: string;
+  auth_mode?: string | null;
+  oauth_status?: string | null;
   enabled?: boolean;
   globally_enabled?: boolean;
   enabled_in_suits?: boolean;
@@ -70,6 +72,7 @@ export interface ServerSummary {
   server_version?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  oauth_status?: OAuthStatus["state"] | null;
 }
 
 export interface ServerListResponse {
@@ -544,6 +547,11 @@ export interface MCPServerConfig {
 
   /** HTTP headers for non-stdio servers */
   headers?: Record<string, string>;
+
+  profile_ids?: string[];
+
+  /** Whether this server is a hidden pre-import record */
+  pending_import?: boolean;
 
   /** 最大实例数 */
   max_instances?: number;
@@ -1191,4 +1199,39 @@ export interface CapabilityTokenLedgerRow {
 export interface CapabilityTokenLedgerResponse {
 	items: CapabilityTokenLedgerRow[];
 	tokenizer_note: string;
+}
+
+export interface OAuthStatus {
+  server_id: string;
+  configured: boolean;
+  state?: "not_configured" | "disconnected" | "connected" | "expired" | string | null;
+  authorization_endpoint?: string | null;
+  token_endpoint?: string | null;
+  client_id?: string | null;
+  scopes?: string | null;
+  redirect_uri?: string | null;
+  has_client_secret?: boolean | null;
+  manual_authorization_override?: boolean | null;
+  expires_at?: string | null;
+}
+
+export interface OAuthConfigRequest {
+  server_id?: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  client_id: string;
+  client_secret?: string;
+  scopes?: string;
+  redirect_uri: string;
+}
+
+export interface OAuthInitiateResponse {
+  server_id: string;
+  authorization_url: string;
+  state: string;
+}
+
+export interface OAuthCallbackRequest {
+  code: string;
+  state: string;
 }

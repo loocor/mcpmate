@@ -15,6 +15,7 @@ export type WizardStep = "form" | "preview" | "result";
 
 export interface ServerInstallDraft {
 	name: string;
+	serverId?: string;
 	kind: "stdio" | "streamable_http";
 	command?: string;
 	args?: string[];
@@ -79,6 +80,7 @@ export function useServerInstallPipeline(
 			include_details: true,
 			servers: items.map((item) => ({
 				name: item.name,
+				server_id: item.serverId ?? null,
 				kind: item.kind,
 				command: item.kind === "stdio" ? (item.command ?? null) : null,
 				args: item.args?.length ? item.args : null,
@@ -390,6 +392,7 @@ export function useServerInstallPipeline(
 			confirmImport,
 			close: reset,
 			reset,
+			setImportResult,
 			setPreviewState,
 			setCurrentStep,
 			setTargetProfileId,
@@ -400,6 +403,7 @@ export function useServerInstallPipeline(
 			begin,
 			confirmImport,
 			reset,
+			setImportResult,
 			setPreviewState,
 			setCurrentStep,
 			setTargetProfileId,

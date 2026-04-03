@@ -120,6 +120,118 @@ impl BackupPolicySetting {
     }
 }
 
+/// Client onboarding policy
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OnboardingPolicy {
+    #[default]
+    AutoManage,
+    RequireApproval,
+    Manual,
+}
+
+impl OnboardingPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OnboardingPolicy::AutoManage => "auto_manage",
+            OnboardingPolicy::RequireApproval => "require_approval",
+            OnboardingPolicy::Manual => "manual",
+        }
+    }
+}
+
+impl fmt::Display for OnboardingPolicy {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for OnboardingPolicy {
+    type Err = ParseOnboardingPolicyError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto_manage" => Ok(OnboardingPolicy::AutoManage),
+            "require_approval" => Ok(OnboardingPolicy::RequireApproval),
+            "manual" => Ok(OnboardingPolicy::Manual),
+            _ => Err(ParseOnboardingPolicyError),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseOnboardingPolicyError;
+
+impl fmt::Display for ParseOnboardingPolicyError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid onboarding policy")
+    }
+}
+
+impl std::error::Error for ParseOnboardingPolicyError {}
+
+/// Client approval status
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalStatus {
+    Pending,
+    #[default]
+    Approved,
+    Rejected,
+}
+
+impl ApprovalStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ApprovalStatus::Pending => "pending",
+            ApprovalStatus::Approved => "approved",
+            ApprovalStatus::Rejected => "rejected",
+        }
+    }
+}
+
+impl fmt::Display for ApprovalStatus {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for ApprovalStatus {
+    type Err = ParseApprovalStatusError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(ApprovalStatus::Pending),
+            "approved" => Ok(ApprovalStatus::Approved),
+            "rejected" => Ok(ApprovalStatus::Rejected),
+            _ => Err(ParseApprovalStatusError),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseApprovalStatusError;
+
+impl fmt::Display for ParseApprovalStatusError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid approval status")
+    }
+}
+
+impl std::error::Error for ParseApprovalStatusError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

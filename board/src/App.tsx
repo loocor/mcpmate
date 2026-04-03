@@ -22,6 +22,7 @@ import { ProfilePresetPage } from "./pages/profile/profile-preset-page";
 import { RuntimePage } from "./pages/runtime/runtime-page";
 import { InstanceDetailPage } from "./pages/servers/instance-detail-page";
 import { ServerDetailPage } from "./pages/servers/server-detail-page";
+import { OAuthCallbackPage } from "./pages/servers/oauth-callback-page";
 import { ServerListPage } from "./pages/servers/server-list-page";
 import { SettingsPage } from "./pages/settings/settings-page";
 
@@ -71,6 +72,7 @@ function App() {
 						<Route path="market" element={<MarketPage />} />
 						<Route path="market/:registryKey" element={<MarketDetailPage />} />
 						<Route path="servers" element={<ServerListPage />} />
+						<Route path="oauth/callback" element={<OAuthCallbackPage />} />
 						<Route path="servers/:serverId" element={<ServerDetailPage />} />
 						<Route
 							path="servers/:serverId/instances/:instanceId"

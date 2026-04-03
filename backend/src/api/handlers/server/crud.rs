@@ -220,6 +220,10 @@ pub async fn create_server(
         payload.url.clone(),
     );
     server.registry_server_id = payload.registry_server_id.clone();
+    server.pending_import = payload.pending_import.unwrap_or(false);
+    if server.pending_import {
+        server.enabled = crate::common::status::EnabledStatus::Disabled;
+    }
 
     // Insert server into database
     let server_id = crate::config::server::upsert_server(&db.pool, &server)
@@ -257,7 +261,7 @@ pub async fn create_server(
     // Associate server with specified profiles if provided
     let initial_enabled = payload.enabled.unwrap_or(true);
 
-    if let Some(profile_ids) = payload.profile_ids.as_ref() {
+    if !server.pending_import && let Some(profile_ids) = payload.profile_ids.as_ref() {
         let mut unique_profiles = BTreeSet::new();
         for profile_id in profile_ids {
             if !unique_profiles.insert(profile_id) {
@@ -286,15 +290,17 @@ pub async fn create_server(
     }
 
     // Initial capability discovery + dual write (SQLite shadow + REDB)
-    let _ = sync_via_connection_pool(
-        &state.connection_pool,
-        &state.redb_cache,
-        &db.pool,
-        &server_id,
-        &payload.name,
-        crate::config::server::capabilities::default_pool_lock_timeout_secs(),
-    )
-    .await;
+    if !server.pending_import {
+        let _ = sync_via_connection_pool(
+            &state.connection_pool,
+            &state.redb_cache,
+            &db.pool,
+            &server_id,
+            &payload.name,
+            crate::config::server::capabilities::default_pool_lock_timeout_secs(),
+        )
+        .await;
+    }
 
     let server_row = crate::config::server::get_server_by_id(&db.pool, &server_id)
         .await
@@ -332,6 +338,8 @@ pub async fn create_server(
         created_at,
         updated_at,
         instances: details.instances,
+        auth_mode: None,
+        oauth_status: None,
     }));
 
     let mut data = Map::new();
@@ -436,6 +444,17 @@ pub async fn update_server(
         updated_server.registry_server_id = Some(registry_id);
     }
 
+    if let Some(enabled) = payload.enabled {
+        updated_server.enabled = enabled.into();
+    }
+
+    if let Some(pending_import) = payload.pending_import {
+        updated_server.pending_import = pending_import;
+        if pending_import {
+            updated_server.enabled = crate::common::status::EnabledStatus::Disabled;
+        }
+    }
+
     // Update server in database
     crate::config::server::upsert_server(&db.pool, &updated_server)
         .await
@@ -496,6 +515,18 @@ pub async fn update_server(
         }
     }
 
+    if existing_server.pending_import && !updated_server.pending_import {
+        let _ = sync_via_connection_pool(
+            &state.connection_pool,
+            &state.redb_cache,
+            &db.pool,
+            &server_id,
+            &existing_server.name,
+            crate::config::server::capabilities::default_pool_lock_timeout_secs(),
+        )
+        .await;
+    }
+
     // Get server details via shared helper
     let details = common::get_complete_server_details(&db.pool, &server_id, &existing_server.name, &state).await;
 
@@ -521,6 +552,8 @@ pub async fn update_server(
         created_at: updated_server.created_at.map(|dt| dt.to_rfc3339()),
         updated_at: updated_server.updated_at.map(|dt| dt.to_rfc3339()),
         instances: details.instances,
+        auth_mode: None,
+        oauth_status: None,
     }));
 
     let mut data = Map::new();

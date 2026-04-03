@@ -33,6 +33,7 @@ pub struct Server {
     pub capabilities: Option<String>,
     /// Whether the server is globally enabled
     pub enabled: EnabledStatus,
+    pub pending_import: bool,
     /// When the configuration was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the configuration was last updated
@@ -131,6 +132,7 @@ impl Server {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
+            pending_import: false,
             created_at: None,
             updated_at: None,
         }
@@ -151,6 +153,7 @@ impl Server {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
+            pending_import: false,
             created_at: None,
             updated_at: None,
         }
@@ -171,6 +174,7 @@ impl Server {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
+            pending_import: false,
             created_at: None,
             updated_at: None,
         }
@@ -368,4 +372,31 @@ impl ServerMeta {
             updated_at: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ServerOAuthConfig {
+    pub id: Option<String>,
+    pub server_id: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub scopes: Option<String>,
+    pub redirect_uri: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ServerOAuthToken {
+    pub id: Option<String>,
+    pub server_id: String,
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub token_type: String,
+    pub expires_at: Option<String>,
+    pub scope: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
 }

@@ -114,6 +114,18 @@ pub struct ClientInfo {
     pub mcp_servers_count: Option<u32>,
     #[schemars(description = "Template metadata summary for this client")]
     pub template: ClientTemplateMetadata,
+    #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
+    #[serde(default)]
+    pub approval_status: Option<String>,
+    #[schemars(description = "Template identifier bound to this client")]
+    #[serde(default)]
+    pub template_id: Option<String>,
+    #[schemars(description = "Whether the client has a known template")]
+    #[serde(default)]
+    pub template_known: bool,
+    #[schemars(description = "Whether the client is pending approval")]
+    #[serde(default)]
+    pub pending_approval: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema, Default)]
@@ -469,7 +481,6 @@ pub struct ClientCapabilityConfigData {
     #[serde(default)]
     pub custom_profile_id: Option<String>,
 }
-
 api_resp!(
     ClientCapabilityConfigResp,
     ClientCapabilityConfigData,
@@ -522,6 +533,50 @@ pub struct ClientCapabilityConfigReq {
     #[serde(default)]
     pub selected_profile_ids: Vec<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Client approval request")]
+pub struct ClientApproveReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Optional template ID to bind during approval")]
+    #[serde(default)]
+    pub template_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client approval response body")]
+pub struct ClientApproveData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "New approval status after operation")]
+    pub approval_status: String,
+    #[schemars(description = "Whether the client is now managed")]
+    pub managed: bool,
+}
+
+api_resp!(ClientApproveResp, ClientApproveData, "Client approval response");
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Client suspend request")]
+pub struct ClientSuspendReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client suspend response body")]
+pub struct ClientSuspendData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "New approval status after operation")]
+    pub approval_status: String,
+    #[schemars(description = "Whether the client is still managed")]
+    pub managed: bool,
+}
+
+api_resp!(ClientSuspendResp, ClientSuspendData, "Client suspend response");
+
 api_resp!(
     ClientBackupListResp,
     ClientBackupListData,
@@ -677,4 +732,36 @@ pub struct ClientDetectedApp {
     pub install_path: std::path::PathBuf,
     #[schemars(description = "Path to client configuration file")]
     pub config_path: std::path::PathBuf,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Client approval request")]
+pub struct ApprovalRequest {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Client approval response")]
+pub struct ApprovalResponse {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Updated approval status")]
+    pub status: String,
+    #[schemars(description = "Whether client is managed after approval")]
+    pub managed: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Onboarding policy update request")]
+pub struct OnboardingPolicyRequest {
+    #[schemars(description = "Policy: auto_manage, require_approval, or manual")]
+    pub policy: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Onboarding policy response")]
+pub struct OnboardingPolicyResponse {
+    #[schemars(description = "Current onboarding policy")]
+    pub policy: String,
 }

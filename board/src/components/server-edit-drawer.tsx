@@ -297,6 +297,35 @@ export function ServerEditDrawer({
 		[onSubmit, onUpdated, server],
 	);
 
+	const handleInitiateOAuth = useCallback(
+		async (config: import("../lib/types").OAuthConfigRequest) => {
+			if (!server?.id) return;
+			
+			try {
+				await serversApi.saveOAuthConfig(server.id, config);
+				const redirectRes = await serversApi.initiateOAuth(server.id);
+				if (redirectRes.authorization_url) {
+					const width = 600;
+					const height = 800;
+					const left = window.screenX + (window.outerWidth - width) / 2;
+					const top = window.screenY + (window.outerHeight - height) / 2;
+					const popup = window.open(
+						redirectRes.authorization_url,
+						"oauth_window",
+						`width=${width},height=${height},left=${left},top=${top}`,
+					);
+					if (!popup) {
+						window.location.assign(redirectRes.authorization_url);
+					}
+				}
+			} catch (error) {
+				console.error("Failed to initiate OAuth:", error);
+				throw error;
+			}
+		},
+		[server]
+	);
+
 	const handleRefreshFromRegistry = useCallback(async () => {
 		if (!server?.registry_server_id || !server.id) return;
 		try {
@@ -334,6 +363,8 @@ export function ServerEditDrawer({
 			onClose={onClose}
 			onSubmit={handleSubmit}
 			mode="edit"
+			serverId={server?.id}
+			onInitiateOAuth={handleInitiateOAuth}
 			allowJsonEditing={false}
 			initialDraft={initialDraft ?? undefined}
 			onRefreshFromRegistry={server?.registry_server_id ? handleRefreshFromRegistry : undefined}

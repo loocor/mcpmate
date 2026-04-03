@@ -67,6 +67,10 @@ import type {
 	ServerListResp,
 	ServerListResponse,
 	ServerMetaInfo,
+	OAuthCallbackRequest,
+	OAuthConfigRequest,
+	OAuthInitiateResponse,
+	OAuthStatus,
 	ServerSummary,
 	ServersImportData,
 	SkippedServer,
@@ -672,6 +676,8 @@ export const serversApi = {
 					...enhanced,
 					server_type: serverType,
 					registry_server_id: registryServerId,
+					auth_mode: asOptionalString(er.auth_mode) ?? null,
+					oauth_status: asOptionalString(er.oauth_status) ?? null,
 				} as ServerSummary;
 			});
 			return { servers };
@@ -679,6 +685,68 @@ export const serversApi = {
 			console.error("Failed to fetch servers:", error);
 			return { servers: [] };
 		}
+	},
+
+	getOAuthStatus: async (id: string): Promise<OAuthStatus | null> => {
+		try {
+			const q = new URLSearchParams({ id });
+			const resp = await fetchApi<ApiWrapper<OAuthStatus>>(
+				`/api/mcp/servers/oauth/status?${q}`,
+			);
+			return resp?.data ?? null;
+		} catch (error) {
+			console.error("Failed to fetch OAuth status:", error);
+			return null;
+		}
+	},
+
+	saveOAuthConfig: async (
+		id: string,
+		config: Omit<OAuthConfigRequest, 'server_id'>,
+	): Promise<OAuthStatus> => {
+		const resp = await fetchApi<ApiWrapper<OAuthStatus>>(
+			"/api/mcp/servers/oauth/config",
+			{
+			method: "POST",
+			body: JSON.stringify({ server_id: id, ...config }),
+		},
+		);
+		return extractApiData(resp);
+	},
+
+	initiateOAuth: async (id: string): Promise<OAuthInitiateResponse> => {
+		const resp = await fetchApi<ApiWrapper<OAuthInitiateResponse>>(
+			"/api/mcp/servers/oauth/initiate",
+			{
+			method: "POST",
+			body: JSON.stringify({ server_id: id }),
+		},
+		);
+		return extractApiData(resp);
+	},
+
+	revokeOAuth: async (id: string): Promise<OAuthStatus> => {
+		const resp = await fetchApi<ApiWrapper<OAuthStatus>>(
+			"/api/mcp/servers/oauth/revoke",
+			{
+			method: "POST",
+			body: JSON.stringify({ server_id: id }),
+		},
+		);
+		return extractApiData(resp);
+	},
+
+	handleOAuthCallback: async (
+		payload: OAuthCallbackRequest,
+	): Promise<OAuthStatus> => {
+		const resp = await fetchApi<ApiWrapper<OAuthStatus>>(
+			"/api/mcp/servers/oauth/callback",
+			{
+			method: "POST",
+			body: JSON.stringify(payload),
+		},
+		);
+		return extractApiData(resp);
 	},
 
 	getServer: async (id: string): Promise<ServerDetail> => {
@@ -689,6 +757,7 @@ export const serversApi = {
 			);
 			const data = (resp?.data ?? {}) as Record<string, unknown>;
 			const enhanced = enrichServerRecord(data);
+			const detailRecord = enhanced as Record<string, unknown>;
 			const enabledValue =
 				typeof enhanced?.enabled === "boolean"
 					? enhanced.enabled
@@ -804,6 +873,8 @@ export const serversApi = {
 						? (enhanced.env as Record<string, string>)
 						: undefined,
 				url: typeof enhanced?.url === "string" ? enhanced.url : undefined,
+				auth_mode: asOptionalString(detailRecord.auth_mode) ?? null,
+				oauth_status: asOptionalString(detailRecord.oauth_status) ?? null,
 				headers:
 					typeof enhanced?.headers === "object" && enhanced?.headers !== null
 						? (enhanced.headers as Record<string, string>)
@@ -879,6 +950,8 @@ export const serversApi = {
 					? (enhanced.env as Record<string, string>)
 					: undefined,
 			url: typeof enhanced?.url === "string" ? enhanced.url : undefined,
+			auth_mode: asOptionalString(detailRecord.auth_mode) ?? null,
+			oauth_status: asOptionalString(detailRecord.oauth_status) ?? null,
 			headers:
 				typeof enhanced?.headers === "object" && enhanced?.headers !== null
 					? (enhanced.headers as Record<string, string>)
@@ -1018,6 +1091,7 @@ export const serversApi = {
 			name: serverConfig.name,
 			server_type: serverType,
 			enabled: sc.enabled ?? undefined,
+			profile_ids: serverConfig.profile_ids ?? undefined,
 		};
 		if (serverType === "stdio") {
 			base.command = serverConfig.command ?? undefined;
@@ -1026,6 +1100,9 @@ export const serversApi = {
 				base.env = serverConfig.env as Record<string, string>;
 		} else {
 			base.url = sc.url ?? serverConfig.command ?? undefined;
+		}
+		if (serverConfig.pending_import !== undefined) {
+			base.pending_import = serverConfig.pending_import;
 		}
 		// Add meta information if present
 		const metaPayload = serializeMetaForApi(serverConfig.meta ?? undefined);
@@ -1041,6 +1118,7 @@ export const serversApi = {
 			const msg = e instanceof Error ? e.message : String(e);
 			// Fallback to import when the create endpoint rejects (schema/DB constraints)
 			if (
+				serverConfig.pending_import !== true &&
 				/Check constraint violation|Unprocessable Entity|Invalid server type|missing field `server_type`/i.test(
 					msg,
 				)
@@ -1095,7 +1173,11 @@ export const serversApi = {
 			env: serverConfig.env ?? undefined,
 			headers: serverConfig.headers ?? undefined,
 			enabled: sc.enabled ?? undefined,
+			profile_ids: serverConfig.profile_ids ?? undefined,
 		};
+		if (serverConfig.pending_import !== undefined) {
+			body.pending_import = serverConfig.pending_import;
+		}
 		if (serverType === "stdio" || !serverType) {
 			body.command = serverConfig.command ?? undefined;
 			body.url = sc.url ?? undefined;
@@ -1188,6 +1270,7 @@ export const serversApi = {
 		timeout_ms?: number | null;
 		servers: Array<{
 			name: string;
+			server_id?: string | null;
 			kind: string;
 			command?: string | null;
 			args?: string[] | null;

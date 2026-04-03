@@ -5,6 +5,7 @@ pub mod audit;
 pub mod cache;
 pub mod client;
 pub mod inspector;
+pub mod oauth;
 pub mod profile;
 pub mod resp;
 pub mod runtime;

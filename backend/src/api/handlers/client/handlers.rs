@@ -188,6 +188,18 @@ pub async fn config_apply(
     Json(request): Json<ClientConfigUpdateReq>,
 ) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
+    
+    if let Ok(Some(state)) = service.fetch_state(&request.identifier).await {
+        if state.is_pending_unknown() {
+            tracing::warn!(
+                client = %request.identifier,
+                approval_status = %state.approval_status(),
+                "Rejected config apply for pending unknown client"
+            );
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+    
     let template = service.get_client_template(&request.identifier).await.map_err(|err| {
         tracing::error!(
             client = %request.identifier,
@@ -196,6 +208,7 @@ pub async fn config_apply(
         );
         StatusCode::NOT_FOUND
     })?;
+    
     let options = build_render_options(&request);
     let outcome = service.apply_with_deferred(options).await.map_err(|err| {
         let status = match err {
@@ -280,6 +293,18 @@ pub async fn config_restore(
     Json(request): Json<ClientConfigRestoreReq>,
 ) -> Result<Json<ClientBackupActionResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
+    
+    if let Ok(Some(state)) = service.fetch_state(&request.identifier).await {
+        if state.is_pending_unknown() {
+            tracing::warn!(
+                client = %request.identifier,
+                approval_status = %state.approval_status(),
+                "Rejected config restore for pending unknown client"
+            );
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+    
     let result = service
         .restore_backup(&request.identifier, &request.backup)
         .await
@@ -684,6 +709,17 @@ async fn descriptor_to_client_info(
 
     let last_modified = descriptor.config_path.as_deref().and_then(get_config_last_modified);
 
+    let state = service
+        .fetch_state(&template.identifier)
+        .await
+        .ok()
+        .flatten();
+
+    let approval_status = state.as_ref().map(|s| s.approval_status().to_string());
+    let template_id = state.as_ref().and_then(|s| s.template_id().map(|id| id.to_string()));
+    let template_known = template_id.is_some();
+    let pending_approval = approval_status.as_deref() == Some("pending");
+
     Ok(ClientInfo {
         identifier: template.identifier.clone(),
         display_name,
@@ -724,6 +760,10 @@ async fn descriptor_to_client_info(
         last_modified,
         mcp_servers_count: Some(mcp_servers_count),
         template: build_template_metadata(&template),
+        approval_status,
+        template_id,
+        template_known,
+        pending_approval,
     })
 }
 
@@ -880,7 +920,7 @@ mod tests {
     };
     use crate::common::profile::ProfileType;
     use crate::config::{
-        client::init::initialize_client_table,
+        client::init::{initialize_client_table, initialize_system_settings_table},
         database::Database,
         models::Profile,
         profile::{self, init::initialize_profile_tables},
@@ -924,6 +964,9 @@ mod tests {
         initialize_server_tables(&db_pool).await.expect("init server tables");
         initialize_profile_tables(&db_pool).await.expect("init profile tables");
         initialize_client_table(&db_pool).await.expect("init client table");
+        initialize_system_settings_table(&db_pool)
+            .await
+            .expect("init system settings table");
 
         let database = Arc::new(Database {
             pool: db_pool.clone(),
@@ -962,6 +1005,7 @@ mod tests {
             client_service: Some(client_service.clone()),
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            oauth_manager: Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone()))),
         });
 
         TestContext {
@@ -1037,5 +1081,87 @@ mod tests {
         assert_eq!(data.capability_source, CapabilitySource::Custom);
         assert!(data.selected_profile_ids.is_empty());
         assert_eq!(data.custom_profile_id, config.custom_profile_id);
+    }
+
+    #[tokio::test]
+    async fn config_apply_rejects_pending_unknown_client() {
+        use crate::clients::models::OnboardingPolicy;
+        use crate::common::constants::database::tables;
+
+        let context = create_test_context().await;
+
+        sqlx::query(&format!(
+            "UPDATE {} SET value = ? WHERE key = 'onboarding_policy'",
+            tables::SYSTEM_SETTINGS
+        ))
+        .bind(OnboardingPolicy::RequireApproval.as_str())
+        .execute(&context.db_pool)
+        .await
+        .expect("set onboarding policy");
+
+        sqlx::query(
+            r#"
+            INSERT INTO client (id, name, identifier, managed, approval_status, template_id)
+            VALUES ('clnt001', 'Pending Client', 'pending.client', 0, 'pending', NULL)
+            "#,
+        )
+        .execute(&context.db_pool)
+        .await
+        .expect("create pending unknown client");
+
+        let result = config_apply(
+            State(context.app_state.clone()),
+            Json(ClientConfigUpdateReq {
+                identifier: "pending.client".to_string(),
+                mode: ClientConfigMode::Hosted,
+                preview: false,
+                selected_config: ClientConfigSelected::Profile {
+                    profile_id: "PROF001".to_string(),
+                },
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn config_restore_rejects_pending_unknown_client() {
+        use crate::clients::models::OnboardingPolicy;
+        use crate::common::constants::database::tables;
+
+        let context = create_test_context().await;
+
+        sqlx::query(&format!(
+            "UPDATE {} SET value = ? WHERE key = 'onboarding_policy'",
+            tables::SYSTEM_SETTINGS
+        ))
+        .bind(OnboardingPolicy::RequireApproval.as_str())
+        .execute(&context.db_pool)
+        .await
+        .expect("set onboarding policy");
+
+        sqlx::query(
+            r#"
+            INSERT INTO client (id, name, identifier, managed, approval_status, template_id)
+            VALUES ('clnt002', 'Pending Client', 'pending.restore', 0, 'pending', NULL)
+            "#,
+        )
+        .execute(&context.db_pool)
+        .await
+        .expect("create pending unknown client");
+
+        let result = config_restore(
+            State(context.app_state.clone()),
+            Json(ClientConfigRestoreReq {
+                identifier: "pending.restore".to_string(),
+                backup: "backup-001".to_string(),
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::FORBIDDEN);
     }
 }

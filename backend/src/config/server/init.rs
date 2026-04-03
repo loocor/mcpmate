@@ -16,6 +16,8 @@ pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
     create_server_env_table(pool).await?;
     create_server_headers_table(pool).await?;
     create_server_meta_table(pool).await?;
+    create_server_oauth_config_table(pool).await?;
+    create_server_oauth_tokens_table(pool).await?;
 
     verify_server_tables(pool).await?;
 
@@ -42,6 +44,7 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             registry_server_id TEXT UNIQUE,
             capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
+            pending_import BOOLEAN NOT NULL DEFAULT 0,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -57,6 +60,7 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
     })?;
 
     tracing::debug!("server_config table created or already exists");
+    ensure_column(pool, "server_config", "pending_import", "BOOLEAN NOT NULL DEFAULT 0").await?;
     Ok(())
 }
 
@@ -190,6 +194,65 @@ async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
     Ok(())
 }
 
+async fn create_server_oauth_config_table(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating server_oauth_config table if it doesn't exist");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS server_oauth_config (
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL UNIQUE,
+            authorization_endpoint TEXT NOT NULL,
+            token_endpoint TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            client_secret TEXT,
+            scopes TEXT,
+            redirect_uri TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create server_oauth_config table: {}", e);
+        anyhow::anyhow!("Failed to create server_oauth_config table: {}", e)
+    })?;
+
+    Ok(())
+}
+
+async fn create_server_oauth_tokens_table(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating server_oauth_tokens table if it doesn't exist");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS server_oauth_tokens (
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL UNIQUE,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT,
+            token_type TEXT NOT NULL DEFAULT 'bearer',
+            expires_at TEXT,
+            scope TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create server_oauth_tokens table: {}", e);
+        anyhow::anyhow!("Failed to create server_oauth_tokens table: {}", e)
+    })?;
+
+    Ok(())
+}
+
 async fn ensure_column(
     pool: &Pool<Sqlite>,
     table: &str,
@@ -224,7 +287,10 @@ async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
         tables::SERVER_CONFIG,
         tables::SERVER_ARGS,
         tables::SERVER_ENV,
+        tables::SERVER_HEADERS,
         tables::SERVER_META,
+        tables::SERVER_OAUTH_CONFIG,
+        tables::SERVER_OAUTH_TOKENS,
     ] {
         sqlx::query(&format!(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'"

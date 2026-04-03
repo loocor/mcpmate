@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
+import type { OAuthConfigRequest } from "../../lib/types";
 import type { SegmentOption } from "../ui/segment";
 
 // Constants
@@ -168,10 +169,16 @@ export interface ServerInstallManualFormProps {
 	 * Market mode shows server information and transport options for registry imports.
 	 */
 	mode?: "create" | "edit" | "market";
+	/** Server ID for Edit flow OAuth */
+	serverId?: string;
+	/** Callback for OAuth initiation */
+	onInitiateOAuth?: (config: import("../../lib/types").OAuthConfigRequest) => Promise<void>;
 	/** Optional initial draft used to hydrate the form when editing an existing server. */
 	initialDraft?: ServerInstallDraft | null;
+	serverId?: string;
 	/** Allow users to modify the JSON representation. Defaults to true in create mode. */
 	allowJsonEditing?: boolean;
+	onInitiateOAuth?: (config: OAuthConfigRequest) => Promise<void>;
 	/** Market mode specific props */
 	onPreview?: () => void;
 	onImport?: () => void;

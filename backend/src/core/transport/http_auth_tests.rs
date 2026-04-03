@@ -64,11 +64,14 @@ async fn streamable_http_carries_bearer_on_init_sse_delete() -> anyhow::Result<(
         DummyServer,
         rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
     > = rmcp::transport::streamable_http_server::tower::StreamableHttpService::new(
-        || Ok(DummyServer::default()),
+        || Ok(DummyServer),
         Default::default(),
         rmcp::transport::streamable_http_server::StreamableHttpServerConfig {
             stateful_mode: true,
             sse_keep_alive: None,
+            sse_retry: Some(Duration::from_secs(3)),
+            json_response: false,
+            cancellation_token: CancellationToken::new(),
         },
     );
     let router = Router::new()
@@ -130,4 +133,3 @@ async fn streamable_http_carries_bearer_on_init_sse_delete() -> anyhow::Result<(
 
     Ok(())
 }
-
