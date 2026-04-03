@@ -111,10 +111,14 @@ pub mod database {
         pub const PROFILE_TOOL: &str = "profile_tool";
         pub const PROFILE: &str = "profile";
         pub const CLIENT: &str = "client";
+        pub const SYSTEM_SETTINGS: &str = "system_settings";
         pub const SERVER_ARGS: &str = "server_args";
         pub const SERVER_CONFIG: &str = "server_config";
         pub const SERVER_ENV: &str = "server_env";
+        pub const SERVER_HEADERS: &str = "server_headers";
         pub const SERVER_META: &str = "server_meta";
+        pub const SERVER_OAUTH_CONFIG: &str = "server_oauth_config";
+        pub const SERVER_OAUTH_TOKENS: &str = "server_oauth_tokens";
         pub const SERVER_PROMPTS: &str = "server_prompts";
         pub const SERVER_RESOURCE_TEMPLATES: &str = "server_resource_templates";
         pub const SERVER_RESOURCES: &str = "server_resources";
@@ -136,6 +140,7 @@ pub mod database {
         pub const COMMAND: &str = "command";
         pub const URL: &str = "url";
         pub const TRANSPORT_TYPE: &str = "transport_type";
+        pub const PENDING_IMPORT: &str = "pending_import";
         pub const CAPABILITIES: &str = "capabilities";
         pub const REGISTRY_SERVER_ID: &str = "registry_server_id";
         pub const DESCRIPTION: &str = "description";

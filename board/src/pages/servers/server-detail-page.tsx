@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
 import { DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS } from "../../components/detail-capability-tab-content-class";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
@@ -26,6 +26,7 @@ import {
 import InspectorDrawer, {
 	type InspectorLogEntry,
 } from "../../components/inspector-drawer";
+import { ServerAuthBadge } from "../../components/server-auth-badge";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { StatusBadge } from "../../components/status-badge";
 import {
@@ -1036,6 +1037,29 @@ export function ServerDetailPage() {
 															<span className="font-mono text-sm leading-tight">
 																{server.server_type}
 															</span>
+											{server.auth_mode ? (
+												<>
+													<span className="text-xs uppercase text-slate-500">
+														{t("detail.overview.labels.auth", {
+															defaultValue: "Auth",
+														})}
+													</span>
+													<div className="flex items-center gap-1.5 text-sm">
+														<ServerAuthBadge
+															authMode={server.auth_mode}
+															oauthStatus={server.oauth_status}
+														/>
+														<Button
+															variant="ghost"
+															size="sm"
+															className="h-6 text-xs px-2"
+															onClick={() => setIsEditOpen(true)}
+														>
+															{t("actions.edit", { defaultValue: "Edit" })}
+														</Button>
+													</div>
+												</>
+															) : null}
 															{protocolVersion ? (
 																<>
 																	<span className="text-xs uppercase text-slate-500">
@@ -1231,11 +1255,11 @@ export function ServerDetailPage() {
 													) : null}
 												</div>
 											</div>
-										</CardContent>
-									</Card>
+									</CardContent>
+								</Card>
 
-									{viewMode === VIEW_MODES.browse ? (
-										<Card>
+								{viewMode === VIEW_MODES.browse ? (
+									<Card>
 											<CardHeader>
 												<CardTitle>
 													{t("detail.instances.title", {

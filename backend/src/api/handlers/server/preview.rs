@@ -6,16 +6,17 @@ use crate::api::models::server::{
 
 /// Preview capabilities for arbitrary server configs (no DB/REDB/pool side-effects)
 pub async fn preview_servers(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(req): Json<ServerPreviewReq>,
 ) -> Result<Json<ServerPreviewResp>, ApiError> {
     let timeout = req.timeout_ms.map(std::time::Duration::from_millis);
     let include_details = req.include_details.unwrap_or(true);
+    let db_pool = state.database.as_ref().map(|db| db.pool.clone());
 
     // Process sequentially to avoid uncontrolled concurrency; can add a small semaphore later
     let mut items_out: Vec<ServerPreviewItemData> = Vec::with_capacity(req.servers.len());
     for item in req.servers {
-        items_out.push(preview_one(item, timeout, include_details).await);
+        items_out.push(preview_one(item, timeout, include_details, db_pool.as_ref()).await);
     }
 
     Ok(Json(ServerPreviewResp::success(ServerPreviewData { items: items_out })))
@@ -25,6 +26,7 @@ async fn preview_one(
     item: ServerPreviewItemReq,
     timeout: Option<std::time::Duration>,
     include_details: bool,
+    db_pool: Option<&sqlx::SqlitePool>,
 ) -> ServerPreviewItemData {
     // Map kind -> ServerType
     let kind = match crate::common::server::ServerType::from_client_format(item.kind.as_str()) {
@@ -36,9 +38,18 @@ async fn preview_one(
 
     // Call preview (no side effects)
     // Build optional HTTP client with default headers if provided
+    let effective_headers = if let (Some(pool), Some(server_id)) = (db_pool, item.server_id.as_deref()) {
+        crate::config::server::oauth::get_effective_server_headers(pool, server_id, item.headers.clone())
+            .await
+            .ok()
+            .flatten()
+    } else {
+        item.headers.clone()
+    };
+
     let mut client: Option<reqwest::Client> = None;
     if matches!(kind, crate::common::server::ServerType::StreamableHttp) {
-        if let Some(headers) = item.headers.as_ref() {
+        if let Some(headers) = effective_headers.as_ref() {
             let mut header_map = reqwest::header::HeaderMap::new();
             for (k, v) in headers.iter() {
                 if let Ok(name) = reqwest::header::HeaderName::from_bytes(k.as_bytes()) {
@@ -69,7 +80,7 @@ async fn preview_one(
         url: item.url.clone(),
         args: item.args.clone(),
         env: item.env.clone(),
-        headers: item.headers.clone(),
+        headers: effective_headers,
     };
 
     let snap = crate::config::server::capabilities::discover_from_config_preview(

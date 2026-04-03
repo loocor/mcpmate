@@ -335,6 +335,11 @@ pub struct ServerDetailsData {
     pub updated_at: Option<String>,
     /// Summary of instances
     pub instances: Vec<InstanceSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<String>,
+    /// OAuth connection state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_status: Option<crate::core::oauth::types::OAuthConnectionState>,
 }
 
 /// Repository information compatible with the MCP registry schema
@@ -715,6 +720,10 @@ pub struct ServerCreateReq {
     #[schemars(description = "Whether to enable this server in the specified profiles")]
     pub enabled: Option<bool>,
 
+    #[serde(default)]
+    #[schemars(description = "Whether this server is a hidden pre-import record")]
+    pub pending_import: Option<bool>,
+
     #[schemars(
         description = "Canonical registry server identifier (official `server.name`; `official.serverId` alias only when equivalent) used to link managed servers"
     )]
@@ -775,6 +784,10 @@ pub struct ServerUpdateReq {
     /// Whether to enable the server (optional update)
     #[schemars(description = "Whether to enable this server in the specified profiles")]
     pub enabled: Option<bool>,
+
+    #[serde(default)]
+    #[schemars(description = "Whether this server is a hidden pre-import record")]
+    pub pending_import: Option<bool>,
 
     #[schemars(
         description = "Canonical registry server identifier (official `server.name`; `official.serverId` alias only when equivalent) used to link managed servers"
@@ -911,6 +924,8 @@ api_resp!(
 #[schemars(description = "Single server preview item request")]
 pub struct ServerPreviewItemReq {
     pub name: String,
+    #[serde(default)]
+    pub server_id: Option<String>,
     pub kind: String, // stdio|streamable_http
     #[serde(default)]
     pub command: Option<String>,

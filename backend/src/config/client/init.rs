@@ -66,6 +66,34 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     .await?;
     ensure_column(pool, tables::CLIENT, "selected_profile_ids", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "custom_profile_id", "TEXT").await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "approval_status",
+        "TEXT NOT NULL DEFAULT 'approved' CHECK (approval_status IN ('pending', 'approved', 'suspended', 'rejected'))",
+    )
+    .await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "template_id",
+        "TEXT",
+    )
+    .await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "template_version",
+        "TEXT",
+    )
+    .await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "approval_metadata",
+        "TEXT",
+    )
+    .await?;
 
     sqlx::query(&format!(
         r#"
@@ -129,6 +157,17 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     .map_err(|e| {
         tracing::error!("Failed to normalize {} config_mode: {}", tables::CLIENT, e);
         anyhow::anyhow!("Failed to normalize {} config_mode: {}", tables::CLIENT, e)
+    })?;
+
+    sqlx::query(&format!(
+        "UPDATE {table} SET template_id = identifier WHERE template_id IS NULL OR template_id = ''",
+        table = tables::CLIENT
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to backfill {} template_id: {}", tables::CLIENT, e);
+        anyhow::anyhow!("Failed to backfill {} template_id: {}", tables::CLIENT, e)
     })?;
 
     tracing::debug!("{} table initialized", tables::CLIENT);
@@ -309,6 +348,44 @@ async fn ensure_column(
             Err(anyhow::anyhow!("Failed to add column {}.{}: {}", table, column, e))
         }
     }
+}
+
+pub async fn initialize_system_settings_table(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Initializing system_settings table");
+
+    sqlx::query(&format!(
+        r#"
+        CREATE TABLE IF NOT EXISTS {table} (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+        table = tables::SYSTEM_SETTINGS,
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create {} table: {}", tables::SYSTEM_SETTINGS, e);
+        anyhow::anyhow!("Failed to create {} table: {}", tables::SYSTEM_SETTINGS, e)
+    })?;
+
+    sqlx::query(&format!(
+        r#"
+        INSERT OR IGNORE INTO {table} (key, value)
+        VALUES ('onboarding_policy', 'auto_manage')
+        "#,
+        table = tables::SYSTEM_SETTINGS,
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to insert default onboarding_policy: {}", e);
+        anyhow::anyhow!("Failed to insert default onboarding_policy: {}", e)
+    })?;
+
+    tracing::debug!("{} table initialized", tables::SYSTEM_SETTINGS);
+    Ok(())
 }
 
 #[cfg(test)]

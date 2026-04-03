@@ -1,4 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ChevronDown,
@@ -22,6 +23,7 @@ import {
 import { useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
+import { serversApi } from "../../lib/api";
 import {
 	type InstallSource,
 	type ServerInstallDraft,
@@ -31,6 +33,7 @@ import {
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useAppStore } from "../../lib/store";
+import type { MCPServerConfig } from "../../lib/types";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -54,6 +57,7 @@ import {
 	StdioAdvanced,
 	UrlParams,
 } from "./form-fields";
+import { ServerAuthSection } from "./server-auth-section";
 import { useFormState, useFormSync, useIngest } from "./hooks";
 import {
 	breathingAnimation,
@@ -138,6 +142,7 @@ export const ServerInstallWizard = forwardRef(
 		const installPipeline = externalPipeline ?? internalPipeline;
 		const currentStep = installPipeline.state.currentStep ?? "form";
 		const navigate = useNavigate();
+		const queryClient = useQueryClient();
 
 		// Form state management
 		const {
@@ -361,6 +366,9 @@ export const ServerInstallWizard = forwardRef(
 			[t],
 		);
 		const previewInFlightRef = useRef(false);
+		const pendingImportServerRef = useRef<string | null>(null);
+		const [pendingImportServerId, setPendingImportServerId] =
+			useState<string | null>(null);
 
 		const toKeyValueRecord = useCallback(
 			(items?: Array<{ key?: string | null; value?: string | null }>) => {
@@ -387,6 +395,34 @@ export const ServerInstallWizard = forwardRef(
 			},
 			[],
 		);
+
+		const draftToServerConfig = useCallback(
+			(
+				draft: ServerInstallDraft,
+				extra?: Partial<MCPServerConfig>,
+			): Partial<MCPServerConfig> => ({
+				name: draft.name,
+				kind: draft.kind,
+				command: draft.kind === "stdio" ? draft.command : undefined,
+				url: draft.kind === "stdio" ? undefined : draft.url,
+				args: draft.args,
+				env: draft.env,
+				headers: draft.kind === "stdio" ? undefined : draft.headers,
+				meta: draft.meta,
+				...extra,
+			}),
+			[],
+		);
+
+		const cleanupPendingImportServer = useCallback(() => {
+			const pendingId = pendingImportServerRef.current;
+			if (!pendingId) {
+				return;
+			}
+			pendingImportServerRef.current = null;
+			setPendingImportServerId(null);
+			void serversApi.deleteServer(pendingId).catch(() => {});
+		}, []);
 
 		const buildJsonPayloadFromValues = useCallback(
 			(values: ManualServerFormValues) => {
@@ -715,6 +751,7 @@ export const ServerInstallWizard = forwardRef(
 
 				return {
 					name: values.name.trim(),
+					serverId: pendingImportServerRef.current ?? undefined,
 					kind: values.kind,
 					command: values.kind === "stdio" ? trim(values.command) : undefined,
 					url: values.kind === "stdio" ? undefined : trim(values.url),
@@ -751,6 +788,34 @@ export const ServerInstallWizard = forwardRef(
 				}
 
 				try {
+					if (pendingImportServerRef.current && !isEditMode) {
+						const hiddenServerId = pendingImportServerRef.current;
+						const [tools, resources, prompts, resourceTemplates] = await Promise.all([
+							serversApi.listTools(hiddenServerId, "force"),
+							serversApi.listResources(hiddenServerId, "force"),
+							serversApi.listPrompts(hiddenServerId, "force"),
+							serversApi.listResourceTemplates(hiddenServerId, "force"),
+						]);
+
+						installPipeline.setPreviewState({
+							success: true,
+							data: {
+								items: [
+									{
+										name: draft.name,
+										ok: true,
+										error: null,
+										tools,
+										resources,
+										prompts,
+										resource_templates: resourceTemplates,
+									},
+								],
+							},
+						});
+						return;
+					}
+
 					if (onPreview) {
 						await Promise.resolve(onPreview(drafts));
 					} else {
@@ -764,6 +829,7 @@ export const ServerInstallWizard = forwardRef(
 				trigger,
 				getValues,
 				toDraftFromValues,
+				isEditMode,
 				isImportMode,
 				onPreview,
 				currentStep,
@@ -813,19 +879,56 @@ export const ServerInstallWizard = forwardRef(
 		const handleOverlayClose = useCallback(() => {
 			if (!isClosing) {
 				setIsClosing(true);
+				cleanupPendingImportServer();
+
 				onClose();
 				setIsClosing(false);
 				installPipeline.setCurrentStep("form");
 				installPipeline.reset();
 			}
-		}, [onClose, isClosing, installPipeline]);
+		}, [cleanupPendingImportServer, onClose, isClosing, installPipeline]);
 
 		// Handle import action
 		const handleImport = useCallback(async () => {
+			if (pendingImportServerRef.current && !isEditMode) {
+				const formValues = getValues();
+				const draft = toDraftFromValues(formValues);
+				const publishedServerId = pendingImportServerRef.current;
+				await serversApi.updateServer(
+					publishedServerId,
+					draftToServerConfig(draft, {
+						enabled: true,
+						pending_import: false,
+						profile_ids: installPipeline.state.targetProfileId
+							? [installPipeline.state.targetProfileId]
+							: undefined,
+					}),
+				);
+				pendingImportServerRef.current = null;
+				setPendingImportServerId(null);
+				await queryClient.invalidateQueries({ queryKey: ["servers"] });
+				installPipeline.setImportResult({
+					success: true,
+					summary: {
+						imported_count: 1,
+						skipped_count: 0,
+					},
+					servers: {
+						[draft.name]: {
+							id: publishedServerId,
+							status: "success",
+						},
+					},
+				});
+				return;
+			}
+
 			if (onImport) {
 				const formValues = getValues();
 				const draft = toDraftFromValues(formValues);
 				await Promise.resolve(onImport([draft]));
+				pendingImportServerRef.current = null;
+				setPendingImportServerId(null);
 				handleOverlayClose();
 				return;
 			}
@@ -833,13 +936,18 @@ export const ServerInstallWizard = forwardRef(
 			// Use install pipeline for import; close drawer on success
 			const didSucceed = await installPipeline.confirmImport();
 			if (didSucceed) {
+				pendingImportServerRef.current = null;
+				setPendingImportServerId(null);
 				handleOverlayClose();
 			}
 		}, [
+			queryClient,
 			getValues,
 			onImport,
 			toDraftFromValues,
+			draftToServerConfig,
 			handleOverlayClose,
+			isEditMode,
 			installPipeline,
 		]);
 
@@ -847,6 +955,8 @@ export const ServerInstallWizard = forwardRef(
 		const handleCancelClose = useCallback(() => {
 			if (!isClosing) {
 				setIsClosing(true);
+				cleanupPendingImportServer();
+
 				setTimeout(() => {
 					onClose();
 					setIsClosing(false);
@@ -869,6 +979,7 @@ export const ServerInstallWizard = forwardRef(
 				}, 50);
 			}
 		}, [
+			cleanupPendingImportServer,
 			onClose,
 			isClosing,
 			installPipeline,
@@ -978,7 +1089,8 @@ export const ServerInstallWizard = forwardRef(
 			if (
 				currentStep === "result" &&
 				!installPipeline.state.importResult &&
-				!installPipeline.state.isImporting
+				!installPipeline.state.isImporting &&
+				!hiddenPreviewReady
 			) {
 				// Only perform dry-run if we haven't already done it or if the drafts have changed
 				if (
@@ -988,7 +1100,7 @@ export const ServerInstallWizard = forwardRef(
 					void installPipeline.performDryRun();
 				}
 			}
-		}, [currentStep, installPipeline]);
+		}, [currentStep, hiddenPreviewReady, installPipeline]);
 
 		// Expose methods via ref
 		useImperativeHandle(ref, () => ({
@@ -1228,21 +1340,23 @@ export const ServerInstallWizard = forwardRef(
 																		defaultValue: "e.g., local-mcp",
 																	},
 																)}
-																readOnly={isEditMode}
-																aria-readonly={isEditMode}
-																title={
-																	isEditMode
-																		? t("manual.fields.name.readOnlyTitle", {
-																				defaultValue:
-																					"Editing server names is disabled",
-																			})
-																		: undefined
-																}
-																className={
-																	isEditMode
-																		? "cursor-not-allowed bg-muted text-muted-foreground"
-																		: undefined
-																}
+										readOnly={isEditMode || Boolean(pendingImportServerId)}
+										aria-readonly={isEditMode || Boolean(pendingImportServerId)}
+										title={
+											isEditMode || Boolean(pendingImportServerId)
+												? t("manual.fields.name.readOnlyTitle", {
+													defaultValue:
+														pendingImportServerId
+															? "Editing server names is disabled after OAuth setup starts"
+															: "Editing server names is disabled",
+												})
+												: undefined
+										}
+										className={
+											isEditMode || Boolean(pendingImportServerId)
+												? "cursor-not-allowed bg-muted text-muted-foreground"
+												: undefined
+										}
 															/>
 															{errors.name && (
 																<p className="text-xs text-red-500">
@@ -1258,12 +1372,15 @@ export const ServerInstallWizard = forwardRef(
 															})}
 														</Label>
 														<div className="flex-1">
-															<Segment
-																options={SERVER_TYPE_OPTIONS}
-																value={kind}
-																onValueChange={(value) => {
-																	const newKind =
-																		value as ManualServerFormValues["kind"];
+										<Segment
+											options={SERVER_TYPE_OPTIONS}
+											value={kind}
+											onValueChange={(value) => {
+												if (pendingImportServerId) {
+													return;
+												}
+												const newKind =
+													value as ManualServerFormValues["kind"];
 																	if (newKind === kind) {
 																		return;
 																	}
@@ -1295,6 +1412,64 @@ export const ServerInstallWizard = forwardRef(
 													urlInputRef={urlInputRef}
 													viewMode={viewMode}
 												/>
+
+										<ServerAuthSection
+											serverId={pendingImportServerId ?? undefined}
+											isStdio={isStdio}
+											viewMode={viewMode}
+											isNewServer={!isEditMode}
+											onInitiateOAuth={async (config) => {
+												const formValues = getValues();
+												const draft = toDraftFromValues(formValues);
+												if (!draft.name) throw new Error("Server name is required to initiate OAuth");
+
+												let targetServerId = pendingImportServerRef.current;
+												if (!isEditMode) {
+													if (targetServerId) {
+														await serversApi.updateServer(
+															targetServerId,
+															draftToServerConfig(draft, {
+																pending_import: true,
+																enabled: false,
+															}),
+														);
+													} else {
+														const created = await serversApi.createServer(
+															draftToServerConfig(draft, {
+																pending_import: true,
+																enabled: false,
+															}),
+														);
+														targetServerId = created.data?.id ?? null;
+														if (!targetServerId) {
+															throw new Error("Failed to create OAuth draft server");
+														}
+														pendingImportServerRef.current = targetServerId;
+														setPendingImportServerId(targetServerId);
+													}
+												} else if (!targetServerId) {
+													throw new Error("Server ID is required to initiate OAuth");
+												}
+
+												await serversApi.saveOAuthConfig(targetServerId, config);
+
+												const redirectRes = await serversApi.initiateOAuth(targetServerId);
+												if (redirectRes.authorization_url) {
+													const width = 600;
+													const height = 800;
+													const left = window.screenX + (window.outerWidth - width) / 2;
+													const top = window.screenY + (window.outerHeight - height) / 2;
+													const popup = window.open(
+														redirectRes.authorization_url,
+														"oauth_window",
+														`width=${width},height=${height},left=${left},top=${top}`,
+													);
+													if (!popup) {
+														window.location.assign(redirectRes.authorization_url);
+													}
+												}
+											}}
+										/>
 
 												<StdioAdvanced
 													viewMode={viewMode}
@@ -1444,6 +1619,14 @@ export const ServerInstallWizard = forwardRef(
 			}
 			return map;
 		}, [installPipeline.state.previewState]);
+
+		const hasPendingImportPublishFlow =
+			Boolean(pendingImportServerId) && !isEditMode;
+		const hiddenPreviewReady =
+			hasPendingImportPublishFlow &&
+			installPipeline.state.previewState !== null &&
+			installPipeline.state.previewState.success !== false &&
+			!installPipeline.state.previewError;
 
 		// Expand/collapse details per draft (moved outside render function)
 		const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -1658,7 +1841,12 @@ export const ServerInstallWizard = forwardRef(
 			const dryRunImportableCount = dryRunStats?.importedCount ?? 0;
 			const dryRunSkippedCount = dryRunStats?.skippedCount ?? 0;
 			const dryRunFailedCount = dryRunStats?.failedCount ?? 0;
+			const effectiveImportableCount = hiddenPreviewReady
+				? Math.max(dryRunImportableCount, state.drafts.length || 1)
+				: dryRunImportableCount;
+			const effectiveSkippedCount = hiddenPreviewReady ? 0 : dryRunSkippedCount;
 			const canProceedWithImport =
+				hiddenPreviewReady ||
 				!isDryRunLoading &&
 				!dryRunError &&
 				dryRunResult &&
@@ -1668,9 +1856,9 @@ export const ServerInstallWizard = forwardRef(
 					label: t("wizard.result.validation.ready", {
 						defaultValue: "Ready to import",
 					}),
-					value: dryRunImportableCount,
+					value: effectiveImportableCount,
 					accent:
-						dryRunImportableCount > 0
+						effectiveImportableCount > 0
 							? "text-green-600"
 							: "text-muted-foreground",
 				},
@@ -1678,9 +1866,9 @@ export const ServerInstallWizard = forwardRef(
 					label: t("wizard.result.validation.skipped", {
 						defaultValue: "Will be skipped",
 					}),
-					value: dryRunSkippedCount,
+					value: effectiveSkippedCount,
 					accent:
-						dryRunSkippedCount > 0 ? "text-amber-600" : "text-muted-foreground",
+						effectiveSkippedCount > 0 ? "text-amber-600" : "text-muted-foreground",
 				},
 				{
 					label: t("wizard.result.validation.failed", {
@@ -1850,7 +2038,15 @@ export const ServerInstallWizard = forwardRef(
 									});
 									let detailMessage: string | null = null;
 									let detailTone: "error" | "warning" | "muted" = "muted";
-									if (dryRunError) {
+									if (hiddenPreviewReady) {
+										statusTitle = t("wizard.result.pendingImportReadyTitle", {
+											defaultValue: "Ready to publish",
+										});
+										detailMessage = t("wizard.result.pendingImportReadyDescription", {
+											defaultValue:
+												"OAuth authorization is complete. Import will publish this server and make it visible in your Servers list.",
+										});
+									} else if (dryRunError) {
 										_badgeColor = "bg-red-500";
 											statusTitle = t("wizard.result.validationFailedTitle", {
 												defaultValue: "Import Validation Failed",
@@ -1887,8 +2083,9 @@ export const ServerInstallWizard = forwardRef(
 
 										const skippedOnly =
 											!dryRunError &&
+											!hiddenPreviewReady &&
 											!canProceedWithImport &&
-											dryRunSkippedCount > 0;
+											effectiveSkippedCount > 0;
 
 										const nextSteps = dryRunError
 											? failureSteps
@@ -2200,11 +2397,13 @@ export const ServerInstallWizard = forwardRef(
 											defaultValue: "Retry preview",
 										})}
 										disabled={installPipeline.state.isImporting}
-										onClick={() => {
-											const { drafts, source } = installPipeline.state;
-											installPipeline.setPreviewState(null);
-											installPipeline.begin(drafts, source ?? "manual");
-										}}
+									onClick={() => {
+										installPipeline.setPreviewState(null);
+										void handlePreview({
+											skipValidation: true,
+											shouldFocus: false,
+										});
+									}}
 									>
 										<RefreshCw className="h-4 w-4" />
 									</Button>
@@ -2278,15 +2477,15 @@ export const ServerInstallWizard = forwardRef(
 										<Button
 											type="button"
 											onClick={handleImport}
-											disabled={
-												installPipeline.state.isImporting ||
-												installPipeline.state.isDryRunLoading ||
-												!!installPipeline.state.dryRunError ||
-												!(
-													installPipeline.state.dryRunStats &&
-													installPipeline.state.dryRunStats.importedCount > 0
-												)
-											}
+										disabled={
+											installPipeline.state.isImporting ||
+											installPipeline.state.isDryRunLoading ||
+											!!installPipeline.state.dryRunError ||
+											!(hiddenPreviewReady || (
+												installPipeline.state.dryRunStats &&
+												installPipeline.state.dryRunStats.importedCount > 0
+											))
+										}
 										>
 											{installPipeline.state.isImporting ? (
 												<>

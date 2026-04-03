@@ -11,6 +11,7 @@ pub mod headers;
 pub mod import;
 pub mod init;
 pub mod meta;
+pub mod oauth;
 pub mod preview;
 pub mod tools;
 
@@ -19,6 +20,10 @@ pub use crud::{delete_server, get_all_servers, get_server, get_server_by_id, ups
 pub use env::{get_server_env, upsert_server_env};
 pub use headers::{get_server_headers, replace_server_headers, upsert_server_headers};
 pub use meta::{get_server_meta, upsert_server_meta};
+pub use oauth::{
+    delete_server_oauth_config, delete_server_oauth_token, get_effective_server_headers, get_server_oauth_config,
+    get_server_oauth_token, has_manual_authorization_header, upsert_server_oauth_config, upsert_server_oauth_token,
+};
 
 pub use capabilities::{
     CapabilityManager, CapabilitySnapshot, CapabilitySync, SyncStrategy, discover_from_config,

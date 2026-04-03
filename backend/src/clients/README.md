@@ -137,6 +137,74 @@ All enums/structs are defined in `src/clients/models.rs`.  Key type mappings:
 2. API handlers (`src/api/handlers/client/handlers.rs`) call the service to list templates, render configs, and apply changes.
 3. Storage adapters resolve target paths using detection rules and the path service; writes are performed atomically with backups.
 
+## Client Approval Workflow
+
+MCPMate supports explicit approval states for detected clients, enabling better control over which applications can be managed.
+
+### Approval States
+
+Clients can be in one of four approval states:
+
+- **`approved`** — Default state. Client is fully functional and can be configured/managed
+- **`pending`** — Client detected but awaiting approval (typically for unknown clients without templates)
+- **`suspended`** — Client explicitly disabled from management operations
+- **`rejected`** — Client explicitly rejected and excluded from lists
+
+### Unknown Client Detection
+
+When `ClientConfigService::list_clients()` detects an installed application without a matching template:
+
+1. **Automatic Row Creation** — `ensure_pending_unknown_row()` creates a database record with:
+   - `approval_status = 'pending'`
+   - `managed = 0` (disabled by default)
+   - `template_id = NULL` (no template binding)
+
+2. **Synthetic Template** — A minimal `ClientTemplate` is generated in-memory with:
+   - Empty `detection`, `config_mapping`, and `format_rules`
+   - Identifier matching the detected client
+   - Display name from detection results
+
+3. **API Exposure** — The unknown client appears in `/api/client` responses with:
+   - `approval_status: "pending"`
+   - `template_known: false`
+   - `pending_approval: true`
+
+### Approval API Endpoints
+
+- **`POST /api/client/manage/approve`**
+  - Sets `approval_status = 'approved'` and `managed = 1`
+  - Enables configuration operations for the client
+  
+- **`POST /api/client/manage/suspend`**
+  - Sets `approval_status = 'suspended'` and `managed = 0`
+  - Disables management without deleting the record
+
+- **`POST /api/client/manage/reject`**
+  - Sets `approval_status = 'rejected'`
+  - Client is excluded from future listings
+
+### Operation Guards
+
+Configuration operations (`/api/client/config/apply`, `/api/client/config/restore`) check approval status:
+
+```rust
+if state.is_pending_unknown() {
+    return Err(StatusCode::FORBIDDEN);
+}
+```
+
+Attempting to configure a pending unknown client returns **403 Forbidden** with a warning log entry.
+
+### Template Binding
+
+Approved clients can be bound to templates later by:
+
+1. Creating or identifying a matching template
+2. Updating the `template_id` field in the `client` table
+3. Optionally setting `template_version` for version tracking
+
+The `template_id` field decouples record identity (`identifier`) from template binding, allowing flexible evolution of client definitions.
+
 ## Management & Backup APIs
 
 - `/api/client/manage` (POST) toggles whether MCPMate manages a client (`enable` / `disable`).  Disabled clients are skipped during update calls and surface with `managed: false` in responses.

@@ -461,3 +461,46 @@ fn get_uptime_seconds() -> u64 {
     // Calculate uptime
     now.saturating_sub(start_time)
 }
+
+pub async fn get_onboarding_policy(State(state): State<Arc<AppState>>) -> Result<Json<crate::api::models::client::OnboardingPolicyResponse>, axum::http::StatusCode> {
+    let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
+
+    let policy = service.get_onboarding_policy().await.map_err(|err| {
+        tracing::error!("Failed to fetch onboarding policy: {}", err);
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(crate::api::models::client::OnboardingPolicyResponse {
+        policy: policy.as_str().to_string(),
+    }))
+}
+
+pub async fn set_onboarding_policy(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<crate::api::models::client::OnboardingPolicyRequest>,
+) -> Result<Json<crate::api::models::client::OnboardingPolicyResponse>, axum::http::StatusCode> {
+    let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
+
+    let policy: crate::clients::models::OnboardingPolicy = request.policy.parse().map_err(|_| {
+        tracing::error!("Invalid onboarding policy: {}", request.policy);
+        axum::http::StatusCode::BAD_REQUEST
+    })?;
+
+    service.set_onboarding_policy(policy).await.map_err(|err| {
+        tracing::error!("Failed to set onboarding policy: {}", err);
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::AuditEvent::new(AuditAction::OnboardingPolicyUpdate, AuditStatus::Success)
+            .with_http_route("POST", "/api/system/settings/onboarding-policy")
+            .with_data(serde_json::json!({ "policy": policy.as_str() }))
+            .build(),
+    )
+    .await;
+
+    Ok(Json(crate::api::models::client::OnboardingPolicyResponse {
+        policy: policy.as_str().to_string(),
+    }))
+}

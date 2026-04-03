@@ -139,6 +139,10 @@ pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::ClientCapabilityUpdate
         | AuditAction::ClientBackupDelete
         | AuditAction::ClientBackupPolicyUpdate
+        | AuditAction::ClientApprove
+        | AuditAction::ClientReject
+        | AuditAction::ClientSuspend
+        | AuditAction::OnboardingPolicyUpdate
         | AuditAction::CoreSourceApply
         | AuditAction::LocalCoreServiceStart
         | AuditAction::LocalCoreServiceRestart

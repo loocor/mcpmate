@@ -65,6 +65,10 @@ pub enum AuditAction {
     ClientCapabilityUpdate,
     ClientBackupDelete,
     ClientBackupPolicyUpdate,
+    ClientApprove,
+    ClientReject,
+    ClientSuspend,
+    OnboardingPolicyUpdate,
     CoreSourceApply,
     LocalCoreServiceStart,
     LocalCoreServiceRestart,
@@ -129,7 +133,10 @@ impl AuditAction {
             | Self::ClientConfigImport
             | Self::ClientCapabilityUpdate
             | Self::ClientBackupDelete
-            | Self::ClientBackupPolicyUpdate => AuditCategory::ClientConfig,
+            | Self::ClientBackupPolicyUpdate
+            | Self::ClientApprove
+            | Self::ClientReject
+            | Self::ClientSuspend => AuditCategory::ClientConfig,
             Self::CoreSourceApply
             | Self::LocalCoreServiceStart
             | Self::LocalCoreServiceRestart
@@ -141,7 +148,8 @@ impl AuditAction {
             | Self::DesktopManagedCoreStop
             | Self::RuntimeInstall
             | Self::RuntimeCacheReset
-            | Self::AuditPolicyUpdate => AuditCategory::Management,
+            | Self::AuditPolicyUpdate
+            | Self::OnboardingPolicyUpdate => AuditCategory::Management,
             Self::CapabilityGrant | Self::CapabilityRevoke => AuditCategory::ProfileConfig,
             Self::ProfileServerEnable | Self::ProfileServerDisable | Self::ProfileServerRemove => {
                 AuditCategory::ProfileConfig

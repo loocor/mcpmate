@@ -5,6 +5,10 @@ use super::AppState;
 use crate::api::handlers::server;
 use crate::api::models::{
     cache::{CacheDetailsReq, CacheDetailsResp, CacheResetResp},
+    oauth::{
+        OAuthInitiateResp, OAuthStatusResp, ServerOAuthConfigReq, ServerOAuthInitiateReq, ServerOAuthRevokeReq,
+        ServerOAuthStatusReq,
+    },
     server::{
         InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq,
         InstanceListResp, InstanceManageReq, ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq,
@@ -18,6 +22,7 @@ use aide::axum::{
     ApiRouter,
     routing::{delete_with, get_with, post_with},
 };
+use axum::routing::post as axum_post;
 use std::sync::Arc;
 
 /// Create MCP server management routes
@@ -68,6 +73,23 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/servers/prompts",
             get_with(server_prompts_aide, server_prompts_docs),
+        )
+        .api_route(
+            "/mcp/servers/oauth/config",
+            post_with(configure_oauth_aide, configure_oauth_docs),
+        )
+        .api_route(
+            "/mcp/servers/oauth/initiate",
+            post_with(start_oauth_aide, start_oauth_docs),
+        )
+        .route("/mcp/servers/oauth/callback", axum_post(server::complete_oauth))
+        .api_route(
+            "/mcp/servers/oauth/status",
+            get_with(oauth_status_aide, oauth_status_docs),
+        )
+        .api_route(
+            "/mcp/servers/oauth/revoke",
+            post_with(revoke_oauth_aide, revoke_oauth_docs),
         )
         // Instance management - Query parameters
         .api_route(
@@ -162,6 +184,34 @@ aide_wrapper_query!(
     ServerCapabilityReq,
     ServerPromptsResp,
     "List all prompts for a specific server"
+);
+
+aide_wrapper_payload!(
+    server::configure_oauth,
+    ServerOAuthConfigReq,
+    OAuthStatusResp,
+    "Configure OAuth settings for a specific server"
+);
+
+aide_wrapper_payload!(
+    server::start_oauth,
+    ServerOAuthInitiateReq,
+    OAuthInitiateResp,
+    "Start OAuth authorization for a specific server"
+);
+
+aide_wrapper_query!(
+    server::oauth_status,
+    ServerOAuthStatusReq,
+    OAuthStatusResp,
+    "Get OAuth status for a specific server"
+);
+
+aide_wrapper_payload!(
+    server::revoke_oauth,
+    ServerOAuthRevokeReq,
+    OAuthStatusResp,
+    "Revoke stored OAuth token for a specific server"
 );
 
 aide_wrapper_query!(

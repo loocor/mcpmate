@@ -56,6 +56,7 @@ pub struct AppState {
     pub inspector_calls: Arc<InspectorCallRegistry>,
     /// Inspector session manager
     pub inspector_sessions: Arc<InspectorSessionManager>,
+    pub oauth_manager: Option<Arc<crate::core::oauth::OAuthManager>>,
 }
 
 /// Create the API router with all routes
@@ -149,6 +150,7 @@ async fn create_router_internal(
             client_service: None,
             inspector_calls: inspector_calls.clone(),
             inspector_sessions: inspector_sessions.clone(),
+            oauth_manager: None,
         })
     } else {
         None
@@ -169,6 +171,10 @@ async fn create_router_internal(
         None
     };
 
+    let oauth_manager = database
+        .as_ref()
+        .map(|db| Arc::new(crate::core::oauth::OAuthManager::new(db.pool.clone())));
+
     let state = Arc::new(AppState {
         connection_pool,
         metrics_collector,
@@ -183,6 +189,7 @@ async fn create_router_internal(
         client_service,
         inspector_calls,
         inspector_sessions,
+        oauth_manager,
     });
 
     // Create OpenAPI specification

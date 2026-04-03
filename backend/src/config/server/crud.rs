@@ -6,14 +6,28 @@ use sqlx::{Pool, Sqlite, Transaction};
 
 use crate::common::{
     constants::database::{columns, tables},
-    database::{fetch_all_ordered, fetch_optional},
+    database::fetch_optional,
 };
 use crate::config::models::Server;
 use crate::generate_id;
 
 /// Get all servers from the database
 pub async fn get_all_servers(pool: &Pool<Sqlite>) -> Result<Vec<Server>> {
-    fetch_all_ordered(pool, tables::SERVER_CONFIG, Some(columns::NAME)).await
+    let servers = sqlx::query_as::<_, Server>(&format!(
+        r#"
+        SELECT * FROM {}
+        WHERE COALESCE({}, 0) = 0
+        ORDER BY {} ASC
+        "#,
+        tables::SERVER_CONFIG,
+        columns::PENDING_IMPORT,
+        columns::NAME
+    ))
+    .fetch_all(pool)
+    .await
+    .context("Failed to fetch visible servers")?;
+
+    Ok(servers)
 }
 
 /// Get a specific server from the database by name
@@ -89,9 +103,10 @@ pub async fn upsert_server_tx(
 
     let result = sqlx::query(&format!(
         r#"
-        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {})
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {}, {})
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT({}) DO UPDATE SET
+            {} = excluded.{},
             {} = excluded.{},
             {} = excluded.{},
             {} = excluded.{},
@@ -107,6 +122,7 @@ pub async fn upsert_server_tx(
         columns::URL,
         columns::REGISTRY_SERVER_ID,
         columns::CAPABILITIES,
+        columns::PENDING_IMPORT,
         columns::NAME,
         columns::SERVER_TYPE,
         columns::SERVER_TYPE,
@@ -118,6 +134,8 @@ pub async fn upsert_server_tx(
         columns::REGISTRY_SERVER_ID,
         columns::CAPABILITIES,
         columns::CAPABILITIES,
+        columns::PENDING_IMPORT,
+        columns::PENDING_IMPORT,
         columns::UPDATED_AT
     ))
     .bind(&server_id)
@@ -127,6 +145,7 @@ pub async fn upsert_server_tx(
     .bind(&server.url)
     .bind(&server.registry_server_id)
     .bind(&server.capabilities)
+    .bind(server.pending_import)
     .execute(&mut **tx)
     .await
     .context("Failed to upsert server")?;
@@ -172,4 +191,64 @@ pub async fn delete_server(
     .context("Failed to delete server")?;
 
     Ok(result.rows_affected() > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        common::{server::ServerType, status::EnabledStatus},
+        config::{models::Server, server::init::initialize_server_tables},
+    };
+
+    async fn setup_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        initialize_server_tables(&pool).await.expect("init tables");
+        pool
+    }
+
+    fn build_server(
+        id: &str,
+        name: &str,
+        pending_import: bool,
+    ) -> Server {
+        Server {
+            id: Some(id.to_string()),
+            name: name.to_string(),
+            server_type: ServerType::StreamableHttp,
+            command: None,
+            url: Some(format!("https://example.com/{name}")),
+            registry_server_id: None,
+            capabilities: None,
+            enabled: EnabledStatus::Enabled,
+            pending_import,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn get_all_servers_hides_pending_import_records() {
+        let pool = setup_pool().await;
+
+        upsert_server(&pool, &build_server("serv_visible", "visible-server", false))
+            .await
+            .expect("insert visible server");
+        upsert_server(&pool, &build_server("serv_hidden", "hidden-server", true))
+            .await
+            .expect("insert hidden server");
+
+        let servers = get_all_servers(&pool).await.expect("list visible servers");
+        let names = servers.into_iter().map(|server| server.name).collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["visible-server".to_string()]);
+    }
 }

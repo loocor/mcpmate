@@ -67,6 +67,7 @@ fn build_test_state() -> Arc<AppState> {
         client_service: None,
         inspector_calls,
         inspector_sessions,
+        oauth_manager: None,
     })
 }
 

@@ -10,6 +10,7 @@ use aide::axum::{
 
 use super::AppState;
 use crate::api::handlers::system;
+use crate::api::models::client::{OnboardingPolicyRequest, OnboardingPolicyResponse};
 use crate::api::models::system::{
     ManagementActionResp, SystemDefaultClientModeReq, SystemDefaultClientModeResp, SystemMetricsResp, SystemPortsResp,
     SystemStatusResp,
@@ -61,6 +62,19 @@ aide_wrapper!(
     "Restart MCP proxy service on configured port"
 );
 
+aide_wrapper!(
+    system::get_onboarding_policy,
+    OnboardingPolicyResponse,
+    "Get current client onboarding policy"
+);
+
+aide_wrapper_payload!(
+    system::set_onboarding_policy,
+    OnboardingPolicyRequest,
+    OnboardingPolicyResponse,
+    "Set client onboarding policy"
+);
+
 /// Create system management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
@@ -74,5 +88,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route("/system/metrics", get_with(get_metrics_aide, get_metrics_docs))
         .api_route("/system/shutdown", post_with(shutdown_aide, shutdown_docs))
         .api_route("/system/restart", post_with(restart_aide, restart_docs))
+        .api_route(
+            "/system/settings/onboarding-policy",
+            get_with(get_onboarding_policy_aide, get_onboarding_policy_docs)
+                .post_with(set_onboarding_policy_aide, set_onboarding_policy_docs),
+        )
         .with_state(state)
 }

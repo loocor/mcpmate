@@ -608,6 +608,16 @@ pub async fn refresh_managed_server_metadata(
     )
     .await;
 
+    let mut oauth_status = None;
+    if refreshed.server_type == crate::common::server::ServerType::StreamableHttp {
+        let manager = crate::core::oauth::manager::OAuthManager::new(db.pool.clone());
+        if let Ok(status) = manager.get_status(&server_id).await {
+            if status.configured {
+                oauth_status = Some(status.state);
+            }
+        }
+    }
+
     Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: refreshed.name,
@@ -627,6 +637,8 @@ pub async fn refresh_managed_server_metadata(
         created_at: refreshed.created_at.map(|dt| dt.to_rfc3339()),
         updated_at: refreshed.updated_at.map(|dt| dt.to_rfc3339()),
         instances: details.instances,
+        auth_mode: None,
+        oauth_status,
     })))
 }
 
@@ -649,7 +661,7 @@ mod tests {
     use crate::api::routes::AppState;
     use crate::{
         clients::ClientConfigService,
-        common::{server::ServerType, status::EnabledStatus},
+        common::server::ServerType,
         config::{
             database::Database,
             models::Server,
@@ -1007,6 +1019,9 @@ mod tests {
         database: Option<Arc<Database>>,
     ) -> AppState {
         let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
+        let oauth_manager = database
+            .as_ref()
+            .map(|db| Arc::new(crate::core::oauth::OAuthManager::new(db.pool.clone())));
 
         AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
@@ -1025,6 +1040,7 @@ mod tests {
             client_service: None::<Arc<ClientConfigService>>,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            oauth_manager,
         }
     }
 
@@ -1040,9 +1056,10 @@ mod tests {
             url: None,
             registry_server_id: Some(registry_server_id.to_string()),
             capabilities: None,
-            enabled: EnabledStatus::Enabled,
+            enabled: crate::common::status::EnabledStatus::Enabled,
             created_at: None,
             updated_at: None,
+            pending_import: false,
         };
 
         server::upsert_server(pool, &server).await.expect("seed managed server")

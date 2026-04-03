@@ -67,6 +67,39 @@ fn redact_headers(input: &std::collections::HashMap<String, String>) -> std::col
     out
 }
 
+async fn detect_auth_mode(
+    pool: &sqlx::SqlitePool,
+    server_id: &str,
+    oauth_configured: bool,
+) -> Option<String> {
+    let has_header_auth = crate::config::server::get_server_headers(pool, server_id)
+        .await
+        .ok()
+        .map(|headers| {
+            headers.keys().any(|key| {
+                matches!(
+                    key.trim().to_ascii_lowercase().as_str(),
+                    "authorization"
+                        | "proxy-authorization"
+                        | "x-api-key"
+                        | "api-key"
+                        | "apikey"
+                        | "x-auth-token"
+                        | "authentication"
+                )
+            })
+        })
+        .unwrap_or(false);
+
+    if has_header_auth {
+        Some("header".to_string())
+    } else if oauth_configured {
+        Some("oauth".to_string())
+    } else {
+        None
+    }
+}
+
 /// Get details for a specific MCP server
 ///
 /// **Endpoint:** `GET /mcp/servers/details?id={server_id}`
@@ -130,6 +163,19 @@ async fn server_details_core(
     let created_at = server.created_at.map(|dt| dt.to_rfc3339());
     let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
 
+    let mut oauth_status = None;
+    let mut oauth_configured = false;
+    if server.server_type == crate::common::server::ServerType::StreamableHttp {
+        let manager = crate::core::oauth::manager::OAuthManager::new(db_pool.clone());
+        if let Ok(status) = manager.get_status(server_id).await {
+            oauth_configured = status.configured;
+            if status.configured {
+                oauth_status = Some(status.state);
+            }
+        }
+    }
+    let auth_mode = detect_auth_mode(db_pool, server_id, oauth_configured).await;
+
     // Optionally expose default headers (redacted)
     let headers = if should_expose_headers() {
         if let Some(ref id) = id_opt {
@@ -163,6 +209,8 @@ async fn server_details_core(
         created_at,
         updated_at,
         instances: details.instances,
+        auth_mode,
+        oauth_status,
     };
 
     Ok(ServerDetailsResp::success(server_details))
@@ -231,6 +279,19 @@ async fn server_list_core(
         let protocol_version = protocol_versions.remove(&server_id).flatten();
         let headers = headers_map.remove(&server_id);
 
+        let mut oauth_status = None;
+        let mut oauth_configured = false;
+        if server.server_type == crate::common::server::ServerType::StreamableHttp {
+            let manager = crate::core::oauth::manager::OAuthManager::new(db_pool.clone());
+            if let Ok(status) = manager.get_status(&server_id).await {
+                oauth_configured = status.configured;
+                if status.configured {
+                    oauth_status = Some(status.state);
+                }
+            }
+        }
+        let auth_mode = detect_auth_mode(db_pool, &server_id, oauth_configured).await;
+
         filtered_servers.push(ServerDetailsData {
             id: server.id.clone(),
             name: server.name,
@@ -250,6 +311,8 @@ async fn server_list_core(
             created_at,
             updated_at,
             instances,
+            auth_mode,
+            oauth_status,
         });
     }
 
@@ -955,6 +1018,7 @@ mod tests {
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            oauth_manager: Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone()))),
         });
 
         TestContext {
@@ -981,6 +1045,7 @@ mod tests {
                 enabled: crate::common::status::EnabledStatus::Enabled,
                 created_at: None,
                 updated_at: None,
+                pending_import: false,
             };
             let id = server::upsert_server(pool, &server).await.expect("insert server");
             ids.push(id);

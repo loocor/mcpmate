@@ -717,10 +717,11 @@ impl UpstreamConnectionPool {
 
         // Load default HTTP headers if any (validation path previously missed headers)
         let headers = if let Some(id) = &server.id {
-            match crate::config::server::get_server_headers(pool, id).await {
+            let manual_headers = match crate::config::server::get_server_headers(pool, id).await {
                 Ok(map) if !map.is_empty() => Some(map),
                 _ => None,
-            }
+            };
+            crate::config::server::get_effective_server_headers(pool, id, manual_headers).await?
         } else {
             None
         };

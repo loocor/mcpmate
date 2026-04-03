@@ -36,7 +36,7 @@ fn seed_official_templates(dir: &std::path::Path) -> crate::clients::error::Conf
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Default)]
-pub(super) struct ClientStateRow {
+pub struct ClientStateRow {
     pub(super) id: String,
     pub(super) identifier: String,
     pub(super) name: String,
@@ -49,6 +49,13 @@ pub(super) struct ClientStateRow {
     pub(super) capability_source: Option<String>,
     pub(super) selected_profile_ids: Option<String>,
     pub(super) custom_profile_id: Option<String>,
+    pub(super) approval_status: Option<String>,
+    #[allow(dead_code)]
+    pub(super) template_id: Option<String>,
+    #[allow(dead_code)]
+    pub(super) template_version: Option<String>,
+    #[allow(dead_code)]
+    pub(super) approval_metadata: Option<String>,
 }
 
 impl ClientStateRow {
@@ -59,8 +66,34 @@ impl ClientStateRow {
         )
     }
 
-    pub(super) fn managed(&self) -> bool {
+    pub fn managed(&self) -> bool {
         self.managed != 0
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn is_approved(&self) -> bool {
+        matches!(
+            self.approval_status.as_deref(),
+            Some("approved") | None
+        )
+    }
+
+    pub fn approval_status(&self) -> &str {
+        self.approval_status.as_deref().unwrap_or("approved")
+    }
+
+    #[allow(dead_code)]
+    pub fn is_template_known(&self) -> bool {
+        self.template_id.is_some()
+    }
+
+    #[allow(dead_code)]
+    pub fn is_pending_unknown(&self) -> bool {
+        self.approval_status.as_deref() == Some("pending") && self.template_id.is_none()
+    }
+
+    pub fn template_id(&self) -> Option<&str> {
+        self.template_id.as_deref()
     }
 
     pub(super) fn capability_config(&self) -> ConfigResult<ClientCapabilityConfig> {
