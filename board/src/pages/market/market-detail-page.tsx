@@ -20,6 +20,7 @@ import { ServerInstallWizard } from "../../components/uniimport/server-install-w
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { serversApi } from "../../lib/api";
 import {
 	fetchCachedRegistryServerByKey,
 	getCanonicalRegistryServerId,
@@ -217,6 +218,11 @@ export function MarketDetailPage() {
 		queryFn: () => fetchCachedRegistryServerByKey(decodedKey),
 		enabled: Boolean(decodedKey),
 	});
+	const installedServersQuery = useQuery({
+		queryKey: ["servers"],
+		queryFn: () => serversApi.getAll(),
+		staleTime: 30_000,
+	});
 
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [selectedTransportId, setSelectedTransportId] = useState("");
@@ -270,6 +276,7 @@ export function MarketDetailPage() {
 	const installPipeline = useServerInstallPipeline({
 		onImported: () => {
 			setDrawerOpen(false);
+			void installedServersQuery.refetch();
 		},
 	});
 
@@ -339,6 +346,12 @@ export function MarketDetailPage() {
 	const official = getOfficialMeta(server);
 	const canonicalRegistryId = getCanonicalRegistryServerId(server);
 	const displayName = formatServerName(server.name);
+	const installedServer =
+		installedServersQuery.data?.servers.find((item) => {
+			const registryId = item.registry_server_id ?? null;
+			return registryId === server.name || registryId === canonicalRegistryId;
+		}) ?? null;
+	const isInstalled = Boolean(installedServer);
 	const primaryIconSrc = server.icons?.[0]?.src;
 	const transportTypeSummary = summarizeTransportTypes(server);
 	const links: Array<{ label: string; url: string; icon: typeof Globe }> = [];
@@ -390,15 +403,41 @@ export function MarketDetailPage() {
 									</Button>
 								);
 							})}
-							<Button onClick={() => {
-								if (remoteOptions.length > 0) {
-									setSelectedTransportId(remoteOptions[0].id);
-								}
-								setDrawerOpen(true);
-							}}>
-								<Download className="mr-2 h-4 w-4" />
-								{t("market:buttons.install", { defaultValue: "Install" })}
-							</Button>
+							{isInstalled ? (
+								<>
+									<Button
+										variant="outline"
+										onClick={() =>
+											navigate(`/servers/${encodeURIComponent(installedServer!.id)}`)
+										}
+									>
+										{t("market:buttons.manage", { defaultValue: "Manage" })}
+									</Button>
+									<Button
+										onClick={() => {
+											if (remoteOptions.length > 0) {
+												setSelectedTransportId(remoteOptions[0].id);
+											}
+											setDrawerOpen(true);
+										}}
+									>
+										<Download className="mr-2 h-4 w-4" />
+										{t("market:buttons.reinstall", { defaultValue: "Reinstall" })}
+									</Button>
+								</>
+							) : (
+								<Button
+									onClick={() => {
+										if (remoteOptions.length > 0) {
+											setSelectedTransportId(remoteOptions[0].id);
+										}
+										setDrawerOpen(true);
+									}}
+								>
+									<Download className="mr-2 h-4 w-4" />
+									{t("market:buttons.install", { defaultValue: "Install" })}
+								</Button>
+							)}
 						</div>
 						<div className="flex w-full flex-wrap items-start gap-4 sm:pr-56">
 							<Avatar className="h-12 w-12 shrink-0 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 text-sm font-medium">
@@ -422,6 +461,18 @@ export function MarketDetailPage() {
 								<MetadataGridRow
 									label={t("market:detail.runtime", { defaultValue: "Runtime" })}
 									value={server.status ?? official?.status ?? "—"}
+								/>
+								<MetadataGridRow
+									label={t("market:detail.installation", { defaultValue: "Installation" })}
+									value={
+										isInstalled
+											? t("market:detail.installedValue", {
+												defaultValue: "Installed in MCPMate",
+											})
+											: t("market:detail.notInstalledValue", {
+												defaultValue: "Not installed yet",
+											})
+									}
 								/>
 								<MetadataGridRow
 									label={t("market:detail.type", { defaultValue: "Type" })}
