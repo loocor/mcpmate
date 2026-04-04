@@ -20,8 +20,34 @@ pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
     create_server_oauth_tokens_table(pool).await?;
 
     verify_server_tables(pool).await?;
+    cleanup_pending_import_servers(pool).await?;
 
     tracing::debug!("Server-related database tables initialized successfully");
+    Ok(())
+}
+
+async fn cleanup_pending_import_servers(pool: &Pool<Sqlite>) -> Result<()> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM server_config
+        WHERE pending_import = 1
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to clean pending_import server records: {}", e);
+        anyhow::anyhow!("Failed to clean pending_import server records: {}", e)
+    })?;
+
+    let removed = result.rows_affected();
+    if removed > 0 {
+        tracing::info!(
+            removed,
+            "Removed stale pending_import server records during startup"
+        );
+    }
+
     Ok(())
 }
 
@@ -311,4 +337,68 @@ async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        common::{server::ServerType, status::EnabledStatus},
+        config::{models::Server, server::crud::upsert_server},
+    };
+
+    async fn setup_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        pool
+    }
+
+    fn build_server(id: &str, name: &str, pending_import: bool) -> Server {
+        Server {
+            id: Some(id.to_string()),
+            name: name.to_string(),
+            server_type: ServerType::StreamableHttp,
+            command: None,
+            url: Some(format!("https://example.com/{name}")),
+            registry_server_id: None,
+            capabilities: None,
+            enabled: EnabledStatus::Enabled,
+            pending_import,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_server_tables_removes_pending_import_records() {
+        let pool = setup_pool().await;
+        initialize_server_tables(&pool).await.expect("initialize tables");
+
+        upsert_server(&pool, &build_server("serv_visible", "visible-server", false))
+            .await
+            .expect("insert visible server");
+        upsert_server(&pool, &build_server("serv_pending", "pending-server", true))
+            .await
+            .expect("insert pending server");
+
+        initialize_server_tables(&pool)
+            .await
+            .expect("reinitialize tables and cleanup pending records");
+
+        let remaining_names = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM server_config ORDER BY name ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("list remaining servers");
+
+        assert_eq!(remaining_names, vec!["visible-server".to_string()]);
+    }
 }
