@@ -172,14 +172,12 @@ export interface ServerInstallManualFormProps {
 	/** Server ID for Edit flow OAuth */
 	serverId?: string;
 	/** Callback for OAuth initiation */
-	onInitiateOAuth?: (config: import("../../lib/types").OAuthConfigRequest) => Promise<void>;
+	onInitiateOAuth?: (config: OAuthConfigRequest) => Promise<void>;
 	onAuthModeChange?: (mode: "header" | "oauth") => void;
 	/** Optional initial draft used to hydrate the form when editing an existing server. */
 	initialDraft?: ServerInstallDraft | null;
-	serverId?: string;
 	/** Allow users to modify the JSON representation. Defaults to true in create mode. */
 	allowJsonEditing?: boolean;
-	onInitiateOAuth?: (config: OAuthConfigRequest) => Promise<void>;
 	/** Market mode specific props */
 	onPreview?: () => void;
 	onImport?: () => void;

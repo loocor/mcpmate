@@ -126,6 +126,10 @@ export function ServerAuthSection({
 		};
 
 		const handleMessage = async (event: MessageEvent<OAuthCallbackPayload>) => {
+			if (event.origin !== window.location.origin) {
+				return;
+			}
+
 			await handleCallbackPayload(event.data ?? {});
 		};
 
@@ -212,10 +216,12 @@ export function ServerAuthSection({
 					client_secret: formState.client_secret,
 					scopes: formState.scopes,
 					redirect_uri: formState.redirect_uri,
-				};
+			};
 			await onInitiateOAuth(payload);
 		},
-		onSuccess: () => {},
+		onSuccess: () => {
+			setProgressState("awaiting_callback");
+		},
 		onError: (error) => {
 			setProgressState("error");
 			notifyError(
@@ -401,15 +407,12 @@ export function ServerAuthSection({
 					</div>
 
 					<div className="flex flex-wrap items-center gap-2 pt-1">
-						<Button 
-							type="button"
-							size="sm" 
-							onClick={async () => {
-								setProgressState("awaiting_callback");
-								connectMutation.mutate();
-							}} 
-							disabled={isBusy}
-						>
+				<Button 
+					type="button"
+					size="sm" 
+					onClick={() => connectMutation.mutate()} 
+					disabled={isBusy}
+				>
 							{connectMutation.isPending ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <Link2 className="mr-2 h-3 w-3" />}
 							{status.state === "connected"
 								? t("manual.auth.oauth.actions.reconnect", { defaultValue: "Reconnect OAuth" })

@@ -1,9 +1,12 @@
-use sqlx::SqlitePool;
-use std::collections::HashMap;
 use crate::core::oauth::types::OAuthConnectionState;
-use crate::common::errors::Result;
+use anyhow::Result;
+use sqlx::{Row, SqlitePool};
+use std::collections::HashMap;
 
-pub async fn load_oauth_states(pool: &SqlitePool, server_ids: &[String]) -> Result<HashMap<String, OAuthConnectionState>> {
+pub async fn load_oauth_states(
+    pool: &SqlitePool,
+    server_ids: &[String],
+) -> Result<HashMap<String, OAuthConnectionState>> {
     if server_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -11,7 +14,7 @@ pub async fn load_oauth_states(pool: &SqlitePool, server_ids: &[String]) -> Resu
     let query = format!(
         "SELECT c.server_id, c.authorization_endpoint, t.access_token, t.expires_at 
          FROM server_oauth_config c 
-         LEFT JOIN server_oauth_token t ON c.server_id = t.server_id 
+         LEFT JOIN server_oauth_tokens t ON c.server_id = t.server_id 
          WHERE c.server_id IN ({})",
         server_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ")
     );
@@ -25,10 +28,9 @@ pub async fn load_oauth_states(pool: &SqlitePool, server_ids: &[String]) -> Resu
     let mut map = HashMap::new();
 
     for row in rows {
-        use sqlx::Row;
-        let server_id: String = row.try_get("server_id").unwrap_or_default();
-        let access_token: Option<String> = row.try_get("access_token").unwrap_or_default();
-        let expires_at: Option<String> = row.try_get("expires_at").unwrap_or_default();
+        let server_id: String = row.try_get("server_id")?;
+        let access_token: Option<String> = row.try_get("access_token")?;
+        let expires_at: Option<String> = row.try_get("expires_at")?;
 
         let state = if access_token.is_none() {
             OAuthConnectionState::Disconnected
@@ -37,7 +39,7 @@ pub async fn load_oauth_states(pool: &SqlitePool, server_ids: &[String]) -> Resu
                 .and_then(|value| chrono::DateTime::parse_from_rfc3339(&value).ok())
                 .map(|expires| expires.with_timezone(&chrono::Utc) <= chrono::Utc::now())
                 .unwrap_or(false);
-            
+
             if is_expired {
                 OAuthConnectionState::Expired
             } else {

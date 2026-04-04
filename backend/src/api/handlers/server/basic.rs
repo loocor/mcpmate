@@ -39,20 +39,22 @@ fn should_expose_headers() -> bool {
 /// Redact sensitive header values while keeping general visibility
 fn redact_headers(input: &std::collections::HashMap<String, String>) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    let sensitive = [
-        "authorization",
-        "proxy-authorization",
-        "x-api-key",
-        "api-key",
-        "apikey",
-        "cookie",
-        "set-cookie",
-        "x-auth-token",
-        "authentication",
-    ];
     for (k, v) in input.iter() {
         let lower = k.to_ascii_lowercase();
-        if sensitive.iter().any(|s| *s == lower) {
+        if [
+            "authorization",
+            "proxy-authorization",
+            "x-api-key",
+            "api-key",
+            "apikey",
+            "cookie",
+            "set-cookie",
+            "x-auth-token",
+            "authentication",
+        ]
+        .iter()
+        .any(|s| *s == lower)
+        {
             // Show short masked preview for long tokens, else fully masked
             if v.len() > 12 {
                 let (head, tail) = (&v[..6], &v[v.len() - 2..]);
@@ -67,28 +69,25 @@ fn redact_headers(input: &std::collections::HashMap<String, String>) -> std::col
     out
 }
 
-async fn detect_auth_mode(
-    pool: &sqlx::SqlitePool,
-    server_id: &str,
+fn is_auth_header_key(key: &str) -> bool {
+    matches!(
+        key.trim().to_ascii_lowercase().as_str(),
+        "authorization"
+            | "proxy-authorization"
+            | "x-api-key"
+            | "api-key"
+            | "apikey"
+            | "x-auth-token"
+            | "authentication"
+    )
+}
+
+fn detect_auth_mode_from_headers_and_oauth(
+    headers: Option<&HashMap<String, String>>,
     oauth_configured: bool,
 ) -> Option<String> {
-    let has_header_auth = crate::config::server::get_server_headers(pool, server_id)
-        .await
-        .ok()
-        .map(|headers| {
-            headers.keys().any(|key| {
-                matches!(
-                    key.trim().to_ascii_lowercase().as_str(),
-                    "authorization"
-                        | "proxy-authorization"
-                        | "x-api-key"
-                        | "api-key"
-                        | "apikey"
-                        | "x-auth-token"
-                        | "authentication"
-                )
-            })
-        })
+    let has_header_auth = headers
+        .map(|headers| headers.keys().any(|key| is_auth_header_key(key)))
         .unwrap_or(false);
 
     if has_header_auth {
@@ -174,18 +173,25 @@ async fn server_details_core(
             }
         }
     }
-    let auth_mode = detect_auth_mode(db_pool, server_id, oauth_configured).await;
+    let raw_headers = if let Some(ref id) = id_opt {
+        match crate::config::server::get_server_headers(db_pool, id).await {
+            Ok(headers) => Some(headers),
+            Err(error) => {
+                tracing::warn!(server_id = %id, error = %error, "Failed to load server headers for server details");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let auth_mode = detect_auth_mode_from_headers_and_oauth(raw_headers.as_ref(), oauth_configured);
 
     // Optionally expose default headers (redacted)
     let headers = if should_expose_headers() {
-        if let Some(ref id) = id_opt {
-            match crate::config::server::get_server_headers(db_pool, id).await {
-                Ok(map) if !map.is_empty() => Some(redact_headers(&map)),
-                _ => None,
-            }
-        } else {
-            None
-        }
+        raw_headers
+            .as_ref()
+            .filter(|headers| !headers.is_empty())
+            .map(redact_headers)
     } else {
         None
     };
@@ -233,8 +239,25 @@ async fn server_list_core(
     let capability_map = load_server_capabilities(db_pool, &server_ids).await;
     let meta_map = load_server_meta_map(db_pool, &server_ids).await;
     let enabled_in_profile = load_enabled_server_ids(db_pool).await;
+    let streamable_http_server_ids: Vec<String> = all_servers
+        .iter()
+        .filter(|server| server.server_type == crate::common::server::ServerType::StreamableHttp)
+        .filter_map(|server| server.id.clone())
+        .collect();
+    let oauth_status_map = match crate::core::oauth::load_oauth_states(db_pool, &streamable_http_server_ids).await {
+        Ok(map) => map,
+        Err(error) => {
+            tracing::warn!(error = %error, "Failed to batch load OAuth states for server list");
+            HashMap::new()
+        }
+    };
+    let mut raw_headers_map = load_server_header_maps(db_pool, &server_ids).await;
     let headers_map = if should_expose_headers() {
-        load_server_headers_map(db_pool, &server_ids).await
+        raw_headers_map
+            .iter()
+            .filter(|(_, headers)| !headers.is_empty())
+            .map(|(server_id, headers)| (server_id.clone(), redact_headers(headers)))
+            .collect()
     } else {
         HashMap::new()
     };
@@ -277,20 +300,16 @@ async fn server_list_core(
         let capability = capability_map.remove(&server_id);
         let meta = meta_map.remove(&server_id).flatten();
         let protocol_version = protocol_versions.remove(&server_id).flatten();
+        let raw_headers = raw_headers_map.remove(&server_id);
         let headers = headers_map.remove(&server_id);
 
-        let mut oauth_status = None;
-        let mut oauth_configured = false;
-        if server.server_type == crate::common::server::ServerType::StreamableHttp {
-            let manager = crate::core::oauth::manager::OAuthManager::new(db_pool.clone());
-            if let Ok(status) = manager.get_status(&server_id).await {
-                oauth_configured = status.configured;
-                if status.configured {
-                    oauth_status = Some(status.state);
-                }
-            }
-        }
-        let auth_mode = detect_auth_mode(db_pool, &server_id, oauth_configured).await;
+        let oauth_status = if server.server_type == crate::common::server::ServerType::StreamableHttp {
+            oauth_status_map.get(&server_id).cloned()
+        } else {
+            None
+        };
+        let oauth_configured = oauth_status.is_some();
+        let auth_mode = detect_auth_mode_from_headers_and_oauth(raw_headers.as_ref(), oauth_configured);
 
         filtered_servers.push(ServerDetailsData {
             id: server.id.clone(),
@@ -727,22 +746,43 @@ async fn load_cached_protocol_versions(
     protocol_versions
 }
 
-async fn load_server_headers_map(
+async fn load_server_header_maps(
     pool: &Pool<Sqlite>,
     server_ids: &[String],
 ) -> HashMap<String, HashMap<String, String>> {
-    let mut headers_map = HashMap::new();
-    for server_id in server_ids {
-        match crate::config::server::get_server_headers(pool, server_id).await {
-            Ok(headers) if !headers.is_empty() => {
-                headers_map.insert(server_id.clone(), redact_headers(&headers));
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(server_id = %server_id, error = %error, "Failed to load server headers for server list");
-            }
-        }
+    if server_ids.is_empty() {
+        return HashMap::new();
     }
+
+    let query = format!(
+        "SELECT server_id, header_key, header_value FROM server_headers WHERE server_id IN ({}) ORDER BY server_id, header_key",
+        server_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ")
+    );
+
+    let mut statement = sqlx::query(&query);
+    for server_id in server_ids {
+        statement = statement.bind(server_id);
+    }
+
+    let rows = match statement.fetch_all(pool).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(error = %error, "Failed to batch load server headers for server list");
+            return HashMap::new();
+        }
+    };
+
+    let mut headers_map = HashMap::new();
+    for row in rows {
+        let server_id: String = row.get("server_id");
+        let header_key: String = row.get("header_key");
+        let header_value: String = row.get("header_value");
+        headers_map
+            .entry(server_id)
+            .or_insert_with(HashMap::new)
+            .insert(header_key, header_value);
+    }
+
     headers_map
 }
 
@@ -821,7 +861,7 @@ mod tests {
         common::{profile::ProfileType, server::ServerType},
         config::{
             database::Database,
-            models::{Profile, Server},
+            models::{Profile, Server, ServerOAuthConfig, ServerOAuthToken},
             profile, server,
         },
         core::{
@@ -833,6 +873,7 @@ mod tests {
         inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
         system::metrics::MetricsCollector,
     };
+    use chrono::Utc;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
@@ -972,6 +1013,132 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn server_list_derives_auth_mode_from_headers_and_oauth_state() {
+        let context = create_test_context().await;
+        let oauth_only_id = seed_streamable_http_server(&context.db_pool, "oauth-only").await;
+        let header_only_id = seed_streamable_http_server(&context.db_pool, "header-only").await;
+        let both_id = seed_streamable_http_server(&context.db_pool, "both").await;
+
+        crate::config::server::upsert_server_oauth_config(
+            &context.db_pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: oauth_only_id.clone(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint: "https://issuer.example.com/token".to_string(),
+                client_id: "client-oauth-only".to_string(),
+                client_secret: None,
+                scopes: Some("read".to_string()),
+                redirect_uri: "http://127.0.0.1:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("upsert oauth-only config");
+        crate::config::server::upsert_server_oauth_token(
+            &context.db_pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: oauth_only_id.clone(),
+                access_token: "token-oauth-only".to_string(),
+                refresh_token: None,
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() + chrono::Duration::hours(1)).to_rfc3339()),
+                scope: Some("read".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("upsert oauth-only token");
+
+        crate::config::server::upsert_server_headers(
+            &context.db_pool,
+            &header_only_id,
+            &HashMap::from([("Authorization".to_string(), "Bearer header-only".to_string())]),
+        )
+        .await
+        .expect("upsert header-only auth header");
+
+        crate::config::server::upsert_server_oauth_config(
+            &context.db_pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: both_id.clone(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint: "https://issuer.example.com/token".to_string(),
+                client_id: "client-both".to_string(),
+                client_secret: None,
+                scopes: Some("read write".to_string()),
+                redirect_uri: "http://127.0.0.1:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("upsert both config");
+        crate::config::server::upsert_server_oauth_token(
+            &context.db_pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: both_id.clone(),
+                access_token: "token-both".to_string(),
+                refresh_token: None,
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() + chrono::Duration::hours(1)).to_rfc3339()),
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("upsert both token");
+        crate::config::server::upsert_server_headers(
+            &context.db_pool,
+            &both_id,
+            &HashMap::from([("Authorization".to_string(), "Bearer manual".to_string())]),
+        )
+        .await
+        .expect("upsert both auth header");
+
+        let request = ServerListReq {
+            enabled: Some(true),
+            server_type: Some("streamable_http".to_string()),
+            limit: Some(10),
+            offset: Some(0),
+        };
+
+        let response = server_list_core(&request, &context.db_pool, &context.app_state)
+            .await
+            .expect("server list should succeed");
+        let data = response.data.expect("server list data");
+        let servers_by_id: HashMap<String, ServerDetailsData> = data
+            .servers
+            .into_iter()
+            .filter_map(|server| server.id.clone().map(|id| (id, server)))
+            .collect();
+
+        let oauth_only = servers_by_id.get(&oauth_only_id).expect("oauth-only server");
+        assert_eq!(oauth_only.auth_mode.as_deref(), Some("oauth"));
+        assert!(matches!(
+            oauth_only.oauth_status,
+            Some(crate::core::oauth::OAuthConnectionState::Connected)
+        ));
+
+        let header_only = servers_by_id.get(&header_only_id).expect("header-only server");
+        assert_eq!(header_only.auth_mode.as_deref(), Some("header"));
+        assert!(header_only.oauth_status.is_none());
+
+        let both = servers_by_id.get(&both_id).expect("both server");
+        assert_eq!(both.auth_mode.as_deref(), Some("header"));
+        assert!(matches!(
+            both.oauth_status,
+            Some(crate::core::oauth::OAuthConnectionState::Connected)
+        ));
+    }
+
     async fn create_test_context() -> TestContext {
         let temp_dir = TempDir::new().expect("temp dir");
         let db_pool = SqlitePoolOptions::new()
@@ -1051,6 +1218,29 @@ mod tests {
             ids.push(id);
         }
         ids
+    }
+
+    async fn seed_streamable_http_server(
+        pool: &sqlx::SqlitePool,
+        name: &str,
+    ) -> String {
+        let server = Server {
+            id: None,
+            name: name.to_string(),
+            server_type: ServerType::StreamableHttp,
+            command: None,
+            url: Some(format!("https://example.com/{name}")),
+            registry_server_id: None,
+            capabilities: None,
+            enabled: crate::common::status::EnabledStatus::Enabled,
+            created_at: None,
+            updated_at: None,
+            pending_import: false,
+        };
+
+        server::upsert_server(pool, &server)
+            .await
+            .expect("insert streamable http server")
     }
 
     async fn seed_server_meta(
