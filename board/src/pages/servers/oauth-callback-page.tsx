@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { serversApi } from "../../lib/api";
-import { PageLayout } from "../../components/page-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
@@ -11,7 +10,7 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 export function OAuthCallbackPage() {
 	const { t, i18n } = useTranslation("servers");
 	usePageTranslations("servers");
-	
+
 	const [searchParams] = useSearchParams();
 	const navigate = useNavigate();
 	const [status, setStatus] = useState<"processing" | "success" | "error">("processing");
@@ -33,8 +32,37 @@ export function OAuthCallbackPage() {
 			return;
 		}
 
-		const callbackCode = code;
-		const callbackState = state;
+		const callbackCode: string = code;
+		const callbackState: string = state;
+
+		const runSafely = (action: () => void) => {
+			try {
+				action();
+			} catch (error) {
+				void error;
+			}
+		};
+
+		const notifyMainWindow = (payload: Record<string, unknown>) => {
+			runSafely(() => {
+				window.localStorage.setItem("mcpmate.oauth.callback", JSON.stringify(payload));
+			});
+
+			runSafely(() => {
+				if (window.opener) {
+					window.opener.postMessage(payload, "*");
+					window.opener.focus();
+				}
+			});
+
+			if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+				runSafely(() => {
+					const channel = new BroadcastChannel("mcpmate-oauth");
+					channel.postMessage(payload);
+					channel.close();
+				});
+			}
+		};
 
 		async function processCallback() {
 			try {
@@ -44,18 +72,18 @@ export function OAuthCallbackPage() {
 				});
 				setServerTarget(oauthStatus.server_id);
 				setStatus("success");
-				
-				if (window.opener) {
-					window.opener.postMessage({ type: "OAUTH_CALLBACK_SUCCESS", serverId: oauthStatus.server_id }, "*");
-					setTimeout(() => window.close(), 1200);
-					return;
-				}
+
+				const successPayload = {
+					type: "OAUTH_CALLBACK_SUCCESS",
+					serverId: oauthStatus.server_id,
+					timestamp: Date.now(),
+				};
+
+				notifyMainWindow(successPayload);
 
 				redirectTimer = setTimeout(() => {
-					navigate(`/servers/${encodeURIComponent(oauthStatus.server_id)}`, {
-						replace: true,
-					});
-				}, 1200);
+					window.close();
+				}, 300);
 			} catch (err) {
 				setStatus("error");
 				const errorMsg = err instanceof Error
@@ -65,9 +93,11 @@ export function OAuthCallbackPage() {
 					  });
 				setErrorMessage(errorMsg);
 
-				if (window.opener) {
-					window.opener.postMessage({ type: "OAUTH_CALLBACK_ERROR", error: errorMsg }, "*");
-				}
+				notifyMainWindow({
+					type: "OAUTH_CALLBACK_ERROR",
+					error: errorMsg,
+					timestamp: Date.now(),
+				});
 			}
 		}
 
@@ -80,47 +110,55 @@ export function OAuthCallbackPage() {
 		};
 	}, [searchParams, navigate, t, i18n.language]);
 
+	const description = (() => {
+		switch (status) {
+			case "processing":
+				return t("oauth.callback.processing", {
+					defaultValue: "Completing authorization, please wait...",
+				});
+			case "success":
+				return t("oauth.callback.success", {
+					defaultValue: "Authorization successful. This window will close automatically.",
+				});
+			default:
+				return t("oauth.callback.error", {
+					defaultValue: "Authorization failed.",
+				});
+		}
+	})();
+
 	return (
-		<PageLayout title={t("oauth.callback.title", { defaultValue: "OAuth Authorization" })}>
-			<div className="flex items-center justify-center h-[60vh]">
-				<Card className="w-full max-w-md">
-					<CardHeader className="text-center">
-						<CardTitle>{t("oauth.callback.title", { defaultValue: "OAuth Authorization" })}</CardTitle>
-						<CardDescription>
-							{status === "processing" &&
-								t("oauth.callback.processing", {
-									defaultValue: "Completing authorization, please wait...",
-								})}
-							{status === "success" &&
-								t("oauth.callback.success", {
-									defaultValue:
-										"Authorization successful. Returning to the server detail page...",
-								})}
-							{status === "error" &&
-								t("oauth.callback.error", {
-									defaultValue: "Authorization failed.",
-								})}
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="flex flex-col items-center justify-center p-6 space-y-4">
-						{status === "processing" && <Loader2 className="h-10 w-10 animate-spin text-slate-500" />}
-						{status === "success" && (
+		<div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
+			<Card className="w-full max-w-md">
+				<CardHeader className="text-center">
+					<CardTitle>{t("oauth.callback.title", { defaultValue: "OAuth Authorization" })}</CardTitle>
+					<CardDescription>{description}</CardDescription>
+				</CardHeader>
+				<CardContent className="flex flex-col items-center justify-center p-6 space-y-4">
+					{status === "processing" && <Loader2 className="h-10 w-10 animate-spin text-slate-500" />}
+					{status === "success" && (
+						<>
 							<CheckCircle2 className="h-12 w-12 text-emerald-500" />
-						)}
-						{status === "error" && (
-							<div className="text-destructive flex flex-col items-center text-center gap-3">
-								<XCircle className="h-12 w-12" />
-								<p>{errorMessage}</p>
-								<Button variant="outline" onClick={() => navigate(serverTarget ? `/servers/${encodeURIComponent(serverTarget)}` : "/servers") }>
-									{t("oauth.callback.back", {
-										defaultValue: "Back to servers",
-									})}
-								</Button>
-							</div>
-						)}
-					</CardContent>
-				</Card>
-			</div>
-		</PageLayout>
+							<Button variant="outline" onClick={() => window.close()}>
+								{t("oauth.callback.close", {
+									defaultValue: "Close this window",
+								})}
+							</Button>
+						</>
+					)}
+					{status === "error" && (
+						<div className="text-destructive flex flex-col items-center text-center gap-3">
+							<XCircle className="h-12 w-12" />
+							<p>{errorMessage}</p>
+							<Button variant="outline" onClick={() => navigate(serverTarget ? `/servers/${encodeURIComponent(serverTarget)}` : "/servers")}>
+								{t("oauth.callback.back", {
+									defaultValue: "Back to servers",
+								})}
+							</Button>
+						</div>
+					)}
+				</CardContent>
+			</Card>
+		</div>
 	);
 }

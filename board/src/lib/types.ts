@@ -54,10 +54,9 @@ export interface ServerSummary {
   id: string;
   name: string;
   server_type?: string;
-  status: string;
-  auth_mode?: string | null;
-  oauth_status?: string | null;
-  enabled?: boolean;
+	status: string;
+	auth_mode?: string | null;
+	enabled?: boolean;
   globally_enabled?: boolean;
   enabled_in_suits?: boolean;
   enabled_in_profile?: boolean;
@@ -549,6 +548,7 @@ export interface MCPServerConfig {
   headers?: Record<string, string>;
 
   profile_ids?: string[];
+  enabled?: boolean;
 
   /** Whether this server is a hidden pre-import record */
   pending_import?: boolean;

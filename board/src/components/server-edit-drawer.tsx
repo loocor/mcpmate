@@ -302,7 +302,18 @@ export function ServerEditDrawer({
 			if (!server?.id) return;
 			
 			try {
-				await serversApi.saveOAuthConfig(server.id, config);
+				const shouldUseManualConfig =
+					Boolean(config.authorization_endpoint?.trim()) &&
+					Boolean(config.token_endpoint?.trim()) &&
+					Boolean(config.client_id?.trim());
+				if (shouldUseManualConfig) {
+					await serversApi.saveOAuthConfig(server.id, config);
+				} else {
+					await serversApi.prepareOAuth(server.id, {
+						redirect_uri: config.redirect_uri,
+						scopes: config.scopes,
+					});
+				}
 				const redirectRes = await serversApi.initiateOAuth(server.id);
 				if (redirectRes.authorization_url) {
 					const width = 600;
