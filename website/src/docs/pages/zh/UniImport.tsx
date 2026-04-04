@@ -48,6 +48,11 @@ export default function UniImport() {
 				Streamable HTTP。
 			</P>
 
+			<H2>上游 HTTP 服务器的 OAuth</H2>
+			<P>
+				当导入的 Streamable HTTP 服务器需要 OAuth 时，全能导入会在第一步内完成认证设置并走回调式授权流程。MCPMate 会自动准备元数据、拉起提供方登录，并在授权完成后继续预览与导入。
+			</P>
+
 			<H2>使用场景</H2>
 			<Ul>
 				<Li>导入共享的团队配置。</Li>

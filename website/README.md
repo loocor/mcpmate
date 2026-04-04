@@ -22,6 +22,7 @@ Current product highlights to keep documented
 - Integrated desktop mode (Tauri bundles backend + board)
 - Audit logs and operational traceability workflows
 - Streamable HTTP aligned transport behavior and legacy SSE input normalization in install/import flows
+- Upstream OAuth support for Streamable HTTP servers (prepare + callback-based authorization from install flow)
 
 Preview download configuration
 - Copy `.env.example` to `.env`
