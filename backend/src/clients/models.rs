@@ -183,6 +183,7 @@ pub enum ApprovalStatus {
     Pending,
     #[default]
     Approved,
+    Suspended,
     Rejected,
 }
 
@@ -191,6 +192,7 @@ impl ApprovalStatus {
         match self {
             ApprovalStatus::Pending => "pending",
             ApprovalStatus::Approved => "approved",
+            ApprovalStatus::Suspended => "suspended",
             ApprovalStatus::Rejected => "rejected",
         }
     }
@@ -212,6 +214,7 @@ impl FromStr for ApprovalStatus {
         match s {
             "pending" => Ok(ApprovalStatus::Pending),
             "approved" => Ok(ApprovalStatus::Approved),
+            "suspended" => Ok(ApprovalStatus::Suspended),
             "rejected" => Ok(ApprovalStatus::Rejected),
             _ => Err(ParseApprovalStatusError),
         }
@@ -280,6 +283,15 @@ mod tests {
         assert_eq!(config.capability_source, CapabilitySource::Activated);
         assert!(config.selected_profile_ids.is_empty());
         assert!(config.custom_profile_id.is_none());
+    }
+
+    #[test]
+    fn approval_status_supports_suspended() {
+        assert_eq!(
+            ApprovalStatus::from_str("suspended").expect("parse suspended"),
+            ApprovalStatus::Suspended
+        );
+        assert_eq!(ApprovalStatus::Suspended.as_str(), "suspended");
     }
 }
 

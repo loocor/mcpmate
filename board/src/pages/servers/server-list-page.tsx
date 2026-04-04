@@ -630,7 +630,7 @@ export function ServerListPage() {
 		}
 
 		if (server.oauth_status) {
-			if (server.oauth_status === "Connected") {
+			if (server.oauth_status === "connected") {
 				tags.push(
 					<span
 						key="oauth"
@@ -641,7 +641,7 @@ export function ServerListPage() {
 						{t("entity.connectionTags.authConnected", { defaultValue: "Authorized" })}
 					</span>,
 				);
-			} else if (server.oauth_status === "Expired") {
+			} else if (server.oauth_status === "expired") {
 				tags.push(
 					<span
 						key="oauth"
@@ -652,7 +652,7 @@ export function ServerListPage() {
 						{t("entity.connectionTags.authExpired", { defaultValue: "Auth Expired" })}
 					</span>,
 				);
-			} else if (server.oauth_status === "Disconnected") {
+			} else if (server.oauth_status === "disconnected") {
 				tags.push(
 					<span
 						key="oauth"

@@ -44,13 +44,15 @@ export function OAuthCallbackPage() {
 		};
 
 		const notifyMainWindow = (payload: Record<string, unknown>) => {
+			const targetOrigin = window.location.origin;
+
 			runSafely(() => {
 				window.localStorage.setItem("mcpmate.oauth.callback", JSON.stringify(payload));
 			});
 
 			runSafely(() => {
 				if (window.opener) {
-					window.opener.postMessage(payload, "*");
+					window.opener.postMessage(payload, targetOrigin);
 					window.opener.focus();
 				}
 			});
