@@ -185,13 +185,13 @@ pub async fn create_server(
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
+    let is_pending_import = payload.pending_import.unwrap_or(false);
 
-    // Check if server already exists
-    if crate::config::server::get_server(&db.pool, &payload.name)
+    let existing_server = crate::config::server::get_server(&db.pool, &payload.name)
         .await
-        .map_err(map_anyhow_error)?
-        .is_some()
-    {
+        .map_err(map_anyhow_error)?;
+    let reusable_pending_server = existing_server.as_ref().filter(|server| is_pending_import && server.pending_import);
+    if existing_server.is_some() && reusable_pending_server.is_none() {
         return Err(ApiError::Conflict(format!(
             "Server with name '{}' already exists. Please choose a different name for your server.",
             payload.name
@@ -219,8 +219,11 @@ pub async fn create_server(
         payload.command.clone(),
         payload.url.clone(),
     );
+    if let Some(existing) = reusable_pending_server {
+        server.id = existing.id.clone();
+    }
     server.registry_server_id = payload.registry_server_id.clone();
-    server.pending_import = payload.pending_import.unwrap_or(false);
+    server.pending_import = is_pending_import;
     if server.pending_import {
         server.enabled = crate::common::status::EnabledStatus::Disabled;
     }
@@ -230,8 +233,26 @@ pub async fn create_server(
         .await
         .map_err(map_anyhow_error)?;
 
+    if reusable_pending_server.is_some() {
+        crate::config::server::delete_server_oauth_config(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+        crate::config::server::delete_server_oauth_token(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+    }
+
     // Persist default headers if provided
-    if let Some(headers) = &payload.headers {
+    if reusable_pending_server.is_some() {
+        let empty_headers = std::collections::HashMap::new();
+        replace_server_headers(
+            &db.pool,
+            &server_id,
+            payload.headers.as_ref().unwrap_or(&empty_headers),
+        )
+        .await
+        .map_err(map_anyhow_error)?;
+    } else if let Some(headers) = &payload.headers {
         if !headers.is_empty() {
             upsert_server_headers(&db.pool, &server_id, headers)
                 .await
@@ -240,14 +261,18 @@ pub async fn create_server(
     }
 
     // Insert server arguments if provided
-    if let Some(args) = &payload.args {
+    if reusable_pending_server.is_some() || payload.args.is_some() {
+        let empty_args: Vec<String> = Vec::new();
+        let args = payload.args.as_ref().unwrap_or(&empty_args);
         crate::config::server::upsert_server_args(&db.pool, &server_id, args)
             .await
             .map_err(map_anyhow_error)?;
     }
 
     // Insert server environment variables if provided
-    if let Some(env) = &payload.env {
+    if reusable_pending_server.is_some() || payload.env.is_some() {
+        let empty_env = std::collections::HashMap::new();
+        let env = payload.env.as_ref().unwrap_or(&empty_env);
         crate::config::server::upsert_server_env(&db.pool, &server_id, env)
             .await
             .map_err(map_anyhow_error)?;
