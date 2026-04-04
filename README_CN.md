@@ -50,6 +50,7 @@ MCPMate 通过集中化的配置管理、智能化的服务调度和增强的安
 - 为 AI 客户端提供统一接口
 - 实现 stdio 和 Streamable HTTP 传输协议（符合 MCP 2025-06-18 规范）
 - 接受旧版 SSE 配置的服务器，并自动归一化为 Streamable HTTP 以保持向后兼容
+- 支持上游 Streamable HTTP MCP 服务器的 OAuth 2.1 授权流程，包含元数据发现与回调处理
 - 实时监控和审计 MCP 通信
 - 检测潜在安全风险（如工具投毒）
 - 智能管理服务器资源
@@ -153,6 +154,7 @@ runtime list
 - 主关联键：`registry_server_id`（对应官方 `server.name`）
 - `official.serverId` 仅在与 `server.name` 等价时作为别名使用
 - `Repository Entry ID` 仅作为仓库元数据保留，不参与托管服务器关联主链路
+- 对支持 OAuth 的上游服务器，可直接在安装向导内完成回调式授权连接
 - 详见文档：[Market registry linkage keys](./docs/features/market-registry-linkage.md)
 
 ![Market](./assets/market.png)

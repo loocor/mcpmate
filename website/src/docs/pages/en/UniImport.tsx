@@ -53,6 +53,14 @@ export default function UniImport() {
 				input is accepted and normalized to Streamable HTTP during persistence.
 			</P>
 
+			<H2>OAuth for upstream HTTP servers</H2>
+			<P>
+				When an imported Streamable HTTP server requires OAuth, Uni-Import keeps
+				auth setup in the first step and starts a callback-based authorization
+				flow. MCPMate prepares metadata automatically, opens the provider login,
+				and continues to preview/import after authorization completes.
+			</P>
+
 			<H2>Use cases</H2>
 			<Ul>
 				<Li>Importing shared team configurations.</Li>

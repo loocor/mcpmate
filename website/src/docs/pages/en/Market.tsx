@@ -53,6 +53,14 @@ export default function MarketEN() {
 				pre-filled so you can tweak aliases before saving.
 			</P>
 
+			<H3>OAuth-enabled upstream servers</H3>
+			<P>
+				For upstream Streamable HTTP servers that require OAuth, the install
+				wizard can prepare authorization metadata and open the provider login
+				popup. After approval, MCPMate receives the callback, closes the popup,
+				and continues in the same install flow.
+			</P>
+
 			<H3>Hide or blacklist items</H3>
 			<P>
 				Use the &ldquo;Hide&rdquo; action to move entries into your local market

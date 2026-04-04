@@ -50,6 +50,7 @@ A high-performance MCP proxy server that:
 - Provides a unified interface for AI clients
 - Implements stdio and Streamable HTTP transport protocols (aligned with MCP 2025-06-18 specification)
 - Accepts legacy SSE-configured servers and automatically normalizes them to Streamable HTTP for backward compatibility
+- Supports upstream OAuth 2.1 flows for Streamable HTTP MCP servers, including metadata discovery and callback handling
 - Monitors and audits MCP communication in real time
 - Detects potential security risks (e.g., tool poisoning)
 - Intelligently manages server resources
@@ -153,6 +154,7 @@ Browse the official MCP registry and install servers without leaving the app.
 - Canonical linkage key: `registry_server_id` (official `server.name`)
 - `official.serverId` is treated as an alias only when equivalent to `server.name`
 - `Repository Entry ID` is preserved as metadata only
+- Upstream OAuth-capable servers can be connected directly from the install wizard with callback-based authorization
 - See docs: [Market registry linkage keys](./docs/features/market-registry-linkage.md)
 
 ![Market](./assets/market.png)
