@@ -700,6 +700,20 @@ export const serversApi = {
 		}
 	},
 
+	prepareOAuth: async (
+		id: string,
+		payload: { redirect_uri: string; scopes?: string },
+	): Promise<OAuthStatus> => {
+		const resp = await fetchApi<ApiWrapper<OAuthStatus>>(
+			"/api/mcp/servers/oauth/prepare",
+			{
+				method: "POST",
+				body: JSON.stringify({ server_id: id, ...payload }),
+			},
+		);
+		return extractApiData(resp);
+	},
+
 	saveOAuthConfig: async (
 		id: string,
 		config: Omit<OAuthConfigRequest, 'server_id'>,

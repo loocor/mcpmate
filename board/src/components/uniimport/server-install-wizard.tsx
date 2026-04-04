@@ -369,6 +369,18 @@ export const ServerInstallWizard = forwardRef(
 		const pendingImportServerRef = useRef<string | null>(null);
 		const [pendingImportServerId, setPendingImportServerId] =
 			useState<string | null>(null);
+		const [selectedAuthMode, setSelectedAuthMode] =
+			useState<"header" | "oauth">("header");
+		const suggestedAuthMode = useMemo<"header" | "oauth">(() => {
+			if (!isImportMode || isStdio) {
+				return "header";
+			}
+			const hasAuthorizationHeader = (watchedHeaders ?? []).some((entry) => {
+				const key = typeof entry?.key === "string" ? entry.key.trim().toLowerCase() : "";
+				return key === "authorization";
+			});
+			return hasAuthorizationHeader ? "header" : "oauth";
+		}, [isImportMode, isStdio, watchedHeaders]);
 
 		const toKeyValueRecord = useCallback(
 			(items?: Array<{ key?: string | null; value?: string | null }>) => {
@@ -782,6 +794,7 @@ export const ServerInstallWizard = forwardRef(
 				const origin = isImportMode
 					? ("market" as InstallSource)
 					: ("manual" as InstallSource);
+				installPipeline.setDrafts(drafts);
 
 				if (currentStep !== "preview") {
 					installPipeline.setCurrentStep("preview");
@@ -1086,11 +1099,17 @@ export const ServerInstallWizard = forwardRef(
 
 		// Perform dry-run when entering result step
 		useEffect(() => {
+			const skipDryRunForHiddenPreview =
+				Boolean(pendingImportServerId) &&
+				!isEditMode &&
+				installPipeline.state.previewState !== null &&
+				installPipeline.state.previewState.success !== false &&
+				!installPipeline.state.previewError;
 			if (
 				currentStep === "result" &&
 				!installPipeline.state.importResult &&
 				!installPipeline.state.isImporting &&
-				!hiddenPreviewReady
+				!skipDryRunForHiddenPreview
 			) {
 				// Only perform dry-run if we haven't already done it or if the drafts have changed
 				if (
@@ -1100,7 +1119,12 @@ export const ServerInstallWizard = forwardRef(
 					void installPipeline.performDryRun();
 				}
 			}
-		}, [currentStep, hiddenPreviewReady, installPipeline]);
+		}, [
+			currentStep,
+			isEditMode,
+			installPipeline,
+			pendingImportServerId,
+		]);
 
 		// Expose methods via ref
 		useImperativeHandle(ref, () => ({
@@ -1334,12 +1358,12 @@ export const ServerInstallWizard = forwardRef(
 															<Input
 																id={nameId}
 																{...register("name")}
-																placeholder={t(
-																	"manual.fields.name.placeholder",
-																	{
-																		defaultValue: "e.g., local-mcp",
-																	},
-																)}
+										placeholder={t(
+											"manual.fields.name.placeholder",
+											{
+												defaultValue: "e.g., local-mcp",
+											},
+										)}
 										readOnly={isEditMode || Boolean(pendingImportServerId)}
 										aria-readonly={isEditMode || Boolean(pendingImportServerId)}
 										title={
@@ -1418,6 +1442,17 @@ export const ServerInstallWizard = forwardRef(
 											isStdio={isStdio}
 											viewMode={viewMode}
 											isNewServer={!isEditMode}
+											suggestedAuthMode={suggestedAuthMode}
+											onAuthModeChange={setSelectedAuthMode}
+											onOAuthConnected={(serverId) => {
+												if (isEditMode || pendingImportServerRef.current !== serverId) {
+													return;
+												}
+												void handlePreview({
+													skipValidation: true,
+													shouldFocus: false,
+												});
+											}}
 											onInitiateOAuth={async (config) => {
 												const formValues = getValues();
 												const draft = toDraftFromValues(formValues);
@@ -1451,7 +1486,19 @@ export const ServerInstallWizard = forwardRef(
 													throw new Error("Server ID is required to initiate OAuth");
 												}
 
-												await serversApi.saveOAuthConfig(targetServerId, config);
+												const shouldUseManualConfig =
+													Boolean(config.authorization_endpoint?.trim()) &&
+													Boolean(config.token_endpoint?.trim()) &&
+													Boolean(config.client_id?.trim());
+
+												if (shouldUseManualConfig) {
+													await serversApi.saveOAuthConfig(targetServerId, config);
+												} else {
+													await serversApi.prepareOAuth(targetServerId, {
+														redirect_uri: config.redirect_uri,
+														scopes: config.scopes,
+													});
+												}
 
 												const redirectRes = await serversApi.initiateOAuth(targetServerId);
 												if (redirectRes.authorization_url) {
@@ -1486,9 +1533,9 @@ export const ServerInstallWizard = forwardRef(
 													onGhostClick={handleGhostClick}
 												/>
 
-												<UrlParams
-													viewMode={viewMode}
-													isStdio={isStdio}
+											<UrlParams
+												viewMode={viewMode}
+												isStdio={isStdio}
 													urlParamFields={paramFields.fields}
 													removeUrlParam={removeUrlParam}
 													appendUrlParam={appendUrlParam}
@@ -1496,9 +1543,18 @@ export const ServerInstallWizard = forwardRef(
 													deleteConfirmStates={deleteConfirmStates}
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
-												/>
+											/>
 
-												<HttpHeaders
+											{!isStdio && selectedAuthMode === "oauth" ? (
+												<p className="text-xs text-slate-500 dark:text-slate-400">
+													{t("manual.auth.transportHint", {
+														defaultValue:
+															"URL Parameters and HTTP Headers are optional transport extras. They still apply after OAuth if this server needs them.",
+													})}
+												</p>
+											) : null}
+
+											<HttpHeaders
 													viewMode={viewMode}
 													isStdio={isStdio}
 													headerFields={headerFields.fields}
@@ -2032,7 +2088,6 @@ export const ServerInstallWizard = forwardRef(
 							) : (
 							<div className="rounded-lg border p-4 space-y-4">
 								{(() => {
-									let _badgeColor = "bg-green-500";
 									let statusTitle = t("wizard.result.validatedTitle", {
 										defaultValue: "Import Validated",
 									});
@@ -2047,7 +2102,6 @@ export const ServerInstallWizard = forwardRef(
 												"OAuth authorization is complete. Import will publish this server and make it visible in your Servers list.",
 										});
 									} else if (dryRunError) {
-										_badgeColor = "bg-red-500";
 											statusTitle = t("wizard.result.validationFailedTitle", {
 												defaultValue: "Import Validation Failed",
 											});
@@ -2055,7 +2109,6 @@ export const ServerInstallWizard = forwardRef(
 											detailTone = "error";
 										} else if (canProceedWithImport) {
 											if (dryRunWarning) {
-												_badgeColor = "bg-amber-500";
 												statusTitle = t(
 													"wizard.result.validatedWithWarningsTitle",
 													{
@@ -2066,7 +2119,6 @@ export const ServerInstallWizard = forwardRef(
 												detailTone = "warning";
 											}
 									} else {
-										_badgeColor = "bg-amber-500";
 										statusTitle = t("wizard.result.alreadyInstalledTitle", {
 												defaultValue: "Already Installed",
 											});

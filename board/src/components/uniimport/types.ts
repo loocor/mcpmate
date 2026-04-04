@@ -173,6 +173,7 @@ export interface ServerInstallManualFormProps {
 	serverId?: string;
 	/** Callback for OAuth initiation */
 	onInitiateOAuth?: (config: import("../../lib/types").OAuthConfigRequest) => Promise<void>;
+	onAuthModeChange?: (mode: "header" | "oauth") => void;
 	/** Optional initial draft used to hydrate the form when editing an existing server. */
 	initialDraft?: ServerInstallDraft | null;
 	serverId?: string;

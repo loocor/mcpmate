@@ -43,6 +43,7 @@ function App() {
 			<LanguageSynchronizer />
 			<BrowserRouter>
 				<Routes>
+					<Route path="oauth/callback" element={<OAuthCallbackPage />} />
 					<Route path="/" element={<Layout />}>
 						<Route index element={<DashboardPage />} />
 						{/* New canonical routes */}
@@ -72,7 +73,6 @@ function App() {
 						<Route path="market" element={<MarketPage />} />
 						<Route path="market/:registryKey" element={<MarketDetailPage />} />
 						<Route path="servers" element={<ServerListPage />} />
-						<Route path="oauth/callback" element={<OAuthCallbackPage />} />
 						<Route path="servers/:serverId" element={<ServerDetailPage />} />
 						<Route
 							path="servers/:serverId/instances/:instanceId"
