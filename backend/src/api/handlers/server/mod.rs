@@ -8,7 +8,7 @@ pub use self::{
     crud::{create_server, delete_server, import_servers, update_server},
     instance::{check_health, get_instance, manage_instance},
     mgmt::{disable_server, enable_server, manage_server},
-    oauth::{complete_oauth, configure_oauth, oauth_status, revoke_oauth, start_oauth},
+    oauth::{complete_oauth, configure_oauth, oauth_status, prepare_oauth, revoke_oauth, start_oauth},
     preview::preview_servers,
     prompts::server_prompts,
     resources::{server_resource_templates, server_resources},

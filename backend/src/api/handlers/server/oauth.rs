@@ -3,10 +3,10 @@ use crate::api::{
     handlers::ApiError,
     models::oauth::{
         OAuthInitiateResp, OAuthStatusResp, ServerOAuthCallbackReq, ServerOAuthConfigReq,
-        ServerOAuthInitiateReq, ServerOAuthRevokeReq, ServerOAuthStatusReq,
+        ServerOAuthInitiateReq, ServerOAuthPrepareReq, ServerOAuthRevokeReq, ServerOAuthStatusReq,
     },
 };
-use crate::core::oauth::OAuthConfigInput;
+use crate::core::oauth::{OAuthConfigInput, OAuthPrepareInput};
 
 fn get_oauth_manager(
     state: &Arc<AppState>,
@@ -49,6 +49,24 @@ pub async fn start_oauth(
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(Json(OAuthInitiateResp::success(result)))
+}
+
+pub async fn prepare_oauth(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ServerOAuthPrepareReq>,
+) -> Result<Json<OAuthStatusResp>, ApiError> {
+    let manager = get_oauth_manager(&state)?;
+    let status = manager
+        .prepare(
+            &payload.server_id,
+            OAuthPrepareInput {
+                redirect_uri: payload.redirect_uri,
+                scopes: payload.scopes,
+            },
+        )
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(OAuthStatusResp::success(status)))
 }
 
 pub async fn complete_oauth(
