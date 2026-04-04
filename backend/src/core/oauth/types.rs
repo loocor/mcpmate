@@ -11,6 +11,12 @@ pub struct OAuthConfigInput {
     pub redirect_uri: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthPrepareInput {
+    pub redirect_uri: String,
+    pub scopes: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OAuthConnectionState {

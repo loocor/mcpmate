@@ -6,8 +6,8 @@ use crate::api::handlers::server;
 use crate::api::models::{
     cache::{CacheDetailsReq, CacheDetailsResp, CacheResetResp},
     oauth::{
-        OAuthInitiateResp, OAuthStatusResp, ServerOAuthConfigReq, ServerOAuthInitiateReq, ServerOAuthRevokeReq,
-        ServerOAuthStatusReq,
+        OAuthInitiateResp, OAuthStatusResp, ServerOAuthConfigReq, ServerOAuthInitiateReq, ServerOAuthPrepareReq,
+        ServerOAuthRevokeReq, ServerOAuthStatusReq,
     },
     server::{
         InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq,
@@ -77,6 +77,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/servers/oauth/config",
             post_with(configure_oauth_aide, configure_oauth_docs),
+        )
+        .api_route(
+            "/mcp/servers/oauth/prepare",
+            post_with(prepare_oauth_aide, prepare_oauth_docs),
         )
         .api_route(
             "/mcp/servers/oauth/initiate",
@@ -191,6 +195,13 @@ aide_wrapper_payload!(
     ServerOAuthConfigReq,
     OAuthStatusResp,
     "Configure OAuth settings for a specific server"
+);
+
+aide_wrapper_payload!(
+    server::prepare_oauth,
+    ServerOAuthPrepareReq,
+    OAuthStatusResp,
+    "Automatically discover and prepare OAuth configuration for a specific server"
 );
 
 aide_wrapper_payload!(

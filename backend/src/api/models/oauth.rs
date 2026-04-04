@@ -22,6 +22,14 @@ pub struct ServerOAuthInitiateReq {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ServerOAuthPrepareReq {
+    pub server_id: String,
+    pub redirect_uri: String,
+    #[serde(default)]
+    pub scopes: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ServerOAuthCallbackReq {
     pub state: String,
     pub code: String,

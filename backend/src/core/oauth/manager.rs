@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
 use reqwest::Url;
+use reqwest::header::WWW_AUTHENTICATE;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
@@ -13,7 +14,7 @@ use crate::{
     config::{models::{ServerOAuthConfig, ServerOAuthToken}, server},
 };
 
-use super::types::{OAuthConfigInput, OAuthConnectionState, OAuthInitiateResult, OAuthStatus};
+use super::types::{OAuthConfigInput, OAuthConnectionState, OAuthInitiateResult, OAuthPrepareInput, OAuthStatus};
 
 #[derive(Debug, Clone)]
 struct PendingOAuthFlow {
@@ -28,6 +29,27 @@ struct OAuthTokenResponse {
     refresh_token: Option<String>,
     token_type: Option<String>,
     expires_in: Option<i64>,
+    scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProtectedResourceMetadata {
+    authorization_servers: Option<Vec<String>>,
+    scopes_supported: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthorizationServerMetadata {
+    authorization_endpoint: String,
+    token_endpoint: String,
+    registration_endpoint: Option<String>,
+    scopes_supported: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DynamicClientRegistrationResponse {
+    client_id: String,
+    client_secret: Option<String>,
     scope: Option<String>,
 }
 
@@ -76,6 +98,83 @@ impl OAuthManager {
         };
         server::upsert_server_oauth_config(&self.pool, &config).await?;
         self.get_status(server_id).await
+    }
+
+    pub async fn prepare(&self, server_id: &str, input: OAuthPrepareInput) -> Result<OAuthStatus> {
+        let server_model = server::get_server_by_id(&self.pool, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
+        if server_model.server_type != ServerType::StreamableHttp {
+            bail!("OAuth is only supported for streamable_http servers");
+        }
+
+        let server_url = server_model
+            .url
+            .as_deref()
+            .ok_or_else(|| anyhow!("Streamable HTTP server is missing a URL"))?;
+        let resource_url = Url::parse(server_url)
+            .with_context(|| format!("Invalid streamable HTTP server URL '{}'", server_url))?;
+
+        let existing = server::get_server_oauth_config(&self.pool, server_id).await?;
+        if let Some(existing_config) = existing.as_ref() {
+            if !existing_config.authorization_endpoint.trim().is_empty()
+                && !existing_config.token_endpoint.trim().is_empty()
+                && !existing_config.client_id.trim().is_empty()
+            {
+                return self
+                    .upsert_config(
+                        server_id,
+                        OAuthConfigInput {
+                            authorization_endpoint: existing_config.authorization_endpoint.clone(),
+                            token_endpoint: existing_config.token_endpoint.clone(),
+                            client_id: existing_config.client_id.clone(),
+                            client_secret: existing_config.client_secret.clone(),
+                            scopes: input.scopes.or_else(|| existing_config.scopes.clone()),
+                            redirect_uri: input.redirect_uri,
+                        },
+                    )
+                    .await;
+            }
+        }
+
+        let protected_metadata = self.discover_protected_resource_metadata(&resource_url).await?;
+        let authorization_server = protected_metadata
+            .authorization_servers
+            .as_ref()
+            .and_then(|servers| servers.first())
+            .cloned()
+            .unwrap_or_else(|| resource_origin(&resource_url));
+        let authorization_metadata = self
+            .discover_authorization_server_metadata(&authorization_server)
+            .await?;
+
+        let registration = match authorization_metadata.registration_endpoint.as_deref() {
+            Some(endpoint) => Some(self.register_dynamic_client(endpoint, &input.redirect_uri).await?),
+            None => None,
+        };
+
+        let client_id = registration
+            .as_ref()
+            .map(|item| item.client_id.clone())
+            .ok_or_else(|| anyhow!("OAuth discovery succeeded, but the authorization server does not support automatic client registration yet"))?;
+        let scopes = input
+            .scopes
+            .or_else(|| registration.as_ref().and_then(|item| item.scope.clone()))
+            .or_else(|| protected_metadata.scopes_supported.as_ref().map(|scopes| scopes.join(" ")))
+            .or_else(|| authorization_metadata.scopes_supported.as_ref().map(|scopes| scopes.join(" ")));
+
+        self.upsert_config(
+            server_id,
+            OAuthConfigInput {
+                authorization_endpoint: authorization_metadata.authorization_endpoint,
+                token_endpoint: authorization_metadata.token_endpoint,
+                client_id,
+                client_secret: registration.and_then(|item| item.client_secret),
+                scopes,
+                redirect_uri: input.redirect_uri,
+            },
+        )
+        .await
     }
 
     pub async fn initiate(&self, server_id: &str) -> Result<OAuthInitiateResult> {
@@ -228,6 +327,170 @@ impl OAuthManager {
         server::delete_server_oauth_token(&self.pool, server_id).await?;
         self.get_status(server_id).await
     }
+}
+
+impl OAuthManager {
+    async fn discover_protected_resource_metadata(&self, resource_url: &Url) -> Result<ProtectedResourceMetadata> {
+        if let Some(metadata) = self.discover_protected_metadata_from_challenge(resource_url).await? {
+            return Ok(metadata);
+        }
+
+        let candidates = protected_resource_candidates(resource_url)?;
+        for candidate in candidates {
+            if let Ok(metadata) = self.fetch_json::<ProtectedResourceMetadata>(&candidate).await {
+                return Ok(metadata);
+            }
+        }
+
+        Ok(ProtectedResourceMetadata {
+            authorization_servers: Some(vec![resource_origin(resource_url)]),
+            scopes_supported: None,
+        })
+    }
+
+    async fn discover_protected_metadata_from_challenge(
+        &self,
+        resource_url: &Url,
+    ) -> Result<Option<ProtectedResourceMetadata>> {
+        let response = self.http_client.get(resource_url.clone()).send().await;
+        let response = match response {
+            Ok(response) => response,
+            Err(_) => return Ok(None),
+        };
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(None);
+        }
+
+        let mut resource_metadata_url: Option<String> = None;
+        let mut authorization_endpoint: Option<String> = None;
+        let mut token_endpoint: Option<String> = None;
+        let mut scopes: Option<String> = None;
+
+        for value in response.headers().get_all(WWW_AUTHENTICATE) {
+            if let Ok(raw) = value.to_str() {
+                let params = parse_www_authenticate(raw);
+                resource_metadata_url = resource_metadata_url.or_else(|| params.get("resource_metadata").cloned());
+                authorization_endpoint = authorization_endpoint.or_else(|| params.get("authorization_uri").cloned());
+                token_endpoint = token_endpoint.or_else(|| params.get("token_uri").cloned());
+                scopes = scopes.or_else(|| params.get("scope").cloned());
+            }
+        }
+
+        if let Some(resource_metadata_url) = resource_metadata_url {
+            if let Ok(metadata) = self.fetch_json::<ProtectedResourceMetadata>(&resource_metadata_url).await {
+                return Ok(Some(metadata));
+            }
+        }
+
+        if let (Some(authorization_endpoint), Some(_token_endpoint)) = (authorization_endpoint, token_endpoint) {
+            return Ok(Some(ProtectedResourceMetadata {
+                authorization_servers: Some(vec![issuer_from_endpoint(&authorization_endpoint)]),
+                scopes_supported: scopes.map(|value| value.split_whitespace().map(ToOwned::to_owned).collect()),
+            }));
+        }
+
+        Ok(None)
+    }
+
+    async fn discover_authorization_server_metadata(
+        &self,
+        issuer_or_base: &str,
+    ) -> Result<AuthorizationServerMetadata> {
+        let mut candidates = Vec::new();
+        let base = issuer_or_base.trim_end_matches('/');
+        candidates.push(format!("{base}/.well-known/oauth-authorization-server"));
+        candidates.push(format!("{base}/.well-known/openid-configuration"));
+
+        for candidate in candidates {
+            if let Ok(metadata) = self.fetch_json::<AuthorizationServerMetadata>(&candidate).await {
+                return Ok(metadata);
+            }
+        }
+
+        bail!("Failed to discover OAuth authorization server metadata")
+    }
+
+    async fn register_dynamic_client(
+        &self,
+        registration_endpoint: &str,
+        redirect_uri: &str,
+    ) -> Result<DynamicClientRegistrationResponse> {
+        let payload = serde_json::json!({
+            "client_name": "MCPMate",
+            "application_type": "native",
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "redirect_uris": [redirect_uri],
+            "token_endpoint_auth_method": "none"
+        });
+
+        self.http_client
+            .post(registration_endpoint)
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to call OAuth dynamic client registration endpoint")?
+            .error_for_status()
+            .context("OAuth dynamic client registration returned error status")?
+            .json::<DynamicClientRegistrationResponse>()
+            .await
+            .context("Failed to parse OAuth dynamic client registration response")
+    }
+
+    async fn fetch_json<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
+        self.http_client
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("Failed to fetch OAuth metadata from '{url}'"))?
+            .error_for_status()
+            .with_context(|| format!("OAuth metadata endpoint '{url}' returned error status"))?
+            .json::<T>()
+            .await
+            .with_context(|| format!("Failed to parse OAuth metadata from '{url}'"))
+    }
+}
+
+fn resource_origin(resource_url: &Url) -> String {
+    let mut origin = resource_url.clone();
+    origin.set_path("");
+    origin.set_query(None);
+    origin.set_fragment(None);
+    origin.to_string().trim_end_matches('/').to_string()
+}
+
+fn issuer_from_endpoint(endpoint: &str) -> String {
+    Url::parse(endpoint)
+        .ok()
+        .map(|url| resource_origin(&url))
+        .unwrap_or_else(|| endpoint.trim_end_matches('/').to_string())
+}
+
+fn protected_resource_candidates(resource_url: &Url) -> Result<Vec<String>> {
+    let origin = resource_origin(resource_url);
+    let mut candidates = vec![format!("{origin}/.well-known/oauth-protected-resource")];
+    let path = resource_url.path().trim_start_matches('/');
+    if !path.is_empty() {
+        candidates.push(format!("{origin}/.well-known/oauth-protected-resource/{path}"));
+    }
+    Ok(candidates)
+}
+
+fn parse_www_authenticate(header_value: &str) -> HashMap<String, String> {
+    let trimmed = header_value.trim();
+    let payload = trimmed
+        .strip_prefix("Bearer ")
+        .or_else(|| trimmed.strip_prefix("bearer "))
+        .unwrap_or(trimmed);
+
+    payload
+        .split(',')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            let parsed = value.trim().trim_matches('"').to_string();
+            Some((key.trim().to_string(), parsed))
+        })
+        .collect()
 }
 
 fn generate_oauth_random(size: usize) -> String {
