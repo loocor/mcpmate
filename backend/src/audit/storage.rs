@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose};
 use serde_json::Value;
 use sqlx::{FromRow, Pool, QueryBuilder, Row, Sqlite};
+use tracing::warn;
 
 use crate::{
     audit::types::{AuditCursor, AuditCursorScope, AuditEventDto, AuditFilter, AuditListPage, AuditSortCursor},
@@ -198,8 +199,17 @@ impl AuditStore {
         let mut events: Vec<AuditEventDto> = rows
             .into_iter()
             .take(page_limit as usize)
-            .map(AuditEventDto::try_from)
-            .collect::<Result<Vec<_>>>()?;
+            .filter_map(|row| match AuditEventDto::try_from(row) {
+                Ok(event) => Some(event),
+                Err(error) => {
+                    warn!(
+                        error = ?error,
+                        "Skipping audit row that could not be deserialized"
+                    );
+                    None
+                }
+            })
+            .collect();
 
         let next_cursor = if has_more {
             events
