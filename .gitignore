@@ -6,27 +6,29 @@ node-compile-cache/
 *.hm
 
 # Local AI/tooling state
-.claude/
 .codex/
+.claude/
 .opencode/
 .sisyphus/
+.research/
 
 # Cloudflare Wrangler cache
 .wrangler/
 
 # Shared build outputs
+**/.build/
 **/target/
 **/dist/
-**/node_modules/
-**/.build/
 **/DerivedData/
+**/node_modules/
 
 # Local environment files
 **/.env
 **/.env.local
 **/.env.*.local
 
-# Auth backend & rmcp sdk
+# external projects
 auth/
 rmcp/
 docs/
+workers/
