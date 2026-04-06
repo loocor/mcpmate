@@ -425,9 +425,6 @@ pub fn run() -> Result<()> {
                                 if let Err(err) = shell::ensure_window_visibility(&handle) {
                                     warn!(error = %err, "Failed to show main window from tray");
                                 }
-                                if let Err(err) = handle.emit(shell::EVENT_OPEN_MAIN, json!({})) {
-                                    warn!(error = %err, "Failed to emit open-main event to frontend");
-                                }
                             });
                         }
                         shell::MENU_OPEN_SETTINGS => {
@@ -483,9 +480,6 @@ pub fn run() -> Result<()> {
 										emit_core_state_changed(&handle, &view);
                                                 if let Err(err) = shell::ensure_window_visibility(&handle) {
                                                     warn!(error = %err, "Failed to reveal main window after starting service");
-                                                }
-                                                if let Err(err) = handle.emit(shell::EVENT_OPEN_MAIN, json!({})) {
-                                                    warn!(error = %err, "Failed to emit open-main after starting service");
                                                 }
                                             }
                                             Err(err) => {
@@ -677,9 +671,6 @@ pub fn run() -> Result<()> {
             RunEvent::Reopen { .. } => {
                 if let Err(err) = shell::ensure_window_visibility(app_handle) {
                     warn!(error = %err, "Failed to restore main window on app reopen");
-                }
-                if let Err(err) = app_handle.emit(shell::EVENT_OPEN_MAIN, json!({})) {
-                    warn!(error = %err, "Failed to emit open-main on app reopen");
                 }
             }
             RunEvent::Exit => {
@@ -951,8 +942,8 @@ async fn mcp_shell_manage_local_core_service(
         .await
         .map_err(|err| err.to_string())?;
 
-    if let Some(audit_action) = audit_action {
-        if let Err(err) = audit::emit_desktop_audit_event(
+    if let Some(audit_action) = audit_action
+        && let Err(err) = audit::emit_desktop_audit_event(
             audit_action,
             mcpmate::audit::AuditStatus::Success,
             Some(action_name.clone()),
@@ -967,9 +958,8 @@ async fn mcp_shell_manage_local_core_service(
             None,
         )
         .await
-        {
-            warn!(error = %err, "Failed to emit desktop audit event for service action");
-        }
+    {
+        warn!(error = %err, "Failed to emit desktop audit event for service action");
     }
 
     Ok(view)

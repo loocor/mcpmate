@@ -51,7 +51,6 @@ pub const MENU_OPEN_SETTINGS: &str = "mcpmate.tray.open_settings";
 pub const MENU_SHOW_ABOUT: &str = "mcpmate.tray.show_about";
 pub const MENU_QUIT: &str = "mcpmate.tray.quit";
 
-pub const EVENT_OPEN_MAIN: &str = "mcpmate://open-main";
 pub const EVENT_OPEN_SETTINGS: &str = "mcpmate://open-settings";
 pub const EVENT_CORE_STATE_CHANGED: &str = "mcpmate://core/status-changed";
 
