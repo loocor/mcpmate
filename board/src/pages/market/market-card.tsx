@@ -1,4 +1,4 @@
-import { ExternalLink, EyeOff, Plug, Download } from "lucide-react";
+import { ExternalLink, EyeOff, Plug, Download, ShieldCheck } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Avatar, AvatarFallback } from "../../components/ui/avatar";
@@ -12,7 +12,9 @@ import {
 	CardTitle,
 } from "../../components/ui/card";
 import { notifyInfo } from "../../lib/notify";
-import { getOfficialMeta } from "../../lib/registry";
+import { useQuery } from "@tanstack/react-query";
+import { serversApi } from "../../lib/api";
+import { getOfficialMeta, matchesInstalledRegistryServer } from "../../lib/registry";
 import { cn, formatLocalDateTime, truncate } from "../../lib/utils";
 import type { MarketCardProps } from "./types";
 import {
@@ -30,6 +32,20 @@ export function MarketCard({
 }: MarketCardProps) {
 	const { t } = useTranslation("market");
 	const official = getOfficialMeta(server);
+
+	const installedServersQuery = useQuery({
+		queryKey: ["servers"],
+		queryFn: () => serversApi.getAll(),
+		staleTime: 30_000,
+	});
+
+	const isInstalled = useMemo(() => {
+		const installedServer =
+			installedServersQuery.data?.servers.find((item) => {
+				return matchesInstalledRegistryServer(server, item);
+			}) ?? null;
+		return Boolean(installedServer);
+	}, [installedServersQuery.data?.servers, server]);
 
 	const transportBadges = useMemo(() => {
 		const set = new Set(
@@ -98,9 +114,9 @@ export function MarketCard({
 
 					<div className="flex-1 min-w-0 space-y-1">
 						{/* 标题和传输类型标签在同一行 */}
-						<div className="flex items-start justify-between gap-3">
+						<div className="flex min-w-0 items-start justify-between gap-3">
 							<CardTitle
-								className="text-lg font-semibold leading-tight truncate"
+								className="min-w-0 flex-1 truncate text-lg font-semibold leading-tight"
 								title={displayName}
 							>
 								{displayName}
@@ -126,8 +142,10 @@ export function MarketCard({
 						</div>
 
 						{/* 版本和更新时间 - 与标题左对齐 */}
-						<div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-							<span>{t("server.version", { defaultValue: "Version {{version}}", version: server.version })}</span>
+						<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+							<span className="break-words">
+								{t("server.version", { defaultValue: "Version {{version}}", version: server.version })}
+							</span>
 						{absoluteTimestamp && (
 							<>
 								<span>•</span>
@@ -175,13 +193,23 @@ export function MarketCard({
 				</div>
 				<div className="flex items-center gap-2">
 					<Button
-						variant="outline"
+						variant={isInstalled ? "secondary" : "outline"}
 						size="sm"
-						className="h-7 px-2 text-xs"
-						onClick={handleInstall}
+						className={cn(
+							"h-7 px-2 text-xs",
+							isInstalled && "bg-green-50 text-green-700 hover:bg-green-50 hover:text-green-700 border-transparent dark:bg-green-950/30 dark:text-green-400 dark:hover:bg-green-950/30 cursor-default opacity-100"
+						)}
+						onClick={isInstalled ? (e) => { e.stopPropagation(); e.preventDefault(); } : handleInstall}
+						disabled={isInstalled}
 					>
-						<Download className="h-3 w-3 mr-1" />
-						{t("buttons.install", { defaultValue: "Install" })}
+						{isInstalled ? (
+							<ShieldCheck className="h-3 w-3 mr-1" />
+						) : (
+							<Download className="h-3 w-3 mr-1" />
+						)}
+						{isInstalled 
+							? t("buttons.installed", { defaultValue: "Installed" })
+							: t("buttons.install", { defaultValue: "Install" })}
 					</Button>
 					<button
 						type="button"

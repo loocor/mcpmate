@@ -25,6 +25,7 @@ import {
 	fetchCachedRegistryServerByKey,
 	getCanonicalRegistryServerId,
 	getOfficialMeta,
+	matchesInstalledRegistryServer,
 } from "../../lib/registry";
 import type { RegistryServerEntry } from "../../lib/types";
 import { formatLocalDateTime } from "../../lib/utils";
@@ -348,8 +349,7 @@ export function MarketDetailPage() {
 	const displayName = formatServerName(server.name);
 	const installedServer =
 		installedServersQuery.data?.servers.find((item) => {
-			const registryId = item.registry_server_id ?? null;
-			return registryId === server.name || registryId === canonicalRegistryId;
+			return matchesInstalledRegistryServer(server, item);
 		}) ?? null;
 	const isInstalled = Boolean(installedServer);
 	const primaryIconSrc = server.icons?.[0]?.src;
@@ -413,16 +413,9 @@ export function MarketDetailPage() {
 									>
 										{t("market:buttons.manage", { defaultValue: "Manage" })}
 									</Button>
-									<Button
-										onClick={() => {
-											if (remoteOptions.length > 0) {
-												setSelectedTransportId(remoteOptions[0].id);
-											}
-											setDrawerOpen(true);
-										}}
-									>
-										<Download className="mr-2 h-4 w-4" />
-										{t("market:buttons.reinstall", { defaultValue: "Reinstall" })}
+									<Button disabled>
+										<ShieldCheck className="mr-2 h-4 w-4" />
+										{t("market:buttons.installed", { defaultValue: "Installed" })}
 									</Button>
 								</>
 							) : (

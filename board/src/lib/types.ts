@@ -57,6 +57,7 @@ export interface ServerSummary {
 	status: string;
 	auth_mode?: string | null;
 	enabled?: boolean;
+  url?: string | null;
   globally_enabled?: boolean;
   enabled_in_suits?: boolean;
   enabled_in_profile?: boolean;

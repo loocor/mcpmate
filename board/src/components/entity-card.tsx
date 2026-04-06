@@ -80,41 +80,41 @@ export function EntityCard({
 			onKeyDown={handleKeyDown}
 		>
 			<CardHeader className="p-4 pb-2">
-				<div className="grid grid-cols-1 grid-rows-1">
-					<div className="flex items-start gap-3 col-start-1 row-start-1">
-						<CachedAvatar
-							src={avatar?.src}
-							alt={avatar?.alt || title}
-							fallback={avatar?.fallback || title}
-							size="lg"
-							shape={avatarShape}
-							className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 font-semibold"
-						/>
-						<div className="flex-1 space-y-2">
-							<CardTitle className="text-lg font-semibold leading-tight">
+				<div className="flex min-w-0 items-start gap-3">
+					<CachedAvatar
+						src={avatar?.src}
+						alt={avatar?.alt || title}
+						fallback={avatar?.fallback || title}
+						size="lg"
+						shape={avatarShape}
+						className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 font-semibold"
+					/>
+					<div className="min-w-0 flex-1 space-y-2">
+						<div className="flex min-w-0 items-start justify-between gap-2">
+							<CardTitle
+								className="min-w-0 flex-1 truncate text-lg font-semibold leading-tight"
+								title={title}
+							>
 								{title}
 							</CardTitle>
-						<div className="h-10 flex items-start">
+							{topRightBadge ? (
+								<div className="flex shrink-0 flex-row-reverse flex-nowrap gap-1 pt-0.5">
+									{topRightBadge}
+								</div>
+							) : null}
+						</div>
+						<div className="h-10 flex min-w-0 items-start">
 							{typeof description === "string" || description === undefined ? (
 								<CardDescription className="text-sm text-slate-500 line-clamp-2 leading-5">
 									{description || "N/A"}
 								</CardDescription>
 							) : (
-								<div className="text-sm text-slate-500 line-clamp-2 leading-5">
+								<div className="min-w-0 text-sm text-slate-500 line-clamp-2 leading-5">
 									{description}
 								</div>
 							)}
 						</div>
-						</div>
 					</div>
-
-					{topRightBadge && (
-						<div className="col-start-1 row-start-1 flex justify-end items-start pt-1 pr-1">
-							<div className="flex flex-row-reverse gap-1 flex-nowrap">
-								{topRightBadge}
-							</div>
-						</div>
-					)}
 				</div>
 			</CardHeader>
 

@@ -7,9 +7,6 @@ import {
 	RefreshCw,
 	Server,
 	Target,
-	Lock,
-	Unlock,
-	AlertTriangle
 } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -565,13 +562,15 @@ export function ServerListPage() {
 
 	const getConnectionTypeTags = (server: ServerSummary) => {
 		const tags = [];
-		const serverType = server.server_type || "";
+		const lower = (server.server_type || "").toLowerCase();
+		const isStdio = lower.includes("stdio") || lower.includes("process");
+		const isStreamable =
+			lower.includes("stream") ||
+			lower.includes("sse") ||
+			lower.includes("streamable");
+		const isGenericHttp = lower.includes("http") || lower.includes("rest");
 
-		// Determine connection method based on server type
-		if (
-			serverType.toLowerCase().includes("stdio") ||
-			serverType.toLowerCase().includes("process")
-		) {
+		if (isStdio) {
 			tags.push(
 				<span
 					key="stdio"
@@ -582,25 +581,7 @@ export function ServerListPage() {
 					{t("entity.connectionTags.stdio", { defaultValue: "STDIO" })}
 				</span>,
 			);
-		}
-
-		if (
-			serverType.toLowerCase().includes("http") ||
-			serverType.toLowerCase().includes("rest")
-		) {
-			tags.push(
-				<span
-					key="http"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
-				</span>,
-			);
-		}
-
-		if (serverType.toLowerCase().includes("stream")) {
+		} else if (isStreamable) {
 			tags.push(
 				<span
 					key="streamable_http"
@@ -613,9 +594,19 @@ export function ServerListPage() {
 					})}
 				</span>,
 			);
+		} else if (isGenericHttp) {
+			tags.push(
+				<span
+					key="http"
+					className="flex items-center gap-1 text-xs"
+					data-decorative
+				>
+					<Plug className="h-3 w-3" />
+					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
+				</span>,
+			);
 		}
 
-		// If no specific type matched, default to showing HTTP
 		if (tags.length === 0) {
 			tags.push(
 				<span
@@ -627,43 +618,6 @@ export function ServerListPage() {
 					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
 				</span>,
 			);
-		}
-
-		if (server.oauth_status) {
-			if (server.oauth_status === "connected") {
-				tags.push(
-					<span
-						key="oauth"
-						className="flex items-center gap-1 text-xs text-green-600"
-						data-decorative
-					>
-						<Unlock className="h-3 w-3" />
-						{t("entity.connectionTags.authConnected", { defaultValue: "Authorized" })}
-					</span>,
-				);
-			} else if (server.oauth_status === "expired") {
-				tags.push(
-					<span
-						key="oauth"
-						className="flex items-center gap-1 text-xs text-amber-600"
-						data-decorative
-					>
-						<AlertTriangle className="h-3 w-3" />
-						{t("entity.connectionTags.authExpired", { defaultValue: "Auth Expired" })}
-					</span>,
-				);
-			} else if (server.oauth_status === "disconnected") {
-				tags.push(
-					<span
-						key="oauth"
-						className="flex items-center gap-1 text-xs text-slate-500"
-						data-decorative
-					>
-						<Lock className="h-3 w-3" />
-						{t("entity.connectionTags.authDisconnected", { defaultValue: "Login Required" })}
-					</span>,
-				);
-			}
 		}
 
 		return tags;
