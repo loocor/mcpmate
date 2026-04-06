@@ -30,5 +30,5 @@ node-compile-cache/
 # external projects
 auth/
 rmcp/
-docs/
+/docs/
 workers/
