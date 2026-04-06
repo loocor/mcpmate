@@ -27,7 +27,9 @@ pub fn extract_bearer_token(headers: &Option<HashMap<String, String>>) -> Option
         }
     }
     let val = auth_val?;
-    strip_bearer_case_insensitive(val).map(|rest| rest.trim().to_string())
+    strip_bearer_case_insensitive(val)
+        .map(|rest| rest.trim().to_string())
+        .filter(|token| !token.is_empty())
 }
 
 /// Remove a leading "Bearer " (case-insensitive) prefix from a token string.
@@ -98,6 +100,19 @@ mod tests {
         let mut h3 = HashMap::new();
         h3.insert("AUTHORIZATION".to_string(), "Token something".to_string());
         assert_eq!(extract_bearer_token(&Some(h3)), None);
+
+        // Empty/whitespace-only credential must return None, not Some("")
+        let mut h4 = HashMap::new();
+        h4.insert("Authorization".to_string(), "Bearer ".to_string());
+        assert_eq!(extract_bearer_token(&Some(h4)), None);
+
+        let mut h5 = HashMap::new();
+        h5.insert("Authorization".to_string(), "Bearer    ".to_string());
+        assert_eq!(extract_bearer_token(&Some(h5)), None);
+
+        let mut h6 = HashMap::new();
+        h6.insert("Authorization".to_string(), "Bearer\t".to_string());
+        assert_eq!(extract_bearer_token(&Some(h6)), None);
     }
 
     #[test]
