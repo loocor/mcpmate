@@ -39,7 +39,7 @@ const zh = {
 	"download.expired": "预览通道暂未开放，敬请期待。",
 	"download.expires_in": "预览版倒计时",
 	"download.subtitle":
-		"使用 Rust 从源码构建。支持 macOS、Windows 和 Linux。",
+		"使用 Rust 从源码构建。macOS 现已可用；Windows 与 Linux 版本仍在规划中。",
 	"download.for": "下载",
 	"download.version": "版本",
 	"download.early_access": "（预览版）",
@@ -112,8 +112,8 @@ const zh = {
 	"value.owners.title": "更清晰地在本地运营",
 	"value.owners.p1": "把 core 作为本地服务运行，需要时再打开 Web 界面或桌面端外壳。",
 	"value.owners.p2": "通过本地 API 与 Inspector 做自动化检查、问题定位与行为验证。",
-	"value.owners.p3": "让隐私边界、审计能力与本地运行事实保持可见，而不是埋在分散配置里。",
-	"value.owners.diagram": "企业准备度",
+	"value.owners.p3": "让隐私边界、可观测性与本地运行事实保持可见，而不是埋在分散配置里。",
+	"value.owners.diagram": "运维透明度",
 
 	// 架构（设计价值观）
 	"arch.title": "设计原则",
@@ -171,13 +171,13 @@ const zh = {
 	"faq.title": "常见问题",
 	"faq.opensource.title": "是否开源？",
 	"faq.opensource.answer":
-		"是的！MCPMate 已在 MIT 许可下开源，代码见 github.com/loocor/mcpmate",
+		"是的！MCPMate 已在 AGPL-3.0 许可下开源，代码见 github.com/loocor/mcpmate",
 	"faq.expiry.title": "预览版到期会怎样？",
 	"faq.expiry.answer":
 		"从 GitHub 拉取最新代码并重新构建即可获得最新版本。",
 	"faq.platforms.title": "支持哪些平台？",
 	"faq.platforms.answer":
-		"目前提供 macOS（Apple Silicon、Intel），Windows 与 Linux 版本已在规划中",
+		"目前提供 macOS（Apple Silicon、Intel），Windows 与 Linux 版本仍在规划中。",
 	"faq.security.title": "安全如何保障？",
 	"faq.security.answer":
 		"核心采用 Rust 实现，强调内存安全与稳定性。我们会在正式版前持续完善隔离和校验机制",

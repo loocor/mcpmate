@@ -22,7 +22,7 @@ export default function FeaturesOverview() {
 			<h3>配置与管理</h3>
 			<ul>
 				<li>
-					<strong>集中配置：</strong>一次配置，随处使用，跨所有客户端生效
+					<strong>集中配置：</strong>一次配置，随处使用，跨所有客户端生效，包括用户自定义客户端
 				</li>
 				<li>
 					<strong>无缝上下文切换：</strong>在不同工作场景之间瞬间切换

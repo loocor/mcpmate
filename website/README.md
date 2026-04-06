@@ -14,8 +14,8 @@ Documentation authoring
 - Docs routes and sidebar: `src/docs/nav.ts`
 - English pages: `src/docs/pages/en/`
 - Chinese pages: `src/docs/pages/zh/`
-- Changelog data: `src/docs/changelog/en.json`, `src/docs/changelog/zh.json`
-- Keep EN/ZH docs aligned when adding or updating product capabilities
+- Changelog data: `src/docs/changelog/en.json`, `src/docs/changelog/zh.json`, `src/docs/changelog/ja.json`
+- Keep EN/ZH docs aligned when adding or updating product capabilities, then sync JA
 
 Current product highlights to keep documented
 - Core server + UI separated operation mode (backend decoupled from dashboard shell)
@@ -36,5 +36,5 @@ Preview download configuration
 - Optionally set `VITE_DOCS_URL`, `VITE_INSTALL_URL`, `VITE_WIN_URL`, `VITE_LINUX_URL`
 
 Notes
-- Waitlist section is removed; navigation includes "Download Preview" and a Download section with macOS variants.
+- Waitlist section is removed; navigation now highlights "Quick Start" and a download section with macOS variants.
 - If URLs are not set, buttons render as "Coming Soon".

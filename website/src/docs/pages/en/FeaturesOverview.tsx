@@ -25,7 +25,7 @@ export default function FeaturesOverview() {
 			<ul>
 				<li>
 					<strong>Centralized Configuration:</strong> Configure once, use
-					everywhere across all your clients
+					everywhere across all your clients, including user-defined clients
 				</li>
 				<li>
 					<strong>Seamless Context Switching:</strong> Instantly switch between
