@@ -40,7 +40,7 @@ const en = {
 	"download.expired": "Public preview is paused while we finish the refactor.",
 	"download.expires_in": "Preview expires in",
 	"download.subtitle":
-		"Build from source with Rust. Available for macOS, Windows, and Linux.",
+		"Build from source with Rust. macOS is available now; Windows and Linux builds are planned.",
 	"download.for": "Download for",
 	"download.version": "Version",
 	"download.early_access": "(Preview)",
@@ -126,8 +126,8 @@ const en = {
 	"value.owners.title": "Operate locally with clearer control",
 	"value.owners.p1": "Run the core as a local service and reopen the web UI or desktop shell only when you need it.",
 	"value.owners.p2": "Use the local API and Inspector to automate checks and investigate real behavior.",
-	"value.owners.p3": "Keep privacy, auditability, and local boundaries visible instead of burying them in scattered config files.",
-	"value.owners.diagram": "Enterprise Readiness",
+	"value.owners.p3": "Keep privacy, observability, and local boundaries visible instead of burying them in scattered config files.",
+	"value.owners.diagram": "Operational Clarity",
 
 	// Architecture (Design Values)
 	"arch.title": "Design Principles",
@@ -191,7 +191,7 @@ const en = {
 	"faq.title": "Frequently Asked Questions",
 	"faq.opensource.title": "Is MCPMate open source?",
 	"faq.opensource.answer":
-		"Yes! MCPMate is open source under the MIT license. Check out the code at github.com/loocor/mcpmate",
+		"Yes! MCPMate is open source under the AGPL-3.0 license. Check out the code at github.com/loocor/mcpmate",
 	"faq.expiry.title": "What happens when the preview expires?",
 	"faq.expiry.answer":
     	"Pull the latest changes from GitHub and rebuild to get the newest version.",

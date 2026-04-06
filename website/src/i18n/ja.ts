@@ -40,7 +40,7 @@ const ja = {
 	"download.expired": "パブリックプレビューは一時停止中です。リファクタリング完了をお待ちください。",
 	"download.expires_in": "プレビュー版の残り時間",
 	"download.subtitle":
-		"Rust でソースからビルド。macOS、Windows、Linux に対応。",
+		"Rust でソースからビルド。macOS は現在利用可能で、Windows と Linux 版は引き続き計画中です。",
 	"download.for": "ダウンロード",
 	"download.version": "バージョン",
 	"download.early_access": "（プレビュー版）",
@@ -116,8 +116,8 @@ const ja = {
 	"value.owners.title": "ローカルでより明確に運用",
 	"value.owners.p1": "コアをローカルサービスとして実行し、必要な時だけ Web UI またはデスクトップシェルを開きます。",
 	"value.owners.p2": "ローカル API とインスペクターを使用して、自動チェック、問題の特定、動作検証を行います。",
-	"value.owners.p3": "プライバシー、監査可能性、ローカル実行の事実を可視化し続け、散在する設定ファイルに埋もれさせません。",
-	"value.owners.diagram": "エンタープライズ準備",
+	"value.owners.p3": "プライバシー、可観測性、ローカル実行の事実を可視化し続け、散在する設定ファイルに埋もれさせません。",
+	"value.owners.diagram": "運用の透明性",
 
 	// アーキテクチャ（設計価値観）
 	"arch.title": "設計原則",
@@ -176,13 +176,13 @@ const ja = {
 	"faq.title": "よくある質問",
 	"faq.opensource.title": "MCPMate はオープンソースですか？",
 	"faq.opensource.answer":
-		"はい！MCPMate は MIT ライセンスでオープンソースです。コードは github.com/loocor/mcpmate でご覧いただけます。",
+		"はい！MCPMate は AGPL-3.0 ライセンスでオープンソースです。コードは github.com/loocor/mcpmate でご覧いただけます。",
 	"faq.expiry.title": "プレビュー版が期限切れになったらどうなりますか？",
 	"faq.expiry.answer":
 		"GitHub から最新の変更をプルし、再ビルドすると最新版を入手できます。",
 	"faq.platforms.title": "どのプラットフォームに対応していますか？",
 	"faq.platforms.answer":
-		"現在 macOS（Apple Silicon、Intel）に対応しています。Windows と Linux 版は計画中です。",
+		"現在 macOS（Apple Silicon、Intel）に対応しています。Windows と Linux 版は引き続き計画中です。",
 	"faq.security.title": "セキュリティはどうなっていますか？",
 	"faq.security.answer":
 		"コアは Rust で実装され、安全性を重視しています。MCPMate はツールをオーケストレーションし、GA 前にサンドボックスと検証を強化し続けます。",

@@ -7,7 +7,7 @@ export default function ClientAppsZH() {
 	return (
 		<DocLayout meta={{ title: "兼容应用", description: "与 MCPMate 集成的应用" }}>
 			<P>
-				客户端页面用于管理能够连接 MCPMate 的桌面应用（如 Cursor、Claude Desktop、Zed 等）。页面集成自动发现、托管开关与配置位置信息，帮助你随时掌握编辑器与代理的协同状态。
+				客户端页面用于管理能够连接 MCPMate 的桌面应用（如 Cursor、Claude Desktop、Zed、Codex 以及用户自定义客户端）。页面集成自动发现、托管开关与配置位置信息，帮助你随时掌握编辑器与代理的协同状态。
 			</P>
 
 			<DocScreenshot
@@ -56,7 +56,7 @@ export default function ClientAppsZH() {
 					<strong>概览</strong>：检测状态、托管开关、应用配置集等操作，以及打开 MCP 配置目录等快捷入口。
 				</Li>
 				<Li>
-					<strong>配置</strong>：展示 MCPMate 将为该客户端写入的 MCP 服务、从客户端导入配置，以及统一模式 / 托管模式 / 透明模式相关说明。
+					<strong>配置</strong>：展示 MCPMate 将为该客户端写入的 MCP 服务、从客户端导入配置，以及统一模式 / 托管模式 / 透明模式相关说明；对遵循同一 MCP 配置契约的自定义客户端也适用。
 				</Li>
 				<Li>
 					<strong>备份</strong>：应用配置集或导入时生成的轮转快照；可恢复、批量删除，或在成功后刷新列表。

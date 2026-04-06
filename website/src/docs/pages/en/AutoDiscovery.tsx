@@ -13,7 +13,9 @@ export default function AutoDiscovery() {
 			<P>
 				MCPMate can automatically discover existing MCP server configurations on
 				your system and import them with a single click. This eliminates the
-				tedious process of manually recreating your setup in a new tool.
+				tedious process of manually recreating your setup in a new tool, and the
+				import flow can also be reused for user-defined clients that store MCP
+				configs in standard locations.
 			</P>
 
 			<H2>How it works</H2>
@@ -25,7 +27,7 @@ export default function AutoDiscovery() {
 				<Li>Claude Desktop configuration files</Li>
 				<Li>VS Code MCP extension settings</Li>
 				<Li>Cursor MCP configurations</Li>
-				<Li>Other standard MCP client setups</Li>
+				<Li>Other standard MCP client setups, including user-defined clients</Li>
 			</Ul>
 
 			<H2>Import process</H2>

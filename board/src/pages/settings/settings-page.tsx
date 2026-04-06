@@ -187,10 +187,10 @@ const BACKUP_STRATEGY_CONFIG = [
 	},
 ];
 
-const CHROME_EXTENSION_PLACEHOLDER_URL =
-	"https://mcp.umate.ai/extensions/chrome";
-const EDGE_EXTENSION_PLACEHOLDER_URL =
-	"https://mcp.umate.ai/extensions/edge";
+const CHROME_EXTENSION_URL =
+	"https://chromewebstore.google.com/detail/mcpmate-server-import/jngogcgclencgillbmeeimkcjjnobidf";
+const EDGE_EXTENSION_URL =
+	"https://microsoftedge.microsoft.com/addons/detail/mcpmate-server-import/nbpdfanhajcjghegoocfmjkpaklidckn";
 
 interface ShellPreferencesResponse {
 	menuBarIconMode: MenuBarIconMode;
@@ -2385,7 +2385,7 @@ function MarketBlacklistCard({
 						</div>
 						<Button asChild variant="outline" size="sm" className="w-52 shrink-0">
 							<a
-								href={CHROME_EXTENSION_PLACEHOLDER_URL}
+								href={CHROME_EXTENSION_URL}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="inline-flex w-full items-center justify-center"
@@ -2414,7 +2414,7 @@ function MarketBlacklistCard({
 						</div>
 						<Button asChild variant="outline" size="sm" className="w-52 shrink-0">
 							<a
-								href={EDGE_EXTENSION_PLACEHOLDER_URL}
+								href={EDGE_EXTENSION_URL}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="inline-flex w-full items-center justify-center"
@@ -2428,9 +2428,9 @@ function MarketBlacklistCard({
 					</div>
 
 					<p className="text-xs text-muted-foreground">
-						{t("settings:market.browserExtensionsReviewHint", {
+						{t("settings:market.browserExtensionsAvailableHint", {
 							defaultValue:
-								"Browser extensions are currently under store review. Use these links to check availability and install once approved.",
+								"Browser extensions are now available on Chrome Web Store and Microsoft Edge Add-ons.",
 						})}
 					</p>
 				</div>

@@ -243,10 +243,10 @@ export const settingsTranslations = {
       installEdgeExtension: "Install Edge Extension",
       installEdgeExtensionDescription:
         "Find MCP server configs on web pages and import with one click.",
-      browserExtensionsReviewHint:
-        "Extensions are under store review. Install when approved.",
-      browserExtensionsPlaceholderHint:
-        "Placeholder links for now. They will be replaced with official extension store URLs.",
+      browserExtensionsAvailableHint:
+        "Browser extensions are now available on Chrome Web Store and Microsoft Edge Add-ons.",
+      browserExtensionsStoreHint:
+        "Install from Chrome Web Store or Microsoft Edge Add-ons.",
       hiddenOn: "Hidden on {{value}}",
       restore: "Restore",
     },
@@ -525,10 +525,10 @@ export const settingsTranslations = {
       installEdgeExtension: "安装 Edge 扩展",
       installEdgeExtensionDescription:
         "发现网页中的 MCP Server 配置并一键导入 MCPMate。",
-      browserExtensionsReviewHint:
-        "扩展正在商店审核中，审核通过后可安装。",
-      browserExtensionsPlaceholderHint:
-        "当前为占位链接，后续会替换为官方扩展商店地址。",
+      browserExtensionsAvailableHint:
+        "浏览器扩展已上架 Chrome 网上应用店和 Microsoft Edge 加载项。",
+      browserExtensionsStoreHint:
+        "可从 Chrome 网上应用店或 Microsoft Edge 加载项安装。",
       hiddenOn: "隐藏于 {{value}}",
       restore: "恢复",
     },
@@ -815,10 +815,10 @@ export const settingsTranslations = {
       installEdgeExtension: "Edge 拡張をインストール",
       installEdgeExtensionDescription:
         "Web ページ上の MCP Server 設定を見つけてワンクリックで取り込めます。",
-      browserExtensionsReviewHint:
-        "拡張は現在ストア審査中です。承認後にインストールできます。",
-      browserExtensionsPlaceholderHint:
-        "現在はプレースホルダーリンクです。後で公式ストア URL に置き換えます。",
+      browserExtensionsAvailableHint:
+        "ブラウザ拡張機能は Chrome ウェブストアと Microsoft Edge アドオンで公開中です。",
+      browserExtensionsStoreHint:
+        "Chrome ウェブストアまたは Microsoft Edge アドオンからインストールできます。",
       hiddenOn: "非表示日時：{{value}}",
       restore: "復元",
     },
