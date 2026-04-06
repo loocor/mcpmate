@@ -1,11 +1,14 @@
 import { ArrowUp } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { ErrorDisplay } from "../../components/error-display";
 import { Button } from "../../components/ui/button";
+import { serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyInfo } from "../../lib/notify";
+import { buildRegistryServerKey, matchesInstalledRegistryServer } from "../../lib/registry";
 import { useAppStore } from "../../lib/store";
 import type { RegistryServerEntry } from "../../lib/types";
 import { useMarketData } from "./hooks/use-market-data";
@@ -23,6 +26,11 @@ export function MarketPage() {
 	const [sort, setSort] = useState<SortOption>("recent");
 	const debouncedSearch = useDebouncedValue(search.trim(), 300);
 	const [showScrollTop, setShowScrollTop] = useState(false);
+	const installedServersQuery = useQuery({
+		queryKey: ["servers"],
+		queryFn: () => serversApi.getAll(),
+		staleTime: 30_000,
+	});
 
 	const {
 		servers,
@@ -48,6 +56,17 @@ export function MarketPage() {
 	const enableMarketBlacklist = useAppStore(
 		(state) => state.dashboardSettings.enableMarketBlacklist,
 	);
+
+	const installedRegistryServerKeys = useMemo(() => {
+		const installedServers = installedServersQuery.data?.servers ?? [];
+		const installedKeys = new Set<string>();
+		for (const registryServer of servers) {
+			if (installedServers.some((installedServer) => matchesInstalledRegistryServer(registryServer, installedServer))) {
+				installedKeys.add(buildRegistryServerKey(registryServer));
+			}
+		}
+		return installedKeys;
+	}, [installedServersQuery.data?.servers, servers]);
 
 	const handleHideServer = useCallback(
 		(entry: RegistryServerEntry) => {
@@ -106,6 +125,7 @@ export function MarketPage() {
 
 			<ServerGrid
 				servers={servers}
+				installedRegistryServerKeys={installedRegistryServerKeys}
 				isInitialLoading={isInitialLoading}
 				isPageLoading={isPageLoading}
 				isEmpty={isEmpty}

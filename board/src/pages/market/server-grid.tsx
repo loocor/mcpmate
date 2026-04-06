@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Pagination } from "../../components/pagination";
 import { Card, CardFooter, CardHeader } from "../../components/ui/card";
+import { buildRegistryServerKey } from "../../lib/registry";
 import { MarketCard } from "./market-card";
 import type { ServerGridProps } from "./types";
 
@@ -9,6 +10,7 @@ const MARKET_PAGE_SIZE_OPTIONS = [9, 27, 54, 72];
 
 export function ServerGrid({
 	servers,
+	installedRegistryServerKeys,
 	isInitialLoading,
 	isPageLoading,
 	isEmpty,
@@ -98,6 +100,7 @@ export function ServerGrid({
 								<MarketCard
 									key={`${server.name}-${server.version}`}
 									server={server}
+									isInstalled={installedRegistryServerKeys.has(buildRegistryServerKey(server))}
 									onPreview={onServerPreview}
 									onInstall={onServerInstall}
 									onHide={onServerHide}
