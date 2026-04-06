@@ -285,12 +285,12 @@ export function Layout() {
 			<Sidebar />
 			<Header />
 			<main
-				className={`pt-16 transition-all duration-300 ease-in-out ${sidebarOpen ? "ml-64" : "ml-16"
+				className={`min-w-0 pt-16 transition-all duration-300 ease-in-out ${sidebarOpen ? "ml-64" : "ml-16"
 					}`}
 			>
 				{/* Viewport-height column: outlet fills space above footer; pages can use h-full + inner scroll */}
-				<div className="box-border flex h-[calc(100vh-4rem)] w-full flex-col overflow-hidden p-4">
-					<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+				<div className="box-border flex h-[calc(100vh-4rem)] w-full min-w-0 flex-col overflow-hidden p-4">
+					<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 						<Outlet />
 					</div>
 					<footer className="mt-6 shrink-0 text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-700 pt-2 pb-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">

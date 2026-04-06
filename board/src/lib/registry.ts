@@ -3,6 +3,7 @@ import type {
   RegistryOfficialMeta,
   RegistryServerEntry,
   RegistryServerListResponse,
+  ServerSummary,
 } from "./types";
 
 export interface CachedRegistryServerListResponse
@@ -149,6 +150,95 @@ export function getCanonicalRegistryServerId(server: RegistryServerEntry): strin
   return canonicalName;
 }
 
+function getEquivalentOfficialAlias(server: RegistryServerEntry): string | null {
+  const canonicalName = (server.name ?? "").trim();
+  const officialServerId = getOfficialMeta(server)?.serverId?.trim();
+  if (!canonicalName || !officialServerId || officialServerId !== canonicalName) {
+    return null;
+  }
+  return officialServerId;
+}
+
 export function buildRegistryServerKey(server: RegistryServerEntry): string {
   return getCanonicalRegistryServerId(server);
+}
+
+function normalizeRegistryCandidate(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function collectRegistryCandidates(values: Array<string | null | undefined>): Set<string> {
+  const candidates = new Set<string>();
+  for (const value of values) {
+    const normalized = normalizeRegistryCandidate(value);
+    if (normalized) {
+      candidates.add(normalized);
+    }
+  }
+  return candidates;
+}
+
+function normalizeUrlCandidate(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const normalized = new URL(trimmed);
+    normalized.hash = "";
+    if ((normalized.protocol === "http:" || normalized.protocol === "https:") && normalized.pathname !== "/") {
+      normalized.pathname = normalized.pathname.replace(/\/+$/, "") || "/";
+    }
+    if (!normalized.search) {
+      normalized.search = "";
+    }
+    return normalized.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed.replace(/\/$/, "");
+  }
+}
+
+export function matchesInstalledRegistryServer(
+  registryServer: RegistryServerEntry,
+  installedServer: ServerSummary,
+): boolean {
+  const registryCandidates = collectRegistryCandidates([
+    registryServer.name,
+    getCanonicalRegistryServerId(registryServer),
+    getEquivalentOfficialAlias(registryServer),
+  ]);
+
+  if (registryCandidates.size === 0) {
+    return false;
+  }
+
+  const installedOfficialMeta = installedServer.meta?._meta?.["io.modelcontextprotocol.registry/official"] as
+    | RegistryOfficialMeta
+    | undefined;
+  const installedCandidates = collectRegistryCandidates([
+    installedServer.registry_server_id,
+    installedServer.name,
+    installedOfficialMeta?.serverId?.trim() === installedServer.registry_server_id?.trim()
+      ? installedOfficialMeta?.serverId
+      : null,
+  ]);
+
+  for (const candidate of installedCandidates) {
+    if (registryCandidates.has(candidate)) {
+      return true;
+    }
+  }
+
+  const installedUrl = normalizeUrlCandidate(installedServer.url);
+  if (!installedUrl) {
+    return false;
+  }
+
+  const registryRemoteUrls = (registryServer.remotes ?? [])
+    .map((remote) => normalizeUrlCandidate(remote.url))
+    .filter((value): value is string => Boolean(value));
+
+  return registryRemoteUrls.includes(installedUrl);
 }
