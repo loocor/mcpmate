@@ -1,12 +1,17 @@
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use std::collections::HashMap;
 
-/// Strip "Bearer " prefix (case-insensitive) from a string, returning the stripped content or None.
+/// Strip a leading `Bearer` scheme (ASCII case-insensitive) and following whitespace from `s`.
+/// Returns the remainder (credential) or `None` if the scheme is not Bearer.
 fn strip_bearer_case_insensitive(s: &str) -> Option<&str> {
     let trimmed = s.trim();
-    trimmed
-        .strip_prefix("Bearer ")
-        .or_else(|| trimmed.strip_prefix("bearer "))
+    let scheme_end = trimmed.find(char::is_whitespace)?;
+    let (scheme, rest) = trimmed.split_at(scheme_end);
+    if scheme.eq_ignore_ascii_case("bearer") {
+        Some(rest.trim_start())
+    } else {
+        None
+    }
 }
 
 /// Extract bearer token value from `headers` map.
@@ -70,6 +75,8 @@ mod tests {
     fn test_trim_bearer_prefix() {
         assert_eq!(trim_bearer_prefix("Bearer ABC"), "ABC");
         assert_eq!(trim_bearer_prefix("bearer XYZ "), "XYZ");
+        assert_eq!(trim_bearer_prefix("BEARER mixed-case"), "mixed-case");
+        assert_eq!(trim_bearer_prefix("BeArEr\ttab-sep"), "tab-sep");
         assert_eq!(trim_bearer_prefix("NOPREFIX"), "NOPREFIX");
         assert_eq!(trim_bearer_prefix("  Bearer  TKN-123  "), "TKN-123");
     }
@@ -83,6 +90,10 @@ mod tests {
         let mut h2 = HashMap::new();
         h2.insert("authorization".to_string(), "bearer tok-2".to_string());
         assert_eq!(extract_bearer_token(&Some(h2)), Some("tok-2".to_string()));
+
+        let mut h2b = HashMap::new();
+        h2b.insert("Authorization".to_string(), "BEARER tok-2b".to_string());
+        assert_eq!(extract_bearer_token(&Some(h2b)), Some("tok-2b".to_string()));
 
         let mut h3 = HashMap::new();
         h3.insert("AUTHORIZATION".to_string(), "Token something".to_string());
