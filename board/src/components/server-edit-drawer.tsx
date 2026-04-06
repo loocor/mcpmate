@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { notifySuccess, notifyError } from "../lib/notify";
+import { startOAuthAccessFlow } from "../lib/oauth-callback-access";
 import type { ServerInstallDraft } from "../hooks/use-server-install-pipeline";
 import type {
 	MCPServerConfig,
@@ -8,7 +9,6 @@ import type {
 	ServerIcon,
 	ServerMetaInfo,
 } from "../lib/types";
-import { serversApi } from "../lib/api";
 import { ServerInstallManualForm, type ServerInstallManualFormHandle } from "./server-uni-import";
 
 interface ServerEditDrawerProps {
@@ -302,33 +302,7 @@ export function ServerEditDrawer({
 			if (!server?.id) return;
 			
 			try {
-				const shouldUseManualConfig =
-					Boolean(config.authorization_endpoint?.trim()) &&
-					Boolean(config.token_endpoint?.trim()) &&
-					Boolean(config.client_id?.trim());
-				if (shouldUseManualConfig) {
-					await serversApi.saveOAuthConfig(server.id, config);
-				} else {
-					await serversApi.prepareOAuth(server.id, {
-						redirect_uri: config.redirect_uri,
-						scopes: config.scopes,
-					});
-				}
-				const redirectRes = await serversApi.initiateOAuth(server.id);
-				if (redirectRes.authorization_url) {
-					const width = 600;
-					const height = 800;
-					const left = window.screenX + (window.outerWidth - width) / 2;
-					const top = window.screenY + (window.outerHeight - height) / 2;
-					const popup = window.open(
-						redirectRes.authorization_url,
-						"oauth_window",
-						`width=${width},height=${height},left=${left},top=${top}`,
-					);
-					if (!popup) {
-						window.location.assign(redirectRes.authorization_url);
-					}
-				}
+				await startOAuthAccessFlow(server.id, config);
 			} catch (error) {
 				console.error("Failed to initiate OAuth:", error);
 				throw error;

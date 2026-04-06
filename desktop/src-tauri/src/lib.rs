@@ -21,6 +21,7 @@ mod account;
 mod audit;
 mod core_service;
 mod deep_link;
+mod oauth_callback_access;
 mod runtime_ports;
 mod shell;
 mod source_config;
@@ -30,6 +31,7 @@ use core_service::{
     sync_local_service_definition, uninstall_local_service,
 };
 use deep_link::ImportServerDeepLinkPayload;
+use oauth_callback_access::OAuthCallbackAccessState;
 use shell::{ShellPreferences, ShellState};
 use source_config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -357,6 +359,7 @@ pub fn run() -> Result<()> {
             let shell_state = ShellState::new(shell_prefs.clone(), prefs_path);
             shell::apply_activation_policy(app.handle(), &shell_prefs)?;
             app.manage(shell_state.clone());
+            app.manage(OAuthCallbackAccessState::default());
 
             let open_main_item =
                 MenuItem::with_id(app, shell::MENU_OPEN_MAIN, "Open MCPMate", true, None::<&str>)?;
@@ -647,7 +650,6 @@ pub fn run() -> Result<()> {
                     }
                 }
             }
-
             if !shell_prefs.show_dock_icon
                 && let Some(window) = app.get_webview_window("main")
             {
@@ -666,7 +668,9 @@ pub fn run() -> Result<()> {
         mcp_deep_link_take_pending_server_import,
         mcp_account_start_github_login,
         mcp_account_get_status,
-        mcp_account_logout
+        mcp_account_logout,
+        mcp_oauth_prepare_callback_access,
+        mcp_oauth_open_authorization_url
     ]);
 
     builder
@@ -951,8 +955,8 @@ async fn mcp_shell_manage_local_core_service(
         .await
         .map_err(|err| err.to_string())?;
 
-    if let Some(audit_action) = audit_action {
-        if let Err(err) = audit::emit_desktop_audit_event(
+    if let Some(audit_action) = audit_action
+        && let Err(err) = audit::emit_desktop_audit_event(
             audit_action,
             mcpmate::audit::AuditStatus::Success,
             Some(action_name.clone()),
@@ -967,9 +971,8 @@ async fn mcp_shell_manage_local_core_service(
             None,
         )
         .await
-        {
-            warn!(error = %err, "Failed to emit desktop audit event for service action");
-        }
+    {
+        warn!(error = %err, "Failed to emit desktop audit event for service action");
     }
 
     Ok(view)
@@ -995,6 +998,30 @@ fn mcp_account_get_status(app: tauri::AppHandle) -> Result<account::AccountStatu
 #[tauri::command]
 fn mcp_account_logout() -> Result<(), String> {
     account::logout()
+}
+
+#[tauri::command]
+async fn mcp_oauth_prepare_callback_access(
+    app: tauri::AppHandle,
+    access_state: tauri::State<'_, OAuthCallbackAccessState>,
+    server_id: String,
+    api_base_url: String,
+) -> Result<oauth_callback_access::OAuthCallbackAccessContract, String> {
+    oauth_callback_access::prepare_callback_access(
+        app,
+        access_state.inner().clone(),
+        server_id,
+        api_base_url,
+    )
+    .await
+}
+
+#[tauri::command]
+fn mcp_oauth_open_authorization_url(
+    app: tauri::AppHandle,
+    authorization_url: String,
+) -> Result<(), String> {
+    oauth_callback_access::open_authorization_url(&app, &authorization_url)
 }
 
 fn configure_tauri_environment() {
