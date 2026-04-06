@@ -2,6 +2,7 @@ import type { RegistryServerEntry } from "../../lib/types";
 
 export interface MarketCardProps {
 	server: RegistryServerEntry;
+	isInstalled: boolean;
 	onPreview: (server: RegistryServerEntry) => void;
 	onInstall: (server: RegistryServerEntry) => void;
 	onHide: (server: RegistryServerEntry) => void;
@@ -32,6 +33,7 @@ export interface RemoteOption {
 
 export interface ServerGridProps {
 	servers: RegistryServerEntry[];
+	installedRegistryServerKeys: Set<string>;
 	isInitialLoading: boolean;
 	isPageLoading: boolean;
 	isEmpty: boolean;

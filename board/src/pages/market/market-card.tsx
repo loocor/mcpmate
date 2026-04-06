@@ -1,6 +1,7 @@
 import { ExternalLink, EyeOff, Plug, Download, ShieldCheck } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import type { MouseEvent, KeyboardEvent } from "react";
 import { Avatar, AvatarFallback } from "../../components/ui/avatar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -12,9 +13,7 @@ import {
 	CardTitle,
 } from "../../components/ui/card";
 import { notifyInfo } from "../../lib/notify";
-import { useQuery } from "@tanstack/react-query";
-import { serversApi } from "../../lib/api";
-import { getOfficialMeta, matchesInstalledRegistryServer } from "../../lib/registry";
+import { getOfficialMeta } from "../../lib/registry";
 import { cn, formatLocalDateTime, truncate } from "../../lib/utils";
 import type { MarketCardProps } from "./types";
 import {
@@ -25,6 +24,7 @@ import {
 
 export function MarketCard({
 	server,
+	isInstalled,
 	onPreview,
 	onInstall,
 	onHide,
@@ -32,20 +32,6 @@ export function MarketCard({
 }: MarketCardProps) {
 	const { t } = useTranslation("market");
 	const official = getOfficialMeta(server);
-
-	const installedServersQuery = useQuery({
-		queryKey: ["servers"],
-		queryFn: () => serversApi.getAll(),
-		staleTime: 30_000,
-	});
-
-	const isInstalled = useMemo(() => {
-		const installedServer =
-			installedServersQuery.data?.servers.find((item) => {
-				return matchesInstalledRegistryServer(server, item);
-			}) ?? null;
-		return Boolean(installedServer);
-	}, [installedServersQuery.data?.servers, server]);
 
 	const transportBadges = useMemo(() => {
 		const set = new Set(
@@ -82,7 +68,7 @@ export function MarketCard({
 		onPreview(server);
 	};
 
-	const handleInstall = (e: React.MouseEvent | React.KeyboardEvent) => {
+	const handleInstall = (e: MouseEvent | KeyboardEvent) => {
 		e.stopPropagation();
 		e.preventDefault();
 		onInstall(server);

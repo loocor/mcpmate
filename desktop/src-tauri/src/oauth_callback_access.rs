@@ -20,6 +20,7 @@ use tracing::warn;
 const CALLBACK_EVENT_NAME: &str = "mcp-oauth/callback";
 const CALLBACK_PATH: &str = "/oauth/callback";
 const CALLBACK_FLOW_TIMEOUT: Duration = Duration::from_secs(600);
+const CALLBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Default)]
 pub struct OAuthCallbackAccessState {
@@ -206,7 +207,11 @@ async fn complete_oauth_callback(
     code: &str,
 ) -> Result<String, String> {
     let endpoint = format!("{api_base_url}/api/mcp/servers/oauth/callback");
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(CALLBACK_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
         .post(endpoint)
         .json(&CompleteOAuthRequest {
             state: oauth_state.to_string(),

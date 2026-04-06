@@ -150,15 +150,6 @@ export function getCanonicalRegistryServerId(server: RegistryServerEntry): strin
   return canonicalName;
 }
 
-function getEquivalentOfficialAlias(server: RegistryServerEntry): string | null {
-  const canonicalName = (server.name ?? "").trim();
-  const officialServerId = getOfficialMeta(server)?.serverId?.trim();
-  if (!canonicalName || !officialServerId || officialServerId !== canonicalName) {
-    return null;
-  }
-  return officialServerId;
-}
-
 export function buildRegistryServerKey(server: RegistryServerEntry): string {
   return getCanonicalRegistryServerId(server);
 }
@@ -207,7 +198,6 @@ export function matchesInstalledRegistryServer(
   const registryCandidates = collectRegistryCandidates([
     registryServer.name,
     getCanonicalRegistryServerId(registryServer),
-    getEquivalentOfficialAlias(registryServer),
   ]);
 
   if (registryCandidates.size === 0) {
@@ -220,9 +210,7 @@ export function matchesInstalledRegistryServer(
   const installedCandidates = collectRegistryCandidates([
     installedServer.registry_server_id,
     installedServer.name,
-    installedOfficialMeta?.serverId?.trim() === installedServer.registry_server_id?.trim()
-      ? installedOfficialMeta?.serverId
-      : null,
+    installedOfficialMeta?.serverId,
   ]);
 
   for (const candidate of installedCandidates) {
