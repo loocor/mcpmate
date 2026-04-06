@@ -49,7 +49,7 @@ MCPMate 通过本地代理运行，生成一致的客户端配置，按配置集
 
 - 连接多个 MCP 服务器并聚合它们的工具
 - 为 AI 客户端提供统一接口
-- 实现 Stdio 和 Streamable HTTP 传输协议（符合 MCP 2025-06-18 规范）
+- 实现 stdio 和 Streamable HTTP 传输协议（符合 MCP 2025-06-18 规范）
 - 接受旧版 SSE 配置的服务器，并自动归一化为 Streamable HTTP 以保持向后兼容
 - 支持上游 Streamable HTTP MCP 服务器的 OAuth 2.1 授权流程，包含元数据发现与回调处理
 - 实时监控并记录 MCP 通信
@@ -87,7 +87,7 @@ runtime list
 
 ### 桌面应用
 
-基于 Tauri2 的跨平台桌面应用：
+基于 Tauri 2 的跨平台桌面应用：
 
 - 完整的图形界面，管理 MCP 服务器、配置集和工具
 - 实时监控和状态显示
@@ -130,13 +130,13 @@ runtime list
 
 ![Server Resources](./assets/server-resources.png)
 
-###配置集概览
+### 配置集概览
 
 每个配置集聚合服务器、工具、资源和提示词，用于特定场景。
 
 ![Profile Overview](./assets/profile-detail-overview.png)
 
-###配置集— 工具配置
+### 配置集— 工具配置
 
 在配置集中启用或禁用单个工具。
 
