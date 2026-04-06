@@ -1425,14 +1425,10 @@ impl BrokerService {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(60);
+        let mut options = PeerRequestOptions::no_options();
+        options.timeout = Some(std::time::Duration::from_secs(timeout_secs));
         let handle = peer
-            .send_cancellable_request(
-                request,
-                PeerRequestOptions {
-                    timeout: Some(std::time::Duration::from_secs(timeout_secs)),
-                    meta: None,
-                },
-            )
+            .send_cancellable_request(request, options)
             .await
             .context("Failed to send Unify broker tool call")?;
 

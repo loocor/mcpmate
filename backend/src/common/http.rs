@@ -1,6 +1,14 @@
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use std::collections::HashMap;
 
+/// Strip "Bearer " prefix (case-insensitive) from a string, returning the stripped content or None.
+fn strip_bearer_case_insensitive(s: &str) -> Option<&str> {
+    let trimmed = s.trim();
+    trimmed
+        .strip_prefix("Bearer ")
+        .or_else(|| trimmed.strip_prefix("bearer "))
+}
+
 /// Extract bearer token value from `headers` map.
 /// Expects `Authorization: Bearer <token>`; returns `<token>` without the prefix.
 pub fn extract_bearer_token(headers: &Option<HashMap<String, String>>) -> Option<String> {
@@ -14,28 +22,15 @@ pub fn extract_bearer_token(headers: &Option<HashMap<String, String>>) -> Option
         }
     }
     let val = auth_val?;
-    let trimmed = val.trim();
-    // Accept common forms like "Bearer <token>" (case-insensitive)
-    if let Some(rest) = trimmed.strip_prefix("Bearer ") {
-        return Some(rest.trim().to_string());
-    }
-    if let Some(rest) = trimmed.strip_prefix("bearer ") {
-        return Some(rest.trim().to_string());
-    }
-    // If no prefix, we conservatively reject to avoid sending malformed headers
-    None
+    strip_bearer_case_insensitive(val).map(|rest| rest.trim().to_string())
 }
 
 /// Remove a leading "Bearer " (case-insensitive) prefix from a token string.
 pub fn trim_bearer_prefix<S: AsRef<str>>(s: S) -> String {
-    let val = s.as_ref().trim();
-    if let Some(rest) = val.strip_prefix("Bearer ") {
-        return rest.trim().to_string();
-    }
-    if let Some(rest) = val.strip_prefix("bearer ") {
-        return rest.trim().to_string();
-    }
-    val.to_string()
+    let val = s.as_ref();
+    strip_bearer_case_insensitive(val)
+        .map(|rest| rest.trim().to_string())
+        .unwrap_or_else(|| val.trim().to_string())
 }
 
 /// Build a Streamable HTTP client config using URL and optional headers.
@@ -44,7 +39,7 @@ pub fn make_streamable_config(
     url: &str,
     headers: &Option<HashMap<String, String>>,
 ) -> StreamableHttpClientTransportConfig {
-    let mut cfg = StreamableHttpClientTransportConfig::with_uri(url);
+    let mut cfg = StreamableHttpClientTransportConfig::with_uri(url).reinit_on_expired_session(true);
     if let Some(token) = extract_bearer_token(headers) {
         cfg = cfg.auth_header(token);
     }
@@ -56,7 +51,7 @@ pub fn make_streamable_config_with_bearer(
     url: &str,
     bearer: Option<&str>,
 ) -> StreamableHttpClientTransportConfig {
-    let mut cfg = StreamableHttpClientTransportConfig::with_uri(url);
+    let mut cfg = StreamableHttpClientTransportConfig::with_uri(url).reinit_on_expired_session(true);
     if let Some(token) = bearer {
         let trimmed = trim_bearer_prefix(token);
         if !trimmed.is_empty() {
@@ -101,9 +96,11 @@ mod tests {
         let cfg = make_streamable_config("http://x/mcp", &Some(h));
         assert_eq!(cfg.uri.as_ref(), "http://x/mcp");
         assert_eq!(cfg.auth_header.as_deref(), Some("tok-3"));
+        assert!(cfg.reinit_on_expired_session);
 
         let cfg2 = make_streamable_config_with_bearer("http://y/mcp", Some("Bearer tok-4"));
         assert_eq!(cfg2.uri.as_ref(), "http://y/mcp");
         assert_eq!(cfg2.auth_header.as_deref(), Some("tok-4"));
+        assert!(cfg2.reinit_on_expired_session);
     }
 }

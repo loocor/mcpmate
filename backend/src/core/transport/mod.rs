@@ -2,8 +2,6 @@
 // Provides abstractions for different transport types (stdio, sse, http, unified)
 
 pub mod http;
-#[cfg(test)]
-mod http_auth_tests;
 
 // sse functions are merged into http module
 pub mod client;
