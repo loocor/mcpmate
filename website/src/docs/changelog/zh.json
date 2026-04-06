@@ -1,5 +1,26 @@
 [
 	{
+		"version": "0.1.9",
+		"date": "2026-04-06",
+		"highlights": [
+			"新增 Streamable HTTP MCP 服务器的 OAuth 上游支持、浏览器扩展正式上架，并统一文档术语为 Logs 与 Operational Clarity。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "新增面向 Streamable HTTP MCP 服务器的 OAuth 2.1 上游支持。MCPMate 现可代理需要 OAuth 的 MCP 服务器，自动完成元数据发现、授权码流程与 token 刷新。"
+			},
+			{
+				"type": "feat",
+				"text": "浏览器扩展已通过审核并上架 Chrome 网上应用店与 Microsoft Edge 加载项。可在网页中检测 mcpServers JSON 配置片段，并通过 mcpmate:// 协议一键导入到 MCPMate 桌面端。"
+			},
+			{
+				"type": "docs",
+				"text": "术语对齐：将文档与控制台中的 \"Audit Hub\" 更名为 \"Logs\"；将营销文案中的 \"Enterprise Readiness\" 替换为 \"Operational Clarity\"。"
+			}
+		]
+	},
+	{
 		"version": "0.1.8",
 		"date": "2026-04-02",
 		"highlights": [

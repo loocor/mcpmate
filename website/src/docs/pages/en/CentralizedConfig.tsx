@@ -14,7 +14,8 @@ export default function CentralizedConfig() {
 				One of MCPMate's core features is centralized configuration management.
 				Instead of maintaining separate configurations for each MCP client, you
 				can configure your servers once in MCPMate and have them automatically
-				available across all connected clients.
+				available across all connected clients, including user-defined clients
+				that follow the standard MCP configuration layout.
 			</P>
 
 			<H2>Benefits</H2>
@@ -47,7 +48,7 @@ export default function CentralizedConfig() {
 
 			<H2>Use cases</H2>
 			<Ul>
-				<Li>Using the same servers across Claude Desktop, Cursor, and VS Code.</Li>
+				<Li>Using the same servers across Claude Desktop, Cursor, Codex, and user-defined clients.</Li>
 				<Li>Managing team-wide server configurations.</Li>
 				<Li>Onboarding new clients without reconfiguration.</Li>
 			</Ul>

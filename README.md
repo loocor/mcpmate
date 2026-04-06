@@ -6,9 +6,10 @@
   <img src="./assets/dashboard.png" alt="MCPMate dashboard (light)" width="100%">
 </p>
 
-> **One management center for all your MCP servers and AI clients.**
+> **One local proxy that connects MCP servers and AI clients.**
 
-MCPMate is a comprehensive Model Context Protocol (MCP) management center designed to simplify configuration, reduce resource consumption, and enhance security across the MCP ecosystem.
+Configuring the same MCP servers across multiple clients is repetitive, token-costly, and hard to observe.
+MCPMate proxies MCP servers, syncs client configs, trims capabilities by profile, and logs activity.
 
 This is not a brand-new project. I started shaping MCPMate around May 2024, paused active development around October, and recently came back to it with a clearer conviction: as the hype around skills- and CLI-shaped workflows settles into a more reflective phase, the long-term, irreplaceable value of MCP becomes easier to see.
 
@@ -30,7 +31,7 @@ MCPMate was previously developed in private and is now being reopened in public.
 
 ## Why MCPMate?
 
-Managing MCP servers across multiple AI tools (Claude Desktop, Cursor, Zed, Cherry Studio, etc.) brings significant challenges:
+Managing MCP servers across multiple AI tools (Claude Desktop, Cursor, Zed, Codex, and user-defined clients) brings significant challenges:
 
 - **Complex, repetitive configuration** — The same MCP server needs to be configured repeatedly in each client
 - **High context-switching cost** — Different work scenarios require frequent MCP configuration changes
@@ -38,7 +39,7 @@ Managing MCP servers across multiple AI tools (Claude Desktop, Cursor, Zed, Cher
 - **Security blind spots** — Configuration errors or security risks are hard to detect
 - **Fragmented management** — No single place to manage all MCP services
 
-MCPMate solves these problems through centralized configuration management, intelligent service scheduling, and enhanced security protection.
+MCPMate solves these problems by running a local proxy, generating consistent client configs, trimming tools per profile, and keeping structured Logs.
 
 ## Core Components
 
@@ -51,10 +52,10 @@ A high-performance MCP proxy server that:
 - Implements stdio and Streamable HTTP transport protocols (aligned with MCP 2025-06-18 specification)
 - Accepts legacy SSE-configured servers and automatically normalizes them to Streamable HTTP for backward compatibility
 - Supports upstream OAuth 2.1 flows for Streamable HTTP MCP servers, including metadata discovery and callback handling
-- Monitors and audits MCP communication in real time
+- Monitors and logs MCP communication in real time
 - Detects potential security risks (e.g., tool poisoning)
 - Intelligently manages server resources
-- Provides RESTful API for management and monitoring
+- Provides REST APIs for configuration and monitoring
 
 ### Bridge
 
@@ -92,16 +93,16 @@ Cross-platform desktop application built with Tauri 2:
 - Real-time monitoring and status display
 - Intelligent client detection and configuration generation
 - System tray integration with native notifications
-- Supports macOS, Windows, and Linux
+- macOS is available now; Windows and Linux builds are planned
 
-### Audit Hub
+### Logs
 
-Unified audit trail for operational and security events:
+Structured operational log for MCP proxy activity:
 
 - Collects MCP operations and management-side changes into a structured timeline
 - Supports cursor-based pagination for high-volume environments
-- Exposes REST APIs for querying and reviewing audit records
-- Provides a dedicated Audit Logs page in the dashboard UI
+- Exposes REST APIs for querying and reviewing log records
+- Provides a dedicated Logs page in the dashboard UI
 
 ## Screenshots
 
@@ -243,23 +244,28 @@ Switch between profiles instantly without restarting services.
 
 ### Multi-Client Support
 
-MCPMate detects and configures multiple AI clients:
+MCPMate detects, configures, and extends multiple AI clients:
 - Claude Desktop
 - Cursor
 - Zed
-- Cherry Studio
-- VS Code (with MCP extensions)
+- Codex
+- User-defined clients
+
+### Browser Extension Import
+
+- Chrome/Edge extension detects MCP config snippets containing `mcpServers` and hands them to MCPMate desktop via `mcpmate://import/server`.
+- Includes the source page URL along with the snippet text for import traceability.
 
 ### Security
 
 - Real-time MCP communication monitoring
 - Tool poisoning detection
-- Sensitive data detection
-- Security alerts and audit logs
+- Sensitive data detection (experimental)
+- Security alerts and operational logs
 
-### Audit Logs
+### Logs
 
-- Dedicated **Audit Logs** page for filtering and reviewing historical actions
+- Dedicated **Logs** page for filtering and reviewing historical actions
 - Event stream includes actor, target, action type, and timestamp metadata
 - Cursor pagination support for large datasets and incremental loading
 
@@ -277,11 +283,11 @@ See [AGENTS.md](./AGENTS.md) for development guidelines, coding standards, and c
 
 ## Roadmap
 
-1. **Core proxy enhancement** — Improve stability, performance, and features
-2. **Security audit** — Develop MCPMate Inspector for advanced security auditing
-3. **Smart switching** — Context-based automatic profile switching
-4. **Team collaboration** — Configuration sharing and role-based access control
-5. **Cloud sync** — Multi-device configuration synchronization
+1. **Profile-based capability trimming**: reduce token usage per conversation
+2. **Continue refining Unify mode**: progressive disclosure for lower first-token-cost MCP workflows
+3. **Operational logging and monitoring improvements**
+4. **Smart switching**: context-based automatic profile switching
+5. **Team collaboration**: configuration sharing (when validated by user demand)
 
 ## Contributing
 
@@ -293,7 +299,7 @@ Contributions are welcome! Please:
 
 ## License
 
-MIT License — see [LICENSE](./LICENSE) for details.
+GNU Affero General Public License v3.0 (AGPL-3.0) — see [LICENSE](./LICENSE) for details.
 
 ---
 

@@ -1,6 +1,6 @@
 # MCPMate Server Import (Chrome)
 
-The MCPMate Server Import extension detects MCP configuration snippets on web pages and sends them to the MCPMate desktop app in one click.
+The MCPMate Server Import extension detects MCP configuration snippets on web pages and hands them to the MCPMate desktop app via the `mcpmate://import/server` protocol handler.
 
 - **Product**: MCPMate
 - **Website**: [https://mcp.umate.ai](https://mcp.umate.ai)
@@ -18,6 +18,13 @@ The payload JSON matches desktop handling in `deep_link.rs`:
 - Injects a compact bar on each block: **MCPMate logo** (inline SVG, same mark as `icons/logo.svg`) by default—avoids page CSP blocking `chrome-extension://` images; on hover/focus it expands to **Add to MCPMate** (English UI; i18n later).
 - Sends source URL along with snippet text for auditability.
 - Extension toolbar uses an **inline copy** of the logo in `content.js` (`MCPMATE_LOGO_SVG`); keep it in sync with `icons/logo.svg` / `website/public/logo.svg` when the brand mark changes. **`manifest.json` icons** use PNGs (`icons/icon-{16,32,48,128}.png`) because Chrome’s extension UI does not reliably show SVG there; regenerate those PNGs from `desktop/tauri/src-tauri/icons/icon.png` when the app icon changes (e.g. `sips -z <size> <size> icon.png --out icons/icon-<size>.png` on macOS).
+
+## Install (store)
+
+Status: Available on Chrome Web Store and Microsoft Edge Add-ons.
+
+- Chrome Web Store: https://chromewebstore.google.com/detail/mcpmate-server-import/jngogcgclencgillbmeeimkcjjnobidf
+- Microsoft Edge Add-ons: https://microsoftedge.microsoft.com/addons/detail/mcpmate-server-import/nbpdfanhajcjghegoocfmjkpaklidckn
 
 ## Install (unpacked)
 

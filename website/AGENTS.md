@@ -124,23 +124,24 @@ bun run preview
 ### Changelog Format
 
 ```json
-{
-  "versions": [
-    {
-      "version": "1.0.0",
-      "date": "2025-01-15",
-      "changes": [
-        {
-          "type": "feature",
-          "description": "Description of the change"
-        }
-      ]
-    }
-  ]
-}
+[
+  {
+    "version": "1.0.0",
+    "date": "2025-01-15",
+    "highlights": [
+      "One-line release summary"
+    ],
+    "changes": [
+      {
+        "type": "feat",
+        "text": "Description of the change"
+      }
+    ]
+  }
+]
 ```
 
-Change types: `feature`, `fix`, `improvement`, `breaking`, `deprecation`
+Change types follow the current website data format, such as `feat`, `fix`, and `docs`.
 
 ## Board Integration
 

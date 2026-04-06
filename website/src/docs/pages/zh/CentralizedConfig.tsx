@@ -13,7 +13,8 @@ export default function CentralizedConfig() {
 				MCPMate
 				的核心功能之一是集中配置管理。您无需为每个 MCP
 				客户端维护单独的配置，只需在 MCPMate
-				中配置一次服务器，它们就会自动在所有连接的客户端中可用。
+				中配置一次服务器，它们就会自动在所有连接的客户端中可用，
+				包括遵循标准 MCP 配置布局的用户自定义客户端。
 			</P>
 
 			<H2>优势</H2>
@@ -40,7 +41,7 @@ export default function CentralizedConfig() {
 
 			<H2>使用场景</H2>
 			<Ul>
-				<Li>在 Claude Desktop、Cursor 和 VS Code 中复用同一套服务器。</Li>
+				<Li>在 Claude Desktop、Cursor、Codex 与用户自定义客户端中复用同一套服务器。</Li>
 				<Li>管理团队级的统一服务器配置。</Li>
 				<Li>快速接入新客户端而无需重复配置。</Li>
 			</Ul>

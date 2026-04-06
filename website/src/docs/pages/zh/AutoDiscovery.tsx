@@ -12,6 +12,7 @@ export default function AutoDiscovery() {
 			<P>
 				MCPMate 可以自动发现系统上现有的 MCP
 				服务器配置，并一键导入。这消除了在新工具中手动重新创建设置的繁琐过程。
+				对于把 MCP 配置保存在标准位置的用户自定义客户端，这套导入流程同样适用。
 			</P>
 
 			<H2>工作原理</H2>
@@ -20,7 +21,7 @@ export default function AutoDiscovery() {
 				<Li>Claude Desktop 配置文件</Li>
 				<Li>VS Code MCP 扩展设置</Li>
 				<Li>Cursor MCP 配置</Li>
-				<Li>其他标准 MCP 客户端设置</Li>
+				<Li>其他标准 MCP 客户端设置（包括用户自定义客户端）</Li>
 			</Ul>
 
 			<H2>导入流程</H2>

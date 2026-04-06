@@ -13,7 +13,8 @@ export default function ClientApps() {
 		>
 			<P>
 				The Clients screen tracks desktop applications that can talk to MCPMate
-				(Cursor, Claude Desktop, Zed, etc.). It combines automatic discovery,
+				(Cursor, Claude Desktop, Zed, Codex, and user-defined clients).
+				It combines automatic discovery,
 				management toggles, and configuration hints so you can keep editor
 				integration in sync with the proxy.
 			</P>
@@ -97,7 +98,8 @@ export default function ClientApps() {
 				<Li>
 					<strong>Configuration</strong> &mdash; live view of MCP servers MCPMate
 					would write for this client, import-from-client flows, and Unify /
-					Hosted / Transparent mode guidance.
+					Hosted / Transparent mode guidance, including custom-client setups that
+					use the same MCP config contract.
 				</Li>
 				<Li>
 					<strong>Backups</strong> &mdash; rotating snapshots created when you
