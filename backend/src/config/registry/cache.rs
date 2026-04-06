@@ -61,7 +61,7 @@ impl RegistryCacheService {
         &self,
         entry: &RegistryCacheEntry,
     ) -> Result<()> {
-        tracing::debug!("Upserting registry cache entry: {}", entry.server_name);
+        tracing::trace!("Upserting registry cache entry: {}", entry.server_name);
 
         sqlx::query(
             r#"
@@ -107,7 +107,7 @@ impl RegistryCacheService {
         .await
         .with_context(|| format!("Failed to upsert registry cache entry: {}", entry.server_name))?;
 
-        tracing::debug!("Successfully upserted registry cache entry: {}", entry.server_name);
+        tracing::trace!("Successfully upserted registry cache entry: {}", entry.server_name);
         Ok(())
     }
 

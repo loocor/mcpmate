@@ -151,7 +151,7 @@ impl RegistrySyncService {
                 break;
             }
 
-            tracing::debug!("Fetched {} servers, continuing with cursor", count);
+            tracing::trace!("Fetched {} servers, continuing with cursor", count);
         }
 
         // Convert to cache entries and sync
