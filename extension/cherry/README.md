@@ -148,7 +148,7 @@ This library is designed to be:
 
 ## License
 
-MIT License.
+See the repository root [LICENSE](../../LICENSE) for current licensing terms.
 
 ## Contributing
 
