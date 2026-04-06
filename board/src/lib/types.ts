@@ -94,7 +94,6 @@ export interface ServerDetail extends ServerSummary {
   commandPath?: string;
   args?: string[];
   env?: Record<string, string>;
-  url?: string | null;
   headers?: Record<string, string> | null;
   instances: InstanceSummary[];
 }
