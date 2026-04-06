@@ -1,10 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, ChevronDown, Link2, Loader2, Unplug } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { notifyError, notifySuccess } from "../../lib/notify";
+import {
+	bindDesktopOAuthCallback,
+	getOAuthRedirectUriForForm,
+} from "../../lib/oauth-callback-access";
 import { serversApi } from "../../lib/api";
-import type { OAuthConfigRequest, OAuthStatus } from "../../lib/types";
+import { isTauriEnvironmentSync } from "../../lib/platform";
+import type {
+	OAuthCallbackNotificationPayload,
+	OAuthConfigRequest,
+	OAuthStatus,
+} from "../../lib/types";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -12,12 +21,6 @@ import { Segment } from "../ui/segment";
 import { Label } from "../ui/label";
 
 type OAuthProgressState = "idle" | "preparing" | "awaiting_callback" | "connected" | "error";
-
-interface OAuthCallbackPayload {
-	type?: string;
-	serverId?: string;
-	error?: string;
-}
 
 interface ServerAuthSectionProps {
 	serverId?: string;
@@ -30,16 +33,6 @@ interface ServerAuthSectionProps {
 	onOAuthConnected?: (serverId: string) => void;
 }
 
-function buildDefaultRedirectUri(): string {
-	if (typeof window === "undefined") {
-		return "http://127.0.0.1:5173/oauth/callback";
-	}
-	if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-		return `${window.location.origin}/oauth/callback`;
-	}
-	return "http://127.0.0.1:5173/oauth/callback";
-}
-
 function toFormState(status: OAuthStatus | null): OAuthConfigRequest {
 	return {
 		authorization_endpoint: status?.authorization_endpoint ?? "",
@@ -47,7 +40,7 @@ function toFormState(status: OAuthStatus | null): OAuthConfigRequest {
 		client_id: status?.client_id ?? "",
 		client_secret: "",
 		scopes: status?.scopes ?? "",
-		redirect_uri: status?.redirect_uri ?? buildDefaultRedirectUri(),
+		redirect_uri: getOAuthRedirectUriForForm(status?.redirect_uri),
 	};
 }
 
@@ -79,6 +72,16 @@ export function ServerAuthSection({
 	const [isDirty, setIsDirty] = useState(false);
 	const [showAdvanced, setShowAdvanced] = useState(false);
 	const [progressState, setProgressState] = useState<OAuthProgressState>("idle");
+	const [desktopListenerReady, setDesktopListenerReady] = useState(() => !isTauriEnvironmentSync());
+	const completedServerRef = useRef<string | null>(null);
+	const serverIdRef = useRef<string | undefined>(serverId);
+	const onOAuthConnectedRef = useRef(onOAuthConnected);
+	const translateRef = useRef(t);
+	const isDesktopEnvironment = isTauriEnvironmentSync();
+
+	serverIdRef.current = serverId;
+	onOAuthConnectedRef.current = onOAuthConnected;
+	translateRef.current = t;
 
 	const authorizationEndpointId = useId();
 	const tokenEndpointId = useId();
@@ -92,40 +95,75 @@ export function ServerAuthSection({
 	}, [authMode, onAuthModeChange]);
 
 	useEffect(() => {
-		const handleSuccess = async (callbackServerId?: string) => {
-			if (!callbackServerId || callbackServerId !== serverId) {
+		completedServerRef.current = null;
+	}, [serverId]);
+
+	useEffect(() => {
+		setDesktopListenerReady(!isDesktopEnvironment);
+
+		const completeOAuthConnection = async (completedServerId?: string) => {
+			const activeServerId = serverIdRef.current;
+
+			if (!completedServerId) {
 				return;
 			}
 
+			if (activeServerId && completedServerId !== activeServerId) {
+				return;
+			}
+
+			if (completedServerRef.current === completedServerId) {
+				return;
+			}
+
+			completedServerRef.current = completedServerId;
+
 			setProgressState("connected");
-			await queryClient.invalidateQueries({ queryKey: ["server-oauth", serverId] });
-			onOAuthConnected?.(callbackServerId);
+			await queryClient.invalidateQueries({ queryKey: ["server-oauth", completedServerId] });
+			onOAuthConnectedRef.current?.(completedServerId);
 			notifySuccess(
-				t("manual.auth.oauth.connectedTitle", { defaultValue: "OAuth connected" }),
-				t("manual.auth.oauth.connectedMessage", { defaultValue: "Successfully authorized." }),
+				translateRef.current("manual.auth.oauth.connectedTitle", {
+					defaultValue: "OAuth connected",
+				}),
+				translateRef.current("manual.auth.oauth.connectedMessage", {
+					defaultValue: "Successfully authorized.",
+				}),
 			);
 		};
 
 		const handleError = (errorMessage?: string) => {
 			setProgressState("error");
 			notifyError(
-				t("manual.auth.oauth.connectFailedTitle", { defaultValue: "Unable to start OAuth" }),
+				translateRef.current("manual.auth.oauth.connectFailedTitle", {
+					defaultValue: "Unable to start OAuth",
+				}),
 				errorMessage || "Unknown error",
 			);
 		};
 
-		const handleCallbackPayload = async (payload: OAuthCallbackPayload) => {
+		const handleCallbackPayload = async (payload: OAuthCallbackNotificationPayload) => {
+			const activeServerId = serverIdRef.current;
+			const callbackServerId = payload.serverId ?? activeServerId;
+
 			if (payload.type === "OAUTH_CALLBACK_SUCCESS") {
-				await handleSuccess(payload.serverId);
+				if (!callbackServerId) {
+					return;
+				}
+
+				await queryClient.refetchQueries({ queryKey: ["server-oauth", callbackServerId] });
+				await completeOAuthConnection(callbackServerId);
 				return;
 			}
 
 			if (payload.type === "OAUTH_CALLBACK_ERROR") {
+				if (payload.serverId && activeServerId && payload.serverId !== activeServerId) {
+					return;
+				}
 				handleError(payload.error);
 			}
 		};
 
-		const handleMessage = async (event: MessageEvent<OAuthCallbackPayload>) => {
+		const handleMessage = async (event: MessageEvent<OAuthCallbackNotificationPayload>) => {
 			if (event.origin !== window.location.origin) {
 				return;
 			}
@@ -133,12 +171,31 @@ export function ServerAuthSection({
 			await handleCallbackPayload(event.data ?? {});
 		};
 
+		let desktopCallbackCleanup: (() => void) | undefined;
+		let desktopBindingCancelled = false;
+		const bindDesktopListener = async () => {
+			try {
+				desktopCallbackCleanup = await bindDesktopOAuthCallback(handleCallbackPayload);
+				if (!desktopBindingCancelled) {
+					setDesktopListenerReady(true);
+				}
+			} catch (error) {
+				if (!desktopBindingCancelled) {
+					setDesktopListenerReady(false);
+				}
+				if (!desktopBindingCancelled && import.meta.env.DEV) {
+					console.warn("[ServerAuthSection] desktop oauth bind failed", error);
+				}
+			}
+		};
+		void bindDesktopListener();
+
 		const oauthChannel =
 			typeof window !== "undefined" && "BroadcastChannel" in window
 				? new BroadcastChannel("mcpmate-oauth")
 				: null;
 
-		const handleChannelMessage = async (event: MessageEvent<OAuthCallbackPayload>) => {
+		const handleChannelMessage = async (event: MessageEvent<OAuthCallbackNotificationPayload>) => {
 			await handleCallbackPayload(event.data ?? {});
 		};
 
@@ -148,7 +205,7 @@ export function ServerAuthSection({
 			}
 
 			try {
-				const payload = JSON.parse(event.newValue) as OAuthCallbackPayload;
+				const payload = JSON.parse(event.newValue) as OAuthCallbackNotificationPayload;
 				await handleCallbackPayload(payload);
 			} catch (error) {
 				void error;
@@ -160,19 +217,49 @@ export function ServerAuthSection({
 		window.addEventListener("storage", handleStorage);
 
 		return () => {
+			desktopBindingCancelled = true;
+			desktopCallbackCleanup?.();
 			window.removeEventListener("message", handleMessage);
 			oauthChannel?.removeEventListener("message", handleChannelMessage);
 			oauthChannel?.close();
 			window.removeEventListener("storage", handleStorage);
 		};
-	}, [serverId, queryClient, t, onOAuthConnected]);
+	}, [isDesktopEnvironment, queryClient]);
 
 	const oauthStatusQ = useQuery({
 		queryKey: ["server-oauth", serverId],
 		queryFn: () => serversApi.getOAuthStatus(serverId!),
 		enabled: !isStdio && !!serverId,
+		refetchInterval:
+			!isStdio && !!serverId && progressState === "awaiting_callback" ? 1500 : false,
+		refetchIntervalInBackground: progressState === "awaiting_callback",
+		refetchOnWindowFocus: progressState === "awaiting_callback",
 		retry: false,
 	});
+
+	useEffect(() => {
+		if (!serverId || progressState !== "awaiting_callback") {
+			return;
+		}
+
+		const refetchOAuthStatus = () => {
+			void queryClient.refetchQueries({ queryKey: ["server-oauth", serverId] });
+		};
+
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === "visible") {
+				refetchOAuthStatus();
+			}
+		};
+
+		window.addEventListener("focus", refetchOAuthStatus);
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+
+		return () => {
+			window.removeEventListener("focus", refetchOAuthStatus);
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+		};
+	}, [progressState, queryClient, serverId]);
 
 	useEffect(() => {
 		if (oauthStatusQ.data?.configured && !isDirty) {
@@ -193,10 +280,34 @@ export function ServerAuthSection({
 			setProgressState("error");
 			return;
 		}
-		if (oauthStatusQ.data?.state === "disconnected") {
-			setProgressState("idle");
+		if (
+			oauthStatusQ.data?.state === "disconnected" ||
+			oauthStatusQ.data?.state === "not_configured"
+		) {
+			setProgressState((current) =>
+				current === "preparing" || current === "awaiting_callback" ? current : "idle",
+			);
 		}
 	}, [oauthStatusQ.data?.state]);
+
+	useEffect(() => {
+		if (
+			!serverId ||
+			progressState !== "awaiting_callback" ||
+			oauthStatusQ.data?.state !== "connected" ||
+			completedServerRef.current === serverId
+		) {
+			return;
+		}
+
+		completedServerRef.current = serverId;
+		setProgressState("connected");
+		onOAuthConnected?.(serverId);
+		notifySuccess(
+			t("manual.auth.oauth.connectedTitle", { defaultValue: "OAuth connected" }),
+			t("manual.auth.oauth.connectedMessage", { defaultValue: "Successfully authorized." }),
+		);
+	}, [oauthStatusQ.data?.state, onOAuthConnected, progressState, serverId, t]);
 
 	useEffect(() => {
 		if (!isDirty) {
@@ -206,7 +317,16 @@ export function ServerAuthSection({
 
 	const connectMutation = useMutation({
 		mutationFn: async () => {
+			if (isDesktopEnvironment && !desktopListenerReady) {
+				throw new Error(
+					t("manual.auth.oauth.listenerNotReady", {
+						defaultValue: "OAuth callback listener is still initializing. Please try again in a moment.",
+					}),
+				);
+			}
+
 			setProgressState("preparing");
+			completedServerRef.current = null;
 			const payload = showAdvanced
 				? formState
 				: {
@@ -237,6 +357,7 @@ export function ServerAuthSection({
 			return serversApi.revokeOAuth(serverId);
 		},
 		onSuccess: async () => {
+			completedServerRef.current = null;
 			setProgressState("idle");
 			await queryClient.invalidateQueries({ queryKey: ["server-oauth", serverId] });
 			notifySuccess(
@@ -271,49 +392,49 @@ export function ServerAuthSection({
 		}
 	})();
 
-	const progressItems = useMemo(
-		() => [
-			{
-				key: "discover",
-				label: t("manual.auth.oauth.progress.discover", {
-					defaultValue: "Metadata discovery",
-				}),
-				active:
-					progressState === "preparing" ||
-					progressState === "awaiting_callback" ||
-					progressState === "connected",
-			},
-			{
-				key: "register",
-				label: t("manual.auth.oauth.progress.register", {
-					defaultValue: "Client registration",
-				}),
-				active:
-					progressState === "awaiting_callback" || progressState === "connected",
-			},
-			{
-				key: "authorize",
-				label: t("manual.auth.oauth.progress.authorize", {
-					defaultValue: "Authorization",
-				}),
-				active:
-					progressState === "awaiting_callback" || progressState === "connected",
-			},
-			{
-				key: "complete",
-				label: t("manual.auth.oauth.progress.complete", {
-					defaultValue: "Authentication complete",
-				}),
-				active: progressState === "connected",
-			},
-		],
-		[progressState, t],
-	);
+	const progressItems = [
+		{
+			key: "discover",
+			label: t("manual.auth.oauth.progress.discover", {
+				defaultValue: "Metadata discovery",
+			}),
+			active:
+				progressState === "preparing" ||
+				progressState === "awaiting_callback" ||
+				progressState === "connected",
+		},
+		{
+			key: "register",
+			label: t("manual.auth.oauth.progress.register", {
+				defaultValue: "Client registration",
+			}),
+			active: progressState === "awaiting_callback" || progressState === "connected",
+		},
+		{
+			key: "authorize",
+			label: t("manual.auth.oauth.progress.authorize", {
+				defaultValue: "Authorization",
+			}),
+			active: progressState === "awaiting_callback" || progressState === "connected",
+		},
+		{
+			key: "complete",
+			label: t("manual.auth.oauth.progress.complete", {
+				defaultValue: "Authentication complete",
+			}),
+			active: progressState === "connected",
+		},
+	];
 
 	const progressMessage = (() => {
 		if (connectMutation.isPending) {
 			return t("manual.auth.oauth.progress.preparingMessage", {
 				defaultValue: "Preparing OAuth flow and opening the authorization page…",
+			});
+		}
+		if (isDesktopEnvironment && !desktopListenerReady) {
+			return t("manual.auth.oauth.progress.listenerPreparingMessage", {
+				defaultValue: "Preparing the desktop callback listener…",
 			});
 		}
 		if (progressState === "awaiting_callback") {
@@ -339,6 +460,7 @@ export function ServerAuthSection({
 	}
 
 	const isBusy = connectMutation.isPending || revokeMutation.isPending;
+	const isConnectDisabled = isBusy || (isDesktopEnvironment && !desktopListenerReady);
 
 	return (
 		<div className="space-y-4 pt-2 border-t mt-4">
@@ -407,12 +529,12 @@ export function ServerAuthSection({
 					</div>
 
 					<div className="flex flex-wrap items-center gap-2 pt-1">
-				<Button 
-					type="button"
-					size="sm" 
-					onClick={() => connectMutation.mutate()} 
-					disabled={isBusy}
-				>
+						<Button
+							type="button"
+							size="sm"
+							onClick={() => connectMutation.mutate()}
+							disabled={isConnectDisabled}
+						>
 							{connectMutation.isPending ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <Link2 className="mr-2 h-3 w-3" />}
 							{status.state === "connected"
 								? t("manual.auth.oauth.actions.reconnect", { defaultValue: "Reconnect OAuth" })

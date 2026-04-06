@@ -24,6 +24,7 @@ import { useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { serversApi } from "../../lib/api";
+import { startOAuthAccessFlow } from "../../lib/oauth-callback-access";
 import {
 	type InstallSource,
 	type ServerInstallDraft,
@@ -32,6 +33,7 @@ import {
 } from "../../hooks/use-server-install-pipeline";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { notifyError } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { MCPServerConfig } from "../../lib/types";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
@@ -764,6 +766,7 @@ export const ServerInstallWizard = forwardRef(
 				return {
 					name: values.name.trim(),
 					serverId: pendingImportServerRef.current ?? undefined,
+					registryServerId: initialDraft?.registryServerId,
 					kind: values.kind,
 					command: values.kind === "stdio" ? trim(values.command) : undefined,
 					url: values.kind === "stdio" ? undefined : trim(values.url),
@@ -774,7 +777,7 @@ export const ServerInstallWizard = forwardRef(
 					meta: Object.keys(meta).length ? meta : undefined,
 				};
 			},
-			[],
+			[initialDraft?.registryServerId],
 		);
 
 		const handlePreview = useCallback(
@@ -802,30 +805,42 @@ export const ServerInstallWizard = forwardRef(
 
 				try {
 					if (pendingImportServerRef.current && !isEditMode) {
+						installPipeline.setPreviewError(null);
+						installPipeline.setPreviewState(null);
+						installPipeline.setPreviewLoading(true);
 						const hiddenServerId = pendingImportServerRef.current;
-						const [tools, resources, prompts, resourceTemplates] = await Promise.all([
-							serversApi.listTools(hiddenServerId, "force"),
-							serversApi.listResources(hiddenServerId, "force"),
-							serversApi.listPrompts(hiddenServerId, "force"),
-							serversApi.listResourceTemplates(hiddenServerId, "force"),
-						]);
+						try {
+							const [tools, resources, prompts, resourceTemplates] = await Promise.all([
+								serversApi.listTools(hiddenServerId, "force"),
+								serversApi.listResources(hiddenServerId, "force"),
+								serversApi.listPrompts(hiddenServerId, "force"),
+								serversApi.listResourceTemplates(hiddenServerId, "force"),
+							]);
 
-						installPipeline.setPreviewState({
-							success: true,
-							data: {
-								items: [
-									{
-										name: draft.name,
-										ok: true,
-										error: null,
-										tools,
-										resources,
-										prompts,
-										resource_templates: resourceTemplates,
-									},
-								],
-							},
-						});
+							installPipeline.setPreviewState({
+								success: true,
+								data: {
+									items: [
+										{
+											name: draft.name,
+											ok: true,
+											error: null,
+											tools,
+											resources,
+											prompts,
+											resource_templates: resourceTemplates,
+										},
+									],
+								},
+							});
+						} catch (error) {
+							const message =
+								error instanceof Error ? error.message : "Preview request failed";
+							installPipeline.setPreviewError(message);
+							notifyError("Preview failed", message);
+						} finally {
+							installPipeline.setPreviewLoading(false);
+						}
 						return;
 					}
 
@@ -1486,35 +1501,7 @@ export const ServerInstallWizard = forwardRef(
 													throw new Error("Server ID is required to initiate OAuth");
 												}
 
-												const shouldUseManualConfig =
-													Boolean(config.authorization_endpoint?.trim()) &&
-													Boolean(config.token_endpoint?.trim()) &&
-													Boolean(config.client_id?.trim());
-
-												if (shouldUseManualConfig) {
-													await serversApi.saveOAuthConfig(targetServerId, config);
-												} else {
-													await serversApi.prepareOAuth(targetServerId, {
-														redirect_uri: config.redirect_uri,
-														scopes: config.scopes,
-													});
-												}
-
-												const redirectRes = await serversApi.initiateOAuth(targetServerId);
-												if (redirectRes.authorization_url) {
-													const width = 600;
-													const height = 800;
-													const left = window.screenX + (window.outerWidth - width) / 2;
-													const top = window.screenY + (window.outerHeight - height) / 2;
-													const popup = window.open(
-														redirectRes.authorization_url,
-														"oauth_window",
-														`width=${width},height=${height},left=${left},top=${top}`,
-													);
-													if (!popup) {
-														window.location.assign(redirectRes.authorization_url);
-													}
-												}
+												await startOAuthAccessFlow(targetServerId, config);
 											}}
 										/>
 
@@ -2435,20 +2422,23 @@ export const ServerInstallWizard = forwardRef(
 									);
 								})}
 							</div>
-							{/* Refresh button for preview step - only show after preview is completed */}
+							{/* Refresh button for preview step - visible during and after preview */}
 							{currentStep === "preview" &&
-								installPipeline.state.previewState !== null &&
-								!installPipeline.state.isPreviewLoading && (
+								(installPipeline.state.previewState !== null || installPipeline.state.isPreviewLoading) && (
 									<Button
 										variant="ghost"
 										className="h-9 w-9 p-0"
-										aria-label={t("wizard.preview.retry", {
-											defaultValue: "Retry preview",
-										})}
-										title={t("wizard.preview.retry", {
-											defaultValue: "Retry preview",
-										})}
-										disabled={installPipeline.state.isImporting}
+										aria-label={
+											installPipeline.state.isPreviewLoading
+												? t("wizard.buttons.previewing", { defaultValue: "Previewing..." })
+												: t("wizard.preview.retry", { defaultValue: "Retry preview" })
+										}
+										title={
+											installPipeline.state.isPreviewLoading
+												? t("wizard.buttons.previewing", { defaultValue: "Previewing..." })
+												: t("wizard.preview.retry", { defaultValue: "Retry preview" })
+										}
+										disabled={installPipeline.state.isImporting || installPipeline.state.isPreviewLoading}
 									onClick={() => {
 										installPipeline.setPreviewState(null);
 										void handlePreview({
@@ -2457,7 +2447,7 @@ export const ServerInstallWizard = forwardRef(
 										});
 									}}
 									>
-										<RefreshCw className="h-4 w-4" />
+										<RefreshCw className={`h-4 w-4 ${installPipeline.state.isPreviewLoading ? "animate-spin" : ""}`} />
 									</Button>
 								)}
 						</div>

@@ -1231,6 +1231,20 @@ export interface OAuthInitiateResponse {
   state: string;
 }
 
+export type OAuthCallbackAccessKind = "web" | "desktop_loopback";
+
+export interface OAuthCallbackAccessContract {
+  kind: OAuthCallbackAccessKind;
+  redirect_uri: string;
+}
+
+export interface OAuthCallbackNotificationPayload {
+  type?: "OAUTH_CALLBACK_SUCCESS" | "OAUTH_CALLBACK_ERROR" | string;
+  serverId?: string;
+  error?: string;
+  timestamp?: number;
+}
+
 export interface OAuthCallbackRequest {
   code: string;
   state: string;
