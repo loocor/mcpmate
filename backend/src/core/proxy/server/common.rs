@@ -655,13 +655,12 @@ impl UnifiedHttpServer {
             self.config.streamable_http_path,
         );
 
-        let streamable_http_config = StreamableHttpServerConfig {
-            sse_keep_alive: self.config.keep_alive_interval,
-            sse_retry: Some(std::time::Duration::from_secs(3)),
-            stateful_mode: true,
-            json_response: false,
-            cancellation_token: self.config.cancellation_token.clone(),
-        };
+        let streamable_http_config = StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(self.config.keep_alive_interval)
+            .with_sse_retry(Some(std::time::Duration::from_secs(3)))
+            .with_stateful_mode(true)
+            .with_json_response(false)
+            .with_cancellation_token(self.config.cancellation_token.clone());
 
         let session_manager = std::sync::Arc::new(LocalSessionManager::default());
 

@@ -480,10 +480,8 @@ async fn start_tool_call_internal(
         CallToolRequestParams::new(upstream_tool_name).with_arguments(req.arguments.clone().unwrap_or_default());
     let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
 
-    let options = PeerRequestOptions {
-        timeout: Some(timeout),
-        meta: None,
-    };
+    let mut options = PeerRequestOptions::no_options();
+    options.timeout = Some(timeout);
 
     let call_id = crate::generate_id!("inspcall");
     let handle = peer

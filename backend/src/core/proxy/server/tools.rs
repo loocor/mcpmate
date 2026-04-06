@@ -464,10 +464,8 @@ pub(super) async fn call_tool(
         params = params.with_arguments(arguments);
     }
     let req = ClientRequest::CallToolRequest(CallToolRequest::new(params));
-    let options = PeerRequestOptions {
-        timeout: Some(std::time::Duration::from_secs(call_timeout_secs)),
-        meta: None,
-    };
+    let mut options = PeerRequestOptions::no_options();
+    options.timeout = Some(std::time::Duration::from_secs(call_timeout_secs));
     let handle = peer
         .send_cancellable_request(req, options)
         .await

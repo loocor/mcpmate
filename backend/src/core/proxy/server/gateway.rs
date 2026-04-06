@@ -555,13 +555,12 @@ impl ProxyServer {
         tracing::info!("Starting Streamable HTTP server on {} at path {}", bind_address, path);
         let server_clone = self.clone();
         let factory = move || Ok(server_clone.clone());
-        let server_config = rmcp::transport::StreamableHttpServerConfig {
-            sse_keep_alive: Some(std::time::Duration::from_secs(15)),
-            sse_retry: Some(std::time::Duration::from_secs(3)),
-            stateful_mode: true,
-            json_response: false,
-            cancellation_token: self.cancellation_token.clone(),
-        };
+        let server_config = rmcp::transport::StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(Some(std::time::Duration::from_secs(15)))
+            .with_sse_retry(Some(std::time::Duration::from_secs(3)))
+            .with_stateful_mode(true)
+            .with_json_response(false)
+            .with_cancellation_token(self.cancellation_token.clone());
         let session_manager = std::sync::Arc::new(
             rmcp::transport::streamable_http_server::session::local::LocalSessionManager::default(),
         );
@@ -722,6 +721,13 @@ impl ProxyServer {
         self.call_sessions_by_request.remove(request_id);
     }
 
+    fn build_base_event_data(route: &DownstreamRoute) -> Map<String, Value> {
+        let mut data = Map::new();
+        data.insert("client_id".to_string(), Value::String(route.client_id.clone()));
+        data.insert("session_id".to_string(), Value::String(route.session_id.clone()));
+        data
+    }
+
     pub async fn forward_upstream_progress(
         &self,
         _server_id: &str,
@@ -741,9 +747,7 @@ impl ProxyServer {
             progress = ?param.progress,
             "Forwarded progress to downstream"
         );
-        let mut data = Map::new();
-        data.insert("client_id".to_string(), Value::String(route.client_id.clone()));
-        data.insert("session_id".to_string(), Value::String(route.session_id.clone()));
+        let mut data = Self::build_base_event_data(&route);
         data.insert("progress".to_string(), Value::from(param.progress));
         if let Some(total) = param.total {
             data.insert("total".to_string(), Value::from(total));
@@ -794,9 +798,7 @@ impl ProxyServer {
             reason = ?param.reason,
             "Forwarded cancellation to downstream"
         );
-        let mut data = Map::new();
-        data.insert("client_id".to_string(), Value::String(route.client_id.clone()));
-        data.insert("session_id".to_string(), Value::String(route.session_id.clone()));
+        let mut data = Self::build_base_event_data(&route);
         data.insert("request_id".to_string(), Value::String(param.request_id.to_string()));
         crate::audit::interceptor::emit_event(
             self.audit_service.as_ref(),
@@ -845,9 +847,7 @@ impl ProxyServer {
             level = ?param.level,
             "Forwarded log message to downstream"
         );
-        let mut data = Map::new();
-        data.insert("client_id".to_string(), Value::String(route.client_id.clone()));
-        data.insert("session_id".to_string(), Value::String(route.session_id.clone()));
+        let mut data = Self::build_base_event_data(&route);
         data.insert(
             "level".to_string(),
             Value::String(
