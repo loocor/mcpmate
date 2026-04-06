@@ -435,7 +435,7 @@ impl UpstreamConnectionPool {
             }
         }
 
-        tracing::debug!(
+        tracing::trace!(
             "Created connection pool snapshot with {} servers and {} total instances",
             result.len(),
             result.values().map(|instances| instances.len()).sum::<usize>()
@@ -609,8 +609,10 @@ impl UpstreamConnectionPool {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
 
-        // Use server_id if available; fall back to server_name for failure tracking
-        let failure_key: String = server.id.clone().unwrap_or_else(|| server_name.to_string());
+        let failure_key = format!(
+            "validation:{}",
+            server.id.clone().unwrap_or_else(|| server_name.to_string())
+        );
 
         // Respect backoff window for faulty upstreams to avoid repeated connection storms
         if let Some(remaining) = self.remaining_backoff(&failure_key) {
@@ -677,6 +679,8 @@ impl UpstreamConnectionPool {
                     ));
                 }
             };
+
+        self.clear_failure_state(&failure_key);
 
         // Update connection with service and capabilities
         connection.update_connected(service, tools, capabilities);

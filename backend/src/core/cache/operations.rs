@@ -105,14 +105,14 @@ impl<'a> CacheOperations<'a> {
 
         // Generate composite key for lookup
         let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type(), &query.scope);
-        tracing::info!("[CACHE][LOOKUP] key={}", cache_key);
+        tracing::trace!("[CACHE][LOOKUP] key={}", cache_key);
 
         if let Some(data) = servers_table.get(cache_key.as_str())? {
             let server_data: CachedServerData = bincode::deserialize(data.value())?;
-            tracing::info!("[CACHE][HIT] key={}", cache_key);
+            tracing::trace!("[CACHE][HIT] key={}", cache_key);
             Ok(Some(server_data))
         } else {
-            tracing::info!("[CACHE][MISS] key={}", cache_key);
+            tracing::trace!("[CACHE][MISS] key={}", cache_key);
             Ok(None)
         }
     }

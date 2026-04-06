@@ -15,7 +15,7 @@ pub async fn get_profile_servers(
     pool: &Pool<Sqlite>,
     profile_id: &str,
 ) -> Result<Vec<ProfileServer>> {
-    tracing::debug!("Executing SQL query to get servers for profile with ID {}", profile_id);
+    tracing::trace!("Executing SQL query to get servers for profile with ID {}", profile_id);
 
     let servers = sqlx::query_as::<_, ProfileServer>(&format!(
         r#"
@@ -32,7 +32,7 @@ pub async fn get_profile_servers(
     .await
     .context("Failed to fetch profile servers")?;
 
-    tracing::debug!(
+    tracing::trace!(
         "Successfully fetched {} servers for profile with ID {}",
         servers.len(),
         profile_id

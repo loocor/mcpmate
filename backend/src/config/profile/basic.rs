@@ -19,7 +19,7 @@ pub async fn get_all_profile(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
 
 /// Get all active profile from the database
 pub async fn get_active_profile(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
-    tracing::debug!("Executing SQL query to get all active profile");
+    tracing::trace!("Executing SQL query to get all active profile");
 
     let profile = sqlx::query_as::<_, Profile>(
         r#"
@@ -32,19 +32,19 @@ pub async fn get_active_profile(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
     .await
     .context("Failed to fetch active profile")?;
 
-    tracing::debug!("Successfully fetched {} active profile from database", profile.len());
+    tracing::trace!("Successfully fetched {} active profile from database", profile.len());
     Ok(profile)
 }
 
 /// Get the default profile from the database
 pub async fn get_default_profile(pool: &Pool<Sqlite>) -> Result<Option<Profile>> {
-    tracing::debug!("Retrieving default anchor profile");
+    tracing::trace!("Retrieving default anchor profile");
 
     if let Some(profile) = get_profile_by_role(pool, ProfileRole::DefaultAnchor).await? {
         return Ok(Some(profile));
     }
 
-    tracing::debug!("Default anchor profile not found via role, falling back to is_default flag");
+    tracing::trace!("Default anchor profile not found via role, falling back to is_default flag");
 
     let profile = sqlx::query_as::<_, Profile>(
         r#"
@@ -59,13 +59,13 @@ pub async fn get_default_profile(pool: &Pool<Sqlite>) -> Result<Option<Profile>>
     .context("Failed to fetch default profile")?;
 
     if let Some(ref s) = profile {
-        tracing::debug!(
+        tracing::trace!(
             "Found fallback default profile '{}' with ID {}",
             s.name,
             s.id.as_ref().unwrap_or(&"unknown".to_string())
         );
     } else {
-        tracing::debug!("No default profile found");
+        tracing::trace!("No default profile found");
     }
 
     Ok(profile)
@@ -73,7 +73,7 @@ pub async fn get_default_profile(pool: &Pool<Sqlite>) -> Result<Option<Profile>>
 
 /// Get all profiles marked as default and active from the database
 pub async fn get_default_profiles(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
-    tracing::debug!("Executing SQL query to get all default profiles");
+    tracing::trace!("Executing SQL query to get all default profiles");
 
     let profile = sqlx::query_as::<_, Profile>(
         r#"
@@ -86,7 +86,7 @@ pub async fn get_default_profiles(pool: &Pool<Sqlite>) -> Result<Vec<Profile>> {
     .await
     .context("Failed to fetch default profiles")?;
 
-    tracing::debug!("Successfully fetched {} default profiles from database", profile.len());
+    tracing::trace!("Successfully fetched {} default profiles from database", profile.len());
     Ok(profile)
 }
 
@@ -95,7 +95,7 @@ pub async fn get_profile_by_type(
     pool: &Pool<Sqlite>,
     profile_type: ProfileType,
 ) -> Result<Vec<Profile>> {
-    tracing::debug!("Executing SQL query to get profile of type '{}'", profile_type.as_str());
+    tracing::trace!("Executing SQL query to get profile of type '{}'", profile_type.as_str());
 
     let profile = sqlx::query_as::<_, Profile>(
         r#"
@@ -109,7 +109,7 @@ pub async fn get_profile_by_type(
     .await
     .context("Failed to fetch profile by type")?;
 
-    tracing::debug!(
+    tracing::trace!(
         "Successfully fetched {} profile of type '{}'",
         profile.len(),
         profile_type.as_str()

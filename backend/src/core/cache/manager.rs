@@ -290,7 +290,7 @@ impl RedbCacheManager {
     ) -> Result<CacheResult<Option<CachedServerData>>, CacheError> {
         // Generate composite key for consistent lookup
         let cache_key = self.generate_cache_key(&query.server_id, &query.instance_type(), &query.scope);
-        tracing::debug!(
+        tracing::trace!(
             "[CACHE][GET_DATA] key={} freshness={:?}",
             cache_key,
             query.freshness_level
@@ -301,7 +301,7 @@ impl RedbCacheManager {
             let mut memory_cache = self.memory_cache.write().await;
             if let Some(cached_data) = memory_cache.get(&cache_key) {
                 if self.is_data_fresh(cached_data, &query.freshness_level) {
-                    tracing::debug!("[CACHE][L1 HIT] key={}", cache_key);
+                    tracing::trace!("[CACHE][L1 HIT] key={}", cache_key);
                     let mut m = self.metrics.write().await;
                     m.total_queries += 1;
                     m.cache_hits += 1;
@@ -313,7 +313,7 @@ impl RedbCacheManager {
                     });
                 }
             }
-            tracing::debug!("[CACHE][L1 MISS] key={}", cache_key);
+            tracing::trace!("[CACHE][L1 MISS] key={}", cache_key);
         }
 
         // L2: Check disk cache
@@ -321,7 +321,7 @@ impl RedbCacheManager {
         let data = operations.get_server_data(query)?;
 
         let (cache_hit, cached_at) = if let Some(ref server_data) = data {
-            tracing::debug!("[CACHE][L2 HIT] key={}", cache_key);
+            tracing::trace!("[CACHE][L2 HIT] key={}", cache_key);
             // Update L1 cache with fresh data using composite key
             let mut memory_cache = self.memory_cache.write().await;
             memory_cache.put(cache_key.clone(), server_data.clone());
@@ -329,7 +329,7 @@ impl RedbCacheManager {
             let is_fresh = self.is_data_fresh(server_data, &query.freshness_level);
             // For RealTime requests, always return cache_hit=false to force fresh data
             if query.freshness_level == FreshnessLevel::RealTime {
-                tracing::debug!("[CACHE][L2 FORCE REFRESH] key={} - RealTime requested", cache_key);
+                tracing::trace!("[CACHE][L2 FORCE REFRESH] key={} - RealTime requested", cache_key);
                 let mut m = self.metrics.write().await;
                 m.total_queries += 1;
                 m.cache_misses += 1; // treat as miss for real-time
@@ -349,7 +349,7 @@ impl RedbCacheManager {
                 (false, None)
             }
         } else {
-            tracing::debug!("[CACHE][L2 MISS] key={}", cache_key);
+            tracing::trace!("[CACHE][L2 MISS] key={}", cache_key);
             let mut m = self.metrics.write().await;
             m.total_queries += 1;
             m.cache_misses += 1;
