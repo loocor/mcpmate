@@ -146,7 +146,6 @@ export function Layout() {
 	}, []);
 
 	React.useEffect(() => {
-		let unlistenMain: (() => void) | undefined;
 		let unlistenSettings: (() => void) | undefined;
 		let unlistenImportServer: (() => void) | undefined;
 		let unlistenCoreState: (() => void) | undefined;
@@ -162,9 +161,6 @@ export function Layout() {
 				if (cancelled) {
 					return;
 				}
-				unlistenMain = await listen("mcpmate://open-main", () => {
-					navigate("/");
-				});
 				unlistenSettings = await listen(
 					"mcpmate://open-settings",
 					(event) => {
@@ -203,9 +199,6 @@ export function Layout() {
 		void bind();
 		return () => {
 			cancelled = true;
-			if (unlistenMain) {
-				void unlistenMain();
-			}
 			if (unlistenSettings) {
 				void unlistenSettings();
 			}
