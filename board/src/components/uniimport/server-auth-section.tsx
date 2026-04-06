@@ -119,7 +119,6 @@ export function ServerAuthSection({
 			completedServerRef.current = completedServerId;
 
 			setProgressState("connected");
-			await queryClient.invalidateQueries({ queryKey: ["server-oauth", completedServerId] });
 			onOAuthConnectedRef.current?.(completedServerId);
 			notifySuccess(
 				translateRef.current("manual.auth.oauth.connectedTitle", {
