@@ -1,16 +1,5 @@
 use once_cell::sync::Lazy;
-use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::sync::RwLock;
-
-use crate::clients::error::{ConfigError, ConfigResult};
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
-struct RawKeyMap {
-    pub version: Option<String>,
-    pub transports: HashMap<String, Vec<String>>, // norm -> aliases
-}
 
 #[derive(Debug, Default, Clone)]
 pub struct KeyMapRegistry {
@@ -18,34 +7,14 @@ pub struct KeyMapRegistry {
 }
 
 impl KeyMapRegistry {
-    fn from_raw(raw: RawKeyMap) -> Self {
+    fn from_defaults() -> Self {
         let mut transports: HashMap<String, HashSet<String>> = HashMap::new();
-        for (norm, aliases) in raw.transports.into_iter() {
+        for (norm, aliases) in default_transport_aliases() {
             let key = norm.to_ascii_lowercase();
-            let set: HashSet<String> = aliases.into_iter().map(|a| a.to_ascii_lowercase()).collect();
+            let set: HashSet<String> = aliases.iter().map(|alias| alias.to_ascii_lowercase()).collect();
             transports.insert(key, set);
         }
         Self { transports }
-    }
-
-    fn with_defaults() -> Self {
-        let raw = RawKeyMap {
-            version: Some("2025-10-11".into()),
-            transports: HashMap::from([
-                (
-                    "streamable_http".into(),
-                    vec![
-                        "streamableHttp".into(),
-                        "http".into(),
-                        "HTTP".into(),
-                        "sse".into(),
-                        "SSE".into(),
-                    ],
-                ),
-                ("stdio".into(), vec!["STDIO".into(), "Stdio".into()]),
-            ]),
-        };
-        Self::from_raw(raw)
     }
 
     /// Determine if the map contains a rule for the normalized transport in the given format_rules map
@@ -103,41 +72,15 @@ impl KeyMapRegistry {
     }
 }
 
-static REGISTRY: Lazy<RwLock<KeyMapRegistry>> = Lazy::new(|| RwLock::new(KeyMapRegistry::with_defaults()));
+static REGISTRY: Lazy<KeyMapRegistry> = Lazy::new(KeyMapRegistry::from_defaults);
 
-pub fn reload() -> ConfigResult<()> {
-    use crate::system::paths::PathService;
-    let path_service = PathService::new().map_err(|e| ConfigError::PathResolutionError(e.to_string()))?;
-    let root = path_service
-        .resolve_user_path("~/.mcpmate/keymap.json5")
-        .map_err(|e| ConfigError::PathResolutionError(e.to_string()))?;
-    let path = root;
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(ConfigError::IoError)?;
-        }
-        // Seed default file so users can discover and edit it.
-        let content = r#"{
-  "version": "2025-10-11",
-  "transports": {
-    "streamable_http": ["streamableHttp", "http", "HTTP", "sse", "SSE"],
-    "stdio": ["STDIO", "Stdio"]
-  }
-}
-"#;
-        std::fs::write(&path, content).map_err(ConfigError::IoError)?;
-    }
-    let content = std::fs::read_to_string(&path).map_err(ConfigError::IoError)?;
-    let raw: RawKeyMap = json5::from_str(&content)
-        .or_else(|_| serde_json::from_str(&content))
-        .map_err(|e| ConfigError::TemplateParseError(format!("Failed to parse keymap.json5: {}", e)))?;
-    let registry = KeyMapRegistry::from_raw(raw);
-    if let Ok(mut guard) = REGISTRY.write() {
-        *guard = registry;
-    }
-    Ok(())
+fn default_transport_aliases() -> [(&'static str, &'static [&'static str]); 2] {
+    [
+        ("streamable_http", &["streamableHttp", "http", "HTTP", "sse", "SSE"]),
+        ("stdio", &["STDIO", "Stdio", "stdio"]),
+    ]
 }
 
 pub fn registry() -> KeyMapRegistry {
-    REGISTRY.read().unwrap().clone()
+    REGISTRY.clone()
 }

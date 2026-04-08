@@ -30,6 +30,18 @@ use serde_yaml;
 use std::sync::Arc;
 use toml;
 
+type ClientSettingsErrorResponse = (StatusCode, Json<crate::api::models::client::ClientSettingsUpdateResp>);
+
+fn client_settings_error(status: StatusCode, message: impl Into<String>) -> ClientSettingsErrorResponse {
+    (
+        status,
+        Json(crate::api::models::client::ClientSettingsUpdateResp::error_simple(
+            "client_settings_invalid",
+            &message.into(),
+        )),
+    )
+}
+
 /// Handler for GET /api/client
 /// Detects and returns all clients, with optional template reload
 pub async fn list(
@@ -198,16 +210,12 @@ pub async fn config_details(
         .map(|row| row.governed_by_default_policy())
         .unwrap_or(true);
     let approval_status = state.as_ref().map(|row| row.approval_status().to_string());
-    let writable_config = state
-        .as_ref()
-        .map(|row| row.has_local_config_target())
-        .unwrap_or_else(|| {
-            connection_mode.as_deref() != Some("remote_http")
-                && !config_path.as_deref().unwrap_or_default().trim().is_empty()
-                && matches!(
-                    template.as_ref().map(|entry| entry.storage.kind).unwrap_or(StorageKind::Custom),
-                    StorageKind::File | StorageKind::Custom
-                )
+    let writable_config = service
+        .has_verified_local_config_target(&request.identifier)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::warn!(client = %request.identifier, error = %err, "Failed to verify local config target");
+            false
         });
 
     let data = ClientConfigData {
@@ -260,13 +268,31 @@ pub async fn config_apply(
     Json(request): Json<ClientConfigUpdateReq>,
 ) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-    
-    if let Ok(Some(state)) = service.fetch_state(&request.identifier).await {
-        if state.is_pending_unknown() {
+
+    let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
+        tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before apply");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    if let Some(state) = existing_state.as_ref() {
+        if state.approval_status() != "approved" {
             tracing::warn!(
                 client = %request.identifier,
                 approval_status = %state.approval_status(),
-                "Rejected config apply for pending unknown client"
+                "Rejected config apply for non-approved client"
+            );
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+
+    match service.has_verified_local_config_target(&request.identifier).await {
+        Ok(true) => {}
+        Ok(false) => return Err(StatusCode::FORBIDDEN),
+        Err(err) => {
+            tracing::warn!(
+                client = %request.identifier,
+                error = %err,
+                "Rejected config apply without a verified local config target"
             );
             return Err(StatusCode::FORBIDDEN);
         }
@@ -276,13 +302,32 @@ pub async fn config_apply(
         tracing::error!(client = %request.identifier, error = %err, "Failed to resolve client name");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    service
-        .ensure_active_state_row_with_name(&request.identifier, &client_name, Some(true), Some("approved"))
-        .await
-        .map_err(|err| {
-            tracing::error!(client = %request.identifier, error = %err, "Failed to activate client state before apply");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+
+    match existing_state.as_ref() {
+        Some(state) => {
+            service
+                .ensure_active_state_row_with_name(
+                    &request.identifier,
+                    &client_name,
+                    None,
+                    Some(state.approval_status()),
+                )
+                .await
+                .map_err(|err| {
+                    tracing::error!(client = %request.identifier, error = %err, "Failed to refresh active client state before apply");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+        }
+        None => {
+            service
+                .ensure_active_state_row_with_name(&request.identifier, &client_name, Some(true), Some("approved"))
+                .await
+                .map_err(|err| {
+                    tracing::error!(client = %request.identifier, error = %err, "Failed to create active client state before apply");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+        }
+    }
     
     let template = service.get_client_template(&request.identifier).await.map_err(|err| {
         tracing::error!(
@@ -297,6 +342,10 @@ pub async fn config_apply(
     let outcome = service.apply_with_deferred(options).await.map_err(|err| {
         let status = match err {
             ConfigError::ClientDisabled { .. } => StatusCode::FORBIDDEN,
+            ConfigError::DataAccessError(_)
+            | ConfigError::PathResolutionError(_)
+            | ConfigError::PathNotWritable { .. }
+            | ConfigError::FileOperationError(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         tracing::error!(
@@ -611,8 +660,9 @@ async fn emit_client_audit_event(
 pub async fn update_settings(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<crate::api::models::client::ClientSettingsUpdateReq>,
-) -> Result<Json<crate::api::models::client::ClientSettingsUpdateResp>, StatusCode> {
-    let service = get_client_service(&app_state)?;
+) -> Result<Json<crate::api::models::client::ClientSettingsUpdateResp>, ClientSettingsErrorResponse> {
+    let service = get_client_service(&app_state)
+        .map_err(|status| client_settings_error(status, "Client service unavailable"))?;
 
     tracing::info!(
         client = %request.identifier,
@@ -645,12 +695,20 @@ pub async fn update_settings(
         )
         .await
         .map_err(|err| {
+            let status = match err {
+                ConfigError::DataAccessError(_)
+                | ConfigError::PathResolutionError(_)
+                | ConfigError::PathNotWritable { .. }
+                | ConfigError::FileOperationError(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
             tracing::error!(
                 client = %request.identifier,
                 error = %err,
+                status = %status.as_u16(),
                 "Failed to update client settings"
             );
-            StatusCode::INTERNAL_SERVER_ERROR
+            client_settings_error(status, err.to_string())
         })?;
 
     let (mode, transport, version) = service
@@ -662,7 +720,7 @@ pub async fn update_settings(
                 error = %err,
                 "Failed to fetch updated client settings"
             );
-            StatusCode::INTERNAL_SERVER_ERROR
+            client_settings_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
         })?
         .unwrap_or((None, "auto".into(), None));
     let state = service
@@ -670,9 +728,9 @@ pub async fn update_settings(
         .await
         .map_err(|err| {
             tracing::error!(client = %request.identifier, error = %err, "Failed to fetch updated client state");
-            StatusCode::INTERNAL_SERVER_ERROR
+            client_settings_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
         })?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or_else(|| client_settings_error(StatusCode::NOT_FOUND, "Client state not found"))?;
     let runtime_metadata = state.runtime_client_metadata();
 
     let data = crate::api::models::client::ClientSettingsUpdateData {
@@ -877,7 +935,15 @@ async fn descriptor_to_client_info(
     let governance_kind = Some(state.governance_kind().as_str().to_string());
     let connection_mode = Some(state.connection_mode().as_str().to_string());
     let governed_by_default_policy = state.governed_by_default_policy();
-    let writable_config = state.has_local_config_target();
+    let config_mode = service
+        .get_client_settings(state.identifier())
+        .await
+        .ok()
+        .and_then(|o| o.and_then(|(mode, _, _)| mode));
+    let writable_config = service
+        .has_verified_local_config_target(state.identifier())
+        .await
+        .unwrap_or(false);
     let template_id = state.template_identifier().map(|id| id.to_string());
     let template_known = state.is_template_known();
     let pending_approval = approval_status.as_deref() == Some("pending");
@@ -899,11 +965,7 @@ async fn descriptor_to_client_info(
         homepage_url,
         docs_url,
         support_url,
-        config_mode: service
-            .get_client_settings(state.identifier())
-            .await
-            .ok()
-            .and_then(|o| o.and_then(|(mode, _, _)| mode)),
+        config_mode,
         transport: service
             .get_client_settings(state.identifier())
             .await
@@ -1403,6 +1465,10 @@ mod tests {
     #[tokio::test]
     async fn update_settings_persists_runtime_only_active_payload_fields() {
         let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("custom-runtime-payload.json");
+        tokio::fs::write(&config_path, "{}")
+            .await
+            .expect("seed payload config file");
 
         let Json(response) = update_settings(
             State(context.app_state.clone()),
@@ -1412,8 +1478,8 @@ mod tests {
                 transport: Some("streamable_http".to_string()),
                 client_version: Some("1.2.3".to_string()),
                 display_name: Some("Custom Runtime".to_string()),
-                connection_mode: Some("manual".to_string()),
-                config_path: Some("~/custom/runtime.json".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(config_path.to_string_lossy().to_string()),
                 supported_transports: Some(vec!["streamable_http".to_string(), "stdio".to_string()]),
                 description: Some("Custom runtime client".to_string()),
                 homepage_url: Some("https://example.com".to_string()),
@@ -1428,7 +1494,7 @@ mod tests {
         assert!(response.success);
         let data = response.data.expect("response data");
         assert_eq!(data.display_name, "Custom Runtime");
-        assert_eq!(data.connection_mode.as_deref(), Some("manual"));
+        assert_eq!(data.connection_mode.as_deref(), Some("local_config_detected"));
         assert_eq!(data.supported_transports, vec!["streamable_http".to_string(), "stdio".to_string()]);
         assert_eq!(data.description.as_deref(), Some("Custom runtime client"));
 
@@ -1441,8 +1507,8 @@ mod tests {
         assert_eq!(state.governance_kind().as_str(), "active");
         assert_eq!(state.record_kind().as_str(), "template_known");
         assert_eq!(state.display_name(), "Custom Runtime");
-        assert_eq!(state.connection_mode().as_str(), "manual");
-        assert_eq!(state.config_path(), Some("~/custom/runtime.json"));
+        assert_eq!(state.connection_mode().as_str(), "local_config_detected");
+        assert_eq!(state.config_path(), Some(config_path.to_string_lossy().as_ref()));
         assert_eq!(state.template_identifier(), Some("custom.runtime.payload"));
         assert_eq!(
             state.runtime_client_metadata().homepage_url.as_deref(),
@@ -1471,9 +1537,221 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_settings_rejects_missing_local_config_target() {
+        let context = create_test_context().await;
+        let missing_path = context._temp_dir.path().join("missing-client.json");
+
+        let result = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "custom.runtime.invalid".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Invalid Runtime".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(missing_path.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await;
+
+        let (status, Json(response)) = result.expect_err("missing local config target should fail");
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let error = response.error.expect("error payload");
+        assert!(error.message.contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn update_settings_clears_config_path_when_switching_to_manual() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("client-manual-clear.json");
+        tokio::fs::write(&config_path, "{}")
+            .await
+            .expect("seed config file");
+
+        let Json(initial_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "custom.runtime.clear".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Clear Runtime".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("initial update succeeds");
+        assert!(initial_response.success);
+
+        let Json(clear_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "custom.runtime.clear".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Clear Runtime".to_string()),
+                connection_mode: Some("manual".to_string()),
+                config_path: None,
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("manual update succeeds");
+        assert!(clear_response.success);
+
+        let state = context
+            .client_service
+            .fetch_state("custom.runtime.clear")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(state.connection_mode().as_str(), "manual");
+        assert_eq!(state.config_path(), None);
+    }
+
+    #[tokio::test]
+    async fn config_details_and_apply_reject_stale_missing_config_target() {
+        let context = create_test_context().await;
+
+        context
+            .client_service
+            .set_client_settings(
+                "client-a",
+                Some("hosted".to_string()),
+                Some("streamable_http".to_string()),
+                None,
+            )
+            .await
+            .expect("seed client settings");
+
+        sqlx::query(
+            "UPDATE client SET connection_mode = 'local_config_detected', config_path = ?, managed = 1, approval_status = 'approved' WHERE identifier = ?",
+        )
+        .bind(context._temp_dir.path().join("stale-missing.json").to_string_lossy().to_string())
+        .bind("client-a")
+        .execute(&context.db_pool)
+        .await
+        .expect("seed stale config path");
+
+        let Json(details_response) = config_details(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-a".to_string(),
+            }),
+        )
+        .await
+        .expect("config details response");
+
+        assert!(details_response.success);
+        let details = details_response.data.expect("details data");
+        assert!(!details.writable_config);
+
+        let apply_result = config_apply(
+            State(context.app_state.clone()),
+            Json(ClientConfigUpdateReq {
+                identifier: "client-a".to_string(),
+                mode: ClientConfigMode::Hosted,
+                preview: false,
+                selected_config: ClientConfigSelected::Default,
+            }),
+        )
+        .await;
+
+        assert!(apply_result.is_err());
+        assert_eq!(apply_result.unwrap_err(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn update_settings_preserves_suspended_governance_state() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("suspended-client.json");
+        tokio::fs::write(&config_path, "{}")
+            .await
+            .expect("seed suspended client config file");
+
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-a",
+                ActiveClientSettingsUpdate {
+                    display_name: Some("Suspended Client".to_string()),
+                    config_mode: Some("hosted".to_string()),
+                    transport: Some("streamable_http".to_string()),
+                    connection_mode: Some("local_config_detected".to_string()),
+                    config_path: Some(config_path.to_string_lossy().to_string()),
+                    supported_transports: Some(vec!["streamable_http".to_string()]),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed active client state");
+
+        context
+            .client_service
+            .suspend_client("client-a")
+            .await
+            .expect("suspend client");
+
+        let Json(response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: Some("2.0.0".to_string()),
+                display_name: Some("Suspended Client".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: Some("Still editable while denied".to_string()),
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("update denied client settings succeeds");
+
+        assert!(response.success);
+        let state = context
+            .client_service
+            .fetch_state("client-a")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(state.approval_status(), "suspended");
+        assert!(!state.managed());
+        assert_eq!(state.display_name(), "Suspended Client");
+    }
+
+    #[tokio::test]
     async fn config_apply_uses_persisted_runtime_template_for_runtime_only_client() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("runtime-client.json");
+        tokio::fs::write(&config_path, "{}")
+            .await
+            .expect("seed runtime apply config file");
 
         let Json(update_response) = update_settings(
             State(context.app_state.clone()),

@@ -17,6 +17,10 @@ impl ClientConfigService {
             });
         }
 
+        if matches!(options.mode, ConfigMode::Managed | ConfigMode::Native) {
+            self.verified_local_config_target(&options.client_id).await?;
+        }
+
         let template = self.get_client_template(&options.client_id).await?;
         // Select transport for managed mode if applicable
         let mut chosen_transport: Option<String> = None;
