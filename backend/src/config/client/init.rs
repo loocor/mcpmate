@@ -505,21 +505,52 @@ pub async fn initialize_system_settings_table(pool: &Pool<Sqlite>) -> Result<()>
         anyhow::anyhow!("Failed to insert default onboarding_policy: {}", e)
     })?;
 
-    sqlx::query(&format!(
-        r#"
-        INSERT OR IGNORE INTO {table} (key, value)
-        VALUES (?, ?)
-        "#,
+    let existing_first_contact_behavior = sqlx::query_scalar::<_, String>(&format!(
+        r#"SELECT value FROM {table} WHERE key = ?"#,
         table = tables::SYSTEM_SETTINGS,
     ))
     .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
-    .bind("allow")
-    .execute(pool)
+    .fetch_optional(pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to insert default first_contact_behavior: {}", e);
-        anyhow::anyhow!("Failed to insert default first_contact_behavior: {}", e)
+        tracing::error!("Failed to read first_contact_behavior: {}", e);
+        anyhow::anyhow!("Failed to read first_contact_behavior: {}", e)
     })?;
+
+    if existing_first_contact_behavior.is_none() {
+        let onboarding_policy = sqlx::query_scalar::<_, String>(&format!(
+            r#"SELECT value FROM {table} WHERE key = 'onboarding_policy'"#,
+            table = tables::SYSTEM_SETTINGS,
+        ))
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read onboarding_policy for first_contact_behavior migration: {}", e);
+            anyhow::anyhow!("Failed to read onboarding_policy for first_contact_behavior migration: {}", e)
+        })?;
+
+        let initial_behavior = match onboarding_policy.as_deref() {
+            Some("require_approval") => "review",
+            Some("manual") => "deny",
+            Some("auto_manage") | Some(_) | None => "allow",
+        };
+
+        sqlx::query(&format!(
+            r#"
+            INSERT INTO {table} (key, value)
+            VALUES (?, ?)
+            "#,
+            table = tables::SYSTEM_SETTINGS,
+        ))
+        .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
+        .bind(initial_behavior)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to insert default first_contact_behavior: {}", e);
+            anyhow::anyhow!("Failed to insert default first_contact_behavior: {}", e)
+        })?;
+    }
 
     tracing::debug!("{} table initialized", tables::SYSTEM_SETTINGS);
     Ok(())
@@ -527,7 +558,10 @@ pub async fn initialize_system_settings_table(pool: &Pool<Sqlite>) -> Result<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{initialize_client_table, resolve_default_client_config_mode, set_default_client_config_mode};
+    use super::{
+        initialize_client_table, initialize_system_settings_table, resolve_default_client_config_mode,
+        set_default_client_config_mode, FIRST_CONTACT_BEHAVIOR_SETTING_KEY,
+    };
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_pool() -> sqlx::Pool<sqlx::Sqlite> {
@@ -540,6 +574,9 @@ mod tests {
         initialize_client_table(&pool)
             .await
             .expect("failed to initialize client tables");
+        initialize_system_settings_table(&pool)
+            .await
+            .expect("failed to initialize system settings table");
 
         pool
     }
@@ -578,5 +615,35 @@ mod tests {
                 .expect("failed to resolve transparent mode"),
             "transparent"
         );
+    }
+
+    #[tokio::test]
+    async fn first_contact_behavior_backfills_from_existing_onboarding_policy() {
+        let pool = setup_pool().await;
+
+        sqlx::query("DELETE FROM system_settings WHERE key = ?")
+            .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
+            .execute(&pool)
+            .await
+            .expect("delete first_contact_behavior");
+
+        sqlx::query("UPDATE system_settings SET value = 'manual' WHERE key = 'onboarding_policy'")
+            .execute(&pool)
+            .await
+            .expect("update onboarding policy");
+
+        initialize_system_settings_table(&pool)
+            .await
+            .expect("reinitialize system settings");
+
+        let behavior = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM system_settings WHERE key = ?",
+        )
+        .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch first_contact_behavior");
+
+        assert_eq!(behavior, "deny");
     }
 }

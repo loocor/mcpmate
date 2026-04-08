@@ -71,7 +71,6 @@ impl ClientConfigService {
         let resolved_path = get_path_service()
             .resolve_user_path(raw_path)
             .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
-
         let metadata = tokio::fs::metadata(&resolved_path).await.map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 ConfigError::DataAccessError(format!(
@@ -86,21 +85,25 @@ impl ClientConfigService {
             }
         })?;
 
-        if !metadata.is_file() {
+        if metadata.is_file() {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&resolved_path)
+                .await
+                .map_err(|_| ConfigError::PathNotWritable {
+                    path: resolved_path,
+                })?;
+        } else if metadata.is_dir() {
+            let _ = tokio::fs::read_dir(&resolved_path)
+                .await
+                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path })?;
+        } else {
             return Err(ConfigError::DataAccessError(format!(
-                "Configured MCP path is not a file: {}",
+                "Configured MCP path is neither a file nor a directory: {}",
                 raw_path
             )));
         }
-
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&resolved_path)
-            .await
-            .map_err(|_| ConfigError::PathNotWritable {
-                path: resolved_path,
-            })?;
 
         Ok(())
     }

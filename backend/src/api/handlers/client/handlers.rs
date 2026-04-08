@@ -1682,6 +1682,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_settings_accepts_directory_target_for_kv_client() {
+        let context = create_test_context().await;
+        let kv_dir = context._temp_dir.path().join("cherry-kv");
+        tokio::fs::create_dir_all(&kv_dir)
+            .await
+            .expect("create kv directory");
+
+        let Json(response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "cherry_studio".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Cherry Studio".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(kv_dir.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("kv directory target should be accepted");
+
+        assert!(response.success);
+    }
+
+    #[tokio::test]
     async fn update_settings_preserves_suspended_governance_state() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("suspended-client.json");

@@ -435,19 +435,23 @@ impl ClientConfigService {
             }
         })?;
 
-        if !metadata.is_file() {
+        if metadata.is_file() {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&resolved_path)
+                .await
+                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path.clone() })?;
+        } else if metadata.is_dir() {
+            let _ = tokio::fs::read_dir(&resolved_path)
+                .await
+                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path.clone() })?;
+        } else {
             return Err(ConfigError::DataAccessError(format!(
-                "Client config target is not a file: {}",
+                "Client config target is neither a file nor a directory: {}",
                 config_path
             )));
         }
-
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&resolved_path)
-            .await
-            .map_err(|_| ConfigError::PathNotWritable { path: resolved_path.clone() })?;
 
         Ok(Some(config_path))
     }
