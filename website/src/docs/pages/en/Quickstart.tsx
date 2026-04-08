@@ -111,6 +111,9 @@ export default function Quickstart() {
 					In <strong>Clients</strong>, ensure your editor appears as <strong>Detected</strong>. If it is not, reinstall the client or review the path.
 				</Li>
 				<Li>
+					If the client should allow MCPMate to write its own MCP configuration, confirm in the New / Edit drawer that it points to a real writable local MCP config file. MCPMate validates that path before using it as a write target.
+				</Li>
+				<Li>
 					Set the client to <strong>Hosted</strong> mode to enable in-place profile switching from MCPMate.
 					 Use <strong>Unify</strong> mode when you want session-local builtin control instead of dashboard-managed profile switching.
 					 <strong>Transparent</strong> mode only writes configuration files and cannot toggle profiles live.
