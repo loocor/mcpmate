@@ -222,6 +222,9 @@ export const clientsTranslations = {
 					"Applying governance to the client configuration requires a verified writable local MCP config file.",
 				applyRequiresApprovedReason:
 					"Applying client configuration requires an approved governance state and a verified local config target.",
+				managementSettingsPendingReason:
+					"Save management settings after this client leaves pending approval.",
+				apply: "Apply",
 				reapply: "Re-apply",
 				sections: {
 					mode: {
@@ -455,6 +458,11 @@ export const clientsTranslations = {
 				applied: {
 					title: "Applied",
 					message: "Configuration applied",
+				},
+				managementSaved: {
+					title: "Saved",
+					message:
+						"Management settings were saved in MCPMate. Local client configuration was not updated.",
 				},
 				applyFailed: {
 					title: "Apply failed",
@@ -740,6 +748,8 @@ export const clientsTranslations = {
 				description: "若不清楚含义，请勿修改并保持现有设置。",
 				writeTargetRequiredReason: "要把治理配置真正应用到客户端配置文件，必须先确认一个已验证且可写的本地 MCP 配置文件。",
 				applyRequiresApprovedReason: "要把客户端配置真正应用落盘，必须先处于已允许治理状态，并且拥有一个已验证的本地配置目标。",
+				managementSettingsPendingReason: "请在该客户端结束待审批状态后再保存管理设置。",
+				apply: "应用",
 				reapply: "重新应用",
 				sections: {
 					mode: {
@@ -962,6 +972,10 @@ export const clientsTranslations = {
 				applied: {
 					title: "已应用",
 					message: "配置已应用",
+				},
+				managementSaved: {
+					title: "已保存",
+					message: "管理设置已保存到 MCPMate，本地客户端配置未更新。",
 				},
 				applyFailed: {
 					title: "应用失败",
@@ -1249,6 +1263,9 @@ export const clientsTranslations = {
 					"クライアント設定ファイルへガバナンスを適用するには、検証済みで書き込み可能なローカル MCP 設定ファイルが必要です。",
 				applyRequiresApprovedReason:
 					"クライアント設定を適用するには、許可済みのガバナンス状態と検証済みのローカル設定対象が必要です。",
+				managementSettingsPendingReason:
+					"このクライアントが承認待ち状態を抜けてから管理設定を保存してください。",
+				apply: "適用",
 				reapply: "再適用",
 				sections: {
 					mode: {
@@ -1481,6 +1498,10 @@ export const clientsTranslations = {
 				applied: {
 					title: "適用しました",
 					message: "設定を適用しました",
+				},
+				managementSaved: {
+					title: "保存しました",
+					message: "管理設定を MCPMate に保存しました。ローカルのクライアント設定は更新していません。",
 				},
 				applyFailed: {
 					title: "適用に失敗しました",

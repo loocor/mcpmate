@@ -1025,6 +1025,10 @@ fn extract_client_supported_transports(
     template: Option<&ClientTemplate>,
     runtime_metadata: &RuntimeClientMetadata,
 ) -> Vec<String> {
+    if !runtime_metadata.supported_transports.is_empty() {
+        return runtime_metadata.supported_transports.clone();
+    }
+
     match template {
         Some(template) => extract_supported_transports(template),
         None => runtime_metadata.supported_transports.clone(),
@@ -1534,6 +1538,67 @@ mod tests {
             metadata_string(&runtime_template, "homepage_url").as_deref(),
             Some("https://example.com")
         );
+    }
+
+    #[tokio::test]
+    async fn config_details_prefers_persisted_supported_transports_for_template_client() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("template-client.json");
+        tokio::fs::write(&config_path, "{}")
+            .await
+            .expect("seed template client config file");
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("stdio".to_string()),
+                client_version: None,
+                display_name: Some("Client A".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["stdio".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("update template client settings");
+
+        assert!(update_response.success);
+
+        let Json(details_response) = config_details(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-a".to_string(),
+            }),
+        )
+        .await
+        .expect("load template client details");
+
+        assert!(details_response.success);
+        let details = details_response.data.expect("details data");
+        assert_eq!(details.supported_transports, vec!["stdio".to_string()]);
+
+        let Json(list_response) = list(
+            State(context.app_state.clone()),
+            Query(ClientCheckReq { refresh: false }),
+        )
+        .await
+        .expect("list clients");
+
+        let listed_client = list_response
+            .data
+            .expect("list data")
+            .client
+            .into_iter()
+            .find(|client| client.identifier == "client-a")
+            .expect("client-a in list response");
+        assert_eq!(listed_client.supported_transports, vec!["stdio".to_string()]);
     }
 
     #[tokio::test]
