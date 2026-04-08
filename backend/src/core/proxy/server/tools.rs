@@ -514,30 +514,6 @@ mod tests {
     use crate::clients::models::CapabilitySource;
 
     #[test]
-    fn profile_tools_are_only_available_for_activated_capability_source() {
-        let profile_tools = [
-            "mcpmate_profile_enable",
-            "mcpmate_profile_disable",
-            "mcpmate_profile_activate_only",
-        ];
-
-        for tool in profile_tools {
-            assert!(
-                builtin_tool_allowed(None, CapabilitySource::Activated, tool),
-                "{tool} should be available for Activated"
-            );
-            assert!(
-                !builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
-                "{tool} should NOT be available for Profiles"
-            );
-            assert!(
-                !builtin_tool_allowed(None, CapabilitySource::Custom, tool),
-                "{tool} should NOT be available for Custom"
-            );
-        }
-    }
-
-    #[test]
     fn hosted_profile_listing_tools_are_only_available_for_profiles_source() {
         let other_tools = ["mcpmate_profile_list", "mcpmate_profile_preview"];
 

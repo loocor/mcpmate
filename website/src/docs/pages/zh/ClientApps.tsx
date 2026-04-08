@@ -39,7 +39,8 @@ export default function ClientAppsZH() {
 
 			<H3>托管开关</H3>
 			<P>
-				右下角开关负责打开或关闭托管模式。启用后 MCPMate 会同步配置集变更到该客户端；切换完成后会通过通知提示成功或失败。
+				现在这组主操作更偏向治理放行：你可以显式允许或禁行某个客户端。禁行的含义是把它挡在 MCPMate 的能力放行圈之外，而不是锁死它的配置编辑能力。
+				即使客户端当前被禁行，你仍然可以继续调整管理模式、能力来源与路径元数据，再决定何时重新允许它。
 			</P>
 
 			<H3>详情页</H3>
@@ -70,6 +71,11 @@ export default function ClientAppsZH() {
 			<Callout type="warning" title="长期未检测到客户端的处理">
 				请确认目标应用安装在默认位置，并确保 MCPMate 具有访问 <strong>/Applications</strong>
 				目录的权限。若使用 macOS，必要时在“系统设置 → 隐私与安全性”中授予完整磁盘访问权限，随后点击“刷新”重新扫描。
+			</Callout>
+
+			<Callout type="info" title="只有已验证的本地配置目标才允许写入">
+				只有当客户端在 New / Edit 抽屉里声明并通过验证，确认它确实拥有一个可写的本地 MCP 配置文件目标时，MCPMate 才会真正写入该客户端自己的配置文件。
+				托管模式、统一模式、透明模式都可能产生写入结果，但它们都不能靠“仅仅保存治理状态”来创建这份资格。
 			</Callout>
 		</DocLayout>
 	);

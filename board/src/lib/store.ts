@@ -15,7 +15,12 @@ export type DashboardDefaultView = "list" | "grid";
 export type DashboardAppMode = "express" | "expert";
 export type DashboardLanguage = "en" | "zh-cn" | "ja";
 export type ClientDefaultMode = "unify" | "hosted" | "transparent";
-export type ClientListDefaultFilter = "all" | "detected" | "managed";
+/** Default governance filter for the Clients list (URL + settings). */
+export type ClientListDefaultFilter =
+	| "all"
+	| "allowed"
+	| "pending"
+	| "denied";
 export type ClientBackupStrategy = "keep_n" | "keep_last" | "none";
 export type MenuBarIconMode = "runtime" | "hidden";
 /** Default Market portal selection (`official` or a registered third-party id). */
@@ -220,10 +225,17 @@ function normalizeDashboardSettings(
 
 	if (
 		patch.clientListDefaultFilter === "all" ||
+		patch.clientListDefaultFilter === "allowed" ||
+		patch.clientListDefaultFilter === "pending" ||
+		patch.clientListDefaultFilter === "denied"
+	) {
+		next.clientListDefaultFilter = patch.clientListDefaultFilter;
+	} else if (
 		patch.clientListDefaultFilter === "detected" ||
 		patch.clientListDefaultFilter === "managed"
 	) {
-		next.clientListDefaultFilter = patch.clientListDefaultFilter;
+		// Legacy persisted values (older dashboard used detection/management axes for filters).
+		next.clientListDefaultFilter = "all";
 	}
 
 	if (

@@ -1,6 +1,8 @@
 use super::common::{ClientContext, ManagedClientContextResolver, SessionBoundClientContextResolver};
 use crate::{
     audit::AuditService,
+    clients::models::FirstContactBehavior,
+    clients::service::ClientConfigService,
     config::audit_database::AuditDatabase,
     config::database::Database,
     core::{pool::UpstreamConnectionPool, transport::TransportType},
@@ -29,7 +31,6 @@ pub struct DownstreamRoute {
     pub peer: rmcp::service::Peer<rmcp::RoleServer>,
 }
 
-#[derive(Debug)]
 pub struct ProxyServer {
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
     pub database: Option<Arc<Database>>,
@@ -47,6 +48,8 @@ pub struct ProxyServer {
     pub server_resource_index: Arc<dashmap::DashMap<String, dashmap::DashSet<(String, String)>>>, // server_id -> {(session_id, unique_uri)}
     pub call_sessions_by_token: Arc<dashmap::DashMap<rmcp::model::ProgressToken, DownstreamRoute>>,
     pub call_sessions_by_request: Arc<dashmap::DashMap<RequestId, DownstreamRoute>>,
+    /// Used for first-contact governance on MCP `initialize` (unknown clients + policy).
+    pub client_config_service: Option<Arc<ClientConfigService>>,
 }
 
 impl Clone for ProxyServer {
@@ -68,6 +71,7 @@ impl Clone for ProxyServer {
             server_resource_index: self.server_resource_index.clone(),
             call_sessions_by_token: self.call_sessions_by_token.clone(),
             call_sessions_by_request: self.call_sessions_by_request.clone(),
+            client_config_service: self.client_config_service.clone(),
         }
     }
 }
@@ -158,6 +162,10 @@ impl ProxyServer {
         &self,
         mut client: ClientContext,
     ) -> Result<ClientContext, rmcp::ErrorData> {
+        if let Some(ref svc) = self.client_config_service {
+            self.enforce_client_governance_for_initialize(svc, &client).await?;
+        }
+
         if client.config_mode.is_none() {
             client.config_mode = Some(self.resolve_effective_config_mode(&client.client_id).await?);
         }
@@ -176,6 +184,70 @@ impl ProxyServer {
             .map_err(|error| self.map_client_context_error(error))?;
         client.rules_fingerprint = Some(snapshot.rules_fingerprint);
         Ok(client)
+    }
+
+    /// Enforce default client governance on MCP `initialize`: deny / review / allow for unknown clients.
+    /// Uses JSON-RPC–style `invalid_request` / `internal_error` per MCP error mapping.
+    async fn enforce_client_governance_for_initialize(
+        &self,
+        svc: &Arc<ClientConfigService>,
+        client: &ClientContext,
+    ) -> Result<(), rmcp::ErrorData> {
+        let policy = svc.get_first_contact_behavior().await.map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("Failed to read client governance policy: {e}"), None)
+        })?;
+
+        let display_name = client
+            .observed_client_info
+            .as_ref()
+            .map(|o| o.name.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(client.client_id.as_str());
+
+        let state_opt = svc.fetch_state(&client.client_id).await.map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("Failed to read client state: {e}"), None)
+        })?;
+
+        if let Some(ref state) = state_opt {
+            return match state.approval_status() {
+                "approved" => Ok(()),
+                "rejected" => Err(rmcp::ErrorData::invalid_request(
+                    "MCPMate rejected this client identifier; connection is not allowed.".to_string(),
+                    None,
+                )),
+                "suspended" => Err(rmcp::ErrorData::invalid_request(
+                    "This client is suspended in MCPMate; connection is not allowed.".to_string(),
+                    None,
+                )),
+                "pending" => Err(rmcp::ErrorData::invalid_request(
+                    "This client is pending approval in MCPMate. Approve it in the dashboard, then reconnect."
+                        .to_string(),
+                    None,
+                )),
+                _ => Ok(()),
+            };
+        }
+
+        match policy {
+            FirstContactBehavior::Allow => Ok(()),
+            FirstContactBehavior::Deny => Err(rmcp::ErrorData::invalid_request(
+                "Unknown client identifier is denied by MCPMate policy. Register the client before connecting."
+                    .to_string(),
+                None,
+            )),
+            FirstContactBehavior::Review => {
+                svc.ensure_passive_observed_row(&client.client_id, display_name, None)
+                    .await
+                    .map_err(|e| {
+                        rmcp::ErrorData::internal_error(format!("Failed to register client for review: {e}"), None)
+                    })?;
+                Err(rmcp::ErrorData::invalid_request(
+                    "This client is pending approval in MCPMate. Approve it in the dashboard, then reconnect."
+                        .to_string(),
+                    None,
+                ))
+            }
+        }
     }
 
     async fn resolve_effective_config_mode(
@@ -437,6 +509,7 @@ impl ProxyServer {
             server_resource_index: Arc::new(dashmap::DashMap::new()),
             call_sessions_by_token: Arc::new(dashmap::DashMap::new()),
             call_sessions_by_request: Arc::new(dashmap::DashMap::new()),
+            client_config_service: None,
         }
     }
 
@@ -449,7 +522,8 @@ impl ProxyServer {
         crate::core::capability::naming::initialize(db_arc.pool.clone());
         self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
         let client_config_service =
-            Arc::new(crate::clients::service::ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
+            Arc::new(ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
+        self.client_config_service = Some(client_config_service.clone());
         self.builtin_services = Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(
             db_arc.clone(),
             self.connection_pool.clone(),

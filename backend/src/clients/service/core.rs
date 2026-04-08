@@ -3,43 +3,103 @@ use crate::clients::detector::{ClientDetector, DetectedClient};
 use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    BackupPolicySetting, ClientCapabilityConfig, ClientTemplate, ConfigMode, ServerTemplateInput, TemplateFormat,
+    BackupPolicySetting, ClientCapabilityConfig, ClientConnectionMode, ClientGovernanceKind, ClientRecordKind,
+    ClientTemplate, ConfigMapping, ConfigMode, DetectionMethod, DetectionRule, FormatRule, ManagedEndpointConfig,
+    MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
 };
-use crate::clients::source::{ClientConfigSource, FileTemplateSource, TemplateRoot};
-use crate::system::paths::PathService;
+use crate::clients::source::{ClientConfigSource, DbTemplateSource};
+#[cfg(test)]
+use crate::clients::source::FileTemplateSource;
+use crate::system::paths::{PathService, get_path_service};
 use chrono::{DateTime, Utc};
+use serde_json::json;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use std::fs as std_fs;
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
+use tokio::fs::OpenOptions;
 
 // Generated at build time from the repository's config/client directory
 include!(concat!(env!("OUT_DIR"), "/official_templates_generated.rs"));
 
-fn seed_official_templates(dir: &std::path::Path) -> crate::clients::error::ConfigResult<()> {
-    for (file_name, contents) in OFFICIAL_TEMPLATES {
-        let path = dir.join(file_name);
-        if let Some(parent) = path.parent() {
-            std_fs::create_dir_all(parent).map_err(crate::clients::error::ConfigError::IoError)?;
+const RUNTIME_ACTIVE_TEMPLATE_SOURCE: &str = "runtime_active_client";
+
+fn parse_embedded_template(
+    file_name: &str,
+    contents: &str,
+) -> ConfigResult<ClientTemplate> {
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .ok_or_else(|| ConfigError::TemplateParseError(format!("Unsupported embedded template: {}", file_name)))?;
+
+    let mut template: ClientTemplate = match ext.as_str() {
+        "json" => serde_json::from_str(contents)
+            .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err)))?,
+        "json5" => json5::from_str(contents)
+            .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err)))?,
+        "yaml" | "yml" => serde_yaml::from_str(contents)
+            .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err)))?,
+        "toml" => toml::from_str(contents)
+            .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err)))?,
+        _ => {
+            return Err(ConfigError::TemplateParseError(format!(
+                "Unsupported embedded template extension {} ({})",
+                ext, file_name
+            )));
         }
+    };
 
-        let needs_write = match std_fs::read_to_string(&path) {
-            Ok(existing) => existing != *contents,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
-            Err(_) => true,
-        };
-
-        if needs_write {
-            std_fs::write(&path, contents).map_err(crate::clients::error::ConfigError::IoError)?;
+    if matches!(template.format, TemplateFormat::Json) {
+        match ext.as_str() {
+            "json5" => template.format = TemplateFormat::Json5,
+            "yaml" | "yml" => template.format = TemplateFormat::Yaml,
+            "toml" => template.format = TemplateFormat::Toml,
+            _ => {}
         }
     }
-    Ok(())
+
+    if template.identifier.trim().is_empty() {
+        return Err(ConfigError::TemplateParseError(format!(
+            "Embedded template missing identifier field: {}",
+            file_name
+        )));
+    }
+
+    if template.config_mapping.container_keys.is_empty() {
+        return Err(ConfigError::TemplateParseError(format!(
+            "Embedded template {} missing config_mapping.container_keys",
+            template.identifier
+        )));
+    }
+
+    if template.detection.is_empty() {
+        return Err(ConfigError::TemplateParseError(format!(
+            "Embedded template {} missing detection rules",
+            template.identifier
+        )));
+    }
+
+    Ok(template)
+}
+
+fn embedded_official_templates() -> ConfigResult<Vec<ClientTemplate>> {
+    OFFICIAL_TEMPLATES
+        .iter()
+        .map(|(file_name, contents)| parse_embedded_template(file_name, contents))
+        .collect()
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Default)]
 pub struct ClientStateRow {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) id: String,
     pub(super) identifier: String,
     pub(super) name: String,
+    pub(super) display_name: Option<String>,
+    pub(super) config_path: Option<String>,
     pub(super) managed: i64,
     pub(super) config_mode: Option<String>,
     pub(super) transport: Option<String>,
@@ -47,6 +107,10 @@ pub struct ClientStateRow {
     pub(super) backup_policy: Option<String>,
     pub(super) backup_limit: Option<i64>,
     pub(super) capability_source: Option<String>,
+    pub(super) governance_kind: Option<String>,
+    pub(super) connection_mode: Option<String>,
+    pub(super) record_kind: Option<String>,
+    pub(super) template_identifier: Option<String>,
     pub(super) selected_profile_ids: Option<String>,
     pub(super) custom_profile_id: Option<String>,
     pub(super) approval_status: Option<String>,
@@ -58,7 +122,29 @@ pub struct ClientStateRow {
     pub(super) approval_metadata: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeClientMetadata {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub homepage_url: Option<String>,
+    #[serde(default)]
+    pub docs_url: Option<String>,
+    #[serde(default)]
+    pub support_url: Option<String>,
+    #[serde(default)]
+    pub logo_url: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub supported_transports: Vec<String>,
+}
+
 impl ClientStateRow {
+    pub fn identifier(&self) -> &str {
+        &self.identifier
+    }
+
     pub(super) fn to_setting(&self) -> BackupPolicySetting {
         BackupPolicySetting::from_pair(
             self.backup_policy.as_deref(),
@@ -82,18 +168,73 @@ impl ClientStateRow {
         self.approval_status.as_deref().unwrap_or("approved")
     }
 
+    pub fn connection_mode(&self) -> ClientConnectionMode {
+        self.connection_mode
+            .as_deref()
+            .and_then(|value| value.parse::<ClientConnectionMode>().ok())
+            .unwrap_or_default()
+    }
+
+    pub fn governance_kind(&self) -> ClientGovernanceKind {
+        self.governance_kind
+            .as_deref()
+            .and_then(|value| value.parse::<ClientGovernanceKind>().ok())
+            .unwrap_or_default()
+    }
+
+    pub fn record_kind(&self) -> ClientRecordKind {
+        self.record_kind
+            .as_deref()
+            .and_then(|value| value.parse::<ClientRecordKind>().ok())
+            .unwrap_or_default()
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.display_name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&self.name)
+    }
+
+    pub fn config_path(&self) -> Option<&str> {
+        self.config_path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+    }
+
+    pub fn governed_by_default_policy(&self) -> bool {
+        self.governance_kind() == ClientGovernanceKind::Passive
+    }
+
+    pub fn has_local_config_target(&self) -> bool {
+        self.connection_mode() != ClientConnectionMode::RemoteHttp
+            && self
+                .config_path
+                .as_deref()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+    }
+
     #[allow(dead_code)]
     pub fn is_template_known(&self) -> bool {
-        self.template_id.is_some()
+        self.record_kind() == ClientRecordKind::TemplateKnown
     }
 
     #[allow(dead_code)]
     pub fn is_pending_unknown(&self) -> bool {
-        self.approval_status.as_deref() == Some("pending") && self.template_id.is_none()
+        self.approval_status.as_deref() == Some("pending")
+            && self.record_kind() == ClientRecordKind::ObservedUnknown
     }
 
     pub fn template_id(&self) -> Option<&str> {
         self.template_id.as_deref()
+    }
+
+    pub fn template_identifier(&self) -> Option<&str> {
+        self.template_identifier
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| self.template_id())
     }
 
     pub(super) fn capability_config(&self) -> ConfigResult<ClientCapabilityConfig> {
@@ -104,12 +245,29 @@ impl ClientStateRow {
         )
         .map_err(ConfigError::DataAccessError)
     }
+
+    pub fn runtime_client_metadata(&self) -> RuntimeClientMetadata {
+        let Some(raw) = self.approval_metadata.as_deref() else {
+            return RuntimeClientMetadata::default();
+        };
+
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+            return RuntimeClientMetadata::default();
+        };
+
+        value
+            .get("runtime_client")
+            .cloned()
+            .and_then(|entry| serde_json::from_value::<RuntimeClientMetadata>(entry).ok())
+            .unwrap_or_default()
+    }
 }
 
 /// Summarized view of a client template combined with detection and filesystem state
 #[derive(Debug, Clone)]
 pub struct ClientDescriptor {
-    pub template: ClientTemplate,
+    pub template: Option<ClientTemplate>,
+    pub state: ClientStateRow,
     pub detection: Option<DetectedClient>,
     pub config_path: Option<String>,
     pub config_exists: bool,
@@ -167,7 +325,7 @@ pub struct ApplyOutcome {
 
 /// High-level service wiring templates, detection, and storage backends
 pub struct ClientConfigService {
-    pub(super) template_source: Arc<FileTemplateSource>,
+    pub(super) template_source: Arc<dyn ClientConfigSource>,
     pub(super) template_engine: Arc<TemplateEngine>,
     pub(super) detector: Arc<ClientDetector>,
     pub(super) db_pool: Arc<SqlitePool>,
@@ -176,24 +334,20 @@ pub struct ClientConfigService {
 impl ClientConfigService {
     /// Bootstrap service with default template root resolution
     pub async fn bootstrap(db_pool: Arc<SqlitePool>) -> crate::clients::error::ConfigResult<Self> {
-        let template_root = TemplateRoot::resolve()?;
-        template_root.ensure_base_dirs()?;
-        let official_dir = template_root.official_dir();
-        seed_official_templates(&official_dir)?;
-        // Ensure keymap defaults file exists on first run
-        let _ = crate::clients::keymap::reload();
-        let source = Arc::new(FileTemplateSource::bootstrap(template_root).await?);
-        Self::with_source(db_pool, source).await
+        let templates = embedded_official_templates()?;
+        Self::seed_runtime_template_snapshots_from_templates(db_pool.as_ref(), &templates).await?;
+        Self::seed_client_runtime_rows_from_templates(db_pool.as_ref(), &templates).await?;
+        let runtime_source: Arc<dyn ClientConfigSource> = Arc::new(DbTemplateSource::new(db_pool.clone())?);
+        Self::with_source(db_pool, runtime_source).await
     }
 
     /// Initialize service with pre-built template source (primarily for tests)
     pub async fn with_source(
         db_pool: Arc<SqlitePool>,
-        template_source: Arc<FileTemplateSource>,
+        template_source: Arc<dyn ClientConfigSource>,
     ) -> crate::clients::error::ConfigResult<Self> {
-        let source_dyn: Arc<dyn ClientConfigSource> = template_source.clone();
-        let engine = TemplateEngine::with_defaults(source_dyn.clone());
-        let detector = ClientDetector::new(source_dyn)?;
+        let engine = TemplateEngine::with_defaults(template_source.clone());
+        let detector = ClientDetector::new(template_source.clone())?;
 
         Ok(Self {
             template_source,
@@ -205,9 +359,6 @@ impl ClientConfigService {
 
     /// Reload templates from disk, keeping previous index if reloading fails
     pub async fn reload_templates(&self) -> crate::clients::error::ConfigResult<()> {
-        self.template_source.reload().await?;
-        // Reload keymap registry alongside templates
-        let _ = crate::clients::keymap::reload();
         Ok(())
     }
 
@@ -249,7 +400,389 @@ impl ClientConfigService {
         &self,
         client_id: &str,
     ) -> crate::clients::error::ConfigResult<Option<String>> {
+        if let Some(state) = self.fetch_state(client_id).await? {
+            if let Some(config_path) = state.config_path.filter(|value| !value.trim().is_empty()) {
+                let resolved = get_path_service()
+                    .resolve_user_path(&config_path)
+                    .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
+                return Ok(Some(resolved.to_string_lossy().to_string()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub(super) async fn verified_local_config_target(
+        &self,
+        client_id: &str,
+    ) -> ConfigResult<Option<String>> {
+        let Some(config_path) = self.resolved_config_path(client_id).await? else {
+            return Ok(None);
+        };
+
+        let resolved_path = std::path::PathBuf::from(&config_path);
+        let metadata = tokio::fs::metadata(&resolved_path).await.map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                ConfigError::DataAccessError(format!(
+                    "Client config target does not exist: {}",
+                    config_path
+                ))
+            } else {
+                ConfigError::FileOperationError(format!(
+                    "Failed to inspect client config target {}: {}",
+                    config_path, err
+                ))
+            }
+        })?;
+
+        if metadata.is_file() {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&resolved_path)
+                .await
+                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path.clone() })?;
+        } else if metadata.is_dir() {
+            let _ = tokio::fs::read_dir(&resolved_path)
+                .await
+                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path.clone() })?;
+        } else {
+            return Err(ConfigError::DataAccessError(format!(
+                "Client config target is neither a file nor a directory: {}",
+                config_path
+            )));
+        }
+
+        Ok(Some(config_path))
+    }
+
+    pub async fn has_verified_local_config_target(
+        &self,
+        client_id: &str,
+    ) -> ConfigResult<bool> {
+        Ok(self.verified_local_config_target(client_id).await?.is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn seed_runtime_template_snapshots(
+        db_pool: &SqlitePool,
+        file_source: &FileTemplateSource,
+    ) -> crate::clients::error::ConfigResult<()> {
+        let templates = file_source.list_client().await?;
+        Self::seed_runtime_template_snapshots_from_templates(db_pool, &templates).await
+    }
+
+    async fn seed_runtime_template_snapshots_from_templates(
+        db_pool: &SqlitePool,
+        templates: &[ClientTemplate],
+    ) -> crate::clients::error::ConfigResult<()> {
+        for template in templates {
+            let payload_json = serde_json::to_string(&template)
+                .map_err(|err| ConfigError::TemplateParseError(format!("Failed to serialize runtime template payload: {}", err)))?;
+            sqlx::query(
+                r#"
+                INSERT INTO client_template_runtime (identifier, payload_json)
+                VALUES (?, ?)
+                ON CONFLICT(identifier) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    updated_at = CURRENT_TIMESTAMP
+                "#,
+            )
+            .bind(&template.identifier)
+            .bind(payload_json)
+            .execute(db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub(super) async fn should_persist_runtime_active_template(
+        &self,
+        identifier: &str,
+        existing_state: Option<&ClientStateRow>,
+    ) -> ConfigResult<bool> {
+        if existing_state
+            .map(|state| state.record_kind() == ClientRecordKind::ObservedUnknown)
+            .unwrap_or(true)
+        {
+            return Ok(true);
+        }
+
+        let payload_json = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT payload_json
+            FROM client_template_runtime
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(identifier)
+        .fetch_optional(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        let Some(payload_json) = payload_json else {
+            return Ok(true);
+        };
+
+        let template = serde_json::from_str::<ClientTemplate>(&payload_json).map_err(|err| {
+            ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err))
+        })?;
+
+        Ok(template.config_mapping.managed_source.as_deref() == Some(RUNTIME_ACTIVE_TEMPLATE_SOURCE))
+    }
+
+    pub(super) async fn persist_runtime_active_template(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<()> {
+        let state = self
+            .fetch_state(identifier)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Missing client state for {}", identifier)))?;
+        let template = Self::build_runtime_active_template(&state);
+        let payload_json = serde_json::to_string(&template).map_err(|err| {
+            ConfigError::TemplateParseError(format!("Failed to serialize runtime template payload: {}", err))
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO client_template_runtime (identifier, payload_json)
+            VALUES (?, ?)
+            ON CONFLICT(identifier) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(identifier)
+        .bind(payload_json)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET record_kind = 'template_known',
+                template_identifier = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(identifier)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        Ok(())
+    }
+
+    fn build_runtime_active_template(state: &ClientStateRow) -> ClientTemplate {
+        let config_path = state.config_path().map(str::to_string);
+        let runtime_metadata = state.runtime_client_metadata();
+        let format = Self::infer_runtime_template_format(config_path.as_deref());
+        let mut detection = HashMap::new();
+        if let Some(config_path) = config_path.clone().filter(|value| !value.trim().is_empty()) {
+            detection.insert(
+                PathService::get_current_platform().to_string(),
+                vec![DetectionRule {
+                    method: DetectionMethod::ConfigPath,
+                    value: config_path.clone(),
+                    config_path: Some(config_path),
+                    priority: Some(0),
+                }],
+            );
+        }
+
+        let mut metadata = HashMap::new();
+        if let Some(description) = runtime_metadata.description.clone() {
+            metadata.insert("description".to_string(), json!(description));
+        }
+        if let Some(homepage_url) = runtime_metadata.homepage_url.clone() {
+            metadata.insert("homepage_url".to_string(), json!(homepage_url));
+        }
+        if let Some(docs_url) = runtime_metadata.docs_url.clone() {
+            metadata.insert("docs_url".to_string(), json!(docs_url));
+        }
+        if let Some(support_url) = runtime_metadata.support_url.clone() {
+            metadata.insert("support_url".to_string(), json!(support_url));
+        }
+        if let Some(logo_url) = runtime_metadata.logo_url.clone() {
+            metadata.insert("logo_url".to_string(), json!(logo_url));
+        }
+        if let Some(category) = runtime_metadata.category.clone() {
+            metadata.insert("category".to_string(), json!(category));
+        }
+
+        ClientTemplate {
+            identifier: state.identifier().to_string(),
+            display_name: Some(state.display_name().to_string()),
+            version: state.client_version.clone(),
+            format,
+            protocol_revision: None,
+            storage: StorageConfig {
+                kind: StorageKind::File,
+                path_strategy: Some("config_path".to_string()),
+                adapter: None,
+            },
+            detection,
+            config_mapping: ConfigMapping {
+                container_keys: vec!["mcpServers".to_string()],
+                container_type: crate::clients::models::ContainerType::ObjectMap,
+                merge_strategy: MergeStrategy::DeepMerge,
+                keep_original_config: true,
+                managed_endpoint: Some(ManagedEndpointConfig {
+                    source: Some("profile".to_string()),
+                }),
+                managed_source: Some(RUNTIME_ACTIVE_TEMPLATE_SOURCE.to_string()),
+                format_rules: Self::build_runtime_active_format_rules(
+                    &runtime_metadata.supported_transports,
+                    state.transport.as_deref(),
+                ),
+            },
+            metadata,
+        }
+    }
+
+    fn infer_runtime_template_format(config_path: Option<&str>) -> TemplateFormat {
+        let Some(path) = config_path else {
+            return TemplateFormat::Json;
+        };
+
+        let extension = std::path::Path::new(path)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+
+        match extension.as_deref() {
+            Some("json5") => TemplateFormat::Json5,
+            Some("toml") => TemplateFormat::Toml,
+            Some("yaml") | Some("yml") => TemplateFormat::Yaml,
+            _ => TemplateFormat::Json,
+        }
+    }
+
+    fn build_runtime_active_format_rules(
+        supported_transports: &[String],
+        preferred_transport: Option<&str>,
+    ) -> HashMap<String, FormatRule> {
+        let mut normalized = supported_transports
+            .iter()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .map(|value| match value.as_str() {
+                "sse" | "http" | "streamablehttp" => "streamable_http".to_string(),
+                other => other.to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        if normalized.is_empty() {
+            if let Some(preferred_transport) = preferred_transport {
+                let preferred = preferred_transport.trim().to_ascii_lowercase();
+                if matches!(preferred.as_str(), "streamable_http" | "sse" | "http") {
+                    normalized.push("streamable_http".to_string());
+                } else if preferred == "stdio" {
+                    normalized.push("stdio".to_string());
+                }
+            }
+        }
+
+        if normalized.is_empty() {
+            normalized.extend(["streamable_http".to_string(), "stdio".to_string()]);
+        }
+
+        let mut format_rules = HashMap::new();
+
+        if normalized.iter().any(|value| value == "streamable_http") {
+            let http_rule = FormatRule {
+                template: json!({
+                    "type": "streamable_http",
+                    "url": "{{url}}",
+                    "headers": "{{{json headers}}}"
+                }),
+                requires_type_field: false,
+            };
+            format_rules.insert("streamable_http".to_string(), http_rule.clone());
+            format_rules.insert("sse".to_string(), http_rule);
+        }
+
+        if normalized.iter().any(|value| value == "stdio") {
+            format_rules.insert(
+                "stdio".to_string(),
+                FormatRule {
+                    template: json!({
+                        "type": "stdio",
+                        "command": "{{command}}",
+                        "args": "{{{json args}}}",
+                        "env": "{{{json env}}}"
+                    }),
+                    requires_type_field: false,
+                },
+            );
+        }
+
+        format_rules
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn seed_client_runtime_rows(
+        db_pool: &SqlitePool,
+        file_source: &FileTemplateSource,
+    ) -> crate::clients::error::ConfigResult<()> {
+        let templates = file_source.list_client().await?;
+        Self::seed_client_runtime_rows_from_templates(db_pool, &templates).await
+    }
+
+    async fn seed_client_runtime_rows_from_templates(
+        db_pool: &SqlitePool,
+        templates: &[ClientTemplate],
+    ) -> crate::clients::error::ConfigResult<()> {
+        for template in templates {
+            let display_name = template.display_name.as_deref().unwrap_or(&template.identifier);
+            let config_path = Self::extract_runtime_config_path_from_template(template);
+            let id = crate::generate_id!("clnt");
+
+            sqlx::query(
+                r#"
+                INSERT INTO client (
+                    id, name, display_name, identifier, config_path, managed, backup_policy, backup_limit,
+                    capability_source, governance_kind, connection_mode, approval_status, record_kind, template_identifier
+                )
+                VALUES (?, ?, ?, ?, ?, 1, 'keep_n', 30, 'activated', 'passive', 'local_config_detected', 'approved', 'template_known', ?)
+                ON CONFLICT(identifier) DO UPDATE SET
+                    display_name = COALESCE(NULLIF(client.display_name, ''), excluded.display_name),
+                    config_path = COALESCE(NULLIF(client.config_path, ''), excluded.config_path),
+                    record_kind = COALESCE(NULLIF(client.record_kind, ''), excluded.record_kind),
+                    template_identifier = COALESCE(NULLIF(client.template_identifier, ''), excluded.template_identifier),
+                    updated_at = CURRENT_TIMESTAMP
+                "#,
+            )
+            .bind(&id)
+            .bind(display_name)
+            .bind(display_name)
+            .bind(&template.identifier)
+            .bind(config_path)
+            .bind(&template.identifier)
+            .execute(db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn extract_runtime_config_path_from_template(
+        template: &ClientTemplate,
+    ) -> Option<String> {
         let platform = PathService::get_current_platform();
-        self.template_source.get_config_path(client_id, platform).await
+        let rules = template.platform_rules(platform)?;
+        let rule = rules.first()?;
+        let candidate = rule.config_path.as_ref().or(Some(&rule.value))?;
+        PathService::new()
+            .ok()?
+            .resolve_user_path(candidate)
+            .ok()
+            .map(|value| value.to_string_lossy().to_string())
     }
 }

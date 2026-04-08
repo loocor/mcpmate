@@ -1129,6 +1129,7 @@ mod tests {
         server::{self, init::initialize_server_tables},
     };
     use sqlx::sqlite::SqlitePoolOptions;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     async fn create_visibility_service() -> (TempDir, Arc<Database>, ProfileVisibilityService) {
@@ -1187,11 +1188,22 @@ mod tests {
         server_name: &str,
         tool_name: &str,
     ) -> String {
-        let unique_name =
-            crate::config::server::tools::upsert_server_tool(&db.pool, server_id, server_name, tool_name, None, None)
-                .await
-                .expect("upsert server tool")
-                .unique_name;
+        let unique_name = generate_unique_name(NamingKind::Tool, server_name, tool_name);
+        sqlx::query(
+            r#"
+            INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(crate::generate_id!("stl"))
+        .bind(server_id)
+        .bind(server_name)
+        .bind(tool_name)
+        .bind(&unique_name)
+        .bind(Option::<String>::None)
+        .execute(&db.pool)
+        .await
+        .expect("insert server tool");
         profile::add_tool_to_profile(&db.pool, profile_id, server_id, tool_name, true)
             .await
             .expect("add tool to profile");
@@ -1322,6 +1334,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn resolve_snapshot_uses_active_profiles_for_activated_mode() {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
@@ -1369,6 +1382,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn resolve_snapshot_uses_selected_profiles_for_profiles_mode() {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
@@ -1414,6 +1428,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn resolve_snapshot_uses_custom_profile_for_custom_mode() {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
@@ -1454,6 +1469,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn direct_authorization_uses_same_snapshot_rules_as_list_filtering() {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
@@ -1484,17 +1500,22 @@ mod tests {
         )
         .await;
 
-        let denied_tool = crate::config::server::tools::upsert_server_tool(
-            &db.pool,
-            &denied_server_id,
-            "beta-server",
-            "tool_beta",
-            None,
-            None,
+        let denied_tool = generate_unique_name(NamingKind::Tool, "beta-server", "tool_beta");
+        sqlx::query(
+            r#"
+            INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
         )
+        .bind(crate::generate_id!("stl"))
+        .bind(&denied_server_id)
+        .bind("beta-server")
+        .bind("tool_beta")
+        .bind(&denied_tool)
+        .bind(Option::<String>::None)
+        .execute(&db.pool)
         .await
-        .expect("upsert denied tool")
-        .unique_name;
+        .expect("insert denied tool");
         let denied_prompt = generate_unique_name(NamingKind::Prompt, "beta-server", "prompt_beta");
         let denied_resource = generate_unique_name(NamingKind::Resource, "beta-server", "file://other/file.txt");
 
@@ -1580,6 +1601,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn unify_snapshot_uses_globally_enabled_servers_without_profile_semantics() {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
