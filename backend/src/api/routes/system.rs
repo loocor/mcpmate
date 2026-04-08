@@ -10,7 +10,9 @@ use aide::axum::{
 
 use super::AppState;
 use crate::api::handlers::system;
-use crate::api::models::client::{OnboardingPolicyRequest, OnboardingPolicyResponse};
+use crate::api::models::client::{
+    FirstContactBehaviorRequest, FirstContactBehaviorResp, OnboardingPolicyRequest, OnboardingPolicyResponse,
+};
 use crate::api::models::system::{
     ManagementActionResp, SystemDefaultClientModeReq, SystemDefaultClientModeResp, SystemMetricsResp, SystemPortsResp,
     SystemStatusResp,
@@ -75,6 +77,19 @@ aide_wrapper_payload!(
     "Set client onboarding policy"
 );
 
+aide_wrapper!(
+    system::get_first_contact_behavior,
+    FirstContactBehaviorResp,
+    "Get current first contact behavior"
+);
+
+aide_wrapper_payload!(
+    system::set_first_contact_behavior,
+    FirstContactBehaviorRequest,
+    FirstContactBehaviorResp,
+    "Set first contact behavior"
+);
+
 /// Create system management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
@@ -92,6 +107,11 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             "/system/settings/onboarding-policy",
             get_with(get_onboarding_policy_aide, get_onboarding_policy_docs)
                 .post_with(set_onboarding_policy_aide, set_onboarding_policy_docs),
+        )
+        .api_route(
+            "/system/settings/first-contact-behavior",
+            get_with(get_first_contact_behavior_aide, get_first_contact_behavior_docs)
+                .post_with(set_first_contact_behavior_aide, set_first_contact_behavior_docs),
         )
         .with_state(state)
 }

@@ -1,14 +1,14 @@
 use super::core::{ClientConfigService, ClientStateRow};
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::BackupPolicySetting;
-use crate::clients::source::ClientConfigSource;
-use crate::system::paths::PathService;
+use crate::clients::models::{
+    BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, ClientRecordKind, FirstContactBehavior,
+};
 use std::collections::HashMap;
 
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, selected_profile_ids, custom_profile_id, approval_status, template_id, template_version, approval_metadata FROM client",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, approval_status, template_id, template_version, approval_metadata FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -31,100 +31,25 @@ impl ClientConfigService {
         name: &str,
     ) -> ConfigResult<ClientStateRow> {
         if let Some(existing) = self.fetch_state(identifier).await? {
-            if existing.name != name {
-                sqlx::query(
-                    r#"
-                    UPDATE client
-                    SET name = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE identifier = ?
-                    "#,
-                )
-                .bind(name)
-                .bind(identifier)
-                .execute(&*self.db_pool)
-                .await
-                .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-                return self.fetch_state(identifier).await?.ok_or_else(|| {
-                    ConfigError::DataAccessError(format!("Failed to update management state for client {}", identifier))
-                });
-            }
-
-            return Ok(existing);
+            return self.refresh_existing_state_name(identifier, name, existing).await;
         }
 
-        let policy = self.get_onboarding_policy().await?;
+        let first_contact_behavior = self.get_first_contact_behavior().await?;
+        let (managed, approval_status) = match first_contact_behavior {
+            FirstContactBehavior::Deny => (0_i64, "rejected"),
+            FirstContactBehavior::Review => (0_i64, "pending"),
+            FirstContactBehavior::Allow => (1_i64, "approved"),
+        };
 
-        match policy {
-            crate::clients::models::OnboardingPolicy::Manual => {
-                return Err(ConfigError::DataAccessError(format!(
-                    "Client {} not found and onboarding policy is manual",
-                    identifier
-                )));
-            }
-            crate::clients::models::OnboardingPolicy::AutoManage => {
-                let generated_id = crate::generate_id!("clnt");
-                let insert_result = sqlx::query(
-                    r#"
-                    INSERT INTO client (id, name, identifier, managed, backup_policy, backup_limit, approval_status)
-                    VALUES (?, ?, ?, 1, 'keep_n', 30, 'approved')
-                    "#,
-                )
-                .bind(&generated_id)
-                .bind(name)
-                .bind(identifier)
-                .execute(&*self.db_pool)
-                .await;
-
-                if let Err(err) = insert_result {
-                    if let sqlx::Error::Database(db_err) = &err {
-                        if db_err.code().map(|code| code == "2067").unwrap_or(false) {
-                            tracing::warn!(
-                                client = %identifier,
-                                "Concurrent client state insert detected; reusing existing row"
-                            );
-                        } else {
-                            return Err(ConfigError::DataAccessError(err.to_string()));
-                        }
-                    } else {
-                        return Err(ConfigError::DataAccessError(err.to_string()));
-                    }
-                }
-            }
-            crate::clients::models::OnboardingPolicy::RequireApproval => {
-                let generated_id = crate::generate_id!("clnt");
-                let insert_result = sqlx::query(
-                    r#"
-                    INSERT INTO client (id, name, identifier, managed, backup_policy, backup_limit, approval_status)
-                    VALUES (?, ?, ?, 0, 'keep_n', 30, 'pending')
-                    "#,
-                )
-                .bind(&generated_id)
-                .bind(name)
-                .bind(identifier)
-                .execute(&*self.db_pool)
-                .await;
-
-                if let Err(err) = insert_result {
-                    if let sqlx::Error::Database(db_err) = &err {
-                        if db_err.code().map(|code| code == "2067").unwrap_or(false) {
-                            tracing::warn!(
-                                client = %identifier,
-                                "Concurrent client state insert detected; reusing existing row"
-                            );
-                        } else {
-                            return Err(ConfigError::DataAccessError(err.to_string()));
-                        }
-                    } else {
-                        return Err(ConfigError::DataAccessError(err.to_string()));
-                    }
-                }
-            }
-        }
-
-        self.fetch_state(identifier).await?.ok_or_else(|| {
-            ConfigError::DataAccessError(format!("Failed to create management state for client {}", identifier))
-        })
+        self.create_state_row(
+            identifier,
+            name,
+            ClientGovernanceKind::Passive,
+            managed,
+            approval_status,
+            None,
+        )
+        .await
     }
 
     pub async fn fetch_state(
@@ -132,7 +57,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, selected_profile_ids, custom_profile_id, approval_status, template_id, template_version, approval_metadata FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, approval_status, template_id, template_version, approval_metadata FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
@@ -140,14 +65,16 @@ impl ClientConfigService {
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))
     }
 
-    pub(super) async fn resolve_client_name(
+    pub(crate) async fn resolve_client_name(
         &self,
         identifier: &str,
     ) -> ConfigResult<String> {
-        let platform = PathService::get_current_platform();
-        if let Some(template) = self.template_source.get_template(identifier, platform).await? {
-            if let Some(display_name) = template.display_name {
-                return Ok(display_name);
+        if let Some(state) = self.fetch_state(identifier).await? {
+            if !state.display_name().trim().is_empty() {
+                return Ok(state.display_name().to_string());
+            }
+            if !state.name.trim().is_empty() {
+                return Ok(state.name);
             }
         }
         Ok(identifier.to_string())
@@ -159,12 +86,13 @@ impl ClientConfigService {
         managed: bool,
     ) -> ConfigResult<bool> {
         let name = self.resolve_client_name(identifier).await?;
-        self.ensure_state_row_with_name(identifier, &name).await?;
+        self.ensure_active_state_row_with_name(identifier, &name, Some(managed), Some("approved"))
+            .await?;
 
         sqlx::query(
             r#"
             UPDATE client
-            SET name = ?, managed = ?, updated_at = CURRENT_TIMESTAMP
+            SET name = ?, managed = ?, governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
@@ -212,7 +140,8 @@ impl ClientConfigService {
     ) -> ConfigResult<BackupPolicySetting> {
         let (policy_label, limit) = policy.as_db_pair();
         let name = self.resolve_client_name(identifier).await?;
-        self.ensure_state_row_with_name(identifier, &name).await?;
+        self.ensure_active_state_row_with_name(identifier, &name, None, Some("approved"))
+            .await?;
 
         sqlx::query(
             r#"
@@ -220,6 +149,7 @@ impl ClientConfigService {
             SET name = ?,
                 backup_policy = ?,
                 backup_limit = ?,
+                governance_kind = 'active',
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
@@ -236,8 +166,16 @@ impl ClientConfigService {
     }
 
     pub async fn get_onboarding_policy(&self) -> ConfigResult<crate::clients::models::OnboardingPolicy> {
+        Ok(match self.get_first_contact_behavior().await? {
+            FirstContactBehavior::Allow => crate::clients::models::OnboardingPolicy::AutoManage,
+            FirstContactBehavior::Review => crate::clients::models::OnboardingPolicy::RequireApproval,
+            FirstContactBehavior::Deny => crate::clients::models::OnboardingPolicy::Manual,
+        })
+    }
+
+    pub async fn get_first_contact_behavior(&self) -> ConfigResult<FirstContactBehavior> {
         let result: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM system_settings WHERE key = 'onboarding_policy'",
+            "SELECT value FROM system_settings WHERE key = 'first_contact_behavior'",
         )
         .fetch_optional(&*self.db_pool)
         .await
@@ -246,15 +184,40 @@ impl ClientConfigService {
         match result {
             Some((value,)) => value
                 .parse()
-                .map_err(|_| ConfigError::DataAccessError("Invalid onboarding_policy value".to_string())),
-            None => Ok(crate::clients::models::OnboardingPolicy::default()),
+                .map_err(|_| ConfigError::DataAccessError("Invalid first_contact_behavior value".to_string())),
+            None => Ok(FirstContactBehavior::default()),
         }
+    }
+
+    pub async fn set_first_contact_behavior(
+        &self,
+        behavior: FirstContactBehavior,
+    ) -> ConfigResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO system_settings (key, value, updated_at)
+            VALUES ('first_contact_behavior', ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(behavior.as_str())
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        Ok(())
     }
 
     pub async fn set_onboarding_policy(
         &self,
         policy: crate::clients::models::OnboardingPolicy,
     ) -> ConfigResult<()> {
+        let behavior = match policy {
+            crate::clients::models::OnboardingPolicy::AutoManage => FirstContactBehavior::Allow,
+            crate::clients::models::OnboardingPolicy::RequireApproval => FirstContactBehavior::Review,
+            crate::clients::models::OnboardingPolicy::Manual => FirstContactBehavior::Deny,
+        };
+
         sqlx::query(
             r#"
             INSERT INTO system_settings (key, value, updated_at)
@@ -267,12 +230,14 @@ impl ClientConfigService {
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-        Ok(())
+        self.set_first_contact_behavior(behavior).await
     }
 
     pub async fn approve_client(&self, identifier: &str) -> ConfigResult<(String, bool)> {
-        let row = self.fetch_state(identifier).await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} not found", identifier)))?;
+        let name = self.resolve_client_name(identifier).await?;
+        let row = self
+            .ensure_active_state_row_with_name(identifier, &name, Some(true), Some("approved"))
+            .await?;
 
         if row.approval_status() == "approved" {
             return Ok((row.approval_status().to_string(), row.managed()));
@@ -281,7 +246,7 @@ impl ClientConfigService {
         sqlx::query(
             r#"
             UPDATE client
-            SET managed = 1, approval_status = 'approved', updated_at = CURRENT_TIMESTAMP
+            SET managed = 1, approval_status = 'approved', governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
@@ -294,8 +259,10 @@ impl ClientConfigService {
     }
 
     pub async fn reject_client(&self, identifier: &str) -> ConfigResult<(String, bool)> {
-        let row = self.fetch_state(identifier).await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} not found", identifier)))?;
+        let name = self.resolve_client_name(identifier).await?;
+        let row = self
+            .ensure_active_state_row_with_name(identifier, &name, Some(false), Some("rejected"))
+            .await?;
 
         if row.approval_status() == "rejected" {
             return Ok((row.approval_status().to_string(), row.managed()));
@@ -304,7 +271,7 @@ impl ClientConfigService {
         sqlx::query(
             r#"
             UPDATE client
-            SET approval_status = 'rejected', updated_at = CURRENT_TIMESTAMP
+            SET approval_status = 'rejected', governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
@@ -320,8 +287,10 @@ impl ClientConfigService {
     }
 
     pub async fn suspend_client(&self, identifier: &str) -> ConfigResult<(String, bool)> {
-        let row = self.fetch_state(identifier).await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} not found", identifier)))?;
+        let name = self.resolve_client_name(identifier).await?;
+        let row = self
+            .ensure_active_state_row_with_name(identifier, &name, Some(false), Some("suspended"))
+            .await?;
 
         if row.approval_status() == "suspended" {
             return Ok((row.approval_status().to_string(), row.managed()));
@@ -330,7 +299,7 @@ impl ClientConfigService {
         sqlx::query(
             r#"
             UPDATE client
-            SET managed = 0, approval_status = 'suspended', updated_at = CURRENT_TIMESTAMP
+            SET managed = 0, approval_status = 'suspended', governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
@@ -342,36 +311,178 @@ impl ClientConfigService {
         Ok(("suspended".to_string(), false))
     }
 
-    #[allow(dead_code)]
-    pub(super) async fn ensure_pending_unknown_row(
+    /// Used by detection/list and by the MCP proxy when registering an unknown client under `review` policy.
+    pub async fn ensure_passive_observed_row(
         &self,
         identifier: &str,
         name: &str,
+        config_path: Option<&str>,
     ) -> ConfigResult<ClientStateRow> {
         if let Some(existing) = self.fetch_state(identifier).await? {
+            return self.refresh_existing_state_name(identifier, name, existing).await;
+        }
+        let first_contact_behavior = self.get_first_contact_behavior().await?;
+        let (managed, approval_status) = match first_contact_behavior {
+            FirstContactBehavior::Deny => (0_i64, "rejected"),
+            FirstContactBehavior::Review => (0_i64, "pending"),
+            FirstContactBehavior::Allow => (1_i64, "approved"),
+        };
+
+        self.create_state_row(
+            identifier,
+            name,
+            ClientGovernanceKind::Passive,
+            managed,
+            approval_status,
+            config_path,
+        )
+        .await
+    }
+
+    pub(crate) async fn ensure_active_state_row_with_name(
+        &self,
+        identifier: &str,
+        name: &str,
+        managed: Option<bool>,
+        approval_status: Option<&str>,
+    ) -> ConfigResult<ClientStateRow> {
+        if let Some(existing) = self.fetch_state(identifier).await? {
+            self.promote_existing_state(identifier, name, managed, approval_status, existing)
+                .await
+        } else {
+            self.create_state_row(
+                identifier,
+                name,
+                ClientGovernanceKind::Active,
+                i64::from(managed.unwrap_or(true)),
+                approval_status.unwrap_or("approved"),
+                None,
+            )
+            .await
+        }
+    }
+
+    async fn refresh_existing_state_name(
+        &self,
+        identifier: &str,
+        name: &str,
+        existing: ClientStateRow,
+    ) -> ConfigResult<ClientStateRow> {
+        if existing.name == name {
             return Ok(existing);
         }
 
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET name = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(name)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        self.fetch_state(identifier).await?.ok_or_else(|| {
+            ConfigError::DataAccessError(format!("Failed to update management state for client {}", identifier))
+        })
+    }
+
+    async fn promote_existing_state(
+        &self,
+        identifier: &str,
+        name: &str,
+        managed: Option<bool>,
+        approval_status: Option<&str>,
+        existing: ClientStateRow,
+    ) -> ConfigResult<ClientStateRow> {
+        let managed = managed.unwrap_or(existing.managed()) as i64;
+        let approval_status = approval_status.unwrap_or(existing.approval_status());
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET name = ?,
+                governance_kind = 'active',
+                managed = ?,
+                approval_status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(name)
+        .bind(managed)
+        .bind(approval_status)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        self.fetch_state(identifier).await?.ok_or_else(|| {
+            ConfigError::DataAccessError(format!("Failed to promote management state for client {}", identifier))
+        })
+    }
+
+    async fn create_state_row(
+        &self,
+        identifier: &str,
+        name: &str,
+        governance_kind: ClientGovernanceKind,
+        managed: i64,
+        approval_status: &str,
+        observed_config_path: Option<&str>,
+    ) -> ConfigResult<ClientStateRow> {
+        let platform = crate::system::paths::PathService::get_current_platform();
+        let template = self.template_source.get_template(identifier, platform).await?;
+        let display_name = template
+            .as_ref()
+            .and_then(|entry| entry.display_name.clone())
+            .unwrap_or_else(|| name.to_string());
+        let config_path = observed_config_path
+            .map(str::to_string)
+            .or_else(|| template.as_ref().and_then(Self::extract_runtime_config_path_from_template));
+        let connection_mode = if config_path.is_some() {
+            ClientConnectionMode::LocalConfigDetected.as_str()
+        } else {
+            ClientConnectionMode::Manual.as_str()
+        };
+        let record_kind = if template.is_some() {
+            ClientRecordKind::TemplateKnown.as_str()
+        } else {
+            ClientRecordKind::ObservedUnknown.as_str()
+        };
+        let template_identifier = template.as_ref().map(|entry| entry.identifier.clone());
         let generated_id = crate::generate_id!("clnt");
+
         let insert_result = sqlx::query(
             r#"
-            INSERT INTO client (id, name, identifier, managed, backup_policy, backup_limit, approval_status)
-            VALUES (?, ?, ?, 0, 'keep_n', 30, 'pending')
+            INSERT INTO client (
+                id, name, display_name, identifier, config_path, managed, backup_policy, backup_limit,
+                approval_status, governance_kind, connection_mode, record_kind, template_identifier
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'keep_n', 30, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&generated_id)
         .bind(name)
+        .bind(display_name)
         .bind(identifier)
+        .bind(config_path)
+        .bind(managed)
+        .bind(approval_status)
+        .bind(governance_kind.as_str())
+        .bind(connection_mode)
+        .bind(record_kind)
+        .bind(template_identifier)
         .execute(&*self.db_pool)
         .await;
 
         if let Err(err) = insert_result {
             if let sqlx::Error::Database(db_err) = &err {
                 if db_err.code().map(|code| code == "2067").unwrap_or(false) {
-                    tracing::warn!(
-                        client = %identifier,
-                        "Concurrent pending unknown client insert detected; reusing existing row"
-                    );
+                    tracing::warn!(client = %identifier, "Concurrent client state insert detected; reusing existing row");
                 } else {
                     return Err(ConfigError::DataAccessError(err.to_string()));
                 }
@@ -381,7 +492,7 @@ impl ClientConfigService {
         }
 
         self.fetch_state(identifier).await?.ok_or_else(|| {
-            ConfigError::DataAccessError(format!("Failed to create pending unknown client {}", identifier))
+            ConfigError::DataAccessError(format!("Failed to create management state for client {}", identifier))
         })
     }
 }
@@ -390,8 +501,7 @@ impl ClientConfigService {
 mod tests {
     use super::*;
     use crate::clients::models::OnboardingPolicy;
-    use crate::clients::source::{FileTemplateSource, TemplateRoot};
-    use crate::common::constants::database::tables;
+    use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
     use crate::config::{
         client::init::{initialize_client_table, initialize_system_settings_table},
         profile::init::initialize_profile_tables,
@@ -430,7 +540,15 @@ mod tests {
                 .await
                 .expect("template source"),
         );
-        let service = ClientConfigService::with_source(pool, source)
+        ClientConfigService::seed_runtime_template_snapshots(pool.as_ref(), source.as_ref())
+            .await
+            .expect("seed runtime templates");
+        ClientConfigService::seed_client_runtime_rows(pool.as_ref(), source.as_ref())
+            .await
+            .expect("seed runtime rows");
+        let runtime_source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(pool.clone()).expect("runtime source"));
+        let service = ClientConfigService::with_source(pool, runtime_source)
             .await
             .expect("client config service");
 
@@ -441,15 +559,7 @@ mod tests {
         service: &ClientConfigService,
         policy: OnboardingPolicy,
     ) -> ConfigResult<()> {
-        sqlx::query(&format!(
-            "UPDATE {} SET value = ? WHERE key = 'onboarding_policy'",
-            tables::SYSTEM_SETTINGS
-        ))
-        .bind(policy.as_str())
-        .execute(&*service.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        Ok(())
+        service.set_onboarding_policy(policy).await
     }
 
     #[tokio::test]
@@ -469,6 +579,7 @@ mod tests {
         assert_eq!(state.name, "Test Client");
         assert_eq!(state.managed, 1);
         assert_eq!(state.approval_status.as_deref(), Some("approved"));
+        assert_eq!(state.governance_kind().as_str(), "passive");
     }
 
     #[tokio::test]
@@ -488,27 +599,27 @@ mod tests {
         assert_eq!(state.name, "Test Client");
         assert_eq!(state.managed, 0);
         assert_eq!(state.approval_status.as_deref(), Some("pending"));
+        assert_eq!(state.governance_kind().as_str(), "passive");
     }
 
     #[tokio::test]
-    async fn manual_policy_rejects_client_creation() {
+    async fn manual_policy_creates_rejected_client() {
         let (_temp_dir, service) = create_test_service().await;
 
         set_onboarding_policy(&service, OnboardingPolicy::Manual)
             .await
             .expect("set policy");
 
-        let result = service
+        let state = service
             .ensure_state_row_with_name("test.client", "Test Client")
-            .await;
+            .await
+            .expect("ensure state");
 
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("not found") && err_msg.contains("manual"),
-            "Expected error about manual policy, got: {}",
-            err_msg
-        );
+        assert_eq!(state.identifier, "test.client");
+        assert_eq!(state.name, "Test Client");
+        assert_eq!(state.managed, 0);
+        assert_eq!(state.approval_status.as_deref(), Some("rejected"));
+        assert_eq!(state.governance_kind().as_str(), "passive");
     }
 
     #[tokio::test]
@@ -566,5 +677,29 @@ mod tests {
 
         assert_eq!(first.id, updated.id);
         assert_eq!(updated.name, "Updated Name");
+    }
+
+    #[tokio::test]
+    async fn active_updates_promote_existing_passive_client() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        let passive = service
+            .ensure_state_row_with_name("test.client", "Test Client")
+            .await
+            .expect("create passive client");
+        assert_eq!(passive.governance_kind().as_str(), "passive");
+
+        service
+            .set_client_settings("test.client", Some("hosted".to_string()), None, None)
+            .await
+            .expect("promote via settings update");
+
+        let promoted = service
+            .fetch_state("test.client")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(promoted.governance_kind().as_str(), "active");
+        assert_eq!(promoted.config_mode.as_deref(), Some("hosted"));
     }
 }

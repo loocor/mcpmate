@@ -28,7 +28,7 @@ impl ClientConfigService {
         let mut failures = std::collections::HashMap::new();
 
         for descriptor in descriptors {
-            let client_id = descriptor.template.identifier.clone();
+            let client_id = descriptor.state.identifier().to_string();
             if !descriptor.managed {
                 continue;
             }

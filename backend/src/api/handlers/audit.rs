@@ -94,9 +94,9 @@ async fn enrich_audit_event(
     if event.client_name.is_none()
         && let Some(client_id) = event.client_id.clone()
         && let Some(service) = state.client_service.as_ref()
-        && let Ok(template) = service.get_client_template(&client_id).await
+        && let Ok(Some(client_state)) = service.fetch_state(&client_id).await
     {
-        event.client_name = template.display_name.or(Some(client_id));
+        event.client_name = Some(client_state.display_name().to_string());
     }
 
     event

@@ -133,7 +133,7 @@ All enums/structs are defined in `src/clients/models.rs`.  Key type mappings:
 
 ## Runtime Flow
 
-1. `ClientConfigService::bootstrap` seeds official templates under `~/.mcpmate/client/official/` and builds an in-memory index.
+1. `ClientConfigService::bootstrap` seeds official templates into the runtime database and builds an in-memory index.
 2. API handlers (`src/api/handlers/client/handlers.rs`) call the service to list templates, render configs, and apply changes.
 3. Storage adapters resolve target paths using detection rules and the path service; writes are performed atomically with backups.
 
@@ -212,7 +212,7 @@ The `template_id` field decouples record identity (`identifier`) from template b
 - `/api/client/backups/restore` / `/api/client/backups/delete` (POST) restore or remove a backup snapshot.
 - `/api/client/backups/policy` (GET/POST) reads or updates the retention policy described above.
 
-All state is persisted in the lightweight `client` table so that backups and management preferences survive restarts without reintroducing the legacy config tables.
+All state is persisted in the lightweight `client` table so that backups and management preferences survive restarts without reintroducing the legacy config tables. Transport alias keymaps are also shipped as built-in code defaults rather than external user files.
 
 ## Warp (SQLite) Support
 

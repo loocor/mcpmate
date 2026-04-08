@@ -251,6 +251,13 @@ MCPMate detects, configures, and extends multiple AI clients:
 - Codex
 - User-defined clients
 
+### Dynamic Client Governance
+
+- Client governance now lives in MCPMate's database instead of being frozen in static template files.
+- New and observed clients can be promoted into actively managed records without reworking compatibility templates.
+- Allow / Deny governance acts as a dedicated safety line: you can keep editing rollout expectations while still preventing a client from entering the allowed capability circle.
+- Writing to a client's own MCP configuration now requires a verified local config target. Saving governance state alone never creates or infers that target.
+
 ### Browser Extension Import
 
 - Chrome/Edge extension detects MCP config snippets containing `mcpServers` and hands them to MCPMate desktop via `mcpmate://import/server`.
