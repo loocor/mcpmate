@@ -186,7 +186,7 @@ export function ClientDetailPage() {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	usePageTranslations("clients");
-	const { t, i18n } = useTranslation("clients");
+	const { t } = useTranslation("clients");
 	const showClientLiveLogs = useAppStore(
 		(state) => state.dashboardSettings.showClientLiveLogs,
 	);
@@ -265,7 +265,7 @@ export function ClientDetailPage() {
 	const [selectedConfig, setSelectedConfig] =
 		useState<ClientCapabilitySourceSelection>("default");
 	const [policyOpen, setPolicyOpen] = useState(false);
-		const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+	const [importPreviewOpen, setImportPreviewOpen] = useState(false);
 	const [importPreviewData, setImportPreviewData] =
 		useState<ClientConfigImportData | null>(null);
 
@@ -302,28 +302,24 @@ export function ClientDetailPage() {
 		retry: 1,
 	});
 
-	const backups: ClientBackupEntry[] = backupsData?.backups || [];
-	const visibleBackups = useMemo(
-		() => backups.filter((b) => b.identifier === identifier),
-		[backups, identifier],
-	);
+	const visibleBackups = useMemo(() => {
+		const backups: ClientBackupEntry[] = backupsData?.backups || [];
+		return backups.filter((backup) => backup.identifier === identifier);
+	}, [backupsData?.backups, identifier]);
 
 	// Process profiles data
-	const profiles: ConfigSuit[] = profilesData?.suits || [];
-	const activeProfiles = useMemo(
-		() =>
-			arrangeProfilesWithDefaultFirst(
-				profiles.filter((profile) => profile.is_active),
-			),
-		[profiles],
-	);
-	const sharedProfiles = useMemo(
-		() =>
-			arrangeProfilesWithDefaultFirst(
-				profiles.filter((profile) => profile.suit_type === "shared"),
-			),
-		[profiles],
-	);
+	const activeProfiles = useMemo(() => {
+		const profiles: ConfigSuit[] = profilesData?.suits || [];
+		return arrangeProfilesWithDefaultFirst(
+			profiles.filter((profile) => profile.is_active),
+		);
+	}, [profilesData?.suits]);
+	const sharedProfiles = useMemo(() => {
+		const profiles: ConfigSuit[] = profilesData?.suits || [];
+		return arrangeProfilesWithDefaultFirst(
+			profiles.filter((profile) => profile.suit_type === "shared"),
+		);
+	}, [profilesData?.suits]);
 
 	const effectiveCapabilityConfig = useMemo<ClientCapabilityConfigData | null>(() => {
 		if (capabilityConfig) {
@@ -460,10 +456,18 @@ export function ClientDetailPage() {
 		: undefined;
 	const managedTransportSupported = (configDetails?.supported_transports?.length ?? 0) > 0;
 	const canWriteClientConfig = configDetails?.writable_config !== false;
-	const canApplyGovernanceToClientConfig =
+	const isPendingApproval = configDetails?.approval_status === "pending";
+	const canSaveManagementSettings = !isPendingApproval;
+	const canApplyTransparentConfig =
+		canSaveManagementSettings &&
 		canWriteClientConfig &&
-		configDetails?.approval_status !== "pending" &&
 		!isDeniedApprovalStatus(configDetails?.approval_status);
+	const canSyncManagedConfig =
+		canWriteClientConfig &&
+		canSaveManagementSettings &&
+		!isDeniedApprovalStatus(configDetails?.approval_status) &&
+		managedTransportSupported;
+	const shouldRequireLocalConfigWrite = mode === "transparent";
 
 	const supportedTransportOptions = useMemo(() => {
 		const supported = (configDetails?.supported_transports || []) as string[];
@@ -519,7 +523,7 @@ export function ClientDetailPage() {
 				},
 			];
 		},
-		[t, i18n.language],
+		[t],
 	);
 
 	const detailDescription = configDetails?.description ?? "";
@@ -533,24 +537,12 @@ export function ClientDetailPage() {
 				label: t("detail.configuration.sections.mode.options.unify", {
 					defaultValue: "Unify",
 				}),
-				disabled: !managedTransportSupported,
-				tooltip: !managedTransportSupported
-					? t("detail.configuration.sections.mode.managedDisabledReason", {
-						defaultValue: "Hosted and Unify require at least one supported transport.",
-					})
-					: undefined,
 			},
 			{
 				value: "hosted",
 				label: t("detail.configuration.sections.mode.options.hosted", {
 					defaultValue: "Hosted",
 				}),
-				disabled: !managedTransportSupported,
-				tooltip: !managedTransportSupported
-					? t("detail.configuration.sections.mode.managedDisabledReason", {
-						defaultValue: "Hosted and Unify require at least one supported transport.",
-					})
-					: undefined,
 			},
 			{
 				value: "transparent",
@@ -566,7 +558,7 @@ export function ClientDetailPage() {
 						: undefined,
 			},
 		],
-		[configDetails?.writable_config, managedTransportSupported, t, i18n.language],
+		[configDetails?.writable_config, t],
 	);
 	const [logFilter, setLogFilter] = useState("");
 	const [logPageSize, setLogPageSize] = useState<number>(10);
@@ -865,39 +857,30 @@ export function ClientDetailPage() {
 	});
 
 	const applyMutation = useMutation<
-		{ data: ClientConfigUpdateData | null; preview: boolean },
+		{
+			data: ClientConfigUpdateData | null;
+			preview: boolean;
+			clientConfigApplied: boolean;
+		},
 		unknown,
 		{ preview: boolean }
 	>({
 		mutationFn: async ({ preview }) => {
 			if (!identifier) throw new Error("No identifier provided");
-			if (!canApplyGovernanceToClientConfig) {
+			if (!canSaveManagementSettings) {
 				throw new Error(
-					t("detail.configuration.applyRequiresApprovedReason", {
+					t("detail.configuration.managementSettingsPendingReason", {
 						defaultValue:
-							"Applying client configuration requires an approved governance state and a verified local config target.",
+							"Save management settings after this client leaves pending approval.",
 					}),
 				);
 			}
-			if (!canWriteClientConfig) {
-				throw new Error(
-					t("detail.configuration.writeTargetRequiredReason", {
-						defaultValue:
-							"Applying governance to the client configuration requires a verified writable local MCP config file.",
-					}),
-				);
-			}
-			if (mode !== "transparent" && !managedTransportSupported) {
-				throw new Error(
-					t("detail.configuration.sections.mode.managedDisabledReason", {
-						defaultValue: "Hosted and Unify require at least one supported transport.",
-					}),
-				);
-			}
+
 			await clientsApi.update({
 				identifier,
 				config_mode: mode,
 			});
+
 			const capabilityData =
 				mode === "unify"
 					? effectiveCapabilityConfig
@@ -911,16 +894,49 @@ export function ClientDetailPage() {
 				);
 			}
 
+			const selectedConfigForManagedApply =
+				mode === "unify" ? "default" : buildApplySelectedConfig(capabilityData);
+
+			if (shouldRequireLocalConfigWrite) {
+				if (!canWriteClientConfig) {
+					throw new Error(
+						t("detail.configuration.writeTargetRequiredReason", {
+							defaultValue:
+								"Applying governance to the client configuration requires a verified writable local MCP config file.",
+						}),
+					);
+				}
+				if (!canApplyTransparentConfig) {
+					throw new Error(
+						t("detail.configuration.applyRequiresApprovedReason", {
+							defaultValue:
+								"Applying client configuration requires an approved governance state and a verified local config target.",
+						}),
+					);
+				}
+
+				const data = await clientsApi.applyConfig({
+					identifier,
+					mode,
+					selected_config: buildApplySelectedConfig(capabilityData),
+					preview,
+				});
+				return { data: data ?? null, preview, clientConfigApplied: true };
+			}
+
+			if (!canSyncManagedConfig) {
+				return { data: null, preview, clientConfigApplied: false };
+			}
+
 			const data = await clientsApi.applyConfig({
 				identifier,
 				mode,
-				selected_config:
-					mode === "unify" ? "default" : buildApplySelectedConfig(capabilityData),
+				selected_config: selectedConfigForManagedApply,
 				preview,
 			});
-			return { data: data ?? null, preview };
+			return { data: data ?? null, preview, clientConfigApplied: true };
 		},
-		onSuccess: ({ data, preview }) => {
+		onSuccess: ({ data, preview, clientConfigApplied }) => {
 			if (preview) {
 				if (data) {
 					notifyInfo(
@@ -941,7 +957,7 @@ export function ClientDetailPage() {
 						}),
 					);
 				}
-			} else {
+			} else if (clientConfigApplied) {
 				notifySuccess(
 					t("detail.notifications.applied.title", {
 						defaultValue: "Applied",
@@ -950,8 +966,17 @@ export function ClientDetailPage() {
 						defaultValue: "Configuration applied",
 					}),
 				);
-				// Refresh backup records after successful apply
 				refetchBackups();
+			} else {
+				notifySuccess(
+					t("detail.notifications.managementSaved.title", {
+						defaultValue: "Saved",
+					}),
+					t("detail.notifications.managementSaved.message", {
+						defaultValue:
+							"Management settings were saved in MCPMate. Local client configuration was not updated.",
+					}),
+				);
 			}
 			qc.invalidateQueries({ queryKey: ["clients"] });
 			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
@@ -1052,20 +1077,26 @@ export function ClientDetailPage() {
 			),
 	});
 
-	const governanceMutation = useMutation({
-		mutationFn: async () => {
+	const governanceMutation = useMutation<void, unknown, { nextStatus: "approved" | "suspended" }>({
+		mutationFn: async ({ nextStatus }) => {
 			if (!identifier) throw new Error("No identifier provided");
-			if (isDeniedApprovalStatus(configDetails?.approval_status)) {
+			if (nextStatus === "approved") {
 				await clientsApi.approveRecord({ identifier });
-			} else {
-				await governanceClientsApi.suspendRecord({ identifier });
+				return;
 			}
-			await refetchDetails();
+
+			await governanceClientsApi.suspendRecord({ identifier });
 		},
-		onSuccess: () => {
+		onSuccess: async (_, { nextStatus }) => {
+			await Promise.allSettled([
+				refetchDetails(),
+				qc.invalidateQueries({ queryKey: ["clients"] }),
+				qc.invalidateQueries({ queryKey: ["client-config", identifier] }),
+			]);
+
 			notifySuccess(
 				t(
-					isDeniedApprovalStatus(configDetails?.approval_status)
+					nextStatus === "approved"
 						? "detail.notifications.governanceAllowed.title"
 						: "detail.notifications.governanceDenied.title",
 					{
@@ -1073,18 +1104,17 @@ export function ClientDetailPage() {
 					},
 				),
 				t(
-					isDeniedApprovalStatus(configDetails?.approval_status)
+					nextStatus === "approved"
 						? "detail.notifications.governanceAllowed.message"
 						: "detail.notifications.governanceDenied.message",
 					{
-						defaultValue: isDeniedApprovalStatus(configDetails?.approval_status)
-							? "Client governance is now allowed."
-							: "Client governance is now denied.",
+						defaultValue:
+							nextStatus === "approved"
+								? "Client governance is now allowed."
+								: "Client governance is now denied.",
 					},
 				),
 			);
-			qc.invalidateQueries({ queryKey: ["clients"] });
-			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
 		},
 		onError: (e) =>
 			notifyError(
@@ -1492,30 +1522,36 @@ export function ClientDetailPage() {
 														defaultValue: "Refresh",
 													})}
 												</Button>
-															<Button
-																variant="outline"
-																size="sm"
-																onClick={() => governanceMutation.mutate()}
-																disabled={
-																	governanceMutation.isPending ||
-																	!configDetails ||
-																	configDetails.approval_status === "pending"
-																}
-																className="gap-2"
-															>
-																{isDeniedApprovalStatus(configDetails?.approval_status) ? (
-																	<Check className="h-4 w-4" />
-																) : (
-																	<Square className="h-4 w-4" />
-																)}
-																{isDeniedApprovalStatus(configDetails?.approval_status)
-																	? t("detail.overview.buttons.allow", {
-																		defaultValue: "Allow",
-																	})
-																	: t("detail.overview.buttons.deny", {
-																		defaultValue: "Deny",
-																	})}
-															</Button>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={() =>
+														governanceMutation.mutate({
+															nextStatus: isDeniedApprovalStatus(configDetails?.approval_status)
+																? "approved"
+																: "suspended",
+														})
+													}
+													disabled={
+														governanceMutation.isPending ||
+														!configDetails ||
+														configDetails.approval_status === "pending"
+													}
+													className="gap-2"
+												>
+													{isDeniedApprovalStatus(configDetails?.approval_status) ? (
+														<Check className="h-4 w-4" />
+													) : (
+														<Square className="h-4 w-4" />
+													)}
+													{isDeniedApprovalStatus(configDetails?.approval_status)
+														? t("detail.overview.buttons.allow", {
+															defaultValue: "Allow",
+														})
+														: t("detail.overview.buttons.deny", {
+															defaultValue: "Deny",
+														})}
+												</Button>
 												{supportedTransportOptions.length > 0 ? (
 													<ButtonGroupText className="h-9 p-0 select-none shadow-none">
 														<Select
@@ -1607,7 +1643,7 @@ export function ClientDetailPage() {
 								</div>
 							</CardHeader>
 							<CardContent>
-							{loadingConfig ? (
+								{loadingConfig ? (
 									<div className="space-y-2">
 										{[1, 2, 3].map((i) => (
 											<div
@@ -1709,26 +1745,29 @@ export function ClientDetailPage() {
 											})}
 										</CardDescription>
 									</div>
-									{configDetails?.managed ? (
-										<Button
-											size="sm"
-											variant="default"
-											onClick={() => applyMutation.mutate({ preview: false })}
-											disabled={
-												applyMutation.isPending ||
-												!canApplyGovernanceToClientConfig ||
-												(mode !== "transparent" && !managedTransportSupported)
-											}
-											className="gap-2"
-										>
-											<HardDrive
-												className={`h-4 w-4 ${applyMutation.isPending ? "animate-pulse" : ""}`}
-											/>
-											{t("detail.configuration.reapply", {
-												defaultValue: "Apply",
-											})}
-										</Button>
-									) : null}
+									<Button
+										size="sm"
+										variant="default"
+										onClick={() => applyMutation.mutate({ preview: false })}
+										disabled={
+											applyMutation.isPending ||
+											!canSaveManagementSettings ||
+											(shouldRequireLocalConfigWrite && !canApplyTransparentConfig)
+										}
+										className="gap-2"
+									>
+										<HardDrive
+											className={`h-4 w-4 ${applyMutation.isPending ? "animate-pulse" : ""}`}
+										/>
+										{t(
+											configDetails?.managed
+												? "detail.configuration.reapply"
+												: "detail.configuration.apply",
+											{
+												defaultValue: configDetails?.managed ? "Re-Apply" : "Apply",
+											},
+										)}
+									</Button>
 								</CardHeader>
 								<CardContent className="pt-0">
 									<div className="grid grid-cols-10 gap-8">
@@ -2433,7 +2472,7 @@ export function ClientDetailPage() {
 				onConfirm={() => bulkDeleteMutation.mutate()}
 			/>
 
-			
+
 
 			{/* Backup Policy Drawer */}
 			<Drawer open={policyOpen} onOpenChange={setPolicyOpen}>
@@ -2459,11 +2498,11 @@ export function ClientDetailPage() {
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
-										<SelectItem value="keep_n">
-											{t("detail.policy.fields.options.keepN", {
-												defaultValue: "keep_n",
-											})}
-										</SelectItem>
+									<SelectItem value="keep_n">
+										{t("detail.policy.fields.options.keepN", {
+											defaultValue: "keep_n",
+										})}
+									</SelectItem>
 								</SelectContent>
 							</Select>
 						</div>

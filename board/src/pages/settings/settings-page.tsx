@@ -19,7 +19,7 @@ import {
 	Sun,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/button";
@@ -454,6 +454,9 @@ export function SettingsPage() {
 				stringifyError(error),
 			);
 		},
+		onSettled: () => {
+			pendingDefaultClientPolicyKeyRef.current = null;
+		},
 	});
 
 	const handleSavePolicy = useCallback(() => {
@@ -816,6 +819,16 @@ export function SettingsPage() {
 			| "allow"
 			| undefined) ?? "allow";
 
+	const pendingDefaultClientPolicyKeyRef = useRef<string | null>(null);
+
+	const buildDefaultClientPolicyMutationKey = useCallback(
+		(payload: {
+			config_mode: ClientDefaultMode;
+			first_contact_behavior: "deny" | "review" | "allow";
+		}) => `${payload.config_mode}::${payload.first_contact_behavior}`,
+		[],
+	);
+
 	const handleClientDefaultModeSegmentChange = useCallback(
 		(value: string) => {
 			if (defaultClientPolicyMutation.isPending) {
@@ -828,9 +841,9 @@ export function SettingsPage() {
 			if (next === currentMode) {
 				return;
 			}
-			defaultClientPolicyMutation.mutate({
+			const nextPayload = {
 				config_mode: next,
-				capability_source: "activated",
+				capability_source: "activated" as const,
 				first_contact_behavior: currentFirstContactBehavior,
 				policySnapshot: defaultClientPolicyQuery.data
 					? {
@@ -839,7 +852,13 @@ export function SettingsPage() {
 								defaultClientPolicyQuery.data.first_contact_behavior,
 						}
 					: null,
-			});
+			};
+			const nextKey = buildDefaultClientPolicyMutationKey(nextPayload);
+			if (pendingDefaultClientPolicyKeyRef.current === nextKey) {
+				return;
+			}
+			pendingDefaultClientPolicyKeyRef.current = nextKey;
+			defaultClientPolicyMutation.mutate(nextPayload);
 		},
 		[
 			currentFirstContactBehavior,
@@ -858,11 +877,11 @@ export function SettingsPage() {
 			if (next === currentFirstContactBehavior) {
 				return;
 			}
-			defaultClientPolicyMutation.mutate({
+			const nextPayload = {
 				config_mode:
 					(defaultClientPolicyQuery.data?.config_mode as ClientDefaultMode | undefined) ??
 					dashboardSettings.clientDefaultMode,
-				capability_source: "activated",
+				capability_source: "activated" as const,
 				first_contact_behavior: next,
 				policySnapshot: defaultClientPolicyQuery.data
 					? {
@@ -871,7 +890,13 @@ export function SettingsPage() {
 								defaultClientPolicyQuery.data.first_contact_behavior,
 						}
 					: null,
-			});
+			};
+			const nextKey = buildDefaultClientPolicyMutationKey(nextPayload);
+			if (pendingDefaultClientPolicyKeyRef.current === nextKey) {
+				return;
+			}
+			pendingDefaultClientPolicyKeyRef.current = nextKey;
+			defaultClientPolicyMutation.mutate(nextPayload);
 		},
 		[
 			currentFirstContactBehavior,
