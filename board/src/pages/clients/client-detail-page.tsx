@@ -9,7 +9,6 @@ import {
 	Download,
 	HardDrive,
 	Pencil,
-	Play,
 	Plus,
 	RefreshCw,
 	RotateCcw,
@@ -82,6 +81,10 @@ import type {
 import { formatBackupTime } from "../../lib/utils";
 import { ConfigurationProfileTokenChart } from "./components/configuration-profile-token-chart";
 
+const governanceClientsApi = clientsApi as typeof clientsApi & {
+	suspendRecord: (payload: { identifier: string }) => Promise<unknown>;
+};
+
 const arrangeProfilesWithDefaultFirst = (items: ConfigSuit[] = []) => {
 	if (!items.length) {
 		return [] as ConfigSuit[];
@@ -126,6 +129,10 @@ function resolveConfigModeForWritableState(
 	}
 
 	return requestedMode;
+}
+
+function isDeniedApprovalStatus(status?: string | null): boolean {
+	return status === "rejected" || status === "suspended";
 }
 
 function extractServers(obj: unknown): string[] {
@@ -452,6 +459,11 @@ export function ClientDetailPage() {
 		? profileCapabilities.get(customProfileId)
 		: undefined;
 	const managedTransportSupported = (configDetails?.supported_transports?.length ?? 0) > 0;
+	const canWriteClientConfig = configDetails?.writable_config !== false;
+	const canApplyGovernanceToClientConfig =
+		canWriteClientConfig &&
+		configDetails?.approval_status !== "pending" &&
+		!isDeniedApprovalStatus(configDetails?.approval_status);
 
 	const supportedTransportOptions = useMemo(() => {
 		const supported = (configDetails?.supported_transports || []) as string[];
@@ -514,14 +526,6 @@ export function ClientDetailPage() {
 	const detailHomepageUrl = configDetails?.homepage_url ?? "";
 	const detailDocsUrl = configDetails?.docs_url ?? "";
 	const detailSupportUrl = configDetails?.support_url ?? "";
-	const nonWritableReason = useMemo(() => {
-		if (configDetails?.writable_config !== false) {
-			return null;
-		}
-		return t("detail.configuration.nonWritableReason", {
-			defaultValue: "This record is currently non-writable.",
-		});
-	}, [configDetails?.writable_config, t, i18n.language]);
 	const managementModeSegmentOptions = useMemo(
 		() => [
 			{
@@ -660,6 +664,9 @@ export function ClientDetailPage() {
 					cursor: nextCursor,
 					client_id: identifier,
 				});
+				if (!page) {
+					break;
+				}
 				nextCursor = page.next_cursor ?? undefined;
 			}
 			setLogPageCursors(nextPageCursors);
@@ -835,12 +842,17 @@ export function ClientDetailPage() {
 		onSuccess: (_, action) => {
 			notifySuccess(
 				t("detail.notifications.reviewSuccess.title", { defaultValue: "Success" }),
-				t("detail.notifications.reviewSuccess.message", {
+				t(
+					action === "approve"
+						? "detail.notifications.reviewSuccess.messageApproved"
+						: "detail.notifications.reviewSuccess.messageRejected",
+					{
 						defaultValue:
 							action === "approve"
 								? "Record approved successfully."
 								: "Record rejected successfully.",
-				})
+					},
+				),
 			);
 			qc.invalidateQueries({ queryKey: ["clients"] });
 			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
@@ -859,10 +871,19 @@ export function ClientDetailPage() {
 	>({
 		mutationFn: async ({ preview }) => {
 			if (!identifier) throw new Error("No identifier provided");
-			if (mode === "transparent" && configDetails?.writable_config === false) {
+			if (!canApplyGovernanceToClientConfig) {
 				throw new Error(
-					t("detail.configuration.sections.mode.transparentDisabledReason", {
-						defaultValue: "Transparent requires a writable local config path.",
+					t("detail.configuration.applyRequiresApprovedReason", {
+						defaultValue:
+							"Applying client configuration requires an approved governance state and a verified local config target.",
+					}),
+				);
+			}
+			if (!canWriteClientConfig) {
+				throw new Error(
+					t("detail.configuration.writeTargetRequiredReason", {
+						defaultValue:
+							"Applying governance to the client configuration requires a verified writable local MCP config file.",
 					}),
 				);
 			}
@@ -1031,25 +1052,43 @@ export function ClientDetailPage() {
 			),
 	});
 
-	const toggleManagedMutation = useMutation({
+	const governanceMutation = useMutation({
 		mutationFn: async () => {
 			if (!identifier) throw new Error("No identifier provided");
-			const next = !(configDetails?.managed ?? false);
-			await clientsApi.manage(identifier, next ? "enable" : "disable");
+			if (isDeniedApprovalStatus(configDetails?.approval_status)) {
+				await clientsApi.approveRecord({ identifier });
+			} else {
+				await governanceClientsApi.suspendRecord({ identifier });
+			}
 			await refetchDetails();
 		},
-		onSuccess: () =>
+		onSuccess: () => {
 			notifySuccess(
-				t("detail.notifications.managedUpdated.title", {
-					defaultValue: "Updated",
-				}),
-				t("detail.notifications.managedUpdated.message", {
-					defaultValue: "Managed state changed",
-				}),
-			),
+				t(
+					isDeniedApprovalStatus(configDetails?.approval_status)
+						? "detail.notifications.governanceAllowed.title"
+						: "detail.notifications.governanceDenied.title",
+					{
+						defaultValue: "Updated",
+					},
+				),
+				t(
+					isDeniedApprovalStatus(configDetails?.approval_status)
+						? "detail.notifications.governanceAllowed.message"
+						: "detail.notifications.governanceDenied.message",
+					{
+						defaultValue: isDeniedApprovalStatus(configDetails?.approval_status)
+							? "Client governance is now allowed."
+							: "Client governance is now denied.",
+					},
+				),
+			);
+			qc.invalidateQueries({ queryKey: ["clients"] });
+			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
+		},
 		onError: (e) =>
 			notifyError(
-				t("detail.notifications.managedFailed.title", {
+				t("detail.notifications.governanceFailed.title", {
 					defaultValue: "Update failed",
 				}),
 				String(e),
@@ -1236,7 +1275,7 @@ export function ClientDetailPage() {
 								{t("detail.badges.pendingReview", { defaultValue: "Pending Review" })}
 							</Badge>
 						)}
-						{configDetails?.approval_status === "rejected" && (
+						{isDeniedApprovalStatus(configDetails?.approval_status) && (
 							<Badge variant="destructive">
 								{t("detail.badges.rejected", { defaultValue: "Rejected" })}
 							</Badge>
@@ -1453,28 +1492,30 @@ export function ClientDetailPage() {
 														defaultValue: "Refresh",
 													})}
 												</Button>
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() => toggleManagedMutation.mutate()}
-													disabled={
-														toggleManagedMutation.isPending || !configDetails
-													}
-													className="gap-2"
-												>
-													{configDetails?.managed ? (
-														<Square className="h-4 w-4" />
-													) : (
-														<Play className="h-4 w-4" />
-													)}
-													{configDetails?.managed
-														? t("detail.overview.buttons.disable", {
-															defaultValue: "Disable",
-														})
-														: t("detail.overview.buttons.enable", {
-															defaultValue: "Enable",
-														})}
-												</Button>
+															<Button
+																variant="outline"
+																size="sm"
+																onClick={() => governanceMutation.mutate()}
+																disabled={
+																	governanceMutation.isPending ||
+																	!configDetails ||
+																	configDetails.approval_status === "pending"
+																}
+																className="gap-2"
+															>
+																{isDeniedApprovalStatus(configDetails?.approval_status) ? (
+																	<Check className="h-4 w-4" />
+																) : (
+																	<Square className="h-4 w-4" />
+																)}
+																{isDeniedApprovalStatus(configDetails?.approval_status)
+																	? t("detail.overview.buttons.allow", {
+																		defaultValue: "Allow",
+																	})
+																	: t("detail.overview.buttons.deny", {
+																		defaultValue: "Deny",
+																	})}
+															</Button>
 												{supportedTransportOptions.length > 0 ? (
 													<ButtonGroupText className="h-9 p-0 select-none shadow-none">
 														<Select
@@ -1566,12 +1607,7 @@ export function ClientDetailPage() {
 								</div>
 							</CardHeader>
 							<CardContent>
-								{configDetails?.writable_config === false && nonWritableReason ? (
-									<div className="mb-3 rounded-md border border-dashed border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
-										{nonWritableReason}
-									</div>
-								) : null}
-								{loadingConfig ? (
+							{loadingConfig ? (
 									<div className="space-y-2">
 										{[1, 2, 3].map((i) => (
 											<div
@@ -1678,7 +1714,11 @@ export function ClientDetailPage() {
 											size="sm"
 											variant="default"
 											onClick={() => applyMutation.mutate({ preview: false })}
-											disabled={applyMutation.isPending}
+											disabled={
+												applyMutation.isPending ||
+												!canApplyGovernanceToClientConfig ||
+												(mode !== "transparent" && !managedTransportSupported)
+											}
 											className="gap-2"
 										>
 											<HardDrive
@@ -1694,11 +1734,6 @@ export function ClientDetailPage() {
 									<div className="grid grid-cols-10 gap-8">
 										{/* Left side - Mode and Source (4/10) */}
 										<div className="col-span-4 space-y-6">
-											{nonWritableReason ? (
-												<div className="rounded-md border border-dashed border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
-													{nonWritableReason}
-												</div>
-											) : null}
 											{/* Mode Selection */}
 											<div className="space-y-3">
 												<div className="space-y-1">

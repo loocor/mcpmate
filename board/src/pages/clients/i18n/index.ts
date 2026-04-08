@@ -131,6 +131,10 @@ export const clientsTranslations = {
 					refresh: "Refresh",
 					enable: "Enable",
 					disable: "Disable",
+					approve: "Approve",
+					reject: "Reject",
+					allow: "Allow",
+					deny: "Deny",
 				},
 				noDetails: "No details available",
 					currentServers: {
@@ -214,6 +218,10 @@ export const clientsTranslations = {
 				title: "Configuration Mode",
 				description:
 					"If you don't understand what this means, please don't make any changes and keep the current settings.",
+				writeTargetRequiredReason:
+					"Applying governance to the client configuration requires a verified writable local MCP config file.",
+				applyRequiresApprovedReason:
+					"Applying client configuration requires an approved governance state and a verified local config target.",
 				reapply: "Re-apply",
 				sections: {
 					mode: {
@@ -430,10 +438,18 @@ export const clientsTranslations = {
 					noImportNeeded: "No import needed",
 				},
 			},
-			notifications: {
-				previewReady: {
-					title: "Preview ready",
-					message: "Review the diff before applying.",
+				notifications: {
+					reviewSuccess: {
+						title: "Success",
+						messageApproved: "Record approved successfully.",
+						messageRejected: "Record rejected successfully.",
+					},
+					reviewFailed: {
+						title: "Review failed",
+					},
+					previewReady: {
+						title: "Preview ready",
+						message: "Review the diff before applying.",
 					noChanges: "No changes detected in this configuration.",
 				},
 				applied: {
@@ -467,6 +483,21 @@ export const clientsTranslations = {
 				},
 				managedFailed: {
 					title: "Update failed",
+				},
+					governanceUpdated: {
+						title: "Updated",
+						message: "Client governance state changed",
+					},
+				governanceFailed: {
+					title: "Update failed",
+				},
+				governanceAllowed: {
+					title: "Updated",
+					message: "Client governance is now allowed.",
+				},
+				governanceDenied: {
+					title: "Updated",
+					message: "Client governance is now denied.",
 				},
 				previewFailed: {
 					title: "Preview failed",
@@ -632,6 +663,10 @@ export const clientsTranslations = {
 					refresh: "刷新",
 					enable: "启用",
 					disable: "停用",
+					approve: "批准",
+					reject: "拒绝",
+					allow: "允许",
+					deny: "拒绝治理",
 				},
 				noDetails: "暂无详细信息",
 					currentServers: {
@@ -703,6 +738,8 @@ export const clientsTranslations = {
 				configuration: {
 				title: "配置模式",
 				description: "若不清楚含义，请勿修改并保持现有设置。",
+				writeTargetRequiredReason: "要把治理配置真正应用到客户端配置文件，必须先确认一个已验证且可写的本地 MCP 配置文件。",
+				applyRequiresApprovedReason: "要把客户端配置真正应用落盘，必须先处于已允许治理状态，并且拥有一个已验证的本地配置目标。",
 				reapply: "重新应用",
 				sections: {
 					mode: {
@@ -908,10 +945,18 @@ export const clientsTranslations = {
 					noImportNeeded: "无需导入",
 				},
 			},
-			notifications: {
-				previewReady: {
-					title: "预览已就绪",
-					message: "请在应用前先查看差异。",
+				notifications: {
+					reviewSuccess: {
+						title: "成功",
+						messageApproved: "记录已成功批准。",
+						messageRejected: "记录已成功拒绝。",
+					},
+					reviewFailed: {
+						title: "审批失败",
+					},
+					previewReady: {
+						title: "预览已就绪",
+						message: "请在应用前先查看差异。",
 					noChanges: "当前配置未产生任何变化。",
 				},
 				applied: {
@@ -945,6 +990,21 @@ export const clientsTranslations = {
 				},
 				managedFailed: {
 					title: "更新失败",
+				},
+					governanceUpdated: {
+						title: "已更新",
+						message: "客户端治理状态已变更",
+					},
+				governanceFailed: {
+					title: "更新失败",
+				},
+				governanceAllowed: {
+					title: "已更新",
+					message: "该客户端现已允许。",
+				},
+				governanceDenied: {
+					title: "已更新",
+					message: "该客户端现已禁行。",
 				},
 				previewFailed: {
 					title: "预览失败",
@@ -1110,6 +1170,10 @@ export const clientsTranslations = {
 					refresh: "更新",
 					enable: "有効化",
 					disable: "無効化",
+					approve: "承認",
+					reject: "拒否",
+					allow: "許可",
+					deny: "拒否",
 				},
 				noDetails: "詳細情報がありません",
 					currentServers: {
@@ -1181,6 +1245,10 @@ export const clientsTranslations = {
 				configuration: {
 				title: "設定モード",
 				description: "意味が不明な場合は変更せず現状の設定を維持してください。",
+				writeTargetRequiredReason:
+					"クライアント設定ファイルへガバナンスを適用するには、検証済みで書き込み可能なローカル MCP 設定ファイルが必要です。",
+				applyRequiresApprovedReason:
+					"クライアント設定を適用するには、許可済みのガバナンス状態と検証済みのローカル設定対象が必要です。",
 				reapply: "再適用",
 				sections: {
 					mode: {
@@ -1396,10 +1464,18 @@ export const clientsTranslations = {
 					noImportNeeded: "インポート不要",
 				},
 			},
-			notifications: {
-				previewReady: {
-					title: "プレビュー準備完了",
-					message: "適用前に差分を確認してください。",
+				notifications: {
+					reviewSuccess: {
+						title: "成功",
+						messageApproved: "レコードを承認しました。",
+						messageRejected: "レコードを拒否しました。",
+					},
+					reviewFailed: {
+						title: "レビューに失敗しました",
+					},
+					previewReady: {
+						title: "プレビュー準備完了",
+						message: "適用前に差分を確認してください。",
 					noChanges: "この設定では変更はありませんでした。",
 				},
 				applied: {
@@ -1434,6 +1510,21 @@ export const clientsTranslations = {
 				},
 				managedFailed: {
 					title: "更新に失敗しました",
+				},
+					governanceUpdated: {
+						title: "更新しました",
+						message: "クライアントのガバナンス状態を変更しました",
+					},
+				governanceFailed: {
+					title: "更新に失敗しました",
+				},
+				governanceAllowed: {
+					title: "更新しました",
+					message: "このクライアントは許可状態になりました。",
+				},
+				governanceDenied: {
+					title: "更新しました",
+					message: "このクライアントは拒否状態になりました。",
 				},
 				previewFailed: {
 					title: "プレビューに失敗しました",

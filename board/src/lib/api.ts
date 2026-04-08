@@ -1534,10 +1534,7 @@ export const auditApi = {
 		if (query?.server_id) qs.set("server_id", query.server_id);
 		if (query?.session_id) qs.set("session_id", query.session_id);
 		const resp = await fetchApi<AuditListResp>(`/api/audit/events?${qs}`);
-		return resp.data ?? {
-			events: [],
-			next_cursor: null,
-		};
+		return extractApiData(resp);
 	},
 	details: async (id: number) => {
 		const qs = new URLSearchParams({ id: String(id) });
@@ -1554,7 +1551,7 @@ export const auditApi = {
 	},
 	getPolicy: async () => {
 		const resp = await fetchApi<AuditPolicyResp>("/api/audit/policy");
-		return resp.data;
+		return extractApiData(resp);
 	},
 	setPolicy: async (payload: AuditPolicySetReq) => {
 		const resp = await fetchApi<AuditPolicyResp>("/api/audit/policy", {
@@ -1562,7 +1559,7 @@ export const auditApi = {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
 		});
-		return resp.data;
+		return extractApiData(resp);
 	},
 };
 
@@ -2518,6 +2515,14 @@ export const clientsApi = {
 
 	rejectRecord: async (payload: ClientRecordReviewReq) => {
 		const resp = await fetchApi<ClientRecordLifecycleResp>("/api/client/manage/reject", {
+			method: "POST",
+			body: JSON.stringify(payload),
+		});
+		return extractApiData(resp);
+	},
+
+	suspendRecord: async (payload: ClientRecordReviewReq) => {
+		const resp = await fetchApi<ClientRecordLifecycleResp>("/api/client/manage/suspend", {
 			method: "POST",
 			body: JSON.stringify(payload),
 		});

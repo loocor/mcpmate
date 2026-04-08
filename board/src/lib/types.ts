@@ -998,7 +998,7 @@ export interface ClientRecordLifecycleData {
   display_name: string;
   managed: boolean;
   connection_mode?: "local_config_detected" | "remote_http" | "manual" | string;
-  approval_status: "approved" | "pending" | "rejected" | string;
+  approval_status: "approved" | "pending" | "rejected" | "suspended" | string;
   record_kind: "template_known" | "observed_unknown" | string;
   template_identifier?: string | null;
   writable_config?: boolean | null;
@@ -1121,7 +1121,7 @@ export interface ClientConfigData {
   connection_mode?: ClientConnectionMode | null;
   mcp_servers_count: number;
   supported_transports: string[];
-  approval_status?: "approved" | "rejected" | "pending" | string | null;
+  approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
   record_kind?: "template_known" | "observed_unknown" | string | null;
   template_identifier?: string | null;
   writable_config?: boolean | null;
