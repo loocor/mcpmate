@@ -10,7 +10,7 @@ use crate::clients::models::{
 use crate::clients::source::{ClientConfigSource, DbTemplateSource};
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
-use crate::system::paths::PathService;
+use crate::system::paths::{PathService, get_path_service};
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use serde::{Deserialize, Serialize};
@@ -403,7 +403,10 @@ impl ClientConfigService {
     ) -> crate::clients::error::ConfigResult<Option<String>> {
         if let Some(state) = self.fetch_state(client_id).await? {
             if let Some(config_path) = state.config_path.filter(|value| !value.trim().is_empty()) {
-                return Ok(Some(config_path));
+                let resolved = get_path_service()
+                    .resolve_user_path(&config_path)
+                    .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
+                return Ok(Some(resolved.to_string_lossy().to_string()));
             }
         }
 
@@ -530,19 +533,17 @@ impl ClientConfigService {
         let runtime_metadata = state.runtime_client_metadata();
         let format = Self::infer_runtime_template_format(config_path.as_deref());
         let mut detection = HashMap::new();
-        detection.insert(
-            PathService::get_current_platform().to_string(),
-            vec![DetectionRule {
-                method: if config_path.is_some() {
-                    DetectionMethod::ConfigPath
-                } else {
-                    DetectionMethod::FilePath
-                },
-                value: config_path.clone().unwrap_or_default(),
-                config_path: config_path.clone(),
-                priority: Some(0),
-            }],
-        );
+        if let Some(config_path) = config_path.clone().filter(|value| !value.trim().is_empty()) {
+            detection.insert(
+                PathService::get_current_platform().to_string(),
+                vec![DetectionRule {
+                    method: DetectionMethod::ConfigPath,
+                    value: config_path.clone(),
+                    config_path: Some(config_path),
+                    priority: Some(0),
+                }],
+            );
+        }
 
         let mut metadata = HashMap::new();
         if let Some(description) = runtime_metadata.description.clone() {
