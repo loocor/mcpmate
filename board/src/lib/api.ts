@@ -1537,13 +1537,16 @@ export const auditApi = {
 		return resp.data ?? {
 			events: [],
 			next_cursor: null,
-			total: 0,
 		};
 	},
 	details: async (id: number) => {
 		const qs = new URLSearchParams({ id: String(id) });
 		const resp = await fetchApi<AuditEventDetailsResp>(`/api/audit/events/details?${qs}`);
-		return resp.data?.event;
+		const event = resp.data?.event;
+		if (!event) {
+			throw new Error(`Audit event details response missing event for id ${id}`);
+		}
+		return event;
 	},
 	eventsWsUrl: () => {
 		const wsBase = resolveWebSocketUrl();

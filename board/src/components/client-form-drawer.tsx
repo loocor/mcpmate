@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, FolderOpen, ImageIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { type ControllerRenderProps, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import * as z from "zod";
@@ -88,7 +88,7 @@ function LogoUrlFieldWithPreview({
 	placeholder,
 	field,
 }: {
-	label: React.ReactNode;
+	label: ReactNode;
 	placeholder: string;
 	field: ControllerRenderProps<ClientRecordFormValues, "logoUrl">;
 }) {
