@@ -287,6 +287,9 @@ export type AuditAction =
   | "server_cache_reset"
   | "runtime_install"
   | "runtime_cache_reset"
+  | "client_record_observed"
+  | "client_record_approved"
+  | "client_record_rejected"
   | "audit_policy_update";
 
 
@@ -326,13 +329,21 @@ export interface AuditListData {
   next_cursor?: string | null;
 }
 
-export interface AuditListResp extends ApiResponse<AuditListData> {}
+export interface AuditListResp {
+  data?: AuditListData | null;
+  error?: unknown | null;
+  success: boolean;
+}
 
 export interface AuditEventDetailsData {
   event: AuditEventRecord;
 }
 
-export interface AuditEventDetailsResp extends ApiResponse<AuditEventDetailsData> {}
+export interface AuditEventDetailsResp {
+  data?: AuditEventDetailsData | null;
+  error?: unknown | null;
+  success: boolean;
+}
 
 export type AuditRetentionPolicy =
   | "off"
@@ -345,7 +356,11 @@ export interface AuditPolicyData {
   sweep_interval_secs: number;
 }
 
-export interface AuditPolicyResp extends ApiResponse<AuditPolicyData> {}
+export interface AuditPolicyResp {
+  data?: AuditPolicyData | null;
+  error?: unknown | null;
+  success: boolean;
+}
 
 export interface AuditPolicySetReq {
   policy: AuditRetentionPolicy;
@@ -923,6 +938,7 @@ export interface ClientTemplateMetadata {
 export interface ClientInfo {
   identifier: string;
   display_name: string;
+  connection_mode?: "local_config_detected" | "remote_http" | "manual" | string | null;
   category: ClientCategory;
   enabled: boolean;
   managed: boolean;
@@ -931,6 +947,11 @@ export interface ClientInfo {
   config_exists: boolean;
   has_mcp_config: boolean;
   supported_transports: string[];
+  approval_status?: "approved" | "rejected" | "pending" | string | null;
+  record_kind?: "template_known" | "observed_unknown" | string | null;
+  template_identifier?: string | null;
+  writable_config?: boolean | null;
+  governed_by_default_policy?: boolean | null;
   description?: string | null;
   homepage_url?: string | null;
   docs_url?: string | null;
@@ -962,9 +983,64 @@ export interface ClientCheckResp {
 export type ClientManageAction = "enable" | "disable";
 
 export interface ClientManageResp {
-  data?: { identifier: string; managed: boolean } | null;
+  data?: {
+    identifier: string;
+    managed: boolean;
+    approval_status?: "approved" | "rejected" | "pending" | string | null;
+    record_kind?: "template_known" | "observed_unknown" | string | null;
+  } | null;
   error?: unknown | null;
   success: boolean;
+}
+
+export interface ClientRecordLifecycleData {
+  identifier: string;
+  display_name: string;
+  managed: boolean;
+  connection_mode?: "local_config_detected" | "remote_http" | "manual" | string;
+  approval_status: "approved" | "pending" | "rejected" | string;
+  record_kind: "template_known" | "observed_unknown" | string;
+  template_identifier?: string | null;
+  writable_config?: boolean | null;
+}
+
+export interface ClientRecordLifecycleResp {
+  data?: ClientRecordLifecycleData | null;
+  error?: unknown | null;
+  success: boolean;
+}
+
+export interface ClientObserveReq {
+  identifier: string;
+  display_name?: string | null;
+}
+
+export interface ClientRecordReviewReq {
+  identifier: string;
+}
+
+export type ClientConnectionMode =
+  | "local_config_detected"
+  | "remote_http"
+  | "manual"
+  | string;
+
+export interface DefaultClientPolicyData {
+  config_mode: string;
+  capability_source: CapabilitySource;
+  first_contact_behavior: "deny" | "review" | "allow" | string;
+}
+
+export interface DefaultClientPolicyResp {
+  data?: DefaultClientPolicyData | null;
+  error?: unknown | null;
+  success: boolean;
+}
+
+export interface DefaultClientPolicyUpdateReq {
+  config_mode: string;
+  capability_source: CapabilitySource;
+  first_contact_behavior: "deny" | "review" | "allow" | string;
 }
 
 // Client config details
@@ -1042,8 +1118,14 @@ export interface ClientConfigData {
   import_summary?: ClientImportSummary | null;
   last_modified?: string | null;
   managed: boolean;
+  connection_mode?: ClientConnectionMode | null;
   mcp_servers_count: number;
   supported_transports: string[];
+  approval_status?: "approved" | "rejected" | "pending" | string | null;
+  record_kind?: "template_known" | "observed_unknown" | string | null;
+  template_identifier?: string | null;
+  writable_config?: boolean | null;
+  governed_by_default_policy?: boolean | null;
   template: ClientTemplateMetadata;
   description?: string | null;
   homepage_url?: string | null;

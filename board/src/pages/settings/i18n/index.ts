@@ -136,6 +136,8 @@ export const settingsTranslations = {
         unify: "Unify",
         hosted: "Hosted",
         transparent: "Transparent",
+        transparentDisabledTooltip:
+          "Transparent cannot be the workspace default. Enable it per client when a writable local path is available.",
       },
       backup: {
         keepN: "Keep N",
@@ -168,12 +170,23 @@ export const settingsTranslations = {
         "Choose which client statuses are shown by default on the Clients page.",
       defaultVisibility: {
         all: "All",
-        detected: "Detected",
-        managed: "Managed",
+        allowed: "Allowed",
+        pending: "Pending",
+        denied: "Denied",
       },
       modeTitle: "Client Management Mode",
       modeDescription:
         "Choose how client configurations should be managed by default.",
+      firstContactTitle: "First-contact Behavior",
+      firstContactDescription:
+        "Control how new, unknown clients are handled when they first request an MCP connection.",
+      firstContact: {
+        deny: "Deny",
+        review: "Review",
+        allow: "Allow",
+      },
+      policySaved: "Default client policy updated.",
+      policySaveFailed: "Failed to update default client policy",
       backupStrategyTitle: "Client Backup Strategy",
       backupStrategyDescription:
         "Define how client configurations should be backed up.",
@@ -432,6 +445,8 @@ export const settingsTranslations = {
         unify: "统一模式",
         hosted: "托管",
         transparent: "透明",
+        transparentDisabledTooltip:
+          "透明模式不能作为工作区默认值。请在有可写本地路径时按客户端单独启用。",
       },
       backup: {
         keepN: "保留 N 个",
@@ -461,11 +476,22 @@ export const settingsTranslations = {
         "选择在“客户端”页面默认展示哪些状态的记录。",
       defaultVisibility: {
         all: "全部",
-        detected: "已检测",
-        managed: "已管理",
+        allowed: "已允许",
+        pending: "待审批",
+        denied: "已拒绝",
       },
       modeTitle: "客户端管理模式",
       modeDescription: "选择客户端配置默认应如何由 MCPMate 管理。",
+      firstContactTitle: "首次连接行为",
+      firstContactDescription:
+        "控制未知客户端首次请求 MCP 连接时的处理方式。",
+      firstContact: {
+        deny: "拒绝",
+        review: "需审批",
+        allow: "允许",
+      },
+      policySaved: "默认客户端策略已更新。",
+      policySaveFailed: "更新默认客户端策略失败",
       backupStrategyTitle: "客户端备份策略",
       backupStrategyDescription: "定义客户端配置应如何备份。",
       backupLimitTitle: "最大备份副本数",
@@ -711,6 +737,8 @@ export const settingsTranslations = {
         unify: "Unify",
         hosted: "ホスト",
         transparent: "トランスペアレント",
+        transparentDisabledTooltip:
+          "トランスペアレントはワークスペースの既定にはできません。書き込み可能なローカルパスがあるクライアントごとに有効化してください。",
       },
       backup: {
         keepN: "N 件保持",
@@ -745,12 +773,23 @@ export const settingsTranslations = {
         "クライアントページで既定として表示するステータスを選択します。",
       defaultVisibility: {
         all: "すべて",
-        detected: "検出済み",
-        managed: "管理中",
+        allowed: "許可済み",
+        pending: "承認待ち",
+        denied: "拒否",
       },
       modeTitle: "クライアント管理モード",
       modeDescription:
         "クライアント設定をデフォルトでどのように管理するかを選択します。",
+      firstContactTitle: "初回接続時の挙動",
+      firstContactDescription:
+        "初めて MCP 接続を要求する未知のクライアントをどう扱うかを設定します。",
+      firstContact: {
+        deny: "拒否",
+        review: "承認が必要",
+        allow: "許可",
+      },
+      policySaved: "既定のクライアントポリシーを更新しました。",
+      policySaveFailed: "既定のクライアントポリシーを更新できませんでした",
       backupStrategyTitle: "クライアントバックアップ戦略",
       backupStrategyDescription:
         "クライアント設定をどのようにバックアップするかを定義します。",
