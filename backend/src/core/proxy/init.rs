@@ -318,12 +318,30 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn setup_proxy_server_default_mode_seeds_pool_from_globally_enabled_servers() {
-        let (_temp_dir, db) = create_test_database().await;
+        let (temp_dir, db) = create_test_database().await;
         insert_server(&db.pool, "server-global", "Global Server", true).await;
 
-        let (proxy, _) = setup_proxy_server_with_params(db, None, &StartupMode::Default)
+        let template_root = temp_dir.path().join("client-template-root");
+        std::fs::create_dir_all(&template_root).expect("create isolated template root");
+        let previous_template_root = std::env::var("MCPMATE_TEMPLATE_ROOT").ok();
+        unsafe {
+            std::env::set_var("MCPMATE_TEMPLATE_ROOT", &template_root);
+        }
+
+        let setup_result = setup_proxy_server_with_params(db, None, &StartupMode::Default)
             .await
             .expect("setup proxy server");
+
+        match previous_template_root {
+            Some(previous) => unsafe {
+                std::env::set_var("MCPMATE_TEMPLATE_ROOT", previous);
+            },
+            None => unsafe {
+                std::env::remove_var("MCPMATE_TEMPLATE_ROOT");
+            },
+        }
+
+        let (proxy, _) = setup_result;
 
         let pool = proxy.connection_pool.lock().await;
 
