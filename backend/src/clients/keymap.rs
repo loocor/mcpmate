@@ -109,7 +109,7 @@ pub fn reload() -> ConfigResult<()> {
     use crate::system::paths::PathService;
     let path_service = PathService::new().map_err(|e| ConfigError::PathResolutionError(e.to_string()))?;
     let root = path_service
-        .resolve_user_path("~/.mcpmate/client/common/keymap.json5")
+        .resolve_user_path("~/.mcpmate/keymap.json5")
         .map_err(|e| ConfigError::PathResolutionError(e.to_string()))?;
     let path = root;
     if !path.exists() {

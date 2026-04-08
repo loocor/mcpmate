@@ -13,6 +13,8 @@ use crate::api::models::client::{
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat};
+use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
+use crate::clients::service::settings::ActiveClientSettingsUpdate;
 use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
@@ -35,12 +37,6 @@ pub async fn list(
     Query(request): Query<ClientCheckReq>,
 ) -> Result<Json<ClientCheckResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-
-    if request.refresh {
-        if let Err(err) = service.reload_templates().await {
-            tracing::warn!("Failed to reload client templates: {}", err);
-        }
-    }
 
     let descriptors = service.list_clients(request.refresh).await.map_err(|err| {
         tracing::error!("Failed to list clients: {}", err);
@@ -71,10 +67,12 @@ pub async fn config_details(
     Query(request): Query<ClientConfigReq>,
 ) -> Result<Json<ClientConfigResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-    let template = service.get_client_template(&request.identifier).await.map_err(|err| {
-        tracing::error!("Failed to load client template {}: {}", request.identifier, err);
-        StatusCode::NOT_FOUND
-    })?;
+    let state = service.fetch_state(&request.identifier).await.ok().flatten();
+    let template = service.get_client_template(&request.identifier).await.ok();
+    if template.is_none() && state.is_none() {
+        tracing::error!("Failed to resolve client config details for {}", request.identifier);
+        return Err(StatusCode::NOT_FOUND);
+    }
 
     let config_path = service.config_path(&request.identifier).await.map_err(|err| {
         tracing::error!("Failed to resolve config path for {}: {}", request.identifier, err);
@@ -82,34 +80,49 @@ pub async fn config_details(
     })?;
 
     let mut warnings: Vec<String> = Vec::new();
-    let content = match service.read_current_config(&request.identifier).await {
-        Ok(content) => content,
-        Err(err) => {
-            let message = format!("Unable to read current configuration: {}", err);
-            tracing::warn!(
-                client = %request.identifier,
-                error = %err,
-                "Gracefully degrading after configuration read failure"
-            );
-            warnings.push(message);
-            None
+    let content = match template.as_ref() {
+        None => {
+            warnings.push("Runtime template is unavailable for this client record".to_string());
+            read_runtime_config(service.as_ref(), &request.identifier)
+                .await
+                .map_err(|err| {
+                    tracing::error!(client = %request.identifier, error = %err, "Failed to read runtime config");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?
         }
+        Some(_) => match service.read_current_config(&request.identifier).await {
+            Ok(content) => content,
+            Err(err) => {
+                let message = format!("Unable to read current configuration: {}", err);
+                tracing::warn!(
+                    client = %request.identifier,
+                    error = %err,
+                    "Gracefully degrading after configuration read failure"
+                );
+                warnings.push(message);
+                None
+            }
+        },
     };
 
     let config_exists = content.is_some();
-    let parsed_content = content
-        .as_deref()
-        .map(|raw| parse_config_value(raw, &template))
-        .unwrap_or(Value::Null);
+    let parsed_content = match (content.as_deref(), template.as_ref()) {
+        (Some(raw), Some(template)) => parse_config_value(raw, template),
+        (Some(raw), None) => parse_runtime_config_value(raw, config_path.as_deref()),
+        (None, _) => Value::Null,
+    };
 
-    let (has_mcp_config, mcp_servers_count) = content
-        .as_deref()
-        .map(|raw| analyze_config_content(raw, &request.identifier, &template))
-        .unwrap_or((false, 0));
+    let (has_mcp_config, mcp_servers_count) = match (content.as_deref(), template.as_ref()) {
+        (Some(raw), Some(template)) => analyze_config_content(raw, &request.identifier, template),
+        _ => (false, 0),
+    };
 
     let last_modified = config_path.as_deref().and_then(get_config_last_modified);
 
-    let config_type = convert_container_type(template.config_mapping.container_type);
+    let config_type = template
+        .as_ref()
+        .and_then(|template| convert_container_type(template.config_mapping.container_type))
+        .or_else(|| infer_config_type_from_path(config_path.as_deref()));
 
     let managed = match service.is_client_managed(&request.identifier).await {
         Ok(state) => state,
@@ -125,11 +138,30 @@ pub async fn config_details(
     };
 
     let (imported_servers, import_summary) = (None, None);
-    let description = metadata_string(&template, "description");
-    let homepage_url = metadata_string(&template, "homepage_url");
-    let docs_url = metadata_string(&template, "docs_url");
-    let support_url = metadata_string(&template, "support_url");
-    let logo_url = extract_logo_url(&template);
+    let runtime_metadata = state
+        .as_ref()
+        .map(ClientStateRow::runtime_client_metadata)
+        .unwrap_or_default();
+    let description = template
+        .as_ref()
+        .and_then(|template| metadata_string(template, "description"))
+        .or_else(|| runtime_metadata.description.clone());
+    let homepage_url = template
+        .as_ref()
+        .and_then(|template| metadata_string(template, "homepage_url"))
+        .or_else(|| runtime_metadata.homepage_url.clone());
+    let docs_url = template
+        .as_ref()
+        .and_then(|template| metadata_string(template, "docs_url"))
+        .or_else(|| runtime_metadata.docs_url.clone());
+    let support_url = template
+        .as_ref()
+        .and_then(|template| metadata_string(template, "support_url"))
+        .or_else(|| runtime_metadata.support_url.clone());
+    let logo_url = template
+        .as_ref()
+        .and_then(extract_logo_url)
+        .or_else(|| runtime_metadata.logo_url.clone());
 
     let capability_config = service
         .get_capability_config(&request.identifier)
@@ -143,6 +175,40 @@ pub async fn config_details(
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .unwrap_or_default();
+    let record_kind = state
+        .as_ref()
+        .map(|row| row.record_kind().as_str().to_string())
+        .or_else(|| Some("template_known".to_string()));
+    let governance_kind = state
+        .as_ref()
+        .map(|row| row.governance_kind().as_str().to_string())
+        .or_else(|| Some("passive".to_string()));
+    let connection_mode = state
+        .as_ref()
+        .map(|row| row.connection_mode().as_str().to_string())
+        .or_else(|| {
+            if config_path.as_deref().unwrap_or_default().is_empty() {
+                Some("manual".to_string())
+            } else {
+                Some("local_config_detected".to_string())
+            }
+        });
+    let governed_by_default_policy = state
+        .as_ref()
+        .map(|row| row.governed_by_default_policy())
+        .unwrap_or(true);
+    let approval_status = state.as_ref().map(|row| row.approval_status().to_string());
+    let writable_config = state
+        .as_ref()
+        .map(|row| row.has_local_config_target())
+        .unwrap_or_else(|| {
+            connection_mode.as_deref() != Some("remote_http")
+                && !config_path.as_deref().unwrap_or_default().trim().is_empty()
+                && matches!(
+                    template.as_ref().map(|entry| entry.storage.kind).unwrap_or(StorageKind::Custom),
+                    StorageKind::File | StorageKind::Custom
+                )
+        });
 
     let data = ClientConfigData {
         config_path: config_path.unwrap_or_default(),
@@ -154,8 +220,8 @@ pub async fn config_details(
         config_type,
         imported_servers,
         import_summary,
-        template: build_template_metadata(&template),
-        supported_transports: extract_supported_transports(&template),
+        template: build_client_template_metadata(template.as_ref(), state.as_ref(), &runtime_metadata),
+        supported_transports: extract_client_supported_transports(template.as_ref(), &runtime_metadata),
         managed,
         description,
         homepage_url,
@@ -165,6 +231,12 @@ pub async fn config_details(
         capability_source: capability_config.capability_source,
         selected_profile_ids: capability_config.selected_profile_ids,
         custom_profile_id: capability_config.custom_profile_id,
+        approval_status,
+        record_kind,
+        governance_kind,
+        connection_mode,
+        governed_by_default_policy,
+        writable_config,
         warnings,
     };
 
@@ -199,6 +271,18 @@ pub async fn config_apply(
             return Err(StatusCode::FORBIDDEN);
         }
     }
+
+    let client_name = service.resolve_client_name(&request.identifier).await.map_err(|err| {
+        tracing::error!(client = %request.identifier, error = %err, "Failed to resolve client name");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    service
+        .ensure_active_state_row_with_name(&request.identifier, &client_name, Some(true), Some("approved"))
+        .await
+        .map_err(|err| {
+            tracing::error!(client = %request.identifier, error = %err, "Failed to activate client state before apply");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     
     let template = service.get_client_template(&request.identifier).await.map_err(|err| {
         tracing::error!(
@@ -304,6 +388,18 @@ pub async fn config_restore(
             return Err(StatusCode::FORBIDDEN);
         }
     }
+
+    let client_name = service.resolve_client_name(&request.identifier).await.map_err(|err| {
+        tracing::error!(client = %request.identifier, error = %err, "Failed to resolve client name");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    service
+        .ensure_active_state_row_with_name(&request.identifier, &client_name, Some(true), Some("approved"))
+        .await
+        .map_err(|err| {
+            tracing::error!(client = %request.identifier, error = %err, "Failed to activate client state before restore");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     
     let result = service
         .restore_backup(&request.identifier, &request.backup)
@@ -523,15 +619,29 @@ pub async fn update_settings(
         config_mode = ?request.config_mode,
         transport = ?request.transport,
         client_version = ?request.client_version,
+        display_name = ?request.display_name,
+        connection_mode = ?request.connection_mode,
+        config_path = ?request.config_path,
         "update_settings: received request"
     );
 
     service
-        .set_client_settings(
+        .set_active_client_settings(
             &request.identifier,
-            request.config_mode.clone(),
-            request.transport.clone(),
-            request.client_version.clone(),
+            ActiveClientSettingsUpdate {
+                display_name: request.display_name.clone(),
+                config_mode: request.config_mode.clone(),
+                transport: request.transport.clone(),
+                client_version: request.client_version.clone(),
+                connection_mode: request.connection_mode.clone(),
+                config_path: request.config_path.clone(),
+                description: request.description.clone(),
+                homepage_url: request.homepage_url.clone(),
+                docs_url: request.docs_url.clone(),
+                support_url: request.support_url.clone(),
+                logo_url: request.logo_url.clone(),
+                supported_transports: request.supported_transports.clone(),
+            },
         )
         .await
         .map_err(|err| {
@@ -555,12 +665,30 @@ pub async fn update_settings(
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .unwrap_or((None, "auto".into(), None));
+    let state = service
+        .fetch_state(&request.identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(client = %request.identifier, error = %err, "Failed to fetch updated client state");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let runtime_metadata = state.runtime_client_metadata();
 
     let data = crate::api::models::client::ClientSettingsUpdateData {
         identifier: request.identifier,
+        display_name: state.display_name().to_string(),
         config_mode: mode,
         transport,
         client_version: version,
+        connection_mode: Some(state.connection_mode().as_str().to_string()),
+        config_path: state.config_path().map(str::to_string),
+        supported_transports: runtime_metadata.supported_transports.clone(),
+        description: runtime_metadata.description.clone(),
+        homepage_url: runtime_metadata.homepage_url.clone(),
+        docs_url: runtime_metadata.docs_url.clone(),
+        support_url: runtime_metadata.support_url.clone(),
+        logo_url: runtime_metadata.logo_url.clone(),
     };
 
     emit_client_audit_event(
@@ -574,6 +702,10 @@ pub async fn update_settings(
             "config_mode": data.config_mode,
             "transport": data.transport,
             "client_version": data.client_version,
+            "display_name": data.display_name,
+            "connection_mode": data.connection_mode,
+            "config_path": data.config_path,
+            "supported_transports": data.supported_transports,
         })),
         None,
     )
@@ -664,21 +796,49 @@ async fn descriptor_to_client_info(
     descriptor: ClientDescriptor,
 ) -> Result<ClientInfo, StatusCode> {
     let template = descriptor.template.clone();
-    let display_name = template_display_name(&template);
-    let logo_url = extract_logo_url(&template);
-    let category = extract_category(&template);
-    let supported_transports = extract_supported_transports(&template);
-    let description = metadata_string(&template, "description");
-    let homepage_url = metadata_string(&template, "homepage_url");
-    let docs_url = metadata_string(&template, "docs_url");
-    let support_url = metadata_string(&template, "support_url");
-    let config_type = convert_container_type(template.config_mapping.container_type);
+    let state = descriptor.state.clone();
+    let runtime_metadata = state.runtime_client_metadata();
+    let identifier = state.identifier().to_string();
+    let display_name = template
+        .as_ref()
+        .map(template_display_name)
+        .unwrap_or_else(|| state.display_name().to_string());
+    let logo_url = template
+        .as_ref()
+        .and_then(extract_logo_url)
+        .or_else(|| runtime_metadata.logo_url.clone());
+    let category = template
+        .as_ref()
+        .map(extract_category)
+        .or_else(|| runtime_metadata.category.as_deref().and_then(ClientCategory::parse))
+        .unwrap_or_default();
+    let supported_transports = extract_client_supported_transports(template.as_ref(), &runtime_metadata);
+    let description = template
+        .as_ref()
+        .and_then(|template| metadata_string(template, "description"))
+        .or_else(|| runtime_metadata.description.clone());
+    let homepage_url = template
+        .as_ref()
+        .and_then(|template| metadata_string(template, "homepage_url"))
+        .or_else(|| runtime_metadata.homepage_url.clone());
+    let docs_url = template
+        .as_ref()
+        .and_then(|template| metadata_string(template, "docs_url"))
+        .or_else(|| runtime_metadata.docs_url.clone());
+    let support_url = template
+        .as_ref()
+        .and_then(|template| metadata_string(template, "support_url"))
+        .or_else(|| runtime_metadata.support_url.clone());
+    let config_type = template
+        .as_ref()
+        .and_then(|template| convert_container_type(template.config_mapping.container_type))
+        .or_else(|| infer_config_type_from_path(descriptor.config_path.as_deref()));
     let capability_config = service
-        .get_capability_config(&template.identifier)
+        .get_capability_config(&identifier)
         .await
         .map_err(|err| {
             tracing::error!(
-                client = %template.identifier,
+                client = %identifier,
                 error = %err,
                 "Failed to load client capability config"
             );
@@ -687,41 +847,43 @@ async fn descriptor_to_client_info(
         .unwrap_or_default();
 
     let content = if descriptor.config_exists {
-        match service.read_current_config(&template.identifier).await {
-            Ok(content) => content,
-            Err(err) => {
-                tracing::warn!(
-                    client = %template.identifier,
-                    error = %err,
-                    "Continuing list operation despite configuration read failure"
-                );
-                None
-            }
+        match template.as_ref() {
+            Some(_) => match service.read_current_config(&identifier).await {
+                Ok(content) => content,
+                Err(err) => {
+                    tracing::warn!(
+                        client = %identifier,
+                        error = %err,
+                        "Continuing list operation despite configuration read failure"
+                    );
+                    None
+                }
+            },
+            None => read_runtime_config(service, &identifier).await.unwrap_or(None),
         }
     } else {
         None
     };
 
-    let (has_mcp_config, mcp_servers_count) = content
-        .as_deref()
-        .map(|raw| analyze_config_content(raw, &template.identifier, &template))
-        .unwrap_or((false, 0));
+    let (has_mcp_config, mcp_servers_count) = match (content.as_deref(), template.as_ref()) {
+        (Some(raw), Some(template)) => analyze_config_content(raw, &identifier, template),
+        _ => (false, 0),
+    };
 
     let last_modified = descriptor.config_path.as_deref().and_then(get_config_last_modified);
 
-    let state = service
-        .fetch_state(&template.identifier)
-        .await
-        .ok()
-        .flatten();
-
-    let approval_status = state.as_ref().map(|s| s.approval_status().to_string());
-    let template_id = state.as_ref().and_then(|s| s.template_id().map(|id| id.to_string()));
-    let template_known = template_id.is_some();
+    let approval_status = Some(state.approval_status().to_string());
+    let record_kind = Some(state.record_kind().as_str().to_string());
+    let governance_kind = Some(state.governance_kind().as_str().to_string());
+    let connection_mode = Some(state.connection_mode().as_str().to_string());
+    let governed_by_default_policy = state.governed_by_default_policy();
+    let writable_config = state.has_local_config_target();
+    let template_id = state.template_identifier().map(|id| id.to_string());
+    let template_known = state.is_template_known();
     let pending_approval = approval_status.as_deref() == Some("pending");
 
     Ok(ClientInfo {
-        identifier: template.identifier.clone(),
+        identifier,
         display_name,
         logo_url,
         category,
@@ -738,17 +900,17 @@ async fn descriptor_to_client_info(
         docs_url,
         support_url,
         config_mode: service
-            .get_client_settings(&template.identifier)
+            .get_client_settings(state.identifier())
             .await
             .ok()
             .and_then(|o| o.and_then(|(mode, _, _)| mode)),
         transport: service
-            .get_client_settings(&template.identifier)
+            .get_client_settings(state.identifier())
             .await
             .ok()
             .map(|o| o.map(|(_, tr, _)| tr).unwrap_or_else(|| "auto".to_string())),
         client_version: service
-            .get_client_settings(&template.identifier)
+            .get_client_settings(state.identifier())
             .await
             .ok()
             .and_then(|o| o.and_then(|(_, _, ver)| ver)),
@@ -759,8 +921,13 @@ async fn descriptor_to_client_info(
         last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
         last_modified,
         mcp_servers_count: Some(mcp_servers_count),
-        template: build_template_metadata(&template),
+        template: build_client_template_metadata(template.as_ref(), Some(&state), &runtime_metadata),
         approval_status,
+        record_kind,
+        governance_kind,
+        connection_mode,
+        governed_by_default_policy,
+        writable_config,
         template_id,
         template_known,
         pending_approval,
@@ -792,6 +959,16 @@ fn extract_supported_transports(template: &ClientTemplate) -> Vec<String> {
     keymap.advertise_supported(&template.config_mapping.format_rules)
 }
 
+fn extract_client_supported_transports(
+    template: Option<&ClientTemplate>,
+    runtime_metadata: &RuntimeClientMetadata,
+) -> Vec<String> {
+    match template {
+        Some(template) => extract_supported_transports(template),
+        None => runtime_metadata.supported_transports.clone(),
+    }
+}
+
 fn build_template_metadata(template: &ClientTemplate) -> ClientTemplateMetadata {
     ClientTemplateMetadata {
         format: template.format.as_str().to_string(),
@@ -815,6 +992,43 @@ fn build_template_metadata(template: &ClientTemplate) -> ClientTemplateMetadata 
         homepage_url: metadata_string(template, "homepage_url"),
         docs_url: metadata_string(template, "docs_url"),
         support_url: metadata_string(template, "support_url"),
+    }
+}
+
+fn build_runtime_template_metadata(
+    state: Option<&ClientStateRow>,
+    runtime_metadata: &RuntimeClientMetadata,
+) -> ClientTemplateMetadata {
+    ClientTemplateMetadata {
+        format: "runtime_record".to_string(),
+        protocol_revision: None,
+        storage: ClientTemplateStorageMetadata {
+            kind: if state.map(ClientStateRow::has_local_config_target).unwrap_or(false) {
+                "file".to_string()
+            } else {
+                "custom".to_string()
+            },
+            path_strategy: None,
+        },
+        container_type: crate::api::models::client::ClientConfigType::Standard,
+        merge_strategy: "replace".to_string(),
+        keep_original_config: false,
+        managed_source: None,
+        description: runtime_metadata.description.clone(),
+        homepage_url: runtime_metadata.homepage_url.clone(),
+        docs_url: runtime_metadata.docs_url.clone(),
+        support_url: runtime_metadata.support_url.clone(),
+    }
+}
+
+fn build_client_template_metadata(
+    template: Option<&ClientTemplate>,
+    state: Option<&ClientStateRow>,
+    runtime_metadata: &RuntimeClientMetadata,
+) -> ClientTemplateMetadata {
+    match template {
+        Some(template) => build_template_metadata(template),
+        None => build_runtime_template_metadata(state, runtime_metadata),
     }
 }
 
@@ -858,6 +1072,59 @@ fn parse_config_value(
             .and_then(|value| serde_json::to_value(value).ok())
             .unwrap_or(Value::Null),
         TemplateFormat::Yaml => serde_yaml::from_str(trimmed).unwrap_or(Value::Null),
+    }
+}
+
+fn parse_runtime_config_value(content: &str, config_path: Option<&str>) -> Value {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Value::Null;
+    }
+
+    match infer_template_format_from_path(config_path) {
+        Some(TemplateFormat::Json) => serde_json::from_str(trimmed).unwrap_or_else(|_| Value::String(content.to_string())),
+        Some(TemplateFormat::Json5) => json5::from_str(trimmed).unwrap_or_else(|_| Value::String(content.to_string())),
+        Some(TemplateFormat::Toml) => toml::from_str::<toml::Value>(trimmed)
+            .ok()
+            .and_then(|value| serde_json::to_value(value).ok())
+            .unwrap_or_else(|| Value::String(content.to_string())),
+        Some(TemplateFormat::Yaml) => serde_yaml::from_str(trimmed).unwrap_or_else(|_| Value::String(content.to_string())),
+        None => Value::String(content.to_string()),
+    }
+}
+
+fn infer_template_format_from_path(config_path: Option<&str>) -> Option<TemplateFormat> {
+    let path = config_path?.to_ascii_lowercase();
+    if path.ends_with(".json5") {
+        Some(TemplateFormat::Json5)
+    } else if path.ends_with(".json") {
+        Some(TemplateFormat::Json)
+    } else if path.ends_with(".toml") {
+        Some(TemplateFormat::Toml)
+    } else if path.ends_with(".yaml") || path.ends_with(".yml") {
+        Some(TemplateFormat::Yaml)
+    } else {
+        None
+    }
+}
+
+fn infer_config_type_from_path(config_path: Option<&str>) -> Option<crate::api::models::client::ClientConfigType> {
+    infer_template_format_from_path(config_path)
+        .map(|_| crate::api::models::client::ClientConfigType::Standard)
+}
+
+async fn read_runtime_config(
+    service: &ClientConfigService,
+    client_id: &str,
+) -> crate::clients::error::ConfigResult<Option<String>> {
+    let Some(path) = service.config_path(client_id).await? else {
+        return Ok(None);
+    };
+
+    match tokio::fs::read_to_string(&path).await {
+        Ok(content) => Ok(Some(content)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(ConfigError::IoError(err)),
     }
 }
 
@@ -916,7 +1183,7 @@ mod tests {
     use crate::api::routes::AppState;
     use crate::clients::{
         CapabilitySource,
-        source::{FileTemplateSource, TemplateRoot},
+        source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot},
     };
     use crate::common::profile::ProfileType;
     use crate::config::{
@@ -979,8 +1246,17 @@ mod tests {
                 .await
                 .expect("template source"),
         );
+        ClientConfigService::seed_runtime_template_snapshots(&db_pool, template_source.as_ref())
+            .await
+            .expect("seed runtime templates");
+        ClientConfigService::seed_client_runtime_rows(&db_pool, template_source.as_ref())
+            .await
+            .expect("seed runtime rows");
+        let runtime_source: Arc<dyn ClientConfigSource> = Arc::new(
+            DbTemplateSource::new(Arc::new(db_pool.clone())).expect("runtime source"),
+        );
         let client_service = Arc::new(
-            ClientConfigService::with_source(Arc::new(db_pool.clone()), template_source)
+            ClientConfigService::with_source(Arc::new(db_pool.clone()), runtime_source)
                 .await
                 .expect("client service"),
         );
@@ -1084,6 +1360,188 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn config_details_supports_active_runtime_only_client() {
+        let context = create_test_context().await;
+
+        context
+            .client_service
+            .set_active_client_settings(
+                "custom.runtime",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("hosted".to_string()),
+                    connection_mode: Some("manual".to_string()),
+                    supported_transports: Some(vec!["streamable_http".to_string()]),
+                    description: Some("Runtime-only client".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("create active runtime-only client");
+
+        let Json(response) = config_details(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "custom.runtime".to_string(),
+            }),
+        )
+        .await
+        .expect("config details for runtime-only client");
+
+        assert!(response.success);
+        let data = response.data.expect("response data");
+        assert_eq!(data.governance_kind.as_deref(), Some("active"));
+        assert!(!data.governed_by_default_policy);
+        assert!(!data.writable_config);
+        assert!(data.warnings.is_empty());
+        assert_eq!(data.supported_transports, vec!["streamable_http".to_string()]);
+        assert_eq!(data.description.as_deref(), Some("Runtime-only client"));
+        assert_eq!(data.template.format, "json");
+        assert_eq!(data.template.storage.kind, "file");
+        assert_eq!(data.record_kind.as_deref(), Some("template_known"));
+    }
+
+    #[tokio::test]
+    async fn update_settings_persists_runtime_only_active_payload_fields() {
+        let context = create_test_context().await;
+
+        let Json(response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "custom.runtime.payload".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: Some("1.2.3".to_string()),
+                display_name: Some("Custom Runtime".to_string()),
+                connection_mode: Some("manual".to_string()),
+                config_path: Some("~/custom/runtime.json".to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string(), "stdio".to_string()]),
+                description: Some("Custom runtime client".to_string()),
+                homepage_url: Some("https://example.com".to_string()),
+                docs_url: Some("https://example.com/docs".to_string()),
+                support_url: Some("https://example.com/support".to_string()),
+                logo_url: Some("https://example.com/logo.png".to_string()),
+            }),
+        )
+        .await
+        .expect("update settings");
+
+        assert!(response.success);
+        let data = response.data.expect("response data");
+        assert_eq!(data.display_name, "Custom Runtime");
+        assert_eq!(data.connection_mode.as_deref(), Some("manual"));
+        assert_eq!(data.supported_transports, vec!["streamable_http".to_string(), "stdio".to_string()]);
+        assert_eq!(data.description.as_deref(), Some("Custom runtime client"));
+
+        let state = context
+            .client_service
+            .fetch_state("custom.runtime.payload")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(state.governance_kind().as_str(), "active");
+        assert_eq!(state.record_kind().as_str(), "template_known");
+        assert_eq!(state.display_name(), "Custom Runtime");
+        assert_eq!(state.connection_mode().as_str(), "manual");
+        assert_eq!(state.config_path(), Some("~/custom/runtime.json"));
+        assert_eq!(state.template_identifier(), Some("custom.runtime.payload"));
+        assert_eq!(
+            state.runtime_client_metadata().homepage_url.as_deref(),
+            Some("https://example.com")
+        );
+
+        let runtime_template = context
+            .client_service
+            .get_client_template("custom.runtime.payload")
+            .await
+            .expect("load runtime template");
+        assert_eq!(runtime_template.identifier, "custom.runtime.payload");
+        assert_eq!(runtime_template.display_name.as_deref(), Some("Custom Runtime"));
+        assert_eq!(runtime_template.version.as_deref(), Some("1.2.3"));
+        assert_eq!(runtime_template.config_mapping.container_keys, vec!["mcpServers".to_string()]);
+        assert_eq!(
+            runtime_template.config_mapping.managed_source.as_deref(),
+            Some("runtime_active_client")
+        );
+        assert!(runtime_template.config_mapping.format_rules.contains_key("streamable_http"));
+        assert!(runtime_template.config_mapping.format_rules.contains_key("stdio"));
+        assert_eq!(
+            metadata_string(&runtime_template, "homepage_url").as_deref(),
+            Some("https://example.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn config_apply_uses_persisted_runtime_template_for_runtime_only_client() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("runtime-client.json");
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "custom.runtime.apply".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: Some("9.9.9".to_string()),
+                display_name: Some("Runtime Apply Client".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string(), "stdio".to_string()]),
+                description: Some("Runtime apply test client".to_string()),
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("update runtime-only client");
+
+        assert!(update_response.success);
+
+        let Json(apply_response) = config_apply(
+            State(context.app_state.clone()),
+            Json(ClientConfigUpdateReq {
+                identifier: "custom.runtime.apply".to_string(),
+                mode: ClientConfigMode::Hosted,
+                preview: false,
+                selected_config: ClientConfigSelected::Default,
+            }),
+        )
+        .await
+        .expect("apply runtime-only client config");
+
+        assert!(apply_response.success);
+        let data = apply_response.data.expect("response data");
+        assert!(data.applied);
+        assert_eq!(data.preview["mcpServers"]["MCPMate"]["type"], "streamable_http");
+
+        let written = tokio::fs::read_to_string(&config_path)
+            .await
+            .expect("read written config");
+        let parsed: Value = serde_json::from_str(&written).expect("parse written config");
+        assert_eq!(parsed["mcpServers"]["MCPMate"]["type"], "streamable_http");
+        assert_eq!(
+            parsed["mcpServers"]["MCPMate"]["headers"]["x-mcpmate-client-id"],
+            "custom.runtime.apply"
+        );
+
+        let Json(details_response) = config_details(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "custom.runtime.apply".to_string(),
+            }),
+        )
+        .await
+        .expect("details for applied runtime-only client");
+
+        assert!(details_response.success);
+        let details = details_response.data.expect("details data");
+        assert!(details.config_exists);
+        assert_eq!(details.template.managed_source.as_deref(), Some("runtime_active_client"));
+        assert_eq!(details.content["mcpServers"]["MCPMate"]["type"], "streamable_http");
+    }
+
+    #[tokio::test]
     async fn config_apply_rejects_pending_unknown_client() {
         use crate::clients::models::OnboardingPolicy;
         use crate::common::constants::database::tables;
@@ -1101,8 +1559,10 @@ mod tests {
 
         sqlx::query(
             r#"
-            INSERT INTO client (id, name, identifier, managed, approval_status, template_id)
-            VALUES ('clnt001', 'Pending Client', 'pending.client', 0, 'pending', NULL)
+            INSERT INTO client (
+                id, name, identifier, managed, approval_status, record_kind, connection_mode, template_identifier
+            )
+            VALUES ('clnt001', 'Pending Client', 'pending.client', 0, 'pending', 'observed_unknown', 'manual', NULL)
             "#,
         )
         .execute(&context.db_pool)
@@ -1144,8 +1604,10 @@ mod tests {
 
         sqlx::query(
             r#"
-            INSERT INTO client (id, name, identifier, managed, approval_status, template_id)
-            VALUES ('clnt002', 'Pending Client', 'pending.restore', 0, 'pending', NULL)
+            INSERT INTO client (
+                id, name, identifier, managed, approval_status, record_kind, connection_mode, template_identifier
+            )
+            VALUES ('clnt002', 'Pending Client', 'pending.restore', 0, 'pending', 'observed_unknown', 'manual', NULL)
             "#,
         )
         .execute(&context.db_pool)

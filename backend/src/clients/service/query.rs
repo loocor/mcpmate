@@ -228,7 +228,7 @@ fn sanitize_server_name(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::clients::models::ConfigMode;
-    use crate::clients::source::{FileTemplateSource, TemplateRoot};
+    use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
     use crate::common::profile::ProfileType;
     use crate::config::{
         client::init::{initialize_client_table, initialize_system_settings_table},
@@ -266,7 +266,15 @@ mod tests {
                 .await
                 .expect("template source"),
         );
-        let service = ClientConfigService::with_source(pool, source)
+        ClientConfigService::seed_runtime_template_snapshots(pool.as_ref(), source.as_ref())
+            .await
+            .expect("seed runtime templates");
+        ClientConfigService::seed_client_runtime_rows(pool.as_ref(), source.as_ref())
+            .await
+            .expect("seed runtime rows");
+        let runtime_source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(pool.clone()).expect("runtime source"));
+        let service = ClientConfigService::with_source(pool, runtime_source)
             .await
             .expect("client config service");
 

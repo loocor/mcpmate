@@ -176,6 +176,61 @@ impl fmt::Display for ParseOnboardingPolicyError {
 
 impl std::error::Error for ParseOnboardingPolicyError {}
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientConnectionMode {
+    #[default]
+    LocalConfigDetected,
+    RemoteHttp,
+    Manual,
+}
+
+impl ClientConnectionMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClientConnectionMode::LocalConfigDetected => "local_config_detected",
+            ClientConnectionMode::RemoteHttp => "remote_http",
+            ClientConnectionMode::Manual => "manual",
+        }
+    }
+}
+
+impl fmt::Display for ClientConnectionMode {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for ClientConnectionMode {
+    type Err = ParseClientConnectionModeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "local_config_detected" => Ok(ClientConnectionMode::LocalConfigDetected),
+            "remote_http" => Ok(ClientConnectionMode::RemoteHttp),
+            "manual" => Ok(ClientConnectionMode::Manual),
+            _ => Err(ParseClientConnectionModeError),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseClientConnectionModeError;
+
+impl fmt::Display for ParseClientConnectionModeError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid client connection mode")
+    }
+}
+
+impl std::error::Error for ParseClientConnectionModeError {}
+
 /// Client approval status
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -235,6 +290,171 @@ impl fmt::Display for ParseApprovalStatusError {
 
 impl std::error::Error for ParseApprovalStatusError {}
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientRecordKind {
+    #[default]
+    TemplateKnown,
+    ObservedUnknown,
+}
+
+impl ClientRecordKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClientRecordKind::TemplateKnown => "template_known",
+            ClientRecordKind::ObservedUnknown => "observed_unknown",
+        }
+    }
+}
+
+impl fmt::Display for ClientRecordKind {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for ClientRecordKind {
+    type Err = ParseClientRecordKindError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "template_known" => Ok(ClientRecordKind::TemplateKnown),
+            "observed_unknown" => Ok(ClientRecordKind::ObservedUnknown),
+            _ => Err(ParseClientRecordKindError),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseClientRecordKindError;
+
+impl fmt::Display for ParseClientRecordKindError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid client record kind")
+    }
+}
+
+impl std::error::Error for ParseClientRecordKindError {}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientGovernanceKind {
+    #[default]
+    Passive,
+    Active,
+}
+
+impl ClientGovernanceKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClientGovernanceKind::Passive => "passive",
+            ClientGovernanceKind::Active => "active",
+        }
+    }
+}
+
+impl fmt::Display for ClientGovernanceKind {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for ClientGovernanceKind {
+    type Err = ParseClientGovernanceKindError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "passive" => Ok(ClientGovernanceKind::Passive),
+            "active" => Ok(ClientGovernanceKind::Active),
+            _ => Err(ParseClientGovernanceKindError),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseClientGovernanceKindError;
+
+impl fmt::Display for ParseClientGovernanceKindError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid client governance kind")
+    }
+}
+
+impl std::error::Error for ParseClientGovernanceKindError {}
+
+/// Default governance when a new client identifier is observed (dashboard + MCP proxy).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FirstContactBehavior {
+    /// Reject unknown clients until explicitly registered (no passive row on first MCP connect).
+    Deny,
+    /// Require approval: unknown clients appear as pending; MCP initialize fails until approved.
+    Review,
+    /// Auto-approve and enable management for new clients.
+    #[default]
+    Allow,
+}
+
+impl FirstContactBehavior {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FirstContactBehavior::Deny => "deny",
+            FirstContactBehavior::Review => "review",
+            FirstContactBehavior::Allow => "allow",
+        }
+    }
+}
+
+impl fmt::Display for FirstContactBehavior {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for FirstContactBehavior {
+    type Err = ParseFirstContactBehaviorError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "deny" => Ok(FirstContactBehavior::Deny),
+            "review" => Ok(FirstContactBehavior::Review),
+            "allow" => Ok(FirstContactBehavior::Allow),
+            // Legacy four-mode values (pre governance simplification)
+            "pending_review" | "allow_then_review" => Ok(FirstContactBehavior::Review),
+            _ => Err(ParseFirstContactBehaviorError),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseFirstContactBehaviorError;
+
+impl fmt::Display for ParseFirstContactBehaviorError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid first contact behavior")
+    }
+}
+
+impl std::error::Error for ParseFirstContactBehaviorError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +512,70 @@ mod tests {
             ApprovalStatus::Suspended
         );
         assert_eq!(ApprovalStatus::Suspended.as_str(), "suspended");
+    }
+
+    #[test]
+    fn parses_connection_mode_values() {
+        assert_eq!(
+            ClientConnectionMode::from_str("local_config_detected").expect("parse local config detected"),
+            ClientConnectionMode::LocalConfigDetected
+        );
+        assert_eq!(
+            ClientConnectionMode::from_str("remote_http").expect("parse remote http"),
+            ClientConnectionMode::RemoteHttp
+        );
+        assert_eq!(
+            ClientConnectionMode::from_str("manual").expect("parse manual"),
+            ClientConnectionMode::Manual
+        );
+    }
+
+    #[test]
+    fn parses_record_kind_values() {
+        assert_eq!(
+            ClientRecordKind::from_str("template_known").expect("parse template known"),
+            ClientRecordKind::TemplateKnown
+        );
+        assert_eq!(
+            ClientRecordKind::from_str("observed_unknown").expect("parse observed unknown"),
+            ClientRecordKind::ObservedUnknown
+        );
+    }
+
+    #[test]
+    fn parses_governance_kind_values() {
+        assert_eq!(
+            ClientGovernanceKind::from_str("passive").expect("parse passive governance kind"),
+            ClientGovernanceKind::Passive
+        );
+        assert_eq!(
+            ClientGovernanceKind::from_str("active").expect("parse active governance kind"),
+            ClientGovernanceKind::Active
+        );
+    }
+
+    #[test]
+    fn parses_first_contact_behavior_values() {
+        assert_eq!(
+            FirstContactBehavior::from_str("deny").expect("parse deny"),
+            FirstContactBehavior::Deny
+        );
+        assert_eq!(
+            FirstContactBehavior::from_str("review").expect("parse review"),
+            FirstContactBehavior::Review
+        );
+        assert_eq!(
+            FirstContactBehavior::from_str("pending_review").expect("legacy pending_review maps to review"),
+            FirstContactBehavior::Review
+        );
+        assert_eq!(
+            FirstContactBehavior::from_str("allow_then_review").expect("legacy allow_then_review maps to review"),
+            FirstContactBehavior::Review
+        );
+        assert_eq!(
+            FirstContactBehavior::from_str("allow").expect("parse allow"),
+            FirstContactBehavior::Allow
+        );
     }
 }
 

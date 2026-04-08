@@ -475,6 +475,23 @@ pub async fn get_onboarding_policy(State(state): State<Arc<AppState>>) -> Result
     }))
 }
 
+pub async fn get_first_contact_behavior(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<crate::api::models::client::FirstContactBehaviorResp>, axum::http::StatusCode> {
+    let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
+
+    let behavior = service.get_first_contact_behavior().await.map_err(|err| {
+        tracing::error!("Failed to fetch first contact behavior: {}", err);
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(crate::api::models::client::FirstContactBehaviorResp::success(
+        crate::api::models::client::FirstContactBehaviorData {
+            behavior: behavior.as_str().to_string(),
+        },
+    )))
+}
+
 pub async fn set_onboarding_policy(
     State(state): State<Arc<AppState>>,
     Json(request): Json<crate::api::models::client::OnboardingPolicyRequest>,
@@ -503,4 +520,36 @@ pub async fn set_onboarding_policy(
     Ok(Json(crate::api::models::client::OnboardingPolicyResponse {
         policy: policy.as_str().to_string(),
     }))
+}
+
+pub async fn set_first_contact_behavior(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<crate::api::models::client::FirstContactBehaviorRequest>,
+) -> Result<Json<crate::api::models::client::FirstContactBehaviorResp>, axum::http::StatusCode> {
+    let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
+
+    let behavior: crate::clients::models::FirstContactBehavior = request.behavior.parse().map_err(|_| {
+        tracing::error!("Invalid first contact behavior: {}", request.behavior);
+        axum::http::StatusCode::BAD_REQUEST
+    })?;
+
+    service.set_first_contact_behavior(behavior).await.map_err(|err| {
+        tracing::error!("Failed to set first contact behavior: {}", err);
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::AuditEvent::new(AuditAction::OnboardingPolicyUpdate, AuditStatus::Success)
+            .with_http_route("POST", "/api/system/settings/first-contact-behavior")
+            .with_data(serde_json::json!({ "behavior": behavior.as_str() }))
+            .build(),
+    )
+    .await;
+
+    Ok(Json(crate::api::models::client::FirstContactBehaviorResp::success(
+        crate::api::models::client::FirstContactBehaviorData {
+            behavior: behavior.as_str().to_string(),
+        },
+    )))
 }

@@ -117,6 +117,21 @@ pub struct ClientInfo {
     #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
     #[serde(default)]
     pub approval_status: Option<String>,
+    #[schemars(description = "Runtime record kind (template_known or observed_unknown)")]
+    #[serde(default)]
+    pub record_kind: Option<String>,
+    #[schemars(description = "Runtime governance kind (passive or active)")]
+    #[serde(default)]
+    pub governance_kind: Option<String>,
+    #[schemars(description = "Runtime connection mode (local_config_detected, remote_http, or manual)")]
+    #[serde(default)]
+    pub connection_mode: Option<String>,
+    #[schemars(description = "Whether current governance state is inherited from default policy")]
+    #[serde(default)]
+    pub governed_by_default_policy: bool,
+    #[schemars(description = "Whether this client has a real writable local configuration target")]
+    #[serde(default)]
+    pub writable_config: bool,
     #[schemars(description = "Template identifier bound to this client")]
     #[serde(default)]
     pub template_id: Option<String>,
@@ -330,6 +345,24 @@ pub struct ClientConfigData {
     #[schemars(description = "Client-private custom profile id when using custom mode")]
     #[serde(default)]
     pub custom_profile_id: Option<String>,
+    #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
+    #[serde(default)]
+    pub approval_status: Option<String>,
+    #[schemars(description = "Runtime record kind (template_known or observed_unknown)")]
+    #[serde(default)]
+    pub record_kind: Option<String>,
+    #[schemars(description = "Runtime governance kind (passive or active)")]
+    #[serde(default)]
+    pub governance_kind: Option<String>,
+    #[schemars(description = "Runtime connection mode (local_config_detected, remote_http, or manual)")]
+    #[serde(default)]
+    pub connection_mode: Option<String>,
+    #[schemars(description = "Whether current governance state is inherited from default policy")]
+    #[serde(default)]
+    pub governed_by_default_policy: bool,
+    #[schemars(description = "Whether this client has a real writable local configuration target")]
+    #[serde(default)]
+    pub writable_config: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -503,17 +536,61 @@ pub struct ClientSettingsUpdateReq {
     #[schemars(description = "Client version string")]
     #[serde(default)]
     pub client_version: Option<String>,
+    #[schemars(description = "Optional display name for active runtime client records")]
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[schemars(description = "Runtime connection mode: local_config_detected|remote_http|manual")]
+    #[serde(default)]
+    pub connection_mode: Option<String>,
+    #[schemars(description = "Runtime config path when the client uses a local config target")]
+    #[serde(default)]
+    pub config_path: Option<String>,
+    #[schemars(description = "Supported transports explicitly declared for runtime-only active clients")]
+    #[serde(default)]
+    pub supported_transports: Option<Vec<String>>,
+    #[schemars(description = "Short description of the client application")]
+    #[serde(default)]
+    pub description: Option<String>,
+    #[schemars(description = "Homepage URL for the client application")]
+    #[serde(default)]
+    pub homepage_url: Option<String>,
+    #[schemars(description = "Documentation URL for the client application")]
+    #[serde(default)]
+    pub docs_url: Option<String>,
+    #[schemars(description = "Support or community URL for the client application")]
+    #[serde(default)]
+    pub support_url: Option<String>,
+    #[schemars(description = "Logo URL for the client application")]
+    #[serde(default)]
+    pub logo_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Client settings update response body")]
 pub struct ClientSettingsUpdateData {
     pub identifier: String,
+    pub display_name: String,
     #[serde(default)]
     pub config_mode: Option<String>,
     pub transport: String,
     #[serde(default)]
     pub client_version: Option<String>,
+    #[serde(default)]
+    pub connection_mode: Option<String>,
+    #[serde(default)]
+    pub config_path: Option<String>,
+    #[serde(default)]
+    pub supported_transports: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub homepage_url: Option<String>,
+    #[serde(default)]
+    pub docs_url: Option<String>,
+    #[serde(default)]
+    pub support_url: Option<String>,
+    #[serde(default)]
+    pub logo_url: Option<String>,
 }
 
 api_resp!(
@@ -765,3 +842,23 @@ pub struct OnboardingPolicyResponse {
     #[schemars(description = "Current onboarding policy")]
     pub policy: String,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "First contact behavior update request")]
+pub struct FirstContactBehaviorRequest {
+    #[schemars(description = "Behavior: deny, review, or allow (legacy pending_review / allow_then_review accepted as review)")]
+    pub behavior: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "First contact behavior payload")]
+pub struct FirstContactBehaviorData {
+    #[schemars(description = "Current first contact behavior")]
+    pub behavior: String,
+}
+
+api_resp!(
+    FirstContactBehaviorResp,
+    FirstContactBehaviorData,
+    "First contact behavior API response"
+);
