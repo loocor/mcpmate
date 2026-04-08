@@ -71,10 +71,11 @@ export default function ClientApps() {
 
 			<H3>Managed toggle</H3>
 			<P>
-				The switch at the bottom-right of each item enables or disables managed
-				mode. When enabled, MCPMate keeps the client&apos;s configuration in sync
-				with the active profile set. The toggle updates immediately and shows a
-				toast on success or failure.
+				The primary control is now governance-oriented: you can explicitly allow
+				or deny a client. Denying a client keeps it out of MCPMate&apos;s allowed
+				capability circle, but it does not lock the rest of the client editor.
+				You can still adjust rollout mode, capability source, and path metadata
+				before allowing the client again.
 			</P>
 
 			<H3>Client details</H3>
@@ -119,6 +120,13 @@ export default function ClientApps() {
 				macOS, you may need to grant &ldquo;Full Disk Access&rdquo; to the MCPMate
 				service. After adjusting permissions, press <strong>Refresh</strong> to
 				force a rescan.
+			</Callout>
+
+			<Callout type="info" title="Verified local config targets gate write operations">
+				MCPMate only writes a client&apos;s own MCP configuration after the client has
+				a verified writable local config target from the New / Edit drawer.
+				Hosted, Unify, and Transparent can all produce write output, but none of
+				them may create that trust by saving governance state alone.
 			</Callout>
 		</DocLayout>
 	);

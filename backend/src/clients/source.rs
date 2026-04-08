@@ -11,7 +11,9 @@ use walkdir::WalkDir;
 
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{ClientTemplate, DetectionMethod, TemplateFormat};
+use crate::common::constants::database::tables;
 use crate::system::paths::PathService;
+use sqlx::SqlitePool;
 
 /// Template root directory abstract, responsible for parsing and caching base paths
 #[derive(Debug, Clone)]
@@ -132,6 +134,46 @@ pub struct FileTemplateSource {
     template_index: Arc<RwLock<HashMap<String, TemplateEntry>>>,
     standards: Arc<RwLock<McpStandards>>,
     path_service: PathService,
+}
+
+pub struct DbTemplateSource {
+    db_pool: Arc<SqlitePool>,
+    path_service: PathService,
+}
+
+impl DbTemplateSource {
+    pub fn new(db_pool: Arc<SqlitePool>) -> ConfigResult<Self> {
+        let path_service = PathService::new().map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
+        Ok(Self { db_pool, path_service })
+    }
+
+    async fn load_templates(&self) -> ConfigResult<Vec<ClientTemplate>> {
+        let rows = sqlx::query_as::<_, (String, String)>(
+            &format!(
+                "SELECT identifier, payload_json FROM {} ORDER BY identifier",
+                tables::CLIENT_TEMPLATE_RUNTIME
+            ),
+        )
+        .fetch_all(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        rows.into_iter()
+            .map(|(identifier, payload_json)| {
+                let template = serde_json::from_str::<ClientTemplate>(&payload_json)
+                    .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err)))?;
+
+                if template.identifier != identifier {
+                    return Err(ConfigError::TemplateParseError(format!(
+                        "Runtime template identifier mismatch: row identifier '{}' does not match payload identifier '{}'",
+                        identifier, template.identifier
+                    )));
+                }
+
+                Ok(template)
+            })
+            .collect()
+    }
 }
 
 impl FileTemplateSource {
@@ -429,5 +471,64 @@ impl ClientConfigSource for FileTemplateSource {
                 Err(err)
             }
         }
+    }
+}
+
+#[async_trait]
+impl ClientConfigSource for DbTemplateSource {
+    async fn list_client(&self) -> ConfigResult<Vec<ClientTemplate>> {
+        self.load_templates().await
+    }
+
+    async fn get_template(
+        &self,
+        client_id: &str,
+        _platform: &str,
+    ) -> ConfigResult<Option<ClientTemplate>> {
+        let row = sqlx::query_scalar::<_, String>(
+            &format!(
+                "SELECT payload_json FROM {} WHERE identifier = ?",
+                tables::CLIENT_TEMPLATE_RUNTIME
+            ),
+        )
+        .bind(client_id)
+        .fetch_optional(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        row.map(|payload_json| {
+            serde_json::from_str::<ClientTemplate>(&payload_json)
+                .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err)))
+        })
+        .transpose()
+    }
+
+    async fn get_config_path(
+        &self,
+        client_id: &str,
+        _platform: &str,
+    ) -> ConfigResult<Option<String>> {
+        let path = sqlx::query_scalar::<_, String>(
+            &format!(
+                "SELECT config_path FROM {} WHERE identifier = ? AND config_path IS NOT NULL AND TRIM(config_path) <> ''",
+                tables::CLIENT
+            ),
+        )
+        .bind(client_id)
+        .fetch_optional(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        path.map(|raw| {
+            self.path_service
+                .resolve_user_path(&raw)
+                .map(|resolved| resolved.to_string_lossy().to_string())
+                .map_err(|err| ConfigError::PathResolutionError(err.to_string()))
+        })
+        .transpose()
+    }
+
+    async fn reload(&self) -> ConfigResult<()> {
+        Ok(())
     }
 }

@@ -1,8 +1,6 @@
 use super::core::{ClientConfigService, ClientDescriptor};
 use crate::clients::detector::DetectedClient;
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::ClientTemplate;
-use crate::clients::source::ClientConfigSource;
 use crate::system::paths::get_path_service;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,37 +11,25 @@ impl ClientConfigService {
         &self,
         _force_detect: bool,
     ) -> ConfigResult<Vec<ClientDescriptor>> {
-        let templates = self.template_source.list_client().await?;
         let detected = self.detector.detect_installed_client().await?;
         let states = self.fetch_client_states().await?;
+        let templates = self.template_source.list_client().await?;
+        let mut template_map = templates
+            .into_iter()
+            .map(|template| (template.identifier.clone(), template))
+            .collect::<HashMap<_, _>>();
 
         let mut detected_map: HashMap<String, DetectedClient> = HashMap::new();
         for entry in detected {
             detected_map.insert(entry.identifier.clone(), entry);
         }
 
-        let mut results = Vec::with_capacity(templates.len());
-        for mut template in templates {
-            let identifier = template.identifier.clone();
-            let state_entry = states.get(&identifier);
+        let mut results = Vec::with_capacity(states.len() + detected_map.len());
+        for (identifier, state) in &states {
+            let detection = detected_map.remove(identifier);
+            let template = template_map.remove(identifier);
 
-            if let Some(state) = state_entry {
-                tracing::trace!(
-                    client_state_id = %state.id,
-                    client_identifier = %identifier,
-                    "Loaded client state metadata"
-                );
-            }
-
-            if template.display_name.is_none() {
-                if let Some(state) = state_entry {
-                    if !state.name.is_empty() {
-                        template.display_name = Some(state.name.clone());
-                    }
-                }
-            }
-
-            let resolved_path = self.resolved_config_path(&identifier).await?;
+            let resolved_path = self.resolved_config_path(identifier).await?;
             let config_exists = if let Some(path_str) = &resolved_path {
                 let path = PathBuf::from(path_str);
                 get_path_service()
@@ -54,63 +40,40 @@ impl ClientConfigService {
                 false
             };
 
-            let detection = detected_map.remove(&identifier);
             let detected_at = detection.as_ref().map(|entry| entry.detected_at);
-            let managed = state_entry.map(|state| state.managed()).unwrap_or(true);
             results.push(ClientDescriptor {
+                state: state.clone(),
                 detection,
                 template,
                 config_path: resolved_path,
                 config_exists,
                 detected_at,
-                managed,
+                managed: state.managed(),
             });
         }
 
-        // Process remaining detected clients without templates (pending unknowns)
         for (identifier, detected) in detected_map {
-            // Ensure pending row exists
             let display_name = detected
                 .display_name
                 .as_deref()
                 .unwrap_or(&identifier);
-            
-            match self.ensure_pending_unknown_row(&identifier, display_name).await {
+
+            match self
+                .ensure_passive_observed_row(&identifier, display_name, detected.config_path.as_deref())
+                .await
+            {
                 Ok(state_row) => {
                     tracing::info!(
                         identifier = %identifier,
                         approval_status = %state_row.approval_status(),
-                        "Created or found pending unknown client"
+                        governance_kind = %state_row.governance_kind().as_str(),
+                        "Created passive observed client row"
                     );
-                    
-                    // Create synthetic template for this unknown client
-                    let synthetic_template = ClientTemplate {
-                        identifier: identifier.clone(),
-                        display_name: detected.display_name.clone(),
-                        version: None,
-                        format: crate::clients::models::TemplateFormat::Json,
-                        protocol_revision: None,
-                        storage: crate::clients::models::StorageConfig {
-                            kind: crate::clients::models::StorageKind::File,
-                            path_strategy: None,
-                            adapter: None,
-                        },
-                        detection: std::collections::HashMap::new(),
-                        config_mapping: crate::clients::models::ConfigMapping {
-                            container_keys: vec![],
-                            container_type: crate::clients::models::ContainerType::ObjectMap,
-                            merge_strategy: crate::clients::models::MergeStrategy::Replace,
-                            keep_original_config: false,
-                            managed_endpoint: None,
-                            managed_source: None,
-                            format_rules: std::collections::HashMap::new(),
-                        },
-                        metadata: std::collections::HashMap::new(),
-                    };
-                    
+
                     results.push(ClientDescriptor {
+                        state: state_row.clone(),
                         detection: Some(detected.clone()),
-                        template: synthetic_template,
+                        template: None,
                         config_path: detected.config_path.clone(),
                         config_exists: false,
                         detected_at: Some(detected.detected_at),
@@ -135,8 +98,7 @@ impl ClientConfigService {
 mod tests {
     use super::*;
     use crate::clients::models::OnboardingPolicy;
-    use crate::clients::source::{FileTemplateSource, TemplateRoot};
-    use crate::common::constants::database::tables;
+    use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
     use crate::config::{
         client::init::{initialize_client_table, initialize_system_settings_table},
         profile::init::initialize_profile_tables,
@@ -175,7 +137,15 @@ mod tests {
                 .await
                 .expect("template source"),
         );
-        let service = ClientConfigService::with_source(pool, source)
+        ClientConfigService::seed_runtime_template_snapshots(pool.as_ref(), source.as_ref())
+            .await
+            .expect("seed runtime templates");
+        ClientConfigService::seed_client_runtime_rows(pool.as_ref(), source.as_ref())
+            .await
+            .expect("seed runtime rows");
+        let runtime_source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(pool.clone()).expect("runtime source"));
+        let service = ClientConfigService::with_source(pool, runtime_source)
             .await
             .expect("client config service");
 
@@ -186,19 +156,11 @@ mod tests {
         service: &ClientConfigService,
         policy: OnboardingPolicy,
     ) -> ConfigResult<()> {
-        sqlx::query(&format!(
-            "UPDATE {} SET value = ? WHERE key = 'onboarding_policy'",
-            tables::SYSTEM_SETTINGS
-        ))
-        .bind(policy.as_str())
-        .execute(&*service.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        Ok(())
+        service.set_onboarding_policy(policy).await
     }
 
     #[tokio::test]
-    async fn pending_unknown_row_creation_workflow() {
+    async fn passive_observed_row_creation_workflow() {
         let (_temp_dir, service) = create_test_service().await;
 
         set_onboarding_policy(&service, OnboardingPolicy::RequireApproval)
@@ -206,9 +168,9 @@ mod tests {
             .expect("set policy");
 
         let state = service
-            .ensure_pending_unknown_row("test.unknown", "Test Unknown")
+            .ensure_passive_observed_row("test.unknown", "Test Unknown", None)
             .await
-            .expect("ensure pending row");
+            .expect("ensure passive observed row");
 
         assert_eq!(state.identifier, "test.unknown");
         assert_eq!(state.name, "Test Unknown");
@@ -216,6 +178,7 @@ mod tests {
         assert_eq!(state.approval_status.as_deref(), Some("pending"));
         assert!(state.template_id.is_none());
         assert!(state.is_pending_unknown());
+        assert_eq!(state.governance_kind().as_str(), "passive");
 
         let fetched_state = service
             .fetch_state("test.unknown")
@@ -228,7 +191,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_pending_unknown_row_is_idempotent() {
+    async fn ensure_passive_observed_row_is_idempotent() {
         let (_temp_dir, service) = create_test_service().await;
 
         set_onboarding_policy(&service, OnboardingPolicy::RequireApproval)
@@ -236,17 +199,43 @@ mod tests {
             .expect("set policy");
 
         let state1 = service
-            .ensure_pending_unknown_row("test.idempotent", "Test Idempotent")
+            .ensure_passive_observed_row("test.idempotent", "Test Idempotent", None)
             .await
             .expect("first ensure");
 
         let state2 = service
-            .ensure_pending_unknown_row("test.idempotent", "Different Name")
+            .ensure_passive_observed_row("test.idempotent", "Different Name", None)
             .await
             .expect("second ensure");
 
         assert_eq!(state1.id, state2.id);
         assert_eq!(state1.identifier, state2.identifier);
-        assert_eq!(state2.name, "Test Idempotent");
+        assert_eq!(state2.name, "Different Name");
+    }
+
+    #[tokio::test]
+    async fn list_clients_includes_active_runtime_only_records() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        service
+            .set_client_settings("custom.runtime", Some("hosted".to_string()), None, None)
+            .await
+            .expect("create active runtime-only client");
+
+        let descriptors = service.list_clients(false).await.expect("list clients");
+        let descriptor = descriptors
+            .into_iter()
+            .find(|entry| entry.state.identifier() == "custom.runtime")
+            .expect("runtime-only descriptor should exist");
+
+        let template = descriptor.template.expect("runtime-only template should be persisted");
+        assert_eq!(template.identifier, "custom.runtime");
+        assert_eq!(
+            template.config_mapping.managed_source.as_deref(),
+            Some("runtime_active_client")
+        );
+        assert_eq!(descriptor.state.display_name(), "custom.runtime");
+        assert_eq!(descriptor.state.record_kind().as_str(), "template_known");
+        assert!(descriptor.managed);
     }
 }

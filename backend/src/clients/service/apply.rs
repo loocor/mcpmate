@@ -17,6 +17,18 @@ impl ClientConfigService {
             });
         }
 
+        if matches!(options.mode, ConfigMode::Managed | ConfigMode::Native) {
+            match self.verified_local_config_target(&options.client_id).await? {
+                Some(_) => {}
+                None => {
+                    return Err(ConfigError::DataAccessError(format!(
+                        "Client '{}' has no configured local config target; cannot render {:?} mode",
+                        options.client_id, options.mode
+                    )));
+                }
+            }
+        }
+
         let template = self.get_client_template(&options.client_id).await?;
         // Select transport for managed mode if applicable
         let mut chosen_transport: Option<String> = None;

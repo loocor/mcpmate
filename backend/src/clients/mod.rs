@@ -22,5 +22,5 @@ pub use models::{
 pub use service::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ClientRenderResult, HostedClientReapplySummary,
 };
-pub use source::{ClientConfigSource, FileTemplateSource, TemplateRoot};
+pub use source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
 pub use utils::{get_nested_value, set_nested_value};

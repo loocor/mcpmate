@@ -1,7 +1,6 @@
 import type {
 	ApiResponse,
 	AuditEventDetailsResp,
-	AuditListData,
 	AuditListResp,
 	AuditPolicyResp,
 	AuditPolicySetReq,
@@ -26,6 +25,8 @@ import type {
 	ClientConfigUpdateResp,
 	ClientManageAction,
 	ClientManageResp,
+	ClientRecordLifecycleResp,
+	ClientRecordReviewReq,
 	ConfigPreset,
 	ConfigSuit,
 	ConfigSuitListResponse,
@@ -74,6 +75,7 @@ import type {
 	ServerSummary,
 	ServersImportData,
 	SkippedServer,
+	DefaultClientPolicyUpdateReq,
 	SystemMetrics,
 	SystemStatus,
 	CapabilityTokenLedgerResponse,
@@ -94,7 +96,13 @@ const isDesktopShellEnvironment = (): boolean => {
 	if (typeof window === "undefined") {
 		return false;
 	}
-	const w = window as Record<string, unknown>;
+	const w = window as unknown as {
+		__TAURI__?: unknown;
+		__TAURI_IPC__?: unknown;
+		__TAURI_INTERNALS__?: unknown;
+		__TAURI_METADATA__?: unknown;
+		__MCPMATE_IS_TAURI__?: unknown;
+	};
 	const protocol = window.location?.protocol?.toLowerCase() ?? "";
 	const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
 	return (
@@ -916,7 +924,7 @@ export const serversApi = {
 				body: JSON.stringify({ id }),
 			},
 		);
-		const data = extractApiData(resp) as Record<string, unknown>;
+		const data = extractApiData(resp as unknown as ApiWrapper<ServerDetail>) as unknown as Record<string, unknown>;
 		const enhanced = enrichServerRecord(data);
 		const enabledValue =
 			typeof enhanced?.enabled === "boolean"
@@ -927,7 +935,7 @@ export const serversApi = {
 		const instances = Array.isArray(enhanced?.instances)
 			? (enhanced.instances as InstanceSummary[])
 			: [];
-		const detailRecord = enhanced as Record<string, unknown>;
+		const detailRecord = enhanced as unknown as Record<string, unknown>;
 		const registryServerId = asStringOrNull(
 			detailRecord.registry_server_id ?? detailRecord.registryServerId,
 		);
@@ -1526,12 +1534,16 @@ export const auditApi = {
 		if (query?.server_id) qs.set("server_id", query.server_id);
 		if (query?.session_id) qs.set("session_id", query.session_id);
 		const resp = await fetchApi<AuditListResp>(`/api/audit/events?${qs}`);
-		return extractApiData<AuditListData>(resp);
+		return extractApiData(resp);
 	},
 	details: async (id: number) => {
 		const qs = new URLSearchParams({ id: String(id) });
 		const resp = await fetchApi<AuditEventDetailsResp>(`/api/audit/events/details?${qs}`);
-		return extractApiData(resp).event;
+		const event = resp.data?.event;
+		if (!event) {
+			throw new Error(`Audit event details response missing event for id ${id}`);
+		}
+		return event;
 	},
 	eventsWsUrl: () => {
 		const wsBase = resolveWebSocketUrl();
@@ -1539,7 +1551,7 @@ export const auditApi = {
 	},
 	getPolicy: async () => {
 		const resp = await fetchApi<AuditPolicyResp>("/api/audit/policy");
-		return extractApiData<AuditPolicyData>(resp);
+		return extractApiData(resp);
 	},
 	setPolicy: async (payload: AuditPolicySetReq) => {
 		const resp = await fetchApi<AuditPolicyResp>("/api/audit/policy", {
@@ -1547,7 +1559,7 @@ export const auditApi = {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(payload),
 		});
-		return extractApiData<AuditPolicyData>(resp);
+		return extractApiData(resp);
 	},
 };
 
@@ -1681,6 +1693,27 @@ export const systemApi = {
 		>("/api/system/client-default-mode", {
 			method: "POST",
 			body: JSON.stringify({ default_config_mode }),
+		});
+		return extractApiData(response);
+	},
+	getFirstContactBehavior: async (): Promise<{
+		behavior: "deny" | "review" | "allow" | string;
+	}> => {
+		const response = await fetchApi<
+			ApiWrapper<{
+				behavior: "deny" | "review" | "allow" | string;
+			}>
+		>("/api/system/settings/first-contact-behavior");
+		return extractApiData(response);
+	},
+	setFirstContactBehavior: async (behavior: "deny" | "review" | "allow" | string) => {
+		const response = await fetchApi<
+			ApiWrapper<{
+				behavior: "deny" | "review" | "allow" | string;
+			}>
+		>("/api/system/settings/first-contact-behavior", {
+			method: "POST",
+			body: JSON.stringify({ behavior }),
 		});
 		return extractApiData(response);
 	},
@@ -2367,8 +2400,78 @@ export class NotificationsService {
 
 export const notificationsService = new NotificationsService();
 
+/** Maps legacy API values to the simplified deny | review | allow model. */
+function normalizeFirstContactBehavior(raw: string): "deny" | "review" | "allow" {
+	if (raw === "pending_review" || raw === "allow_then_review") {
+		return "review";
+	}
+	if (raw === "deny" || raw === "review" || raw === "allow") {
+		return raw;
+	}
+	return "allow";
+}
+
 // Clients Management API
 export const clientsApi = {
+	getDefaultPolicy: async () => {
+		const [mode, firstContact] = await Promise.all([
+			systemApi.getDefaultClientMode(),
+			systemApi.getFirstContactBehavior(),
+		]);
+		return {
+			config_mode: mode.default_config_mode,
+			capability_source: "activated" as const,
+			first_contact_behavior: normalizeFirstContactBehavior(firstContact.behavior),
+		};
+	},
+	updateDefaultPolicy: async (
+		payload: DefaultClientPolicyUpdateReq,
+		before?: { config_mode: string; first_contact_behavior: string } | null,
+	) => {
+		const modeT = payload.config_mode as "unify" | "hosted" | "transparent";
+		const modeChanged = !before || before.config_mode !== payload.config_mode;
+		const prevFc = before
+			? normalizeFirstContactBehavior(before.first_contact_behavior)
+			: null;
+		const nextFc = normalizeFirstContactBehavior(String(payload.first_contact_behavior));
+		const fcChanged = !before || prevFc !== nextFc;
+
+		if (!modeChanged && !fcChanged) {
+			return {
+				config_mode: payload.config_mode,
+				capability_source: payload.capability_source,
+				first_contact_behavior: nextFc,
+			};
+		}
+
+		let mode: { default_config_mode: "unify" | "hosted" | "transparent" };
+		let firstContact: { behavior: string };
+
+		if (modeChanged && fcChanged) {
+			[mode, firstContact] = await Promise.all([
+				systemApi.setDefaultClientMode(modeT),
+				systemApi.setFirstContactBehavior(payload.first_contact_behavior),
+			]);
+		} else if (modeChanged) {
+			mode = await systemApi.setDefaultClientMode(modeT);
+			firstContact = { behavior: before!.first_contact_behavior };
+		} else {
+			firstContact = await systemApi.setFirstContactBehavior(payload.first_contact_behavior);
+			mode = { default_config_mode: modeT };
+		}
+
+		return {
+			config_mode: mode.default_config_mode,
+			capability_source: payload.capability_source,
+			first_contact_behavior: normalizeFirstContactBehavior(firstContact.behavior),
+		};
+	},
+	setDefaultPolicy: async (
+		payload: DefaultClientPolicyUpdateReq,
+		before?: { config_mode: string; first_contact_behavior: string } | null,
+	) => {
+		return clientsApi.updateDefaultPolicy(payload, before);
+	},
 	getCapabilityConfig: async (identifier: string) => {
 		const q = new URLSearchParams({ identifier });
 		const resp = await fetchApi<ClientCapabilityConfigResp>(
@@ -2402,6 +2505,30 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 
+	approveRecord: async (payload: ClientRecordReviewReq) => {
+		const resp = await fetchApi<ClientRecordLifecycleResp>("/api/client/manage/approve", {
+			method: "POST",
+			body: JSON.stringify(payload),
+		});
+		return extractApiData(resp);
+	},
+
+	rejectRecord: async (payload: ClientRecordReviewReq) => {
+		const resp = await fetchApi<ClientRecordLifecycleResp>("/api/client/manage/reject", {
+			method: "POST",
+			body: JSON.stringify(payload),
+		});
+		return extractApiData(resp);
+	},
+
+	suspendRecord: async (payload: ClientRecordReviewReq) => {
+		const resp = await fetchApi<ClientRecordLifecycleResp>("/api/client/manage/suspend", {
+			method: "POST",
+			body: JSON.stringify(payload),
+		});
+		return extractApiData(resp);
+	},
+
 	configDetails: async (identifier: string, doImport = false) => {
 		const q = new URLSearchParams({ identifier, import: String(doImport) });
 		const resp = await fetchApi<ClientConfigResp>(
@@ -2412,9 +2539,18 @@ export const clientsApi = {
 
 	update: async (payload: {
 		identifier: string;
+		display_name?: string;
 		config_mode?: string;
 		transport?: string;
+		connection_mode?: string;
+		config_path?: string;
 		client_version?: string;
+		supported_transports?: string[];
+        description?: string;
+        homepage_url?: string;
+        docs_url?: string;
+        support_url?: string;
+        logo_url?: string;
 	}) => {
 		const resp = await fetchApi<
 			{ success: boolean } & ApiWrapper<Record<string, unknown>>
