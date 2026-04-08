@@ -25,6 +25,14 @@ export default function ClientConfiguration() {
 				<Li><strong>Capability source</strong> determines whether Hosted or Transparent workflows follow active profiles, selected shared profiles, or a client-specific custom profile.</Li>
 			</Ul>
 
+			<H2>Governance and write eligibility are separate</H2>
+			<Ul>
+				<Li><strong>Allow / Deny</strong> decides whether a client may enter MCPMate&apos;s allowed capability circle. This is a safety control, not a configuration editor lock.</Li>
+				<Li>You can still adjust management mode, capability source, and client metadata while a client is denied or suspended.</Li>
+				<Li>Actually writing a client&apos;s own MCP config file is a different gate: Hosted, Unify, and Transparent only apply to disk after the client has a verified writable local config target.</Li>
+				<Li>Saving governance state alone never creates a new client config file or upgrades an unverified path into a trusted write target.</Li>
+			</Ul>
+
 			<H2>What each mode really means</H2>
 			<Ul>
 				<Li><strong>Unify</strong> starts with builtin MCP tools only, uses session-local builtin tooling to browse capabilities from globally enabled servers, and resets when the session ends.</Li>
@@ -42,6 +50,7 @@ export default function ClientConfiguration() {
 
 			<H2>Recommended workflow</H2>
 			<Ul>
+				<Li>Use the New / Edit drawer to declare whether the client truly has a local MCP config file, then let MCPMate verify that path before using it as a write target.</Li>
 				<Li>Choose Unify when you want session-scoped builtin control, Hosted when you want durable managed rollout, or Transparent when you need direct client config output.</Li>
 				<Li>Select the capability source only when you are using Hosted or Transparent.</Li>
 				<Li>Preview or import when you need to compare existing client config before overwriting it.</Li>

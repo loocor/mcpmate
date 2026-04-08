@@ -15,6 +15,13 @@ export default function ClientConfigurationZH() {
 				<Li><strong>透明模式</strong> 适合必须直接写客户端配置文件的兼容场景，但会减少 MCPMate 的精细控制价值。</Li>
 				<Li><strong>能力来源</strong> 决定托管模式或透明模式下，客户端跟随已激活配置集、所选共享配置集，还是客户端专属的自定义配置集。</Li>
 			</Ul>
+			<H2>治理放行与写入资格是两条线</H2>
+			<Ul>
+				<Li><strong>Allow / Deny</strong> 用来决定某个客户端是否允许进入 MCPMate 的能力放行圈，这是安全控制，不是配置编辑锁。</Li>
+				<Li>即使客户端当前被禁行或暂停，你仍然可以继续调整它的管理模式、能力来源与基础元数据。</Li>
+				<Li>真正把 Hosted、Unify 或 Transparent 的结果写入客户端自己的 MCP 配置文件，还要额外满足“已验证本地配置目标”这个条件。</Li>
+				<Li>单纯保存治理状态不会凭空创建新的客户端配置文件，也不会把一个未验证路径自动升级成可信写入目标。</Li>
+			</Ul>
 			<H2>三种模式真正意味着什么</H2>
 			<Ul>
 				<Li><strong>统一模式</strong> 初始只提供内建 MCP 工具，会在当前会话中通过内建流程浏览全局启用服务器的 capabilities，并在会话结束后自动重置。</Li>
@@ -30,6 +37,7 @@ export default function ClientConfigurationZH() {
 			</Ul>
 			<H2>推荐流程</H2>
 			<Ul>
+				<Li>先在 New / Edit 抽屉里声明这个客户端是否真的有本地 MCP 配置文件，并让 MCPMate 验证该路径，再把它作为写入目标使用。</Li>
 				<Li>先在统一模式、托管模式、透明模式之间选定管理路径，再决定是否需要能力来源选择。</Li>
 				<Li>只有在托管模式或透明模式下，才需要继续选择能力来源。</Li>
 				<Li>覆盖写入前先看导入预览，避免误覆盖已有配置。</Li>

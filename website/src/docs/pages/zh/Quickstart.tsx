@@ -83,6 +83,7 @@ export default function QuickstartZH() {
 			<H2>在客户端应用配置</H2>
 			<Ul>
 				<Li>确认客户端在 <strong>客户端</strong> 页面显示为 <strong>已检测</strong>。</Li>
+				<Li>如果这个客户端需要允许 MCPMate 回写它自己的 MCP 配置文件，请先在 New / Edit 抽屉里确认它指向的是一个真实且可写的本地配置文件；MCPMate 会先做验证，再把它作为写入目标。</Li>
 				<Li>
 					将客户端设置为 <strong>托管模式</strong>，即可在 MCPMate 内直接切换配置集；若希望改用会话内建控制而不是仪表盘侧配置集切换，可选择 <strong>统一模式</strong>；<strong>透明模式</strong> 仅会写入配置文件，不支持就地切换。
 				</Li>
