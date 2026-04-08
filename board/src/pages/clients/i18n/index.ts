@@ -14,14 +14,15 @@ export const clientsTranslations = {
 				title: "Filter",
 				options: {
 					all: "All",
-					detected: "Detected",
-					managed: "Managed",
+					allowed: "Allowed",
+					pending: "Pending",
+					denied: "Denied",
 				},
 			},
 			sort: {
 				options: {
 					displayName: "Name",
-					detected: "Detection Status",
+					approvalStatus: "Governance Status",
 					managed: "Management Status",
 				},
 			},
@@ -116,8 +117,8 @@ export const clientsTranslations = {
 				backups: "Backups",
 				logs: "Logs",
 			},
-			overview: {
-				labels: {
+				overview: {
+					labels: {
 					configPath: "Config Path",
 					lastModified: "Last Modified",
 					supportedTransports: "Supported Transports",
@@ -126,19 +127,90 @@ export const clientsTranslations = {
 					support: "Support",
 				},
 				buttons: {
+					edit: "Edit",
 					refresh: "Refresh",
 					enable: "Enable",
 					disable: "Disable",
 				},
 				noDetails: "No details available",
-				currentServers: {
-					title: "Current Servers",
-					import: "Import from Config",
-					configuredLabel: "configured",
-					empty: "No servers extracted from current config.",
+					currentServers: {
+						title: "Current Servers",
+						import: "Import from Config",
+						configuredLabel: "configured",
+						empty: "No servers extracted from current config.",
+					},
 				},
-			},
-			configuration: {
+				form: {
+					titleCreate: "Add Client Record",
+					titleEdit: "Edit Client Record",
+					descriptionCreate: "Create a client record with its management shape and metadata.",
+					descriptionEdit: "Update this client record and its management settings.",
+					tabs: { basic: "Basic", meta: "Meta" },
+					connectionShape: {
+						label: "Client Shape",
+						description:
+							"Choose whether this client has a writable local config file or is a non-writable remote/unknown client.",
+						options: {
+							localWithConfig: "Local + Config",
+							localWithoutConfig: "Local / Unknown Config",
+							remoteHttp: "Remote HTTP",
+						},
+					},
+					transportSupport: {
+						label: "Transport Support",
+						placeholder: "Select supported transports",
+						empty: "No transports found.",
+						description:
+							"Choose which runtime transports this client supports. This array is the only source used to constrain hosted/unify transport selection.",
+						options: {
+							stdio: "STDIO",
+							streamableHttpLegacy: "Streamable HTTP",
+							sseLegacy: "SSE (Legacy)",
+						},
+					},
+					fields: {
+						displayName: { label: "Client Name", placeholder: "Cursor Desktop" },
+						identifier: {
+							label: "Client ID",
+							placeholder: "cursor-desktop",
+							description:
+								"Spaces and casing are normalized automatically when creating a new record.",
+						},
+						clientVersion: { label: "Client Version", placeholder: "optional" },
+						configPath: {
+							label: "Config File Path",
+							placeholder: "~/.cursor/mcp.json",
+							description:
+								"A writable local config path enables MCPMate to manage this client through file-based configuration operations.",
+							unavailableHint:
+								"This client does not currently have a writable local config path, so file-based configuration management is unavailable.",
+							browse: "Choose…",
+							browseAria: "Browse for configuration file on disk",
+							dialogTitle: "Select configuration file",
+							pickFailedTitle: "Unable to read selected file",
+							webPickInfoTitle: "Browser file access",
+							webPickInfoDescription:
+								"Your browser cannot read the absolute path automatically. Please paste it manually if needed.",
+						},
+						logoUrl: { label: "Logo URL", placeholder: "https://example.com/logo.png" },
+						homepageUrl: { label: "Homepage URL", placeholder: "https://example.com" },
+						docsUrl: { label: "Docs URL", placeholder: "https://docs.example.com" },
+						supportUrl: { label: "Support URL", placeholder: "https://support.example.com" },
+						description: {
+							label: "Description",
+							placeholder: "A short summary of this client.",
+							description:
+								"These meta fields are stored for display and guidance; the old template files remain only as compatibility seeds.",
+						},
+					},
+					buttons: { cancel: "Cancel", create: "Create Record", save: "Save Changes" },
+					notifications: {
+						createSuccess: { title: "Client record created", message: "The client record has been created." },
+						editSuccess: { title: "Client record updated", message: "The client record has been updated." },
+						saveFailed: { title: "Unable to save client record" },
+					},
+				},
+				configuration: {
 				title: "Configuration Mode",
 				description:
 					"If you don't understand what this means, please don't make any changes and keep the current settings.",
@@ -154,9 +226,13 @@ export const clientsTranslations = {
 							transparent:
 								"MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
 						},
+						managedDisabledReason:
+							"Hosted and Unify require at least one supported transport.",
+						transparentDisabledReason:
+							"Transparent requires a writable local config path.",
 						options: {
 						unify: "Unify",
-							hosted: "Hosted",
+							hosted: "Hosted Mode",
 							transparent: "Transparent",
 						},
 					},
@@ -176,11 +252,11 @@ export const clientsTranslations = {
 							transparentCustom:
 								"Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
 						},
-						options: {
-							default: "Active",
-							profile: "Profiles",
-							custom: "Customize",
-						},
+					options: {
+						default: "Active",
+						profile: "Profiles",
+						custom: "Customized",
+					},
 						statusLabel: {
 							default: "",
 							profile: "",
@@ -188,10 +264,10 @@ export const clientsTranslations = {
 						},
 					},
 					profiles: {
-						title: "3. Profiles",
+					title: "3. Profiles",
 						descriptions: {
 						unify:
-							"Unify does not maintain a profile working set here. Use profiles for Hosted or Transparent workflows instead.",
+							"Unify does not maintain a profile working set here. Use profiles for Hosted Mode or Transparent Mode workflows instead.",
 							default:
 								"Review the profiles that are already active for this client runtime. This view is read-only to keep the active scene set consistent.",
 							profile:
@@ -229,20 +305,42 @@ export const clientsTranslations = {
 						},
 					},
 				},
-				labels: {
-					noDescription: "No description",
-					openProfileDetail: "Open profile details",
-					servers: "Servers",
-					tools: "Tools",
-					resources: "Resources",
-					prompts: "Prompts",
-				},
-				transportOptions: {
-					stdio: "STDIO",
-					streamableHttp: "Streamable HTTP",
-					sseLegacy: "SSE (Legacy)",
+			labels: {
+				noDescription: "No description",
+				openProfileDetail: "Open profile details",
+				servers: "Servers",
+				tools: "Tools",
+				resources: "Resources",
+				prompts: "Prompts",
+			},
+			nonWritableReason: "This record is currently non-writable.",
+			transportOptions: {
+				auto: "Auto",
+				stdio: "STDIO",
+				streamableHttp: "Streamable HTTP",
+				streamableHttpLegacy: "Streamable HTTP",
+				sseLegacy: "SSE (Legacy)",
+			},
+			form: {
+				fields: {
+					configPath: {
+						placeholder: "~/.cursor/mcp.json",
+					},
+					logoUrl: {
+						placeholder: "https://example.com/logo.png",
+					},
+					homepageUrl: {
+						placeholder: "https://example.com",
+					},
+					docsUrl: {
+						placeholder: "https://docs.example.com",
+					},
+					supportUrl: {
+						placeholder: "https://support.example.com",
+					},
 				},
 			},
+		},
 			backups: {
 				title: "Backups",
 				description: "Restore or delete configuration snapshots.",
@@ -295,6 +393,9 @@ export const clientsTranslations = {
 					policy: "Policy",
 					policyDescription:
 						'Backup retention strategy. For now, only "keep_n" is supported, which keeps at most N recent backups and prunes older ones.',
+					options: {
+						keepN: "keep_n",
+					},
 					limit: "Limit",
 					limitDescription:
 						"Maximum number of backups to keep for this client. Set to 0 for no limit.",
@@ -416,15 +517,16 @@ export const clientsTranslations = {
 				title: "筛选",
 				options: {
 					all: "全部",
-					detected: "已检测",
-					managed: "已管理",
+					allowed: "已允许",
+					pending: "待审批",
+					denied: "已拒绝",
 				},
 			},
 			sort: {
 				options: {
 					displayName: "名称",
-					detected: "检测状态",
-				managed: "管理状态",
+					approvalStatus: "审批状态",
+					managed: "管理状态",
 				},
 			},
 			actions: {
@@ -526,19 +628,79 @@ export const clientsTranslations = {
 					support: "支持",
 				},
 				buttons: {
+					edit: "编辑",
 					refresh: "刷新",
 					enable: "启用",
 					disable: "停用",
 				},
 				noDetails: "暂无详细信息",
-				currentServers: {
-					title: "当前服务器",
-					import: "从配置导入",
-					configuredLabel: "已配置",
-					empty: "未从当前配置解析到服务器。",
+					currentServers: {
+						title: "当前服务器",
+						import: "从配置导入",
+						configuredLabel: "已配置",
+						empty: "未从当前配置解析到服务器。",
+					},
 				},
-			},
-			configuration: {
+				form: {
+					titleCreate: "新增客户端记录",
+					titleEdit: "编辑客户端记录",
+					descriptionCreate: "创建一个带有管理形态与元数据的客户端记录。",
+					descriptionEdit: "更新该客户端记录及其管理设置。",
+					tabs: { basic: "基础", meta: "元数据" },
+					connectionShape: {
+						label: "客户端形态",
+						description: "选择该客户端是否具备可写本地配置文件，或属于不可写的远程/未知客户端。",
+						options: {
+							localWithConfig: "本地 + 配置文件",
+							localWithoutConfig: "本地 / 未知配置",
+							remoteHttp: "远程 HTTP",
+						},
+					},
+					transportSupport: {
+						label: "传输支持",
+						placeholder: "选择支持的传输方式",
+						empty: "未找到传输方式。",
+						description: "选择该客户端支持的运行时传输方式。该数组会作为 hosted / unify 传输选择的唯一约束来源。",
+						options: {
+							stdio: "STDIO",
+							streamableHttpLegacy: "Streamable HTTP",
+							sseLegacy: "SSE（旧版兼容）",
+						},
+					},
+					fields: {
+						displayName: { label: "客户端名称", placeholder: "Cursor Desktop" },
+						identifier: { label: "客户端 ID", placeholder: "cursor-desktop", description: "创建新记录时，空格和大小写会自动规范化。" },
+						clientVersion: { label: "客户端版本", placeholder: "可选" },
+						configPath: {
+							label: "配置文件路径",
+							placeholder: "~/.cursor/mcp.json",
+							description: "可写的本地配置路径会让 MCPMate 能通过文件配置操作来管理该客户端。",
+							unavailableHint: "该客户端当前没有可写的本地配置路径，因此暂时无法进行基于文件的配置管理。",
+							browse: "选择…",
+							browseAria: "从磁盘选择配置文件",
+							dialogTitle: "选择配置文件",
+							pickFailedTitle: "无法读取所选文件",
+							webPickInfoTitle: "浏览器文件访问",
+							webPickInfoDescription: "浏览器无法自动读取绝对路径，如有需要请手动粘贴。",
+						},
+						logoUrl: { label: "Logo 地址", placeholder: "https://example.com/logo.png" },
+						homepageUrl: { label: "主页地址", placeholder: "https://example.com" },
+						docsUrl: { label: "文档地址", placeholder: "https://docs.example.com" },
+						supportUrl: { label: "支持地址", placeholder: "https://support.example.com" },
+						description: {
+							label: "描述",
+							placeholder: "简要描述这个客户端。",
+							description: "这些元数据字段仅用于展示与提示；旧模板文件现在只保留兼容性 seed 作用。",
+						},
+					},
+					buttons: { cancel: "取消", create: "创建记录", save: "保存更改" },
+					notifications: {
+						createSuccess: { title: "客户端记录已创建", message: "客户端记录已创建。" },
+						editSuccess: { title: "客户端记录已更新", message: "客户端记录已更新。" },
+						saveFailed: { title: "无法保存客户端记录" },
+					},
+				},
+				configuration: {
 				title: "配置模式",
 				description: "若不清楚含义，请勿修改并保持现有设置。",
 				reapply: "重新应用",
@@ -547,15 +709,17 @@ export const clientsTranslations = {
 						title: "1. 管理模式",
 						descriptions: {
 						unify:
-							"统一模式初始仅提供内建 MCP 工具，并在当前会话中面向全局启用服务器的 capabilities 工作。",
+							"统一模式初始仅提供内建 MCP 工具，并在当前会话中面向全局启用服务器的能力工作。",
 							hosted:
-								"Hosted 会为该客户端保留持久化托管配置，并记住当前选择的工作状态。",
+								"托管模式会为该客户端保留持久化托管配置，并记住当前选择的工作状态。",
 							transparent:
-								"MCPMate 会将所选配置集中的服务器直接写入该客户端的 MCP 配置，且不会保留 capabilities 层级的控制。",
+								"MCPMate 会将所选配置集中的服务器直接写入该客户端的 MCP 配置，且不会保留能力层级的控制。",
 						},
+						managedDisabledReason: "托管模式与统一模式至少需要一种后端已声明支持的传输方式。",
+						transparentDisabledReason: "透明模式需要可写的本地配置文件路径。",
 						options: {
 						unify: "统一模式",
-							hosted: "Hosted",
+							hosted: "托管模式",
 							transparent: "透明模式",
 						},
 					},
@@ -563,7 +727,7 @@ export const clientsTranslations = {
 						title: "2. 配置详情",
 						titleTransparent: "2. 配置详情",
 						descriptions: {
-						unify: "统一模式不使用仪表板中的 Profile 选择。请在当前会话内通过内建 UCAN 工具浏览并调用来自全局启用服务器的 capabilities。",
+						unify: "统一模式不使用仪表板中的配置集选择。请在当前会话内通过内建 UCAN 工具浏览并调用来自全局启用服务器的能力。",
 							default: "查看当前已对该客户端运行态生效的配置集。",
 							profile: "浏览共享场景库，并为该客户端选择精确的工作集。",
 						custom: "在当前统一模式工作状态之上创建客户端专属调整。",
@@ -574,11 +738,11 @@ export const clientsTranslations = {
 						transparentCustom:
 							"将该客户端专属自定义配置集中的服务器直接写入该客户端的 MCP 配置。",
 						},
-						options: {
-							default: "Active",
-							profile: "Profiles",
-							custom: "Customize",
-						},
+					options: {
+						default: "当前生效",
+						profile: "配置集库",
+						custom: "自定义工作区",
+					},
 					statusLabel: {
 						default: "",
 						profile: "",
@@ -586,9 +750,9 @@ export const clientsTranslations = {
 					},
 				},
 					profiles: {
-						title: "3. Profiles",
+					title: "3. 配置集",
 						descriptions: {
-						unify: "统一模式不会在这里维护 Profile 工作集。Profiles 仅用于 Hosted 或 Transparent 工作流。",
+						unify: "统一模式不会在这里维护配置集工作集。配置集仅用于托管模式或透明模式工作流。",
 							default:
 								"查看当前已对该客户端运行态生效的配置集。为保持场景一致性，此视图为只读。",
 							profile: "选择定义该客户端工作集的可复用共享配置集。",
@@ -604,14 +768,14 @@ export const clientsTranslations = {
 							active: "未找到已激活的配置集",
 							shared: "未找到共享配置集",
 						},
-						ghost: {
-							titleCustom: "自定义当前状态",
-							titleDefault: "打开场景库",
-							subtitleCustom: "为当前工作集创建并管理客户端专属覆盖项",
-							subtitleCustomTransparent: "配置哪些服务器会被直接写入当前客户端。",
-							subtitleDefault: "浏览可复用共享场景，并在配置集页面中维护它们",
-						},
-					},
+				ghost: {
+					titleCustom: "自定义当前状态",
+					titleDefault: "打开配置集库",
+					subtitleCustom: "为当前工作集创建并管理客户端专属覆盖项",
+					subtitleCustomTransparent: "配置哪些服务器会被直接写入当前客户端。",
+					subtitleDefault: "浏览可复用共享场景，并在配置集页面中维护它们",
+				},
+			},
 					unify: {
 						title: "2. 配置详情",
 						description:
@@ -623,20 +787,42 @@ export const clientsTranslations = {
 						},
 					},
 				},
-				labels: {
-					noDescription: "暂无描述",
-					openProfileDetail: "打开配置集详情",
-					servers: "服务器",
-					tools: "工具",
-					resources: "资源",
-					prompts: "提示",
-				},
-				transportOptions: {
-					stdio: "STDIO",
-					streamableHttp: "Streamable HTTP",
-					sseLegacy: "SSE（旧版兼容）",
+			labels: {
+				noDescription: "暂无描述",
+				openProfileDetail: "打开配置集详情",
+				servers: "服务器",
+				tools: "工具",
+				resources: "资源",
+				prompts: "提示",
+			},
+			nonWritableReason: "该记录当前不可写。",
+			transportOptions: {
+				auto: "自动",
+				stdio: "STDIO",
+				streamableHttp: "Streamable HTTP",
+				streamableHttpLegacy: "Streamable HTTP",
+				sseLegacy: "SSE（旧版兼容）",
+			},
+			form: {
+				fields: {
+					configPath: {
+						placeholder: "~/.cursor/mcp.json",
+					},
+					logoUrl: {
+						placeholder: "https://example.com/logo.png",
+					},
+					homepageUrl: {
+						placeholder: "https://example.com",
+					},
+					docsUrl: {
+						placeholder: "https://docs.example.com",
+					},
+					supportUrl: {
+						placeholder: "https://support.example.com",
+					},
 				},
 			},
+		},
 			backups: {
 				title: "备份",
 				description: "恢复或删除配置快照。",
@@ -686,6 +872,9 @@ export const clientsTranslations = {
 					policy: "策略",
 					policyDescription:
 						"备份保留策略。目前仅支持“keep_n”，会保留最近 N 个备份并清理更早的备份。",
+					options: {
+						keepN: "keep_n",
+					},
 					limit: "上限",
 					limitDescription: "该客户端保留的备份数量上限，设置为 0 表示不限。",
 				},
@@ -806,14 +995,15 @@ export const clientsTranslations = {
 				title: "フィルター",
 				options: {
 					all: "すべて",
-					detected: "検出済み",
-					managed: "管理中",
+					allowed: "許可済み",
+					pending: "承認待ち",
+					denied: "拒否",
 				},
 			},
 			sort: {
 				options: {
 					displayName: "名前",
-					detected: "検出状況",
+					approvalStatus: "承認状態",
 					managed: "管理状況",
 				},
 			},
@@ -916,19 +1106,79 @@ export const clientsTranslations = {
 					support: "サポート",
 				},
 				buttons: {
+					edit: "編集",
 					refresh: "更新",
 					enable: "有効化",
 					disable: "無効化",
 				},
 				noDetails: "詳細情報がありません",
-				currentServers: {
-					title: "現在のサーバー",
-					import: "設定からインポート",
-					configuredLabel: "設定済み",
-					empty: "現在の設定からサーバーを取得できませんでした。",
+					currentServers: {
+						title: "現在のサーバー",
+						import: "設定からインポート",
+						configuredLabel: "設定済み",
+						empty: "現在の設定からサーバーを取得できませんでした。",
+					},
 				},
-			},
-			configuration: {
+				form: {
+					titleCreate: "クライアントレコードを追加",
+					titleEdit: "クライアントレコードを編集",
+					descriptionCreate: "管理形態とメタデータを含むクライアントレコードを作成します。",
+					descriptionEdit: "このクライアントレコードと管理設定を更新します。",
+					tabs: { basic: "基本", meta: "メタデータ" },
+					connectionShape: {
+						label: "クライアント形態",
+						description: "このクライアントが書き込み可能なローカル設定ファイルを持つか、書き込み不可のリモート/未知クライアントかを選択します。",
+						options: {
+							localWithConfig: "ローカル + 設定ファイル",
+							localWithoutConfig: "ローカル / 不明な設定",
+							remoteHttp: "リモート HTTP",
+						},
+					},
+					transportSupport: {
+						label: "対応トランスポート",
+						placeholder: "対応するトランスポートを選択",
+						empty: "トランスポートが見つかりません。",
+						description: "このクライアントが対応するランタイムトランスポートを選択します。この配列は hosted / unify のトランスポート選択を制約する唯一の情報源です。",
+						options: {
+							stdio: "STDIO",
+							streamableHttpLegacy: "ストリーミング HTTP",
+							sseLegacy: "SSE（レガシー互換）",
+						},
+					},
+					fields: {
+						displayName: { label: "クライアント名", placeholder: "Cursor Desktop" },
+						identifier: { label: "クライアント ID", placeholder: "cursor-desktop", description: "新規レコード作成時は、スペースと大文字小文字が自動で正規化されます。" },
+						clientVersion: { label: "クライアントバージョン", placeholder: "任意" },
+						configPath: {
+							label: "設定ファイルパス",
+							placeholder: "~/.cursor/mcp.json",
+							description: "書き込み可能なローカル設定パスがある場合、MCPMate はファイルベースの設定操作でこのクライアントを管理できます。",
+							unavailableHint: "このクライアントには現在書き込み可能なローカル設定パスがないため、ファイルベースの設定管理は利用できません。",
+							browse: "選択…",
+							browseAria: "ディスク上の設定ファイルを選択",
+							dialogTitle: "設定ファイルを選択",
+							pickFailedTitle: "選択したファイルを読み取れませんでした",
+							webPickInfoTitle: "ブラウザのファイルアクセス",
+							webPickInfoDescription: "ブラウザは絶対パスを自動取得できません。必要なら手動で貼り付けてください。",
+						},
+						logoUrl: { label: "ロゴ URL", placeholder: "https://example.com/logo.png" },
+						homepageUrl: { label: "ホームページ URL", placeholder: "https://example.com" },
+						docsUrl: { label: "ドキュメント URL", placeholder: "https://docs.example.com" },
+						supportUrl: { label: "サポート URL", placeholder: "https://support.example.com" },
+						description: {
+							label: "説明",
+							placeholder: "このクライアントの概要を入力してください。",
+							description: "これらのメタデータは表示とガイダンスのために保存されます。旧テンプレートファイルは互換性 seed としてのみ残ります。",
+						},
+					},
+					buttons: { cancel: "キャンセル", create: "レコードを作成", save: "変更を保存" },
+					notifications: {
+						createSuccess: { title: "クライアントレコードを作成しました", message: "クライアントレコードを作成しました。" },
+						editSuccess: { title: "クライアントレコードを更新しました", message: "クライアントレコードを更新しました。" },
+						saveFailed: { title: "クライアントレコードを保存できませんでした" },
+					},
+				},
+				configuration: {
 				title: "設定モード",
 				description: "意味が不明な場合は変更せず現状の設定を維持してください。",
 				reapply: "再適用",
@@ -937,15 +1187,19 @@ export const clientsTranslations = {
 						title: "1. 管理モード",
 						descriptions: {
 						unify:
-							"Unify は内蔵 MCP ツールのみで開始し、現在のセッションではグローバルに有効なサーバーの capability を扱います。",
+							"統一モードは内蔵 MCP ツールのみで開始し、現在のセッションではグローバルに有効なサーバーのケイパビリティを扱います。",
 							hosted:
-								"Hosted はこのクライアントの持続的な管理設定を保持し、現在のワーク状態を記憶します。",
+								"ホスト型モードはこのクライアントの持続的な管理設定を保持し、現在のワーク状態を記憶します。",
 							transparent:
-								"MCPMate は選択したプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込み、capability 単位の制御は保持しません。",
+								"MCPMate は選択したプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込み、ケイパビリティ単位の制御は保持しません。",
 						},
+						managedDisabledReason:
+							"ホスト型モードと統一モードを使うには、少なくとも 1 つのサポート対象トランスポートが必要です。",
+						transparentDisabledReason:
+							"トランスペアレントモードには、書き込み可能なローカル設定ファイルのパスが必要です。",
 						options: {
-						unify: "Unify",
-							hosted: "Hosted",
+						unify: "統一モード",
+							hosted: "ホスト型モード",
 							transparent: "トランスペアレントモード",
 						},
 					},
@@ -954,10 +1208,10 @@ export const clientsTranslations = {
 						titleTransparent: "2. 設定",
 						descriptions: {
 						unify:
-							"Unify ではダッシュボード上のプロファイル選択を使いません。現在のセッションでは、内蔵 UCAN ツールでグローバルに有効なサーバーの capability を参照・呼び出します。",
+							"統一モードではダッシュボード上のプロファイル選択を使いません。現在のセッションでは、内蔵 UCAN ツールでグローバルに有効なサーバーのケイパビリティを参照・呼び出します。",
 							default: "このクライアントの実行時に現在有効なプロファイルを確認します。",
 							profile: "共有シーンライブラリを参照し、このクライアントの正確なワークセットを選択します。",
-						custom: "現在の Unify Mode ワーク状態の上にクライアント専用の調整を作成します。",
+						custom: "現在の統一モードのワーク状態の上にクライアント専用の調整を作成します。",
 						transparentDefault:
 							"現在有効なすべてのプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
 						transparentProfile:
@@ -965,11 +1219,11 @@ export const clientsTranslations = {
 						transparentCustom:
 							"このクライアント専用のカスタムプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
 						},
-						options: {
-							default: "Active",
-							profile: "Profiles",
-							custom: "Customize",
-						},
+					options: {
+						default: "有効なプロファイル",
+						profile: "プロファイルライブラリ",
+						custom: "カスタムワークスペース",
+					},
 					statusLabel: {
 						default: "",
 						profile: "",
@@ -977,10 +1231,10 @@ export const clientsTranslations = {
 					},
 				},
 					profiles: {
-						title: "3. Profiles",
+					title: "3. プロファイル",
 						descriptions: {
 						unify:
-							"Unify はここでプロファイルのワークセットを維持しません。Profiles は Hosted または Transparent のワークフローで使用します。",
+							"統一モードではここでプロファイルのワークセットを維持しません。プロファイルはホスト型モードまたはトランスペアレントモードのワークフローで使用します。",
 							default:
 								"このクライアントの実行時にすでに有効なプロファイルを確認します。シーンの一貫性を保つため、このビューは読み取り専用です。",
 							profile: "このクライアントのワークセットを定義する再利用可能な共有プロファイルを選択します。",
@@ -1008,7 +1262,7 @@ export const clientsTranslations = {
 					unify: {
 						title: "2. 設定",
 						description:
-							"Unify は内蔵 MCP ツールのみで開始します。現在の MCP セッションでは、セッション内の内蔵フローでグローバルに有効なサーバーの capability を参照し、終了時に自動的にリセットされます。",
+							"統一モードは内蔵 MCP ツールのみで開始します。現在の MCP セッションでは、セッション内の内蔵フローでグローバルに有効なサーバーのケイパビリティを参照し、終了時に自動的にリセットされます。",
 						items: {
 							builtinOnly: "内蔵ツールのみ",
 							sessionScoped: "セッション内の内蔵フロー",
@@ -1016,20 +1270,42 @@ export const clientsTranslations = {
 						},
 					},
 				},
-				labels: {
-					noDescription: "説明なし",
-					openProfileDetail: "プロファイルの詳細を開く",
-					servers: "サーバー",
-					tools: "ツール",
-					resources: "リソース",
-					prompts: "プロンプト",
-				},
-				transportOptions: {
-					stdio: "STDIO",
-					streamableHttp: "ストリーミング HTTP",
-					sseLegacy: "SSE（レガシー互換）",
+			labels: {
+				noDescription: "説明なし",
+				openProfileDetail: "プロファイルの詳細を開く",
+				servers: "サーバー",
+				tools: "ツール",
+				resources: "リソース",
+				prompts: "プロンプト",
+			},
+			nonWritableReason: "このレコードは現在書き込みできません。",
+			transportOptions: {
+				auto: "自動",
+				stdio: "STDIO",
+				streamableHttp: "ストリーミング HTTP",
+				streamableHttpLegacy: "ストリーミング HTTP",
+				sseLegacy: "SSE（レガシー互換）",
+			},
+			form: {
+				fields: {
+					configPath: {
+						placeholder: "~/.cursor/mcp.json",
+					},
+					logoUrl: {
+						placeholder: "https://example.com/logo.png",
+					},
+					homepageUrl: {
+						placeholder: "https://example.com",
+					},
+					docsUrl: {
+						placeholder: "https://docs.example.com",
+					},
+					supportUrl: {
+						placeholder: "https://support.example.com",
+					},
 				},
 			},
+		},
 			backups: {
 				title: "バックアップ",
 				description: "設定スナップショットの復元・削除を行います。",
@@ -1083,6 +1359,9 @@ export const clientsTranslations = {
 					policy: "ポリシー",
 					policyDescription:
 						'バックアップ保持方針です。現在は "keep_n" のみ対応し、最新 N 件を保持して古いものを削除します。',
+					options: {
+						keepN: "keep_n",
+					},
 					limit: "上限",
 					limitDescription:
 						"このクライアントで保持するバックアップ数の上限です。0 にすると無制限です。",

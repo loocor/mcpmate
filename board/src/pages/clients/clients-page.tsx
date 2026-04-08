@@ -1,25 +1,45 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Globe, Plus, RefreshCw, ToggleLeft } from "lucide-react";
+import {
+	BookCopy,
+	Check,
+	CheckCircle2,
+	Clock,
+	FileText,
+	Globe,
+	PenLine,
+	Plus,
+	RefreshCw,
+	ShieldX,
+	ToggleLeft,
+} from "lucide-react";
 import React, { type MouseEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { EntityCard } from "../../components/entity-card";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
 import { EmptyState, PageLayout } from "../../components/page-layout";
 import { StatsCards } from "../../components/stats-cards";
+import { ClientFormDrawer } from "../../components/client-form-drawer";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { PageToolbar } from "../../components/ui/page-toolbar";
+import type { Entity } from "../../components/ui/page-toolbar";
 import { Switch } from "../../components/ui/switch";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "../../components/ui/tooltip";
 import type { SegmentOption } from "../../components/ui/segment";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
 } from "../../components/ui/select";
 import { clientsApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
@@ -27,12 +47,14 @@ import { useUrlFilter, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { ClientListDefaultFilter } from "../../lib/store";
+import type { ClientInfo } from "../../lib/types";
 
 export function ClientsPage() {
 	const navigate = useNavigate();
 	const qc = useQueryClient();
 	const [refreshing, setRefreshing] = useState(false);
-	const [searchParams] = useSearchParams();
+	const [isClientFormOpen, setIsClientFormOpen] = useState(false);
+	const [editingClient, setEditingClient] = useState<ClientInfo | null>(null);
 	usePageTranslations("clients");
 	const { t, i18n } = useTranslation("clients");
 	const { defaultFilter, setDashboardSetting } = useAppStore((state) => ({
@@ -52,7 +74,7 @@ export function ClientsPage() {
 	const { filter, setFilter } = useUrlFilter({
 		paramName: "filter",
 		defaultValue: defaultFilter,
-		validValues: ["all", "detected", "managed"],
+		validValues: ["all", "allowed", "pending", "denied"],
 	});
 
 	const { data, isLoading, isRefetching, refetch } = useQuery({
@@ -68,44 +90,79 @@ export function ClientsPage() {
 	});
 
 	// Use a stable empty array reference to avoid re-render loops when data is undefined or on errors
-	const EMPTY: any[] = React.useMemo(() => [], []);
-	const clients =
-		data && Array.isArray((data as any).client) ? (data as any).client : EMPTY;
-	const detectedCount = clients.filter((c: any) => !!c.detected).length;
-	const managedCount = clients.filter((c: any) => !!c.managed).length;
-	const configuredCount = clients.filter((c: any) => !!c.has_mcp_config).length;
+	const EMPTY: ClientInfo[] = React.useMemo(() => [], []);
+	const clients: ClientInfo[] = data?.client ?? EMPTY;
+	const detectedCount = clients.filter((c) => !!c.detected).length;
+	const managedCount = clients.filter((c) => !!c.managed).length;
+	const pendingCount = clients.filter((c) => c.approval_status === "pending").length;
 
-    const clientsAsEntities = React.useMemo(() => {
-        const mapped = clients.map((client: any) => ({
-            id: client.identifier || client.display_name || "",
-            name: client.display_name || client.identifier || "",
-            description: client.description || "",
-            ...client,
-        }));
-        // Default stable sort by name A→Z, tie-breaker by id
-        mapped.sort((a, b) => {
-            const byName = a.name.localeCompare(b.name, undefined, {
-                sensitivity: "base",
-            });
-            if (byName !== 0) return byName;
-            return a.id.localeCompare(b.id, undefined, { sensitivity: "base" });
-        });
-        return mapped;
-    }, [clients]);
+	type ClientToolbarEntity = Entity & {
+		identifier: string;
+		display_name: string;
+		managed: boolean;
+		detected: boolean;
+		approval_status?: string | null;
+	};
 
-    // Apply visibility filter from toolbar
-    const filteredClientsAsEntities = React.useMemo(() => {
-        if (filter === "detected") {
-            return clientsAsEntities.filter((c: any) => !!c.detected);
-        }
-        if (filter === "managed") {
-            return clientsAsEntities.filter((c: any) => !!c.managed);
-        }
-        return clientsAsEntities;
-    }, [clientsAsEntities, filter]);
+	const clientsAsEntities = React.useMemo<ClientToolbarEntity[]>(() => {
+		const mapped: ClientToolbarEntity[] = clients.map((client: ClientInfo) => ({
+			id: client.identifier || client.display_name || "",
+			name: client.display_name || client.identifier || "",
+			identifier: client.identifier,
+			display_name: client.display_name,
+			managed: client.managed,
+			detected: client.detected,
+			approval_status: client.approval_status,
+			description: client.description ?? undefined,
+		}));
+		// Default stable sort by name A→Z, tie-breaker by id
+		mapped.sort((a, b) => {
+			const byName = a.name.localeCompare(b.name, undefined, {
+				sensitivity: "base",
+			});
+			if (byName !== 0) return byName;
+			return a.id.localeCompare(b.id, undefined, { sensitivity: "base" });
+		});
+		return mapped;
+	}, [clients]);
 
-	// 排序后的数据状态
-	const [sortedClients, setSortedClients] = React.useState(
+	const clientsByIdentifier = React.useMemo(() => {
+		return new Map(clients.map((client) => [client.identifier, client]));
+	}, [clients]);
+
+	// Apply visibility filter from toolbar
+	const filteredClientsAsEntities = React.useMemo<ClientToolbarEntity[]>(() => {
+		if (filter === "allowed") {
+			return clientsAsEntities.filter(
+				(c) => c.approval_status !== "pending" && c.approval_status !== "rejected",
+			);
+		}
+		if (filter === "pending") {
+			return clientsAsEntities.filter((c) => c.approval_status === "pending");
+		}
+		if (filter === "denied") {
+			return clientsAsEntities.filter((c) => c.approval_status === "rejected");
+		}
+		return clientsAsEntities;
+	}, [clientsAsEntities, filter]);
+
+	const getGovernanceStatus = (client: ClientInfo) => {
+		if (client.approval_status === "pending") return "pending";
+		if (client.approval_status === "rejected") return "denied";
+		return "allowed";
+	};
+
+	const getGovernanceStatusLabel = (status: "allowed" | "pending" | "denied") => {
+		if (status === "pending") {
+			return t("entity.badge.pending", { defaultValue: "Pending" });
+		}
+		if (status === "denied") {
+			return t("entity.badge.denied", { defaultValue: "Denied" });
+		}
+		return t("entity.badge.allowed", { defaultValue: "Allowed" });
+	};
+
+	const [sortedClients, setSortedClients] = React.useState<ClientToolbarEntity[]>(
 		filteredClientsAsEntities,
 	);
 
@@ -127,7 +184,7 @@ export function ClientsPage() {
 			try {
 				// Force backend to refresh detection/config state, then sync cache
 				const fresh = await clientsApi.list(true);
-				qc.setQueryData(["clients"], fresh as any);
+				qc.setQueryData(["clients"], fresh);
 			} catch {
 				/* noop */
 			}
@@ -150,7 +207,7 @@ export function ClientsPage() {
 			),
 	});
 
-	const renderClientListItem = (client: any) => {
+	const renderClientListItem = (client: ClientInfo) => {
 		const displayName =
 			client.display_name ||
 			client.identifier ||
@@ -163,19 +220,23 @@ export function ClientsPage() {
 			client.config_path ||
 			t("entity.config.notConfigured", { defaultValue: "Not configured" });
 		const description =
-			client.description ?? client.template?.description ?? "";
+			client.description ?? client.template?.description ?? undefined;
 
 		const configLabel = t("entity.stats.config", { defaultValue: "Config" });
 		const serversTag = t("entity.bottomTags.servers", {
 			count: serverCount,
 			defaultValue: "Servers: {{count}}",
 		});
-		const detectedLabel = t("entity.badge.detected", {
-			defaultValue: "Detected",
-		});
-		const notDetectedLabel = t("entity.badge.notDetected", {
-			defaultValue: "Not Detected",
-		});
+		const governanceStatus = getGovernanceStatus(client);
+		const governanceLabel = getGovernanceStatusLabel(governanceStatus);
+
+		const recordKindLabel = client.governed_by_default_policy
+			? t("entity.badge.defaultPolicy", { defaultValue: "Default Policy" })
+			: t("entity.badge.explicitRecord", { defaultValue: "Explicit Record" });
+
+		const writableConfigLabel = client.writable_config
+			? t("entity.badge.writableConfig", { defaultValue: "Writable" })
+			: null;
 
 		return (
 			<EntityListItem
@@ -184,19 +245,27 @@ export function ClientsPage() {
 				title={displayName}
 				description={description}
 				avatar={{
-					src: client.logo_url,
+					src: client.logo_url ?? undefined,
 					alt: displayName,
 					fallback: avatarInitial,
 				}}
 				stats={[{ label: configLabel, value: configPath }]}
-				bottomTags={[<span key="servers">{serversTag}</span>]}
+				bottomTags={[
+					<span key="servers">{serversTag}</span>,
+					<span key="recordKind" className="text-slate-500">• {recordKindLabel}</span>,
+					writableConfigLabel && <span key="writable" className="text-slate-500">• {writableConfigLabel}</span>
+				].filter(Boolean)}
 				statusBadge={
-					client.detected ? (
-						<span className="flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
-							<Check className="mr-1 h-3 w-3" /> {detectedLabel}
-						</span>
+					governanceStatus === "pending" ? (
+						<Badge variant="destructive" className="bg-amber-500 hover:bg-amber-600">
+							{governanceLabel}
+						</Badge>
+					) : governanceStatus === "denied" ? (
+						<Badge variant="destructive">{governanceLabel}</Badge>
 					) : (
-						<Badge variant="secondary">{notDetectedLabel}</Badge>
+						<span className="flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
+							<Check className="mr-1 h-3 w-3" /> {governanceLabel}
+						</span>
 					)
 				}
 				enableSwitch={{
@@ -205,12 +274,13 @@ export function ClientsPage() {
 						manageMutation.mutate({ identifier, managed: checked }),
 					disabled: manageMutation.isPending,
 				}}
+				className={governanceStatus === "pending" ? "opacity-75" : ""}
 				onClick={() => navigate(`/clients/${encodeURIComponent(identifier)}`)}
 			/>
 		);
 	};
 
-	const renderClientCard = (client: any) => {
+	const renderClientCard = (client: ClientInfo) => {
 		const displayName =
 			client.display_name ||
 			client.identifier ||
@@ -219,7 +289,7 @@ export function ClientsPage() {
 		const avatarInitial =
 			(displayName.trim() || identifier).charAt(0).toUpperCase() || "C";
 		const description =
-			client.description ?? client.template?.description ?? "";
+			client.description ?? client.template?.description ?? undefined;
 		const homepageUrl =
 			client.homepage_url ?? client.template?.homepage_url ?? null;
 		const statItems = [
@@ -246,15 +316,62 @@ export function ClientsPage() {
 					: t("states.missing", { defaultValue: "Missing" }),
 			},
 		];
-		const detectedBadge = client.detected ? (
-			<Badge variant="default">
-				{t("entity.badge.detected", { defaultValue: "Detected" })}
-			</Badge>
-		) : (
-			<Badge variant="secondary">
-				{t("entity.badge.notDetected", { defaultValue: "Not Detected" })}
-			</Badge>
-		);
+
+		const governanceStatus = getGovernanceStatus(client);
+
+		const allowedLabel = t("entity.badge.allowed", { defaultValue: "Allowed" });
+		const pendingLabel = t("entity.badge.pending", { defaultValue: "Pending" });
+		const deniedLabel = t("entity.badge.denied", { defaultValue: "Denied" });
+
+		const governanceIcon =
+			governanceStatus === "pending" ? (
+				<Clock className="h-4 w-4" aria-hidden />
+			) : governanceStatus === "denied" ? (
+				<ShieldX className="h-4 w-4" aria-hidden />
+			) : (
+				<CheckCircle2 className="h-4 w-4" aria-hidden />
+			);
+
+		const governanceStatusLabel =
+			governanceStatus === "pending"
+				? pendingLabel
+				: governanceStatus === "denied"
+					? deniedLabel
+					: allowedLabel;
+
+		const governanceIconClass =
+			governanceStatus === "pending"
+				? "text-amber-600 dark:text-amber-400"
+				: governanceStatus === "denied"
+					? "text-destructive"
+					: "text-emerald-600 dark:text-emerald-400";
+
+		const yesLabel = t("states.yes", { defaultValue: "Yes" });
+		const noLabel = t("states.no", { defaultValue: "No" });
+
+		const governanceTooltip = t("entity.tooltip.governanceStatus", {
+			status: governanceStatusLabel,
+			defaultValue: "Governance status: {{status}}",
+		});
+
+		const defaultPolicyTooltip = t("entity.tooltip.defaultPolicy", {
+			answer: client.governed_by_default_policy === true ? yesLabel : noLabel,
+			defaultValue: "Default policy: {{answer}}",
+		});
+
+		const explicitRecordTooltip = t("entity.tooltip.explicitRecord", {
+			answer: client.governed_by_default_policy === true ? noLabel : yesLabel,
+			defaultValue: "Explicit record: {{answer}}",
+		});
+
+		const writableTooltip = t("entity.tooltip.writableConfig", {
+			answer: client.writable_config === true ? yesLabel : noLabel,
+			defaultValue: "Writable config: {{answer}}",
+		});
+
+		const iconButtonClass =
+			"inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-0 bg-transparent p-0 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50";
+
 		const quickLinks = (
 			[
 				{
@@ -284,28 +401,88 @@ export function ClientsPage() {
 				title={displayName}
 				description={description}
 				avatar={{
-					src: client.logo_url,
+					src: client.logo_url ?? undefined,
 					alt: displayName,
 					fallback: avatarInitial,
 				}}
 				avatarShape="rounded"
 				stats={statItems}
+				className={governanceStatus === "pending" ? "opacity-75" : ""}
+				topRightBadge={
+					quickLinks.length > 0 ? (
+						<>
+							{quickLinks.map((link) => (
+								<button
+									key={`${identifier}-${link.label}`}
+									type="button"
+									className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-slate-400 transition hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:text-slate-500 dark:hover:text-slate-300"
+									onClick={(event) => handleQuickLink(event, link.url!)}
+									title={link.label}
+								>
+									<link.icon className="h-4 w-4" aria-hidden />
+									<span className="sr-only">{link.label}</span>
+								</button>
+							))}
+						</>
+					) : undefined
+				}
 				bottomLeft={
-					<div className="flex flex-wrap items-center gap-2">
-						{detectedBadge}
-						{quickLinks.map((link) => (
-							<button
-								key={`${identifier}-${link.label}`}
-								type="button"
-								className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent h-5 w-5 text-slate-400 transition hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:text-slate-500 dark:hover:text-slate-300"
-								onClick={(event) => handleQuickLink(event, link.url!)}
-								title={link.label}
-							>
-								<link.icon className="w-4" />
-								<span className="sr-only">{link.label}</span>
-							</button>
-						))}
-					</div>
+					<TooltipProvider delayDuration={200}>
+						<div className="flex max-w-full flex-nowrap items-center gap-2 overflow-hidden text-foreground">
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										className={`${iconButtonClass} ${governanceIconClass}`}
+										aria-label={governanceTooltip}
+										onClick={(e) => e.stopPropagation()}
+									>
+										{governanceIcon}
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="top">{governanceTooltip}</TooltipContent>
+							</Tooltip>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										className={`${iconButtonClass} text-foreground ${client.governed_by_default_policy === true ? "opacity-100" : "opacity-25"}`}
+										aria-label={defaultPolicyTooltip}
+										onClick={(e) => e.stopPropagation()}
+									>
+										<BookCopy className="h-4 w-4" aria-hidden />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="top">{defaultPolicyTooltip}</TooltipContent>
+							</Tooltip>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										className={`${iconButtonClass} text-foreground ${client.governed_by_default_policy === true ? "opacity-25" : "opacity-100"}`}
+										aria-label={explicitRecordTooltip}
+										onClick={(e) => e.stopPropagation()}
+									>
+										<FileText className="h-4 w-4" aria-hidden />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="top">{explicitRecordTooltip}</TooltipContent>
+							</Tooltip>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										className={`${iconButtonClass} text-foreground ${client.writable_config === true ? "opacity-100" : "opacity-25"}`}
+										aria-label={writableTooltip}
+										onClick={(e) => e.stopPropagation()}
+									>
+										<PenLine className="h-4 w-4" aria-hidden />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="top">{writableTooltip}</TooltipContent>
+							</Tooltip>
+						</div>
+					</TooltipProvider>
 				}
 				bottomRight={
 					<Switch
@@ -364,12 +541,12 @@ export function ClientsPage() {
 				}),
 			},
 			{
-				title: t("statsCards.configured.title", {
-					defaultValue: "Configured",
+				title: t("statsCards.pending.title", {
+					defaultValue: "Pending",
 				}),
-				value: configuredCount,
-				description: t("statsCards.configured.description", {
-					defaultValue: "has MCP config",
+				value: pendingCount,
+				description: t("statsCards.pending.description", {
+					defaultValue: "awaiting review",
 				}),
 			},
 		],
@@ -377,7 +554,7 @@ export function ClientsPage() {
 			clients.length,
 			detectedCount,
 			managedCount,
-			configuredCount,
+			pendingCount,
 			i18n.language,
 		],
 	);
@@ -386,42 +563,42 @@ export function ClientsPage() {
 	const loadingSkeleton =
 		viewMode === "grid"
 			? Array.from({ length: 6 }, (_, index) => (
-					<Card key={`client-skeleton-grid-${index}`} className="p-4">
-						<div className="flex items-start gap-3">
-							<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800" />
-							<div className="flex-1 space-y-2">
-								<div className="h-4 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-								<div className="h-3 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-							</div>
+				<Card key={`client-skeleton-grid-${index}`} className="p-4">
+					<div className="flex items-start gap-3">
+						<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800" />
+						<div className="flex-1 space-y-2">
+							<div className="h-4 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+							<div className="h-3 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
 						</div>
-						<div className="mt-4 grid grid-cols-2 gap-3">
-							{Array.from({ length: 4 }, (__, sIdx) => (
-								<div
-									key={`client-skeleton-stat-grid-${index}-${sIdx}`}
-									className="space-y-2"
-								>
-									<div className="h-3 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-									<div className="h-4 w-20 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-								</div>
-							))}
-						</div>
-					</Card>
-				))
-			: Array.from({ length: 3 }, (_, index) => (
-					<div
-						key={`client-skeleton-list-${index}`}
-						className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 dark:border-slate-700 dark:bg-slate-900"
-					>
-						<div className="flex items-center gap-3">
-							<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800" />
-							<div className="space-y-2">
-								<div className="h-4 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-								<div className="h-3 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-							</div>
-						</div>
-						<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
 					</div>
-				));
+					<div className="mt-4 grid grid-cols-2 gap-3">
+						{Array.from({ length: 4 }, (__, sIdx) => (
+							<div
+								key={`client-skeleton-stat-grid-${index}-${sIdx}`}
+								className="space-y-2"
+							>
+								<div className="h-3 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+								<div className="h-4 w-20 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+							</div>
+						))}
+					</div>
+				</Card>
+			))
+			: Array.from({ length: 3 }, (_, index) => (
+				<div
+					key={`client-skeleton-list-${index}`}
+					className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 dark:border-slate-700 dark:bg-slate-900"
+				>
+					<div className="flex items-center gap-3">
+						<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800" />
+						<div className="space-y-2">
+							<div className="h-4 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+							<div className="h-3 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+						</div>
+					</div>
+					<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+				</div>
+			));
 
 	// Prepare empty state
 	const emptyState = (
@@ -445,9 +622,9 @@ export function ClientsPage() {
 	const [expanded, setExpanded] = useState(false);
 
 	// 工具栏配置
-    const toolbarConfig = React.useMemo(
-        () => ({
-        data: filteredClientsAsEntities,
+	const toolbarConfig = React.useMemo(
+		() => ({
+			data: filteredClientsAsEntities,
 			search: {
 				placeholder: t("toolbar.search.placeholder", {
 					defaultValue: "Search clients...",
@@ -492,11 +669,11 @@ export function ClientsPage() {
 						defaultDirection: "asc" as const,
 					},
 					{
-						value: "detected",
-						label: t("toolbar.sort.options.detected", {
-							defaultValue: "Detection Status",
+						value: "approval_status",
+						label: t("toolbar.sort.options.approvalStatus", {
+							defaultValue: "Governance Status",
 						}),
-						defaultDirection: "desc" as const,
+						defaultDirection: "asc" as const,
 					},
 					{
 						value: "managed",
@@ -511,9 +688,9 @@ export function ClientsPage() {
 			urlPersistence: {
 				enabled: true,
 			},
-        }),
-        [filteredClientsAsEntities, i18n.language, t],
-    );
+		}),
+		[filteredClientsAsEntities, i18n.language, t],
+	);
 
 	// 工具栏状态
 	const toolbarState = {
@@ -521,106 +698,102 @@ export function ClientsPage() {
 	};
 
 	// 工具栏回调
-	const toolbarCallbacks = {
+	const toolbarCallbacks: {
+		onViewModeChange: (mode: "grid" | "list") => void;
+		onSortedDataChange: (sortedData: ClientToolbarEntity[]) => void;
+		onExpandedChange: React.Dispatch<React.SetStateAction<boolean>>;
+	} = {
 		onViewModeChange: (mode: "grid" | "list") => {
 			setDashboardSetting("defaultView", mode);
 		},
-		onSortedDataChange: setSortedClients,
+		onSortedDataChange: (sortedData: ClientToolbarEntity[]) => setSortedClients(sortedData),
 		onExpandedChange: setExpanded,
 	};
 
-    // Toolbar: quick filter options (All / Detected / Managed)
-    const filterOptions: SegmentOption[] = React.useMemo(
-        () => [
-            { value: "all", label: t("toolbar.filters.options.all", { defaultValue: "All" }) },
-            { value: "detected", label: t("toolbar.filters.options.detected", { defaultValue: "Detected" }) },
-            { value: "managed", label: t("toolbar.filters.options.managed", { defaultValue: "Managed" }) },
-        ],
-        [t, i18n.language],
-    );
+	const filterOptions: SegmentOption[] = React.useMemo(
+		() => [
+			{ value: "all", label: t("toolbar.filters.options.all", { defaultValue: "All" }) },
+			{ value: "allowed", label: t("toolbar.filters.options.allowed", { defaultValue: "Allowed" }) },
+			{ value: "pending", label: t("toolbar.filters.options.pending", { defaultValue: "Pending" }) },
+			{ value: "denied", label: t("toolbar.filters.options.denied", { defaultValue: "Denied" }) },
+		],
+		[t, i18n.language],
+	);
 
-    // 过滤器节点（由 PageToolbar 控制显示时机）
-    const filterNode = (
-        <div className="w-32">
-            <Select
-                value={filter}
-                onValueChange={(value) => setFilter(value as ClientListDefaultFilter)}
-            >
-                <SelectTrigger className="h-9 w-full" aria-label={t("toolbar.filters.title", { defaultValue: "Filter" })}>
-                    <SelectValue placeholder={t("toolbar.filters.title", { defaultValue: "Filter" })} />
-                </SelectTrigger>
-                <SelectContent align="end">
-                    {filterOptions.map((opt) => (
-                        <SelectItem key={opt.value as string} value={opt.value as string}>
-                            {opt.label}
-                        </SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
-        </div>
-    );
+	const filterNode = (
+		<div className="w-32">
+			<Select
+				value={filter}
+				onValueChange={(value) => setFilter(value as ClientListDefaultFilter)}
+			>
+				<SelectTrigger className="h-9 w-full" aria-label={t("toolbar.filters.title", { defaultValue: "Filter" })}>
+					<SelectValue placeholder={t("toolbar.filters.title", { defaultValue: "Filter" })} />
+				</SelectTrigger>
+				<SelectContent align="end">
+					{filterOptions.map((opt) => (
+						<SelectItem key={opt.value as string} value={opt.value as string}>
+							{opt.label}
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
+		</div>
+	);
 
-    // 操作按钮（刷新 / 新增）
-    const actions = (
-        <div className="flex items-center gap-2">
-            <Button
-                onClick={handleRefresh}
-                disabled={isRefetching || refreshing}
-                variant="outline"
-                size="sm"
-                className="h-9 w-9 p-0"
-                onMouseUp={() =>
-                    notifyInfo(
-                        t("toolbar.actions.refresh.notificationTitle", {
-                            defaultValue: "Refresh triggered",
-                        }),
-                        t("toolbar.actions.refresh.notificationMessage", {
-                            defaultValue: "Latest client state will sync to the list",
-                        }),
-                    )
-                }
-                title={t("toolbar.actions.refresh.title", {
-                    defaultValue: "Refresh",
-                })}
-            >
-                <RefreshCw
-                    className={`h-4 w-4 ${isRefetching || refreshing ? "animate-spin" : ""}`}
-                />
-            </Button>
-            <Button
-                size="sm"
-                className="h-9 w-9 p-0"
-                onClick={() =>
-                    notifyInfo(
-                        t("toolbar.actions.add.notificationTitle", {
-                            defaultValue: "Feature in Development",
-                        }),
-                        t("toolbar.actions.add.notificationMessage", {
-                            defaultValue:
-                                "This feature is being implemented, please stay tuned",
-                        }),
-                    )
-                }
-                title={t("toolbar.actions.add.title", {
-                    defaultValue: "Add Client",
-                })}
-            >
-                <Plus className="h-4 w-4" />
-            </Button>
-        </div>
-    );
+	// 操作按钮（刷新 / 新增）
+	const actions = (
+		<div className="flex items-center gap-2">
+			<Button
+				onClick={handleRefresh}
+				disabled={isRefetching || refreshing}
+				variant="outline"
+				size="sm"
+				className="h-9 w-9 p-0"
+				onMouseUp={() =>
+					notifyInfo(
+						t("toolbar.actions.refresh.notificationTitle", {
+							defaultValue: "Refresh triggered",
+						}),
+						t("toolbar.actions.refresh.notificationMessage", {
+							defaultValue: "Latest client state will sync to the list",
+						}),
+					)
+				}
+				title={t("toolbar.actions.refresh.title", {
+					defaultValue: "Refresh",
+				})}
+			>
+				<RefreshCw
+					className={`h-4 w-4 ${isRefetching || refreshing ? "animate-spin" : ""}`}
+				/>
+			</Button>
+			<Button
+				size="sm"
+				className="h-9 w-9 p-0"
+				onClick={() => {
+					setEditingClient(null);
+					setIsClientFormOpen(true);
+				}}
+				title={t("toolbar.actions.add.title", {
+					defaultValue: "Add Client",
+				})}
+			>
+				<Plus className="h-4 w-4" />
+			</Button>
+		</div>
+	);
 
 	return (
 		<PageLayout
 			title={t("title", { defaultValue: "Clients" })}
 			headerActions={
-                    <PageToolbar
-                        config={toolbarConfig}
-                        state={toolbarState}
-                        callbacks={toolbarCallbacks}
-                        filters={filterNode}
-                        actions={actions}
-                    />
+				<PageToolbar<ClientToolbarEntity>
+					config={toolbarConfig}
+					state={toolbarState}
+					callbacks={toolbarCallbacks}
+					filters={filterNode}
+					actions={actions}
+				/>
 			}
 			statsCards={<StatsCards cards={statsCards} />}
 		>
@@ -630,9 +803,25 @@ export function ClientsPage() {
 				emptyState={sortedClients.length === 0 ? emptyState : undefined}
 			>
 				{viewMode === "grid"
-					? sortedClients.map((client) => renderClientCard(client))
-					: sortedClients.map((client) => renderClientListItem(client))}
+					? sortedClients.map((client) => {
+						const sourceClient = clientsByIdentifier.get(client.identifier);
+						return sourceClient ? renderClientCard(sourceClient) : null;
+					})
+					: sortedClients.map((client) => {
+						const sourceClient = clientsByIdentifier.get(client.identifier);
+						return sourceClient ? renderClientListItem(sourceClient) : null;
+					})}
 			</ListGridContainer>
+			<ClientFormDrawer
+				open={isClientFormOpen}
+				onOpenChange={setIsClientFormOpen}
+				mode={editingClient ? "edit" : "create"}
+				client={editingClient}
+				onSuccess={(identifier) => {
+					void refetch();
+					navigate(`/clients/${encodeURIComponent(identifier)}`);
+				}}
+			/>
 		</PageLayout>
 	);
 }

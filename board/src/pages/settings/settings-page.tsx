@@ -58,9 +58,9 @@ import {
 import {
 	auditApi,
 	API_BASE_URL,
+	clientsApi,
 	notificationsService,
 	setApiBaseUrl,
-	systemApi,
 } from "../../lib/api";
 import {
 	type DesktopCoreSourceResponse,
@@ -88,6 +88,7 @@ import {
 	type MenuBarIconMode,
 	useAppStore,
 } from "../../lib/store";
+import type { CapabilitySource } from "../../lib/types";
 import type { OpenSourceDocument } from "../../types/open-source";
 import { AboutLicensesSection } from "./about-licenses-section";
 
@@ -114,14 +115,19 @@ const CLIENT_FILTER_CONFIG = [
 		fallback: "All",
 	},
 	{
-		value: "detected" as const,
-		labelKey: "settings:clients.defaultVisibility.detected",
-		fallback: "Detected",
+		value: "allowed" as const,
+		labelKey: "settings:clients.defaultVisibility.allowed",
+		fallback: "Allowed",
 	},
 	{
-		value: "managed" as const,
-		labelKey: "settings:clients.defaultVisibility.managed",
-		fallback: "Managed",
+		value: "pending" as const,
+		labelKey: "settings:clients.defaultVisibility.pending",
+		fallback: "Pending",
+	},
+	{
+		value: "denied" as const,
+		labelKey: "settings:clients.defaultVisibility.denied",
+		fallback: "Denied",
 	},
 ];
 
@@ -151,23 +157,34 @@ const APPLICATION_MODE_CONFIG = [
 	},
 ];
 
-const CLIENT_MODE_CONFIG = [
-	{
-		value: "unify" as const,
-		labelKey: "settings:options.clientMode.unify",
-		fallback: "Unify",
-	},
-	{
-		value: "hosted" as const,
-		labelKey: "settings:options.clientMode.hosted",
-		fallback: "Hosted",
-	},
-	{
-		value: "transparent" as const,
-		labelKey: "settings:options.clientMode.transparent",
-		fallback: "Transparent",
-	},
-];
+const CLIENT_MODE_CONFIG: ReadonlyArray<{
+	value: "unify" | "hosted" | "transparent";
+	labelKey: string;
+	fallback: string;
+	disabled?: boolean;
+	tooltipKey?: string;
+	tooltipFallback?: string;
+}> = [
+		{
+			value: "unify",
+			labelKey: "settings:options.clientMode.unify",
+			fallback: "Unify",
+		},
+		{
+			value: "hosted",
+			labelKey: "settings:options.clientMode.hosted",
+			fallback: "Hosted",
+		},
+		{
+			value: "transparent",
+			labelKey: "settings:options.clientMode.transparent",
+			fallback: "Transparent",
+			disabled: true,
+			tooltipKey: "settings:options.clientMode.transparentDisabledTooltip",
+			tooltipFallback:
+				"Transparent cannot be the workspace default. Enable it per client when a writable local path is available.",
+		},
+	];
 
 const BACKUP_STRATEGY_CONFIG = [
 	{
@@ -351,9 +368,9 @@ export function SettingsPage() {
 		queryFn: () => auditApi.getPolicy(),
 	});
 
-	const defaultClientModeQuery = useQuery({
-		queryKey: ["system", "default-client-mode"],
-		queryFn: () => systemApi.getDefaultClientMode(),
+	const defaultClientPolicyQuery = useQuery({
+		queryKey: ["client", "policy", "default"],
+		queryFn: () => clientsApi.getDefaultPolicy(),
 	});
 
 	useEffect(() => {
@@ -377,13 +394,13 @@ export function SettingsPage() {
 	}, [policyQuery.data]);
 
 	useEffect(() => {
-		if (defaultClientModeQuery.data?.default_config_mode) {
+		if (defaultClientPolicyQuery.data?.config_mode) {
 			setDashboardSetting(
 				"clientDefaultMode",
-				defaultClientModeQuery.data.default_config_mode,
+				defaultClientPolicyQuery.data.config_mode as ClientDefaultMode,
 			);
 		}
-	}, [defaultClientModeQuery.data, setDashboardSetting]);
+	}, [defaultClientPolicyQuery.data, setDashboardSetting]);
 
 	const policyMutation = useMutation({
 		mutationFn: (data: { policy: AuditRetentionPolicy; sweep_interval_secs: number }) =>
@@ -397,27 +414,42 @@ export function SettingsPage() {
 		},
 	});
 
-	const defaultClientModeMutation = useMutation({
-		mutationFn: (mode: ClientDefaultMode) => systemApi.setDefaultClientMode(mode),
+	const defaultClientPolicyMutation = useMutation({
+		mutationFn: (payload: {
+			config_mode: ClientDefaultMode;
+			capability_source: CapabilitySource;
+			first_contact_behavior: "deny" | "review" | "allow";
+			policySnapshot?: { config_mode: string; first_contact_behavior: string } | null;
+		}) => {
+			const { policySnapshot, ...body } = payload;
+			return clientsApi.setDefaultPolicy(body, policySnapshot);
+		},
 		onSuccess: (data) => {
-			setDashboardSetting("clientDefaultMode", data.default_config_mode);
+			if (!data) {
+				throw new Error("Missing default client policy response");
+			}
+			// Sync cache immediately so duplicate Radix `onValueChange` (same tick / refetch race)
+			// sees the new policy and skips a second mutate + notify.
+			queryClient.setQueryData(["client", "policy", "default"], {
+				config_mode: data.config_mode,
+				capability_source: data.capability_source,
+				first_contact_behavior: data.first_contact_behavior,
+			});
+			setDashboardSetting("clientDefaultMode", data.config_mode as ClientDefaultMode);
 			notifySuccess(
 				t("settings:clients.modeTitle", {
 					defaultValue: "Client Management Mode",
 				}),
-				t("settings:system.applySuccessDescription", {
-					source: data.default_config_mode,
-					apiPort: effectiveApiPort,
-					mcpPort: effectiveMcpPort,
-					defaultValue: "Default mode updated to {{source}}.",
+				t("settings:clients.policySaved", {
+					defaultValue: "Default client policy updated.",
 				}),
 			);
-			void defaultClientModeQuery.refetch();
+			void defaultClientPolicyQuery.refetch();
 		},
 		onError: (error) => {
 			notifyError(
-				t("settings:clients.modeTitle", {
-					defaultValue: "Client Management Mode",
+				t("settings:clients.policySaveFailed", {
+					defaultValue: "Failed to update default client policy",
 				}),
 				stringifyError(error),
 			);
@@ -706,6 +738,13 @@ export function SettingsPage() {
 		"w-full justify-center gap-2 px-2 py-2 text-left text-sm font-medium text-slate-600 data-[state=active]:text-emerald-700 md:justify-start md:px-3 dark:text-slate-300";
 	const settingItemTitleClass = "text-base font-medium";
 	const settingItemDescriptionClass = "text-sm text-muted-foreground";
+	/** Clients tab: left column wraps without stealing flex space from controls; right keeps a floor width so Segments are not squeezed. */
+	const clientsSettingsRowClass =
+		"flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6";
+	const clientsSettingsLabelClass =
+		"min-w-0 max-w-full flex-1 space-y-0.5 sm:pr-2 lg:max-w-lg xl:max-w-xl";
+	const clientsSettingsControlClass =
+		"w-full shrink-0 sm:w-auto sm:min-w-[16rem] md:min-w-[20rem] lg:min-w-[24rem]";
 
 	const themeOptions = useMemo<SegmentOption[]>(
 		() =>
@@ -737,11 +776,109 @@ export function SettingsPage() {
 
 	const clientModeOptions = useMemo<SegmentOption[]>(
 		() =>
-			CLIENT_MODE_CONFIG.map(({ value, labelKey, fallback }) => ({
-				value,
-				label: t(labelKey, { defaultValue: fallback }),
-			})),
+			CLIENT_MODE_CONFIG.map(
+				({ value, labelKey, fallback, disabled, tooltipKey, tooltipFallback }) => ({
+					value,
+					label: t(labelKey, { defaultValue: fallback }),
+					...(disabled ? { disabled: true } : {}),
+					...(tooltipKey && tooltipFallback
+						? {
+							tooltip: t(tooltipKey, { defaultValue: tooltipFallback }),
+						}
+						: {}),
+				}),
+			),
 		[t, i18n.language],
+	);
+
+	const firstContactOptions = useMemo<SegmentOption[]>(
+		() => [
+			{
+				value: "deny",
+				label: t("settings:clients.firstContact.deny", { defaultValue: "Deny" }),
+			},
+			{
+				value: "review",
+				label: t("settings:clients.firstContact.review", { defaultValue: "Review" }),
+			},
+			{
+				value: "allow",
+				label: t("settings:clients.firstContact.allow", { defaultValue: "Allow" }),
+			},
+		],
+		[t, i18n.language],
+	);
+
+	const currentFirstContactBehavior =
+		(defaultClientPolicyQuery.data?.first_contact_behavior as
+			| "deny"
+			| "review"
+			| "allow"
+			| undefined) ?? "allow";
+
+	const handleClientDefaultModeSegmentChange = useCallback(
+		(value: string) => {
+			if (defaultClientPolicyMutation.isPending) {
+				return;
+			}
+			const next = value as ClientDefaultMode;
+			const currentMode =
+				(defaultClientPolicyQuery.data?.config_mode as ClientDefaultMode | undefined) ??
+				dashboardSettings.clientDefaultMode;
+			if (next === currentMode) {
+				return;
+			}
+			defaultClientPolicyMutation.mutate({
+				config_mode: next,
+				capability_source: "activated",
+				first_contact_behavior: currentFirstContactBehavior,
+				policySnapshot: defaultClientPolicyQuery.data
+					? {
+							config_mode: defaultClientPolicyQuery.data.config_mode,
+							first_contact_behavior:
+								defaultClientPolicyQuery.data.first_contact_behavior,
+						}
+					: null,
+			});
+		},
+		[
+			currentFirstContactBehavior,
+			dashboardSettings.clientDefaultMode,
+			defaultClientPolicyMutation,
+			defaultClientPolicyQuery.data,
+		],
+	);
+
+	const handleFirstContactSegmentChange = useCallback(
+		(value: string) => {
+			if (defaultClientPolicyMutation.isPending) {
+				return;
+			}
+			const next = value as "deny" | "review" | "allow";
+			if (next === currentFirstContactBehavior) {
+				return;
+			}
+			defaultClientPolicyMutation.mutate({
+				config_mode:
+					(defaultClientPolicyQuery.data?.config_mode as ClientDefaultMode | undefined) ??
+					dashboardSettings.clientDefaultMode,
+				capability_source: "activated",
+				first_contact_behavior: next,
+				policySnapshot: defaultClientPolicyQuery.data
+					? {
+							config_mode: defaultClientPolicyQuery.data.config_mode,
+							first_contact_behavior:
+								defaultClientPolicyQuery.data.first_contact_behavior,
+						}
+					: null,
+			});
+		},
+		[
+			currentFirstContactBehavior,
+			dashboardSettings.clientDefaultMode,
+			defaultClientPolicyMutation,
+			defaultClientPolicyQuery.data,
+		],
 	);
 
 	const clientFilterOptions = useMemo<SegmentOption[]>(
@@ -1338,8 +1475,8 @@ export function SettingsPage() {
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-5">
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
+								<div className={clientsSettingsRowClass}>
+									<div className={clientsSettingsLabelClass}>
 										<h3 className="text-base font-medium">
 											{t("settings:clients.modeTitle", {
 												defaultValue: "Client Application Mode",
@@ -1352,21 +1489,44 @@ export function SettingsPage() {
 											})}
 										</p>
 									</div>
-									<div className="w-64">
-									<Segment
-										options={clientModeOptions}
-										value={dashboardSettings.clientDefaultMode}
-										onValueChange={(value) =>
-											defaultClientModeMutation.mutate(value as ClientDefaultMode)
-										}
-										disabled={defaultClientModeMutation.isPending}
-										showDots={false}
-									/>
+									<div className={clientsSettingsControlClass}>
+										<Segment
+											options={clientModeOptions}
+											value={defaultClientPolicyQuery.data?.config_mode ?? dashboardSettings.clientDefaultMode}
+											onValueChange={handleClientDefaultModeSegmentChange}
+											disabled={defaultClientPolicyMutation.isPending}
+											showDots={false}
+										/>
 									</div>
 								</div>
 
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
+								<div className={clientsSettingsRowClass}>
+									<div className={clientsSettingsLabelClass}>
+										<h3 className="text-base font-medium">
+											{t("settings:clients.firstContactTitle", {
+												defaultValue: "First-contact Behavior",
+											})}
+										</h3>
+										<p className="text-sm text-muted-foreground">
+											{t("settings:clients.firstContactDescription", {
+												defaultValue:
+													"Control how new, unknown clients are handled when they first request an MCP connection.",
+											})}
+										</p>
+									</div>
+									<div className={clientsSettingsControlClass}>
+										<Segment
+											options={firstContactOptions}
+											value={currentFirstContactBehavior}
+											onValueChange={handleFirstContactSegmentChange}
+											disabled={defaultClientPolicyMutation.isPending}
+											showDots={false}
+										/>
+									</div>
+								</div>
+
+								<div className={clientsSettingsRowClass}>
+									<div className={clientsSettingsLabelClass}>
 										<h3 className="text-base font-medium">
 											{t("settings:clients.defaultVisibilityTitle", {
 												defaultValue: "Default Client Visibility",
@@ -1379,7 +1539,7 @@ export function SettingsPage() {
 											})}
 										</p>
 									</div>
-									<div className="w-64">
+									<div className={clientsSettingsControlClass}>
 										<Segment
 											options={clientFilterOptions}
 											value={dashboardSettings.clientListDefaultFilter}
@@ -1394,8 +1554,8 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
+								<div className={clientsSettingsRowClass}>
+									<div className={clientsSettingsLabelClass}>
 										<h3 className="text-base font-medium">
 											{t("settings:clients.backupStrategyTitle", {
 												defaultValue: "Client Backup Strategy",
@@ -1408,7 +1568,7 @@ export function SettingsPage() {
 											})}
 										</p>
 									</div>
-									<div className="w-64">
+									<div className={clientsSettingsControlClass}>
 										<Segment
 											options={backupStrategyOptions}
 											value={dashboardSettings.clientBackupStrategy}
@@ -1423,8 +1583,8 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
+								<div className={clientsSettingsRowClass}>
+									<div className={clientsSettingsLabelClass}>
 										<h3 className="text-base font-medium">
 											{t("settings:clients.backupLimitTitle", {
 												defaultValue: "Maximum Backup Copies",
@@ -1451,11 +1611,11 @@ export function SettingsPage() {
 										disabled={
 											dashboardSettings.clientBackupStrategy !== "keep_n"
 										}
-										className="w-64"
+										className={clientsSettingsControlClass}
 									/>
 								</div>
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
+								<div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+									<div className={clientsSettingsLabelClass}>
 										<h3 className="text-base font-medium">
 											{t("settings:clients.liveLogsTitle", {
 												defaultValue: "Client Detail Logs",
@@ -1468,12 +1628,14 @@ export function SettingsPage() {
 											})}
 										</p>
 									</div>
-									<Switch
-										checked={dashboardSettings.showClientLiveLogs}
-										onCheckedChange={(checked) =>
-											setDashboardSetting("showClientLiveLogs", checked)
-										}
-									/>
+									<div className="shrink-0">
+										<Switch
+											checked={dashboardSettings.showClientLiveLogs}
+											onCheckedChange={(checked) =>
+												setDashboardSetting("showClientLiveLogs", checked)
+											}
+										/>
+									</div>
 								</div>
 							</CardContent>
 						</Card>
@@ -2369,8 +2531,8 @@ function MarketBlacklistCard({
 				)}
 
 				<div className="space-y-4 border-t border-slate-200 pt-4 dark:border-slate-700">
-					<div className="flex items-center justify-between gap-4">
-						<div className="space-y-0.5">
+					<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
+						<div className="min-w-0 space-y-0.5 md:flex-1">
 							<h3 className="text-base font-medium">
 								{t("settings:market.installChromeExtension", {
 									defaultValue: "Install Chrome Extension",
@@ -2383,23 +2545,25 @@ function MarketBlacklistCard({
 								})}
 							</p>
 						</div>
-						<Button asChild variant="outline" size="sm" className="w-52 shrink-0">
-							<a
-								href={CHROME_EXTENSION_URL}
-								target="_blank"
-								rel="noopener noreferrer"
-								className="inline-flex w-full items-center justify-center"
-							>
-								{t("settings:market.installChromeExtension", {
-									defaultValue: "Install Chrome Extension",
-								})}
-								<ExternalLink className="ml-1 h-3.5 w-3.5 shrink-0" />
-							</a>
-						</Button>
+						<div className="w-full shrink-0 md:ml-auto md:w-52">
+							<Button asChild variant="outline" size="sm" className="w-full">
+								<a
+									href={CHROME_EXTENSION_URL}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="inline-flex w-full items-center justify-center"
+								>
+									{t("settings:market.installChromeExtension", {
+										defaultValue: "Install Chrome Extension",
+									})}
+									<ExternalLink className="ml-1 h-3.5 w-3.5 shrink-0" />
+								</a>
+							</Button>
+						</div>
 					</div>
 
-					<div className="flex items-center justify-between gap-4">
-						<div className="space-y-0.5">
+					<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
+						<div className="min-w-0 space-y-0.5 md:flex-1">
 							<h3 className="text-base font-medium">
 								{t("settings:market.installEdgeExtension", {
 									defaultValue: "Install Edge Extension",
@@ -2412,19 +2576,21 @@ function MarketBlacklistCard({
 								})}
 							</p>
 						</div>
-						<Button asChild variant="outline" size="sm" className="w-52 shrink-0">
-							<a
-								href={EDGE_EXTENSION_URL}
-								target="_blank"
-								rel="noopener noreferrer"
-								className="inline-flex w-full items-center justify-center"
-							>
-								{t("settings:market.installEdgeExtension", {
-									defaultValue: "Install Edge Extension",
-								})}
-								<ExternalLink className="ml-1 h-3.5 w-3.5 shrink-0" />
-							</a>
-						</Button>
+						<div className="w-full shrink-0 md:ml-auto md:w-52">
+							<Button asChild variant="outline" size="sm" className="w-full">
+								<a
+									href={EDGE_EXTENSION_URL}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="inline-flex w-full items-center justify-center"
+								>
+									{t("settings:market.installEdgeExtension", {
+										defaultValue: "Install Edge Extension",
+									})}
+									<ExternalLink className="ml-1 h-3.5 w-3.5 shrink-0" />
+								</a>
+							</Button>
+						</div>
 					</div>
 
 					<p className="text-xs text-muted-foreground">
