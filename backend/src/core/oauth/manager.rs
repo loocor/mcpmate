@@ -178,9 +178,13 @@ impl OAuthManager {
     }
 
     pub async fn initiate(&self, server_id: &str) -> Result<OAuthInitiateResult> {
+        let server_model = server::get_server_by_id(&self.pool, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
         let config = server::get_server_oauth_config(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("OAuth is not configured for server '{}'", server_id))?;
+        let resource = oauth_resource_from_server(&server_model)?;
 
         let state = generate_oauth_random(32);
         let code_verifier = generate_oauth_random(64);
@@ -193,6 +197,7 @@ impl OAuthManager {
             query.append_pair("response_type", "code");
             query.append_pair("client_id", &config.client_id);
             query.append_pair("redirect_uri", &config.redirect_uri);
+            query.append_pair("resource", &resource);
             query.append_pair("state", &state);
             query.append_pair("code_challenge", &code_challenge);
             query.append_pair("code_challenge_method", "S256");
@@ -229,6 +234,10 @@ impl OAuthManager {
         let config = server::get_server_oauth_config(&self.pool, &pending.server_id)
             .await?
             .ok_or_else(|| anyhow!("OAuth config missing for server '{}'", pending.server_id))?;
+        let server_model = server::get_server_by_id(&self.pool, &pending.server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server '{}' not found", pending.server_id))?;
+        let resource = oauth_resource_from_server(&server_model)?;
 
         let mut form = vec![
             ("grant_type", "authorization_code".to_string()),
@@ -236,6 +245,7 @@ impl OAuthManager {
             ("redirect_uri", config.redirect_uri.clone()),
             ("client_id", config.client_id.clone()),
             ("code_verifier", pending.code_verifier.clone()),
+            ("resource", resource),
         ];
         if let Some(secret) = config.client_secret.as_ref().filter(|value| !value.trim().is_empty()) {
             form.push(("client_secret", secret.clone()));
@@ -249,16 +259,26 @@ impl OAuthManager {
             serializer.finish()
         };
 
-        let token_response = self
+        let response = self
             .http_client
             .post(&config.token_endpoint)
             .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .body(encoded_body)
             .send()
             .await
-            .context("Failed to call OAuth token endpoint")?
-            .error_for_status()
-            .context("OAuth token endpoint returned error status")?
+            .context("Failed to call OAuth token endpoint")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            let detail = body.trim();
+            if detail.is_empty() {
+                bail!("OAuth token endpoint returned error status: {status}");
+            }
+            bail!("OAuth token endpoint returned error status: {status} {detail}");
+        }
+
+        let token_response = response
             .json::<OAuthTokenResponse>()
             .await
             .context("Failed to parse OAuth token response")?;
@@ -466,6 +486,18 @@ fn issuer_from_endpoint(endpoint: &str) -> String {
         .unwrap_or_else(|| endpoint.trim_end_matches('/').to_string())
 }
 
+fn oauth_resource_from_server(server_model: &crate::config::models::Server) -> Result<String> {
+    let server_url = server_model
+        .url
+        .as_deref()
+        .ok_or_else(|| anyhow!("Streamable HTTP server is missing a URL"))?;
+    let mut resource = Url::parse(server_url)
+        .with_context(|| format!("Invalid streamable HTTP server URL '{}'", server_url))?;
+    resource.set_query(None);
+    resource.set_fragment(None);
+    Ok(resource.to_string())
+}
+
 fn protected_resource_candidates(resource_url: &Url) -> Result<Vec<String>> {
     let origin = resource_origin(resource_url);
     let mut candidates = vec![format!("{origin}/.well-known/oauth-protected-resource")];
@@ -513,7 +545,10 @@ mod tests {
         common::{server::ServerType, status::EnabledStatus},
         config::{models::Server, server::{crud::upsert_server, init::initialize_server_tables}},
     };
-    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{body_string_contains, method, path},
+    };
 
     async fn setup_manager() -> OAuthManager {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -570,6 +605,7 @@ mod tests {
         assert!(initiate.authorization_url.contains("code_challenge="));
         assert!(initiate.authorization_url.contains("code_challenge_method=S256"));
         assert!(initiate.authorization_url.contains("client_id=client-1"));
+        assert!(initiate.authorization_url.contains("resource=https%3A%2F%2Fexample.com%2Fmcp"));
     }
 
     #[tokio::test]
@@ -580,6 +616,7 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/token"))
+            .and(body_string_contains("resource=https%3A%2F%2Fexample.com%2Fmcp"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "access_token": "access-123",

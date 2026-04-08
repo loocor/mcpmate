@@ -51,6 +51,14 @@
 }
 
 @layer base {
+
+	html,
+	body,
+	#root {
+		height: 100%;
+		overflow: hidden;
+	}
+
 	body {
 		@apply bg-background text-foreground;
 	}
@@ -68,8 +76,10 @@
 	/* Ensure Popover has proper z-index but don't interfere with default events */
 	[data-radix-popper-content-wrapper] {
 		z-index: 100 !important;
-		pointer-events: auto !important; /* allow hover/click to reach popper content */
-		isolation: isolate; /* create a new stacking context to sit above overlays */
+		pointer-events: auto !important;
+		/* allow hover/click to reach popper content */
+		isolation: isolate;
+		/* create a new stacking context to sit above overlays */
 	}
 
 	/* Ensure combobox menus aren't dimmed by upstream opacity */
