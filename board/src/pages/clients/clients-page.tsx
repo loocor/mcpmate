@@ -134,20 +134,26 @@ export function ClientsPage() {
 	const filteredClientsAsEntities = React.useMemo<ClientToolbarEntity[]>(() => {
 		if (filter === "allowed") {
 			return clientsAsEntities.filter(
-				(c) => c.approval_status !== "pending" && c.approval_status !== "rejected",
+				(c) =>
+					c.approval_status !== "pending" &&
+					c.approval_status !== "rejected" &&
+					c.approval_status !== "suspended",
 			);
 		}
 		if (filter === "pending") {
 			return clientsAsEntities.filter((c) => c.approval_status === "pending");
 		}
 		if (filter === "denied") {
-			return clientsAsEntities.filter((c) => c.approval_status === "rejected");
+			return clientsAsEntities.filter(
+				(c) => c.approval_status === "rejected" || c.approval_status === "suspended",
+			);
 		}
 		return clientsAsEntities;
 	}, [clientsAsEntities, filter]);
 
 	const getGovernanceStatus = (client: ClientInfo) => {
 		if (client.approval_status === "pending") return "pending";
+		if (client.approval_status === "suspended") return "denied";
 		if (client.approval_status === "rejected") return "denied";
 		return "allowed";
 	};

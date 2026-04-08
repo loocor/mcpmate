@@ -159,9 +159,18 @@ impl DbTemplateSource {
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         rows.into_iter()
-            .map(|(_identifier, payload_json)| {
-                serde_json::from_str::<ClientTemplate>(&payload_json)
-                    .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err)))
+            .map(|(identifier, payload_json)| {
+                let template = serde_json::from_str::<ClientTemplate>(&payload_json)
+                    .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err)))?;
+
+                if template.identifier != identifier {
+                    return Err(ConfigError::TemplateParseError(format!(
+                        "Runtime template identifier mismatch: row identifier '{}' does not match payload identifier '{}'",
+                        identifier, template.identifier
+                    )));
+                }
+
+                Ok(template)
             })
             .collect()
     }
