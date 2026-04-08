@@ -540,7 +540,7 @@ pub async fn set_first_contact_behavior(
 
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
-        crate::audit::AuditEvent::new(AuditAction::OnboardingPolicyUpdate, AuditStatus::Success)
+        crate::audit::AuditEvent::new(AuditAction::FirstContactBehaviorUpdate, AuditStatus::Success)
             .with_http_route("POST", "/api/system/settings/first-contact-behavior")
             .with_data(serde_json::json!({ "behavior": behavior.as_str() }))
             .build(),

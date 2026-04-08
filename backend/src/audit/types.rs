@@ -69,6 +69,7 @@ pub enum AuditAction {
     ClientReject,
     ClientSuspend,
     OnboardingPolicyUpdate,
+    FirstContactBehaviorUpdate,
     CoreSourceApply,
     LocalCoreServiceStart,
     LocalCoreServiceRestart,
@@ -149,7 +150,8 @@ impl AuditAction {
             | Self::RuntimeInstall
             | Self::RuntimeCacheReset
             | Self::AuditPolicyUpdate
-            | Self::OnboardingPolicyUpdate => AuditCategory::Management,
+            | Self::OnboardingPolicyUpdate
+            | Self::FirstContactBehaviorUpdate => AuditCategory::Management,
             Self::CapabilityGrant | Self::CapabilityRevoke => AuditCategory::ProfileConfig,
             Self::ProfileServerEnable | Self::ProfileServerDisable | Self::ProfileServerRemove => {
                 AuditCategory::ProfileConfig
