@@ -111,6 +111,7 @@ pub mod database {
         pub const PROFILE_TOOL: &str = "profile_tool";
         pub const PROFILE: &str = "profile";
         pub const CLIENT: &str = "client";
+        pub const CLIENT_TEMPLATE_RUNTIME: &str = "client_template_runtime";
         pub const SYSTEM_SETTINGS: &str = "system_settings";
         pub const SERVER_ARGS: &str = "server_args";
         pub const SERVER_CONFIG: &str = "server_config";

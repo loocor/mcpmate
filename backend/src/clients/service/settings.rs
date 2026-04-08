@@ -1,10 +1,30 @@
 use super::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{CapabilitySource, ClientCapabilityConfig};
+use crate::clients::service::core::RuntimeClientMetadata;
 use crate::common::profile::{ProfileRole, ProfileType};
 use crate::config::models::Profile;
+use serde_json::{Map, Value, json};
 
 const VALID_TRANSPORTS: &[&str] = &["auto", "sse", "stdio", "streamable_http"];
+const VALID_CONNECTION_MODES: &[&str] = &["local_config_detected", "remote_http", "manual"];
+const VALID_SUPPORTED_TRANSPORTS: &[&str] = &["sse", "stdio", "streamable_http"];
+
+#[derive(Debug, Clone, Default)]
+pub struct ActiveClientSettingsUpdate {
+    pub display_name: Option<String>,
+    pub config_mode: Option<String>,
+    pub transport: Option<String>,
+    pub client_version: Option<String>,
+    pub connection_mode: Option<String>,
+    pub config_path: Option<String>,
+    pub description: Option<String>,
+    pub homepage_url: Option<String>,
+    pub docs_url: Option<String>,
+    pub support_url: Option<String>,
+    pub logo_url: Option<String>,
+    pub supported_transports: Option<Vec<String>>,
+}
 
 impl ClientConfigService {
     /// Update client settings (config_mode, transport, client_version)
@@ -18,16 +38,34 @@ impl ClientConfigService {
         transport: Option<String>,
         client_version: Option<String>,
     ) -> ConfigResult<()> {
+        self.set_active_client_settings(
+            identifier,
+            ActiveClientSettingsUpdate {
+                config_mode,
+                transport,
+                client_version,
+                ..ActiveClientSettingsUpdate::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn set_active_client_settings(
+        &self,
+        identifier: &str,
+        update: ActiveClientSettingsUpdate,
+    ) -> ConfigResult<()> {
         tracing::info!(
             client = %identifier,
-            config_mode = ?config_mode,
-            transport = ?transport,
-            client_version = ?client_version,
-            "set_client_settings: entry"
+            config_mode = ?update.config_mode,
+            transport = ?update.transport,
+            client_version = ?update.client_version,
+            connection_mode = ?update.connection_mode,
+            config_path = ?update.config_path,
+            "set_active_client_settings: entry"
         );
 
-        // Validate transport value if provided
-        if let Some(ref tr) = transport {
+        if let Some(ref tr) = update.transport {
             if !VALID_TRANSPORTS.contains(&tr.as_str()) {
                 let err = format!(
                     "Invalid transport value '{}', must be one of: {}",
@@ -39,29 +77,110 @@ impl ClientConfigService {
             }
         }
 
-        // Ensure state row exists
-        let name = self.resolve_client_name(identifier).await?;
-        self.ensure_state_row_with_name(identifier, &name).await?;
+        if let Some(ref mode) = update.connection_mode {
+            if !VALID_CONNECTION_MODES.contains(&mode.as_str()) {
+                let err = format!(
+                    "Invalid connection_mode value '{}', must be one of: {}",
+                    mode,
+                    VALID_CONNECTION_MODES.join(", ")
+                );
+                tracing::error!(client = %identifier, connection_mode = %mode, "{}", err);
+                return Err(ConfigError::DataAccessError(err));
+            }
+        }
 
-        // Update name (always)
+        if let Some(ref supported_transports) = update.supported_transports {
+            for transport in supported_transports {
+                if !VALID_SUPPORTED_TRANSPORTS.contains(&transport.as_str()) {
+                    let err = format!(
+                        "Invalid supported transport '{}', must be one of: {}",
+                        transport,
+                        VALID_SUPPORTED_TRANSPORTS.join(", ")
+                    );
+                    tracing::error!(client = %identifier, supported_transport = %transport, "{}", err);
+                    return Err(ConfigError::DataAccessError(err));
+                }
+            }
+        }
+
+        let name = update
+            .display_name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or(self.resolve_client_name(identifier).await?);
+        let existing_state = self.fetch_state(identifier).await?;
+        let should_persist_runtime_template = self
+            .should_persist_runtime_active_template(identifier, existing_state.as_ref())
+            .await?;
+        self.ensure_active_state_row_with_name(identifier, &name, None, Some("approved"))
+            .await?;
+
         self.update_client_name(identifier, &name).await?;
+        self.update_display_name(identifier, &name).await?;
 
-        // Update config_mode if provided
-        if let Some(mode) = config_mode {
+        if let Some(mode) = update.config_mode {
             self.update_config_mode(identifier, &mode).await?;
         }
 
-        // Update transport if provided
-        if let Some(tr) = transport {
+        if let Some(tr) = update.transport {
             self.update_transport(identifier, &tr).await?;
         }
 
-        // Update client_version if provided
-        if let Some(ver) = client_version {
+        if let Some(ver) = update.client_version {
             self.update_client_version(identifier, &ver).await?;
         }
 
-        tracing::info!(client = %identifier, "set_client_settings: complete");
+        let resolved_connection_mode = update.connection_mode.or_else(|| {
+            update.config_path.as_ref().map(|path| {
+                if path.trim().is_empty() {
+                    "manual".to_string()
+                } else {
+                    "local_config_detected".to_string()
+                }
+            })
+        });
+
+        if update.config_path.is_some() || resolved_connection_mode.is_some() {
+            self.update_runtime_target(
+                identifier,
+                update.config_path.as_deref(),
+                resolved_connection_mode.as_deref(),
+            )
+            .await?;
+        }
+
+        if update.description.is_some()
+            || update.homepage_url.is_some()
+            || update.docs_url.is_some()
+            || update.support_url.is_some()
+            || update.logo_url.is_some()
+            || update.supported_transports.is_some()
+        {
+            let existing_metadata = existing_state
+                .as_ref()
+                .map(|state| state.runtime_client_metadata())
+                .unwrap_or_default();
+            let next_metadata = RuntimeClientMetadata {
+                description: update.description.or(existing_metadata.description),
+                homepage_url: update.homepage_url.or(existing_metadata.homepage_url),
+                docs_url: update.docs_url.or(existing_metadata.docs_url),
+                support_url: update.support_url.or(existing_metadata.support_url),
+                logo_url: update.logo_url.or(existing_metadata.logo_url),
+                category: existing_metadata.category,
+                supported_transports: update
+                    .supported_transports
+                    .unwrap_or(existing_metadata.supported_transports),
+            };
+            self.update_runtime_client_metadata(identifier, &next_metadata)
+                .await?;
+        }
+
+        if should_persist_runtime_template {
+            self.persist_runtime_active_template(identifier).await?;
+        }
+
+        tracing::info!(client = %identifier, "set_active_client_settings: complete");
         Ok(())
     }
 
@@ -82,6 +201,21 @@ impl ClientConfigService {
                 tracing::error!(client = %identifier, error = %e, "Failed to update client name");
                 ConfigError::DataAccessError(e.to_string())
             })?;
+
+        Ok(())
+    }
+
+    async fn update_display_name(
+        &self,
+        identifier: &str,
+        display_name: &str,
+    ) -> ConfigResult<()> {
+        sqlx::query("UPDATE client SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE identifier = ?")
+            .bind(display_name)
+            .bind(identifier)
+            .execute(&*self.db_pool)
+            .await
+            .map_err(|e| ConfigError::DataAccessError(e.to_string()))?;
 
         Ok(())
     }
@@ -176,6 +310,65 @@ impl ClientConfigService {
         Ok(())
     }
 
+    async fn update_runtime_target(
+        &self,
+        identifier: &str,
+        config_path: Option<&str>,
+        connection_mode: Option<&str>,
+    ) -> ConfigResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET config_path = COALESCE(?, config_path),
+                connection_mode = COALESCE(?, connection_mode),
+                governance_kind = 'active',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(config_path)
+        .bind(connection_mode)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|e| ConfigError::DataAccessError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn update_runtime_client_metadata(
+        &self,
+        identifier: &str,
+        metadata: &RuntimeClientMetadata,
+    ) -> ConfigResult<()> {
+        let existing: Option<String> = sqlx::query_scalar("SELECT approval_metadata FROM client WHERE identifier = ?")
+            .bind(identifier)
+            .fetch_optional(&*self.db_pool)
+            .await
+            .map_err(|e| ConfigError::DataAccessError(e.to_string()))?;
+
+        let mut payload = existing
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<Map<String, Value>>(raw).ok())
+            .unwrap_or_default();
+        payload.insert("runtime_client".to_string(), json!(metadata));
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET approval_metadata = ?, governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(serde_json::to_string(&payload).map_err(|e| ConfigError::DataAccessError(e.to_string()))?)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|e| ConfigError::DataAccessError(e.to_string()))?;
+
+        Ok(())
+    }
+
     /// Get client settings (config_mode, transport, client_version)
     /// Returns None if client state not found
     pub async fn get_client_settings(
@@ -226,6 +419,7 @@ impl ClientConfigService {
             SET capability_source = ?,
                 selected_profile_ids = ?,
                 custom_profile_id = ?,
+                governance_kind = 'active',
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
