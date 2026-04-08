@@ -4,7 +4,9 @@ use crate::clients::models::{CapabilitySource, ClientCapabilityConfig};
 use crate::clients::service::core::RuntimeClientMetadata;
 use crate::common::profile::{ProfileRole, ProfileType};
 use crate::config::models::Profile;
+use crate::system::paths::get_path_service;
 use serde_json::{Map, Value, json};
+use tokio::fs::OpenOptions;
 
 const VALID_TRANSPORTS: &[&str] = &["auto", "sse", "stdio", "streamable_http"];
 const VALID_CONNECTION_MODES: &[&str] = &["local_config_detected", "remote_http", "manual"];
@@ -27,6 +29,82 @@ pub struct ActiveClientSettingsUpdate {
 }
 
 impl ClientConfigService {
+    async fn validate_runtime_target_input(
+        &self,
+        connection_mode: Option<&str>,
+        config_path: Option<&str>,
+    ) -> ConfigResult<()> {
+        let normalized_path = config_path.map(str::trim).filter(|value| !value.is_empty());
+
+        match connection_mode {
+            Some("local_config_detected") => {
+                let raw_path = normalized_path.ok_or_else(|| {
+                    ConfigError::DataAccessError(
+                        "Clients with a local config target must provide a valid MCP config file path."
+                            .to_string(),
+                    )
+                })?;
+                self.validate_existing_config_target(raw_path).await?;
+            }
+            Some("manual") | Some("remote_http") => {
+                if normalized_path.is_some() {
+                    return Err(ConfigError::DataAccessError(
+                        "Only clients with a local config target may store a config file path."
+                            .to_string(),
+                    ));
+                }
+            }
+            _ => {
+                if let Some(raw_path) = normalized_path {
+                    self.validate_existing_config_target(raw_path).await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn validate_existing_config_target(
+        &self,
+        raw_path: &str,
+    ) -> ConfigResult<()> {
+        let resolved_path = get_path_service()
+            .resolve_user_path(raw_path)
+            .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
+
+        let metadata = tokio::fs::metadata(&resolved_path).await.map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                ConfigError::DataAccessError(format!(
+                    "Configured MCP file does not exist: {}",
+                    raw_path
+                ))
+            } else {
+                ConfigError::FileOperationError(format!(
+                    "Failed to inspect configured MCP file {}: {}",
+                    raw_path, err
+                ))
+            }
+        })?;
+
+        if !metadata.is_file() {
+            return Err(ConfigError::DataAccessError(format!(
+                "Configured MCP path is not a file: {}",
+                raw_path
+            )));
+        }
+
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&resolved_path)
+            .await
+            .map_err(|_| ConfigError::PathNotWritable {
+                path: resolved_path,
+            })?;
+
+        Ok(())
+    }
+
     /// Update client settings (config_mode, transport, client_version)
     /// - config_mode: optional, only update if provided
     /// - transport: optional, only update if provided; must be one of: auto, sse, stdio, streamable_http
@@ -113,7 +191,36 @@ impl ClientConfigService {
         let should_persist_runtime_template = self
             .should_persist_runtime_active_template(identifier, existing_state.as_ref())
             .await?;
-        self.ensure_active_state_row_with_name(identifier, &name, None, Some("approved"))
+
+        let normalized_config_path = update
+            .config_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        let resolved_connection_mode = update.connection_mode.clone().or_else(|| {
+            normalized_config_path.as_ref().map(|path| {
+                if path.trim().is_empty() {
+                    "manual".to_string()
+                } else {
+                    "local_config_detected".to_string()
+                }
+            })
+        });
+
+        self.validate_runtime_target_input(
+            resolved_connection_mode.as_deref(),
+            normalized_config_path.as_deref(),
+        )
+        .await?;
+
+        let approval_status = existing_state
+            .as_ref()
+            .map(|state| state.approval_status().to_string())
+            .unwrap_or_else(|| "approved".to_string());
+
+        self.ensure_active_state_row_with_name(identifier, &name, None, Some(&approval_status))
             .await?;
 
         self.update_client_name(identifier, &name).await?;
@@ -131,20 +238,10 @@ impl ClientConfigService {
             self.update_client_version(identifier, &ver).await?;
         }
 
-        let resolved_connection_mode = update.connection_mode.or_else(|| {
-            update.config_path.as_ref().map(|path| {
-                if path.trim().is_empty() {
-                    "manual".to_string()
-                } else {
-                    "local_config_detected".to_string()
-                }
-            })
-        });
-
         if update.config_path.is_some() || resolved_connection_mode.is_some() {
             self.update_runtime_target(
                 identifier,
-                update.config_path.as_deref(),
+                normalized_config_path.as_deref(),
                 resolved_connection_mode.as_deref(),
             )
             .await?;
@@ -319,14 +416,25 @@ impl ClientConfigService {
         sqlx::query(
             r#"
             UPDATE client
-            SET config_path = COALESCE(?, config_path),
-                connection_mode = COALESCE(?, connection_mode),
+            SET config_path = CASE
+                    WHEN ? IS NOT NULL THEN NULLIF(?, '')
+                    WHEN ? IN ('manual', 'remote_http') THEN NULL
+                    ELSE NULLIF(?, '')
+                END,
+                connection_mode = CASE
+                    WHEN ? IS NULL THEN connection_mode
+                    ELSE NULLIF(?, '')
+                END,
                 governance_kind = 'active',
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
         .bind(config_path)
+        .bind(config_path)
+        .bind(connection_mode)
+        .bind(config_path)
+        .bind(connection_mode)
         .bind(connection_mode)
         .bind(identifier)
         .execute(&*self.db_pool)

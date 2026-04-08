@@ -18,6 +18,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::fs::OpenOptions;
 
 // Generated at build time from the repository's config/client directory
 include!(concat!(env!("OUT_DIR"), "/official_templates_generated.rs"));
@@ -333,8 +334,6 @@ pub struct ClientConfigService {
 impl ClientConfigService {
     /// Bootstrap service with default template root resolution
     pub async fn bootstrap(db_pool: Arc<SqlitePool>) -> crate::clients::error::ConfigResult<Self> {
-        // Ensure keymap defaults file exists on first run
-        let _ = crate::clients::keymap::reload();
         let templates = embedded_official_templates()?;
         Self::seed_runtime_template_snapshots_from_templates(db_pool.as_ref(), &templates).await?;
         Self::seed_client_runtime_rows_from_templates(db_pool.as_ref(), &templates).await?;
@@ -411,6 +410,53 @@ impl ClientConfigService {
         }
 
         Ok(None)
+    }
+
+    pub(super) async fn verified_local_config_target(
+        &self,
+        client_id: &str,
+    ) -> ConfigResult<Option<String>> {
+        let Some(config_path) = self.resolved_config_path(client_id).await? else {
+            return Ok(None);
+        };
+
+        let resolved_path = std::path::PathBuf::from(&config_path);
+        let metadata = tokio::fs::metadata(&resolved_path).await.map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                ConfigError::DataAccessError(format!(
+                    "Client config target does not exist: {}",
+                    config_path
+                ))
+            } else {
+                ConfigError::FileOperationError(format!(
+                    "Failed to inspect client config target {}: {}",
+                    config_path, err
+                ))
+            }
+        })?;
+
+        if !metadata.is_file() {
+            return Err(ConfigError::DataAccessError(format!(
+                "Client config target is not a file: {}",
+                config_path
+            )));
+        }
+
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&resolved_path)
+            .await
+            .map_err(|_| ConfigError::PathNotWritable { path: resolved_path.clone() })?;
+
+        Ok(Some(config_path))
+    }
+
+    pub async fn has_verified_local_config_target(
+        &self,
+        client_id: &str,
+    ) -> ConfigResult<bool> {
+        Ok(self.verified_local_config_target(client_id).await?.is_some())
     }
 
     #[cfg(test)]
