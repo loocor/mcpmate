@@ -274,15 +274,15 @@ export function Layout() {
 	}
 
 	return (
-		<div className="h-screen overflow-hidden">
+		<div className="min-h-screen">
 			<Sidebar />
 			<Header />
 			<main
-				className={`box-border h-full min-w-0 overflow-hidden pt-16 transition-all duration-300 ease-in-out ${sidebarOpen ? "ml-64" : "ml-16"
+				className={`min-w-0 pt-16 transition-all duration-300 ease-in-out ${sidebarOpen ? "ml-64" : "ml-16"
 					}`}
 			>
 				{/* Viewport-height column: outlet fills space above footer; pages can use h-full + inner scroll */}
-				<div className="box-border flex h-full w-full min-w-0 flex-col overflow-hidden p-4">
+				<div className="box-border flex h-[calc(100vh-4rem)] w-full min-w-0 flex-col overflow-hidden p-4">
 					<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 						<Outlet />
 					</div>
