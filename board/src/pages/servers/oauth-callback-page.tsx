@@ -1,5 +1,5 @@
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { serversApi } from "../../lib/api";
@@ -16,6 +16,7 @@ export function OAuthCallbackPage() {
 	const [status, setStatus] = useState<"processing" | "success" | "error">("processing");
 	const [errorMessage, setErrorMessage] = useState("");
 	const [serverTarget, setServerTarget] = useState<string | null>(null);
+	const hasProcessedRef = useRef(false);
 
 	useEffect(() => {
 		let redirectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -67,6 +68,11 @@ export function OAuthCallbackPage() {
 		};
 
 		async function processCallback() {
+			if (hasProcessedRef.current) {
+				return;
+			}
+			hasProcessedRef.current = true;
+
 			try {
 				const oauthStatus = await serversApi.handleOAuthCallback({
 					code: callbackCode,
@@ -130,7 +136,8 @@ export function OAuthCallbackPage() {
 	})();
 
 	return (
-		<div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
+		<div className="min-h-screen overflow-y-auto bg-slate-50 p-4 dark:bg-slate-950">
+			<div className="flex min-h-full items-center justify-center">
 			<Card className="w-full max-w-md">
 				<CardHeader className="text-center">
 					<CardTitle>{t("oauth.callback.title", { defaultValue: "OAuth Authorization" })}</CardTitle>
@@ -161,6 +168,7 @@ export function OAuthCallbackPage() {
 					)}
 				</CardContent>
 			</Card>
+			</div>
 		</div>
 	);
 }
