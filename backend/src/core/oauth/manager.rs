@@ -270,12 +270,7 @@ impl OAuthManager {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            let detail = body.trim();
-            if detail.is_empty() {
-                bail!("OAuth token endpoint returned error status: {status}");
-            }
-            bail!("OAuth token endpoint returned error status: {status} {detail}");
+            bail!("OAuth token endpoint returned error status: {status}");
         }
 
         let token_response = response
