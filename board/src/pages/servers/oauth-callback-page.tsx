@@ -136,7 +136,8 @@ export function OAuthCallbackPage() {
 	})();
 
 	return (
-		<div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
+		<div className="h-full overflow-y-auto bg-slate-50 p-4 dark:bg-slate-950">
+			<div className="flex min-h-full items-center justify-center">
 			<Card className="w-full max-w-md">
 				<CardHeader className="text-center">
 					<CardTitle>{t("oauth.callback.title", { defaultValue: "OAuth Authorization" })}</CardTitle>
@@ -167,6 +168,7 @@ export function OAuthCallbackPage() {
 					)}
 				</CardContent>
 			</Card>
+			</div>
 		</div>
 	);
 }
