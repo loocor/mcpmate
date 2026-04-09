@@ -1750,6 +1750,7 @@ export function ClientDetailPage() {
 										variant="default"
 										onClick={() => applyMutation.mutate({ preview: false })}
 										disabled={
+											loadingConfig ||
 											applyMutation.isPending ||
 											!canSaveManagementSettings ||
 											(shouldRequireLocalConfigWrite && !canApplyTransparentConfig)
