@@ -186,7 +186,7 @@ export function ClientDetailPage() {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	usePageTranslations("clients");
-	const { t } = useTranslation("clients");
+	const { t, i18n } = useTranslation("clients");
 	const showClientLiveLogs = useAppStore(
 		(state) => state.dashboardSettings.showClientLiveLogs,
 	);
@@ -523,7 +523,7 @@ export function ClientDetailPage() {
 				},
 			];
 		},
-		[t],
+		[t, i18n.language],
 	);
 
 	const detailDescription = configDetails?.description ?? "";
@@ -558,7 +558,7 @@ export function ClientDetailPage() {
 						: undefined,
 			},
 		],
-		[configDetails?.writable_config, t],
+		[configDetails?.writable_config, t, i18n.language],
 	);
 	const [logFilter, setLogFilter] = useState("");
 	const [logPageSize, setLogPageSize] = useState<number>(10);
