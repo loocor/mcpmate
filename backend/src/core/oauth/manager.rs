@@ -502,7 +502,7 @@ fn oauth_resource_from_server(server_model: &crate::config::models::Server) -> R
         .map_err(|_| anyhow!("Invalid server URL '{}'", server_url))?;
     resource.set_query(None);
     resource.set_fragment(None);
-    Ok(resource.to_string())
+    Ok(resource.to_string().trim_end_matches('/').to_string())
 }
 
 fn protected_resource_candidates(resource_url: &Url) -> Result<Vec<String>> {
@@ -691,5 +691,26 @@ mod tests {
         let resource = oauth_resource_from_server(&server).expect("sanitize oauth resource");
 
         assert_eq!(resource, "https://example.com/mcp");
+    }
+
+    #[test]
+    fn oauth_resource_trims_trailing_slash() {
+        let server = Server {
+            id: Some("serv_origin".to_string()),
+            name: "server-origin".to_string(),
+            server_type: ServerType::StreamableHttp,
+            command: None,
+            url: Some("https://example.com".to_string()),
+            registry_server_id: None,
+            capabilities: None,
+            enabled: EnabledStatus::Enabled,
+            pending_import: false,
+            created_at: None,
+            updated_at: None,
+        };
+
+        let resource = oauth_resource_from_server(&server).expect("normalize oauth resource");
+
+        assert_eq!(resource, "https://example.com");
     }
 }
