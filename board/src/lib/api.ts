@@ -2506,27 +2506,24 @@ export const clientsApi = {
 	},
 
 	approveRecord: async (payload: ClientRecordReviewReq) => {
-		const resp = await fetchApi<ClientRecordLifecycleResp>("/api/client/manage/approve", {
+		return fetchApi<ClientRecordLifecycleResp>("/api/client/manage/approve", {
 			method: "POST",
 			body: JSON.stringify(payload),
 		});
-		return extractApiData(resp);
 	},
 
 	rejectRecord: async (payload: ClientRecordReviewReq) => {
-		const resp = await fetchApi<ClientRecordLifecycleResp>("/api/client/manage/reject", {
+		return fetchApi<ClientRecordLifecycleResp>("/api/client/manage/reject", {
 			method: "POST",
 			body: JSON.stringify(payload),
 		});
-		return extractApiData(resp);
 	},
 
 	suspendRecord: async (payload: ClientRecordReviewReq) => {
-		const resp = await fetchApi<ClientRecordLifecycleResp>("/api/client/manage/suspend", {
+		return fetchApi<ClientRecordLifecycleResp>("/api/client/manage/suspend", {
 			method: "POST",
 			body: JSON.stringify(payload),
 		});
-		return extractApiData(resp);
 	},
 
 	configDetails: async (identifier: string, doImport = false) => {
