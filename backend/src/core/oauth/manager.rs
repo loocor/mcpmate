@@ -494,6 +494,12 @@ fn oauth_resource_from_server(server_model: &crate::config::models::Server) -> R
         .ok_or_else(|| anyhow!("Server is missing a URL"))?;
     let mut resource = Url::parse(server_url)
         .with_context(|| format!("Invalid server URL '{}'", server_url))?;
+    resource
+        .set_username("")
+        .map_err(|_| anyhow!("Invalid server URL '{}'", server_url))?;
+    resource
+        .set_password(None)
+        .map_err(|_| anyhow!("Invalid server URL '{}'", server_url))?;
     resource.set_query(None);
     resource.set_fragment(None);
     Ok(resource.to_string())
@@ -664,5 +670,26 @@ mod tests {
         let manager = setup_manager().await;
         let error = manager.exchange_code("missing-state", "code").await.expect_err("invalid state should fail");
         assert!(error.to_string().contains("Invalid or expired OAuth state"));
+    }
+
+    #[test]
+    fn oauth_resource_strips_url_userinfo() {
+        let server = Server {
+            id: Some("serv_userinfo".to_string()),
+            name: "server-userinfo".to_string(),
+            server_type: ServerType::StreamableHttp,
+            command: None,
+            url: Some("https://user:pass@example.com/mcp?secret=1#fragment".to_string()),
+            registry_server_id: None,
+            capabilities: None,
+            enabled: EnabledStatus::Enabled,
+            pending_import: false,
+            created_at: None,
+            updated_at: None,
+        };
+
+        let resource = oauth_resource_from_server(&server).expect("sanitize oauth resource");
+
+        assert_eq!(resource, "https://example.com/mcp");
     }
 }
