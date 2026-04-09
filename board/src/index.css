@@ -51,8 +51,15 @@
 }
 
 @layer base {
+	html,
 	body {
 		@apply bg-background text-foreground;
+		height: 100%;
+		overflow: hidden;
+	}
+
+	#root {
+		height: 100%;
 	}
 
 	[data-vaul-drawer][data-vaul-drawer-direction="right"]::after {
