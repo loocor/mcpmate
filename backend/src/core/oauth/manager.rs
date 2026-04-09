@@ -276,7 +276,20 @@ impl OAuthManager {
 
         if !response.status().is_success() {
             let status = response.status();
-            bail!("OAuth token endpoint returned error status: {status}");
+            let token_endpoint = config.token_endpoint.as_str();
+            let response_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read response body>".to_string());
+            let truncated_response_body: String = if response_body.chars().count() > 512 {
+                let prefix: String = response_body.chars().take(512).collect();
+                format!("{prefix}...")
+            } else {
+                response_body
+            };
+            bail!(
+                "OAuth token endpoint returned error status: {status} for {token_endpoint}. Response body: {truncated_response_body}"
+            );
         }
 
         let token_response = response
@@ -488,10 +501,15 @@ fn issuer_from_endpoint(endpoint: &str) -> String {
 }
 
 fn oauth_resource_from_server(server_model: &crate::config::models::Server) -> Result<String> {
+    let server_label = server_model
+        .id
+        .as_deref()
+        .map(|id| format!("'{}' ({})", server_model.name, id))
+        .unwrap_or_else(|| format!("'{}'", server_model.name));
     let server_url = server_model
         .url
         .as_deref()
-        .ok_or_else(|| anyhow!("Server is missing a URL"))?;
+        .ok_or_else(|| anyhow!("Server {} is missing a URL", server_label))?;
     let mut resource = Url::parse(server_url)
         .with_context(|| format!("Invalid server URL '{}'", server_url))?;
     resource
