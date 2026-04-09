@@ -136,7 +136,7 @@ export function OAuthCallbackPage() {
 	})();
 
 	return (
-		<div className="h-full overflow-y-auto bg-slate-50 p-4 dark:bg-slate-950">
+		<div className="min-h-screen overflow-y-auto bg-slate-50 p-4 dark:bg-slate-950">
 			<div className="flex min-h-full items-center justify-center">
 			<Card className="w-full max-w-md">
 				<CardHeader className="text-center">

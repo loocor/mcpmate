@@ -181,6 +181,9 @@ impl OAuthManager {
         let server_model = server::get_server_by_id(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
+        if server_model.server_type != ServerType::StreamableHttp {
+            bail!("OAuth is only supported for streamable_http servers");
+        }
         let config = server::get_server_oauth_config(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("OAuth is not configured for server '{}'", server_id))?;
@@ -237,6 +240,9 @@ impl OAuthManager {
         let server_model = server::get_server_by_id(&self.pool, &pending.server_id)
             .await?
             .ok_or_else(|| anyhow!("Server '{}' not found", pending.server_id))?;
+        if server_model.server_type != ServerType::StreamableHttp {
+            bail!("OAuth is only supported for streamable_http servers");
+        }
         let resource = oauth_resource_from_server(&server_model)?;
 
         let mut form = vec![
@@ -485,9 +491,9 @@ fn oauth_resource_from_server(server_model: &crate::config::models::Server) -> R
     let server_url = server_model
         .url
         .as_deref()
-        .ok_or_else(|| anyhow!("Streamable HTTP server is missing a URL"))?;
+        .ok_or_else(|| anyhow!("Server is missing a URL"))?;
     let mut resource = Url::parse(server_url)
-        .with_context(|| format!("Invalid streamable HTTP server URL '{}'", server_url))?;
+        .with_context(|| format!("Invalid server URL '{}'", server_url))?;
     resource.set_query(None);
     resource.set_fragment(None);
     Ok(resource.to_string())
