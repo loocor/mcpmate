@@ -876,6 +876,27 @@ export function ClientDetailPage() {
 				);
 			}
 
+			// Validate transparent-mode requirements before persisting any management
+			// settings, so a failed precondition never leaves partial state in MCPMate.
+			if (shouldRequireLocalConfigWrite) {
+				if (!canWriteClientConfig) {
+					throw new Error(
+						t("detail.configuration.writeTargetRequiredReason", {
+							defaultValue:
+								"Applying governance to the client configuration requires a verified writable local MCP config file.",
+						}),
+					);
+				}
+				if (!canApplyTransparentConfig) {
+					throw new Error(
+						t("detail.configuration.applyRequiresApprovedReason", {
+							defaultValue:
+								"Applying client configuration requires an approved governance state and a verified local config target.",
+						}),
+					);
+				}
+			}
+
 			await clientsApi.update({
 				identifier,
 				config_mode: mode,
@@ -898,23 +919,6 @@ export function ClientDetailPage() {
 				mode === "unify" ? "default" : buildApplySelectedConfig(capabilityData);
 
 			if (shouldRequireLocalConfigWrite) {
-				if (!canWriteClientConfig) {
-					throw new Error(
-						t("detail.configuration.writeTargetRequiredReason", {
-							defaultValue:
-								"Applying governance to the client configuration requires a verified writable local MCP config file.",
-						}),
-					);
-				}
-				if (!canApplyTransparentConfig) {
-					throw new Error(
-						t("detail.configuration.applyRequiresApprovedReason", {
-							defaultValue:
-								"Applying client configuration requires an approved governance state and a verified local config target.",
-						}),
-					);
-				}
-
 				const data = await clientsApi.applyConfig({
 					identifier,
 					mode,

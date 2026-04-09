@@ -986,7 +986,7 @@ export interface ClientManageResp {
   data?: {
     identifier: string;
     managed: boolean;
-  approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
+    approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
     record_kind?: "template_known" | "observed_unknown" | string | null;
   } | null;
   error?: unknown | null;
