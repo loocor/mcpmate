@@ -609,7 +609,7 @@ export function validateServerType(
   kind: string,
 ): kind is "stdio" | "streamable_http" {
   const validTypes = ["stdio", "streamable_http"] as const;
-  return validTypes.includes(kind as any);
+  return validTypes.some((type) => type === kind);
 }
 
 /**
@@ -893,13 +893,13 @@ export interface ServerCapabilityMeta {
   strategy: string;
 }
 
-export interface ServerCapabilityList<T = any> {
+export interface ServerCapabilityList<T = unknown> {
   items: T[];
   state: string;
   meta: ServerCapabilityMeta;
 }
 
-export interface ServerCapabilityResp<T = any> {
+export interface ServerCapabilityResp<T = unknown> {
   data?: ServerCapabilityList<T> | null;
   error?: unknown | null;
   success: boolean;
@@ -947,7 +947,7 @@ export interface ClientInfo {
   config_exists: boolean;
   has_mcp_config: boolean;
   supported_transports: string[];
-  approval_status?: "approved" | "rejected" | "pending" | string | null;
+  approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
   record_kind?: "template_known" | "observed_unknown" | string | null;
   template_identifier?: string | null;
   writable_config?: boolean | null;
@@ -986,7 +986,7 @@ export interface ClientManageResp {
   data?: {
     identifier: string;
     managed: boolean;
-    approval_status?: "approved" | "rejected" | "pending" | string | null;
+    approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
     record_kind?: "template_known" | "observed_unknown" | string | null;
   } | null;
   error?: unknown | null;
@@ -1005,9 +1005,9 @@ export interface ClientRecordLifecycleData {
 }
 
 export interface ClientRecordLifecycleResp {
-  data?: ClientRecordLifecycleData | null;
-  error?: unknown | null;
-  success: boolean;
+  identifier: string;
+  status: "approved" | "pending" | "rejected" | "suspended" | string;
+  managed: boolean;
 }
 
 export interface ClientObserveReq {
