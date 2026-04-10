@@ -40,7 +40,7 @@ impl ClientConfigService {
             Some("local_config_detected") => {
                 let raw_path = normalized_path.ok_or_else(|| {
                     ConfigError::DataAccessError(
-                        "Clients with a local config target must provide a valid MCP config file path.".to_string(),
+                        "Clients with a local config target must provide a valid MCP config path.".to_string(),
                     )
                 })?;
                 self.validate_existing_config_target(raw_path).await?;
@@ -48,7 +48,7 @@ impl ClientConfigService {
             Some("manual") | Some("remote_http") => {
                 if normalized_path.is_some() {
                     return Err(ConfigError::DataAccessError(
-                        "Only clients with a local config target may store a config file path.".to_string(),
+                        "Only clients with a local config target may store a config path.".to_string(),
                     ));
                 }
             }
@@ -71,9 +71,9 @@ impl ClientConfigService {
             .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
         let metadata = tokio::fs::metadata(&resolved_path).await.map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
-                ConfigError::DataAccessError(format!("Configured MCP file does not exist: {}", raw_path))
+                ConfigError::DataAccessError(format!("Configured MCP path does not exist: {}", raw_path))
             } else {
-                ConfigError::FileOperationError(format!("Failed to inspect configured MCP file {}: {}", raw_path, err))
+                ConfigError::FileOperationError(format!("Failed to inspect configured MCP path {}: {}", raw_path, err))
             }
         })?;
 
@@ -85,9 +85,7 @@ impl ClientConfigService {
                 .await
                 .map_err(|_| ConfigError::PathNotWritable { path: resolved_path })?;
         } else if metadata.is_dir() {
-            let _ = tokio::fs::read_dir(&resolved_path)
-                .await
-                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path })?;
+            Self::validate_directory_target_writable(&resolved_path).await?;
         } else {
             return Err(ConfigError::DataAccessError(format!(
                 "Configured MCP path is neither a file nor a directory: {}",

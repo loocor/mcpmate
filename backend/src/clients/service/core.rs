@@ -18,6 +18,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::OpenOptions;
 
 // Generated at build time from the repository's config/client directory
@@ -440,11 +441,7 @@ impl ClientConfigService {
                     path: resolved_path.clone(),
                 })?;
         } else if metadata.is_dir() {
-            let _ = tokio::fs::read_dir(&resolved_path)
-                .await
-                .map_err(|_| ConfigError::PathNotWritable {
-                    path: resolved_path.clone(),
-                })?;
+            Self::validate_directory_target_writable(&resolved_path).await?;
         } else {
             return Err(ConfigError::DataAccessError(format!(
                 "Client config target is neither a file nor a directory: {}",
@@ -453,6 +450,37 @@ impl ClientConfigService {
         }
 
         Ok(Some(config_path))
+    }
+
+    pub(super) async fn validate_directory_target_writable(
+        directory_path: &std::path::Path,
+    ) -> ConfigResult<()> {
+        let probe_name = format!(
+            ".mcpmate-write-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        );
+        let probe_path = directory_path.join(probe_name);
+
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe_path)
+            .await
+            .map_err(|_| ConfigError::PathNotWritable {
+                path: directory_path.to_path_buf(),
+            })?;
+
+        tokio::fs::remove_file(&probe_path)
+            .await
+            .map_err(|_| ConfigError::PathNotWritable {
+                path: directory_path.to_path_buf(),
+            })?;
+
+        Ok(())
     }
 
     pub async fn has_verified_local_config_target(
