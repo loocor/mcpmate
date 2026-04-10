@@ -1712,6 +1712,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_settings_infers_manual_when_config_path_is_explicitly_cleared() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("client-manual-empty-string.json");
+        tokio::fs::write(&config_path, "{}")
+            .await
+            .expect("seed config file");
+
+        let Json(initial_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "custom.runtime.empty-clear".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Empty Clear Runtime".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("initial update succeeds");
+        assert!(initial_response.success);
+
+        let Json(clear_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "custom.runtime.empty-clear".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Empty Clear Runtime".to_string()),
+                connection_mode: None,
+                config_path: Some("   ".to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("explicit empty config path update succeeds");
+        assert!(clear_response.success);
+
+        let state = context
+            .client_service
+            .fetch_state("custom.runtime.empty-clear")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(state.connection_mode().as_str(), "manual");
+        assert_eq!(state.config_path(), None);
+    }
+
+    #[tokio::test]
     async fn config_details_and_apply_reject_stale_missing_config_target() {
         let context = create_test_context().await;
 
