@@ -43,10 +43,18 @@
 		--accent-foreground: 210 40% 96%;
 		--destructive: 0 62.8% 36%;
 		--destructive-foreground: 210 40% 98%;
-		--border: 217.2 16% 26%;
-		--input: 217.2 16% 26%;
+		/* Closer to card (14.5% L) so dividers read as subtle hairlines, not bright rails. */
+		--border: 217.2 12% 18.5%;
+		--input: 217.2 12% 18.5%;
 		--ring: 212.7 26.8% 83.9%;
 		color-scheme: dark;
+	}
+}
+
+/* Align Tailwind default border color with theme tokens (plain `border-b` etc.). */
+@layer base {
+	* {
+		@apply border-border;
 	}
 }
 
