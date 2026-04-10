@@ -117,6 +117,57 @@ export const clientsTranslations = {
 				backups: "Backups",
 				logs: "Logs",
 			},
+			directExposure: {
+				title: "Capability Level",
+				badge: "Direct Exposure",
+				description:
+					"Adjust which capabilities from this server should be exposed directly to the current client.",
+				serverDescriptionFallback:
+					"Choose which capabilities from this server should be exposed directly to the client.",
+				toolsTitle: "Tools",
+				toolsSummary: "{{enabled}} / {{total}} capabilities exposed directly",
+				tabs: {
+					tools: "Tools",
+					prompts: "Prompts",
+					resources: "Resources",
+					templates: "Templates",
+					toolsWithCounts: "Tools ({{enabled}}/{{total}})",
+					promptsWithCounts: "Prompts ({{enabled}}/{{total}})",
+					resourcesWithCounts: "Resources ({{enabled}}/{{total}})",
+					templatesWithCounts: "Templates ({{enabled}}/{{total}})",
+				},
+				searchPlaceholders: {
+					tools: "Search tools...",
+					prompts: "Search prompts...",
+					resources: "Search resources...",
+					templates: "Search templates...",
+				},
+				empty: {
+					tools: "No tools found for this server.",
+					prompts: "No prompts found for this server.",
+					resources: "No resources found for this server.",
+					templates: "No templates found for this server.",
+				},
+				statusPlaceholder: "Status",
+				filters: {
+					status: {
+						all: "All",
+						enabled: "Enabled",
+						disabled: "Disabled",
+					},
+				},
+				buttons: {
+					selectAll: "Select all",
+					clearSelection: "Clear",
+					enable: "Enable",
+					disable: "Disable",
+				},
+				notifications: {
+					savedTitle: "Direct capabilities updated",
+					savedMessage: "The direct capability exposure settings have been updated.",
+					saveFailedTitle: "Unable to update direct capabilities",
+				},
+			},
 				overview: {
 					labels: {
 					configPath: "Config Path",
@@ -218,6 +269,9 @@ export const clientsTranslations = {
 				title: "Configuration Mode",
 				description:
 					"If you don't understand what this means, please don't make any changes and keep the current settings.",
+					warnings: {
+						mixedRouting: "Mixed routing: splitting stateful workflows may cause issues.",
+					},
 				writeTargetRequiredReason:
 					"Applying governance to the client configuration requires a verified writable local MCP config file.",
 				applyRequiresApprovedReason:
@@ -250,9 +304,20 @@ export const clientsTranslations = {
 					source: {
 						title: "2. Configuration",
 						titleTransparent: "2. Configuration",
+						unifyRouteModes: {
+							broker_only: "Broker Only",
+							server_live: "Server Level",
+							capability_level: "Capability Level",
+						},
 						descriptions: {
 						unify:
 							"Unify does not use dashboard profile selection. Use the builtin UCAN tools during the session to browse and call capabilities from globally enabled servers.",
+							unify_broker_only:
+								"All capabilities are kept behind the UCAN broker catalog. Builtin MCP tools will browse and call capabilities from globally enabled servers.",
+							unify_server_live:
+								"Directly expose all capabilities from selected eligible servers to this client. Exposed capabilities are excluded from the UCAN catalog.",
+							unify_capability_level:
+								"Directly expose only selected capabilities (tools, prompts, resources, templates) from eligible servers to this client. (Advanced)",
 							default: "Review the profiles that are currently active for this client runtime.",
 							profile: "Browse the shared scene library and choose the exact working set for this client.",
 						custom: "Create client-specific adjustments on top of the current unify-mode working state.",
@@ -315,6 +380,25 @@ export const clientsTranslations = {
 							noFurtherSetup: "No further setup in the dashboard",
 						},
 					},
+					exposure: {
+						title: "3. Direct Exposure",
+						descriptions: {
+							broker_only:
+								"All enabled MCP servers, including servers marked for direct exposure, remain reachable through the builtin UCAN tools in Broker Only mode.",
+							server_live:
+								"Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
+							capability_level:
+								"Select eligible servers and configure direct exposure at capability level across tools, prompts, resources, and templates. (Advanced)",
+						},
+						labels: {
+							ucanRoutingDescription:
+								"In Broker Only mode, all enabled MCP servers — including servers marked for direct exposure — are still accessed through the UCAN catalog and call tools.",
+						},
+						empty: {
+							no_eligible:
+								"No eligible servers found. Enable Unify Direct Exposure on a server first.",
+						},
+					},
 				},
 			labels: {
 				noDescription: "No description",
@@ -323,6 +407,9 @@ export const clientsTranslations = {
 				tools: "Tools",
 				resources: "Resources",
 				prompts: "Prompts",
+				resourceTemplates: "Resource templates",
+				toolsExposed: "tools exposed",
+				capabilitiesExposed: "capabilities exposed",
 			},
 			nonWritableReason: "This record is currently non-writable.",
 			transportOptions: {
@@ -657,6 +744,55 @@ export const clientsTranslations = {
 				backups: "备份",
 				logs: "日志",
 			},
+			directExposure: {
+				title: "能力级直达",
+				badge: "直达暴露",
+				description: "调整本服务器有哪些能力应直接暴露给当前客户端。",
+				serverDescriptionFallback: "选择本服务器中应直接暴露给客户端的能力。",
+				toolsTitle: "工具",
+				toolsSummary: "已直达 {{enabled}} / {{total}} 个能力",
+				tabs: {
+					tools: "工具",
+					prompts: "提示",
+					resources: "资源",
+					templates: "模板",
+					toolsWithCounts: "工具（{{enabled}}/{{total}}）",
+					promptsWithCounts: "提示（{{enabled}}/{{total}}）",
+					resourcesWithCounts: "资源（{{enabled}}/{{total}}）",
+					templatesWithCounts: "模板（{{enabled}}/{{total}}）",
+				},
+				searchPlaceholders: {
+					tools: "搜索工具…",
+					prompts: "搜索提示…",
+					resources: "搜索资源…",
+					templates: "搜索模板…",
+				},
+				empty: {
+					tools: "未找到该服务器的工具。",
+					prompts: "未找到该服务器的提示。",
+					resources: "未找到该服务器的资源。",
+					templates: "未找到该服务器的模板。",
+				},
+				statusPlaceholder: "状态",
+				filters: {
+					status: {
+						all: "全部",
+						enabled: "已启用",
+						disabled: "已停用",
+					},
+				},
+				buttons: {
+					selectAll: "全选",
+					clearSelection: "清空",
+					enable: "启用",
+					disable: "停用",
+				},
+				notifications: {
+					savedTitle: "直达能力已更新",
+					savedMessage: "直达能力暴露配置已更新。",
+					saveFailedTitle: "无法更新直达能力",
+				},
+			},
 			overview: {
 				labels: {
 					configPath: "配置路径",
@@ -746,6 +882,9 @@ export const clientsTranslations = {
 				configuration: {
 				title: "配置模式",
 				description: "若不清楚含义，请勿修改并保持现有设置。",
+					warnings: {
+						mixedRouting: "混合路由：若把有状态工作流拆成代理与直连调用，可能出现问题。",
+					},
 				writeTargetRequiredReason: "要把治理配置真正应用到客户端配置文件，必须先确认一个已验证且可写的本地 MCP 配置文件。",
 				applyRequiresApprovedReason: "要把客户端配置真正应用落盘，必须先处于已允许治理状态，并且拥有一个已验证的本地配置目标。",
 				managementSettingsPendingReason: "请在该客户端结束待审批状态后再保存管理设置。",
@@ -773,8 +912,19 @@ export const clientsTranslations = {
 					source: {
 						title: "2. 配置详情",
 						titleTransparent: "2. 配置详情",
+						unifyRouteModes: {
+						broker_only: "全部代理",
+						server_live: "服务器直达",
+						capability_level: "能力级直达",
+						},
 						descriptions: {
 						unify: "统一模式不使用仪表板中的配置集选择。请在当前会话内通过内建 UCAN 工具浏览并调用来自全局启用服务器的能力。",
+							unify_broker_only:
+								"所有能力均通过 UCAN 代理目录访问。内建 MCP 工具会浏览并调用来自全局启用服务器的能力。",
+							unify_server_live:
+								"将所选符合条件的服务器的全部能力直接暴露给该客户端。已暴露的能力不会出现在 UCAN 目录中。",
+							unify_capability_level:
+								"仅从符合条件的服务器中选择部分能力（工具、提示、资源、模板）直接暴露给该客户端。（进阶）",
 							default: "查看当前已对该客户端运行态生效的配置集。",
 							profile: "浏览共享场景库，并为该客户端选择精确的工作集。",
 						custom: "在当前统一模式工作状态之上创建客户端专属调整。",
@@ -833,6 +983,24 @@ export const clientsTranslations = {
 							noFurtherSetup: "仪表板中无需进一步设置",
 						},
 					},
+					exposure: {
+						title: "3. 直达暴露",
+						descriptions: {
+							broker_only:
+								"在仅代理路由模式下，包括标记为直达暴露在内的所有已启用 MCP 服务器，仍通过内建 UCAN 工具访问。",
+							server_live:
+								"选择应将工具、提示、资源与资源模板直接暴露给该客户端的符合条件服务器。",
+							capability_level:
+								"选择符合条件的服务器，并在工具、提示、资源、模板四类能力上进行能力级直达配置。（进阶）",
+						},
+						labels: {
+							ucanRoutingDescription:
+								"在仅代理路由模式下，包括标记为直达暴露的服务器在内，所有已启用的 MCP 服务器仍通过 UCAN 目录与工具调用访问。",
+						},
+						empty: {
+							no_eligible: "暂无可选符合条件服务器。请先在服务器详情中启用统一模式直达暴露。",
+						},
+					},
 				},
 			labels: {
 				noDescription: "暂无描述",
@@ -841,6 +1009,9 @@ export const clientsTranslations = {
 				tools: "工具",
 				resources: "资源",
 				prompts: "提示",
+				resourceTemplates: "资源模板",
+				toolsExposed: "个工具已直达",
+				capabilitiesExposed: "项能力已直达",
 			},
 			nonWritableReason: "该记录当前不可写。",
 			transportOptions: {
@@ -1170,6 +1341,57 @@ export const clientsTranslations = {
 				backups: "バックアップ",
 				logs: "ログ",
 			},
+			directExposure: {
+				title: "能力レベル直達",
+				badge: "直接公開",
+				description:
+					"このサーバーのどのケイパビリティを現在のクライアントへ直接公開するかを調整します。",
+				serverDescriptionFallback:
+					"このサーバーからクライアントへ直接公開するケイパビリティを選択します。",
+				toolsTitle: "ツール",
+				toolsSummary: "直接公開 {{enabled}} / {{total}} ケイパビリティ",
+				tabs: {
+					tools: "ツール",
+					prompts: "プロンプト",
+					resources: "リソース",
+					templates: "テンプレート",
+					toolsWithCounts: "ツール（{{enabled}}/{{total}}）",
+					promptsWithCounts: "プロンプト（{{enabled}}/{{total}}）",
+					resourcesWithCounts: "リソース（{{enabled}}/{{total}}）",
+					templatesWithCounts: "テンプレート（{{enabled}}/{{total}}）",
+				},
+				searchPlaceholders: {
+					tools: "ツールを検索…",
+					prompts: "プロンプトを検索…",
+					resources: "リソースを検索…",
+					templates: "テンプレートを検索…",
+				},
+				empty: {
+					tools: "このサーバーにツールが見つかりません。",
+					prompts: "このサーバーにプロンプトが見つかりません。",
+					resources: "このサーバーにリソースが見つかりません。",
+					templates: "このサーバーにテンプレートが見つかりません。",
+				},
+				statusPlaceholder: "状態",
+				filters: {
+					status: {
+						all: "すべて",
+						enabled: "有効",
+						disabled: "無効",
+					},
+				},
+				buttons: {
+					selectAll: "すべて選択",
+					clearSelection: "クリア",
+					enable: "有効化",
+					disable: "無効化",
+				},
+				notifications: {
+					savedTitle: "直接公開ケイパビリティを更新しました",
+					savedMessage: "直接公開するケイパビリティ設定を更新しました。",
+					saveFailedTitle: "直接公開ケイパビリティを更新できません",
+				},
+			},
 			overview: {
 				labels: {
 					configPath: "設定パス",
@@ -1259,6 +1481,9 @@ export const clientsTranslations = {
 				configuration: {
 				title: "設定モード",
 				description: "意味が不明な場合は変更せず現状の設定を維持してください。",
+					warnings: {
+						mixedRouting: "混合ルーティング: ステートフルな手順を分割すると問題が起きる可能性があります。",
+					},
 				writeTargetRequiredReason:
 					"クライアント設定ファイルへガバナンスを適用するには、検証済みで書き込み可能なローカル MCP 設定ファイルが必要です。",
 				applyRequiresApprovedReason:
@@ -1291,9 +1516,20 @@ export const clientsTranslations = {
 					source: {
 						title: "2. 設定",
 						titleTransparent: "2. 設定",
+						unifyRouteModes: {
+							broker_only: "ブローカーのみ",
+							server_live: "サーバーレベル",
+							capability_level: "能力レベル直達",
+						},
 						descriptions: {
 						unify:
 							"統一モードではダッシュボード上のプロファイル選択を使いません。現在のセッションでは、内蔵 UCAN ツールでグローバルに有効なサーバーのケイパビリティを参照・呼び出します。",
+							unify_broker_only:
+								"すべてのケイパビリティは UCAN ブローカーカタログ越しに提供されます。内蔵 MCP ツールがグローバルに有効なサーバーのケイパビリティを参照・呼び出します。",
+							unify_server_live:
+								"選択した対象サーバーから、このクライアントへケイパビリティを直接公開します。公開されたケイパビリティは UCAN カタログには載りません。",
+							unify_capability_level:
+								"対象サーバーから選択したケイパビリティ（ツール、プロンプト、リソース、テンプレート）のみをこのクライアントへ直接公開します。（上級）",
 							default: "このクライアントの実行時に現在有効なプロファイルを確認します。",
 							profile: "共有シーンライブラリを参照し、このクライアントの正確なワークセットを選択します。",
 						custom: "現在の統一モードのワーク状態の上にクライアント専用の調整を作成します。",
@@ -1354,6 +1590,25 @@ export const clientsTranslations = {
 							noFurtherSetup: "ダッシュボードで追加設定は不要",
 						},
 					},
+					exposure: {
+						title: "3. 直接公開",
+						descriptions: {
+							broker_only:
+								"ブローカーのみモードでは、直接公開対象としてマークされたサーバーを含む、有効な MCP サーバーはすべて内蔵 UCAN ツール経由で利用できます。",
+							server_live:
+								"ツール、プロンプト、リソース、リソーステンプレートをこのクライアントへ直接公開する対象サーバーを選択します。",
+							capability_level:
+								"対象サーバーを選び、ツール、プロンプト、リソース、テンプレートを能力単位で直接公開する設定を行います。（上級）",
+						},
+						labels: {
+							ucanRoutingDescription:
+								"ブローカーのみモードでは、直接公開としてマークされたサーバーを含め、有効な MCP サーバーはすべて UCAN カタログとツール呼び出し経由でアクセスされます。",
+						},
+						empty: {
+							no_eligible:
+								"対象となるサーバーがありません。先にサーバー詳細で Unify の直接公開を有効にしてください。",
+						},
+					},
 				},
 			labels: {
 				noDescription: "説明なし",
@@ -1362,6 +1617,9 @@ export const clientsTranslations = {
 				tools: "ツール",
 				resources: "リソース",
 				prompts: "プロンプト",
+				resourceTemplates: "リソーステンプレート",
+				toolsExposed: "個のツールを直接公開",
+				capabilitiesExposed: "個のケイパビリティを直接公開",
 			},
 			nonWritableReason: "このレコードは現在書き込みできません。",
 			transportOptions: {
