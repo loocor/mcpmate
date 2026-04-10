@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
-import { DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS } from "../../components/detail-capability-tab-content-class";
+import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import {
 	CapsuleStripeList,
@@ -1004,20 +1004,30 @@ export function ServerDetailPage() {
 																	defaultValue: "Service",
 																})}
 															</span>
-															<Badge
-																variant={
-																	serverEnabled ? "secondary" : "outline"
-																}
-																className={`justify-self-start ${serverEnabled ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200" : "text-slate-600 dark:text-slate-300"}`}
-															>
-																{serverEnabled
-																	? t("detail.overview.status.enabled", {
-																		defaultValue: "Enabled",
-																	})
-																	: t("detail.overview.status.disabled", {
-																		defaultValue: "Disabled",
-																	})}
-															</Badge>
+															<div className="flex flex-wrap items-center gap-2 justify-self-start">
+																<Badge
+																	variant={serverEnabled ? "secondary" : "outline"}
+																	className={`${serverEnabled ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200" : "text-slate-600 dark:text-slate-300"}`}
+																>
+																	{serverEnabled
+																		? t("detail.overview.status.enabled", {
+																			defaultValue: "Enabled",
+																		})
+																		: t("detail.overview.status.disabled", {
+																			defaultValue: "Disabled",
+																		})}
+																</Badge>
+																{server.unify_direct_exposure_eligible ? (
+																	<Badge
+																		variant="secondary"
+																		className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+																	>
+																		{t("detail.overview.status.unifyEligible", {
+																			defaultValue: "Unify Direct Enabled",
+																		})}
+																	</Badge>
+																) : null}
+															</div>
 															<span className="text-xs uppercase text-slate-500">
 																{t("detail.overview.labels.runtime", {
 																	defaultValue: "Runtime",
@@ -1037,28 +1047,28 @@ export function ServerDetailPage() {
 															<span className="font-mono text-sm leading-tight">
 																{server.server_type}
 															</span>
-											{server.auth_mode ? (
-												<>
-													<span className="text-xs uppercase text-slate-500">
-														{t("detail.overview.labels.auth", {
-															defaultValue: "Auth",
-														})}
-													</span>
-													<div className="flex items-center gap-1.5 text-sm">
-														<ServerAuthBadge
-															authMode={server.auth_mode}
-															oauthStatus={server.oauth_status}
-														/>
-														<Button
-															variant="ghost"
-															size="sm"
-															className="h-6 text-xs px-2"
-															onClick={() => setIsEditOpen(true)}
-														>
-															{t("actions.edit", { defaultValue: "Edit" })}
-														</Button>
-													</div>
-												</>
+															{server.auth_mode ? (
+																<>
+																	<span className="text-xs uppercase text-slate-500">
+																		{t("detail.overview.labels.auth", {
+																			defaultValue: "Auth",
+																		})}
+																	</span>
+																	<div className="flex items-center gap-1.5 text-sm">
+																		<ServerAuthBadge
+																			authMode={server.auth_mode}
+																			oauthStatus={server.oauth_status}
+																		/>
+																		<Button
+																			variant="ghost"
+																			size="sm"
+																			className="h-6 text-xs px-2"
+																			onClick={() => setIsEditOpen(true)}
+																		>
+																			{t("actions.edit", { defaultValue: "Edit" })}
+																		</Button>
+																	</div>
+																</>
 															) : null}
 															{protocolVersion ? (
 																<>
@@ -1255,11 +1265,11 @@ export function ServerDetailPage() {
 													) : null}
 												</div>
 											</div>
-									</CardContent>
-								</Card>
+										</CardContent>
+									</Card>
 
-								{viewMode === VIEW_MODES.browse ? (
-									<Card>
+									{viewMode === VIEW_MODES.browse ? (
+										<Card>
 											<CardHeader>
 												<CardTitle>
 													{t("detail.instances.title", {
@@ -1361,7 +1371,7 @@ export function ServerDetailPage() {
 						</TabsContent>
 					) : null}
 
-					<TabsContent value="tools" className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}>
+					<TabsContent value="tools" className={DETAIL_TAB_CONTENT_CLASS}>
 						{viewMode === VIEW_MODES.browse ? (
 							<ServerCapabilityList kind="tools" serverId={serverId} />
 						) : (
@@ -1380,7 +1390,7 @@ export function ServerDetailPage() {
 						)}
 					</TabsContent>
 
-					<TabsContent value="prompts" className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}>
+					<TabsContent value="prompts" className={DETAIL_TAB_CONTENT_CLASS}>
 						{viewMode === VIEW_MODES.browse ? (
 							<ServerCapabilityList kind="prompts" serverId={serverId} />
 						) : (
@@ -1399,7 +1409,7 @@ export function ServerDetailPage() {
 						)}
 					</TabsContent>
 
-					<TabsContent value="resources" className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}>
+					<TabsContent value="resources" className={DETAIL_TAB_CONTENT_CLASS}>
 						{viewMode === VIEW_MODES.browse ? (
 							<ServerCapabilityList kind="resources" serverId={serverId} />
 						) : (
@@ -1418,7 +1428,7 @@ export function ServerDetailPage() {
 						)}
 					</TabsContent>
 
-					<TabsContent value="templates" className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}>
+					<TabsContent value="templates" className={DETAIL_TAB_CONTENT_CLASS}>
 						{viewMode === VIEW_MODES.browse ? (
 							<ServerCapabilityList kind="templates" serverId={serverId} />
 						) : (

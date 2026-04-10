@@ -20,10 +20,10 @@ import { ListGridContainer } from "../../components/list-grid-container";
 import { EmptyState, PageLayout } from "../../components/page-layout";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { ServerAuthBadge } from "../../components/server-auth-badge";
-import { ServerInstallWizard } from "../../components/uniimport/server-install-wizard";
-import type { ServerInstallManualFormHandle } from "../../components/uniimport/types";
+import { ServerInstallWizard, type ServerInstallManualFormHandle } from "../../components/server-install";
 import { StatsCards } from "../../components/stats-cards";
 import { StatusBadge } from "../../components/status-badge";
+import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
 	Card,
@@ -560,7 +560,19 @@ export function ServerListPage() {
 		);
 	};
 
-	const getConnectionTypeTags = (server: ServerSummary) => {
+	const getUnifyEligibilityTag = (server: ServerSummary) => {
+	if (!server.unify_direct_exposure_eligible) return null;
+	return (
+		<Badge
+			variant="secondary"
+			className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+		>
+			{t("entity.tags.unifyEligible", { defaultValue: "Unify Direct" })}
+		</Badge>
+	);
+};
+
+const getConnectionTypeTags = (server: ServerSummary) => {
 		const tags = [];
 		const lower = (server.server_type || "").toLowerCase();
 		const isStdio = lower.includes("stdio") || lower.includes("process");
@@ -691,6 +703,7 @@ export function ServerListPage() {
 				description={
 					<div className="flex items-center gap-2">
 						{getConnectionTypeTags(server)}
+						{getUnifyEligibilityTag(server)}
 						<ServerAuthBadge
 							authMode={server.auth_mode}
 							oauthStatus={server.oauth_status}
@@ -702,7 +715,7 @@ export function ServerListPage() {
 					alt: iconSrc ? iconAlt : undefined,
 					fallback: serverInitial,
 				}}
-				titleBadges={[]}
+				titleBadges={getUnifyEligibilityTag(server) ? [getUnifyEligibilityTag(server)] : []}
 				stats={capabilityStats}
 				statusBadge={
 					<StatusBadge
@@ -825,6 +838,7 @@ export function ServerListPage() {
 				topRightBadge={
 					<div className="flex items-center gap-2">
 						{getConnectionTypeTags(server)}
+						{getUnifyEligibilityTag(server)}
 						<ServerAuthBadge
 							authMode={server.auth_mode}
 							oauthStatus={server.oauth_status}
