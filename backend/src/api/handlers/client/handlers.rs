@@ -32,7 +32,10 @@ use toml;
 
 type ClientSettingsErrorResponse = (StatusCode, Json<crate::api::models::client::ClientSettingsUpdateResp>);
 
-fn client_settings_error(status: StatusCode, message: impl Into<String>) -> ClientSettingsErrorResponse {
+fn client_settings_error(
+    status: StatusCode,
+    message: impl Into<String>,
+) -> ClientSettingsErrorResponse {
     (
         status,
         Json(crate::api::models::client::ClientSettingsUpdateResp::error_simple(
@@ -328,7 +331,7 @@ pub async fn config_apply(
                 })?;
         }
     }
-    
+
     let template = service.get_client_template(&request.identifier).await.map_err(|err| {
         tracing::error!(
             client = %request.identifier,
@@ -337,7 +340,7 @@ pub async fn config_apply(
         );
         StatusCode::NOT_FOUND
     })?;
-    
+
     let options = build_render_options(&request);
     let outcome = service.apply_with_deferred(options).await.map_err(|err| {
         let status = match err {
@@ -426,7 +429,7 @@ pub async fn config_restore(
     Json(request): Json<ClientConfigRestoreReq>,
 ) -> Result<Json<ClientBackupActionResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-    
+
     if let Ok(Some(state)) = service.fetch_state(&request.identifier).await {
         if state.is_pending_unknown() {
             tracing::warn!(
@@ -449,7 +452,7 @@ pub async fn config_restore(
             tracing::error!(client = %request.identifier, error = %err, "Failed to activate client state before restore");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    
+
     let result = service
         .restore_backup(&request.identifier, &request.backup)
         .await
@@ -661,8 +664,8 @@ pub async fn update_settings(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<crate::api::models::client::ClientSettingsUpdateReq>,
 ) -> Result<Json<crate::api::models::client::ClientSettingsUpdateResp>, ClientSettingsErrorResponse> {
-    let service = get_client_service(&app_state)
-        .map_err(|status| client_settings_error(status, "Client service unavailable"))?;
+    let service =
+        get_client_service(&app_state).map_err(|status| client_settings_error(status, "Client service unavailable"))?;
 
     tracing::info!(
         client = %request.identifier,
@@ -1141,20 +1144,27 @@ fn parse_config_value(
     }
 }
 
-fn parse_runtime_config_value(content: &str, config_path: Option<&str>) -> Value {
+fn parse_runtime_config_value(
+    content: &str,
+    config_path: Option<&str>,
+) -> Value {
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Value::Null;
     }
 
     match infer_template_format_from_path(config_path) {
-        Some(TemplateFormat::Json) => serde_json::from_str(trimmed).unwrap_or_else(|_| Value::String(content.to_string())),
+        Some(TemplateFormat::Json) => {
+            serde_json::from_str(trimmed).unwrap_or_else(|_| Value::String(content.to_string()))
+        }
         Some(TemplateFormat::Json5) => json5::from_str(trimmed).unwrap_or_else(|_| Value::String(content.to_string())),
         Some(TemplateFormat::Toml) => toml::from_str::<toml::Value>(trimmed)
             .ok()
             .and_then(|value| serde_json::to_value(value).ok())
             .unwrap_or_else(|| Value::String(content.to_string())),
-        Some(TemplateFormat::Yaml) => serde_yaml::from_str(trimmed).unwrap_or_else(|_| Value::String(content.to_string())),
+        Some(TemplateFormat::Yaml) => {
+            serde_yaml::from_str(trimmed).unwrap_or_else(|_| Value::String(content.to_string()))
+        }
         None => Value::String(content.to_string()),
     }
 }
@@ -1175,8 +1185,7 @@ fn infer_template_format_from_path(config_path: Option<&str>) -> Option<Template
 }
 
 fn infer_config_type_from_path(config_path: Option<&str>) -> Option<crate::api::models::client::ClientConfigType> {
-    infer_template_format_from_path(config_path)
-        .map(|_| crate::api::models::client::ClientConfigType::Standard)
+    infer_template_format_from_path(config_path).map(|_| crate::api::models::client::ClientConfigType::Standard)
 }
 
 async fn read_runtime_config(
@@ -1318,9 +1327,8 @@ mod tests {
         ClientConfigService::seed_client_runtime_rows(&db_pool, template_source.as_ref())
             .await
             .expect("seed runtime rows");
-        let runtime_source: Arc<dyn ClientConfigSource> = Arc::new(
-            DbTemplateSource::new(Arc::new(db_pool.clone())).expect("runtime source"),
-        );
+        let runtime_source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(db_pool.clone())).expect("runtime source"));
         let client_service = Arc::new(
             ClientConfigService::with_source(Arc::new(db_pool.clone()), runtime_source)
                 .await
@@ -1499,7 +1507,10 @@ mod tests {
         let data = response.data.expect("response data");
         assert_eq!(data.display_name, "Custom Runtime");
         assert_eq!(data.connection_mode.as_deref(), Some("local_config_detected"));
-        assert_eq!(data.supported_transports, vec!["streamable_http".to_string(), "stdio".to_string()]);
+        assert_eq!(
+            data.supported_transports,
+            vec!["streamable_http".to_string(), "stdio".to_string()]
+        );
         assert_eq!(data.description.as_deref(), Some("Custom runtime client"));
 
         let state = context
@@ -1527,12 +1538,20 @@ mod tests {
         assert_eq!(runtime_template.identifier, "custom.runtime.payload");
         assert_eq!(runtime_template.display_name.as_deref(), Some("Custom Runtime"));
         assert_eq!(runtime_template.version.as_deref(), Some("1.2.3"));
-        assert_eq!(runtime_template.config_mapping.container_keys, vec!["mcpServers".to_string()]);
+        assert_eq!(
+            runtime_template.config_mapping.container_keys,
+            vec!["mcpServers".to_string()]
+        );
         assert_eq!(
             runtime_template.config_mapping.managed_source.as_deref(),
             Some("runtime_active_client")
         );
-        assert!(runtime_template.config_mapping.format_rules.contains_key("streamable_http"));
+        assert!(
+            runtime_template
+                .config_mapping
+                .format_rules
+                .contains_key("streamable_http")
+        );
         assert!(runtime_template.config_mapping.format_rules.contains_key("stdio"));
         assert_eq!(
             metadata_string(&runtime_template, "homepage_url").as_deref(),
@@ -1636,9 +1655,7 @@ mod tests {
     async fn update_settings_clears_config_path_when_switching_to_manual() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("client-manual-clear.json");
-        tokio::fs::write(&config_path, "{}")
-            .await
-            .expect("seed config file");
+        tokio::fs::write(&config_path, "{}").await.expect("seed config file");
 
         let Json(initial_response) = update_settings(
             State(context.app_state.clone()),
@@ -1750,9 +1767,7 @@ mod tests {
     async fn update_settings_accepts_directory_target_for_kv_client() {
         let context = create_test_context().await;
         let kv_dir = context._temp_dir.path().join("cherry-kv");
-        tokio::fs::create_dir_all(&kv_dir)
-            .await
-            .expect("create kv directory");
+        tokio::fs::create_dir_all(&kv_dir).await.expect("create kv directory");
 
         let Json(response) = update_settings(
             State(context.app_state.clone()),
@@ -1912,7 +1927,10 @@ mod tests {
         assert!(details_response.success);
         let details = details_response.data.expect("details data");
         assert!(details.config_exists);
-        assert_eq!(details.template.managed_source.as_deref(), Some("runtime_active_client"));
+        assert_eq!(
+            details.template.managed_source.as_deref(),
+            Some("runtime_active_client")
+        );
         assert_eq!(details.content["mcpServers"]["MCPMate"]["type"], "streamable_http");
     }
 
