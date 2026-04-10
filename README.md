@@ -148,6 +148,10 @@ Configure management mode and capability source for each AI client.
 
 ![Client Configuration](./assets/client-configuration.png)
 
+- **All Proxy** keeps every enabled server behind the builtin UCAN tool flow.
+- **Server Direct** lets selected direct-eligible servers expose their full capabilities to the client in Unify mode.
+- **Capability-Level Direct** opens a client-scoped direct editor so selected tools can be exposed without switching the sidebar into the Profiles section.
+
 ### Market
 
 Browse the official MCP registry and install servers without leaving the app.
