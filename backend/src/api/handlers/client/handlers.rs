@@ -1856,6 +1856,50 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(unix)]
+    async fn update_settings_rejects_non_writable_directory_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let context = create_test_context().await;
+        let kv_dir = context._temp_dir.path().join("read-only-kv");
+        tokio::fs::create_dir_all(&kv_dir).await.expect("create kv directory");
+
+        let original_permissions = std::fs::metadata(&kv_dir)
+            .expect("directory metadata")
+            .permissions();
+        let mut read_only_permissions = original_permissions.clone();
+        read_only_permissions.set_mode(0o555);
+        std::fs::set_permissions(&kv_dir, read_only_permissions).expect("set read-only permissions");
+
+        let result = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "cherry_studio".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Cherry Studio".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(kv_dir.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await;
+
+        std::fs::set_permissions(&kv_dir, original_permissions).expect("restore permissions");
+
+        let (status, Json(response)) = result.expect_err("read-only directory target should fail");
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let error = response.error.expect("error payload");
+        assert!(error.message.contains("not writable"));
+    }
+
+    #[tokio::test]
     async fn update_settings_preserves_suspended_governance_state() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("suspended-client.json");
