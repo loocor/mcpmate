@@ -846,7 +846,9 @@ pub struct OnboardingPolicyResponse {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "First contact behavior update request")]
 pub struct FirstContactBehaviorRequest {
-    #[schemars(description = "Behavior: deny, review, or allow (legacy pending_review / allow_then_review accepted as review)")]
+    #[schemars(
+        description = "Behavior: deny, review, or allow (legacy pending_review / allow_then_review accepted as review)"
+    )]
     pub behavior: String,
 }
 

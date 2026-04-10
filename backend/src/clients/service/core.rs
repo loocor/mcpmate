@@ -7,17 +7,18 @@ use crate::clients::models::{
     ClientTemplate, ConfigMapping, ConfigMode, DetectionMethod, DetectionRule, FormatRule, ManagedEndpointConfig,
     MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
 };
-use crate::clients::source::{ClientConfigSource, DbTemplateSource};
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
+use crate::clients::source::{ClientConfigSource, DbTemplateSource};
 use crate::system::paths::{PathService, get_path_service};
 use chrono::{DateTime, Utc};
-use serde_json::json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::OpenOptions;
 
 // Generated at build time from the repository's config/client directory
@@ -36,14 +37,18 @@ fn parse_embedded_template(
         .ok_or_else(|| ConfigError::TemplateParseError(format!("Unsupported embedded template: {}", file_name)))?;
 
     let mut template: ClientTemplate = match ext.as_str() {
-        "json" => serde_json::from_str(contents)
-            .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err)))?,
-        "json5" => json5::from_str(contents)
-            .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err)))?,
-        "yaml" | "yml" => serde_yaml::from_str(contents)
-            .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err)))?,
-        "toml" => toml::from_str(contents)
-            .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err)))?,
+        "json" => serde_json::from_str(contents).map_err(|err| {
+            ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err))
+        })?,
+        "json5" => json5::from_str(contents).map_err(|err| {
+            ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err))
+        })?,
+        "yaml" | "yml" => serde_yaml::from_str(contents).map_err(|err| {
+            ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err))
+        })?,
+        "toml" => toml::from_str(contents).map_err(|err| {
+            ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err))
+        })?,
         _ => {
             return Err(ConfigError::TemplateParseError(format!(
                 "Unsupported embedded template extension {} ({})",
@@ -158,10 +163,7 @@ impl ClientStateRow {
 
     #[allow(dead_code)]
     pub(super) fn is_approved(&self) -> bool {
-        matches!(
-            self.approval_status.as_deref(),
-            Some("approved") | None
-        )
+        matches!(self.approval_status.as_deref(), Some("approved") | None)
     }
 
     pub fn approval_status(&self) -> &str {
@@ -197,9 +199,7 @@ impl ClientStateRow {
     }
 
     pub fn config_path(&self) -> Option<&str> {
-        self.config_path
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
+        self.config_path.as_deref().filter(|value| !value.trim().is_empty())
     }
 
     pub fn governed_by_default_policy(&self) -> bool {
@@ -222,8 +222,7 @@ impl ClientStateRow {
 
     #[allow(dead_code)]
     pub fn is_pending_unknown(&self) -> bool {
-        self.approval_status.as_deref() == Some("pending")
-            && self.record_kind() == ClientRecordKind::ObservedUnknown
+        self.approval_status.as_deref() == Some("pending") && self.record_kind() == ClientRecordKind::ObservedUnknown
     }
 
     pub fn template_id(&self) -> Option<&str> {
@@ -423,10 +422,7 @@ impl ClientConfigService {
         let resolved_path = std::path::PathBuf::from(&config_path);
         let metadata = tokio::fs::metadata(&resolved_path).await.map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
-                ConfigError::DataAccessError(format!(
-                    "Client config target does not exist: {}",
-                    config_path
-                ))
+                ConfigError::DataAccessError(format!("Client config target does not exist: {}", config_path))
             } else {
                 ConfigError::FileOperationError(format!(
                     "Failed to inspect client config target {}: {}",
@@ -441,11 +437,11 @@ impl ClientConfigService {
                 .write(true)
                 .open(&resolved_path)
                 .await
-                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path.clone() })?;
+                .map_err(|_| ConfigError::PathNotWritable {
+                    path: resolved_path.clone(),
+                })?;
         } else if metadata.is_dir() {
-            let _ = tokio::fs::read_dir(&resolved_path)
-                .await
-                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path.clone() })?;
+            Self::validate_directory_target_writable(&resolved_path).await?;
         } else {
             return Err(ConfigError::DataAccessError(format!(
                 "Client config target is neither a file nor a directory: {}",
@@ -454,6 +450,37 @@ impl ClientConfigService {
         }
 
         Ok(Some(config_path))
+    }
+
+    pub(super) async fn validate_directory_target_writable(
+        directory_path: &std::path::Path,
+    ) -> ConfigResult<()> {
+        let probe_name = format!(
+            ".mcpmate-write-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        );
+        let probe_path = directory_path.join(probe_name);
+
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe_path)
+            .await
+            .map_err(|_| ConfigError::PathNotWritable {
+                path: directory_path.to_path_buf(),
+            })?;
+
+        tokio::fs::remove_file(&probe_path)
+            .await
+            .map_err(|_| ConfigError::PathNotWritable {
+                path: directory_path.to_path_buf(),
+            })?;
+
+        Ok(())
     }
 
     pub async fn has_verified_local_config_target(
@@ -477,8 +504,9 @@ impl ClientConfigService {
         templates: &[ClientTemplate],
     ) -> crate::clients::error::ConfigResult<()> {
         for template in templates {
-            let payload_json = serde_json::to_string(&template)
-                .map_err(|err| ConfigError::TemplateParseError(format!("Failed to serialize runtime template payload: {}", err)))?;
+            let payload_json = serde_json::to_string(&template).map_err(|err| {
+                ConfigError::TemplateParseError(format!("Failed to serialize runtime template payload: {}", err))
+            })?;
             sqlx::query(
                 r#"
                 INSERT INTO client_template_runtime (identifier, payload_json)
@@ -772,9 +800,7 @@ impl ClientConfigService {
         Ok(())
     }
 
-    pub(crate) fn extract_runtime_config_path_from_template(
-        template: &ClientTemplate,
-    ) -> Option<String> {
+    pub(crate) fn extract_runtime_config_path_from_template(template: &ClientTemplate) -> Option<String> {
         let platform = PathService::get_current_platform();
         let rules = template.platform_rules(platform)?;
         let rule = rules.first()?;
