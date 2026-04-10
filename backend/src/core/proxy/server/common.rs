@@ -9,9 +9,11 @@ use rmcp::{
         StreamableHttpServerConfig, StreamableHttpService, streamable_http_server::session::local::LocalSessionManager,
     },
 };
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::clients::models::ClientCapabilityConfig;
+use crate::clients::models::{UnifyDirectExposureConfig, UnifyRouteMode};
+use crate::core::capability::naming::{NamingKind, normalize_server_name, resolve_unique_name, strip_server_prefix};
 
 const MANAGED_CLIENT_ID_HEADER: &str = "x-mcpmate-client-id";
 const MANAGED_PROFILE_ID_HEADER: &str = "x-mcpmate-profile-id";
@@ -35,6 +37,141 @@ pub fn supports_capability(
     crate::core::capability::facade::capability_declared(capabilities, token)
 }
 
+pub fn unify_route_mode(workspace: Option<&UnifyDirectExposureConfig>) -> UnifyRouteMode {
+    workspace.map(|config| config.route_mode).unwrap_or_default()
+}
+
+pub async fn load_unify_direct_exposure_eligible_server_ids(
+    database: &crate::config::database::Database
+) -> Result<HashSet<String>, rmcp::ErrorData> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT sc.id
+        FROM server_config sc
+        WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
+        "#,
+    )
+    .fetch_all(&database.pool)
+    .await
+    .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+
+    Ok(rows.into_iter().map(|(server_id,)| server_id).collect())
+}
+
+pub fn unify_directly_exposed_server_allowed(
+    workspace: Option<&UnifyDirectExposureConfig>,
+    eligible_server_ids: &HashSet<String>,
+    server_id: &str,
+) -> bool {
+    if !eligible_server_ids.contains(server_id) {
+        return false;
+    }
+
+    matches!(unify_route_mode(workspace), UnifyRouteMode::ServerLive)
+        && workspace
+            .map(|config| config.selected_server_ids.iter().any(|id| id == server_id))
+            .unwrap_or(false)
+}
+
+pub fn unify_directly_exposed_tool_allowed(
+    workspace: Option<&UnifyDirectExposureConfig>,
+    eligible_server_ids: &HashSet<String>,
+    server_id: &str,
+    tool_name: &str,
+) -> bool {
+    match unify_route_mode(workspace) {
+        UnifyRouteMode::BrokerOnly => false,
+        UnifyRouteMode::ServerLive => unify_directly_exposed_server_allowed(workspace, eligible_server_ids, server_id),
+        UnifyRouteMode::CapabilityLevel => workspace
+            .filter(|_| eligible_server_ids.contains(server_id))
+            .map(|config| {
+                config
+                    .selected_tool_surfaces
+                    .iter()
+                    .any(|surface| surface.server_id == server_id && surface.tool_name == tool_name)
+            })
+            .unwrap_or(false),
+    }
+}
+
+pub fn unify_directly_exposed_prompt_allowed(
+    workspace: Option<&UnifyDirectExposureConfig>,
+    eligible_server_ids: &HashSet<String>,
+    server_id: &str,
+    prompt_name: &str,
+) -> bool {
+    match unify_route_mode(workspace) {
+        UnifyRouteMode::BrokerOnly => false,
+        UnifyRouteMode::ServerLive => unify_directly_exposed_server_allowed(workspace, eligible_server_ids, server_id),
+        UnifyRouteMode::CapabilityLevel => workspace
+            .filter(|_| eligible_server_ids.contains(server_id))
+            .map(|config| {
+                config
+                    .selected_prompt_surfaces
+                    .iter()
+                    .any(|surface| surface.server_id == server_id && surface.prompt_name == prompt_name)
+            })
+            .unwrap_or(false),
+    }
+}
+
+pub fn unify_directly_exposed_resource_allowed(
+    workspace: Option<&UnifyDirectExposureConfig>,
+    eligible_server_ids: &HashSet<String>,
+    server_id: &str,
+    resource_uri: &str,
+) -> bool {
+    match unify_route_mode(workspace) {
+        UnifyRouteMode::BrokerOnly => false,
+        UnifyRouteMode::ServerLive => unify_directly_exposed_server_allowed(workspace, eligible_server_ids, server_id),
+        UnifyRouteMode::CapabilityLevel => workspace
+            .filter(|_| eligible_server_ids.contains(server_id))
+            .map(|config| {
+                config
+                    .selected_resource_surfaces
+                    .iter()
+                    .any(|surface| surface.server_id == server_id && surface.resource_uri == resource_uri)
+            })
+            .unwrap_or(false),
+    }
+}
+
+pub fn unify_directly_exposed_template_allowed(
+    workspace: Option<&UnifyDirectExposureConfig>,
+    eligible_server_ids: &HashSet<String>,
+    server_id: &str,
+    uri_template: &str,
+) -> bool {
+    match unify_route_mode(workspace) {
+        UnifyRouteMode::BrokerOnly => false,
+        UnifyRouteMode::ServerLive => unify_directly_exposed_server_allowed(workspace, eligible_server_ids, server_id),
+        UnifyRouteMode::CapabilityLevel => workspace
+            .filter(|_| eligible_server_ids.contains(server_id))
+            .map(|config| {
+                config
+                    .selected_template_surfaces
+                    .iter()
+                    .any(|surface| surface.server_id == server_id && surface.uri_template == uri_template)
+            })
+            .unwrap_or(false),
+    }
+}
+
+pub async fn resolve_direct_surface_value(
+    kind: NamingKind,
+    server_name: &str,
+    presented_value: &str,
+) -> String {
+    if let Ok((resolved_server_name, raw_value)) = resolve_unique_name(kind, presented_value).await {
+        if normalize_server_name(&resolved_server_name) == normalize_server_name(server_name) {
+            return raw_value;
+        }
+    }
+
+    strip_server_prefix(kind, server_name, presented_value)
+        .unwrap_or_else(|| presented_value.to_string())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedClientInfo {
     pub name: String,
@@ -48,7 +185,7 @@ pub struct ClientContext {
     pub session_id: Option<String>,
     pub profile_id: Option<String>,
     pub config_mode: Option<String>,
-    pub unify_workspace: Option<ClientCapabilityConfig>,
+    pub unify_workspace: Option<UnifyDirectExposureConfig>,
     pub rules_fingerprint: Option<String>,
     pub transport: ClientTransport,
     pub source: ClientIdentitySource,
@@ -111,7 +248,7 @@ pub struct SessionBinding {
     pub client_id: String,
     pub profile_id: Option<String>,
     pub config_mode: Option<String>,
-    pub unify_workspace: Option<ClientCapabilityConfig>,
+    pub unify_workspace: Option<UnifyDirectExposureConfig>,
     pub rules_fingerprint: Option<String>,
     pub source: ClientIdentitySource,
     pub observed_client_info: Option<ObservedClientInfo>,
@@ -175,7 +312,7 @@ pub trait ManagedClientContextResolver: Send + Sync {
     async fn set_unify_workspace(
         &self,
         session_id: &str,
-        workspace: Option<ClientCapabilityConfig>,
+        workspace: Option<UnifyDirectExposureConfig>,
     ) -> Result<()>;
 }
 
@@ -266,7 +403,7 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
                 client_id: client_context.client_id.clone(),
                 profile_id: client_context.profile_id.clone(),
                 config_mode: client_context.config_mode.clone(),
-            unify_workspace: client_context.unify_workspace.clone(),
+                unify_workspace: client_context.unify_workspace.clone(),
                 rules_fingerprint: client_context.rules_fingerprint.clone(),
                 source: client_context.source,
                 observed_client_info,
@@ -337,7 +474,7 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
     async fn set_unify_workspace(
         &self,
         session_id: &str,
-        workspace: Option<ClientCapabilityConfig>,
+        workspace: Option<UnifyDirectExposureConfig>,
     ) -> Result<()> {
         let mut binding = self
             .session_bindings
@@ -378,7 +515,7 @@ fn resolve_bound_request_context_parts(
         session_id: Some(session_id),
         profile_id: binding.profile_id.clone(),
         config_mode: binding.config_mode.clone(),
-            unify_workspace: binding.unify_workspace.clone(),
+        unify_workspace: binding.unify_workspace.clone(),
         rules_fingerprint: binding.rules_fingerprint.clone(),
         transport: transport_from_parts(Some(parts)),
         source: ClientIdentitySource::SessionBinding,
@@ -403,7 +540,7 @@ fn resolve_pending_session_context_parts(
         session_id: Some(session_id),
         profile_id: initialize_context.profile_id.clone(),
         config_mode: initialize_context.config_mode.clone(),
-            unify_workspace: initialize_context.unify_workspace.clone(),
+        unify_workspace: initialize_context.unify_workspace.clone(),
         rules_fingerprint: initialize_context.rules_fingerprint.clone(),
         transport: transport_from_parts(Some(parts)),
         source: ClientIdentitySource::SessionBinding,
@@ -476,7 +613,7 @@ fn resolve_managed_context(
         session_id,
         profile_id,
         config_mode: None,
-            unify_workspace: None,
+        unify_workspace: None,
         rules_fingerprint: None,
         transport: transport_from_parts(Some(parts)),
         source,
@@ -806,7 +943,7 @@ mod tests {
                 client_id: "claude-code".to_string(),
                 profile_id: Some("profile-a".to_string()),
                 config_mode: Some("hosted".to_string()),
-            unify_workspace: None,
+                unify_workspace: None,
                 rules_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: Some(ObservedClientInfo {
@@ -843,7 +980,7 @@ mod tests {
                 client_id: "claude-code".to_string(),
                 profile_id: Some("profile-a".to_string()),
                 config_mode: Some("hosted".to_string()),
-            unify_workspace: None,
+                unify_workspace: None,
                 rules_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
@@ -866,7 +1003,7 @@ mod tests {
                 client_id: "claude-code".to_string(),
                 profile_id: Some("profile-a".to_string()),
                 config_mode: Some("hosted".to_string()),
-            unify_workspace: None,
+                unify_workspace: None,
                 rules_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
