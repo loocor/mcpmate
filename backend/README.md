@@ -87,6 +87,8 @@ Full API documentation available at `http://localhost:8080/docs` when the server
 
 Configuration is stored in SQLite at `~/.mcpmate/mcpmate.db` by default.
 
+On first startup, if the `server_config` table is empty, MCPMate seeds the database with the bundled preset MCP servers from `backend/config/mcp.json`. This seed data is compiled into the binary, so it does not depend on the process working directory.
+
 Override data directory:
 ```bash
 MCPMATE_DATA_DIR=/custom/path cargo run

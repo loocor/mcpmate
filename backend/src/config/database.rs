@@ -9,7 +9,7 @@ use tracing;
 use crate::{
     common::paths::global_paths,
     common::profile::ProfileType,
-    config::{import, initialization, models},
+    config::{defaults, import, initialization, models},
     core::capability::naming,
 };
 
@@ -45,6 +45,13 @@ impl Database {
         };
 
         tracing::info!("Initializing database connection to {}", database_url);
+
+        let uses_default_database_path = !database_url.starts_with("sqlite:");
+        if uses_default_database_path {
+            global_paths()
+                .ensure_directories()
+                .context("Failed to initialize MCPMate runtime directories")?;
+        }
 
         // Ensure the parent directory exists
         if let Some(parent) = db_path.parent() {
@@ -109,34 +116,25 @@ impl Database {
         // Create database instance
         let db = Self { pool, path: db_path };
 
-        // Import configuration from JSON files if available
-        let default_config_path = std::path::Path::new("config/mcp.json");
-        if default_config_path.exists() {
-            // Check if database already has server configurations
-            let has_server_configs = match sqlx::query_scalar::<_, i64>(&format!(
-                "SELECT COUNT(*) FROM {}",
-                crate::common::constants::database::tables::SERVER_CONFIG
-            ))
-            .fetch_one(&db.pool)
-            .await
-            {
-                Ok(count) => count > 0,
-                Err(e) => {
-                    tracing::error!("Failed to check if server_config table has data: {}", e);
-                    false
-                }
-            };
+        let has_server_configs = match sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM {}",
+            crate::common::constants::database::tables::SERVER_CONFIG
+        ))
+        .fetch_one(&db.pool)
+        .await
+        {
+            Ok(count) => count > 0,
+            Err(e) => {
+                tracing::error!("Failed to check if server_config table has data: {}", e);
+                false
+            }
+        };
 
-            // Import configuration if database is empty
-            if !has_server_configs {
-                if let Err(e) = db.import_from_files(default_config_path).await {
-                    tracing::warn!("Failed to import MCP configuration: {}", e);
-                } else {
-                    tracing::debug!(
-                        "Imported MCP server configuration from {}",
-                        default_config_path.display()
-                    );
-                }
+        if !has_server_configs {
+            if let Err(e) = defaults::seed_default_servers(&db.pool).await {
+                tracing::warn!("Failed to import bundled MCP configuration: {}", e);
+            } else {
+                tracing::debug!("Imported bundled MCP server configuration into empty database");
             }
         }
 
