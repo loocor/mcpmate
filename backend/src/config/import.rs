@@ -9,15 +9,18 @@ use std::collections::HashMap;
 use std::{fs::File, path::Path, sync::Arc};
 
 fn global_redb_cache() -> Result<Arc<RedbCacheManager>> {
-    RedbCacheManager::global().map_err(|error| anyhow::anyhow!(format!("Failed to init REDB cache: {}", error)))
+    RedbCacheManager::global().map_err(|error| anyhow::anyhow!("Failed to init REDB cache: {}", error))
 }
 
 async fn has_server_configs(pool: &Pool<Sqlite>) -> Result<bool> {
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
-        .fetch_one(pool)
-        .await
-        .map(|count| count > 0)
-        .map_err(|error| anyhow::anyhow!("Failed to check if server_config table has data: {}", error))
+    sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM {}",
+        crate::common::constants::database::tables::SERVER_CONFIG
+    ))
+    .fetch_one(pool)
+    .await
+    .map(|count| count > 0)
+    .map_err(|error| anyhow::anyhow!("Failed to check if server_config table has data: {}", error))
 }
 
 async fn import_config_with_cache(
@@ -216,10 +219,13 @@ mod tests {
             .await
             .expect("import config");
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM server_config")
-            .fetch_one(&pool)
-            .await
-            .expect("count servers");
+        let count: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {}",
+            crate::common::constants::database::tables::SERVER_CONFIG
+        ))
+        .fetch_one(&pool)
+        .await
+        .expect("count servers");
         assert_eq!(count, 2);
     }
 }
