@@ -16,7 +16,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar"
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { ServerInstallWizard } from "../../components/uniimport/server-install-wizard";
+import { ServerInstallWizard } from "../../components/server-install";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
