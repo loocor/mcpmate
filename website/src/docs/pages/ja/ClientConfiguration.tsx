@@ -45,6 +45,21 @@ export default function ClientConfiguration() {
 				<Li>概要タブにクライアントが検出され、到達可能であることが示された後にのみ適用します。</Li>
 			</Ul>
 
+			<H2>Unify 直接公開（Unify 専用）</H2>
+			<P>
+				直接公開は Unify にのみ適用されます。Hosted とトランスペアレントモードの意味は変わりません。
+			</P>
+
+			<Ul>
+				<Li><strong>All Proxy</strong>（既定）: 直接公開対象としてマークされたサーバーを含め、すべての有効サーバーは内蔵 UCAN ツール経由でアクセスされます。</Li>
+				<Li><strong>Server Direct</strong>: Unify 直接公開対象としてマークされた選択済みサーバーの全 capability をクライアントへ直接公開します。</Li>
+				<Li><strong>Capability-Level Direct</strong>（上級）: 選択したツールだけを直接公開します。v1 ではツールのみ対象で、prompts / resources / templates は引き続き broker 経由です。</Li>
+			</Ul>
+
+			<P>
+				Capability-Level Direct は Profiles ルートを流用せず、Clients 配下の専用編集ページを開きます。これにより、ナビゲーション状態を正しく保ったまま、ツールの一括編集 UI を再利用できます。
+			</P>
+
 			<Callout type="warning" title="トランスペアレントモードではトレードオフが変わります">
 				トランスペアレントモードはサーバー設定をクライアントへ直接書き込みます。互換性には役立ちますが、capability レベルで MCPMate が制御できる範囲は減少します。
 			</Callout>
