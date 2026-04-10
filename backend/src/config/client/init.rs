@@ -135,27 +135,9 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         "TEXT NOT NULL DEFAULT 'approved' CHECK (approval_status IN ('pending', 'approved', 'suspended', 'rejected'))",
     )
     .await?;
-    ensure_column(
-        pool,
-        tables::CLIENT,
-        "template_id",
-        "TEXT",
-    )
-    .await?;
-    ensure_column(
-        pool,
-        tables::CLIENT,
-        "template_version",
-        "TEXT",
-    )
-    .await?;
-    ensure_column(
-        pool,
-        tables::CLIENT,
-        "approval_metadata",
-        "TEXT",
-    )
-    .await?;
+    ensure_column(pool, tables::CLIENT, "template_id", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "template_version", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "approval_metadata", "TEXT").await?;
 
     sqlx::query(&format!(
         r#"
@@ -525,8 +507,14 @@ pub async fn initialize_system_settings_table(pool: &Pool<Sqlite>) -> Result<()>
         .fetch_optional(pool)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to read onboarding_policy for first_contact_behavior migration: {}", e);
-            anyhow::anyhow!("Failed to read onboarding_policy for first_contact_behavior migration: {}", e)
+            tracing::error!(
+                "Failed to read onboarding_policy for first_contact_behavior migration: {}",
+                e
+            );
+            anyhow::anyhow!(
+                "Failed to read onboarding_policy for first_contact_behavior migration: {}",
+                e
+            )
         })?;
 
         let initial_behavior = match onboarding_policy.as_deref() {
@@ -559,8 +547,8 @@ pub async fn initialize_system_settings_table(pool: &Pool<Sqlite>) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::{
-        initialize_client_table, initialize_system_settings_table, resolve_default_client_config_mode,
-        set_default_client_config_mode, FIRST_CONTACT_BEHAVIOR_SETTING_KEY,
+        FIRST_CONTACT_BEHAVIOR_SETTING_KEY, initialize_client_table, initialize_system_settings_table,
+        resolve_default_client_config_mode, set_default_client_config_mode,
     };
     use sqlx::sqlite::SqlitePoolOptions;
 
@@ -636,13 +624,11 @@ mod tests {
             .await
             .expect("reinitialize system settings");
 
-        let behavior = sqlx::query_scalar::<_, String>(
-            "SELECT value FROM system_settings WHERE key = ?",
-        )
-        .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
-        .fetch_one(&pool)
-        .await
-        .expect("fetch first_contact_behavior");
+        let behavior = sqlx::query_scalar::<_, String>("SELECT value FROM system_settings WHERE key = ?")
+            .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch first_contact_behavior");
 
         assert_eq!(behavior, "deny");
     }
