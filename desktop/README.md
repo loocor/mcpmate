@@ -78,6 +78,8 @@ builds the bridge sidecar, and outputs a notarized DMG to `$HOME/Downloads`.
 
 On startup the shell resolves the per-app data directory through Tauri's `PathResolver::app_data_dir()` and passes that path into MCPMate's runtime (via `MCPMATE_DATA_DIR`). This avoids REDB/SQLite contention with existing CLI instances.
 
+Both localhost runtime modes use that same base directory: service installs run with the data directory as their working directory, and desktop-managed launches now set the child process working directory explicitly as well. That keeps first-run initialization and bundled preset seeding consistent across the desktop startup paths.
+
 You can override runtime ports or modes without recompiling by exporting the following variables before launching:
 
 | Variable                  | Purpose                                      | Default   |
