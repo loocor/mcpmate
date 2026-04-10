@@ -33,6 +33,8 @@ pub struct Server {
     pub capabilities: Option<String>,
     /// Whether the server is globally enabled
     pub enabled: EnabledStatus,
+    /// Whether the server is eligible for Unify direct exposure
+    pub unify_direct_exposure_eligible: bool,
     pub pending_import: bool,
     /// When the configuration was created
     pub created_at: Option<DateTime<Utc>>,
@@ -132,6 +134,7 @@ impl Server {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
+            unify_direct_exposure_eligible: false,
             pending_import: false,
             created_at: None,
             updated_at: None,
@@ -153,6 +156,7 @@ impl Server {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
+            unify_direct_exposure_eligible: false,
             pending_import: false,
             created_at: None,
             updated_at: None,
@@ -174,6 +178,7 @@ impl Server {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
+            unify_direct_exposure_eligible: false,
             pending_import: false,
             created_at: None,
             updated_at: None,

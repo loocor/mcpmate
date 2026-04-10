@@ -21,13 +21,7 @@ pub(super) async fn list_prompts(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListPromptsResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("unify")) {
-        return Ok(ListPromptsResult {
-            prompts: Vec::new(),
-            next_cursor: None,
-            ..Default::default()
-        });
-    }
+    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
         server.database.clone(),
         server.profile_service.clone(),
@@ -37,6 +31,15 @@ pub(super) async fn list_prompts(
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
     let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
+    let unify_direct_exposure_eligible_server_ids = if unify_mode {
+        if let Some(db) = &server.database {
+            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?
+        } else {
+            HashSet::new()
+        }
+    } else {
+        HashSet::new()
+    };
     let mut prompts: Vec<rmcp::model::Prompt> = Vec::new();
 
     if let Some(db) = &server.database {
@@ -91,19 +94,38 @@ pub(super) async fn list_prompts(
                                 out.push(p);
                             }
                         }
-                        out
+                        (server_id, server_name_cloned, out)
                     }
-                    Err(_) => Vec::new(),
+                    Err(_) => (server_id, server_name_cloned, Vec::new()),
                 }
             });
         }
 
-        for mut v in futures::stream::iter(tasks)
+        for (server_id, server_name, mut v) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            prompts.append(&mut v);
+            if !unify_mode {
+                prompts.append(&mut v);
+                continue;
+            }
+            for prompt in v.drain(..) {
+                let raw_prompt_name: String = crate::core::proxy::server::resolve_direct_surface_value(
+                    NamingKind::Prompt,
+                    &server_name,
+                    prompt.name.as_ref(),
+                )
+                .await;
+                if crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
+                    client.unify_workspace.as_ref(),
+                    &unify_direct_exposure_eligible_server_ids,
+                    &server_id,
+                    raw_prompt_name.as_ref(),
+                ) {
+                    prompts.push(prompt);
+                }
+            }
         }
     }
 
@@ -139,12 +161,7 @@ pub(super) async fn get_prompt(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<GetPromptResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("unify")) {
-        return Err(McpError::invalid_params(
-            "Unify mode does not expose prompts directly; use UCAN broker tools instead".to_string(),
-            None,
-        ));
-    }
+    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
     tracing::debug!("Getting prompt: {}", request.name);
 
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
@@ -162,7 +179,7 @@ pub(super) async fn get_prompt(
         capability_source: capability_config.capability_source,
         selected_profile_ids: capability_config.selected_profile_ids,
         custom_profile_id: capability_config.custom_profile_id,
-            unify_workspace: client.unify_workspace.clone(),
+        unify_workspace: client.unify_workspace.clone(),
     };
 
     if builtin_prompt_allowed(client.config_mode.as_deref(), request.name.as_ref()) {
@@ -217,6 +234,41 @@ pub(super) async fn get_prompt(
     } else {
         request.name.clone()
     };
+
+    if unify_mode {
+        let Some(db) = &server.database else {
+            return Err(McpError::invalid_params(
+                "Unify prompt direct exposure requires database-backed server metadata".to_string(),
+                None,
+            ));
+        };
+        let eligible_server_ids =
+            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?;
+        let resolved_server_id = match resolve_unique_name(NamingKind::Prompt, &canonical_name).await {
+            Ok((server_name, _)) => crate::core::capability::resolver::to_id(&server_name)
+                .await
+                .ok()
+                .flatten(),
+            Err(_) => None,
+        };
+        let Some(server_id) = resolved_server_id else {
+            return Err(McpError::invalid_params(
+                format!("Prompt '{}' is not directly exposed for this client", canonical_name),
+                None,
+            ));
+        };
+        if !crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
+            client.unify_workspace.as_ref(),
+            &eligible_server_ids,
+            &server_id,
+            lookup_name.as_ref(),
+        ) {
+            return Err(McpError::invalid_params(
+                format!("Prompt '{}' is not directly exposed for this client", canonical_name),
+                None,
+            ));
+        }
+    }
 
     let snapshot = vis
         .resolve_snapshot_for_client(&client)

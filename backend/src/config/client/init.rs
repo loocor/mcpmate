@@ -59,6 +59,14 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             template_identifier TEXT,
             selected_profile_ids TEXT,
             custom_profile_id TEXT,
+            unify_route_mode TEXT NOT NULL DEFAULT 'broker_only' CHECK (
+                unify_route_mode IN ('broker_only', 'server_live', 'capability_level')
+            ),
+            unify_selected_server_ids TEXT,
+            unify_selected_tool_surfaces TEXT,
+            unify_selected_prompt_surfaces TEXT,
+            unify_selected_resource_surfaces TEXT,
+            unify_selected_template_surfaces TEXT,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -86,6 +94,18 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     .await?;
     ensure_column(pool, tables::CLIENT, "selected_profile_ids", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "custom_profile_id", "TEXT").await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "unify_route_mode",
+        "TEXT NOT NULL DEFAULT 'broker_only' CHECK (unify_route_mode IN ('broker_only', 'server_live', 'capability_level'))",
+    )
+    .await?;
+    ensure_column(pool, tables::CLIENT, "unify_selected_server_ids", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "unify_selected_tool_surfaces", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "unify_selected_prompt_surfaces", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "unify_selected_resource_surfaces", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "unify_selected_template_surfaces", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "display_name", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "config_path", "TEXT").await?;
     ensure_column(

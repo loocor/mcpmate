@@ -58,7 +58,10 @@ pub async fn get_server_oauth_config(
     .map_err(Into::into)
 }
 
-pub async fn delete_server_oauth_config(pool: &Pool<Sqlite>, server_id: &str) -> Result<()> {
+pub async fn delete_server_oauth_config(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<()> {
     sqlx::query("DELETE FROM server_oauth_config WHERE server_id = ?")
         .bind(server_id)
         .execute(pool)
@@ -116,7 +119,10 @@ pub async fn get_server_oauth_token(
     .map_err(Into::into)
 }
 
-pub async fn delete_server_oauth_token(pool: &Pool<Sqlite>, server_id: &str) -> Result<()> {
+pub async fn delete_server_oauth_token(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<()> {
     sqlx::query("DELETE FROM server_oauth_tokens WHERE server_id = ?")
         .bind(server_id)
         .execute(pool)
@@ -171,7 +177,10 @@ mod tests {
     use super::*;
     use crate::{
         common::{server::ServerType, status::EnabledStatus},
-        config::{models::Server, server::{crud::upsert_server, init::initialize_server_tables}},
+        config::{
+            models::Server,
+            server::{crud::upsert_server, init::initialize_server_tables},
+        },
     };
 
     async fn setup_pool() -> sqlx::SqlitePool {
@@ -188,7 +197,10 @@ mod tests {
         pool
     }
 
-    async fn insert_server(pool: &sqlx::SqlitePool, id: &str) {
+    async fn insert_server(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+    ) {
         let server = Server {
             id: Some(id.to_string()),
             name: format!("server-{id}"),
@@ -198,6 +210,7 @@ mod tests {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
             pending_import: false,
             created_at: None,
             updated_at: None,
@@ -221,7 +234,9 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        upsert_server_oauth_token(&pool, &token).await.expect("insert oauth token");
+        upsert_server_oauth_token(&pool, &token)
+            .await
+            .expect("insert oauth token");
 
         let loaded = get_server_oauth_token(&pool, "serv_oauth_roundtrip")
             .await
@@ -229,8 +244,13 @@ mod tests {
             .expect("oauth token exists");
         assert_eq!(loaded.access_token, "access-1");
 
-        let updated = ServerOAuthToken { access_token: "access-2".to_string(), ..token.clone() };
-        upsert_server_oauth_token(&pool, &updated).await.expect("update oauth token");
+        let updated = ServerOAuthToken {
+            access_token: "access-2".to_string(),
+            ..token.clone()
+        };
+        upsert_server_oauth_token(&pool, &updated)
+            .await
+            .expect("update oauth token");
 
         let loaded_updated = get_server_oauth_token(&pool, "serv_oauth_roundtrip")
             .await
@@ -241,10 +261,12 @@ mod tests {
         delete_server_oauth_token(&pool, "serv_oauth_roundtrip")
             .await
             .expect("delete oauth token");
-        assert!(get_server_oauth_token(&pool, "serv_oauth_roundtrip")
-            .await
-            .expect("load deleted token")
-            .is_none());
+        assert!(
+            get_server_oauth_token(&pool, "serv_oauth_roundtrip")
+                .await
+                .expect("load deleted token")
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -264,7 +286,9 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        upsert_server_oauth_config(&pool, &config).await.expect("insert oauth config");
+        upsert_server_oauth_config(&pool, &config)
+            .await
+            .expect("insert oauth config");
 
         let loaded = get_server_oauth_config(&pool, "serv_oauth_config")
             .await
@@ -275,10 +299,12 @@ mod tests {
         delete_server_oauth_config(&pool, "serv_oauth_config")
             .await
             .expect("delete oauth config");
-        assert!(get_server_oauth_config(&pool, "serv_oauth_config")
-            .await
-            .expect("load deleted oauth config")
-            .is_none());
+        assert!(
+            get_server_oauth_config(&pool, "serv_oauth_config")
+                .await
+                .expect("load deleted oauth config")
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -308,6 +334,9 @@ mod tests {
             .await
             .expect("effective headers")
             .expect("headers exist");
-        assert_eq!(effective.get("Authorization").map(String::as_str), Some("Bearer manual-token"));
+        assert_eq!(
+            effective.get("Authorization").map(String::as_str),
+            Some("Bearer manual-token")
+        );
     }
 }

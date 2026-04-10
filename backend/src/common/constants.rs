@@ -142,6 +142,7 @@ pub mod database {
         pub const URL: &str = "url";
         pub const TRANSPORT_TYPE: &str = "transport_type";
         pub const PENDING_IMPORT: &str = "pending_import";
+        pub const UNIFY_DIRECT_EXPOSURE_ELIGIBLE: &str = "unify_direct_exposure_eligible";
         pub const CAPABILITIES: &str = "capabilities";
         pub const REGISTRY_SERVER_ID: &str = "registry_server_id";
         pub const DESCRIPTION: &str = "description";

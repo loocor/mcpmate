@@ -203,6 +203,7 @@ async fn server_details_core(
         enabled,
         globally_enabled: details.globally_enabled,
         enabled_in_profile: details.enabled_in_profile,
+        unify_direct_exposure_eligible: server.unify_direct_exposure_eligible,
         server_type: server.server_type,
         command: server.command.clone(),
         url: server.url.clone(),
@@ -318,6 +319,7 @@ async fn server_list_core(
             enabled,
             globally_enabled,
             enabled_in_profile: enabled_in_profile_flag,
+            unify_direct_exposure_eligible: server.unify_direct_exposure_eligible,
             server_type: server.server_type,
             command: server.command,
             url: server.url,
@@ -993,6 +995,7 @@ mod tests {
         assert!(server.enabled);
         assert!(server.globally_enabled);
         assert!(server.enabled_in_profile);
+        assert!(!server.unify_direct_exposure_eligible);
         assert_eq!(server.args, None);
         assert_eq!(server.env, None);
         assert_eq!(server.instances.len(), 1);
@@ -1139,6 +1142,91 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn unify_direct_exposure_eligibility_round_trips_through_update_list_and_details() {
+        let context = create_test_context().await;
+        let server_id = seed_streamable_http_server(&context.db_pool, "eligibility-server").await;
+
+        let detail_before = server_details_core(
+            &ServerDetailsReq { id: server_id.clone() },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server details before update");
+        let detail_before = detail_before.data.expect("server details payload before update");
+        assert!(!detail_before.unify_direct_exposure_eligible);
+        assert_eq!(detail_before.name, "eligibility-server");
+        assert_eq!(
+            detail_before.url.as_deref(),
+            Some("https://example.com/eligibility-server")
+        );
+
+        let update_response = crate::api::handlers::server::crud::update_server(
+            State(context.app_state.clone()),
+            Json(crate::api::models::server::ServerUpdateReq {
+                id: server_id.clone(),
+                kind: None,
+                command: None,
+                url: None,
+                args: None,
+                env: None,
+                headers: None,
+                profile_ids: None,
+                enabled: None,
+                pending_import: None,
+                registry_server_id: None,
+                meta: None,
+                unify_direct_exposure_eligible: Some(true),
+            }),
+        )
+        .await
+        .expect("server update response")
+        .0;
+        let updated = update_response.data.expect("updated server payload");
+        assert!(updated.unify_direct_exposure_eligible);
+        assert_eq!(updated.name, "eligibility-server");
+        assert_eq!(updated.url.as_deref(), Some("https://example.com/eligibility-server"));
+
+        let list_response = server_list_core(
+            &ServerListReq {
+                enabled: Some(true),
+                server_type: Some("streamable_http".to_string()),
+                limit: Some(10),
+                offset: Some(0),
+            },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server list after update");
+        let listed = list_response
+            .data
+            .expect("server list payload")
+            .servers
+            .into_iter()
+            .find(|server| server.id.as_deref() == Some(server_id.as_str()))
+            .expect("updated server in list");
+        assert!(listed.unify_direct_exposure_eligible);
+        assert_eq!(listed.name, "eligibility-server");
+        assert_eq!(listed.url.as_deref(), Some("https://example.com/eligibility-server"));
+
+        let detail_after = server_details_core(
+            &ServerDetailsReq { id: server_id },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server details after update");
+        let detail_after = detail_after.data.expect("server details payload after update");
+        assert!(detail_after.unify_direct_exposure_eligible);
+        assert_eq!(detail_after.name, "eligibility-server");
+        assert_eq!(
+            detail_after.url.as_deref(),
+            Some("https://example.com/eligibility-server")
+        );
+    }
+
     async fn create_test_context() -> TestContext {
         let temp_dir = TempDir::new().expect("temp dir");
         let db_pool = SqlitePoolOptions::new()
@@ -1210,6 +1298,7 @@ mod tests {
                 registry_server_id: None,
                 capabilities: Some("tools,prompts,resources".to_string()),
                 enabled: crate::common::status::EnabledStatus::Enabled,
+                unify_direct_exposure_eligible: false,
                 created_at: None,
                 updated_at: None,
                 pending_import: false,
@@ -1233,6 +1322,7 @@ mod tests {
             registry_server_id: None,
             capabilities: None,
             enabled: crate::common::status::EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
             created_at: None,
             updated_at: None,
             pending_import: false,

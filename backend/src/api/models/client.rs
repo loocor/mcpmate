@@ -1,4 +1,7 @@
-use crate::clients::models::CapabilitySource;
+use crate::clients::models::{
+    CapabilitySource, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectPromptSurface,
+    UnifyDirectResourceSurface, UnifyDirectTemplateSurface, UnifyDirectToolSurface,
+};
 use crate::common::ClientCategory;
 use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
@@ -513,6 +516,9 @@ pub struct ClientCapabilityConfigData {
     #[schemars(description = "Client-private custom profile id when using custom mode")]
     #[serde(default)]
     pub custom_profile_id: Option<String>,
+    #[schemars(description = "Unify-only direct exposure state and diagnostics")]
+    #[serde(default)]
+    pub unify_direct_exposure: ClientUnifyDirectExposureData,
 }
 api_resp!(
     ClientCapabilityConfigResp,
@@ -609,6 +615,54 @@ pub struct ClientCapabilityConfigReq {
     #[schemars(description = "Selected shared profile ids when using profiles mode")]
     #[serde(default)]
     pub selected_profile_ids: Vec<String>,
+    #[schemars(description = "Optional Unify direct exposure state update")]
+    #[serde(default)]
+    pub unify_direct_exposure: Option<ClientUnifyDirectExposureReq>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[schemars(description = "Unify direct exposure state returned by client capability config APIs")]
+pub struct ClientUnifyDirectExposureData {
+    #[serde(flatten)]
+    pub config: UnifyDirectExposureConfig,
+    #[serde(default)]
+    pub diagnostics: UnifyDirectExposureDiagnostics,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Optional Unify direct exposure state update")]
+pub struct ClientUnifyDirectExposureReq {
+    #[schemars(description = "Route mode for Unify direct exposure")]
+    #[serde(default)]
+    pub route_mode: crate::clients::models::UnifyRouteMode,
+    #[schemars(description = "Selected eligible server ids for direct exposure")]
+    #[serde(default)]
+    pub selected_server_ids: Vec<String>,
+    #[schemars(description = "Selected direct tool surfaces for capability-level direct exposure")]
+    #[serde(default)]
+    pub selected_tool_surfaces: Vec<UnifyDirectToolSurface>,
+    #[schemars(description = "Selected direct prompt surfaces for capability-level direct exposure")]
+    #[serde(default)]
+    pub selected_prompt_surfaces: Vec<UnifyDirectPromptSurface>,
+    #[schemars(description = "Selected direct resource surfaces for capability-level direct exposure")]
+    #[serde(default)]
+    pub selected_resource_surfaces: Vec<UnifyDirectResourceSurface>,
+    #[schemars(description = "Selected direct resource template surfaces for capability-level direct exposure")]
+    #[serde(default)]
+    pub selected_template_surfaces: Vec<UnifyDirectTemplateSurface>,
+}
+
+impl From<ClientUnifyDirectExposureReq> for UnifyDirectExposureConfig {
+    fn from(value: ClientUnifyDirectExposureReq) -> Self {
+        Self {
+            route_mode: value.route_mode,
+            selected_server_ids: value.selected_server_ids,
+            selected_tool_surfaces: value.selected_tool_surfaces,
+            selected_prompt_surfaces: value.selected_prompt_surfaces,
+            selected_resource_surfaces: value.selected_resource_surfaces,
+            selected_template_surfaces: value.selected_template_surfaces,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

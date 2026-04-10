@@ -29,8 +29,11 @@ fn builtin_tool_allowed(
     }
 }
 
-fn direct_managed_tool_call_allowed(config_mode: Option<&str>) -> bool {
-    !matches!(config_mode, Some("unify"))
+fn direct_managed_tool_call_allowed(
+    config_mode: Option<&str>,
+    directly_exposed: bool,
+) -> bool {
+    !matches!(config_mode, Some("unify")) || directly_exposed
 }
 
 fn client_aware_builtin_tool_requires_runtime_refresh(tool_name: &str) -> bool {
@@ -72,60 +75,85 @@ pub(super) async fn list_tools(
         .iter()
         .cloned()
         .collect::<std::collections::HashSet<_>>();
+    let unify_direct_exposure_eligible_server_ids = if unify_mode {
+        if let Some(db) = &server.database {
+            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?
+        } else {
+            std::collections::HashSet::new()
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
+
     let mut tools: Vec<rmcp::model::Tool> = Vec::new();
 
-    if !unify_mode {
-        if let Some(db) = &server.database {
-            let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
-                r#"
+    if let Some(db) = &server.database {
+        let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            r#"
             SELECT sc.id, sc.name, sc.capabilities
             FROM server_config sc
             WHERE sc.enabled = 1
             ORDER BY sc.name, sc.id
             "#,
-            )
-            .fetch_all(&db.pool)
-            .await
-            .unwrap_or_default();
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap_or_default();
 
-            let redb = &server.redb_cache;
-            let pool = &server.connection_pool;
+        let redb = &server.redb_cache;
+        let pool = &server.connection_pool;
 
-            let mut tasks = Vec::new();
-            for (server_id, _server_name, capabilities) in enabled_servers {
-                if !visible_server_ids.contains(&server_id) {
-                    continue;
-                }
-                if !super::supports_capability(capabilities.as_deref(), crate::core::capability::CapabilityType::Tools)
-                {
-                    continue;
-                }
-                let ctx = crate::core::capability::runtime::ListCtx {
-                    capability: crate::core::capability::CapabilityType::Tools,
-                    server_id: server_id.clone(),
-                    refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                    timeout: Some(std::time::Duration::from_secs(10)),
-                    validation_session: None,
-                    runtime_identity: client.runtime_identity(),
-                    connection_selection: client.connection_selection(server_id.clone()),
-                };
-                let redb = redb.clone();
-                let pool = pool.clone();
-                let db = db.clone();
-                tasks.push(async move {
-                    match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
-                        Ok(result) => result.items.into_tools().unwrap_or_default(),
-                        Err(_) => Vec::new(),
-                    }
-                });
+        let mut tasks = Vec::new();
+        for (server_id, server_name, capabilities) in enabled_servers {
+            if !visible_server_ids.contains(&server_id) {
+                continue;
             }
+            if !super::supports_capability(capabilities.as_deref(), crate::core::capability::CapabilityType::Tools) {
+                continue;
+            }
+            let ctx = crate::core::capability::runtime::ListCtx {
+                capability: crate::core::capability::CapabilityType::Tools,
+                server_id: server_id.clone(),
+                refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
+                timeout: Some(std::time::Duration::from_secs(10)),
+                validation_session: None,
+                runtime_identity: client.runtime_identity(),
+                connection_selection: client.connection_selection(server_id.clone()),
+            };
+            let redb = redb.clone();
+            let pool = pool.clone();
+            let db = db.clone();
+            tasks.push(async move {
+                let tools = match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
+                    Ok(result) => result.items.into_tools().unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                };
+                (server_id, server_name, tools)
+            });
+        }
 
-            for mut v in futures::stream::iter(tasks)
-                .buffer_unordered(crate::core::capability::facade::concurrency_limit())
-                .collect::<Vec<_>>()
-                .await
-            {
-                tools.append(&mut v);
+        for (server_id, server_name, tool_batch) in futures::stream::iter(tasks)
+            .buffer_unordered(crate::core::capability::facade::concurrency_limit())
+            .collect::<Vec<_>>()
+            .await
+        {
+            for tool in tool_batch {
+                let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
+                    NamingKind::Tool,
+                    &server_name,
+                    tool.name.as_ref(),
+                )
+                .await;
+                let expose_directly = !unify_mode
+                    || crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+                        client.unify_workspace.as_ref(),
+                        &unify_direct_exposure_eligible_server_ids,
+                        &server_id,
+                        raw_tool_name.as_ref(),
+                    );
+                if expose_directly {
+                    tools.push(tool);
+                }
             }
         }
     }
@@ -226,7 +254,7 @@ pub(super) async fn call_tool(
                 capability_source: capability_config.capability_source,
                 selected_profile_ids: capability_config.selected_profile_ids.clone(),
                 custom_profile_id: capability_config.custom_profile_id.clone(),
-            unify_workspace: client.unify_workspace.clone(),
+                unify_workspace: client.unify_workspace.clone(),
             };
 
             if let Some(result) = server
@@ -301,23 +329,6 @@ pub(super) async fn call_tool(
         ));
     }
 
-    if !direct_managed_tool_call_allowed(client.config_mode.as_deref()) {
-        tracing::warn!(
-            call_id = %call_id,
-            tool = %request.name,
-            client_id = %client.client_id,
-            profile_id = ?client.profile_id,
-            "ProxyServer::call_tool denied direct managed tool call in unify mode"
-        );
-        return Err(McpError::invalid_params(
-            format!(
-                "Tool '{}' is not available for direct proxy calls in unify mode",
-                request.name
-            ),
-            None,
-        ));
-    }
-
     let (server_name, original_tool_name) =
         resolve_unique_name(NamingKind::Tool, &request.name)
             .await
@@ -343,6 +354,39 @@ pub(super) async fn call_tool(
             );
             McpError::internal_error("Server not found for tool mapping".to_string(), None)
         })?;
+
+        let directly_exposed = if matches!(client.config_mode.as_deref(), Some("unify")) {
+        let db = server
+            .database
+            .as_ref()
+            .ok_or_else(|| McpError::internal_error("Database not available for tool calling".to_string(), None))?;
+        let eligible_server_ids = load_unify_direct_exposure_eligible_server_ids(db).await?;
+        crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            client.unify_workspace.as_ref(),
+            &eligible_server_ids,
+            &server_id,
+            &original_tool_name,
+        )
+    } else {
+        false
+    };
+
+    if !direct_managed_tool_call_allowed(client.config_mode.as_deref(), directly_exposed) {
+        tracing::warn!(
+            call_id = %call_id,
+            tool = %request.name,
+            client_id = %client.client_id,
+            profile_id = ?client.profile_id,
+            "ProxyServer::call_tool denied direct managed tool call in unify mode"
+        );
+        return Err(McpError::invalid_params(
+            format!(
+                "Tool '{}' is not available for direct proxy calls in unify mode",
+                request.name
+            ),
+            None,
+        ));
+    }
 
     tracing::debug!(
         call_id = %call_id,
@@ -511,7 +555,8 @@ pub(super) async fn call_tool(
 #[cfg(test)]
 mod tests {
     use super::{builtin_tool_allowed, direct_managed_tool_call_allowed};
-    use crate::clients::models::CapabilitySource;
+    use crate::clients::models::{CapabilitySource, UnifyDirectExposureConfig, UnifyDirectToolSurface, UnifyRouteMode};
+    use std::collections::HashSet;
 
     #[test]
     fn hosted_profile_listing_tools_are_only_available_for_profiles_source() {
@@ -701,9 +746,105 @@ mod tests {
 
     #[test]
     fn unify_mode_blocks_direct_managed_tool_calls_but_other_modes_keep_current_proxy_path() {
-        assert!(!direct_managed_tool_call_allowed(Some("unify")));
-        assert!(direct_managed_tool_call_allowed(None));
-        assert!(direct_managed_tool_call_allowed(Some("hosted")));
-        assert!(direct_managed_tool_call_allowed(Some("transparent")));
+        assert!(!direct_managed_tool_call_allowed(Some("unify"), false));
+        assert!(direct_managed_tool_call_allowed(Some("unify"), true));
+        assert!(direct_managed_tool_call_allowed(None, false));
+        assert!(direct_managed_tool_call_allowed(Some("hosted"), false));
+        assert!(direct_managed_tool_call_allowed(Some("transparent"), false));
     }
+
+    #[test]
+    fn unify_direct_exposure_broker_only_keeps_all_tools_brokered() {
+        let workspace = UnifyDirectExposureConfig {
+            route_mode: UnifyRouteMode::BrokerOnly,
+            selected_server_ids: vec!["server-a".to_string()],
+            selected_tool_surfaces: vec![UnifyDirectToolSurface {
+                server_id: "server-a".to_string(),
+                tool_name: "tool-one".to_string(),
+            }],
+            selected_prompt_surfaces: Vec::new(),
+            selected_resource_surfaces: Vec::new(),
+            selected_template_surfaces: Vec::new(),
+        };
+        let eligible_server_ids = HashSet::from(["server-a".to_string()]);
+
+        assert!(!crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            Some(&workspace),
+            &eligible_server_ids,
+            "server-a",
+            "tool-one",
+        ));
+    }
+
+    #[test]
+    fn unify_direct_exposure_server_live_only_exposes_selected_eligible_servers() {
+        let workspace = UnifyDirectExposureConfig {
+            route_mode: UnifyRouteMode::ServerLive,
+            selected_server_ids: vec!["server-a".to_string()],
+            selected_tool_surfaces: Vec::new(),
+            selected_prompt_surfaces: Vec::new(),
+            selected_resource_surfaces: Vec::new(),
+            selected_template_surfaces: Vec::new(),
+        };
+        let eligible_server_ids = HashSet::from(["server-a".to_string()]);
+
+        assert!(crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            Some(&workspace),
+            &eligible_server_ids,
+            "server-a",
+            "tool-one",
+        ));
+        assert!(!crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            Some(&workspace),
+            &eligible_server_ids,
+            "server-b",
+            "tool-one",
+        ));
+        assert!(!crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            Some(&workspace),
+            &HashSet::new(),
+            "server-a",
+            "tool-one",
+        ));
+        assert!(crate::core::proxy::server::unify_directly_exposed_server_allowed(
+            Some(&workspace),
+            &eligible_server_ids,
+            "server-a",
+        ));
+        assert!(!crate::core::proxy::server::unify_directly_exposed_server_allowed(
+            Some(&workspace),
+            &eligible_server_ids,
+            "server-b",
+        ));
+    }
+
+    #[test]
+    fn unify_direct_exposure_capability_level_only_exposes_selected_tools() {
+        let workspace = UnifyDirectExposureConfig {
+            route_mode: UnifyRouteMode::CapabilityLevel,
+            selected_server_ids: vec!["server-a".to_string()],
+            selected_tool_surfaces: vec![UnifyDirectToolSurface {
+                server_id: "server-a".to_string(),
+                tool_name: "tool-one".to_string(),
+            }],
+            selected_prompt_surfaces: Vec::new(),
+            selected_resource_surfaces: Vec::new(),
+            selected_template_surfaces: Vec::new(),
+        };
+        let eligible_server_ids = HashSet::from(["server-a".to_string()]);
+
+        assert!(crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            Some(&workspace),
+            &eligible_server_ids,
+            "server-a",
+            "tool-one",
+        ));
+        assert!(!crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            Some(&workspace),
+            &eligible_server_ids,
+            "server-a",
+            "tool-two",
+        ));
+    }
+
 }
