@@ -46,9 +46,12 @@ impl Database {
 
         tracing::info!("Initializing database connection to {}", database_url);
 
-        global_paths()
-            .ensure_directories()
-            .context("Failed to initialize MCPMate runtime directories")?;
+        let uses_default_database_path = !database_url.starts_with("sqlite:");
+        if uses_default_database_path {
+            global_paths()
+                .ensure_directories()
+                .context("Failed to initialize MCPMate runtime directories")?;
+        }
 
         // Ensure the parent directory exists
         if let Some(parent) = db_path.parent() {
