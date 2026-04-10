@@ -42,10 +42,7 @@ async fn cleanup_pending_import_servers(pool: &Pool<Sqlite>) -> Result<()> {
 
     let removed = result.rows_affected();
     if removed > 0 {
-        tracing::info!(
-            removed,
-            "Removed stale pending_import server records during startup"
-        );
+        tracing::info!(removed, "Removed stale pending_import server records during startup");
     }
 
     Ok(())
@@ -360,7 +357,11 @@ mod tests {
         pool
     }
 
-    fn build_server(id: &str, name: &str, pending_import: bool) -> Server {
+    fn build_server(
+        id: &str,
+        name: &str,
+        pending_import: bool,
+    ) -> Server {
         Server {
             id: Some(id.to_string()),
             name: name.to_string(),
@@ -392,12 +393,10 @@ mod tests {
             .await
             .expect("reinitialize tables and cleanup pending records");
 
-        let remaining_names = sqlx::query_scalar::<_, String>(
-            "SELECT name FROM server_config ORDER BY name ASC",
-        )
-        .fetch_all(&pool)
-        .await
-        .expect("list remaining servers");
+        let remaining_names = sqlx::query_scalar::<_, String>("SELECT name FROM server_config ORDER BY name ASC")
+            .fetch_all(&pool)
+            .await
+            .expect("list remaining servers");
 
         assert_eq!(remaining_names, vec!["visible-server".to_string()]);
     }

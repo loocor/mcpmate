@@ -462,7 +462,9 @@ fn get_uptime_seconds() -> u64 {
     now.saturating_sub(start_time)
 }
 
-pub async fn get_onboarding_policy(State(state): State<Arc<AppState>>) -> Result<Json<crate::api::models::client::OnboardingPolicyResponse>, axum::http::StatusCode> {
+pub async fn get_onboarding_policy(
+    State(state): State<Arc<AppState>>
+) -> Result<Json<crate::api::models::client::OnboardingPolicyResponse>, axum::http::StatusCode> {
     let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
 
     let policy = service.get_onboarding_policy().await.map_err(|err| {
@@ -476,7 +478,7 @@ pub async fn get_onboarding_policy(State(state): State<Arc<AppState>>) -> Result
 }
 
 pub async fn get_first_contact_behavior(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>
 ) -> Result<Json<crate::api::models::client::FirstContactBehaviorResp>, axum::http::StatusCode> {
     let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
 

@@ -47,10 +47,8 @@ async fn connect_http_internal(
     let (service, tools, capabilities) = match transport_type {
         TransportType::StreamableHttp => {
             let config = make_streamable_config(url, &server_config.headers);
-            let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(
-                reqwest::Client::new(),
-                config,
-            );
+            let transport =
+                StreamableHttpClientTransport::<reqwest::Client>::with_client(reqwest::Client::new(), config);
             build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
         }
         TransportType::Stdio => {

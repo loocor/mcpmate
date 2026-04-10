@@ -1,6 +1,6 @@
 use crate::runtime_ports::PersistedRuntimePorts;
 use anyhow::{Context, Result};
-use mcpmate::common::{constants::ports, MCPMatePaths};
+use mcpmate::common::{MCPMatePaths, constants::ports};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 

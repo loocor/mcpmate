@@ -204,9 +204,10 @@ impl ProxyServer {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(client.client_id.as_str());
 
-        let state_opt = svc.fetch_state(&client.client_id).await.map_err(|e| {
-            rmcp::ErrorData::internal_error(format!("Failed to read client state: {e}"), None)
-        })?;
+        let state_opt = svc
+            .fetch_state(&client.client_id)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(format!("Failed to read client state: {e}"), None))?;
 
         if let Some(ref state) = state_opt {
             return match state.approval_status() {
@@ -312,7 +313,7 @@ impl ProxyServer {
                 session_id: Some(session_id.to_string()),
                 profile_id: binding.profile_id.clone(),
                 config_mode: binding.config_mode.clone(),
-            unify_workspace: binding.unify_workspace.clone(),
+                unify_workspace: binding.unify_workspace.clone(),
                 rules_fingerprint: binding.rules_fingerprint.clone(),
                 transport: crate::core::proxy::server::common::ClientTransport::StreamableHttp,
                 source: crate::core::proxy::server::common::ClientIdentitySource::SessionBinding,
@@ -521,8 +522,7 @@ impl ProxyServer {
         self.database = Some(db_arc.clone());
         crate::core::capability::naming::initialize(db_arc.pool.clone());
         self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
-        let client_config_service =
-            Arc::new(ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
+        let client_config_service = Arc::new(ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
         self.client_config_service = Some(client_config_service.clone());
         self.builtin_services = Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(
             db_arc.clone(),

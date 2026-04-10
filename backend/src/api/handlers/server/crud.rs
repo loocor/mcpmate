@@ -190,7 +190,9 @@ pub async fn create_server(
     let existing_server = crate::config::server::get_server(&db.pool, &payload.name)
         .await
         .map_err(map_anyhow_error)?;
-    let reusable_pending_server = existing_server.as_ref().filter(|server| is_pending_import && server.pending_import);
+    let reusable_pending_server = existing_server
+        .as_ref()
+        .filter(|server| is_pending_import && server.pending_import);
     if existing_server.is_some() && reusable_pending_server.is_none() {
         return Err(ApiError::Conflict(format!(
             "Server with name '{}' already exists. Please choose a different name for your server.",
@@ -245,13 +247,9 @@ pub async fn create_server(
     // Persist default headers if provided
     if reusable_pending_server.is_some() {
         let empty_headers = std::collections::HashMap::new();
-        replace_server_headers(
-            &db.pool,
-            &server_id,
-            payload.headers.as_ref().unwrap_or(&empty_headers),
-        )
-        .await
-        .map_err(map_anyhow_error)?;
+        replace_server_headers(&db.pool, &server_id, payload.headers.as_ref().unwrap_or(&empty_headers))
+            .await
+            .map_err(map_anyhow_error)?;
     } else if let Some(headers) = &payload.headers {
         if !headers.is_empty() {
             upsert_server_headers(&db.pool, &server_id, headers)
@@ -286,7 +284,9 @@ pub async fn create_server(
     // Associate server with specified profiles if provided
     let initial_enabled = payload.enabled.unwrap_or(true);
 
-    if !server.pending_import && let Some(profile_ids) = payload.profile_ids.as_ref() {
+    if !server.pending_import
+        && let Some(profile_ids) = payload.profile_ids.as_ref()
+    {
         let mut unique_profiles = BTreeSet::new();
         for profile_id in profile_ids {
             if !unique_profiles.insert(profile_id) {
