@@ -22,6 +22,7 @@ mod audit;
 mod core_service;
 mod deep_link;
 mod oauth_callback_access;
+mod runtime_env;
 mod runtime_ports;
 mod shell;
 mod source_config;
@@ -1016,96 +1017,7 @@ fn mcp_oauth_open_authorization_url(
 }
 
 fn configure_tauri_environment() {
-    const SKIP_BOARD_STATIC: &str = "MCPMATE_SKIP_BOARD_STATIC";
-
-    if std::env::var_os(SKIP_BOARD_STATIC).is_none() {
-        unsafe {
-            std::env::set_var(SKIP_BOARD_STATIC, "1");
-        }
-    }
-
-    // macOS packaged apps often inherit a minimal PATH when launched from Finder,
-    // which breaks spawning of developer runtimes (bunx/npx/python) from the backend.
-    // To make debug builds work out of the box, we: (1) ensure absolute shims for
-    // common commands under ~/.mcpmate/bin, (2) prepend that bin plus typical Homebrew
-    // locations to PATH.
-    #[cfg(target_os = "macos")]
-    {
-        use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::PathBuf};
-
-        // Resolve MCPMate base dir the same way backend does by default
-        let base_dir = match MCPMatePaths::new() {
-            Ok(p) => p.base_dir().to_path_buf(),
-            Err(_) => {
-                let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/"));
-                PathBuf::from(home).join(".mcpmate")
-            }
-        };
-
-        // Prepare ~/.mcpmate/bin and ~/.mcpmate/runtimes/* helper dirs
-        let bin_dir = base_dir.join("bin");
-        let _ = fs::create_dir_all(&bin_dir);
-
-        let bunx_path = base_dir.join("runtimes").join("bun").join("bunx");
-
-        // Write a tiny shim for `npx` that prefers our managed bunx, then falls back to system npx
-        let npx_shim = bin_dir.join("npx");
-        if !npx_shim.exists() {
-            let mut f = fs::File::create(&npx_shim).ok();
-            if let Some(mut file) = f.take() {
-                let script = format!(
-                    "#!/bin/sh\nset -e\nBUNX=\"{}\"\nif [ -x \"$BUNX\" ]; then exec \"$BUNX\" \"$@\"; fi\n# fallback to system npx if present\nif command -v npx >/dev/null 2>&1; then exec \"$(command -v npx)\" \"$@\"; fi\necho 'npx is unavailable (no bunx in ~/.mcpmate/runtimes and npx not found in PATH)' 1>&2\nexit 127\n",
-                    bunx_path.display()
-                );
-                let _ = file.write_all(script.as_bytes());
-                let _ = fs::set_permissions(&npx_shim, fs::Permissions::from_mode(0o755));
-            }
-        }
-
-        // Provide a conservative Python shim that prefers the system interpreter
-        let python3_candidates = [
-            "/usr/bin/python3",
-            "/opt/homebrew/bin/python3",
-            "/usr/local/bin/python3",
-        ];
-        let py_shim_paths = [bin_dir.join("python3"), bin_dir.join("python")];
-        for shim in &py_shim_paths {
-            if !shim.exists()
-                && let Ok(mut file) = fs::File::create(shim)
-            {
-                let mut found = None;
-                for c in &python3_candidates {
-                    if std::path::Path::new(c).exists() {
-                        found = Some(*c);
-                        break;
-                    }
-                }
-                let body = if let Some(p) = found {
-                    format!("#!/bin/sh\nexec \"{}\" \"$@\"\n", p)
-                } else {
-                    "#!/bin/sh\nexec /usr/bin/env python3 \"$@\"\n".to_string()
-                };
-                let _ = file.write_all(body.as_bytes());
-                let _ = fs::set_permissions(shim, fs::Permissions::from_mode(0o755));
-            }
-        }
-
-        // Compose PATH: ~/.mcpmate/bin + runtimes + common Homebrew prefixes + existing PATH
-        let mut extra_paths: Vec<String> = vec![
-            bin_dir.display().to_string(),
-            base_dir.join("runtimes").join("bun").display().to_string(),
-            base_dir.join("runtimes").join("uv").display().to_string(),
-            "/opt/homebrew/bin".into(),
-            "/usr/local/bin".into(),
-        ];
-        if let Ok(current) = std::env::var("PATH") {
-            extra_paths.push(current);
-        }
-        let new_path = extra_paths.join(":");
-        unsafe {
-            std::env::set_var("PATH", new_path);
-        }
-    }
+    runtime_env::configure_process_environment();
 }
 
 fn initialize_menu(app: &mut tauri::App) -> Result<()> {
@@ -1291,6 +1203,7 @@ fn spawn_desktop_managed_core(
     config: &DesktopCoreSourceConfig,
 ) -> Result<Child> {
     let binary = resolve_local_core_binary(app)?;
+    let base_dir = global_paths().base_dir().to_path_buf();
     let mut command = Command::new(binary);
     command
         .arg("--api-port")
@@ -1300,7 +1213,8 @@ fn spawn_desktop_managed_core(
         .arg("--log-level")
         .arg("info")
         .stdin(Stdio::null())
-        .env("MCPMATE_DATA_DIR", global_paths().base_dir())
+        .current_dir(&base_dir)
+        .env("MCPMATE_DATA_DIR", &base_dir)
         .env("MCPMATE_API_PORT", config.localhost.api_port.to_string())
         .env("MCPMATE_MCP_PORT", config.localhost.mcp_port.to_string());
     configure_desktop_managed_stdio(&mut command);

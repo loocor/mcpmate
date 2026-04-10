@@ -4,7 +4,7 @@
 			"args": [
 				"-y",
 				"@21st-dev/magic@latest",
-				"API_KEY=\"c5dc57e6cec36564e6d056af192bb264551ba5911168eb25f1a7f08b9b2ca1d7\""
+				"API_KEY=\"REPLACE_WITH_YOUR_21MAGIC_API_KEY\""
 			],
 			"command": "npx",
 			"type": "stdio"
