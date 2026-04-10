@@ -23,9 +23,14 @@ pub fn service_environment_entries() -> Vec<(String, String)> {
     desktop_runtime_environment().into_iter().collect()
 }
 
-pub fn merge_service_environment(mut base: Vec<(String, String)>) -> Vec<(String, String)> {
-    base.extend(service_environment_entries());
-    base
+pub fn merge_service_environment(base: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut merged: BTreeMap<String, String> = base.into_iter().collect();
+
+    for (key, value) in service_environment_entries() {
+        merged.insert(key, value);
+    }
+
+    merged.into_iter().collect()
 }
 
 fn desktop_runtime_environment() -> BTreeMap<String, String> {
@@ -53,20 +58,20 @@ fn desktop_runtime_environment() -> BTreeMap<String, String> {
 
 #[cfg(target_os = "macos")]
 fn ensure_desktop_runtime_path() -> Result<String> {
-    use std::os::unix::fs::PermissionsExt;
-
     let base_dir = resolve_base_dir();
     let bin_dir = base_dir.join("bin");
     fs::create_dir_all(&bin_dir)?;
 
-    let bunx_path = base_dir.join("runtimes").join("bun").join("bunx");
+    let bun_runtime_dir = base_dir.join("runtimes").join("bun");
+    let bunx_path = bun_runtime_dir.join("bunx");
 
     let npx_shim = bin_dir.join("npx");
     ensure_executable_shim(
         &npx_shim,
         &format!(
-            "#!/bin/sh\nset -e\nBUNX=\"{}\"\nif [ -x \"$BUNX\" ]; then exec \"$BUNX\" \"$@\"; fi\nif command -v npx >/dev/null 2>&1; then exec \"$(command -v npx)\" \"$@\"; fi\necho 'npx is unavailable (no bunx in ~/.mcpmate/runtimes and npx not found in PATH)' 1>&2\nexit 127\n",
-            bunx_path.display()
+            "#!/bin/sh\nset -e\nBUNX=\"{}\"\nif [ -x \"$BUNX\" ]; then exec \"$BUNX\" \"$@\"; fi\nif command -v npx >/dev/null 2>&1; then exec \"$(command -v npx)\" \"$@\"; fi\necho 'npx is unavailable (no bunx in {} and npx not found in PATH)' 1>&2\nexit 127\n",
+            bunx_path.display(),
+            bun_runtime_dir.display()
         ),
     )?;
 
@@ -145,6 +150,20 @@ mod tests {
         assert!(
             env.iter()
                 .any(|(key, value)| key == "MCPMATE_API_PORT" && value == "8080")
+        );
+    }
+
+    #[test]
+    fn merge_service_environment_deduplicates_base_keys() {
+        let env = merge_service_environment(vec![
+            ("MCPMATE_DATA_DIR".to_string(), "/tmp/mcpmate".to_string()),
+            ("PATH".to_string(), "/tmp/bin".to_string()),
+        ]);
+
+        assert_eq!(env.iter().filter(|(key, _)| key == "PATH").count(), 1);
+        assert!(
+            env.iter()
+                .any(|(key, value)| key == "MCPMATE_DATA_DIR" && value == "/tmp/mcpmate")
         );
     }
 
