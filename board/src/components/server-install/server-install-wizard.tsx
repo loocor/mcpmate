@@ -1383,12 +1383,14 @@ export const ServerInstallWizard = forwardRef(
 										aria-readonly={isEditMode || Boolean(pendingImportServerId)}
 										title={
 											isEditMode || Boolean(pendingImportServerId)
-												? t("manual.fields.name.readOnlyTitle", {
-													defaultValue:
-														pendingImportServerId
-															? "Editing server names is disabled after OAuth setup starts"
-															: "Editing server names is disabled",
-												})
+												? pendingImportServerId
+													? t("manual.fields.name.readOnlyTitleAfterOAuth", {
+														defaultValue:
+															"Editing server names is disabled after OAuth setup starts",
+													})
+													: t("manual.fields.name.readOnlyTitle", {
+														defaultValue: "Editing server names is disabled",
+													})
 												: undefined
 										}
 										className={
@@ -1471,7 +1473,13 @@ export const ServerInstallWizard = forwardRef(
 											onInitiateOAuth={async (config) => {
 												const formValues = getValues();
 												const draft = toDraftFromValues(formValues);
-												if (!draft.name) throw new Error("Server name is required to initiate OAuth");
+												if (!draft.name) {
+													throw new Error(
+														t("manual.errors.nameRequired", {
+															defaultValue: "Name is required",
+														}),
+													);
+												}
 
 												let targetServerId = pendingImportServerRef.current;
 												if (!isEditMode) {
@@ -1492,13 +1500,21 @@ export const ServerInstallWizard = forwardRef(
 														);
 														targetServerId = created.data?.id ?? null;
 														if (!targetServerId) {
-															throw new Error("Failed to create OAuth draft server");
+															throw new Error(
+																t("manual.errors.oauthDraftServerFailed", {
+																	defaultValue: "Failed to create OAuth draft server",
+																}),
+															);
 														}
 														pendingImportServerRef.current = targetServerId;
 														setPendingImportServerId(targetServerId);
 													}
 												} else if (!targetServerId) {
-													throw new Error("Server ID is required to initiate OAuth");
+													throw new Error(
+														t("manual.errors.oauthServerIdRequired", {
+															defaultValue: "Server ID is required to initiate OAuth",
+														}),
+													);
 												}
 
 												await startOAuthAccessFlow(targetServerId, config);
