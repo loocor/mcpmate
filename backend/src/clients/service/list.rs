@@ -53,10 +53,7 @@ impl ClientConfigService {
         }
 
         for (identifier, detected) in detected_map {
-            let display_name = detected
-                .display_name
-                .as_deref()
-                .unwrap_or(&identifier);
+            let display_name = detected.display_name.as_deref().unwrap_or(&identifier);
 
             match self
                 .ensure_passive_observed_row(&identifier, display_name, detected.config_path.as_deref())
@@ -124,9 +121,7 @@ mod tests {
         initialize_profile_tables(pool.as_ref())
             .await
             .expect("init profile tables");
-        initialize_client_table(pool.as_ref())
-            .await
-            .expect("init client table");
+        initialize_client_table(pool.as_ref()).await.expect("init client table");
         initialize_system_settings_table(pool.as_ref())
             .await
             .expect("init system settings table");
