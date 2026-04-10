@@ -23,7 +23,7 @@ import {
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
 import { ProfileFormDrawer } from "../../components/profile-form-drawer";
-import { PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS } from "./components/profile-detail-layout-classes";
+import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
 import { ProfileTokenUsageChart } from "./components/profile-token-usage-chart";
 import {
 	AlertDialog,
@@ -1045,7 +1045,7 @@ export function ProfileDetailPage() {
 													<Edit3 className="h-4 w-4" />
 													{t("profiles:detail.buttons.edit", { defaultValue: "Edit" })}
 												</Button>
-										{suitRole === "user" && !isHostApp && !isCustomMode && (
+												{suitRole === "user" && !isHostApp && !isCustomMode && (
 													<Button
 														variant="outline"
 														size="sm"
@@ -1228,7 +1228,7 @@ export function ProfileDetailPage() {
 						</div>
 					</TabsContent>
 
-					<TabsContent value="servers" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+					<TabsContent value="servers" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
@@ -1494,7 +1494,7 @@ export function ProfileDetailPage() {
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="tools" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+					<TabsContent value="tools" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
@@ -1642,7 +1642,7 @@ export function ProfileDetailPage() {
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="prompts" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+					<TabsContent value="prompts" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
@@ -1792,7 +1792,7 @@ export function ProfileDetailPage() {
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="resources" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+					<TabsContent value="resources" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
@@ -1951,7 +1951,7 @@ export function ProfileDetailPage() {
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="templates" className={PROFILE_DETAIL_CAPABILITY_TAB_CONTENT_CLASS}>
+					<TabsContent value="templates" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
 								<div className="flex items-center justify-between gap-2">
