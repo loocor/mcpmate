@@ -13,13 +13,10 @@ pub async fn approve_client(
 ) -> Result<Json<ApprovalResponse>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let (status, managed) = service
-        .approve_client(&request.identifier)
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to approve client {}: {}", request.identifier, err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let (status, managed) = service.approve_client(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to approve client {}: {}", request.identifier, err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     crate::audit::interceptor::emit_event(
         app_state.audit_service.as_ref(),
@@ -45,13 +42,10 @@ pub async fn reject_client(
 ) -> Result<Json<ApprovalResponse>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let (status, managed) = service
-        .reject_client(&request.identifier)
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to reject client {}: {}", request.identifier, err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let (status, managed) = service.reject_client(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to reject client {}: {}", request.identifier, err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     crate::audit::interceptor::emit_event(
         app_state.audit_service.as_ref(),
@@ -77,13 +71,10 @@ pub async fn suspend_client(
 ) -> Result<Json<ApprovalResponse>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let (status, managed) = service
-        .suspend_client(&request.identifier)
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to suspend client {}: {}", request.identifier, err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let (status, managed) = service.suspend_client(&request.identifier).await.map_err(|err| {
+        tracing::error!("Failed to suspend client {}: {}", request.identifier, err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     crate::audit::interceptor::emit_event(
         app_state.audit_service.as_ref(),
