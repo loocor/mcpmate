@@ -1,14 +1,10 @@
-use std::{
-    ffi::OsString,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use mcpmate::common::global_paths;
 use service_manager::{
-    RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager,
-    ServiceStartCtx, ServiceStatus, ServiceStatusCtx, ServiceStopCtx, ServiceUninstallCtx,
+    RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx,
+    ServiceStatus, ServiceStatusCtx, ServiceStopCtx, ServiceUninstallCtx,
 };
 use tauri::{AppHandle, Manager};
 
@@ -71,7 +67,8 @@ fn service_label() -> Result<ServiceLabel> {
 }
 
 fn service_manager() -> Result<Box<dyn ServiceManager>> {
-    let mut manager = <dyn ServiceManager>::native().context("failed to create native service manager")?;
+    let mut manager =
+        <dyn ServiceManager>::native().context("failed to create native service manager")?;
     manager
         .set_level(resolve_service_level())
         .context("failed to configure service manager level")?;
@@ -82,7 +79,13 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
     let exe_suffix = std::env::consts::EXE_SUFFIX;
     let target = std::env::var("TAURI_ENV_TARGET_TRIPLE")
         .or_else(|_| std::env::var("TARGET"))
-        .unwrap_or_else(|_| format!("{}-unknown-{}", std::env::consts::ARCH, std::env::consts::OS));
+        .unwrap_or_else(|_| {
+            format!(
+                "{}-unknown-{}",
+                std::env::consts::ARCH,
+                std::env::consts::OS
+            )
+        });
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     // For release builds, check MacOS directory first (where Tauri bundles sidecars)
@@ -138,45 +141,70 @@ pub async fn install_local_service(
     read_local_service_status(config).await
 }
 
-pub fn uninstall_local_service(_config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
-	let status = {
-		let manager = service_manager()?;
-		manager.status(ServiceStatusCtx { label: service_label()? })?
-	};
+pub fn uninstall_local_service(
+    _config: &DesktopCoreSourceConfig,
+) -> Result<LocalCoreServiceStatusView> {
+    let status = {
+        let manager = service_manager()?;
+        manager.status(ServiceStatusCtx {
+            label: service_label()?,
+        })?
+    };
 
-	if matches!(status, ServiceStatus::NotInstalled) {
-		return Ok(LocalCoreServiceStatusView {
-			status: LocalCoreServiceStatusKind::NotInstalled,
-			label: "Not Installed".to_string(),
-			detail: "The localhost core service has not been installed yet.".to_string(),
-			level: level_label(resolve_service_level()),
-			installed: false,
-			running: false,
-		});
-	}
+    if matches!(status, ServiceStatus::NotInstalled) {
+        return Ok(LocalCoreServiceStatusView {
+            status: LocalCoreServiceStatusKind::NotInstalled,
+            label: "Not Installed".to_string(),
+            detail: "The localhost core service has not been installed yet.".to_string(),
+            level: level_label(resolve_service_level()),
+            installed: false,
+            running: false,
+        });
+    }
 
-	{
-		let manager = service_manager()?;
-		let _ = manager.stop(ServiceStopCtx { label: service_label()? });
-		manager
-			.uninstall(ServiceUninstallCtx { label: service_label()? })
-			.context("failed to uninstall local core service")?;
-	}
+    {
+        let manager = service_manager()?;
+        let _ = manager.stop(ServiceStopCtx {
+            label: service_label()?,
+        });
+        manager
+            .uninstall(ServiceUninstallCtx {
+                label: service_label()?,
+            })
+            .context("failed to uninstall local core service")?;
+    }
 
-	Ok(LocalCoreServiceStatusView {
-		status: LocalCoreServiceStatusKind::NotInstalled,
-		label: "Not Installed".to_string(),
-		detail: "The localhost core service was removed from the OS service manager.".to_string(),
-		level: level_label(resolve_service_level()),
-		installed: false,
-		running: false,
-	})
+    Ok(LocalCoreServiceStatusView {
+        status: LocalCoreServiceStatusKind::NotInstalled,
+        label: "Not Installed".to_string(),
+        detail: "The localhost core service was removed from the OS service manager.".to_string(),
+        level: level_label(resolve_service_level()),
+        installed: false,
+        running: false,
+    })
 }
 
-fn service_install_ctx(app: &AppHandle, config: &DesktopCoreSourceConfig) -> Result<ServiceInstallCtx> {
+fn service_install_ctx(
+    app: &AppHandle,
+    config: &DesktopCoreSourceConfig,
+) -> Result<ServiceInstallCtx> {
     let base_dir = global_paths().base_dir().to_path_buf();
     let label = service_label()?;
     let program = resolve_local_core_binary(app)?;
+    let environment = crate::runtime_env::merge_service_environment(vec![
+        (
+            "MCPMATE_DATA_DIR".to_string(),
+            base_dir.display().to_string(),
+        ),
+        (
+            "MCPMATE_API_PORT".to_string(),
+            config.localhost.api_port.to_string(),
+        ),
+        (
+            "MCPMATE_MCP_PORT".to_string(),
+            config.localhost.mcp_port.to_string(),
+        ),
+    ]);
 
     Ok(ServiceInstallCtx {
         label,
@@ -198,17 +226,7 @@ fn service_install_ctx(app: &AppHandle, config: &DesktopCoreSourceConfig) -> Res
         contents: None,
         username: None,
         working_directory: Some(base_dir.clone()),
-        environment: Some(vec![
-            ("MCPMATE_DATA_DIR".to_string(), base_dir.display().to_string()),
-            (
-                "MCPMATE_API_PORT".to_string(),
-                config.localhost.api_port.to_string(),
-            ),
-            (
-                "MCPMATE_MCP_PORT".to_string(),
-                config.localhost.mcp_port.to_string(),
-            ),
-        ]),
+        environment: Some(environment),
         autostart: true,
         restart_policy: RestartPolicy::OnFailure {
             delay_secs: Some(5),
@@ -279,7 +297,9 @@ pub async fn wait_for_port_available(port: u16) -> Result<()> {
     anyhow::bail!("Port {} did not become available after 15 seconds", port)
 }
 
-pub async fn read_local_service_status(config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
+pub async fn read_local_service_status(
+    config: &DesktopCoreSourceConfig,
+) -> Result<LocalCoreServiceStatusView> {
     let (level, status) = {
         let manager = service_manager()?;
         let level = level_label(manager.level());
@@ -303,7 +323,9 @@ pub async fn read_local_service_status(config: &DesktopCoreSourceConfig) -> Resu
         ServiceStatus::Stopped(reason) => LocalCoreServiceStatusView {
             status: LocalCoreServiceStatusKind::Stopped,
             label: "Stopped".to_string(),
-            detail: reason.unwrap_or_else(|| "The localhost core service is installed but not running.".to_string()),
+            detail: reason.unwrap_or_else(|| {
+                "The localhost core service is installed but not running.".to_string()
+            }),
             level,
             installed: true,
             running: false,
@@ -313,7 +335,9 @@ pub async fn read_local_service_status(config: &DesktopCoreSourceConfig) -> Resu
                 LocalCoreServiceStatusView {
                     status: LocalCoreServiceStatusKind::Running,
                     label: "Running".to_string(),
-                    detail: "The localhost core service is running and responding to health checks.".to_string(),
+                    detail:
+                        "The localhost core service is running and responding to health checks."
+                            .to_string(),
                     level,
                     installed: true,
                     running: true,
@@ -334,9 +358,14 @@ pub async fn read_local_service_status(config: &DesktopCoreSourceConfig) -> Resu
     Ok(view)
 }
 
-pub fn ensure_local_service_definition(app: &AppHandle, config: &DesktopCoreSourceConfig) -> Result<()> {
+pub fn ensure_local_service_definition(
+    app: &AppHandle,
+    config: &DesktopCoreSourceConfig,
+) -> Result<()> {
     let manager = service_manager()?;
-    let status = manager.status(ServiceStatusCtx { label: service_label()? })?;
+    let status = manager.status(ServiceStatusCtx {
+        label: service_label()?,
+    })?;
     let install_ctx = service_install_ctx(app, config)?;
 
     if !matches!(status, ServiceStatus::NotInstalled) {
@@ -357,7 +386,10 @@ pub fn ensure_local_service_definition(app: &AppHandle, config: &DesktopCoreSour
     Ok(())
 }
 
-pub async fn start_local_service(app: &AppHandle, config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
+pub async fn start_local_service(
+    app: &AppHandle,
+    config: &DesktopCoreSourceConfig,
+) -> Result<LocalCoreServiceStatusView> {
     ensure_local_service_definition(app, config)?;
     {
         let manager = service_manager()?;
@@ -371,7 +403,10 @@ pub async fn start_local_service(app: &AppHandle, config: &DesktopCoreSourceConf
     read_local_service_status(config).await
 }
 
-pub async fn restart_local_service(app: &AppHandle, config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
+pub async fn restart_local_service(
+    app: &AppHandle,
+    config: &DesktopCoreSourceConfig,
+) -> Result<LocalCoreServiceStatusView> {
     ensure_local_service_definition(app, config)?;
     {
         let manager = service_manager()?;
@@ -388,15 +423,22 @@ pub async fn restart_local_service(app: &AppHandle, config: &DesktopCoreSourceCo
     read_local_service_status(config).await
 }
 
-pub async fn stop_local_service(config: &DesktopCoreSourceConfig) -> Result<LocalCoreServiceStatusView> {
+pub async fn stop_local_service(
+    config: &DesktopCoreSourceConfig,
+) -> Result<LocalCoreServiceStatusView> {
     let label = service_label()?;
 
     let status = {
         let manager = service_manager()?;
-        manager.status(ServiceStatusCtx { label: label.clone() })?
+        manager.status(ServiceStatusCtx {
+            label: label.clone(),
+        })?
     };
 
-    if matches!(status, ServiceStatus::NotInstalled | ServiceStatus::Stopped(_)) {
+    if matches!(
+        status,
+        ServiceStatus::NotInstalled | ServiceStatus::Stopped(_)
+    ) {
         return read_local_service_status(config).await;
     }
 
