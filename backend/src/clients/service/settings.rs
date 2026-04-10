@@ -185,21 +185,15 @@ impl ClientConfigService {
             .should_persist_runtime_active_template(identifier, existing_state.as_ref())
             .await?;
 
-        let normalized_config_path = update
-            .config_path
-            .as_deref()
-            .map(str::trim)
+        let raw_config_path = update.config_path.as_deref().map(str::trim);
+        let normalized_config_path = raw_config_path
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
-        let resolved_connection_mode = update.connection_mode.clone().or_else(|| {
-            normalized_config_path.as_ref().map(|path| {
-                if path.trim().is_empty() {
-                    "manual".to_string()
-                } else {
-                    "local_config_detected".to_string()
-                }
-            })
+        let resolved_connection_mode = update.connection_mode.clone().or_else(|| match raw_config_path {
+            Some("") => Some("manual".to_string()),
+            Some(_) => Some("local_config_detected".to_string()),
+            None => None,
         });
 
         self.validate_runtime_target_input(resolved_connection_mode.as_deref(), normalized_config_path.as_deref())
