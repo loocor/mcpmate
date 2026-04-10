@@ -174,12 +174,11 @@ impl ClientConfigService {
     }
 
     pub async fn get_first_contact_behavior(&self) -> ConfigResult<FirstContactBehavior> {
-        let result: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM system_settings WHERE key = 'first_contact_behavior'",
-        )
-        .fetch_optional(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        let result: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM system_settings WHERE key = 'first_contact_behavior'")
+                .fetch_optional(&*self.db_pool)
+                .await
+                .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         match result {
             Some((value,)) => value
@@ -233,7 +232,10 @@ impl ClientConfigService {
         self.set_first_contact_behavior(behavior).await
     }
 
-    pub async fn approve_client(&self, identifier: &str) -> ConfigResult<(String, bool)> {
+    pub async fn approve_client(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<(String, bool)> {
         let name = self.resolve_client_name(identifier).await?;
         let row = self
             .ensure_active_state_row_with_name(identifier, &name, Some(true), Some("approved"))
@@ -258,7 +260,10 @@ impl ClientConfigService {
         Ok(("approved".to_string(), true))
     }
 
-    pub async fn reject_client(&self, identifier: &str) -> ConfigResult<(String, bool)> {
+    pub async fn reject_client(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<(String, bool)> {
         let name = self.resolve_client_name(identifier).await?;
         let row = self
             .ensure_active_state_row_with_name(identifier, &name, Some(false), Some("rejected"))
@@ -280,13 +285,17 @@ impl ClientConfigService {
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-        let updated_row = self.fetch_state(identifier).await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!("Failed to fetch client {} after rejection", identifier)))?;
+        let updated_row = self.fetch_state(identifier).await?.ok_or_else(|| {
+            ConfigError::DataAccessError(format!("Failed to fetch client {} after rejection", identifier))
+        })?;
 
         Ok((updated_row.approval_status().to_string(), updated_row.managed()))
     }
 
-    pub async fn suspend_client(&self, identifier: &str) -> ConfigResult<(String, bool)> {
+    pub async fn suspend_client(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<(String, bool)> {
         let name = self.resolve_client_name(identifier).await?;
         let row = self
             .ensure_active_state_row_with_name(identifier, &name, Some(false), Some("suspended"))
@@ -440,9 +449,11 @@ impl ClientConfigService {
             .as_ref()
             .and_then(|entry| entry.display_name.clone())
             .unwrap_or_else(|| name.to_string());
-        let config_path = observed_config_path
-            .map(str::to_string)
-            .or_else(|| template.as_ref().and_then(Self::extract_runtime_config_path_from_template));
+        let config_path = observed_config_path.map(str::to_string).or_else(|| {
+            template
+                .as_ref()
+                .and_then(Self::extract_runtime_config_path_from_template)
+        });
         let connection_mode = if config_path.is_some() {
             ClientConnectionMode::LocalConfigDetected.as_str()
         } else {
@@ -527,9 +538,7 @@ mod tests {
         initialize_profile_tables(pool.as_ref())
             .await
             .expect("init profile tables");
-        initialize_client_table(pool.as_ref())
-            .await
-            .expect("init client table");
+        initialize_client_table(pool.as_ref()).await.expect("init client table");
         initialize_system_settings_table(pool.as_ref())
             .await
             .expect("init system settings table");
@@ -626,10 +635,7 @@ mod tests {
     async fn default_policy_is_auto_manage() {
         let (_temp_dir, service) = create_test_service().await;
 
-        let policy = service
-            .get_onboarding_policy()
-            .await
-            .expect("get policy");
+        let policy = service.get_onboarding_policy().await.expect("get policy");
 
         assert_eq!(policy, OnboardingPolicy::AutoManage);
     }

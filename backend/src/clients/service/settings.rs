@@ -40,8 +40,7 @@ impl ClientConfigService {
             Some("local_config_detected") => {
                 let raw_path = normalized_path.ok_or_else(|| {
                     ConfigError::DataAccessError(
-                        "Clients with a local config target must provide a valid MCP config file path."
-                            .to_string(),
+                        "Clients with a local config target must provide a valid MCP config file path.".to_string(),
                     )
                 })?;
                 self.validate_existing_config_target(raw_path).await?;
@@ -49,8 +48,7 @@ impl ClientConfigService {
             Some("manual") | Some("remote_http") => {
                 if normalized_path.is_some() {
                     return Err(ConfigError::DataAccessError(
-                        "Only clients with a local config target may store a config file path."
-                            .to_string(),
+                        "Only clients with a local config target may store a config file path.".to_string(),
                     ));
                 }
             }
@@ -73,15 +71,9 @@ impl ClientConfigService {
             .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
         let metadata = tokio::fs::metadata(&resolved_path).await.map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
-                ConfigError::DataAccessError(format!(
-                    "Configured MCP file does not exist: {}",
-                    raw_path
-                ))
+                ConfigError::DataAccessError(format!("Configured MCP file does not exist: {}", raw_path))
             } else {
-                ConfigError::FileOperationError(format!(
-                    "Failed to inspect configured MCP file {}: {}",
-                    raw_path, err
-                ))
+                ConfigError::FileOperationError(format!("Failed to inspect configured MCP file {}: {}", raw_path, err))
             }
         })?;
 
@@ -91,9 +83,7 @@ impl ClientConfigService {
                 .write(true)
                 .open(&resolved_path)
                 .await
-                .map_err(|_| ConfigError::PathNotWritable {
-                    path: resolved_path,
-                })?;
+                .map_err(|_| ConfigError::PathNotWritable { path: resolved_path })?;
         } else if metadata.is_dir() {
             let _ = tokio::fs::read_dir(&resolved_path)
                 .await
@@ -212,11 +202,8 @@ impl ClientConfigService {
             })
         });
 
-        self.validate_runtime_target_input(
-            resolved_connection_mode.as_deref(),
-            normalized_config_path.as_deref(),
-        )
-        .await?;
+        self.validate_runtime_target_input(resolved_connection_mode.as_deref(), normalized_config_path.as_deref())
+            .await?;
 
         let approval_status = existing_state
             .as_ref()
@@ -272,8 +259,7 @@ impl ClientConfigService {
                     .supported_transports
                     .unwrap_or(existing_metadata.supported_transports),
             };
-            self.update_runtime_client_metadata(identifier, &next_metadata)
-                .await?;
+            self.update_runtime_client_metadata(identifier, &next_metadata).await?;
         }
 
         if should_persist_runtime_template {

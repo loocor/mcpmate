@@ -148,12 +148,10 @@ impl DbTemplateSource {
     }
 
     async fn load_templates(&self) -> ConfigResult<Vec<ClientTemplate>> {
-        let rows = sqlx::query_as::<_, (String, String)>(
-            &format!(
-                "SELECT identifier, payload_json FROM {} ORDER BY identifier",
-                tables::CLIENT_TEMPLATE_RUNTIME
-            ),
-        )
+        let rows = sqlx::query_as::<_, (String, String)>(&format!(
+            "SELECT identifier, payload_json FROM {} ORDER BY identifier",
+            tables::CLIENT_TEMPLATE_RUNTIME
+        ))
         .fetch_all(&*self.db_pool)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
@@ -485,20 +483,19 @@ impl ClientConfigSource for DbTemplateSource {
         client_id: &str,
         _platform: &str,
     ) -> ConfigResult<Option<ClientTemplate>> {
-        let row = sqlx::query_scalar::<_, String>(
-            &format!(
-                "SELECT payload_json FROM {} WHERE identifier = ?",
-                tables::CLIENT_TEMPLATE_RUNTIME
-            ),
-        )
+        let row = sqlx::query_scalar::<_, String>(&format!(
+            "SELECT payload_json FROM {} WHERE identifier = ?",
+            tables::CLIENT_TEMPLATE_RUNTIME
+        ))
         .bind(client_id)
         .fetch_optional(&*self.db_pool)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         row.map(|payload_json| {
-            serde_json::from_str::<ClientTemplate>(&payload_json)
-                .map_err(|err| ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err)))
+            serde_json::from_str::<ClientTemplate>(&payload_json).map_err(|err| {
+                ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err))
+            })
         })
         .transpose()
     }
@@ -508,12 +505,10 @@ impl ClientConfigSource for DbTemplateSource {
         client_id: &str,
         _platform: &str,
     ) -> ConfigResult<Option<String>> {
-        let path = sqlx::query_scalar::<_, String>(
-            &format!(
-                "SELECT config_path FROM {} WHERE identifier = ? AND config_path IS NOT NULL AND TRIM(config_path) <> ''",
-                tables::CLIENT
-            ),
-        )
+        let path = sqlx::query_scalar::<_, String>(&format!(
+            "SELECT config_path FROM {} WHERE identifier = ? AND config_path IS NOT NULL AND TRIM(config_path) <> ''",
+            tables::CLIENT
+        ))
         .bind(client_id)
         .fetch_optional(&*self.db_pool)
         .await
