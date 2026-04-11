@@ -48,6 +48,13 @@ export default function ClientConfiguration() {
 				<Li><strong>Customize</strong> creates or reuses a client-specific custom profile.</Li>
 			</Ul>
 
+			<H2>Runtime strategy boundary</H2>
+			<Ul>
+				<Li><strong>Hosted</strong> and <strong>Unify</strong> are MCPMate-managed runtime modes. When their mode or sub-options change, MCPMate treats the change as a managed visibility update: persist the new state, refresh caches and live session state, then emit capability-list notifications only when the managed visible surface actually changes.</Li>
+				<Li><strong>Transparent</strong> still records the selected mode and source, but its main responsibility is writing the client&apos;s raw MCP configuration. After that handoff, the client talks to upstream servers directly rather than through MCPMate&apos;s managed runtime.</Li>
+				<Li>That means Transparent shares the configuration write path, but it does not share the same managed capability-notification contract as Hosted or Unify.</Li>
+			</Ul>
+
 			<H2>Unify direct exposure (Unify-only)</H2>
 			<P>
 				Direct exposure is scoped to Unify. Hosted and Transparent behavior is unchanged.
