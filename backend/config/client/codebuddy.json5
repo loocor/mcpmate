@@ -18,7 +18,7 @@
     macos: [
       {
         method: "config_path",
-        value: "~/Library/Application Support/CodeBuddy/User/globalStorage/tencent.planning-genie/settings/codebuddy_mcp_settings.json",
+        value: "~/.codebuddy/mcp.json",
       },
     ],
     windows: [
