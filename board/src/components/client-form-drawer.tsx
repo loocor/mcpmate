@@ -303,7 +303,13 @@ function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 }
 
 
-export function ClientFormDrawer({ open, onOpenChange, mode, client, onSuccess }: ClientFormDrawerProps) {
+export function ClientFormDrawer({
+	open,
+	onOpenChange,
+	mode,
+	client,
+	onSuccess,
+}: ClientFormDrawerProps) {
 	const { t } = useTranslation("clients");
 	const qc = useQueryClient();
 	const [isHydrating, setIsHydrating] = useState(false);
