@@ -182,7 +182,7 @@ export const serversTranslations = {
 				status: {
 					enabled: "Enabled",
 					disabled: "Disabled",
-					unifyEligible: "Direct Exposure Enabled",
+					unifyEligible: "Direct Exposure Eligible",
 				},
 			},
 			deleteDialog: {
@@ -975,7 +975,7 @@ export const serversTranslations = {
 				status: {
 					enabled: "已启用",
 					disabled: "已禁用",
-					unifyEligible: "已开启直达暴露",
+					unifyEligible: "直达暴露可用",
 				},
 			},
 			deleteDialog: {
@@ -1735,7 +1735,7 @@ export const serversTranslations = {
 				status: {
 					enabled: "有効",
 					disabled: "無効",
-					unifyEligible: "直接公開が有効",
+					unifyEligible: "直接公開が利用可能",
 				},
 			},
 			deleteDialog: {
