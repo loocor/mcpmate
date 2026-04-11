@@ -183,6 +183,12 @@ export interface ServerInstallManualFormProps {
 	onImport?: () => void;
 	/** Allow programmatic ingestion even when ingest UI is disabled (e.g., market mode) */
 	allowProgrammaticIngest?: boolean;
+	/** Optional extra tab to inject into the form */
+	extraTab?: {
+		value: string;
+		label: string;
+		content: React.ReactNode;
+	};
 }
 
 // Utility functions

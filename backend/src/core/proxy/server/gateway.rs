@@ -170,6 +170,15 @@ impl ProxyServer {
             client.config_mode = Some(self.resolve_effective_config_mode(&client.client_id).await?);
         }
 
+        if matches!(client.config_mode.as_deref(), Some("unify")) && client.unify_workspace.is_none() {
+            if let Some(ref svc) = self.client_config_service {
+                client.unify_workspace = svc
+                    .get_unify_direct_exposure_config(&client.client_id)
+                    .await
+                    .map_err(|error| self.map_client_context_error(anyhow::anyhow!(error.to_string())))?;
+            }
+        }
+
         if client.rules_fingerprint.is_some() {
             return Ok(client);
         }
@@ -204,9 +213,10 @@ impl ProxyServer {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(client.client_id.as_str());
 
-        let state_opt = svc.fetch_state(&client.client_id).await.map_err(|e| {
-            rmcp::ErrorData::internal_error(format!("Failed to read client state: {e}"), None)
-        })?;
+        let state_opt = svc
+            .fetch_state(&client.client_id)
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(format!("Failed to read client state: {e}"), None))?;
 
         if let Some(ref state) = state_opt {
             return match state.approval_status() {
@@ -312,7 +322,7 @@ impl ProxyServer {
                 session_id: Some(session_id.to_string()),
                 profile_id: binding.profile_id.clone(),
                 config_mode: binding.config_mode.clone(),
-            unify_workspace: binding.unify_workspace.clone(),
+                unify_workspace: binding.unify_workspace.clone(),
                 rules_fingerprint: binding.rules_fingerprint.clone(),
                 transport: crate::core::proxy::server::common::ClientTransport::StreamableHttp,
                 source: crate::core::proxy::server::common::ClientIdentitySource::SessionBinding,
@@ -337,7 +347,7 @@ impl ProxyServer {
         &self,
         session_id: &str,
         client_id: &str,
-        workspace: crate::clients::models::ClientCapabilityConfig,
+        workspace: crate::clients::models::UnifyDirectExposureConfig,
     ) -> Result<(), rmcp::ErrorData> {
         self.client_context_resolver
             .set_unify_workspace(session_id, Some(workspace))
@@ -345,6 +355,41 @@ impl ProxyServer {
             .map_err(|error| self.map_client_context_error(error))?;
 
         self.refresh_bound_session_runtime_identity(session_id, client_id).await
+    }
+
+    pub async fn apply_persisted_client_runtime_state(
+        &self,
+        client_id: &str,
+        config_mode: Option<String>,
+        unify_workspace: Option<crate::clients::models::UnifyDirectExposureConfig>,
+    ) -> anyhow::Result<()> {
+        let session_ids = self
+            .client_context_resolver
+            .session_bindings
+            .iter()
+            .filter(|entry| entry.client_id == client_id)
+            .map(|entry| entry.session_id.clone())
+            .collect::<Vec<_>>();
+
+        for session_id in session_ids {
+            self.client_context_resolver
+                .set_runtime_state(&session_id, config_mode.clone(), unify_workspace.clone())
+                .await?;
+            self.refresh_bound_session_runtime_identity(&session_id, client_id)
+                .await
+                .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn apply_persisted_unify_direct_exposure(
+        &self,
+        client_id: &str,
+        workspace: crate::clients::models::UnifyDirectExposureConfig,
+    ) -> anyhow::Result<()> {
+        self.apply_persisted_client_runtime_state(client_id, Some("unify".to_string()), Some(workspace))
+            .await
     }
 
     /// Remove all state associated with a downstream session.
@@ -521,8 +566,7 @@ impl ProxyServer {
         self.database = Some(db_arc.clone());
         crate::core::capability::naming::initialize(db_arc.pool.clone());
         self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
-        let client_config_service =
-            Arc::new(ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
+        let client_config_service = Arc::new(ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
         self.client_config_service = Some(client_config_service.clone());
         self.builtin_services = Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(
             db_arc.clone(),

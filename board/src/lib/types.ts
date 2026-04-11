@@ -57,6 +57,7 @@ export interface ServerSummary {
 	status: string;
 	auth_mode?: string | null;
 	enabled?: boolean;
+  unify_direct_exposure_eligible?: boolean;
   url?: string | null;
   globally_enabled?: boolean;
   enabled_in_suits?: boolean;
@@ -564,6 +565,7 @@ export interface MCPServerConfig {
 
   profile_ids?: string[];
   enabled?: boolean;
+  unify_direct_exposure_eligible?: boolean;
 
   /** Whether this server is a hidden pre-import record */
   pending_import?: boolean;
@@ -1145,11 +1147,41 @@ export interface ClientConfigResp {
 
 export type CapabilitySource = "activated" | "profiles" | "custom";
 
+
+export interface UnifyDirectExposureConfig {
+  route_mode: "broker_only" | "server_live" | "capability_level";
+  selected_server_ids?: string[];
+  selected_tool_surfaces?: { server_id: string; tool_name: string }[];
+  selected_prompt_surfaces?: { server_id: string; prompt_name: string }[];
+  selected_resource_surfaces?: { server_id: string; resource_uri: string }[];
+  selected_template_surfaces?: { server_id: string; uri_template: string }[];
+  diagnostics?: {
+    invalid_server_ids?: string[];
+    invalid_tool_surfaces?: { server_id: string; tool_name: string; reason: string }[];
+    invalid_prompt_surfaces?: {
+      server_id: string;
+      prompt_name: string;
+      reason: string;
+    }[];
+    invalid_resource_surfaces?: {
+      server_id: string;
+      resource_uri: string;
+      reason: string;
+    }[];
+    invalid_template_surfaces?: {
+      server_id: string;
+      uri_template: string;
+      reason: string;
+    }[];
+  };
+}
+
 export interface ClientCapabilityConfigData {
   identifier: string;
   capability_source: CapabilitySource;
   selected_profile_ids: string[];
   custom_profile_id?: string | null;
+  unify_direct_exposure?: UnifyDirectExposureConfig | null;
 }
 
 export interface ClientCapabilityConfigResp {
@@ -1162,6 +1194,7 @@ export interface ClientCapabilityConfigReq {
   identifier: string;
   capability_source: CapabilitySource;
   selected_profile_ids?: string[];
+  unify_direct_exposure?: UnifyDirectExposureConfig | null;
 }
 
 export interface ClientConfigUpdateReq {

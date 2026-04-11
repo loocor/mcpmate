@@ -213,6 +213,9 @@ async fn disable_server_core(
     // Update global status (early return on failure)
     update_server_global_status_wrapper(&db, &server_id, &server_name, false).await?;
 
+    super::common::reconcile_client_direct_exposure_after_server_constraint_change(&state, &server_id)
+        .await?;
+
     // Sync connections and client configurations
     handle_server_sync(&state, &query).await?;
 

@@ -2,11 +2,12 @@
 //! Provides generation, resolution, and uniqueness guarantees for tool/prompt/resource identifiers.
 
 use anyhow::{Context, Result};
-use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 use sqlx::{Pool, Sqlite};
+use std::sync::RwLock;
 use tracing;
 
-static NAMING_POOL: OnceCell<Pool<Sqlite>> = OnceCell::new();
+static NAMING_POOL: Lazy<RwLock<Option<Pool<Sqlite>>>> = Lazy::new(|| RwLock::new(None));
 
 /// Tool naming policy inferred from a server's tool list.
 /// When `uniform_prefix` is present, all tool names share the same
@@ -21,18 +22,24 @@ pub struct ToolNamingPolicy {
 }
 
 /// Initialize the global naming store with a database pool.
-/// Safe to call multiple times; subsequent calls are ignored.
+/// Safe to call multiple times; later calls replace the active pool.
 pub fn initialize(pool: Pool<Sqlite>) {
-    if NAMING_POOL.set(pool).is_err() {
-        tracing::debug!("Naming store already initialized");
+    let mut guard = NAMING_POOL
+        .write()
+        .expect("Naming store lock poisoned while initializing");
+    let replaced = guard.replace(pool).is_some();
+    if replaced {
+        tracing::debug!("Naming store reinitialized");
     } else {
         tracing::debug!("Naming store initialized");
     }
 }
 
-fn pool() -> &'static Pool<Sqlite> {
+fn pool() -> Pool<Sqlite> {
     NAMING_POOL
-        .get()
+        .read()
+        .expect("Naming store lock poisoned while reading")
+        .clone()
         .expect("Naming store not initialized; call naming::initialize first")
 }
 
@@ -311,7 +318,7 @@ pub async fn resolve_unique_name(
 
     let row = sqlx::query_as::<_, (String, String)>(&query)
         .bind(unique)
-        .fetch_optional(pool())
+        .fetch_optional(&pool())
         .await
         .context(format!("Failed to resolve unique {:?}: {}", kind, unique))?;
 
@@ -417,7 +424,7 @@ async fn unique_tool_name_conflict(
     .bind(unique_name)
     .bind(server_id)
     .bind(tool_name)
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await
     .context(format!("Failed to check tool name conflicts for '{}'", unique_name))?;
     Ok(exists)

@@ -42,10 +42,7 @@ async fn cleanup_pending_import_servers(pool: &Pool<Sqlite>) -> Result<()> {
 
     let removed = result.rows_affected();
     if removed > 0 {
-        tracing::info!(
-            removed,
-            "Removed stale pending_import server records during startup"
-        );
+        tracing::info!(removed, "Removed stale pending_import server records during startup");
     }
 
     Ok(())
@@ -70,6 +67,7 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             registry_server_id TEXT UNIQUE,
             capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
+            unify_direct_exposure_eligible BOOLEAN NOT NULL DEFAULT 0,
             pending_import BOOLEAN NOT NULL DEFAULT 0,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -87,6 +85,13 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
 
     tracing::debug!("server_config table created or already exists");
     ensure_column(pool, "server_config", "pending_import", "BOOLEAN NOT NULL DEFAULT 0").await?;
+    ensure_column(
+        pool,
+        "server_config",
+        "unify_direct_exposure_eligible",
+        "BOOLEAN NOT NULL DEFAULT 0",
+    )
+    .await?;
     Ok(())
 }
 
@@ -360,7 +365,11 @@ mod tests {
         pool
     }
 
-    fn build_server(id: &str, name: &str, pending_import: bool) -> Server {
+    fn build_server(
+        id: &str,
+        name: &str,
+        pending_import: bool,
+    ) -> Server {
         Server {
             id: Some(id.to_string()),
             name: name.to_string(),
@@ -370,6 +379,7 @@ mod tests {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
             pending_import,
             created_at: None,
             updated_at: None,
@@ -392,12 +402,10 @@ mod tests {
             .await
             .expect("reinitialize tables and cleanup pending records");
 
-        let remaining_names = sqlx::query_scalar::<_, String>(
-            "SELECT name FROM server_config ORDER BY name ASC",
-        )
-        .fetch_all(&pool)
-        .await
-        .expect("list remaining servers");
+        let remaining_names = sqlx::query_scalar::<_, String>("SELECT name FROM server_config ORDER BY name ASC")
+            .fetch_all(&pool)
+            .await
+            .expect("list remaining servers");
 
         assert_eq!(remaining_names, vec!["visible-server".to_string()]);
     }

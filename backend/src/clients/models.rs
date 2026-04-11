@@ -506,6 +506,31 @@ mod tests {
     }
 
     #[test]
+    fn parses_unify_route_mode_values() {
+        assert_eq!(
+            UnifyRouteMode::from_str("broker_only").expect("parse broker_only"),
+            UnifyRouteMode::BrokerOnly
+        );
+        assert_eq!(
+            UnifyRouteMode::from_str("server_live").expect("parse server_live"),
+            UnifyRouteMode::ServerLive
+        );
+        assert_eq!(
+            UnifyRouteMode::from_str("capability_level").expect("parse capability_level"),
+            UnifyRouteMode::CapabilityLevel
+        );
+    }
+
+    #[test]
+    fn defaults_unify_direct_exposure_config_to_broker_only() {
+        let config = UnifyDirectExposureConfig::default();
+
+        assert_eq!(config.route_mode, UnifyRouteMode::BrokerOnly);
+        assert!(config.selected_server_ids.is_empty());
+        assert!(config.selected_tool_surfaces.is_empty());
+    }
+
+    #[test]
     fn approval_status_supports_suspended() {
         assert_eq!(
             ApprovalStatus::from_str("suspended").expect("parse suspended"),
@@ -692,6 +717,69 @@ impl ClientCapabilityConfig {
     }
 }
 
+impl UnifyDirectExposureConfig {
+    pub fn from_parts(
+        route_mode: Option<&str>,
+        selected_server_ids_json: Option<&str>,
+        selected_tool_surfaces_json: Option<&str>,
+        selected_prompt_surfaces_json: Option<&str>,
+        selected_resource_surfaces_json: Option<&str>,
+        selected_template_surfaces_json: Option<&str>,
+    ) -> Result<Self, String> {
+        let route_mode = route_mode
+            .map(UnifyRouteMode::from_str)
+            .transpose()
+            .map_err(|_| {
+                format!(
+                    "invalid unify_route_mode '{}': expected broker_only|server_live|capability_level",
+                    route_mode.unwrap_or_default()
+                )
+            })?
+            .unwrap_or_default();
+
+        let selected_server_ids = if let Some(raw) = selected_server_ids_json {
+            serde_json::from_str::<Vec<String>>(raw)
+                .map_err(|err| format!("invalid unify_selected_server_ids payload '{}': {}", raw, err))?
+        } else {
+            Vec::new()
+        };
+
+        let selected_tool_surfaces = if let Some(raw) = selected_tool_surfaces_json {
+            serde_json::from_str::<Vec<UnifyDirectToolSurface>>(raw)
+                .map_err(|err| format!("invalid unify_selected_tool_surfaces payload '{}': {}", raw, err))?
+        } else {
+            Vec::new()
+        };
+        let selected_prompt_surfaces = if let Some(raw) = selected_prompt_surfaces_json {
+            serde_json::from_str::<Vec<UnifyDirectPromptSurface>>(raw)
+                .map_err(|err| format!("invalid unify_selected_prompt_surfaces payload '{}': {}", raw, err))?
+        } else {
+            Vec::new()
+        };
+        let selected_resource_surfaces = if let Some(raw) = selected_resource_surfaces_json {
+            serde_json::from_str::<Vec<UnifyDirectResourceSurface>>(raw)
+                .map_err(|err| format!("invalid unify_selected_resource_surfaces payload '{}': {}", raw, err))?
+        } else {
+            Vec::new()
+        };
+        let selected_template_surfaces = if let Some(raw) = selected_template_surfaces_json {
+            serde_json::from_str::<Vec<UnifyDirectTemplateSurface>>(raw)
+                .map_err(|err| format!("invalid unify_selected_template_surfaces payload '{}': {}", raw, err))?
+        } else {
+            Vec::new()
+        };
+
+        Ok(Self {
+            route_mode,
+            selected_server_ids,
+            selected_tool_surfaces,
+            selected_prompt_surfaces,
+            selected_resource_surfaces,
+            selected_template_surfaces,
+        })
+    }
+}
+
 /// Detection rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -802,6 +890,146 @@ impl FromStr for CapabilitySource {
     }
 }
 
+/// Unify direct-exposure route mode.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UnifyRouteMode {
+    #[default]
+    BrokerOnly,
+    ServerLive,
+    CapabilityLevel,
+}
+
+impl UnifyRouteMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UnifyRouteMode::BrokerOnly => "broker_only",
+            UnifyRouteMode::ServerLive => "server_live",
+            UnifyRouteMode::CapabilityLevel => "capability_level",
+        }
+    }
+}
+
+impl fmt::Display for UnifyRouteMode {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseUnifyRouteModeError;
+
+impl fmt::Display for ParseUnifyRouteModeError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid unify route mode")
+    }
+}
+
+impl std::error::Error for ParseUnifyRouteModeError {}
+
+impl FromStr for UnifyRouteMode {
+    type Err = ParseUnifyRouteModeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "broker_only" => Ok(UnifyRouteMode::BrokerOnly),
+            "server_live" => Ok(UnifyRouteMode::ServerLive),
+            "capability_level" => Ok(UnifyRouteMode::CapabilityLevel),
+            _ => Err(ParseUnifyRouteModeError),
+        }
+    }
+}
+
+/// Explicit tool surface selected for direct exposure in Unify capability-level mode.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct UnifyDirectToolSurface {
+    pub server_id: String,
+    pub tool_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct UnifyDirectPromptSurface {
+    pub server_id: String,
+    pub prompt_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct UnifyDirectResourceSurface {
+    pub server_id: String,
+    pub resource_uri: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct UnifyDirectTemplateSurface {
+    pub server_id: String,
+    pub uri_template: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct UnifyDirectExposureDiagnostics {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalid_server_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalid_tool_surfaces: Vec<UnifyDirectToolSurfaceDiagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalid_prompt_surfaces: Vec<UnifyDirectPromptSurfaceDiagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalid_resource_surfaces: Vec<UnifyDirectResourceSurfaceDiagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalid_template_surfaces: Vec<UnifyDirectTemplateSurfaceDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct UnifyDirectToolSurfaceDiagnostic {
+    pub server_id: String,
+    pub tool_name: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct UnifyDirectPromptSurfaceDiagnostic {
+    pub server_id: String,
+    pub prompt_name: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct UnifyDirectResourceSurfaceDiagnostic {
+    pub server_id: String,
+    pub resource_uri: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct UnifyDirectTemplateSurfaceDiagnostic {
+    pub server_id: String,
+    pub uri_template: String,
+    pub reason: String,
+}
+
+/// Per-client Unify direct-exposure state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct UnifyDirectExposureConfig {
+    #[serde(default)]
+    pub route_mode: UnifyRouteMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_server_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_tool_surfaces: Vec<UnifyDirectToolSurface>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_prompt_surfaces: Vec<UnifyDirectPromptSurface>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_resource_surfaces: Vec<UnifyDirectResourceSurface>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_template_surfaces: Vec<UnifyDirectTemplateSurface>,
+}
+
 /// Persisted per-client capability configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ClientCapabilityConfig {
@@ -810,6 +1038,13 @@ pub struct ClientCapabilityConfig {
     pub selected_profile_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClientCapabilityConfigState {
+    pub capability_config: ClientCapabilityConfig,
+    pub unify_direct_exposure: UnifyDirectExposureConfig,
+    pub unify_direct_exposure_diagnostics: UnifyDirectExposureDiagnostics,
 }
 
 /// Server context input to template rendering
