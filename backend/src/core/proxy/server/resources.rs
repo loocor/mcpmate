@@ -15,13 +15,7 @@ pub(super) async fn list_resources(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourcesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("unify")) {
-        return Ok(ListResourcesResult {
-            resources: Vec::new(),
-            next_cursor: None,
-            ..Default::default()
-        });
-    }
+    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
         server.database.clone(),
         server.profile_service.clone(),
@@ -31,6 +25,15 @@ pub(super) async fn list_resources(
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
     let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
+    let unify_direct_exposure_eligible_server_ids = if unify_mode {
+        if let Some(db) = &server.database {
+            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?
+        } else {
+            HashSet::new()
+        }
+    } else {
+        HashSet::new()
+    };
     let mut resources: Vec<rmcp::model::Resource> = Vec::new();
 
     if let Some(db) = &server.database {
@@ -85,19 +88,38 @@ pub(super) async fn list_resources(
                                 out.push(r);
                             }
                         }
-                        out
+                        (server_id, server_name_cloned, out)
                     }
-                    Err(_) => Vec::new(),
+                    Err(_) => (server_id, server_name_cloned, Vec::new()),
                 }
             });
         }
 
-        for mut v in futures::stream::iter(tasks)
+        for (server_id, server_name, mut v) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            resources.append(&mut v);
+            if !unify_mode {
+                resources.append(&mut v);
+                continue;
+            }
+            for resource in v.drain(..) {
+                let raw_resource_uri: String = crate::core::proxy::server::resolve_direct_surface_value(
+                    NamingKind::Resource,
+                    &server_name,
+                    resource.uri.as_ref(),
+                )
+                .await;
+                if crate::core::proxy::server::unify_directly_exposed_resource_allowed(
+                    client.unify_workspace.as_ref(),
+                    &unify_direct_exposure_eligible_server_ids,
+                    &server_id,
+                    raw_resource_uri.as_ref(),
+                ) {
+                    resources.push(resource);
+                }
+            }
         }
     }
 
@@ -125,13 +147,7 @@ pub(super) async fn list_resource_templates(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourceTemplatesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("unify")) {
-        return Ok(ListResourceTemplatesResult {
-            resource_templates: Vec::new(),
-            next_cursor: None,
-            ..Default::default()
-        });
-    }
+    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
         server.database.clone(),
         server.profile_service.clone(),
@@ -141,13 +157,18 @@ pub(super) async fn list_resource_templates(
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
     let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
-    let Some(_db) = &server.database else {
+    let Some(db_ref) = &server.database else {
         tracing::warn!("Database not available for server filtering; returning empty list");
         return Ok(ListResourceTemplatesResult {
             resource_templates: Vec::new(),
             next_cursor: None,
             ..Default::default()
         });
+    };
+    let unify_direct_exposure_eligible_server_ids = if unify_mode {
+        crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db_ref).await?
+    } else {
+        HashSet::new()
     };
 
     let mut resource_templates: Vec<rmcp::model::ResourceTemplate> = Vec::new();
@@ -207,19 +228,32 @@ pub(super) async fn list_resource_templates(
                                 out.push(t);
                             }
                         }
-                        out
+                        (server_id, out)
                     }
-                    Err(_) => Vec::new(),
+                    Err(_) => (server_id, Vec::new()),
                 }
             });
         }
 
-        for mut v in futures::stream::iter(tasks)
+        for (server_id, mut v) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            resource_templates.append(&mut v);
+            if !unify_mode {
+                resource_templates.append(&mut v);
+                continue;
+            }
+            for resource_template in v.drain(..) {
+                if crate::core::proxy::server::unify_directly_exposed_template_allowed(
+                    client.unify_workspace.as_ref(),
+                    &unify_direct_exposure_eligible_server_ids,
+                    &server_id,
+                    resource_template.uri_template.as_ref(),
+                ) {
+                    resource_templates.push(resource_template);
+                }
+            }
         }
     }
 
@@ -251,12 +285,7 @@ pub(super) async fn read_resource(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ReadResourceResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    if matches!(client.config_mode.as_deref(), Some("unify")) {
-        return Err(McpError::invalid_params(
-            "Unify mode does not expose resources directly; use UCAN broker tools instead".to_string(),
-            None,
-        ));
-    }
+    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
     tracing::debug!("Reading resource: {}", request.uri);
 
     let mut lookup_uri = request.uri.clone();
@@ -330,6 +359,41 @@ pub(super) async fn read_resource(
     } else {
         request.uri.clone()
     };
+
+    if unify_mode {
+        let Some(db) = &server.database else {
+            return Err(McpError::invalid_params(
+                "Unify resource direct exposure requires database-backed server metadata".to_string(),
+                None,
+            ));
+        };
+        let eligible_server_ids =
+            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?;
+        let resolved_server_id = match resolve_unique_name(NamingKind::Resource, &canonical_uri).await {
+            Ok((server_name, _)) => crate::core::capability::resolver::to_id(&server_name)
+                .await
+                .ok()
+                .flatten(),
+            Err(_) => None,
+        };
+        let Some(server_id) = resolved_server_id else {
+            return Err(McpError::invalid_params(
+                format!("Resource '{}' is not directly exposed for this client", canonical_uri),
+                None,
+            ));
+        };
+        if !crate::core::proxy::server::unify_directly_exposed_resource_allowed(
+            client.unify_workspace.as_ref(),
+            &eligible_server_ids,
+            &server_id,
+            lookup_uri.as_ref(),
+        ) {
+            return Err(McpError::invalid_params(
+                format!("Resource '{}' is not directly exposed for this client", canonical_uri),
+                None,
+            ));
+        }
+    }
 
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
         server.database.clone(),

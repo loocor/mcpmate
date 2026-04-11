@@ -8,7 +8,7 @@ use std::collections::HashMap;
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, approval_status, template_id, template_version, approval_metadata FROM client",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -57,7 +57,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, approval_status, template_id, template_version, approval_metadata FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
@@ -708,4 +708,5 @@ mod tests {
         assert_eq!(promoted.governance_kind().as_str(), "active");
         assert_eq!(promoted.config_mode.as_deref(), Some("hosted"));
     }
+
 }

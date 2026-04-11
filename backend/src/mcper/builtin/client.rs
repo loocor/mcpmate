@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     clients::{
-        models::{CapabilitySource, ClientCapabilityConfig},
+        models::{CapabilitySource, UnifyDirectExposureConfig},
         service::ClientConfigService,
     },
     config::{database::Database, profile},
@@ -31,7 +31,7 @@ pub struct ClientBuiltinContext {
     pub capability_source: CapabilitySource,
     pub selected_profile_ids: Vec<String>,
     pub custom_profile_id: Option<String>,
-    pub unify_workspace: Option<ClientCapabilityConfig>,
+    pub unify_workspace: Option<UnifyDirectExposureConfig>,
 }
 
 pub struct ClientService {
@@ -242,7 +242,7 @@ impl ClientService {
     fn unify_mode_guide_prompt() -> Prompt {
         Prompt::new(
             "mcpmate_unify_mode_guide",
-        Some("Explain how Unify Mode works and when to use builtin UCAN tools."),
+            Some("Explain how Unify Mode works and when to use builtin UCAN tools."),
             None,
         )
     }
@@ -250,7 +250,7 @@ impl ClientService {
     fn unify_mode_next_actions_prompt() -> Prompt {
         Prompt::new(
             "mcpmate_unify_mode_next_actions",
-        Some("Summarize the current Unify Mode state and recommend the next builtin UCAN tool to call."),
+            Some("Summarize the current Unify Mode state and recommend the next builtin UCAN tool to call."),
             None,
         )
     }
@@ -261,15 +261,15 @@ impl ClientService {
     ) -> GetPromptResult {
         let content = format!(
             concat!(
-        "You are helping a user operate MCPMate Unify Mode for client '{client_id}'.\n\n",
-        "Unify Mode concepts:\n",
-        "1. Unify Mode is session-scoped and starts with builtin MCP control-plane tools only.\n",
-        "2. Unify Mode uses globally enabled servers rather than profile selection.\n",
-        "3. There is no second-level profile selector in the UI for Unify Mode.\n\n",
+                "You are helping a user operate MCPMate Unify Mode for client '{client_id}'.\n\n",
+                "Unify Mode concepts:\n",
+                "1. Unify Mode is session-scoped and starts with builtin MCP control-plane tools only.\n",
+                "2. Unify Mode uses globally enabled servers rather than profile selection.\n",
+                "3. There is no second-level profile selector in the UI for Unify Mode.\n\n",
                 "Tool guidance:\n",
                 "- Use mcpmate_ucan_catalog to browse capabilities from globally enabled servers.\n",
                 "- Use mcpmate_ucan_details to inspect one capability before calling it.\n",
-        "- Use mcpmate_ucan_call to invoke a capability through Unify Mode.\n",
+                "- Use mcpmate_ucan_call to invoke a capability through Unify Mode.\n",
                 "- If the user needs durable or profile-scoped selection, move to Hosted or Transparent mode instead.\n\n",
                 "After any tool that changes capability visibility, if the client does not refresh tools automatically, ask it to re-fetch tools/list."
             ),
@@ -277,7 +277,7 @@ impl ClientService {
         );
 
         GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
-        .with_description("Unify Mode guide for the current client")
+            .with_description("Unify Mode guide for the current client")
     }
 
     fn build_unify_mode_next_actions(
@@ -292,21 +292,21 @@ impl ClientService {
                 "Use mcpmate_ucan_catalog and mcpmate_ucan_details to inspect capabilities before calling them."
             }
             CapabilitySource::Custom => {
-        "Unify Mode does not use profile-scoped overlays. Prefer Hosted or Transparent mode for profile selection."
+                "Unify Mode does not use profile-scoped overlays. Prefer Hosted or Transparent mode for profile selection."
             }
         };
 
         let content = format!(
             concat!(
                 "Client: {client_id}\n",
-        "Mode: Unify\n",
+                "Mode: Unify\n",
                 "Capability source: {capability_source}\n\n",
                 "Recommended next action:\n",
                 "{next_action}\n\n",
                 "If the user asks what is available, start with mcpmate_ucan_catalog.\n",
                 "If the user asks for one specific tool, inspect it with mcpmate_ucan_details before calling when needed.\n",
                 "If a tool changes visible capabilities, ask the client to re-fetch tools/list when auto-refresh is not reliable.\n",
-        "Unify Mode resets when the MCP session ends; promote to Hosted if the user wants durable profile-based behavior."
+                "Unify Mode resets when the MCP session ends; promote to Hosted if the user wants durable profile-based behavior."
             ),
             client_id = context.client_id,
             capability_source = context.capability_source.as_str(),
@@ -314,7 +314,7 @@ impl ClientService {
         );
 
         GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
-        .with_description("Recommended Unify Mode next actions for the current client")
+            .with_description("Recommended Unify Mode next actions for the current client")
     }
 }
 

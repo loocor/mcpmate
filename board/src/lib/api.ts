@@ -873,6 +873,10 @@ export const serversApi = {
 				server_type: serverType,
 				registry_server_id: registryServerId,
 				enabled: enabledValue,
+				unify_direct_exposure_eligible:
+					typeof enhanced?.unify_direct_exposure_eligible === "boolean"
+						? enhanced.unify_direct_exposure_eligible
+						: undefined,
 				globally_enabled:
 					typeof enhanced?.globally_enabled === "boolean"
 						? enhanced.globally_enabled
@@ -950,6 +954,10 @@ export const serversApi = {
 			server_type: serverType,
 			registry_server_id: registryServerId,
 			enabled: enabledValue,
+			unify_direct_exposure_eligible:
+				typeof enhanced?.unify_direct_exposure_eligible === "boolean"
+					? enhanced.unify_direct_exposure_eligible
+					: undefined,
 			globally_enabled:
 				typeof enhanced?.globally_enabled === "boolean"
 					? enhanced.globally_enabled
@@ -1107,12 +1115,18 @@ export const serversApi = {
 
 	// CRUD operations
 	createServer: async (serverConfig: Partial<MCPServerConfig>) => {
-		const sc = serverConfig as { url?: string; enabled?: boolean };
+		const sc = serverConfig as {
+			url?: string;
+			enabled?: boolean;
+			unify_direct_exposure_eligible?: boolean;
+		};
 		const serverType = (serverConfig.kind || "stdio") as string;
 		const base: Record<string, unknown> = {
 			name: serverConfig.name,
 			server_type: serverType,
 			enabled: sc.enabled ?? undefined,
+			unify_direct_exposure_eligible:
+				sc.unify_direct_exposure_eligible ?? undefined,
 			profile_ids: serverConfig.profile_ids ?? undefined,
 		};
 		if (serverType === "stdio") {
@@ -1186,7 +1200,11 @@ export const serversApi = {
 		serverId: string,
 		serverConfig: Partial<MCPServerConfig>,
 	) => {
-		const sc = serverConfig as { url?: string; enabled?: boolean };
+		const sc = serverConfig as {
+			url?: string;
+			enabled?: boolean;
+			unify_direct_exposure_eligible?: boolean;
+		};
 		const serverType = serverConfig.kind as string | undefined;
 		const body: Record<string, unknown> = {
 			id: serverId,
@@ -1195,6 +1213,8 @@ export const serversApi = {
 			env: serverConfig.env ?? undefined,
 			headers: serverConfig.headers ?? undefined,
 			enabled: sc.enabled ?? undefined,
+			unify_direct_exposure_eligible:
+				sc.unify_direct_exposure_eligible ?? undefined,
 			profile_ids: serverConfig.profile_ids ?? undefined,
 		};
 		if (serverConfig.pending_import !== undefined) {

@@ -3,7 +3,7 @@ import type { ManualFormStateJson, ManualServerFormValues } from "../types";
 import { cloneArgs, cloneKeyValuePairs } from "../types";
 
 export function useFormState() {
-	const [activeTab, setActiveTab] = useState<"core" | "meta">("core");
+	const [activeTab, setActiveTab] = useState<string>("core");
 	const [viewMode, setViewMode] = useState<"form" | "json">("form");
 	const [jsonText, setJsonText] = useState<string>(
 		`{
