@@ -49,6 +49,18 @@ pub struct ActiveClientSettingsUpdate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveClientSettingsResult {
+    pub old_effective_mode: String,
+    pub new_effective_mode: String,
+}
+
+impl ActiveClientSettingsResult {
+    pub fn effective_mode_changed(&self) -> bool {
+        self.old_effective_mode != self.new_effective_mode
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReconciledUnifyDirectExposure {
     pub identifier: String,
     pub unify_direct_exposure: UnifyDirectExposureConfig,
@@ -85,22 +97,24 @@ fn serialize_json_or_none<T: serde::Serialize>(value: &T) -> ConfigResult<Option
 }
 
 impl ClientConfigService {
-    pub async fn get_effective_config_mode(
+    async fn resolve_effective_mode_from_explicit(
         &self,
-        identifier: &str,
+        explicit_mode: Option<&str>,
     ) -> ConfigResult<String> {
-        let explicit = self
-            .fetch_state(identifier)
-            .await?
-            .and_then(|state| state.config_mode)
-            .filter(|mode| !mode.trim().is_empty());
-
-        match explicit {
-            Some(mode) => Ok(mode),
+        match explicit_mode.map(str::trim).filter(|mode| !mode.is_empty()) {
+            Some(mode) => Ok(mode.to_string()),
             None => crate::config::client::init::resolve_default_client_config_mode(&self.db_pool)
                 .await
                 .map_err(|err| ConfigError::DataAccessError(err.to_string())),
         }
+    }
+
+    pub async fn get_effective_config_mode(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<String> {
+        let explicit = self.fetch_state(identifier).await?.and_then(|state| state.config_mode);
+        self.resolve_effective_mode_from_explicit(explicit.as_deref()).await
     }
 
     async fn validate_runtime_target_input(
@@ -191,13 +205,14 @@ impl ClientConfigService {
             },
         )
         .await
+        .map(|_| ())
     }
 
     pub async fn set_active_client_settings(
         &self,
         identifier: &str,
         update: ActiveClientSettingsUpdate,
-    ) -> ConfigResult<()> {
+    ) -> ConfigResult<ActiveClientSettingsResult> {
         tracing::info!(
             client = %identifier,
             config_mode = ?update.config_mode,
@@ -253,6 +268,10 @@ impl ClientConfigService {
             .map(str::to_string)
             .unwrap_or(self.resolve_client_name(identifier).await?);
         let existing_state = self.fetch_state(identifier).await?;
+        let old_effective_mode = self
+            .resolve_effective_mode_from_explicit(existing_state.as_ref().and_then(|state| state.config_mode.as_deref()))
+            .await?;
+        let requested_config_mode = update.config_mode.clone();
         let should_persist_runtime_template = self
             .should_persist_runtime_active_template(identifier, existing_state.as_ref())
             .await?;
@@ -332,8 +351,15 @@ impl ClientConfigService {
             self.persist_runtime_active_template(identifier).await?;
         }
 
+        let new_effective_mode = self
+            .resolve_effective_mode_from_explicit(requested_config_mode.as_deref().or(Some(old_effective_mode.as_str())))
+            .await?;
+
         tracing::info!(client = %identifier, "set_active_client_settings: complete");
-        Ok(())
+        Ok(ActiveClientSettingsResult {
+            old_effective_mode,
+            new_effective_mode,
+        })
     }
 
     /// Update client name
@@ -668,9 +694,11 @@ impl ClientConfigService {
             )
             .await?;
 
-        if let Some(fingerprint) = old_fingerprint {
+        let new_fingerprint = crate::core::profile::visibility::compute_capability_fingerprint(&state.capability_config);
+
+        if let Some(ref fingerprint) = old_fingerprint {
             if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
-                match cache_manager.invalidate_by_rules_fingerprint(&fingerprint).await {
+                match cache_manager.invalidate_by_rules_fingerprint(fingerprint).await {
                     Ok(count) => {
                         tracing::info!(
                             client = %identifier,
@@ -693,16 +721,23 @@ impl ClientConfigService {
         crate::core::profile::visibility::invalidate_visibility_cache(identifier);
 
         let visible_surface_changed = if effective_mode == "unify" {
-            let new_visible_fingerprint = self
-                .compute_unify_visible_tool_surface_fingerprint(
-                    identifier,
-                    &state.capability_config,
-                    &state.unify_direct_exposure,
-                )
-                .await?;
-            old_visible_fingerprint != new_visible_fingerprint
+            if old_fingerprint.is_none() {
+                false
+            } else {
+                let new_visible_fingerprint = self
+                    .compute_unify_visible_tool_surface_fingerprint(
+                        identifier,
+                        &state.capability_config,
+                        &state.unify_direct_exposure,
+                    )
+                    .await?;
+                old_visible_fingerprint != new_visible_fingerprint
+            }
         } else {
-            false
+            old_fingerprint
+                .as_ref()
+                .map(|fingerprint| fingerprint != &new_fingerprint)
+                .unwrap_or(false)
         };
 
         Ok((state, visible_surface_changed))
