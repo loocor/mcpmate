@@ -357,26 +357,39 @@ impl ProxyServer {
         self.refresh_bound_session_runtime_identity(session_id, client_id).await
     }
 
-    pub async fn apply_persisted_unify_direct_exposure(
+    pub async fn apply_persisted_client_runtime_state(
         &self,
         client_id: &str,
-        workspace: crate::clients::models::UnifyDirectExposureConfig,
+        config_mode: Option<String>,
+        unify_workspace: Option<crate::clients::models::UnifyDirectExposureConfig>,
     ) -> anyhow::Result<()> {
         let session_ids = self
             .client_context_resolver
             .session_bindings
             .iter()
-            .filter(|entry| entry.client_id == client_id && matches!(entry.config_mode.as_deref(), Some("unify")))
+            .filter(|entry| entry.client_id == client_id)
             .map(|entry| entry.session_id.clone())
             .collect::<Vec<_>>();
 
         for session_id in session_ids {
             self.client_context_resolver
-                .set_unify_workspace(&session_id, Some(workspace.clone()))
+                .set_runtime_state(&session_id, config_mode.clone(), unify_workspace.clone())
                 .await?;
+            self.refresh_bound_session_runtime_identity(&session_id, client_id)
+                .await
+                .map_err(|err| anyhow::anyhow!(err.to_string()))?;
         }
 
         Ok(())
+    }
+
+    pub async fn apply_persisted_unify_direct_exposure(
+        &self,
+        client_id: &str,
+        workspace: crate::clients::models::UnifyDirectExposureConfig,
+    ) -> anyhow::Result<()> {
+        self.apply_persisted_client_runtime_state(client_id, Some("unify".to_string()), Some(workspace))
+            .await
     }
 
     /// Remove all state associated with a downstream session.

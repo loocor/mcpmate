@@ -12,7 +12,9 @@ use crate::api::models::client::{
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat};
+use crate::clients::models::{
+    ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat, UnifyDirectExposureConfig,
+};
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
 use crate::clients::{
@@ -632,6 +634,80 @@ pub(crate) fn get_client_service(state: &AppState) -> Result<Arc<ClientConfigSer
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)
 }
 
+struct BoundClientRuntimeState {
+    effective_mode: String,
+    unify_workspace: Option<UnifyDirectExposureConfig>,
+}
+
+impl BoundClientRuntimeState {
+    fn should_emit_managed_visibility_change(&self, requested: bool) -> bool {
+        requested && matches!(self.effective_mode.as_str(), "hosted" | "unify")
+    }
+}
+
+async fn load_bound_client_runtime_state(
+    service: &ClientConfigService,
+    identifier: &str,
+) -> Option<BoundClientRuntimeState> {
+    let effective_mode = match service.get_effective_config_mode(identifier).await {
+        Ok(mode) => mode,
+        Err(err) => {
+            tracing::warn!(client = %identifier, error = %err, "Failed to resolve effective config mode for runtime state sync");
+            return None;
+        }
+    };
+
+    let unify_workspace = if effective_mode == "unify" {
+        match service.get_unify_direct_exposure_config(identifier).await {
+            Ok(workspace) => Some(workspace.unwrap_or_default()),
+            Err(err) => {
+                tracing::error!(client = %identifier, error = %err, "Failed to load unify direct exposure config for runtime state sync");
+                return None;
+            }
+        }
+    } else {
+        None
+    };
+
+    Some(BoundClientRuntimeState {
+        effective_mode,
+        unify_workspace,
+    })
+}
+
+async fn sync_bound_client_runtime_state(
+    service: &ClientConfigService,
+    identifier: &str,
+    notify_visible_change: bool,
+) {
+    let Some(runtime_state) = load_bound_client_runtime_state(service, identifier).await else {
+        return;
+    };
+
+    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
+        if let Ok(guard) = proxy.try_lock() {
+            if let Err(err) = guard
+                .apply_persisted_client_runtime_state(
+                    identifier,
+                    Some(runtime_state.effective_mode.clone()),
+                    runtime_state.unify_workspace.clone(),
+                )
+                .await
+            {
+                tracing::warn!(client = %identifier, error = %err, mode = %runtime_state.effective_mode, "Failed to sync bound client runtime state");
+            }
+        }
+    }
+
+    if runtime_state.should_emit_managed_visibility_change(notify_visible_change) {
+        crate::core::events::EventBus::global().publish(
+            crate::core::events::Event::ClientVisibleDirectSurfaceChanged {
+                client_id: identifier.to_string(),
+            },
+        );
+    }
+}
+
 async fn emit_client_audit_event(
     app_state: &AppState,
     action: AuditAction,
@@ -678,7 +754,7 @@ pub async fn update_settings(
         "update_settings: received request"
     );
 
-    service
+    let settings_result = service
         .set_active_client_settings(
             &request.identifier,
             ActiveClientSettingsUpdate {
@@ -772,6 +848,9 @@ pub async fn update_settings(
     )
     .await;
 
+    let visible_mode_changed = settings_result.effective_mode_changed();
+    sync_bound_client_runtime_state(&service, &data.identifier, visible_mode_changed).await;
+
     Ok(Json(crate::api::models::client::ClientSettingsUpdateResp::success(
         data,
     )))
@@ -811,22 +890,7 @@ pub async fn update_capability_config(
         },
     };
 
-    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
-        if let Ok(guard) = proxy.try_lock() {
-            if let Err(err) = guard
-                .apply_persisted_unify_direct_exposure(&data.identifier, data.unify_direct_exposure.config.clone())
-                .await
-            {
-                tracing::warn!(client = %data.identifier, error = %err, "Failed to refresh live Unify direct exposure state");
-            }
-        }
-    }
-
-    if visible_surface_changed {
-        crate::core::events::EventBus::global().publish(crate::core::events::Event::ClientVisibleDirectSurfaceChanged {
-            client_id: data.identifier.clone(),
-        });
-    }
+    sync_bound_client_runtime_state(&service, &data.identifier, visible_surface_changed).await;
 
     emit_client_audit_event(
         &app_state,
@@ -1287,7 +1351,7 @@ mod tests {
         CapabilitySource,
         source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot},
     };
-    use crate::common::profile::ProfileType;
+    use crate::common::profile::{ProfileRole, ProfileType};
     use crate::config::{
         client::init::{initialize_client_table, initialize_system_settings_table},
         database::Database,
@@ -1297,6 +1361,7 @@ mod tests {
     };
     use crate::core::{
         cache::{RedbCacheManager, manager::CacheConfig},
+        events::{Event, EventBus},
         models::Config,
         pool::UpstreamConnectionPool,
         profile::ConfigApplicationStateManager,
@@ -1315,6 +1380,47 @@ mod tests {
         app_state: Arc<AppState>,
         client_service: Arc<ClientConfigService>,
         db_pool: sqlx::SqlitePool,
+    }
+
+    async fn wait_for_client_visible_change_event(
+        rx: &mut tokio::sync::broadcast::Receiver<Event>,
+        client_id: &str,
+    ) {
+        let expected = client_id.to_string();
+        tokio::time::timeout(Duration::from_secs(2), async move {
+            loop {
+                match rx.recv().await {
+                    Ok(Event::ClientVisibleDirectSurfaceChanged { client_id }) if client_id == expected => {
+                        return;
+                    }
+                    Ok(_) => continue,
+                    Err(err) => panic!("event receiver failed: {err}"),
+                }
+            }
+        })
+        .await
+        .expect("expected client visible change event");
+    }
+
+    async fn assert_no_client_visible_change_event(
+        rx: &mut tokio::sync::broadcast::Receiver<Event>,
+        client_id: &str,
+    ) {
+        let expected = client_id.to_string();
+        let result = tokio::time::timeout(Duration::from_millis(200), async move {
+            loop {
+                match rx.recv().await {
+                    Ok(Event::ClientVisibleDirectSurfaceChanged { client_id }) if client_id == expected => {
+                        panic!("unexpected client visible change event")
+                    }
+                    Ok(_) => continue,
+                    Err(err) => panic!("event receiver failed: {err}"),
+                }
+            }
+        })
+        .await;
+
+        assert!(result.is_err(), "unexpected client visible change event arrived in timeout window");
     }
 
     async fn create_test_context() -> TestContext {
@@ -1807,6 +1913,136 @@ mod tests {
         );
         assert!(data.unify_direct_exposure.diagnostics.invalid_server_ids.is_empty());
         assert!(data.unify_direct_exposure.diagnostics.invalid_tool_surfaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn hosted_capability_source_switch_emits_visible_change_event() {
+        let context = create_test_context().await;
+        let profile = Profile {
+            id: Some("PROFHOSTED001".to_string()),
+            name: "Hosted Profile".to_string(),
+            description: None,
+            profile_type: ProfileType::Shared,
+            role: ProfileRole::User,
+            multi_select: false,
+            priority: 0,
+            is_active: false,
+            is_default: false,
+            created_at: None,
+            updated_at: None,
+        };
+        profile::upsert_profile(&context.db_pool, &profile)
+            .await
+            .expect("insert hosted profile");
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-a",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("hosted".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed hosted mode");
+
+        let mut rx = EventBus::global().subscribe_async();
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-a".to_string(),
+                capability_source: CapabilitySource::Profiles,
+                selected_profile_ids: vec!["PROFHOSTED001".to_string()],
+                unify_direct_exposure: None,
+            }),
+        )
+        .await
+        .expect("switch hosted capability source");
+
+        assert!(response.success);
+        wait_for_client_visible_change_event(&mut rx, "client-a").await;
+    }
+
+    #[tokio::test]
+    async fn mode_switch_to_hosted_emits_visible_change_event() {
+        let context = create_test_context().await;
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-a",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("unify".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed unify mode");
+
+        let mut rx = EventBus::global().subscribe_async();
+        let Json(response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: None,
+                client_version: None,
+                display_name: None,
+                connection_mode: None,
+                config_path: None,
+                supported_transports: None,
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("switch mode to hosted");
+
+        assert!(response.success);
+        wait_for_client_visible_change_event(&mut rx, "client-a").await;
+    }
+
+    #[tokio::test]
+    async fn mode_switch_to_transparent_does_not_emit_visible_change_event() {
+        let context = create_test_context().await;
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-a",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("hosted".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed hosted mode");
+
+        let mut rx = EventBus::global().subscribe_async();
+        let Json(response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("transparent".to_string()),
+                transport: None,
+                client_version: None,
+                display_name: None,
+                connection_mode: None,
+                config_path: None,
+                supported_transports: None,
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("switch mode to transparent");
+
+        assert!(response.success);
+        assert_no_client_visible_change_event(&mut rx, "client-a").await;
     }
 
     #[tokio::test]
