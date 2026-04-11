@@ -309,6 +309,19 @@ pub trait ManagedClientContextResolver: Send + Sync {
         rules_fingerprint: String,
     ) -> Result<()>;
 
+    async fn set_config_mode(
+        &self,
+        session_id: &str,
+        config_mode: Option<String>,
+    ) -> Result<()>;
+
+    async fn set_runtime_state(
+        &self,
+        session_id: &str,
+        config_mode: Option<String>,
+        unify_workspace: Option<UnifyDirectExposureConfig>,
+    ) -> Result<()>;
+
     async fn set_unify_workspace(
         &self,
         session_id: &str,
@@ -319,6 +332,22 @@ pub trait ManagedClientContextResolver: Send + Sync {
 impl SessionBoundClientContextResolver {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn update_session_binding<F>(
+        &self,
+        session_id: &str,
+        mut update: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&mut SessionBinding),
+    {
+        let mut binding = self
+            .session_bindings
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("Managed session '{}' is not bound", session_id))?;
+        update(&mut binding);
+        Ok(())
     }
 }
 
@@ -471,17 +500,36 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
         Ok(())
     }
 
+    async fn set_config_mode(
+        &self,
+        session_id: &str,
+        config_mode: Option<String>,
+    ) -> Result<()> {
+        self.update_session_binding(session_id, |binding| {
+            binding.config_mode = config_mode.clone();
+        })
+    }
+
+    async fn set_runtime_state(
+        &self,
+        session_id: &str,
+        config_mode: Option<String>,
+        unify_workspace: Option<UnifyDirectExposureConfig>,
+    ) -> Result<()> {
+        self.update_session_binding(session_id, |binding| {
+            binding.config_mode = config_mode.clone();
+            binding.unify_workspace = unify_workspace.clone();
+        })
+    }
+
     async fn set_unify_workspace(
         &self,
         session_id: &str,
         workspace: Option<UnifyDirectExposureConfig>,
     ) -> Result<()> {
-        let mut binding = self
-            .session_bindings
-            .get_mut(session_id)
-            .ok_or_else(|| anyhow!("Managed session '{}' is not bound", session_id))?;
-        binding.unify_workspace = workspace;
-        Ok(())
+        self.update_session_binding(session_id, |binding| {
+            binding.unify_workspace = workspace.clone();
+        })
     }
 }
 
@@ -1519,5 +1567,36 @@ mod tests {
             .get("sess-refresh")
             .expect("binding should exist");
         assert_eq!(binding.rules_fingerprint.as_deref(), Some("fp-new"));
+    }
+
+    #[tokio::test]
+    async fn session_binding_updates_config_mode() {
+        let resolver = SessionBoundClientContextResolver::new();
+        let context = ClientContext {
+            client_id: "cursor".to_string(),
+            session_id: Some("sess-mode".to_string()),
+            profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            unify_workspace: None,
+            rules_fingerprint: Some("fp-old".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+
+        resolver
+            .bind_session("sess-mode", &context)
+            .await
+            .expect("bind should succeed");
+        resolver
+            .set_config_mode("sess-mode", Some("unify".to_string()))
+            .await
+            .expect("config mode update should succeed");
+
+        let binding = resolver
+            .session_bindings
+            .get("sess-mode")
+            .expect("binding should exist");
+        assert_eq!(binding.config_mode.as_deref(), Some("unify"));
     }
 }

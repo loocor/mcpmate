@@ -708,4 +708,5 @@ mod tests {
         assert_eq!(promoted.governance_kind().as_str(), "active");
         assert_eq!(promoted.config_mode.as_deref(), Some("hosted"));
     }
+
 }
