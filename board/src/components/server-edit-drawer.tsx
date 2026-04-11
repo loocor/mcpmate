@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { serversApi } from "../lib/api";
 import { notifySuccess, notifyError } from "../lib/notify";
 import { startOAuthAccessFlow } from "../lib/oauth-callback-access";
 import type { ServerInstallDraft } from "../hooks/use-server-install-pipeline";
@@ -9,7 +10,9 @@ import type {
 	ServerIcon,
 	ServerMetaInfo,
 } from "../lib/types";
-import { ServerInstallManualForm, type ServerInstallManualFormHandle } from "./server-uni-import";
+import { ServerInstallManualForm, type ServerInstallManualFormHandle } from "./server-install";
+import { Switch } from "./ui/switch";
+import { Label } from "./ui/label";
 
 interface ServerEditDrawerProps {
 	server: ServerDetail | null;
@@ -281,6 +284,13 @@ export function ServerEditDrawer({
 	const { t } = useTranslation("servers");
 	const formRef = useRef<ServerInstallManualFormHandle>(null);
 	const [isRefreshing, setIsRefreshing] = useState(false);
+	const [unifyEligible, setUnifyEligible] = useState(false);
+
+	useEffect(() => {
+		if (isOpen && server) {
+			setUnifyEligible(server.unify_direct_exposure_eligible ?? false);
+		}
+	}, [isOpen, server]);
 
 	const initialDraft = useMemo(
 		() => (server ? convertServerDetailToDraft(server) : null),
@@ -291,16 +301,19 @@ export function ServerEditDrawer({
 		async (draft: ServerInstallDraft) => {
 			if (!server) return;
 			const payload = draftToUpdateConfig(draft);
-			await onSubmit(payload);
+			await onSubmit({
+				...payload,
+				unify_direct_exposure_eligible: unifyEligible,
+			});
 			onUpdated?.();
 		},
-		[onSubmit, onUpdated, server],
+		[onSubmit, onUpdated, server, unifyEligible],
 	);
 
 	const handleInitiateOAuth = useCallback(
 		async (config: import("../lib/types").OAuthConfigRequest) => {
 			if (!server?.id) return;
-			
+
 			try {
 				await startOAuthAccessFlow(server.id, config);
 			} catch (error) {
@@ -341,6 +354,76 @@ export function ServerEditDrawer({
 		}
 	}, [server, t]);
 
+
+	const unifyTabContent = (
+		<div className="space-y-6">
+			<div className="rounded-lg border border-warning/20 bg-warning/5 p-4 space-y-4">
+				<div>
+					<p className="text-xs font-semibold uppercase tracking-wide text-warning-foreground/80">
+						{t("manual.fields.unifyEligibility.badge", {
+							defaultValue: "Advanced exposure control",
+						})}
+					</p>
+					<p className="mt-2 text-sm text-muted-foreground">
+						{t("manual.fields.unifyEligibility.description", {
+							defaultValue:
+								"This option marks the server as eligible for direct exposure in Unify mode. Eligible servers can expose tools, prompts, resources, and templates directly to selected clients.",
+						})}
+					</p>
+				</div>
+
+				<h4 className="text-sm font-semibold text-warning-foreground mb-2">
+					{t("manual.fields.unifyEligibility.whatIsIt", { defaultValue: "What is this option?" })}
+				</h4>
+				<p className="text-sm text-muted-foreground mb-4">
+					{t("manual.fields.unifyEligibility.whatIsItDesc", { defaultValue: "Enable this only when the server should be available for direct capability exposure in Unify instead of being reached only through the UCAN broker workflow." })}
+				</p>
+
+				<h4 className="text-sm font-semibold text-warning-foreground mb-2">
+					{t("manual.fields.unifyEligibility.whenToUse", { defaultValue: "When to use it" })}
+				</h4>
+				<p className="text-sm text-muted-foreground mb-4">
+					{t("manual.fields.unifyEligibility.whenToUseDesc", { defaultValue: "Use this for servers that should allow direct exposure of key capabilities to selected Unify clients, such as memory, audit, or always-on context services." })}
+				</p>
+
+				<h4 className="text-sm font-semibold text-warning-foreground mb-2">
+					{t("manual.fields.unifyEligibility.watchOut", { defaultValue: "What to watch out for" })}
+				</h4>
+				<p className="text-sm text-muted-foreground mb-4">
+					{t("manual.fields.unifyEligibility.watchOutDesc", { defaultValue: "Do not enable this casually. Once a client selects direct exposure, capabilities from this server can bypass the UCAN-only path and enter the direct client context." })}
+				</p>
+
+				<h4 className="text-sm font-semibold text-warning-foreground mb-2">
+					{t("manual.fields.unifyEligibility.howToEnable", {
+						defaultValue: "How to enable it",
+					})}
+				</h4>
+				<p className="text-sm text-muted-foreground">
+					{t("manual.fields.unifyEligibility.howToEnableDesc", {
+						defaultValue:
+							"First mark the server as eligible here. Then open a Client in Unify mode and choose Server Live (all capabilities) or Capability Level (selected tools/prompts/resources/templates).",
+					})}
+				</p>
+			</div>
+
+			<div className="flex items-center justify-between gap-4 p-4 border rounded-lg">
+				<div className="flex-1 space-y-1">
+					<Label htmlFor="unify-eligible-switch" className="text-sm font-medium leading-none">
+						{t("manual.fields.unifyEligibility.title", { defaultValue: "Mark as Unify-eligible server" })}
+					</Label>
+					<p className="text-sm text-muted-foreground mt-1.5">
+						{t("manual.fields.unifyEligibility.toggleHint", { defaultValue: "This only marks eligibility. Clients still decide whether and how to expose it." })}
+					</p>
+				</div>
+				<Switch
+					id="unify-eligible-switch"
+					checked={unifyEligible}
+					onCheckedChange={setUnifyEligible}
+				/>
+			</div>
+		</div>
+	);
+
 	return (
 		<ServerInstallManualForm
 			ref={formRef}
@@ -354,6 +437,12 @@ export function ServerEditDrawer({
 			initialDraft={initialDraft ?? undefined}
 			onRefreshFromRegistry={server?.registry_server_id ? handleRefreshFromRegistry : undefined}
 			isRefreshingRegistry={isRefreshing}
+			extraTab={{
+				value: "unify",
+				label: t("manual.tabs.unify", { defaultValue: "Direct Exposure" }),
+				content: unifyTabContent,
+			}}
 		/>
 	);
+
 }

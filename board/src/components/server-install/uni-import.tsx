@@ -80,6 +80,7 @@ export const ServerInstallManualForm = forwardRef<
 			allowProgrammaticIngest = false,
 			serverId,
 			onInitiateOAuth,
+			extraTab,
 		}: ServerInstallManualFormProps,
 		ref,
 	) => {
@@ -1001,11 +1002,14 @@ export const ServerInstallManualForm = forwardRef<
 						>
 							<Tabs
 								value={activeTab}
-								onValueChange={(v) => setActiveTab(v as "core" | "meta")}
+								onValueChange={setActiveTab}
 								className="space-y-4"
 							>
-								<TabsList className="grid w-full grid-cols-2">
+								<TabsList className={`grid w-full ${extraTab ? "grid-cols-3" : "grid-cols-2"}`}>
 									<TabsTrigger value="core">{tabsCoreLabel}</TabsTrigger>
+									{extraTab && (
+										<TabsTrigger value={extraTab.value}>{extraTab.label}</TabsTrigger>
+									)}
 									<TabsTrigger value="meta">
 										{tabsMetaLabel} <sup>({tabsMetaWip})</sup>
 									</TabsTrigger>
@@ -1148,6 +1152,7 @@ export const ServerInstallManualForm = forwardRef<
 												onDeleteClick={handleDeleteClick}
 												onGhostClick={handleGhostClick}
 											/>
+
 										</>
 									) : (
 										<div className="flex flex-col h-full">
@@ -1195,8 +1200,19 @@ export const ServerInstallManualForm = forwardRef<
 									)}
 								</TabsContent>
 
+								
+								{extraTab && (
+									<TabsContent
+										value={extraTab.value}
+										className="space-y-4 pt-4"
+										onClick={handleFormInteraction}
+									>
+										{extraTab.content}
+									</TabsContent>
+								)}
 								<TabsContent
 									value="meta"
+
 									className="space-y-4 pt-4"
 									onClick={handleFormInteraction}
 								>

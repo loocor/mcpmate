@@ -97,6 +97,12 @@ pub enum Event {
         enabled: bool,
     },
 
+    /// Visible direct-exposure surfaces changed for a managed client.
+    ClientVisibleDirectSurfaceChanged {
+        /// Client identifier
+        client_id: String,
+    },
+
     /// Database was initialized or changed
     DatabaseChanged,
 

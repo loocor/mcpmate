@@ -5,7 +5,7 @@ use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     BackupPolicySetting, ClientCapabilityConfig, ClientConnectionMode, ClientGovernanceKind, ClientRecordKind,
     ClientTemplate, ConfigMapping, ConfigMode, DetectionMethod, DetectionRule, FormatRule, ManagedEndpointConfig,
-    MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
+    MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat, UnifyDirectExposureConfig,
 };
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
@@ -118,6 +118,12 @@ pub struct ClientStateRow {
     pub(super) template_identifier: Option<String>,
     pub(super) selected_profile_ids: Option<String>,
     pub(super) custom_profile_id: Option<String>,
+    pub(super) unify_route_mode: Option<String>,
+    pub(super) unify_selected_server_ids: Option<String>,
+    pub(super) unify_selected_tool_surfaces: Option<String>,
+    pub(super) unify_selected_prompt_surfaces: Option<String>,
+    pub(super) unify_selected_resource_surfaces: Option<String>,
+    pub(super) unify_selected_template_surfaces: Option<String>,
     pub(super) approval_status: Option<String>,
     #[allow(dead_code)]
     pub(super) template_id: Option<String>,
@@ -241,6 +247,18 @@ impl ClientStateRow {
             self.capability_source.as_deref(),
             self.selected_profile_ids.as_deref(),
             self.custom_profile_id.clone(),
+        )
+        .map_err(ConfigError::DataAccessError)
+    }
+
+    pub(super) fn unify_direct_exposure_config(&self) -> ConfigResult<UnifyDirectExposureConfig> {
+        UnifyDirectExposureConfig::from_parts(
+            self.unify_route_mode.as_deref(),
+            self.unify_selected_server_ids.as_deref(),
+            self.unify_selected_tool_surfaces.as_deref(),
+            self.unify_selected_prompt_surfaces.as_deref(),
+            self.unify_selected_resource_surfaces.as_deref(),
+            self.unify_selected_template_surfaces.as_deref(),
         )
         .map_err(ConfigError::DataAccessError)
     }

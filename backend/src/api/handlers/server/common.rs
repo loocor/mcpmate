@@ -14,6 +14,7 @@ use crate::{
     core::cache::{CacheQuery, CacheScope, FreshnessLevel},
 };
 use axum::http::StatusCode;
+use tracing::{debug, warn};
 
 pub(crate) fn parse_server_icons(raw: &str) -> Result<Option<Vec<ServerIcon>>, serde_json::Error> {
     if let Ok(list) = serde_json::from_str::<Vec<ServerIcon>>(raw) {
@@ -323,6 +324,55 @@ pub async fn get_complete_server_details(
     details
 }
 
+pub(crate) async fn reconcile_client_direct_exposure_after_server_constraint_change(
+    state: &Arc<AppState>,
+    server_id: &str,
+) -> Result<usize, ApiError> {
+    let Ok(client_service) = crate::api::handlers::client::handlers::get_client_service(state) else {
+        warn!(server_id = %server_id, "Client service unavailable; skipping direct exposure reconciliation");
+        return Ok(0);
+    };
+
+    let reconciled = client_service
+        .reconcile_unify_direct_exposure_for_server(server_id)
+        .await
+        .map_err(|err| ApiError::InternalError(format!(
+            "Failed to reconcile client direct exposure after server constraint change: {err}"
+        )))?;
+
+    if reconciled.is_empty() {
+        return Ok(0);
+    }
+
+    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
+        if let Ok(guard) = proxy.try_lock() {
+            for client in &reconciled {
+                if let Err(err) = guard
+                    .apply_persisted_unify_direct_exposure(
+                        &client.identifier,
+                        client.unify_direct_exposure.clone(),
+                    )
+                    .await
+                {
+                    warn!(client = %client.identifier, server_id = %server_id, error = %err, "Failed to refresh reconciled Unify direct exposure state");
+                }
+            }
+
+            let (tools_count, prompts_count, resources_count) = guard.notify_all_list_changed().await;
+            debug!(
+                server_id = %server_id,
+                reconciled_clients = reconciled.len(),
+                tools_count,
+                prompts_count,
+                resources_count,
+                "Reconciled client direct exposure after server constraint change"
+            );
+        }
+    }
+
+    Ok(reconciled.len())
+}
+
 /// Get server instances with timeout protection
 ///
 /// Consolidates the connection pool access and instance retrieval logic
@@ -604,9 +654,9 @@ pub async fn check_capability_or_error(
 #[inline]
 pub fn get_database_from_state(state: &Arc<AppState>) -> Result<Arc<Database>, ApiError> {
     state
-        .http_proxy
-        .as_ref()
-        .and_then(|p| p.database.clone())
+        .database
+        .clone()
+        .or_else(|| state.http_proxy.as_ref().and_then(|p| p.database.clone()))
         .ok_or_else(|| ApiError::InternalError("Database not available".to_string()))
 }
 

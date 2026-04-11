@@ -736,6 +736,7 @@ enum UcanDetailLevel {
 struct VisibleToolEntry {
     server_id: String,
     server_name: String,
+    raw_tool_name: String,
     tool: Tool,
 }
 
@@ -743,6 +744,7 @@ struct VisibleToolEntry {
 struct VisiblePromptEntry {
     server_id: String,
     server_name: String,
+    raw_prompt_name: String,
     prompt: rmcp::model::Prompt,
 }
 
@@ -750,6 +752,7 @@ struct VisiblePromptEntry {
 struct VisibleResourceEntry {
     server_id: String,
     server_name: String,
+    raw_resource_uri: String,
     resource: Resource,
 }
 
@@ -757,7 +760,68 @@ struct VisibleResourceEntry {
 struct VisibleResourceTemplateEntry {
     server_id: String,
     server_name: String,
+    raw_uri_template: String,
     resource_template: ResourceTemplate,
+}
+
+fn retain_brokered_tools(
+    context: &ClientBuiltinContext,
+    eligible_server_ids: &HashSet<String>,
+    visible: &mut Vec<VisibleToolEntry>,
+) {
+    visible.retain(|entry| {
+        !crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            context.unify_workspace.as_ref(),
+            eligible_server_ids,
+            &entry.server_id,
+            &entry.raw_tool_name,
+        )
+    });
+}
+
+fn retain_brokered_prompts(
+    context: &ClientBuiltinContext,
+    eligible_server_ids: &HashSet<String>,
+    visible: &mut Vec<VisiblePromptEntry>,
+) {
+    visible.retain(|entry| {
+        !crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
+            context.unify_workspace.as_ref(),
+            eligible_server_ids,
+            &entry.server_id,
+            &entry.raw_prompt_name,
+        )
+    });
+}
+
+fn retain_brokered_resources(
+    context: &ClientBuiltinContext,
+    eligible_server_ids: &HashSet<String>,
+    visible: &mut Vec<VisibleResourceEntry>,
+) {
+    visible.retain(|entry| {
+        !crate::core::proxy::server::unify_directly_exposed_resource_allowed(
+            context.unify_workspace.as_ref(),
+            eligible_server_ids,
+            &entry.server_id,
+            &entry.raw_resource_uri,
+        )
+    });
+}
+
+fn retain_brokered_resource_templates(
+    context: &ClientBuiltinContext,
+    eligible_server_ids: &HashSet<String>,
+    visible: &mut Vec<VisibleResourceTemplateEntry>,
+) {
+    visible.retain(|entry| {
+        !crate::core::proxy::server::unify_directly_exposed_template_allowed(
+            context.unify_workspace.as_ref(),
+            eligible_server_ids,
+            &entry.server_id,
+            &entry.raw_uri_template,
+        )
+    });
 }
 
 impl BrokerService {
@@ -778,10 +842,10 @@ impl BrokerService {
     async fn load_enabled_servers(
         &self,
         context: &'static str,
-    ) -> Result<Vec<(String, String, Option<String>)>> {
+    ) -> Result<Vec<(String, String, Option<String>, bool)>> {
         sqlx::query_as(
             r#"
-            SELECT sc.id, sc.name, sc.capabilities
+            SELECT sc.id, sc.name, sc.capabilities, sc.unify_direct_exposure_eligible
             FROM server_config sc
             WHERE sc.enabled = 1
             ORDER BY sc.name, sc.id
@@ -1169,7 +1233,7 @@ impl BrokerService {
                         server_name: prompt.server_name,
                         detail_level,
                         details: prompt_details_value(&prompt.prompt, detail_level)
-            .context("Failed to serialize Unify prompt details")?,
+                            .context("Failed to serialize Unify prompt details")?,
                         workflow_hints,
                         related_capabilities: related,
                         argument_tips,
@@ -1197,7 +1261,7 @@ impl BrokerService {
                         server_name: resource.server_name,
                         detail_level,
                         details: resource_details_value(&resource.resource, detail_level)
-            .context("Failed to serialize Unify resource details")?,
+                            .context("Failed to serialize Unify resource details")?,
                         workflow_hints,
                         related_capabilities: related,
                         argument_tips: Vec::new(),
@@ -1230,7 +1294,7 @@ impl BrokerService {
                             server_name: template.server_name,
                             detail_level,
                             details: resource_template_details_value(&template.resource_template, detail_level)
-            .context("Failed to serialize Unify resource template details")?,
+                                .context("Failed to serialize Unify resource template details")?,
                             workflow_hints,
                             related_capabilities: related,
                             argument_tips: Vec::new(),
@@ -1470,7 +1534,8 @@ impl BrokerService {
         let runtime_identity = client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities) in enabled_servers {
+        let mut eligible_server_ids = HashSet::new();
+        for (server_id, server_name, capabilities, unify_direct_exposure_eligible) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
@@ -1479,6 +1544,9 @@ impl BrokerService {
                 crate::core::capability::CapabilityType::Tools,
             ) {
                 continue;
+            }
+            if unify_direct_exposure_eligible {
+                eligible_server_ids.insert(server_id.clone());
             }
 
             let ctx = crate::core::capability::runtime::ListCtx {
@@ -1508,9 +1576,16 @@ impl BrokerService {
             if let Ok(result) = result {
                 if let Some(tools) = result.items.into_tools() {
                     for tool in tools {
+                        let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
+                            NamingKind::Tool,
+                            &server_name,
+                            tool.name.as_ref(),
+                        )
+                        .await;
                         visible.push(VisibleToolEntry {
                             server_id: server_id.clone(),
                             server_name: server_name.clone(),
+                            raw_tool_name,
                             tool,
                         });
                     }
@@ -1524,6 +1599,7 @@ impl BrokerService {
             .map(|tool| tool.name.to_string())
             .collect::<HashSet<_>>();
         visible.retain(|entry| filtered_names.contains(entry.tool.name.as_ref()));
+        retain_brokered_tools(context, &eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name
                 .cmp(&right.server_name)
@@ -1557,6 +1633,10 @@ impl BrokerService {
         let enabled_servers = self
             .load_enabled_servers("Failed to load enabled servers for Unify prompt catalog")
             .await?;
+        let eligible_server_ids = enabled_servers
+            .iter()
+            .filter_map(|(server_id, _server_name, _capabilities, eligible)| eligible.then_some(server_id.clone()))
+            .collect::<HashSet<_>>();
 
         let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
         let database = self.database.clone();
@@ -1564,7 +1644,7 @@ impl BrokerService {
         let runtime_identity = client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities) in enabled_servers {
+        for (server_id, server_name, capabilities, _unify_direct_exposure_eligible) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
@@ -1603,14 +1683,16 @@ impl BrokerService {
             if let Ok(result) = result {
                 if let Some(prompts) = result.items.into_prompts() {
                     for mut prompt in prompts {
+                        let raw_prompt_name = prompt.name.to_string();
                         prompt.name = crate::core::capability::naming::generate_unique_name(
                             NamingKind::Prompt,
                             &server_name,
-                            &prompt.name,
+                            &raw_prompt_name,
                         );
                         visible.push(VisiblePromptEntry {
                             server_id: server_id.clone(),
                             server_name: server_name.clone(),
+                            raw_prompt_name,
                             prompt,
                         });
                     }
@@ -1624,6 +1706,7 @@ impl BrokerService {
             .map(|prompt| prompt.name.to_string())
             .collect::<HashSet<_>>();
         visible.retain(|entry| filtered_names.contains(entry.prompt.name.as_str()));
+        retain_brokered_prompts(context, &eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name
                 .cmp(&right.server_name)
@@ -1659,6 +1742,10 @@ impl BrokerService {
         let enabled_servers = self
             .load_enabled_servers("Failed to load enabled servers for Unify resource catalog")
             .await?;
+        let eligible_server_ids = enabled_servers
+            .iter()
+            .filter_map(|(server_id, _server_name, _capabilities, eligible)| eligible.then_some(server_id.clone()))
+            .collect::<HashSet<_>>();
 
         let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
         let database = self.database.clone();
@@ -1666,7 +1753,7 @@ impl BrokerService {
         let runtime_identity = client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities) in enabled_servers {
+        for (server_id, server_name, capabilities, _unify_direct_exposure_eligible) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
@@ -1705,14 +1792,16 @@ impl BrokerService {
             if let Ok(result) = result {
                 if let Some(resources) = result.items.into_resources() {
                     for mut resource in resources {
+                        let raw_resource_uri = resource.uri.to_string();
                         resource.raw.uri = crate::core::capability::naming::generate_unique_name(
                             NamingKind::Resource,
                             &server_name,
-                            &resource.uri,
+                            &raw_resource_uri,
                         );
                         visible.push(VisibleResourceEntry {
                             server_id: server_id.clone(),
                             server_name: server_name.clone(),
+                            raw_resource_uri,
                             resource,
                         });
                     }
@@ -1731,6 +1820,7 @@ impl BrokerService {
             .map(|resource| resource.uri.to_string())
             .collect::<HashSet<_>>();
         visible.retain(|entry| filtered_names.contains(entry.resource.uri.as_str()));
+        retain_brokered_resources(context, &eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name
                 .cmp(&right.server_name)
@@ -1766,6 +1856,10 @@ impl BrokerService {
         let enabled_servers = self
             .load_enabled_servers("Failed to load enabled servers for Unify resource template catalog")
             .await?;
+        let eligible_server_ids = enabled_servers
+            .iter()
+            .filter_map(|(server_id, _server_name, _capabilities, eligible)| eligible.then_some(server_id.clone()))
+            .collect::<HashSet<_>>();
 
         let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
         let database = self.database.clone();
@@ -1773,7 +1867,7 @@ impl BrokerService {
         let runtime_identity = client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities) in enabled_servers {
+        for (server_id, server_name, capabilities, _unify_direct_exposure_eligible) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
@@ -1812,14 +1906,16 @@ impl BrokerService {
             if let Ok(result) = result {
                 if let Some(templates) = result.items.into_resource_templates() {
                     for mut resource_template in templates {
+                        let raw_uri_template = resource_template.uri_template.to_string();
                         resource_template.raw.name = crate::core::capability::naming::generate_unique_name(
                             NamingKind::ResourceTemplate,
                             &server_name,
-                            &resource_template.uri_template,
+                            &raw_uri_template,
                         );
                         visible.push(VisibleResourceTemplateEntry {
                             server_id: server_id.clone(),
                             server_name: server_name.clone(),
+                            raw_uri_template,
                             resource_template,
                         });
                     }
@@ -1838,6 +1934,7 @@ impl BrokerService {
             .map(|template| template.name.to_string())
             .collect::<HashSet<_>>();
         visible.retain(|entry| filtered_names.contains(entry.resource_template.name.as_str()));
+        retain_brokered_resource_templates(context, &eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name.cmp(&right.server_name).then_with(|| {
                 left.resource_template
@@ -1932,7 +2029,7 @@ impl BrokerService {
         .await
         {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result).context("Failed to serialize Unify prompt result")?,
+                serde_json::to_string_pretty(&result).context("Failed to serialize Unify prompt result")?,
             )])),
             Err(e) => Ok(UcanError::upstream_error("prompt", prompt_name, &e.to_string()).to_call_tool_result()),
         }
@@ -1997,7 +2094,7 @@ impl BrokerService {
         .await
         {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
+                serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
             )])),
             Err(e) => Ok(UcanError::upstream_error("resource", resource_uri, &e.to_string()).to_call_tool_result()),
         }
@@ -2051,12 +2148,12 @@ impl BrokerService {
                 pool_guard
                     .ensure_connected_with_selection(&selection)
                     .await
-            .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
+                    .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
             } else {
                 pool_guard
                     .ensure_connected(server_id)
                     .await
-            .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
+                    .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
             }
         }
 
@@ -2581,10 +2678,17 @@ fn call_requirements_for_prompt(prompt: &rmcp::model::Prompt) -> CallRequirement
 #[cfg(test)]
 mod tests {
     use super::{
-        UcanDetailLevel, UcanError, UcanPromptRepository, capitalize_kind, compact_description,
-        extract_description_from_value, find_similar_names, levenshtein_distance, tool_details_value,
+        ClientBuiltinContext, UcanDetailLevel, UcanError, UcanPromptRepository, VisiblePromptEntry,
+        VisibleResourceEntry, VisibleResourceTemplateEntry, VisibleToolEntry, capitalize_kind, compact_description,
+        extract_description_from_value, find_similar_names, levenshtein_distance, retain_brokered_prompts,
+        retain_brokered_resource_templates, retain_brokered_resources, retain_brokered_tools, tool_details_value,
     };
-    use rmcp::model::Tool;
+    use crate::clients::models::{
+        CapabilitySource, UnifyDirectExposureConfig, UnifyDirectPromptSurface, UnifyDirectResourceSurface,
+        UnifyDirectToolSurface, UnifyRouteMode,
+    };
+    use rmcp::model::{Prompt, Resource, ResourceTemplate, Tool};
+    use std::collections::HashSet;
     use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
     use tempfile::tempdir;
@@ -2849,6 +2953,405 @@ mod tests {
         assert_eq!(capitalize_kind("resource"), "Resource");
         assert_eq!(capitalize_kind("resource_template"), "Resource template");
         assert_eq!(capitalize_kind("unknown"), "Capability");
+    }
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_keeps_broker_only_tools() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::BrokerOnly,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: vec![UnifyDirectToolSurface {
+                    server_id: "server-a".to_string(),
+                    tool_name: "tool-one".to_string(),
+                }],
+                selected_prompt_surfaces: Vec::new(),
+                selected_resource_surfaces: Vec::new(),
+                selected_template_surfaces: Vec::new(),
+            }),
+        };
+        let mut visible = vec![VisibleToolEntry {
+            server_id: "server-a".to_string(),
+            server_name: "Server A".to_string(),
+            raw_tool_name: "tool-one".to_string(),
+            tool: Tool::new("server-a__tool-one", "demo", Arc::new(serde_json::Map::new())),
+        }];
+
+        retain_brokered_tools(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+    }
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_removes_server_live_tools() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::ServerLive,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: Vec::new(),
+                selected_prompt_surfaces: Vec::new(),
+                selected_resource_surfaces: Vec::new(),
+                selected_template_surfaces: Vec::new(),
+            }),
+        };
+        let mut visible = vec![
+            VisibleToolEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_tool_name: "tool-one".to_string(),
+                tool: Tool::new("server-a__tool-one", "demo", Arc::new(serde_json::Map::new())),
+            },
+            VisibleToolEntry {
+                server_id: "server-b".to_string(),
+                server_name: "Server B".to_string(),
+                raw_tool_name: "tool-two".to_string(),
+                tool: Tool::new("server-b__tool-two", "demo", Arc::new(serde_json::Map::new())),
+            },
+        ];
+
+        retain_brokered_tools(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].tool.name.as_ref(), "server-b__tool-two");
+    }
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_removes_only_selected_capability_level_tools() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::CapabilityLevel,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: vec![UnifyDirectToolSurface {
+                    server_id: "server-a".to_string(),
+                    tool_name: "tool-one".to_string(),
+                }],
+                selected_prompt_surfaces: Vec::new(),
+                selected_resource_surfaces: Vec::new(),
+                selected_template_surfaces: Vec::new(),
+            }),
+        };
+        let mut visible = vec![
+            VisibleToolEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_tool_name: "tool-one".to_string(),
+                tool: Tool::new("server-a__tool-one", "demo", Arc::new(serde_json::Map::new())),
+            },
+            VisibleToolEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_tool_name: "tool-two".to_string(),
+                tool: Tool::new("server-a__tool-two", "demo", Arc::new(serde_json::Map::new())),
+            },
+        ];
+
+        retain_brokered_tools(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].tool.name.as_ref(), "server-a__tool-two");
+    }
+
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_removes_server_live_prompts() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::ServerLive,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: Vec::new(),
+                selected_prompt_surfaces: Vec::new(),
+                selected_resource_surfaces: Vec::new(),
+                selected_template_surfaces: Vec::new(),
+            }),
+        };
+        let mut visible = vec![
+            VisiblePromptEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_prompt_name: "prompt-one".to_string(),
+                prompt: Prompt::new(
+                    "server-a__prompt-one",
+                    Some("demo".to_string()),
+                    None::<Vec<rmcp::model::PromptArgument>>,
+                ),
+            },
+            VisiblePromptEntry {
+                server_id: "server-b".to_string(),
+                server_name: "Server B".to_string(),
+                raw_prompt_name: "prompt-two".to_string(),
+                prompt: Prompt::new(
+                    "server-b__prompt-two",
+                    Some("demo".to_string()),
+                    None::<Vec<rmcp::model::PromptArgument>>,
+                ),
+            },
+        ];
+
+        retain_brokered_prompts(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].prompt.name.as_str(), "server-b__prompt-two");
+    }
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_removes_only_selected_capability_level_prompts() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::CapabilityLevel,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: Vec::new(),
+                selected_prompt_surfaces: vec![UnifyDirectPromptSurface {
+                    server_id: "server-a".to_string(),
+                    prompt_name: "prompt-one".to_string(),
+                }],
+                selected_resource_surfaces: Vec::new(),
+                selected_template_surfaces: Vec::new(),
+            }),
+        };
+        let mut visible = vec![
+            VisiblePromptEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_prompt_name: "prompt-one".to_string(),
+                prompt: Prompt::new(
+                    "server-a__prompt-one",
+                    Some("demo".to_string()),
+                    None::<Vec<rmcp::model::PromptArgument>>,
+                ),
+            },
+            VisiblePromptEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_prompt_name: "prompt-two".to_string(),
+                prompt: Prompt::new(
+                    "server-a__prompt-two",
+                    Some("demo".to_string()),
+                    None::<Vec<rmcp::model::PromptArgument>>,
+                ),
+            },
+        ];
+
+        retain_brokered_prompts(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].raw_prompt_name, "prompt-two");
+    }
+
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_removes_server_live_resources() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::ServerLive,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: Vec::new(),
+                selected_prompt_surfaces: Vec::new(),
+                selected_resource_surfaces: Vec::new(),
+                selected_template_surfaces: Vec::new(),
+            }),
+        };
+        let mut visible = vec![
+            VisibleResourceEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_resource_uri: "resource-one".to_string(),
+                resource: Resource {
+                    raw: rmcp::model::RawResource::new("server-a://resource-one", "server-a://resource-one"),
+                    annotations: None,
+                },
+            },
+            VisibleResourceEntry {
+                server_id: "server-b".to_string(),
+                server_name: "Server B".to_string(),
+                raw_resource_uri: "resource-two".to_string(),
+                resource: Resource {
+                    raw: rmcp::model::RawResource::new("server-b://resource-two", "server-b://resource-two"),
+                    annotations: None,
+                },
+            },
+        ];
+
+        retain_brokered_resources(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].resource.uri.as_str(), "server-b://resource-two");
+    }
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_removes_only_selected_capability_level_resources() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::CapabilityLevel,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: Vec::new(),
+                selected_prompt_surfaces: Vec::new(),
+                selected_resource_surfaces: vec![UnifyDirectResourceSurface {
+                    server_id: "server-a".to_string(),
+                    resource_uri: "resource-one".to_string(),
+                }],
+                selected_template_surfaces: Vec::new(),
+            }),
+        };
+        let mut visible = vec![
+            VisibleResourceEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_resource_uri: "resource-one".to_string(),
+                resource: Resource {
+                    raw: rmcp::model::RawResource::new("server-a://resource-one", "server-a://resource-one"),
+                    annotations: None,
+                },
+            },
+            VisibleResourceEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_resource_uri: "resource-two".to_string(),
+                resource: Resource {
+                    raw: rmcp::model::RawResource::new("server-a://resource-two", "server-a://resource-two"),
+                    annotations: None,
+                },
+            },
+        ];
+
+        retain_brokered_resources(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].raw_resource_uri, "resource-two");
+    }
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_removes_server_live_resource_templates() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::ServerLive,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: Vec::new(),
+                selected_prompt_surfaces: Vec::new(),
+                selected_resource_surfaces: Vec::new(),
+                selected_template_surfaces: Vec::new(),
+            }),
+        };
+        let mut visible = vec![
+            VisibleResourceTemplateEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_uri_template: "server-a://{id}".to_string(),
+                resource_template: ResourceTemplate {
+                    raw: rmcp::model::RawResourceTemplate::new("server-a://{id}", "server-a://{id}"),
+                    annotations: None,
+                },
+            },
+            VisibleResourceTemplateEntry {
+                server_id: "server-b".to_string(),
+                server_name: "Server B".to_string(),
+                raw_uri_template: "server-b://{id}".to_string(),
+                resource_template: ResourceTemplate {
+                    raw: rmcp::model::RawResourceTemplate::new("server-b://{id}", "server-b://{id}"),
+                    annotations: None,
+                },
+            },
+        ];
+
+        retain_brokered_resource_templates(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].resource_template.uri_template.as_str(), "server-b://{id}");
+    }
+
+    #[test]
+    fn unify_direct_exposure_catalog_exclusion_removes_only_selected_capability_level_resource_templates() {
+        let context = ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: Some("session-1".to_string()),
+            config_mode: Some("unify".to_string()),
+            capability_source: CapabilitySource::Profiles,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: Some(UnifyDirectExposureConfig {
+                route_mode: UnifyRouteMode::CapabilityLevel,
+                selected_server_ids: vec!["server-a".to_string()],
+                selected_tool_surfaces: Vec::new(),
+                selected_prompt_surfaces: Vec::new(),
+                selected_resource_surfaces: Vec::new(),
+                selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
+                    server_id: "server-a".to_string(),
+                    uri_template: "server-a://{id}".to_string(),
+                }],
+            }),
+        };
+        let mut visible = vec![
+            VisibleResourceTemplateEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_uri_template: "server-a://{id}".to_string(),
+                resource_template: ResourceTemplate {
+                    raw: rmcp::model::RawResourceTemplate::new("server-a://{id}", "server-a://{id}"),
+                    annotations: None,
+                },
+            },
+            VisibleResourceTemplateEntry {
+                server_id: "server-a".to_string(),
+                server_name: "Server A".to_string(),
+                raw_uri_template: "server-a://{name}".to_string(),
+                resource_template: ResourceTemplate {
+                    raw: rmcp::model::RawResourceTemplate::new("server-a://{name}", "server-a://{name}"),
+                    annotations: None,
+                },
+            },
+        ];
+
+        retain_brokered_resource_templates(&context, &HashSet::from(["server-a".to_string()]), &mut visible);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].raw_uri_template, "server-a://{name}");
     }
 
     #[allow(clippy::await_holding_lock)]

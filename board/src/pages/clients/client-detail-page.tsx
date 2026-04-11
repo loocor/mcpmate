@@ -8,8 +8,9 @@ import {
 	Check,
 	Download,
 	HardDrive,
+	Info,
+	MoreVertical,
 	Pencil,
-	Plus,
 	RefreshCw,
 	RotateCcw,
 	Square,
@@ -18,16 +19,21 @@ import {
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useUrlTab } from "../../lib/hooks/use-url-state";
+import { AuditLogsPanel } from "../../components/audit-logs-panel";
+import { CachedAvatar } from "../../components/cached-avatar";
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
-import { DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS } from "../../components/detail-capability-tab-content-class";
-import { ConfirmDialog } from "../../components/confirm-dialog";
-import { AuditLogsPanel } from "../../components/audit-logs-panel";
-import { CachedAvatar } from "../../components/cached-avatar";
+import {
+	CapsuleStripeLeadCircle,
+	CapsuleStripeRowBody,
+} from "../../components/capsule-stripe-row";
 import { ClientFormDrawer } from "../../components/client-form-drawer";
+import { ConfirmDialog } from "../../components/confirm-dialog";
+import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
+import { useUrlTab } from "../../lib/hooks/use-url-state";
+
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "../../components/ui/button-group";
@@ -62,7 +68,7 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { auditApi, clientsApi, configSuitsApi } from "../../lib/api";
+import { auditApi, clientsApi, configSuitsApi, serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
@@ -70,6 +76,7 @@ import type {
 	ClientBackupEntry,
 	ClientBackupPolicySetReq,
 	ClientCapabilityConfigData,
+	ClientCapabilityConfigReq,
 	ClientCapabilitySourceSelection,
 	ClientConfigImportData,
 	ClientConfigMode,
@@ -77,6 +84,7 @@ import type {
 	ClientConfigUpdateData,
 	ClientInfo,
 	ConfigSuit,
+	ServerSummary,
 } from "../../lib/types";
 import { formatBackupTime } from "../../lib/utils";
 import { ConfigurationProfileTokenChart } from "./components/configuration-profile-token-chart";
@@ -97,6 +105,65 @@ const arrangeProfilesWithDefaultFirst = (items: ConfigSuit[] = []) => {
 };
 
 const SUPPORTED_TRANSPORT_OPTIONS = ["streamable_http", "sse", "stdio"];
+
+function getUnifyServerSurfaces<T extends { server_id: string }>(
+	selectedSurfaces: T[],
+	serverId: string,
+): T[] {
+	return selectedSurfaces.filter((entry) => entry.server_id === serverId);
+}
+
+function resolveNextCapabilityLevelSurfaces<T extends { server_id: string }>(
+	currentSurfaces: T[],
+	serverId: string,
+	hasSelectedForServer: boolean,
+	resolvedServerSurfaces: T[],
+): T[] {
+	const otherServerSurfaces = currentSurfaces.filter(
+		(entry) => entry.server_id !== serverId,
+	);
+
+	if (hasSelectedForServer) {
+		return otherServerSurfaces;
+	}
+
+	return [...otherServerSurfaces, ...resolvedServerSurfaces];
+}
+
+function isUnifyServerMixedRouting(
+	routeMode: "broker_only" | "server_live" | "capability_level",
+	toolSurfaceCount: number,
+	toolsCount: number | undefined,
+): boolean {
+	if (routeMode !== "capability_level" || toolSurfaceCount === 0) {
+		return false;
+	}
+
+	if (!toolsCount) {
+		return true;
+	}
+
+	return toolSurfaceCount < toolsCount;
+}
+
+function getClientDirectCapabilitiesPath(
+	identifier: string | undefined,
+	serverId: string,
+): string | null {
+	if (!identifier) {
+		return null;
+	}
+
+	return `/clients/${identifier}/direct/${serverId}`;
+}
+
+function toggleSelectedServerIds(currentIds: string[], serverId: string): string[] {
+	if (currentIds.includes(serverId)) {
+		return currentIds.filter((id) => id !== serverId);
+	}
+
+	return [...currentIds, serverId];
+}
 
 function getTransportOptionLabel(
 	transport: string,
@@ -226,6 +293,10 @@ export function ClientDetailPage() {
 	const limitId = useId();
 	const [mode, setMode] = useState<ClientConfigMode>("hosted");
 	const [transport, setTransport] = useState<string>("auto");
+	const [unifyRouteMode, setUnifyRouteMode] = useState<"broker_only" | "server_live" | "capability_level">("broker_only");
+	const [unifySelectedServers, setUnifySelectedServers] = useState<string[]>([]);
+	const [unifySelectedToolSurfaces, setUnifySelectedToolSurfaces] = useState<{ server_id: string; tool_name: string }[]>([]);
+	const [hasUnifyDraftChanges, setHasUnifyDraftChanges] = useState(false);
 
 	useEffect(() => {
 		if (!currentClient) {
@@ -295,7 +366,21 @@ export function ClientDetailPage() {
 		enabled: Boolean(identifier && currentClient?.writable_config !== false),
 	});
 
-	// Fetch profiles data
+	// Fetch eligible servers for Unify direct exposure
+	const { data: serversListData } = useQuery({
+		queryKey: ["servers", "unify-candidates"],
+		queryFn: () => serversApi.getAll(),
+		staleTime: 0,
+		gcTime: 0,
+		refetchOnMount: "always",
+		refetchOnWindowFocus: "always",
+		refetchOnReconnect: "always",
+		retry: 1,
+	});
+	const eligibleServers = useMemo(() => {
+		return serversListData?.servers?.filter((s) => s.unify_direct_exposure_eligible) || [];
+	}, [serversListData]);
+
 	const { data: profilesData, isLoading: loadingProfiles } = useQuery({
 		queryKey: ["profiles"],
 		queryFn: () => configSuitsApi.getAll(),
@@ -340,6 +425,10 @@ export function ClientDetailPage() {
 		effectiveCapabilityConfig?.custom_profile_id ?? configDetails?.custom_profile_id ?? null;
 
 	useEffect(() => {
+		setHasUnifyDraftChanges(false);
+	}, [identifier]);
+
+	useEffect(() => {
 		if (!effectiveCapabilityConfig) {
 			return;
 		}
@@ -358,7 +447,18 @@ export function ClientDetailPage() {
 				setSelectedProfiles([]);
 				break;
 		}
-	}, [effectiveCapabilityConfig]);
+		if (!hasUnifyDraftChanges) {
+			if (effectiveCapabilityConfig.unify_direct_exposure) {
+				setUnifyRouteMode(effectiveCapabilityConfig.unify_direct_exposure.route_mode || "broker_only");
+				setUnifySelectedServers(effectiveCapabilityConfig.unify_direct_exposure.selected_server_ids || []);
+				setUnifySelectedToolSurfaces(effectiveCapabilityConfig.unify_direct_exposure.selected_tool_surfaces || []);
+			} else {
+				setUnifyRouteMode("broker_only");
+				setUnifySelectedServers([]);
+				setUnifySelectedToolSurfaces([]);
+			}
+		}
+	}, [effectiveCapabilityConfig, hasUnifyDraftChanges]);
 
 	const capabilityProfileIds = useMemo(() => {
 		const ids = new Set<string>();
@@ -481,6 +581,32 @@ export function ClientDetailPage() {
 		);
 	}, [configDetails?.supported_transports]);
 
+	const unifyRouteModeSegmentOptions = useMemo(
+		() => {
+			return [
+				{
+					value: "broker_only",
+					label: t("detail.configuration.sections.source.unifyRouteModes.broker_only", {
+						defaultValue: "Broker Only",
+					}),
+				},
+				{
+					value: "server_live",
+					label: t("detail.configuration.sections.source.unifyRouteModes.server_live", {
+						defaultValue: "Server Level",
+					}),
+				},
+				{
+					value: "capability_level",
+					label: t("detail.configuration.sections.source.unifyRouteModes.capability_level", {
+						defaultValue: "Capability Level",
+					}),
+				},
+			];
+		},
+		[t, i18n.language],
+	);
+
 	const configurationSourceSegmentOptions = useMemo(
 		() => {
 			const statusOrUndefined = (raw: string) => {
@@ -531,33 +657,35 @@ export function ClientDetailPage() {
 	const detailDocsUrl = configDetails?.docs_url ?? "";
 	const detailSupportUrl = configDetails?.support_url ?? "";
 	const managementModeSegmentOptions = useMemo(
-		() => [
-			{
-				value: "unify",
-				label: t("detail.configuration.sections.mode.options.unify", {
-					defaultValue: "Unify",
-				}),
-			},
-			{
-				value: "hosted",
-				label: t("detail.configuration.sections.mode.options.hosted", {
-					defaultValue: "Hosted",
-				}),
-			},
-			{
-				value: "transparent",
-				label: t("detail.configuration.sections.mode.options.transparent", {
-					defaultValue: "Transparent",
-				}),
-				disabled: configDetails?.writable_config === false,
-				tooltip:
-					configDetails?.writable_config === false
-						? t("detail.configuration.sections.mode.transparentDisabledReason", {
-							defaultValue: "Transparent requires a writable local config path.",
-						})
-						: undefined,
-			},
-		],
+		() => {
+			return [
+				{
+					value: "unify",
+					label: t("detail.configuration.sections.mode.options.unify", {
+						defaultValue: "Unify",
+					}),
+				},
+				{
+					value: "hosted",
+					label: t("detail.configuration.sections.mode.options.hosted", {
+						defaultValue: "Hosted",
+					}),
+				},
+				{
+					value: "transparent",
+					label: t("detail.configuration.sections.mode.options.transparent", {
+						defaultValue: "Transparent",
+					}),
+					disabled: configDetails?.writable_config === false,
+					tooltip:
+						configDetails?.writable_config === false
+							? t("detail.configuration.sections.mode.transparentDisabledReason", {
+								defaultValue: "Transparent requires a writable local config path.",
+							})
+							: undefined,
+				},
+			];
+		},
 		[configDetails?.writable_config, t, i18n.language],
 	);
 	const [logFilter, setLogFilter] = useState("");
@@ -668,46 +796,204 @@ export function ClientDetailPage() {
 		}
 	};
 
-	const buildCapabilityConfigPayload = () => {
+	const buildCapabilityConfigPayload = (): ClientCapabilityConfigReq => {
 		if (!identifier) {
 			throw new Error("No identifier provided");
 		}
 
-		if (selectedConfig === "profile") {
-			const profileIds = selectedProfiles.length > 0
-				? selectedProfiles
-				: [sharedProfiles.find((p) => p.is_default)?.id].filter(Boolean) as string[];
+		const payload: ClientCapabilityConfigReq = {
+			identifier,
+			capability_source: "activated",
+			selected_profile_ids: [],
+		};
 
-			if (profileIds.length === 0) {
+		if (mode === "unify") {
+			const currentUnifyExposure = effectiveCapabilityConfig?.unify_direct_exposure;
+			payload.capability_source = "activated";
+			payload.selected_profile_ids = [];
+			payload.unify_direct_exposure = {
+				route_mode: unifyRouteMode,
+				selected_server_ids:
+					unifyRouteMode === "server_live" ? unifySelectedServers : [],
+				selected_tool_surfaces: unifySelectedToolSurfaces,
+				selected_prompt_surfaces: currentUnifyExposure?.selected_prompt_surfaces ?? [],
+				selected_resource_surfaces: currentUnifyExposure?.selected_resource_surfaces ?? [],
+				selected_template_surfaces: currentUnifyExposure?.selected_template_surfaces ?? [],
+			};
+		} else {
+			payload.unify_direct_exposure = effectiveCapabilityConfig?.unify_direct_exposure || null;
+			if (selectedConfig === "profile") {
+				const profileIds = selectedProfiles.length > 0
+					? selectedProfiles
+					: [sharedProfiles.find((p) => p.is_default)?.id].filter(Boolean) as string[];
+
+				if (profileIds.length === 0) {
+					throw new Error(
+						t("detail.configuration.errors.profileRequired", {
+							defaultValue:
+								"Select at least one shared profile before applying this capability source.",
+						}),
+					);
+				}
+				payload.capability_source = "profiles";
+				payload.selected_profile_ids = profileIds;
+			} else if (selectedConfig === "custom") {
+				payload.capability_source = "custom";
+				payload.selected_profile_ids = [];
+			} else {
+				payload.capability_source = "activated";
+				payload.selected_profile_ids = [];
+			}
+		}
+
+		return payload;
+	};
+
+	const bulkCapabilityLevelServerMutation = useMutation<
+		ClientCapabilityConfigData | null,
+		unknown,
+		{ server: ServerSummary }
+	>({
+		mutationFn: async ({ server }) => {
+			if (!identifier) {
+				throw new Error("No identifier provided");
+			}
+
+			const currentConfig =
+				(await clientsApi.getCapabilityConfig(identifier)) ?? effectiveCapabilityConfig;
+			if (!currentConfig) {
 				throw new Error(
-					t("detail.configuration.errors.profileRequired", {
+					t("detail.configuration.errors.capabilityConfigMissing", {
 						defaultValue:
-							"Select at least one shared profile before applying this capability source.",
+							"Capability configuration update returned no data. Please try again.",
 					}),
 				);
 			}
 
-			return {
-				identifier,
-				capability_source: "profiles" as const,
-				selected_profile_ids: profileIds,
-			};
-		}
+			const [toolsResponse, promptsResponse, resourcesResponse, templatesResponse] =
+				await Promise.all([
+					serversApi.listTools(server.id).catch(() => ({ items: [] })),
+					serversApi.listPrompts(server.id).catch(() => ({ items: [] })),
+					serversApi.listResources(server.id).catch(() => ({ items: [] })),
+					serversApi.listResourceTemplates(server.id).catch(() => ({ items: [] })),
+				]);
 
-		if (selectedConfig === "custom") {
-			return {
-				identifier,
-				capability_source: "custom" as const,
-				selected_profile_ids: [],
+			const currentUnifyExposure = currentConfig.unify_direct_exposure ?? {
+				route_mode: "capability_level" as const,
+				selected_server_ids: [],
+				selected_tool_surfaces: [],
+				selected_prompt_surfaces: [],
+				selected_resource_surfaces: [],
+				selected_template_surfaces: [],
 			};
-		}
 
-		return {
-			identifier,
-			capability_source: "activated" as const,
-			selected_profile_ids: [],
-		};
-	};
+			const currentToolSurfaces: NonNullable<
+				ClientCapabilityConfigData["unify_direct_exposure"]
+			>["selected_tool_surfaces"] =
+				currentUnifyExposure.selected_tool_surfaces ?? [];
+			const currentPromptSurfaces: NonNullable<
+				ClientCapabilityConfigData["unify_direct_exposure"]
+			>["selected_prompt_surfaces"] =
+				currentUnifyExposure.selected_prompt_surfaces ?? [];
+			const currentResourceSurfaces: NonNullable<
+				ClientCapabilityConfigData["unify_direct_exposure"]
+			>["selected_resource_surfaces"] =
+				currentUnifyExposure.selected_resource_surfaces ?? [];
+			const currentTemplateSurfaces: NonNullable<
+				ClientCapabilityConfigData["unify_direct_exposure"]
+			>["selected_template_surfaces"] =
+				currentUnifyExposure.selected_template_surfaces ?? [];
+
+			const hasAnySelectedForServer =
+				getUnifyServerSurfaces(currentToolSurfaces, server.id).length > 0 ||
+				getUnifyServerSurfaces(currentPromptSurfaces, server.id).length > 0 ||
+				getUnifyServerSurfaces(currentResourceSurfaces, server.id).length > 0 ||
+				getUnifyServerSurfaces(currentTemplateSurfaces, server.id).length > 0;
+
+			const rawTools = Array.isArray(toolsResponse.items)
+				? (toolsResponse.items as Array<Record<string, unknown>>)
+				: [];
+			const rawPrompts = Array.isArray(promptsResponse.items)
+				? (promptsResponse.items as Array<Record<string, unknown>>)
+				: [];
+			const rawResources = Array.isArray(resourcesResponse.items)
+				? (resourcesResponse.items as Array<Record<string, unknown>>)
+				: [];
+			const rawTemplates = Array.isArray(templatesResponse.items)
+				? (templatesResponse.items as Array<Record<string, unknown>>)
+				: [];
+
+			const nextToolSurfaces = resolveNextCapabilityLevelSurfaces(
+				currentToolSurfaces,
+				server.id,
+				hasAnySelectedForServer,
+				rawTools
+					.map((tool) => String(tool.tool_name ?? tool.name ?? ""))
+					.filter(Boolean)
+					.map((tool_name) => ({ server_id: server.id, tool_name })),
+			);
+			const nextPromptSurfaces = resolveNextCapabilityLevelSurfaces(
+				currentPromptSurfaces,
+				server.id,
+				hasAnySelectedForServer,
+				rawPrompts
+					.map((prompt) => String(prompt.prompt_name ?? prompt.name ?? ""))
+					.filter(Boolean)
+					.map((prompt_name) => ({ server_id: server.id, prompt_name })),
+			);
+			const nextResourceSurfaces = resolveNextCapabilityLevelSurfaces(
+				currentResourceSurfaces,
+				server.id,
+				hasAnySelectedForServer,
+				rawResources
+					.map((resource) => String(resource.resource_uri ?? resource.uri ?? ""))
+					.filter(Boolean)
+					.map((resource_uri) => ({ server_id: server.id, resource_uri })),
+			);
+			const nextTemplateSurfaces = resolveNextCapabilityLevelSurfaces(
+				currentTemplateSurfaces,
+				server.id,
+				hasAnySelectedForServer,
+				rawTemplates
+					.map((template) =>
+						String(template.uri_template ?? template.template ?? ""),
+					)
+					.filter(Boolean)
+					.map((uri_template) => ({ server_id: server.id, uri_template })),
+			);
+
+			return clientsApi.updateCapabilityConfig({
+				identifier,
+				capability_source: currentConfig.capability_source,
+				selected_profile_ids: currentConfig.selected_profile_ids,
+				unify_direct_exposure: {
+					...currentUnifyExposure,
+					route_mode: "capability_level",
+					selected_server_ids: [],
+					selected_tool_surfaces: nextToolSurfaces,
+					selected_prompt_surfaces: nextPromptSurfaces,
+					selected_resource_surfaces: nextResourceSurfaces,
+					selected_template_surfaces: nextTemplateSurfaces,
+				},
+			});
+		},
+		onSuccess: async () => {
+			await Promise.allSettled([
+				qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] }),
+				qc.invalidateQueries({ queryKey: ["client-config", identifier] }),
+				qc.invalidateQueries({ queryKey: ["clients"] }),
+				refetchCapabilityConfig(),
+				refetchDetails(),
+			]);
+		},
+		onError: (error) =>
+			notifyError(
+				t("detail.directExposure.notifications.saveFailedTitle", {
+					defaultValue: "Unable to update direct capabilities",
+				}),
+				String(error),
+			),
+	});
 
 	const buildApplySelectedConfig = (
 		capabilityData: ClientCapabilityConfigData,
@@ -768,6 +1054,58 @@ export function ClientDetailPage() {
 				{capabilityItems.map((item) => (
 					<span key={item.key}>
 						{item.label}: {item.counts.enabled}/{item.counts.total}
+					</span>
+				))}
+			</div>
+		);
+	};
+
+	const renderUnifyEligibleServerCapabilitySummary = (
+		server: ServerSummary,
+		routeMode: "server_live" | "capability_level",
+		exposedToolCount: number,
+	) => {
+		const cap = server.capabilities ?? server.capability;
+		const toolsTotal = cap?.tools_count ?? 0;
+		const toolsValue =
+			routeMode === "capability_level"
+				? `${exposedToolCount}/${toolsTotal}`
+				: String(toolsTotal);
+		const items = [
+			{
+				key: "tools",
+				label: t("detail.configuration.labels.tools", {
+					defaultValue: "Tools",
+				}),
+				value: toolsValue,
+			},
+			{
+				key: "resources",
+				label: t("detail.configuration.labels.resources", {
+					defaultValue: "Resources",
+				}),
+				value: String(cap?.resources_count ?? 0),
+			},
+			{
+				key: "prompts",
+				label: t("detail.configuration.labels.prompts", {
+					defaultValue: "Prompts",
+				}),
+				value: String(cap?.prompts_count ?? 0),
+			},
+			{
+				key: "resourceTemplates",
+				label: t("detail.configuration.labels.resourceTemplates", {
+					defaultValue: "Resource templates",
+				}),
+				value: String(cap?.resource_templates_count ?? 0),
+			},
+		];
+		return (
+			<div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+				{items.map((item) => (
+					<span key={item.key}>
+						{item.label}: {item.value}
 					</span>
 				))}
 			</div>
@@ -902,10 +1240,7 @@ export function ClientDetailPage() {
 				config_mode: mode,
 			});
 
-			const capabilityData =
-				mode === "unify"
-					? effectiveCapabilityConfig
-					: await clientsApi.updateCapabilityConfig(buildCapabilityConfigPayload());
+			const capabilityData = await clientsApi.updateCapabilityConfig(buildCapabilityConfigPayload());
 			if (!capabilityData) {
 				throw new Error(
 					t("detail.configuration.errors.capabilityConfigMissing", {
@@ -985,6 +1320,7 @@ export function ClientDetailPage() {
 			qc.invalidateQueries({ queryKey: ["clients"] });
 			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
 			qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] });
+			setHasUnifyDraftChanges(false);
 			refetchCapabilityConfig();
 			refetchDetails();
 		},
@@ -1730,7 +2066,7 @@ export function ClientDetailPage() {
 
 				<TabsContent
 					value="configuration"
-					className={DETAIL_CAPABILITY_BROWSER_TAB_CONTENT_CLASS}
+					className={DETAIL_TAB_CONTENT_CLASS}
 				>
 					<div className="min-h-0 flex-1 overflow-y-auto">
 						<div className="grid gap-4">
@@ -1831,12 +2167,28 @@ export function ClientDetailPage() {
 														})}
 													</h4>
 													<p className="text-xs text-slate-500 leading-relaxed">
-														{mode === "unify" &&
+														{mode === "unify" && unifyRouteMode === "broker_only" &&
 															t(
-																"detail.configuration.sections.source.descriptions.unify",
+																"detail.configuration.sections.source.descriptions.unify_broker_only",
 																{
 																	defaultValue:
-																		"Builtin MCP tools will browse and call capabilities from globally enabled servers during the current session.",
+																		"All capabilities are kept behind the UCAN broker catalog. Builtin MCP tools will browse and call capabilities from globally enabled servers.",
+																},
+															)}
+														{mode === "unify" && unifyRouteMode === "server_live" &&
+															t(
+																"detail.configuration.sections.source.descriptions.unify_server_live",
+																{
+																	defaultValue:
+																		"Directly expose all capabilities from selected eligible servers to this client. Exposed capabilities are excluded from the UCAN catalog.",
+																},
+															)}
+														{mode === "unify" && unifyRouteMode === "capability_level" &&
+															t(
+																"detail.configuration.sections.source.descriptions.unify_capability_level",
+																{
+																	defaultValue:
+																		"Directly expose only selected capabilities (tools, prompts, resources, templates) from eligible servers to this client. (Advanced)",
 																},
 															)}
 														{mode === "transparent" && selectedConfig === "default" &&
@@ -1889,7 +2241,18 @@ export function ClientDetailPage() {
 															)}
 													</p>
 												</div>
-												{mode !== "unify" && (
+												{mode === "unify" ? (
+													<Segment
+														value={unifyRouteMode}
+														onValueChange={(v) => {
+															setHasUnifyDraftChanges(true);
+															setUnifyRouteMode(v as "broker_only" | "server_live" | "capability_level");
+														}}
+														options={unifyRouteModeSegmentOptions}
+														showDots={true}
+														className="w-full"
+													/>
+												) : (
 													<Segment
 														value={selectedConfig}
 														onValueChange={(v) =>
@@ -1908,20 +2271,38 @@ export function ClientDetailPage() {
 											<div className="col-span-6">
 												<div className="mb-3">
 													<h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-														{t("detail.configuration.sections.profiles.title", {
+														{mode === "unify" ? t("detail.configuration.sections.exposure.title", {
+															defaultValue: "3. Direct Exposure",
+														}) : t("detail.configuration.sections.profiles.title", {
 															defaultValue: "3. Profiles",
 														})}
 													</h4>
-													{mode === "unify" && (
+													{mode === "unify" && unifyRouteMode === "broker_only" && (
 														<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-															{t("detail.configuration.sections.profiles.descriptions.unify", {
+															{t("detail.configuration.sections.exposure.descriptions.broker_only", {
 																defaultValue:
-																	"Profiles shown here are the configured sources Unify Mode can draw from during the current session.",
+																	"All enabled MCP servers, including servers marked for direct exposure, remain reachable through the builtin UCAN tools in Broker Only mode.",
+															})}
+														</p>
+													)}
+													{mode === "unify" && unifyRouteMode === "server_live" && (
+														<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+															{t("detail.configuration.sections.exposure.descriptions.server_live", {
+																defaultValue:
+																	"Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
+															})}
+														</p>
+													)}
+													{mode === "unify" && unifyRouteMode === "capability_level" && (
+														<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+															{t("detail.configuration.sections.exposure.descriptions.capability_level", {
+																defaultValue:
+																	"Toggle each eligible server on the left, then use the more button to configure direct exposure at capability level across tools, prompts, resources, and templates. (Advanced)",
 															})}
 														</p>
 													)}
 													{/* Dynamic description based on source */}
-													{selectedConfig === "default" && (
+													{mode !== "unify" && selectedConfig === "default" && (
 														<p className="text-xs text-slate-500 mt-1 leading-relaxed">
 															{mode === "transparent"
 																? t(
@@ -1940,7 +2321,7 @@ export function ClientDetailPage() {
 																)}
 														</p>
 													)}
-													{selectedConfig === "profile" && (
+													{mode !== "unify" && selectedConfig === "profile" && (
 														<p className="text-xs text-slate-500 mt-1 leading-relaxed">
 															{mode === "transparent"
 																? t(
@@ -1959,7 +2340,7 @@ export function ClientDetailPage() {
 																)}
 														</p>
 													)}
-													{selectedConfig === "custom" && (
+													{mode !== "unify" && selectedConfig === "custom" && (
 														<p className="text-xs text-slate-500 mt-1 leading-relaxed">
 															{mode === "transparent"
 																? t(
@@ -1992,37 +2373,135 @@ export function ClientDetailPage() {
 												) : (
 													<CapsuleStripeList>
 														{mode === "unify" ? (
-															sharedProfiles.length > 0 ? (
-																sharedProfiles.map((profile) => {
-																	const capabilities = profileCapabilities.get(profile.id);
+															unifyRouteMode === "broker_only" ? (
+																<CapsuleStripeListItem className="items-start">
+																	<div className="w-full text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+																		{t("detail.configuration.sections.exposure.labels.ucanRoutingDescription", {
+																			defaultValue:
+																				"In Broker Only mode, all enabled MCP servers — including servers marked for direct exposure — are still accessed through the UCAN catalog and call tools.",
+																		})}
+																	</div>
+																</CapsuleStripeListItem>
+															) : eligibleServers.length > 0 ? (
+																eligibleServers.map((server) => {
+																	const isSelected = unifySelectedServers.includes(server.id);
+																	const toolSurfaces = getUnifyServerSurfaces(
+																		unifySelectedToolSurfaces,
+																		server.id,
+																	);
+																	const promptSurfaces = getUnifyServerSurfaces(
+																		effectiveCapabilityConfig?.unify_direct_exposure
+																			?.selected_prompt_surfaces ?? [],
+																		server.id,
+																	);
+																	const resourceSurfaces = getUnifyServerSurfaces(
+																		effectiveCapabilityConfig?.unify_direct_exposure
+																			?.selected_resource_surfaces ?? [],
+																		server.id,
+																	);
+																	const templateSurfaces = getUnifyServerSurfaces(
+																		effectiveCapabilityConfig?.unify_direct_exposure
+																			?.selected_template_surfaces ?? [],
+																		server.id,
+																	);
+																	const selectedCapabilityCount =
+																		toolSurfaces.length +
+																		promptSurfaces.length +
+																		resourceSurfaces.length +
+																		templateSurfaces.length;
+																	const directPath = getClientDirectCapabilitiesPath(identifier, server.id);
+																	const isMixed = isUnifyServerMixedRouting(
+																		unifyRouteMode,
+																		toolSurfaces.length,
+																		server.capabilities?.tools_count,
+																	);
+																	const showDirectSelection =
+																		unifyRouteMode === "capability_level"
+																			? selectedCapabilityCount > 0
+																			: isSelected;
+																	const serverDescription =
+																		server.meta?.description ||
+																		t("detail.configuration.labels.noDescription", {
+																			defaultValue: "No description",
+																		});
+
 																	return (
-																		<CapsuleStripeListItem key={profile.id} className="cursor-default">
-																			<div className="flex w-full items-center gap-3">
-																				<div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-300 bg-slate-100 dark:border-slate-600 dark:bg-slate-700">
-																					<Check className="h-3 w-3 text-slate-500" />
-																				</div>
-																				<div className="flex-1 min-w-0">
-																					<div className="font-medium text-sm truncate">{profile.name}</div>
-																					<div className="text-xs text-slate-500 truncate">
-																						{profile.description ||
-																							t("detail.configuration.labels.noDescription", {
-																								defaultValue: "No description",
+																		<CapsuleStripeListItem
+																			key={server.id}
+																			interactive={true}
+																			className={`group relative transition-colors ${showDirectSelection ? "bg-primary/10 ring-1 ring-primary/40" : ""}`}
+																			onClick={() => {
+																				if (unifyRouteMode === "capability_level") {
+																					bulkCapabilityLevelServerMutation.mutate({ server });
+																				} else if (unifyRouteMode === "server_live") {
+																					setHasUnifyDraftChanges(true);
+																					setUnifySelectedServers((prev) =>
+																						toggleSelectedServerIds(prev, server.id),
+																					);
+																				}
+																			}}
+																		>
+																			<CapsuleStripeRowBody
+																				lead={
+																					<CapsuleStripeLeadCircle
+																						variant="toggle"
+																						selected={showDirectSelection}
+																					/>
+																				}
+																				trailing={
+																					unifyRouteMode === "capability_level" ? (
+																						<Button
+																							variant="ghost"
+																							size="icon"
+																							className="h-8 w-8 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+																							onClick={(e) => {
+																								e.stopPropagation();
+																								if (directPath) {
+																									navigate(directPath);
+																								}
+																							}}
+																						>
+																							<MoreVertical className="h-4 w-4" />
+																						</Button>
+																					) : undefined
+																				}
+																			>
+																				<div className="font-medium text-sm truncate">
+																					{server.name}
+																					{unifyRouteMode === "capability_level" && selectedCapabilityCount > 0 && (
+																						<span className="ml-2 text-xs font-normal text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md">
+																							{selectedCapabilityCount}{" "}
+																							{t("detail.configuration.labels.capabilitiesExposed", {
+																								defaultValue: "capabilities exposed",
 																							})}
+																						</span>
+																					)}
+																				</div>
+																				<div className="text-xs text-slate-500 truncate">{serverDescription}</div>
+																				{renderUnifyEligibleServerCapabilitySummary(
+																					server,
+																					unifyRouteMode,
+																					toolSurfaces.length,
+																				)}
+																				{isMixed && (
+																					<div className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-500">
+																						<Info className="h-3 w-3" />
+																						{t("detail.configuration.warnings.mixedRouting", {
+																							defaultValue:
+																								"Mixed routing: splitting stateful workflows may cause issues.",
+																						})}
 																					</div>
-																					{capabilities && renderProfileCapabilitySummary(capabilities)}
-																				</div>
-																				<div className="ml-auto flex shrink-0 items-center gap-2">
-																					{getConfigurationProfileTokenSlot(profile, false)}
-																				</div>
-																			</div>
+																				)}
+																			</CapsuleStripeRowBody>
 																		</CapsuleStripeListItem>
 																	);
 																})
 															) : (
+
 																<CapsuleStripeListItem>
 																	<div className="text-sm text-slate-500 py-4 text-center w-full">
-																		{t("detail.configuration.sections.profiles.empty.shared", {
-																			defaultValue: "No shared profiles found",
+																		{t("detail.configuration.sections.exposure.empty.no_eligible", {
+																			defaultValue: "No eligible servers found. Enable Unify Direct Exposure on a server first.",
 																		})}
 																	</div>
 																</CapsuleStripeListItem>
@@ -2039,29 +2518,19 @@ export function ClientDetailPage() {
 																			key={profile.id}
 																			className="cursor-default"
 																		>
-																			<div className="flex w-full items-center gap-3">
-																				<div className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-slate-300 bg-slate-100 dark:border-slate-600 dark:bg-slate-700">
-																					<Check className="h-3 w-3 text-slate-500" />
+																			<CapsuleStripeRowBody
+																				lead={<CapsuleStripeLeadCircle variant="readOnlyActive" />}
+																				trailing={getConfigurationProfileTokenSlot(profile, false)}
+																			>
+																				<div className="font-medium text-sm truncate">{profile.name}</div>
+																				<div className="text-xs text-slate-500 truncate">
+																					{profile.description ||
+																						t("detail.configuration.labels.noDescription", {
+																							defaultValue: "No description",
+																						})}
 																				</div>
-																				<div className="flex-1 min-w-0">
-																					<div className="font-medium text-sm truncate">
-																						{profile.name}
-																					</div>
-																					<div className="text-xs text-slate-500 truncate">
-																						{profile.description ||
-																							t(
-																								"detail.configuration.labels.noDescription",
-																								{
-																									defaultValue: "No description",
-																								},
-																							)}
-																					</div>
-																					{capabilities && renderProfileCapabilitySummary(capabilities)}
-																				</div>
-																				<div className="ml-auto flex shrink-0 items-center gap-2">
-																					{getConfigurationProfileTokenSlot(profile, false)}
-																				</div>
-																			</div>
+																				{capabilities && renderProfileCapabilitySummary(capabilities)}
+																			</CapsuleStripeRowBody>
 																		</CapsuleStripeListItem>
 																	);
 																})
@@ -2090,7 +2559,7 @@ export function ClientDetailPage() {
 																	return (
 																		<CapsuleStripeListItem
 																			key={profile.id}
-																			interactive
+																			interactive={unifyRouteMode !== "broker_only"}
 																			className={`group relative transition-colors ${isSelected
 																				? "bg-primary/10 ring-1 ring-primary/40"
 																				: ""
@@ -2105,36 +2574,21 @@ export function ClientDetailPage() {
 																				);
 																			}}
 																		>
-																			<div className="flex w-full items-center gap-3">
-																				<div
-																					className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition-all duration-200 ${isSelected
-																						? "border-primary bg-primary text-white"
-																						: "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-700"
-																						}`}
-																				>
-																					{isSelected && (
-																						<Check className="h-3 w-3" />
-																					)}
+																			<CapsuleStripeRowBody
+																				lead={
+																					<CapsuleStripeLeadCircle variant="toggle" selected={isSelected} />
+																				}
+																				trailing={getConfigurationProfileTokenSlot(profile, true)}
+																			>
+																				<div className="font-medium text-sm truncate">{profile.name}</div>
+																				<div className="text-xs text-slate-500 truncate">
+																					{profile.description ||
+																						t("detail.configuration.labels.noDescription", {
+																							defaultValue: "No description",
+																						})}
 																				</div>
-																				<div className="flex-1 min-w-0">
-																					<div className="font-medium text-sm truncate">
-																						{profile.name}
-																					</div>
-																					<div className="text-xs text-slate-500 truncate">
-																						{profile.description ||
-																							t(
-																								"detail.configuration.labels.noDescription",
-																								{
-																									defaultValue: "No description",
-																								},
-																							)}
-																					</div>
-																					{capabilities && renderProfileCapabilitySummary(capabilities)}
-																				</div>
-																				<div className="ml-auto flex shrink-0 items-center gap-2">
-																					{getConfigurationProfileTokenSlot(profile, true)}
-																				</div>
-																			</div>
+																				{capabilities && renderProfileCapabilitySummary(capabilities)}
+																			</CapsuleStripeRowBody>
 																		</CapsuleStripeListItem>
 																	);
 																})
@@ -2172,58 +2626,46 @@ export function ClientDetailPage() {
 																	}
 																}}
 															>
-																<div className="flex w-full items-center gap-3">
-																	<div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedConfig === "custom" && customProfileId
-																		? "border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800"
-																		: "border-dashed border-slate-300 dark:border-slate-600"
-																		}`}>
-																		{selectedConfig === "custom" && customProfileId ? (
-																			<Pencil className="h-3 w-3 text-slate-500 dark:text-slate-400" />
-																		) : (
-																			<Plus className="h-3 w-3 text-slate-400" />
-																		)}
+																<CapsuleStripeRowBody
+																	lead={
+																		<CapsuleStripeLeadCircle
+																			variant="ghost"
+																			hasProfile={selectedConfig === "custom" && !!customProfileId}
+																		/>
+																	}
+																>
+																	<div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
+																		{selectedConfig === "custom"
+																			? t("detail.configuration.sections.profiles.ghost.titleCustom", {
+																				defaultValue: customProfileId
+																					? "Customize current state"
+																					: "Create custom workspace",
+																			})
+																			: t("detail.configuration.sections.profiles.ghost.titleDefault", {
+																				defaultValue: "Open profiles library",
+																			})}
 																	</div>
-																	<div className="flex-1 min-w-0">
-																		<div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
-																			{selectedConfig === "custom"
-																				? t(
-																					"detail.configuration.sections.profiles.ghost.titleCustom",
-																					{
-																						defaultValue: customProfileId
-																							? "Customize current state"
-																							: "Create custom workspace",
-																					},
-																				)
-																				: t(
-																					"detail.configuration.sections.profiles.ghost.titleDefault",
-																					{ defaultValue: "Open profiles library" },
-																				)}
-																		</div>
-																		<div className="text-xs text-slate-400 dark:text-slate-600 truncate">
-																			{selectedConfig === "custom"
-																				? t(
-																					mode === "transparent"
-																						? "detail.configuration.sections.profiles.ghost.subtitleCustomTransparent"
-																						: "detail.configuration.sections.profiles.ghost.subtitleCustom",
-																					{
-																						defaultValue: customProfileId
-																							? "Adjust client-specific capabilities on top of the current workspace"
-																							: "Create client-specific overrides for this workspace",
-																					},
-																				)
-																				: t(
-																					"detail.configuration.sections.profiles.ghost.subtitleDefault",
-																					{
-																						defaultValue:
-																							"Browse reusable shared scenes and edit them from the profiles page",
-																					},
-																				)}
-																		</div>
-																		{customProfileCapabilities
-																			? renderProfileCapabilitySummary(customProfileCapabilities)
-																			: null}
+																	<div className="text-xs text-slate-400 dark:text-slate-600 truncate">
+																		{selectedConfig === "custom"
+																			? t(
+																				mode === "transparent"
+																					? "detail.configuration.sections.profiles.ghost.subtitleCustomTransparent"
+																					: "detail.configuration.sections.profiles.ghost.subtitleCustom",
+																				{
+																					defaultValue: customProfileId
+																						? "Adjust client-specific capabilities on top of the current workspace"
+																						: "Create client-specific overrides for this workspace",
+																				},
+																			)
+																			: t("detail.configuration.sections.profiles.ghost.subtitleDefault", {
+																				defaultValue:
+																					"Browse reusable shared scenes and edit them from the profiles page",
+																			})}
 																	</div>
-																</div>
+																	{customProfileCapabilities
+																		? renderProfileCapabilitySummary(customProfileCapabilities)
+																		: null}
+																</CapsuleStripeRowBody>
 															</CapsuleStripeListItem>
 														)}
 													</CapsuleStripeList>
@@ -2727,6 +3169,9 @@ export function ClientDetailPage() {
 					qc.invalidateQueries({ queryKey: ["clients"] });
 				}}
 			/>
+
+
+
 		</div>
 	);
 }

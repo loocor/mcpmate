@@ -110,6 +110,9 @@ export const serversTranslations = {
 			},
 		},
 		entity: {
+			tags: {
+				unifyEligible: "Direct Exposure",
+			},
 			description: {
 				serverLabel: "Server: {{name}}",
 			},
@@ -179,6 +182,7 @@ export const serversTranslations = {
 				status: {
 					enabled: "Enabled",
 					disabled: "Disabled",
+					unifyEligible: "Direct Exposure Eligible",
 				},
 			},
 			deleteDialog: {
@@ -440,6 +444,7 @@ export const serversTranslations = {
 			},
 			tabs: {
 				core: "Core configuration",
+					unify: "Direct Exposure",
 				meta: "Meta information",
 				metaWip: "WIP",
 			},
@@ -473,6 +478,8 @@ export const serversTranslations = {
 					label: "Name",
 					placeholder: "e.g., local-mcp",
 					readOnlyTitle: "Editing server names is disabled",
+					readOnlyTitleAfterOAuth:
+						"Editing server names is disabled after OAuth setup starts",
 				},
 				type: {
 					label: "Type",
@@ -551,6 +558,86 @@ export const serversTranslations = {
 				json: {
 					label: "Server JSON",
 				},
+				unifyEligibility: {
+					badge: "Advanced exposure control",
+					title: "Mark as Unify-eligible server",
+					description: "This option marks the server as eligible for direct exposure in Unify mode. Eligible servers can expose tools, prompts, resources, and templates directly to selected clients.",
+					whatIsIt: "What is it?",
+					whatIsItDesc: "Enable this only when the server should be available for direct capability exposure in Unify instead of being reached only through the UCAN broker workflow.",
+					whenToUse: "When to use it?",
+					whenToUseDesc: "Use this for servers that should allow direct exposure of key capabilities to selected Unify clients, such as memory, audit, or always-on context services.",
+					watchOut: "What to watch out for?",
+					watchOutDesc: "Do not enable this casually. Once a client selects direct exposure, capabilities from this server can bypass the UCAN-only path and enter the direct client context.",
+					howToEnable: "How to enable it",
+					howToEnableDesc: "First mark the server as eligible here. Then open a Client in Unify mode and choose Server Live (all capabilities) or Capability Level (selected tools/prompts/resources/templates).",
+					toggleHint: "This only marks eligibility. Clients still decide whether and how to expose it.",
+				},
+			},
+			auth: {
+				label: "AUTH",
+				transportHint:
+					"URL Parameters and HTTP Headers are optional transport extras. They still apply after OAuth if this server needs them.",
+				mode: {
+					header: "Header-based",
+					oauth: "OAuth",
+				},
+				oauth: {
+					connectedTitle: "OAuth connected",
+					connectedMessage: "Successfully authorized.",
+					listenerNotReady:
+						"OAuth callback listener is still initializing. Please try again in a moment.",
+					connectFailedTitle: "Unable to start OAuth",
+					revokedTitle: "OAuth token revoked",
+					revokedMessage: "Stored OAuth credentials were removed for this server.",
+					revokeFailedTitle: "Failed to revoke OAuth",
+					unknownError: "Unknown error",
+					state: {
+						connected: "Connected",
+						expired: "Expired",
+						disconnected: "Disconnected",
+						notConfigured: "Not configured",
+					},
+					statusLabel: "OAuth status",
+					manualOverride: {
+						title: "Manual Authorization header is active",
+						description:
+							"This server already has an Authorization header in its transport settings, which will take precedence over the stored OAuth token.",
+					},
+					progress: {
+						discover: "Metadata discovery",
+						register: "Client registration",
+						authorize: "Authorization",
+						complete: "Authentication complete",
+						preparingMessage:
+							"Preparing OAuth flow and opening the authorization page…",
+						listenerPreparingMessage: "Preparing the desktop callback listener…",
+						awaitingMessage:
+							"Waiting for authorization to complete in the popup window…",
+						connectedMessage: "OAuth is connected for this server.",
+						errorMessage:
+							"OAuth needs attention. Try reconnecting to refresh the authorization.",
+					},
+					actions: {
+						reconnect: "Reconnect OAuth",
+						connect: "Connect with OAuth",
+						revoke: "Revoke token",
+						configure: "Configure",
+					},
+					fields: {
+						authorizationEndpoint: "Authorization endpoint",
+						tokenEndpoint: "Token endpoint",
+						clientId: "Client ID",
+						clientSecret: "Client secret",
+						clientSecretPlaceholderExisting: "Leave blank to keep the stored secret",
+						clientSecretPlaceholderNew: "Optional for public clients",
+						scopes: "Scopes",
+						redirectUri: "Redirect URI",
+						placeholderAuthorizationEndpoint: "https://issuer.example.com/authorize",
+						placeholderTokenEndpoint: "https://issuer.example.com/token",
+						placeholderScopes: "read write",
+					},
+					loading: "Refreshing OAuth status…",
+				},
 			},
 			errors: {
 				nameRequired: "Name is required",
@@ -568,6 +655,8 @@ export const serversTranslations = {
 				jsonParseFailedTitle: "Invalid JSON",
 				jsonParseFailedFallback: "Failed to parse JSON",
 				invalidJsonTitle: "Invalid JSON",
+				oauthDraftServerFailed: "Failed to create OAuth draft server",
+				oauthServerIdRequired: "Server ID is required to initiate OAuth",
 			},
 		},
 		wizard: {
@@ -623,6 +712,9 @@ export const serversTranslations = {
 				validatedTitle: "Import Validated",
 				validatedDescription:
 					"Pre-validation succeeded. The server can be safely imported.",
+				pendingImportReadyTitle: "Ready to publish",
+				pendingImportReadyDescription:
+					"OAuth authorization is complete. Import will publish this server and make it visible in your Servers list.",
 				validatedWithWarningsTitle: "Import Validated With Warnings",
 				validatedWithWarningsDescription:
 					"Pre-validation succeeded, but some servers will be skipped.",
@@ -811,6 +903,9 @@ export const serversTranslations = {
 			},
 		},
 		entity: {
+			tags: {
+				unifyEligible: "直达暴露",
+			},
 			description: {
 				serverLabel: "服务器：{{name}}",
 			},
@@ -880,6 +975,7 @@ export const serversTranslations = {
 				status: {
 					enabled: "已启用",
 					disabled: "已禁用",
+					unifyEligible: "直达暴露可用",
 				},
 			},
 			deleteDialog: {
@@ -1135,6 +1231,7 @@ export const serversTranslations = {
 			},
 			tabs: {
 				core: "核心配置",
+					unify: "直达暴露",
 				meta: "元信息",
 				metaWip: "预览",
 			},
@@ -1167,6 +1264,7 @@ export const serversTranslations = {
 					label: "名称",
 					placeholder: "例如：local-mcp",
 					readOnlyTitle: "编辑模式下不可修改名称",
+					readOnlyTitleAfterOAuth: "OAuth 流程开始后不可修改名称",
 				},
 				type: {
 					label: "类型",
@@ -1245,6 +1343,82 @@ export const serversTranslations = {
 				json: {
 					label: "服务器 JSON",
 				},
+				unifyEligibility: {
+					badge: "高级暴露控制",
+					title: "标记为直达模式服务器",
+					description: "这个选项会将服务器标记为 Unify 模式下可直达暴露的候选。被选中的客户端可直接暴露该服务器的工具、提示、资源与模板。",
+					whatIsIt: "这是什么？",
+					whatIsItDesc: "仅当该服务器需要在 Unify 中支持直达能力暴露，而非仅通过 UCAN 代理路径访问时，才应启用。",
+					whenToUse: "什么时候使用？",
+					whenToUseDesc: "适用于 Memory、Audit 等需要向指定 Unify 客户端持续直达暴露关键能力的服务器。",
+					watchOut: "需要注意什么？",
+					watchOutDesc: "不要把它当普通开关随手开启。一旦客户端启用直达暴露，该服务器能力可绕过纯 UCAN 路径，直接进入客户端上下文。",
+					howToEnable: "如何启用",
+					howToEnableDesc: "先在这里标记 eligible，再到 Unify 模式的 Client 中选择 Server Live（全部能力）或 Capability Level（按工具/提示/资源/模板选择）来决定暴露范围。",
+					toggleHint: "这里仅标记资格，真正是否暴露、如何暴露，由 Client 侧决定。",
+				},
+			},
+			auth: {
+				label: "鉴权",
+				transportHint:
+					"URL 参数与 HTTP 头是可选的传输附加项。若服务器仍需要，在使用 OAuth 后它们仍会生效。",
+				mode: {
+					header: "基于请求头",
+					oauth: "OAuth",
+				},
+				oauth: {
+					connectedTitle: "OAuth 已连接",
+					connectedMessage: "授权成功。",
+					listenerNotReady: "OAuth 回调监听仍在初始化，请稍后再试。",
+					connectFailedTitle: "无法启动 OAuth",
+					revokedTitle: "OAuth 令牌已撤销",
+					revokedMessage: "已移除该服务器保存的 OAuth 凭据。",
+					revokeFailedTitle: "撤销 OAuth 失败",
+					unknownError: "未知错误",
+					state: {
+						connected: "已连接",
+						expired: "已过期",
+						disconnected: "未连接",
+						notConfigured: "未配置",
+					},
+					statusLabel: "OAuth 状态",
+					manualOverride: {
+						title: "手动 Authorization 请求头已生效",
+						description:
+							"该服务器在传输设置中已配置 Authorization 请求头，将优先于已存储的 OAuth 令牌。",
+					},
+					progress: {
+						discover: "元数据发现",
+						register: "客户端注册",
+						authorize: "授权",
+						complete: "认证完成",
+						preparingMessage: "正在准备 OAuth 流程并打开授权页面…",
+						listenerPreparingMessage: "正在准备桌面端回调监听…",
+						awaitingMessage: "请在弹出窗口中完成授权…",
+						connectedMessage: "该服务器的 OAuth 已连接。",
+						errorMessage: "OAuth 需要处理，请尝试重新连接以刷新授权。",
+					},
+					actions: {
+						reconnect: "重新连接 OAuth",
+						connect: "使用 OAuth 连接",
+						revoke: "撤销令牌",
+						configure: "高级配置",
+					},
+					fields: {
+						authorizationEndpoint: "授权端点",
+						tokenEndpoint: "令牌端点",
+						clientId: "客户端 ID",
+						clientSecret: "客户端密钥",
+						clientSecretPlaceholderExisting: "留空以保留已存储的密钥",
+						clientSecretPlaceholderNew: "公开客户端可留空",
+						scopes: "权限范围（Scopes）",
+						redirectUri: "重定向 URI",
+						placeholderAuthorizationEndpoint: "https://issuer.example.com/authorize",
+						placeholderTokenEndpoint: "https://issuer.example.com/token",
+						placeholderScopes: "read write",
+					},
+					loading: "正在刷新 OAuth 状态…",
+				},
 			},
 			errors: {
 				nameRequired: "名称为必填项",
@@ -1261,6 +1435,8 @@ export const serversTranslations = {
 				jsonParseFailedTitle: "JSON 无法解析",
 				jsonParseFailedFallback: "解析 JSON 失败",
 				invalidJsonTitle: "JSON 无效",
+				oauthDraftServerFailed: "创建 OAuth 草稿服务器失败",
+				oauthServerIdRequired: "启动 OAuth 需要服务器 ID",
 			},
 		},
 		wizard: {
@@ -1313,6 +1489,9 @@ export const serversTranslations = {
 				validationFailedDescription: "请解决下方列出的阻塞项后重新运行校验。",
 				validatedTitle: "导入校验通过",
 				validatedDescription: "预校验成功，可以安全执行导入。",
+				pendingImportReadyTitle: "可以发布",
+				pendingImportReadyDescription:
+					"OAuth 授权已完成。导入将发布该服务器并使其出现在服务器列表中。",
 				validatedWithWarningsTitle: "导入校验通过（含提示）",
 				validatedWithWarningsDescription: "预校验成功，但部分服务器会被跳过。",
 				alreadyInstalledTitle: "无需导入",
@@ -1485,8 +1664,10 @@ export const serversTranslations = {
 			},
 		},
 		entity: {
-			description: {
-				serverLabel: "サーバー: {{name}}",
+			tags: {
+				unifyEligible: "直接公開",
+			},
+			description: { 				serverLabel: "サーバー: {{name}}",
 			},
 			connectionTags: {
 				stdio: "STDIO",
@@ -1554,6 +1735,7 @@ export const serversTranslations = {
 				status: {
 					enabled: "有効",
 					disabled: "無効",
+					unifyEligible: "直接公開が利用可能",
 				},
 			},
 			deleteDialog: {
@@ -1820,6 +2002,7 @@ export const serversTranslations = {
 			},
 			tabs: {
 				core: "基本設定",
+					unify: "直接公開",
 				meta: "メタ情報",
 				metaWip: "プレビュー",
 			},
@@ -1852,6 +2035,8 @@ export const serversTranslations = {
 					label: "名称",
 					placeholder: "例: local-mcp",
 					readOnlyTitle: "編集モードでは名称を変更できません",
+					readOnlyTitleAfterOAuth:
+						"OAuth のセットアップ開始後は名称を変更できません",
 				},
 				type: {
 					label: "種別",
@@ -1930,6 +2115,85 @@ export const serversTranslations = {
 				json: {
 					label: "サーバー JSON",
 				},
+				unifyEligibility: {
+					badge: "高度な公開制御",
+					title: "Unify 直接公開対象としてマーク",
+					description: "このオプションは、サーバーを Unify モードで直接公開可能な候補としてマークします。選択されたクライアントには、ツール・プロンプト・リソース・テンプレートを直接公開できます。",
+					whatIsIt: "これは何ですか？",
+					whatIsItDesc: "このサーバーを Unify で直接公開対象として扱い、UCAN ブローカー経由のみの到達に限定したくない場合に有効化してください。",
+					whenToUse: "いつ使いますか？",
+					whenToUseDesc: "Memory、Audit など、選択した Unify クライアントに主要ケイパビリティを直接公開したいサーバーで使います。",
+					watchOut: "注意点は？",
+					watchOutDesc: "通常の設定項目として気軽に有効化しないでください。クライアントが直接公開を選ぶと、このサーバーのケイパビリティは UCAN 専用経路を迂回してクライアントのコンテキストに入ります。",
+					howToEnable: "有効化手順",
+					howToEnableDesc: "まずここで eligible に設定し、次に Unify モードの Client で Server Live（全能力）または Capability Level（ツール/プロンプト/リソース/テンプレート単位）を選んで公開範囲を決めます。",
+					toggleHint: "ここでは資格だけを付与します。実際に公開するかどうか、どう公開するかは Client 側で決まります。",
+				},
+			},
+			auth: {
+				label: "認証",
+				transportHint:
+					"URL パラメータと HTTP ヘッダーは任意の転送オプションです。OAuth 利用後も、このサーバーに必要なら引き続き適用されます。",
+				mode: {
+					header: "ヘッダー方式",
+					oauth: "OAuth",
+				},
+				oauth: {
+					connectedTitle: "OAuth に接続しました",
+					connectedMessage: "認可が完了しました。",
+					listenerNotReady:
+						"OAuth コールバックの待受けを初期化中です。しばらくしてから再度お試しください。",
+					connectFailedTitle: "OAuth を開始できませんでした",
+					revokedTitle: "OAuth トークンを削除しました",
+					revokedMessage: "このサーバーに保存されていた OAuth 資格情報を削除しました。",
+					revokeFailedTitle: "OAuth の削除に失敗しました",
+					unknownError: "不明なエラー",
+					state: {
+						connected: "接続済み",
+						expired: "期限切れ",
+						disconnected: "未接続",
+						notConfigured: "未設定",
+					},
+					statusLabel: "OAuth の状態",
+					manualOverride: {
+						title: "手動の Authorization ヘッダーが有効です",
+						description:
+							"このサーバーの転送設定にすでに Authorization ヘッダーがあるため、保存済みの OAuth トークンより手動値が優先されます。",
+					},
+					progress: {
+						discover: "メタデータの取得",
+						register: "クライアント登録",
+						authorize: "認可",
+						complete: "認証完了",
+						preparingMessage:
+							"OAuth フローを準備し、認可ページを開いています…",
+						listenerPreparingMessage: "デスクトップのコールバック待受けを準備しています…",
+						awaitingMessage: "ポップアップで認可を完了するまでお待ちください…",
+						connectedMessage: "このサーバーの OAuth は接続済みです。",
+						errorMessage:
+							"OAuth に問題があります。再接続して認可を更新してください。",
+					},
+					actions: {
+						reconnect: "OAuth を再接続",
+						connect: "OAuth で接続",
+						revoke: "トークンを削除",
+						configure: "詳細設定",
+					},
+					fields: {
+						authorizationEndpoint: "認可エンドポイント",
+						tokenEndpoint: "トークンエンドポイント",
+						clientId: "クライアント ID",
+						clientSecret: "クライアントシークレット",
+						clientSecretPlaceholderExisting: "空欄のままにすると保存済みのシークレットを維持します",
+						clientSecretPlaceholderNew: "パブリッククライアントでは任意です",
+						scopes: "スコープ",
+						redirectUri: "リダイレクト URI",
+						placeholderAuthorizationEndpoint: "https://issuer.example.com/authorize",
+						placeholderTokenEndpoint: "https://issuer.example.com/token",
+						placeholderScopes: "read write",
+					},
+					loading: "OAuth 状態を更新しています…",
+				},
 			},
 			errors: {
 				nameRequired: "名称は必須です",
@@ -1947,6 +2211,8 @@ export const serversTranslations = {
 				jsonParseFailedTitle: "JSON を解析できません",
 				jsonParseFailedFallback: "JSON の解析に失敗しました",
 				invalidJsonTitle: "JSON が無効です",
+				oauthDraftServerFailed: "OAuth 用の下書きサーバーの作成に失敗しました",
+				oauthServerIdRequired: "OAuth を開始するにはサーバー ID が必要です",
 			},
 		},
 		wizard: {
@@ -2002,6 +2268,9 @@ export const serversTranslations = {
 				validatedTitle: "インポート検証に成功",
 				validatedDescription:
 					"事前検証を通過しました。安全にインポートできます。",
+				pendingImportReadyTitle: "公開の準備ができました",
+				pendingImportReadyDescription:
+					"OAuth の認可が完了しました。インポートするとこのサーバーが公開され、サーバー一覧に表示されます。",
 				validatedWithWarningsTitle: "警告付きで検証に成功",
 				validatedWithWarningsDescription:
 					"事前検証は成功しましたが、一部のサーバーはスキップされます。",

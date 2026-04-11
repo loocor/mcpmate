@@ -11,7 +11,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     common::server::ServerType,
-    config::{models::{ServerOAuthConfig, ServerOAuthToken}, server},
+    config::{
+        models::{ServerOAuthConfig, ServerOAuthToken},
+        server,
+    },
 };
 
 use super::types::{OAuthConfigInput, OAuthConnectionState, OAuthInitiateResult, OAuthPrepareInput, OAuthStatus};
@@ -69,7 +72,11 @@ impl OAuthManager {
         }
     }
 
-    pub async fn upsert_config(&self, server_id: &str, input: OAuthConfigInput) -> Result<OAuthStatus> {
+    pub async fn upsert_config(
+        &self,
+        server_id: &str,
+        input: OAuthConfigInput,
+    ) -> Result<OAuthStatus> {
         let server_model = server::get_server_by_id(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
@@ -100,7 +107,11 @@ impl OAuthManager {
         self.get_status(server_id).await
     }
 
-    pub async fn prepare(&self, server_id: &str, input: OAuthPrepareInput) -> Result<OAuthStatus> {
+    pub async fn prepare(
+        &self,
+        server_id: &str,
+        input: OAuthPrepareInput,
+    ) -> Result<OAuthStatus> {
         let server_model = server::get_server_by_id(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
@@ -112,8 +123,8 @@ impl OAuthManager {
             .url
             .as_deref()
             .ok_or_else(|| anyhow!("Streamable HTTP server is missing a URL"))?;
-        let resource_url = Url::parse(server_url)
-            .with_context(|| format!("Invalid streamable HTTP server URL '{}'", server_url))?;
+        let resource_url =
+            Url::parse(server_url).with_context(|| format!("Invalid streamable HTTP server URL '{}'", server_url))?;
 
         let existing = server::get_server_oauth_config(&self.pool, server_id).await?;
         if let Some(existing_config) = existing.as_ref() {
@@ -160,8 +171,18 @@ impl OAuthManager {
         let scopes = input
             .scopes
             .or_else(|| registration.as_ref().and_then(|item| item.scope.clone()))
-            .or_else(|| protected_metadata.scopes_supported.as_ref().map(|scopes| scopes.join(" ")))
-            .or_else(|| authorization_metadata.scopes_supported.as_ref().map(|scopes| scopes.join(" ")));
+            .or_else(|| {
+                protected_metadata
+                    .scopes_supported
+                    .as_ref()
+                    .map(|scopes| scopes.join(" "))
+            })
+            .or_else(|| {
+                authorization_metadata
+                    .scopes_supported
+                    .as_ref()
+                    .map(|scopes| scopes.join(" "))
+            });
 
         self.upsert_config(
             server_id,
@@ -177,7 +198,10 @@ impl OAuthManager {
         .await
     }
 
-    pub async fn initiate(&self, server_id: &str) -> Result<OAuthInitiateResult> {
+    pub async fn initiate(
+        &self,
+        server_id: &str,
+    ) -> Result<OAuthInitiateResult> {
         let server_model = server::get_server_by_id(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
@@ -227,7 +251,11 @@ impl OAuthManager {
         })
     }
 
-    pub async fn exchange_code(&self, state: &str, code: &str) -> Result<OAuthStatus> {
+    pub async fn exchange_code(
+        &self,
+        state: &str,
+        code: &str,
+    ) -> Result<OAuthStatus> {
         let pending = {
             let mut flows = self.pending_flows.lock().await;
             flows.remove(state)
@@ -320,7 +348,10 @@ impl OAuthManager {
         self.get_status(&pending.server_id).await
     }
 
-    pub async fn get_status(&self, server_id: &str) -> Result<OAuthStatus> {
+    pub async fn get_status(
+        &self,
+        server_id: &str,
+    ) -> Result<OAuthStatus> {
         let config = server::get_server_oauth_config(&self.pool, server_id).await?;
         let token = server::get_server_oauth_token(&self.pool, server_id).await?;
         let manual_headers = server::get_server_headers(&self.pool, server_id).await.ok();
@@ -357,14 +388,20 @@ impl OAuthManager {
         })
     }
 
-    pub async fn revoke(&self, server_id: &str) -> Result<OAuthStatus> {
+    pub async fn revoke(
+        &self,
+        server_id: &str,
+    ) -> Result<OAuthStatus> {
         server::delete_server_oauth_token(&self.pool, server_id).await?;
         self.get_status(server_id).await
     }
 }
 
 impl OAuthManager {
-    async fn discover_protected_resource_metadata(&self, resource_url: &Url) -> Result<ProtectedResourceMetadata> {
+    async fn discover_protected_resource_metadata(
+        &self,
+        resource_url: &Url,
+    ) -> Result<ProtectedResourceMetadata> {
         if let Some(metadata) = self.discover_protected_metadata_from_challenge(resource_url).await? {
             return Ok(metadata);
         }
@@ -411,7 +448,10 @@ impl OAuthManager {
         }
 
         if let Some(resource_metadata_url) = resource_metadata_url {
-            if let Ok(metadata) = self.fetch_json::<ProtectedResourceMetadata>(&resource_metadata_url).await {
+            if let Ok(metadata) = self
+                .fetch_json::<ProtectedResourceMetadata>(&resource_metadata_url)
+                .await
+            {
                 return Ok(Some(metadata));
             }
         }
@@ -471,7 +511,10 @@ impl OAuthManager {
             .context("Failed to parse OAuth dynamic client registration response")
     }
 
-    async fn fetch_json<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
+    async fn fetch_json<T: for<'de> Deserialize<'de>>(
+        &self,
+        url: &str,
+    ) -> Result<T> {
         self.http_client
             .get(url)
             .send()
@@ -510,8 +553,7 @@ fn oauth_resource_from_server(server_model: &crate::config::models::Server) -> R
         .url
         .as_deref()
         .ok_or_else(|| anyhow!("Server {} is missing a URL", server_label))?;
-    let mut resource = Url::parse(server_url)
-        .with_context(|| format!("Invalid server URL '{}'", server_url))?;
+    let mut resource = Url::parse(server_url).with_context(|| format!("Invalid server URL '{}'", server_url))?;
     resource
         .set_username("")
         .map_err(|_| anyhow!("Invalid server URL '{}'", server_url))?;
@@ -568,7 +610,10 @@ mod tests {
     use super::*;
     use crate::{
         common::{server::ServerType, status::EnabledStatus},
-        config::{models::Server, server::{crud::upsert_server, init::initialize_server_tables}},
+        config::{
+            models::Server,
+            server::{crud::upsert_server, init::initialize_server_tables},
+        },
     };
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
@@ -589,7 +634,10 @@ mod tests {
         OAuthManager::new(pool)
     }
 
-    async fn insert_server(pool: &SqlitePool, id: &str) {
+    async fn insert_server(
+        pool: &SqlitePool,
+        id: &str,
+    ) {
         let server = Server {
             id: Some(id.to_string()),
             name: format!("server-{id}"),
@@ -599,6 +647,7 @@ mod tests {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
             pending_import: false,
             created_at: None,
             updated_at: None,
@@ -630,7 +679,11 @@ mod tests {
         assert!(initiate.authorization_url.contains("code_challenge="));
         assert!(initiate.authorization_url.contains("code_challenge_method=S256"));
         assert!(initiate.authorization_url.contains("client_id=client-1"));
-        assert!(initiate.authorization_url.contains("resource=https%3A%2F%2Fexample.com%2Fmcp"));
+        assert!(
+            initiate
+                .authorization_url
+                .contains("resource=https%3A%2F%2Fexample.com%2Fmcp")
+        );
     }
 
     #[tokio::test]
@@ -642,15 +695,13 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/token"))
             .and(body_string_contains("resource=https%3A%2F%2Fexample.com%2Fmcp"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "access_token": "access-123",
-                    "refresh_token": "refresh-123",
-                    "token_type": "bearer",
-                    "expires_in": 3600,
-                    "scope": "read write"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-123",
+                "refresh_token": "refresh-123",
+                "token_type": "bearer",
+                "expires_in": 3600,
+                "scope": "read write"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -686,7 +737,10 @@ mod tests {
     #[tokio::test]
     async fn exchange_code_rejects_invalid_state() {
         let manager = setup_manager().await;
-        let error = manager.exchange_code("missing-state", "code").await.expect_err("invalid state should fail");
+        let error = manager
+            .exchange_code("missing-state", "code")
+            .await
+            .expect_err("invalid state should fail");
         assert!(error.to_string().contains("Invalid or expired OAuth state"));
     }
 
@@ -701,6 +755,7 @@ mod tests {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
             pending_import: false,
             created_at: None,
             updated_at: None,
@@ -722,6 +777,7 @@ mod tests {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
             pending_import: false,
             created_at: None,
             updated_at: None,

@@ -65,7 +65,7 @@ export function ServerAuthSection({
 	onAuthModeChange,
 	onOAuthConnected,
 }: ServerAuthSectionProps) {
-	const { t } = useTranslation("servers");
+	const { t, i18n } = useTranslation("servers");
 	const queryClient = useQueryClient();
 	const [authMode, setAuthMode] = useState<"oauth" | "header">("header");
 	const [formState, setFormState] = useState<OAuthConfigRequest>(() => toFormState(null));
@@ -136,7 +136,10 @@ export function ServerAuthSection({
 				translateRef.current("manual.auth.oauth.connectFailedTitle", {
 					defaultValue: "Unable to start OAuth",
 				}),
-				errorMessage || "Unknown error",
+				errorMessage ||
+					translateRef.current("manual.auth.oauth.unknownError", {
+						defaultValue: "Unknown error",
+					}),
 			);
 		};
 
@@ -306,7 +309,7 @@ export function ServerAuthSection({
 			t("manual.auth.oauth.connectedTitle", { defaultValue: "OAuth connected" }),
 			t("manual.auth.oauth.connectedMessage", { defaultValue: "Successfully authorized." }),
 		);
-	}, [oauthStatusQ.data?.state, onOAuthConnected, progressState, serverId, t]);
+	}, [oauthStatusQ.data?.state, onOAuthConnected, progressState, serverId, t, i18n.language]);
 
 	useEffect(() => {
 		if (!isDirty) {
@@ -577,7 +580,9 @@ export function ServerAuthSection({
 									setIsDirty(true);
 									setFormState((cur) => ({ ...cur, authorization_endpoint: e.target.value }));
 								}}
-								placeholder="https://issuer.example.com/authorize"
+								placeholder={t("manual.auth.oauth.fields.placeholderAuthorizationEndpoint", {
+									defaultValue: "https://issuer.example.com/authorize",
+								})}
 								className="h-8 text-sm"
 							/>
 								</div>
@@ -592,7 +597,9 @@ export function ServerAuthSection({
 									setIsDirty(true);
 									setFormState((cur) => ({ ...cur, token_endpoint: e.target.value }));
 								}}
-								placeholder="https://issuer.example.com/token"
+								placeholder={t("manual.auth.oauth.fields.placeholderTokenEndpoint", {
+									defaultValue: "https://issuer.example.com/token",
+								})}
 								className="h-8 text-sm"
 							/>
 								</div>
@@ -640,7 +647,9 @@ export function ServerAuthSection({
 									setIsDirty(true);
 									setFormState((cur) => ({ ...cur, scopes: e.target.value }));
 								}}
-								placeholder="read write"
+								placeholder={t("manual.auth.oauth.fields.placeholderScopes", {
+									defaultValue: "read write",
+								})}
 								className="h-8 text-sm"
 							/>
 								</div>

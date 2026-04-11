@@ -208,6 +208,21 @@ impl EventHandlers {
                     }
                 }
             }
+            Event::ClientVisibleDirectSurfaceChanged { client_id } => {
+                debug!(client = %client_id, "Client visible direct surface changed: emitting tools/prompts/resources list_changed");
+                if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
+                    if let Ok(guard) = server.try_lock() {
+                        let (tools_count, prompts_count, resources_count) = guard.notify_all_list_changed().await;
+                        debug!(
+                            client = %client_id,
+                            "tools/list_changed={}, prompts/list_changed={}, resources/list_changed={}",
+                            tools_count,
+                            prompts_count,
+                            resources_count
+                        );
+                    }
+                }
+            }
             Event::ResourceEnabledInProfileChanged { .. } => {
                 debug!("Resource configuration changed: emitting resources/list_changed");
                 if let Some(profile_service) = &self.profile_service {

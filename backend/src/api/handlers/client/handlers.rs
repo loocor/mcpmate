@@ -8,11 +8,13 @@ use crate::api::models::client::{
     ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
     ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
     ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata,
-    ClientTemplateStorageMetadata,
+    ClientTemplateStorageMetadata, ClientUnifyDirectExposureData,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat};
+use crate::clients::models::{
+    ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat, UnifyDirectExposureConfig,
+};
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
 use crate::clients::{
@@ -632,6 +634,80 @@ pub(crate) fn get_client_service(state: &AppState) -> Result<Arc<ClientConfigSer
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)
 }
 
+struct BoundClientRuntimeState {
+    effective_mode: String,
+    unify_workspace: Option<UnifyDirectExposureConfig>,
+}
+
+impl BoundClientRuntimeState {
+    fn should_emit_managed_visibility_change(&self, requested: bool) -> bool {
+        requested && matches!(self.effective_mode.as_str(), "hosted" | "unify")
+    }
+}
+
+async fn load_bound_client_runtime_state(
+    service: &ClientConfigService,
+    identifier: &str,
+) -> Option<BoundClientRuntimeState> {
+    let effective_mode = match service.get_effective_config_mode(identifier).await {
+        Ok(mode) => mode,
+        Err(err) => {
+            tracing::warn!(client = %identifier, error = %err, "Failed to resolve effective config mode for runtime state sync");
+            return None;
+        }
+    };
+
+    let unify_workspace = if effective_mode == "unify" {
+        match service.get_unify_direct_exposure_config(identifier).await {
+            Ok(workspace) => Some(workspace.unwrap_or_default()),
+            Err(err) => {
+                tracing::error!(client = %identifier, error = %err, "Failed to load unify direct exposure config for runtime state sync");
+                return None;
+            }
+        }
+    } else {
+        None
+    };
+
+    Some(BoundClientRuntimeState {
+        effective_mode,
+        unify_workspace,
+    })
+}
+
+async fn sync_bound_client_runtime_state(
+    service: &ClientConfigService,
+    identifier: &str,
+    notify_visible_change: bool,
+) {
+    let Some(runtime_state) = load_bound_client_runtime_state(service, identifier).await else {
+        return;
+    };
+
+    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
+        if let Ok(guard) = proxy.try_lock() {
+            if let Err(err) = guard
+                .apply_persisted_client_runtime_state(
+                    identifier,
+                    Some(runtime_state.effective_mode.clone()),
+                    runtime_state.unify_workspace.clone(),
+                )
+                .await
+            {
+                tracing::warn!(client = %identifier, error = %err, mode = %runtime_state.effective_mode, "Failed to sync bound client runtime state");
+            }
+        }
+    }
+
+    if runtime_state.should_emit_managed_visibility_change(notify_visible_change) {
+        crate::core::events::EventBus::global().publish(
+            crate::core::events::Event::ClientVisibleDirectSurfaceChanged {
+                client_id: identifier.to_string(),
+            },
+        );
+    }
+}
+
 async fn emit_client_audit_event(
     app_state: &AppState,
     action: AuditAction,
@@ -678,7 +754,7 @@ pub async fn update_settings(
         "update_settings: received request"
     );
 
-    service
+    let settings_result = service
         .set_active_client_settings(
             &request.identifier,
             ActiveClientSettingsUpdate {
@@ -772,6 +848,9 @@ pub async fn update_settings(
     )
     .await;
 
+    let visible_mode_changed = settings_result.effective_mode_changed();
+    sync_bound_client_runtime_state(&service, &data.identifier, visible_mode_changed).await;
+
     Ok(Json(crate::api::models::client::ClientSettingsUpdateResp::success(
         data,
     )))
@@ -783,11 +862,12 @@ pub async fn update_capability_config(
 ) -> Result<Json<ClientCapabilityConfigResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let config = service
-        .update_capability_config_and_invalidate(
+    let (state, visible_surface_changed) = service
+        .update_capability_config_state_and_invalidate(
             &request.identifier,
             request.capability_source,
             request.selected_profile_ids,
+            request.unify_direct_exposure.map(Into::into),
         )
         .await
         .map_err(|err| {
@@ -801,10 +881,16 @@ pub async fn update_capability_config(
 
     let data = ClientCapabilityConfigData {
         identifier: request.identifier,
-        capability_source: config.capability_source,
-        selected_profile_ids: config.selected_profile_ids,
-        custom_profile_id: config.custom_profile_id,
+        capability_source: state.capability_config.capability_source,
+        selected_profile_ids: state.capability_config.selected_profile_ids,
+        custom_profile_id: state.capability_config.custom_profile_id,
+        unify_direct_exposure: ClientUnifyDirectExposureData {
+            config: state.unify_direct_exposure.clone(),
+            diagnostics: state.unify_direct_exposure_diagnostics.clone(),
+        },
     };
+
+    sync_bound_client_runtime_state(&service, &data.identifier, visible_surface_changed).await;
 
     emit_client_audit_event(
         &app_state,
@@ -817,6 +903,7 @@ pub async fn update_capability_config(
             "capability_source": data.capability_source,
             "selected_profile_ids": data.selected_profile_ids,
             "custom_profile_id": data.custom_profile_id,
+            "unify_direct_exposure": data.unify_direct_exposure,
         })),
         None,
     )
@@ -832,7 +919,7 @@ pub async fn get_capability_config(
     let service = get_client_service(&app_state)?;
 
     let config = service
-        .get_capability_config(&request.identifier)
+        .get_capability_config_state(&request.identifier)
         .await
         .map_err(|err| {
             tracing::error!(
@@ -846,9 +933,13 @@ pub async fn get_capability_config(
 
     Ok(Json(ClientCapabilityConfigResp::success(ClientCapabilityConfigData {
         identifier: request.identifier,
-        capability_source: config.capability_source,
-        selected_profile_ids: config.selected_profile_ids,
-        custom_profile_id: config.custom_profile_id,
+        capability_source: config.capability_config.capability_source,
+        selected_profile_ids: config.capability_config.selected_profile_ids,
+        custom_profile_id: config.capability_config.custom_profile_id,
+        unify_direct_exposure: ClientUnifyDirectExposureData {
+            config: config.unify_direct_exposure,
+            diagnostics: config.unify_direct_exposure_diagnostics,
+        },
     })))
 }
 
@@ -1260,7 +1351,7 @@ mod tests {
         CapabilitySource,
         source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot},
     };
-    use crate::common::profile::ProfileType;
+    use crate::common::profile::{ProfileRole, ProfileType};
     use crate::config::{
         client::init::{initialize_client_table, initialize_system_settings_table},
         database::Database,
@@ -1270,6 +1361,7 @@ mod tests {
     };
     use crate::core::{
         cache::{RedbCacheManager, manager::CacheConfig},
+        events::{Event, EventBus},
         models::Config,
         pool::UpstreamConnectionPool,
         profile::ConfigApplicationStateManager,
@@ -1277,7 +1369,7 @@ mod tests {
     use crate::inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager};
     use crate::system::metrics::MetricsCollector;
     use axum::Json;
-    use axum::extract::{Query, State};
+    use axum::extract::{Path, Query, State};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
@@ -1288,6 +1380,47 @@ mod tests {
         app_state: Arc<AppState>,
         client_service: Arc<ClientConfigService>,
         db_pool: sqlx::SqlitePool,
+    }
+
+    async fn wait_for_client_visible_change_event(
+        rx: &mut tokio::sync::broadcast::Receiver<Event>,
+        client_id: &str,
+    ) {
+        let expected = client_id.to_string();
+        tokio::time::timeout(Duration::from_secs(2), async move {
+            loop {
+                match rx.recv().await {
+                    Ok(Event::ClientVisibleDirectSurfaceChanged { client_id }) if client_id == expected => {
+                        return;
+                    }
+                    Ok(_) => continue,
+                    Err(err) => panic!("event receiver failed: {err}"),
+                }
+            }
+        })
+        .await
+        .expect("expected client visible change event");
+    }
+
+    async fn assert_no_client_visible_change_event(
+        rx: &mut tokio::sync::broadcast::Receiver<Event>,
+        client_id: &str,
+    ) {
+        let expected = client_id.to_string();
+        let result = tokio::time::timeout(Duration::from_millis(200), async move {
+            loop {
+                match rx.recv().await {
+                    Ok(Event::ClientVisibleDirectSurfaceChanged { client_id }) if client_id == expected => {
+                        panic!("unexpected client visible change event")
+                    }
+                    Ok(_) => continue,
+                    Err(err) => panic!("event receiver failed: {err}"),
+                }
+            }
+        })
+        .await;
+
+        assert!(result.is_err(), "unexpected client visible change event arrived in timeout window");
     }
 
     async fn create_test_context() -> TestContext {
@@ -1334,6 +1467,7 @@ mod tests {
                 .await
                 .expect("client service"),
         );
+        crate::core::capability::naming::initialize(db_pool.clone());
 
         let cache_path = temp_dir.path().join("capability.redb");
         let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
@@ -1374,6 +1508,99 @@ mod tests {
         profile::upsert_profile(pool, &profile).await.expect("upsert profile")
     }
 
+    async fn insert_active_shared_profile(
+        pool: &sqlx::SqlitePool,
+        name: &str,
+    ) -> String {
+        let mut profile = Profile::new(name.to_string(), ProfileType::Shared);
+        profile.is_active = true;
+        profile.is_default = true;
+        profile.multi_select = true;
+        profile::upsert_profile(pool, &profile)
+            .await
+            .expect("upsert active profile")
+    }
+
+    async fn insert_unify_server(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        name: &str,
+        eligible: bool,
+        tool_names: &[&str],
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO server_config (id, name, server_type, command, capabilities, enabled, unify_direct_exposure_eligible)
+            VALUES (?, ?, 'stdio', 'server-binary', 'tools', 1, ?)
+            "#,
+        )
+        .bind(id)
+        .bind(name)
+        .bind(if eligible { 1 } else { 0 })
+        .execute(pool)
+        .await
+        .expect("insert unify server");
+
+        for tool_name in tool_names {
+            crate::config::server::tools::upsert_server_tool(pool, id, name, tool_name, Some("tool"), None)
+                .await
+                .expect("upsert server tool");
+        }
+    }
+
+    async fn insert_unify_non_tool_capabilities(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+        server_name: &str,
+        prompt_names: &[&str],
+        resource_uris: &[&str],
+        template_uris: &[&str],
+    ) {
+        for prompt_name in prompt_names {
+            sqlx::query(
+                "INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(format!("{server_id}-prompt-{prompt_name}"))
+            .bind(server_id)
+            .bind(server_name)
+            .bind(prompt_name)
+            .bind(format!("{}_{}", server_name.to_lowercase().replace(' ', "_"), prompt_name))
+            .execute(pool)
+            .await
+            .expect("insert server prompt");
+        }
+
+        for resource_uri in resource_uris {
+            sqlx::query(
+                "INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri, name) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(format!("{server_id}-resource-{resource_uri}"))
+            .bind(server_id)
+            .bind(server_name)
+            .bind(resource_uri)
+            .bind(format!("{}:{}", server_name.to_lowercase().replace(' ', "_"), resource_uri))
+            .bind(resource_uri)
+            .execute(pool)
+            .await
+            .expect("insert server resource");
+        }
+
+        for template_uri in template_uris {
+            sqlx::query(
+                "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(format!("{server_id}-template-{template_uri}"))
+            .bind(server_id)
+            .bind(server_name)
+            .bind(template_uri)
+            .bind(format!("{}_{}", server_name.to_lowercase().replace(' ', "_"), template_uri))
+            .bind(template_uri)
+            .execute(pool)
+            .await
+            .expect("insert server resource template");
+        }
+    }
+
     #[tokio::test]
     async fn update_capability_config_returns_updated_payload() {
         let context = create_test_context().await;
@@ -1385,6 +1612,7 @@ mod tests {
                 identifier: "client-a".to_string(),
                 capability_source: CapabilitySource::Profiles,
                 selected_profile_ids: vec![profile_id.clone()],
+                unify_direct_exposure: None,
             }),
         )
         .await
@@ -1396,6 +1624,10 @@ mod tests {
         assert_eq!(data.capability_source, CapabilitySource::Profiles);
         assert_eq!(data.selected_profile_ids, vec![profile_id.clone()]);
         assert!(data.custom_profile_id.is_none());
+        assert_eq!(
+            data.unify_direct_exposure.config.route_mode,
+            crate::clients::models::UnifyRouteMode::BrokerOnly
+        );
 
         let stored = context
             .client_service
@@ -1431,6 +1663,761 @@ mod tests {
         assert_eq!(data.capability_source, CapabilitySource::Custom);
         assert!(data.selected_profile_ids.is_empty());
         assert_eq!(data.custom_profile_id, config.custom_profile_id);
+        assert_eq!(
+            data.unify_direct_exposure.config.route_mode,
+            crate::clients::models::UnifyRouteMode::BrokerOnly
+        );
+    }
+
+    #[tokio::test]
+    async fn capability_config_roundtrips_unify_route_only() {
+        let context = create_test_context().await;
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-route-only".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
+                    selected_server_ids: Vec::new(),
+                    selected_tool_surfaces: Vec::new(),
+                    selected_prompt_surfaces: Vec::new(),
+                    selected_resource_surfaces: Vec::new(),
+                    selected_template_surfaces: Vec::new(),
+                }),
+            }),
+        )
+        .await
+        .expect("update route-only capability config");
+
+        let data = response.data.expect("response data");
+        assert_eq!(
+            data.unify_direct_exposure.config.route_mode,
+            crate::clients::models::UnifyRouteMode::BrokerOnly
+        );
+        assert!(data.unify_direct_exposure.config.selected_server_ids.is_empty());
+        assert!(data.unify_direct_exposure.config.selected_tool_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.diagnostics.invalid_server_ids.is_empty());
+        assert!(data.unify_direct_exposure.diagnostics.invalid_tool_surfaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capability_config_roundtrips_unify_server_selection() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-eligible",
+            "Eligible Server",
+            true,
+            &["tool-a", "tool-b"],
+        )
+        .await;
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-server-live".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLive,
+                    selected_server_ids: vec!["server-eligible".to_string()],
+                    selected_tool_surfaces: Vec::new(),
+                    selected_prompt_surfaces: Vec::new(),
+                    selected_resource_surfaces: Vec::new(),
+                    selected_template_surfaces: Vec::new(),
+                }),
+            }),
+        )
+        .await
+        .expect("update server-live capability config");
+
+        let data = response.data.expect("response data");
+        assert_eq!(
+            data.unify_direct_exposure.config.route_mode,
+            crate::clients::models::UnifyRouteMode::ServerLive
+        );
+        assert_eq!(
+            data.unify_direct_exposure.config.selected_server_ids,
+            vec!["server-eligible".to_string()]
+        );
+        assert!(data.unify_direct_exposure.config.selected_tool_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.diagnostics.invalid_server_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capability_config_roundtrips_unify_tool_selection() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-tools",
+            "Tool Server",
+            true,
+            &["tool-a", "tool-b"],
+        )
+        .await;
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-tool-live".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+                    selected_server_ids: Vec::new(),
+                    selected_tool_surfaces: vec![crate::clients::models::UnifyDirectToolSurface {
+                        server_id: "server-tools".to_string(),
+                        tool_name: "tool-b".to_string(),
+                    }],
+                    selected_prompt_surfaces: Vec::new(),
+                    selected_resource_surfaces: Vec::new(),
+                    selected_template_surfaces: Vec::new(),
+                }),
+            }),
+        )
+        .await
+        .expect("update capability-level config");
+
+        let data = response.data.expect("response data");
+        assert_eq!(
+            data.unify_direct_exposure.config.selected_tool_surfaces,
+            vec![crate::clients::models::UnifyDirectToolSurface {
+                server_id: "server-tools".to_string(),
+                tool_name: "tool-b".to_string(),
+            }]
+        );
+        assert!(data.unify_direct_exposure.diagnostics.invalid_tool_surfaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capability_config_roundtrips_unify_prompt_resource_and_template_selection() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-mixed",
+            "Mixed Server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+        insert_unify_non_tool_capabilities(
+            &context.db_pool,
+            "server-mixed",
+            "Mixed Server",
+            &["prompt-a"],
+            &["resource-a"],
+            &["template-a"],
+        )
+        .await;
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-mixed-live".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+                    selected_server_ids: Vec::new(),
+                    selected_tool_surfaces: Vec::new(),
+                    selected_prompt_surfaces: vec![crate::clients::models::UnifyDirectPromptSurface {
+                        server_id: "server-mixed".to_string(),
+                        prompt_name: "prompt-a".to_string(),
+                    }],
+                    selected_resource_surfaces: vec![crate::clients::models::UnifyDirectResourceSurface {
+                        server_id: "server-mixed".to_string(),
+                        resource_uri: "resource-a".to_string(),
+                    }],
+                    selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
+                        server_id: "server-mixed".to_string(),
+                        uri_template: "template-a".to_string(),
+                    }],
+                }),
+            }),
+        )
+        .await
+        .expect("update mixed capability-level config");
+
+        let data = response.data.expect("response data");
+        assert_eq!(
+            data.unify_direct_exposure.config.selected_prompt_surfaces,
+            vec![crate::clients::models::UnifyDirectPromptSurface {
+                server_id: "server-mixed".to_string(),
+                prompt_name: "prompt-a".to_string(),
+            }]
+        );
+        assert_eq!(
+            data.unify_direct_exposure.config.selected_resource_surfaces,
+            vec![crate::clients::models::UnifyDirectResourceSurface {
+                server_id: "server-mixed".to_string(),
+                resource_uri: "resource-a".to_string(),
+            }]
+        );
+        assert_eq!(
+            data.unify_direct_exposure.config.selected_template_surfaces,
+            vec![crate::clients::models::UnifyDirectTemplateSurface {
+                server_id: "server-mixed".to_string(),
+                uri_template: "template-a".to_string(),
+            }]
+        );
+        assert!(data.unify_direct_exposure.diagnostics.invalid_prompt_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.diagnostics.invalid_resource_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.diagnostics.invalid_template_surfaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capability_config_unify_tool_selection_uses_globally_enabled_servers_for_activated_mode() {
+        let context = create_test_context().await;
+        insert_active_shared_profile(&context.db_pool, "active-profile-without-target-server").await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-global-only",
+            "Global Only Server",
+            true,
+            &["tool-a", "tool-b"],
+        )
+        .await;
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-tool-live-global-enabled".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+                    selected_server_ids: Vec::new(),
+                    selected_tool_surfaces: vec![crate::clients::models::UnifyDirectToolSurface {
+                        server_id: "server-global-only".to_string(),
+                        tool_name: "tool-b".to_string(),
+                    }],
+                    selected_prompt_surfaces: Vec::new(),
+                    selected_resource_surfaces: Vec::new(),
+                    selected_template_surfaces: Vec::new(),
+                }),
+            }),
+        )
+        .await
+        .expect("update capability-level config against globally enabled server");
+
+        let data = response.data.expect("response data");
+        assert_eq!(
+            data.unify_direct_exposure.config.selected_tool_surfaces,
+            vec![crate::clients::models::UnifyDirectToolSurface {
+                server_id: "server-global-only".to_string(),
+                tool_name: "tool-b".to_string(),
+            }]
+        );
+        assert!(data.unify_direct_exposure.diagnostics.invalid_server_ids.is_empty());
+        assert!(data.unify_direct_exposure.diagnostics.invalid_tool_surfaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn hosted_capability_source_switch_emits_visible_change_event() {
+        let context = create_test_context().await;
+        let profile = Profile {
+            id: Some("PROFHOSTED001".to_string()),
+            name: "Hosted Profile".to_string(),
+            description: None,
+            profile_type: ProfileType::Shared,
+            role: ProfileRole::User,
+            multi_select: false,
+            priority: 0,
+            is_active: false,
+            is_default: false,
+            created_at: None,
+            updated_at: None,
+        };
+        profile::upsert_profile(&context.db_pool, &profile)
+            .await
+            .expect("insert hosted profile");
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-a",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("hosted".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed hosted mode");
+
+        let mut rx = EventBus::global().subscribe_async();
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-a".to_string(),
+                capability_source: CapabilitySource::Profiles,
+                selected_profile_ids: vec!["PROFHOSTED001".to_string()],
+                unify_direct_exposure: None,
+            }),
+        )
+        .await
+        .expect("switch hosted capability source");
+
+        assert!(response.success);
+        wait_for_client_visible_change_event(&mut rx, "client-a").await;
+    }
+
+    #[tokio::test]
+    async fn mode_switch_to_hosted_emits_visible_change_event() {
+        let context = create_test_context().await;
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-a",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("unify".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed unify mode");
+
+        let mut rx = EventBus::global().subscribe_async();
+        let Json(response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: None,
+                client_version: None,
+                display_name: None,
+                connection_mode: None,
+                config_path: None,
+                supported_transports: None,
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("switch mode to hosted");
+
+        assert!(response.success);
+        wait_for_client_visible_change_event(&mut rx, "client-a").await;
+    }
+
+    #[tokio::test]
+    async fn mode_switch_to_transparent_does_not_emit_visible_change_event() {
+        let context = create_test_context().await;
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-a",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("hosted".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed hosted mode");
+
+        let mut rx = EventBus::global().subscribe_async();
+        let Json(response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("transparent".to_string()),
+                transport: None,
+                client_version: None,
+                display_name: None,
+                connection_mode: None,
+                config_path: None,
+                supported_transports: None,
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+            }),
+        )
+        .await
+        .expect("switch mode to transparent");
+
+        assert!(response.success);
+        assert_no_client_visible_change_event(&mut rx, "client-a").await;
+    }
+
+    #[tokio::test]
+    async fn capability_config_filters_stale_and_ineligible_unify_selections() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-eligible",
+            "Eligible Server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-ineligible",
+            "Ineligible Server",
+            false,
+            &["tool-x"],
+        )
+        .await;
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-invalid".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+                    selected_server_ids: vec![
+                        "server-eligible".to_string(),
+                        "server-ineligible".to_string(),
+                        "server-missing".to_string(),
+                    ],
+                    selected_tool_surfaces: vec![
+                        crate::clients::models::UnifyDirectToolSurface {
+                            server_id: "server-eligible".to_string(),
+                            tool_name: "tool-missing".to_string(),
+                        },
+                        crate::clients::models::UnifyDirectToolSurface {
+                            server_id: "server-ineligible".to_string(),
+                            tool_name: "tool-x".to_string(),
+                        },
+                        crate::clients::models::UnifyDirectToolSurface {
+                            server_id: "server-eligible".to_string(),
+                            tool_name: "tool-a".to_string(),
+                        },
+                    ],
+                    selected_prompt_surfaces: Vec::new(),
+                    selected_resource_surfaces: Vec::new(),
+                    selected_template_surfaces: Vec::new(),
+                }),
+            }),
+        )
+        .await
+        .expect("update invalid unify config");
+
+        let data = response.data.expect("response data");
+        assert_eq!(
+            data.unify_direct_exposure.config.selected_server_ids,
+            vec!["server-eligible".to_string()]
+        );
+        assert_eq!(
+            data.unify_direct_exposure.config.selected_tool_surfaces,
+            vec![crate::clients::models::UnifyDirectToolSurface {
+                server_id: "server-eligible".to_string(),
+                tool_name: "tool-a".to_string(),
+            }]
+        );
+        assert_eq!(
+            data.unify_direct_exposure.diagnostics.invalid_server_ids,
+            vec!["server-ineligible".to_string(), "server-missing".to_string()]
+        );
+        assert_eq!(data.unify_direct_exposure.diagnostics.invalid_tool_surfaces.len(), 2);
+        assert!(
+            data.unify_direct_exposure
+                .diagnostics
+                .invalid_tool_surfaces
+                .iter()
+                .any(|item| item.server_id == "server-eligible"
+                    && item.tool_name == "tool-missing"
+                    && item.reason == "tool_not_found")
+        );
+        assert!(
+            data.unify_direct_exposure
+                .diagnostics
+                .invalid_tool_surfaces
+                .iter()
+                .any(|item| item.server_id == "server-ineligible"
+                    && item.tool_name == "tool-x"
+                    && item.reason == "server_not_eligible_or_missing")
+        );
+    }
+
+    #[tokio::test]
+    async fn server_eligibility_change_prunes_server_live_direct_selection() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-prune-live",
+            "Prune Live Server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+
+        let _ = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-prune-live".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLive,
+                    selected_server_ids: vec!["server-prune-live".to_string()],
+                    selected_tool_surfaces: Vec::new(),
+                    selected_prompt_surfaces: Vec::new(),
+                    selected_resource_surfaces: Vec::new(),
+                    selected_template_surfaces: Vec::new(),
+                }),
+            }),
+        )
+        .await
+        .expect("seed server-live capability config");
+
+        let _ = crate::api::handlers::server::update_server(
+            State(context.app_state.clone()),
+            Json(crate::api::models::server::ServerUpdateReq {
+                id: "server-prune-live".to_string(),
+                kind: None,
+                command: None,
+                url: None,
+                args: None,
+                env: None,
+                headers: None,
+                profile_ids: None,
+                enabled: None,
+                pending_import: None,
+                registry_server_id: None,
+                meta: None,
+                unify_direct_exposure_eligible: Some(false),
+            }),
+        )
+        .await
+        .expect("disable direct exposure eligibility");
+
+        let Json(response) = get_capability_config(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-prune-live".to_string(),
+            }),
+        )
+        .await
+        .expect("load pruned capability config");
+
+        let data = response.data.expect("response data");
+        assert!(data.unify_direct_exposure.config.selected_server_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn server_eligibility_change_prunes_capability_level_direct_surfaces() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-prune-capabilities",
+            "Prune Capability Server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+        insert_unify_non_tool_capabilities(
+            &context.db_pool,
+            "server-prune-capabilities",
+            "Prune Capability Server",
+            &["prompt-a"],
+            &["resource-a"],
+            &["template-a"],
+        )
+        .await;
+
+        let _ = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-prune-capabilities".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+                    selected_server_ids: Vec::new(),
+                    selected_tool_surfaces: vec![crate::clients::models::UnifyDirectToolSurface {
+                        server_id: "server-prune-capabilities".to_string(),
+                        tool_name: "tool-a".to_string(),
+                    }],
+                    selected_prompt_surfaces: vec![crate::clients::models::UnifyDirectPromptSurface {
+                        server_id: "server-prune-capabilities".to_string(),
+                        prompt_name: "prompt-a".to_string(),
+                    }],
+                    selected_resource_surfaces: vec![crate::clients::models::UnifyDirectResourceSurface {
+                        server_id: "server-prune-capabilities".to_string(),
+                        resource_uri: "resource-a".to_string(),
+                    }],
+                    selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
+                        server_id: "server-prune-capabilities".to_string(),
+                        uri_template: "template-a".to_string(),
+                    }],
+                }),
+            }),
+        )
+        .await
+        .expect("seed capability-level direct surfaces");
+
+        let _ = crate::api::handlers::server::update_server(
+            State(context.app_state.clone()),
+            Json(crate::api::models::server::ServerUpdateReq {
+                id: "server-prune-capabilities".to_string(),
+                kind: None,
+                command: None,
+                url: None,
+                args: None,
+                env: None,
+                headers: None,
+                profile_ids: None,
+                enabled: None,
+                pending_import: None,
+                registry_server_id: None,
+                meta: None,
+                unify_direct_exposure_eligible: Some(false),
+            }),
+        )
+        .await
+        .expect("disable capability-level direct eligibility");
+
+        let Json(response) = get_capability_config(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-prune-capabilities".to_string(),
+            }),
+        )
+        .await
+        .expect("load pruned capability-level config");
+
+        let data = response.data.expect("response data");
+        assert!(data.unify_direct_exposure.config.selected_tool_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.config.selected_prompt_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.config.selected_resource_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.config.selected_template_surfaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn server_disable_prunes_server_live_direct_selection() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-disable-live",
+            "Disable Live Server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+
+        let _ = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-disable-live".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLive,
+                    selected_server_ids: vec!["server-disable-live".to_string()],
+                    selected_tool_surfaces: Vec::new(),
+                    selected_prompt_surfaces: Vec::new(),
+                    selected_resource_surfaces: Vec::new(),
+                    selected_template_surfaces: Vec::new(),
+                }),
+            }),
+        )
+        .await
+        .expect("seed server-live config before disable");
+
+        let _ = crate::api::handlers::server::disable_server(
+            State(context.app_state.clone()),
+            Path("server-disable-live".to_string()),
+            Query(std::collections::HashMap::new()),
+        )
+        .await
+        .expect("disable server globally");
+
+        let Json(response) = get_capability_config(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-disable-live".to_string(),
+            }),
+        )
+        .await
+        .expect("load server-live config after disable");
+
+        let data = response.data.expect("response data");
+        assert!(data.unify_direct_exposure.config.selected_server_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn server_disable_prunes_capability_level_direct_surfaces() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-disable-capabilities",
+            "Disable Capability Server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+        insert_unify_non_tool_capabilities(
+            &context.db_pool,
+            "server-disable-capabilities",
+            "Disable Capability Server",
+            &["prompt-a"],
+            &["resource-a"],
+            &["template-a"],
+        )
+        .await;
+
+        let _ = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-disable-capabilities".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+                    selected_server_ids: Vec::new(),
+                    selected_tool_surfaces: vec![crate::clients::models::UnifyDirectToolSurface {
+                        server_id: "server-disable-capabilities".to_string(),
+                        tool_name: "tool-a".to_string(),
+                    }],
+                    selected_prompt_surfaces: vec![crate::clients::models::UnifyDirectPromptSurface {
+                        server_id: "server-disable-capabilities".to_string(),
+                        prompt_name: "prompt-a".to_string(),
+                    }],
+                    selected_resource_surfaces: vec![crate::clients::models::UnifyDirectResourceSurface {
+                        server_id: "server-disable-capabilities".to_string(),
+                        resource_uri: "resource-a".to_string(),
+                    }],
+                    selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
+                        server_id: "server-disable-capabilities".to_string(),
+                        uri_template: "template-a".to_string(),
+                    }],
+                }),
+            }),
+        )
+        .await
+        .expect("seed capability config before disable");
+
+        let _ = crate::api::handlers::server::disable_server(
+            State(context.app_state.clone()),
+            Path("server-disable-capabilities".to_string()),
+            Query(std::collections::HashMap::new()),
+        )
+        .await
+        .expect("disable capability server globally");
+
+        let Json(response) = get_capability_config(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-disable-capabilities".to_string(),
+            }),
+        )
+        .await
+        .expect("load capability config after disable");
+
+        let data = response.data.expect("response data");
+        assert!(data.unify_direct_exposure.config.selected_tool_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.config.selected_prompt_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.config.selected_resource_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.config.selected_template_surfaces.is_empty());
     }
 
     #[tokio::test]

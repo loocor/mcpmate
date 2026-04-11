@@ -308,6 +308,8 @@ pub struct ServerDetailsData {
     pub globally_enabled: bool,
     /// Is enabled in any active profile (profile_server.enabled)
     pub enabled_in_profile: bool,
+    /// Whether this server can be directly exposed in Unify mode
+    pub unify_direct_exposure_eligible: bool,
     /// Server type (stdio, streamable_http)
     pub server_type: ServerType,
     /// Command to execute (for stdio servers)
@@ -733,6 +735,11 @@ pub struct ServerCreateReq {
     #[serde(default)]
     #[schemars(description = "Optional metadata fields for the server")]
     pub meta: Option<ServerMetaPayload>,
+
+    /// Whether this server can be directly exposed in Unify mode
+    #[serde(default)]
+    #[schemars(description = "Whether this server is eligible for Unify direct exposure")]
+    pub unify_direct_exposure_eligible: Option<bool>,
 }
 
 /// MCP Server Update Request
@@ -798,6 +805,11 @@ pub struct ServerUpdateReq {
     #[serde(default)]
     #[schemars(description = "Optional metadata fields to update")]
     pub meta: Option<ServerMetaPayload>,
+
+    /// Whether this server can be directly exposed in Unify mode
+    #[serde(default)]
+    #[schemars(description = "Whether this server is eligible for Unify direct exposure")]
+    pub unify_direct_exposure_eligible: Option<bool>,
 }
 
 /// Import servers request

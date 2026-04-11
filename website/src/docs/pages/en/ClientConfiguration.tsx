@@ -19,7 +19,7 @@ export default function ClientConfiguration() {
 
 			<H2>Key choices</H2>
 			<Ul>
-				<Li><strong>Unify mode</strong> is best when you want session-local control through builtin MCP and UCAN tools without maintaining a dashboard-side client working set.</Li>
+				<Li><strong>Unify mode</strong> is best when you want session-local control through builtin MCP and UCAN tools. Unify direct exposure is configured here and only applies to Unify sessions.</Li>
 				<Li><strong>Hosted mode</strong> is best when you want MCPMate features such as live switching and finer policy control.</Li>
 				<Li><strong>Transparent mode</strong> is best when you must write explicit server config into the client and accept fewer MCPMate-side controls.</Li>
 				<Li><strong>Capability source</strong> determines whether Hosted or Transparent workflows follow active profiles, selected shared profiles, or a client-specific custom profile.</Li>
@@ -47,6 +47,34 @@ export default function ClientConfiguration() {
 				<Li><strong>Profiles</strong> lets one client follow selected shared profiles even when the global active set is different.</Li>
 				<Li><strong>Customize</strong> creates or reuses a client-specific custom profile.</Li>
 			</Ul>
+
+			<H2>Runtime strategy boundary</H2>
+			<Ul>
+				<Li><strong>Hosted</strong> and <strong>Unify</strong> are MCPMate-managed runtime modes. When their mode or sub-options change, MCPMate treats the change as a managed visibility update: persist the new state, refresh caches and live session state, then emit capability-list notifications only when the managed visible surface actually changes.</Li>
+				<Li><strong>Transparent</strong> still records the selected mode and source, but its main responsibility is writing the client&apos;s raw MCP configuration. After that handoff, the client talks to upstream servers directly rather than through MCPMate&apos;s managed runtime.</Li>
+				<Li>That means Transparent shares the configuration write path, but it does not share the same managed capability-notification contract as Hosted or Unify.</Li>
+			</Ul>
+
+			<H2>Unify direct exposure (Unify-only)</H2>
+			<P>
+				Direct exposure is scoped to Unify. Hosted and Transparent behavior is unchanged.
+			</P>
+
+			<Ul>
+				<Li><strong>All Proxy</strong> (default): all enabled servers, including direct-eligible ones, stay brokered through the builtin UCAN tools.</Li>
+				<Li><strong>Server Direct</strong>: directly expose all capabilities from selected servers that are marked eligible for Unify direct exposure.</Li>
+				<Li><strong>Capability-Level Direct</strong> (advanced): directly expose selected tools only. In v1 this is tools-only, prompts/resources/templates remain brokered.</Li>
+			</Ul>
+
+			<P>
+				Capability-Level Direct now opens a dedicated client-scoped editor page instead of reusing the Profiles route. This keeps the navigation state accurate while preserving the same bulk-editing workflow for tools.
+			</P>
+
+			<Callout type="warning" title="Mixed routing warning">
+				Capability Level can split a workflow between brokered and direct tool calls.
+				If an upstream server expects stateful sequences, mixed routing may cause unexpected results.
+				MCPMate shows a warning for this case but does not automatically block or resolve it.
+			</Callout>
 
 			<H2>Recommended workflow</H2>
 			<Ul>

@@ -103,9 +103,10 @@ pub async fn upsert_server_tx(
 
     let result = sqlx::query(&format!(
         r#"
-        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {}, {})
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {}, {}, {})
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT({}) DO UPDATE SET
+            {} = excluded.{},
             {} = excluded.{},
             {} = excluded.{},
             {} = excluded.{},
@@ -122,6 +123,7 @@ pub async fn upsert_server_tx(
         columns::URL,
         columns::REGISTRY_SERVER_ID,
         columns::CAPABILITIES,
+        columns::UNIFY_DIRECT_EXPOSURE_ELIGIBLE,
         columns::PENDING_IMPORT,
         columns::NAME,
         columns::SERVER_TYPE,
@@ -134,6 +136,8 @@ pub async fn upsert_server_tx(
         columns::REGISTRY_SERVER_ID,
         columns::CAPABILITIES,
         columns::CAPABILITIES,
+        columns::UNIFY_DIRECT_EXPOSURE_ELIGIBLE,
+        columns::UNIFY_DIRECT_EXPOSURE_ELIGIBLE,
         columns::PENDING_IMPORT,
         columns::PENDING_IMPORT,
         columns::UPDATED_AT
@@ -145,6 +149,7 @@ pub async fn upsert_server_tx(
     .bind(&server.url)
     .bind(&server.registry_server_id)
     .bind(&server.capabilities)
+    .bind(server.unify_direct_exposure_eligible)
     .bind(server.pending_import)
     .execute(&mut **tx)
     .await
@@ -229,6 +234,7 @@ mod tests {
             registry_server_id: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
             pending_import,
             created_at: None,
             updated_at: None,
