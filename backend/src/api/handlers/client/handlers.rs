@@ -142,7 +142,8 @@ pub async fn config_details(
         (Some(raw), Some(state)) => {
             let container_keys = state.container_keys().unwrap_or_default();
             let is_array_container = state.container_type() == Some("array");
-            analyze_config_content(raw, &container_keys, is_array_container)
+            let format = state.config_format();
+            analyze_config_content(raw, &container_keys, is_array_container, format)
         }
         _ => (false, 0),
     };
@@ -352,6 +353,20 @@ pub async fn config_apply(
         }
     }
 
+    if let Some(policy) = requested_backup_policy {
+        service
+            .set_backup_policy(&request.identifier, policy)
+            .await
+            .map_err(|err| {
+                tracing::error!(
+                    client = %request.identifier,
+                    error = %err,
+                    "Failed to persist backup policy before apply"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
+
     let options = build_render_options(&request);
     let outcome = service.apply_with_deferred(options).await.map_err(|err| {
         let status = match err {
@@ -374,19 +389,6 @@ pub async fn config_apply(
         status
     })?;
 
-    if let Some(policy) = requested_backup_policy {
-        service
-            .set_backup_policy(&request.identifier, policy)
-            .await
-            .map_err(|err| {
-                tracing::error!(
-                    client = %request.identifier,
-                    error = %err,
-                    "Failed to persist backup policy after apply"
-                );
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-    }
     let synthetic = TemplateExecutionResult::DryRun {
         diff: crate::clients::renderer::ConfigDiff {
             format: outcome.preview.format,
@@ -1056,7 +1058,8 @@ async fn descriptor_to_client_info(
         Some(raw) => {
             let container_keys = state.container_keys().unwrap_or_default();
             let is_array_container = state.container_type() == Some("array");
-            analyze_config_content(raw, &container_keys, is_array_container)
+            let format = state.config_format();
+            analyze_config_content(raw, &container_keys, is_array_container, format)
         }
         _ => (false, 0),
     };

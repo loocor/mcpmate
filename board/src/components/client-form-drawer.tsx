@@ -87,6 +87,22 @@ function logoUrlIsPreviewable(value: string): boolean {
 	return false;
 }
 
+function extractErrorMessage(error: unknown): string {
+	if (error instanceof Error && error.message.trim()) {
+		return error.message;
+	}
+
+	if (typeof error === "string" && error.trim()) {
+		return error;
+	}
+
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return String(error);
+	}
+}
+
 function LogoUrlFieldWithPreview({
 	label,
 	placeholder,
@@ -412,11 +428,12 @@ export function ClientFormDrawer({
 				});
 			}
 		} catch (error) {
+			const message = extractErrorMessage(error);
 			notifyError(
 				t("detail.form.fields.configPath.pickFailedTitle", {
 					defaultValue: "Could not open file dialog",
 				}),
-				String(error),
+				message,
 			);
 		} finally {
 			setConfigPathPickBusy(false);
@@ -482,10 +499,23 @@ export function ClientFormDrawer({
 				logo_url: values.logoUrl || undefined,
 			});
 			if (mode === "create") {
-				await clientsApi.setBackupPolicy({
-					identifier: normalizedIdentifier,
-					policy: mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
-				});
+				try {
+					await clientsApi.setBackupPolicy({
+						identifier: normalizedIdentifier,
+						policy: mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
+					});
+				} catch {
+					notifyError(
+						t("detail.form.notifications.saveFailed.title", {
+							defaultValue: "Unable to save client record",
+						}),
+						t("detail.form.notifications.createBackupPolicyFailed.message", {
+							defaultValue:
+								"Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
+						}),
+					);
+					// Continue despite backup policy failure; client record was created successfully
+				}
 			}
 			return normalizedIdentifier;
 		},
@@ -504,7 +534,7 @@ export function ClientFormDrawer({
 			onSuccess?.(savedIdentifier);
 		},
 		onError: (error) => {
-			const message = String(error);
+			const message = extractErrorMessage(error);
 			setFormError(message);
 			notifyError(
 				t("detail.form.notifications.saveFailed.title", { defaultValue: "Unable to save client record" }),
@@ -543,7 +573,7 @@ export function ClientFormDrawer({
 			onDeleteSuccess?.(deletedIdentifier);
 		},
 		onError: (error) => {
-			const message = String(error);
+			const message = extractErrorMessage(error);
 			setDeleteError(message);
 			notifyError(
 				t("detail.form.notifications.deleteFailed.title", {

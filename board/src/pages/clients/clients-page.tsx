@@ -176,7 +176,7 @@ export function ClientsPage() {
 			};
 		}
 
-		if (approvalStatus === "rejected") {
+		if (approvalStatus === "rejected" || approvalStatus === "suspended") {
 			return {
 				cardClassName:
 					"border-red-300/90 hover:border-red-400 dark:border-red-800/80 dark:hover:border-red-700",
