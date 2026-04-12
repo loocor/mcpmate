@@ -1128,8 +1128,8 @@ mod tests {
         profile::{self, init::initialize_profile_tables},
         server::{self, init::initialize_server_tables},
     };
-    use sqlx::sqlite::SqlitePoolOptions;
     use serial_test::serial;
+    use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
 
     async fn create_visibility_service() -> (TempDir, Arc<Database>, ProfileVisibilityService) {

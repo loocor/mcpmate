@@ -2,15 +2,13 @@ use super::shared::*;
 use crate::api::{
     handlers::ApiError,
     models::oauth::{
-        OAuthInitiateResp, OAuthStatusResp, ServerOAuthCallbackReq, ServerOAuthConfigReq,
-        ServerOAuthInitiateReq, ServerOAuthPrepareReq, ServerOAuthRevokeReq, ServerOAuthStatusReq,
+        OAuthInitiateResp, OAuthStatusResp, ServerOAuthCallbackReq, ServerOAuthConfigReq, ServerOAuthInitiateReq,
+        ServerOAuthPrepareReq, ServerOAuthRevokeReq, ServerOAuthStatusReq,
     },
 };
 use crate::core::oauth::{OAuthConfigInput, OAuthPrepareInput};
 
-fn get_oauth_manager(
-    state: &Arc<AppState>,
-) -> Result<Arc<crate::core::oauth::OAuthManager>, ApiError> {
+fn get_oauth_manager(state: &Arc<AppState>) -> Result<Arc<crate::core::oauth::OAuthManager>, ApiError> {
     state
         .oauth_manager
         .clone()

@@ -11,9 +11,11 @@ pub async fn emit_event(
     audit_service: Option<&Arc<AuditService>>,
     event: crate::audit::AuditEventDto,
 ) {
-    if let Some(audit_service) = audit_service {
-        audit_service.emit(event).await;
-    }
+    let Some(audit_service) = audit_service else {
+        return;
+    };
+
+    audit_service.emit(event).await;
 }
 
 pub fn build_mcp_event(
@@ -137,6 +139,7 @@ pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::ClientConfigRestore
         | AuditAction::ClientConfigImport
         | AuditAction::ClientCapabilityUpdate
+        | AuditAction::ClientDelete
         | AuditAction::ClientBackupDelete
         | AuditAction::ClientBackupPolicyUpdate
         | AuditAction::ClientApprove

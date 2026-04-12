@@ -3069,7 +3069,6 @@ mod tests {
         assert_eq!(visible[0].tool.name.as_ref(), "server-a__tool-two");
     }
 
-
     #[test]
     fn unify_direct_exposure_catalog_exclusion_removes_server_live_prompts() {
         let context = ClientBuiltinContext {
@@ -3166,7 +3165,6 @@ mod tests {
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].raw_prompt_name, "prompt-two");
     }
-
 
     #[test]
     fn unify_direct_exposure_catalog_exclusion_removes_server_live_resources() {
