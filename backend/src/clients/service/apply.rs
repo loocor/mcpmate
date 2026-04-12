@@ -232,11 +232,21 @@ impl ClientConfigService {
                     return Err(ConfigError::FileOperationError(msg));
                 }
 
-                // TODO: Refactor schedule_write_after_unlock in Step 5 to accept client_id instead of template
-                tracing::warn!(
-                    client = %options.client_id,
-                    "Cherry KV locked - deferred write not yet implemented after template cleanup"
-                );
+                let config_path = self
+                    .resolved_config_path(&options.client_id)
+                    .await?
+                    .ok_or_else(|| ConfigError::PathResolutionError(format!(
+                        "No config_path for client {}",
+                        options.client_id
+                    )))?;
+                let merged_after = preview_outcome.preview.after.clone().unwrap_or_default();
+                let policy = self.get_backup_policy(&options.client_id).await?;
+                self.schedule_write_after_unlock(
+                    options.client_id.clone(),
+                    config_path,
+                    merged_after,
+                    policy,
+                )?;
 
                 let mut out = preview_outcome;
                 out.scheduled = true;
