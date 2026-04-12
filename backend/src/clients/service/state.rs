@@ -73,7 +73,13 @@ impl ClientConfigService {
             return Ok(false);
         };
 
-        self.delete_all_client_backups(identifier).await?;
+        if let Err(err) = self.delete_all_client_backups(identifier).await {
+            tracing::warn!(
+                client = %identifier,
+                error = %err,
+                "Failed to delete all client backups before record removal; continuing"
+            );
+        }
 
         if let Some(custom_profile_id) = state.custom_profile_id.as_deref() {
             crate::config::profile::delete_profile(self.db_pool.as_ref(), custom_profile_id)
