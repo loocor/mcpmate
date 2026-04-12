@@ -279,6 +279,7 @@ export function ClientDetailPage() {
 		[clientsData?.client, identifier],
 	);
 	const supportsBackupOperations =
+		Boolean(currentClient) &&
 		currentClient?.writable_config !== false &&
 		currentClient?.template?.managed_source !== "runtime_active_client";
 	const detailTabs = useMemo(
@@ -1606,7 +1607,7 @@ export function ClientDetailPage() {
 	});
 
 	const [policyLabel, setPolicyLabel] = useState<string>("keep_n");
-	const [policyLimit, setPolicyLimit] = useState<number | undefined>(30);
+	const [policyLimit, setPolicyLimit] = useState<number | undefined>(5);
 	useEffect(() => {
 		if (policyData) {
 			setPolicyLabel(policyData.policy || "keep_n");
