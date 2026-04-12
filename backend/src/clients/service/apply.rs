@@ -27,14 +27,13 @@ impl ClientConfigService {
         }
 
         // Get client state for configuration metadata
-        let state = self
-            .fetch_state(&options.client_id)
-            .await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!("Client state not found: {}", options.client_id)))?;
-        let format_rules = state.format_rules()?.and_then(|v| {
-            serde_json::from_value::<std::collections::HashMap<String, crate::clients::models::FormatRule>>(v).ok()
-        });
-
+        let state = self.fetch_state(&options.client_id).await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!(
+                "Client state not found: {}", options.client_id
+            )))?;
+        let format_rules = state.format_rules()?
+            .and_then(|v| serde_json::from_value::<std::collections::HashMap<String, crate::clients::models::FormatRule>>(v).ok());
+        
         // Validate format_rules exists for Managed mode
         if matches!(options.mode, ConfigMode::Managed) && format_rules.is_none() {
             return Err(ConfigError::DataAccessError(format!(
