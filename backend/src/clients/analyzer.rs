@@ -1,10 +1,29 @@
 use crate::clients::utils::get_nested_value;
 
+fn parse_to_json_value(
+    content: &str,
+    format: Option<&str>,
+) -> Option<serde_json::Value> {
+    let normalized = format.map(|v| v.trim().to_ascii_lowercase());
+
+    match normalized.as_deref() {
+        Some("json") => serde_json::from_str::<serde_json::Value>(content).ok(),
+        Some("json5") => json5::from_str::<serde_json::Value>(content).ok(),
+        Some("toml") => toml::from_str::<toml::Value>(content)
+            .ok()
+            .and_then(|value| serde_json::to_value(value).ok()),
+        Some("yaml") => serde_yaml::from_str::<serde_json::Value>(content).ok(),
+        Some(_) => None,
+        None => serde_json::from_str::<serde_json::Value>(content).ok(),
+    }
+}
+
 /// Analyze config content for MCP presence and server count according to container configuration.
 pub fn analyze_config_content(
     content: &str,
     container_keys: &[String],
     is_array_container: bool,
+    format: Option<&str>,
 ) -> (bool, u32) {
     if content.is_empty() {
         return (false, 0);
@@ -12,8 +31,8 @@ pub fn analyze_config_content(
     let keys = container_keys;
     let is_array = is_array_container;
 
-    match serde_json::from_str::<serde_json::Value>(content) {
-        Ok(json) => {
+    match parse_to_json_value(content, format) {
+        Some(json) => {
             if is_array {
                 if let Some(arr) = json.as_array() {
                     let has = !arr.is_empty()
@@ -49,7 +68,7 @@ pub fn analyze_config_content(
                 (false, 0)
             }
         }
-        Err(_) => {
+        None => {
             if is_array {
                 let has = content.contains("[") && (content.contains("\"command\"") || content.contains("\"url\""));
                 return (has, 0);
