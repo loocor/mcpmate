@@ -394,7 +394,7 @@ impl ClientConfigService {
                 .map(|state| state.runtime_client_metadata())
                 .unwrap_or_default();
 
-            tracing::info!(
+            tracing::debug!(
                 client = %identifier,
                 update_logo_url = ?update.logo_url,
                 existing_logo_url = ?existing_metadata.logo_url,
@@ -413,7 +413,7 @@ impl ClientConfigService {
                     .unwrap_or(existing_metadata.supported_transports),
             };
 
-            tracing::info!(
+            tracing::debug!(
                 client = %identifier,
                 merged_logo_url = ?next_metadata.logo_url,
                 "Merged runtime metadata, calling update_runtime_client_metadata"
