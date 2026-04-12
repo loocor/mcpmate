@@ -983,9 +983,13 @@ export function ClientFormDrawer({
 						setIsDeleteConfirmOpen(false);
 						setDeleteError(null);
 					}}
-					onConfirm={async () => {
-						await deleteMutation.mutateAsync();
-					}}
+						onConfirm={async () => {
+							try {
+								await deleteMutation.mutateAsync();
+							} catch {
+								// onError already handles user-facing feedback and state updates.
+							}
+						}}
 					title={t("detail.form.confirmDelete.title", {
 						defaultValue: "Delete Client Record",
 					})}
