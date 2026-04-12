@@ -355,7 +355,7 @@ pub(super) async fn call_tool(
             McpError::internal_error("Server not found for tool mapping".to_string(), None)
         })?;
 
-        let directly_exposed = if matches!(client.config_mode.as_deref(), Some("unify")) {
+    let directly_exposed = if matches!(client.config_mode.as_deref(), Some("unify")) {
         let db = server
             .database
             .as_ref()
@@ -846,5 +846,4 @@ mod tests {
             "tool-two",
         ));
     }
-
 }
