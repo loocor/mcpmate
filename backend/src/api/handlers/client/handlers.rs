@@ -560,10 +560,10 @@ pub async fn config_import(
     let config_format_str = state.config_format().filter(|s| !s.trim().is_empty()).ok_or_else(|| {
         tracing::error!(
             client = %request.identifier,
-            status = 400u16,
+            status = 422u16,
             "config_format is missing; cannot parse configuration"
         );
-        StatusCode::BAD_REQUEST
+        StatusCode::UNPROCESSABLE_ENTITY
     })?;
 
     let json_value = raw
