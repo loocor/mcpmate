@@ -540,7 +540,9 @@ pub async fn config_import(
     Json(request): Json<ClientConfigImportReq>,
 ) -> Result<Json<ClientConfigImportResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-    let state = service.fetch_state(&request.identifier).await
+    let state = service
+        .fetch_state(&request.identifier)
+        .await
         .map_err(|err| {
             tracing::error!("Failed to load client state {}: {}", request.identifier, err);
             StatusCode::INTERNAL_SERVER_ERROR
@@ -555,9 +557,18 @@ pub async fn config_import(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    let config_format_str = state.config_format().filter(|s| !s.trim().is_empty()).ok_or_else(|| {
+        tracing::error!(
+            client = %request.identifier,
+            status = 400u16,
+            "config_format is missing; cannot parse configuration"
+        );
+        StatusCode::BAD_REQUEST
+    })?;
+
     let json_value = raw
         .as_deref()
-        .map(|raw| parse_config_value(raw, state.config_format()))
+        .map(|raw| parse_config_value(raw, Some(config_format_str)))
         .unwrap_or(serde_json::Value::Null);
 
     let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;

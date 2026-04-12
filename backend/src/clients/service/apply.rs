@@ -27,12 +27,22 @@ impl ClientConfigService {
         }
 
         // Get client state for configuration metadata
-        let state = self.fetch_state(&options.client_id).await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!(
-                "Client state not found: {}", options.client_id
-            )))?;
-        let format_rules = state.format_rules()?
-            .and_then(|v| serde_json::from_value::<std::collections::HashMap<String, crate::clients::models::FormatRule>>(v).ok());
+        let state = self
+            .fetch_state(&options.client_id)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Client state not found: {}", options.client_id)))?;
+        let format_rules = state.format_rules()?.and_then(|v| {
+            serde_json::from_value::<std::collections::HashMap<String, crate::clients::models::FormatRule>>(v).ok()
+        });
+
+        // Validate format_rules exists for Managed mode
+        if matches!(options.mode, ConfigMode::Managed) && format_rules.is_none() {
+            return Err(ConfigError::DataAccessError(format!(
+                "Client '{}' has no format_rules (likely legacy record); re-detect this client to populate transport configuration",
+                options.client_id
+            )));
+        }
+
         // Select transport for managed mode if applicable
         let mut chosen_transport: Option<String> = None;
         let mut auto_selected = false;
@@ -175,7 +185,8 @@ impl ClientConfigService {
                 let container_keys = state.container_keys().unwrap_or_default();
                 let container_type = state.container_type();
                 // best-effort parse + summarize; don't fail the apply path on parse errors
-                if let Some(summary) = Self::summarize_servers_for_probe(after, format, &container_keys, container_type) {
+                if let Some(summary) = Self::summarize_servers_for_probe(after, format, &container_keys, container_type)
+                {
                     for entry in summary.into_iter().take(5) {
                         tracing::debug!(
                             target: "mcpmate::client::apply_probe",
@@ -220,11 +231,13 @@ impl ClientConfigService {
             Err(ConfigError::FileOperationError(msg)) if msg.to_ascii_lowercase().contains("locked") => {
                 // Only Cherry triggers delayed write
                 let state = self.fetch_state(&options.client_id).await?;
-                let is_cherry = state.as_ref()
+                let is_cherry = state
+                    .as_ref()
                     .and_then(|s| s.storage_kind())
                     .map(|k| k == "kv")
                     .unwrap_or(false)
-                    && state.as_ref()
+                    && state
+                        .as_ref()
                         .and_then(|s| s.storage_adapter())
                         .map(|a| a == "cherry_kv")
                         .unwrap_or(false);
@@ -232,21 +245,12 @@ impl ClientConfigService {
                     return Err(ConfigError::FileOperationError(msg));
                 }
 
-                let config_path = self
-                    .resolved_config_path(&options.client_id)
-                    .await?
-                    .ok_or_else(|| ConfigError::PathResolutionError(format!(
-                        "No config_path for client {}",
-                        options.client_id
-                    )))?;
+                let config_path = self.resolved_config_path(&options.client_id).await?.ok_or_else(|| {
+                    ConfigError::PathResolutionError(format!("No config_path for client {}", options.client_id))
+                })?;
                 let merged_after = preview_outcome.preview.after.clone().unwrap_or_default();
                 let policy = self.get_backup_policy(&options.client_id).await?;
-                self.schedule_write_after_unlock(
-                    options.client_id.clone(),
-                    config_path,
-                    merged_after,
-                    policy,
-                )?;
+                self.schedule_write_after_unlock(options.client_id.clone(), config_path, merged_after, policy)?;
 
                 let mut out = preview_outcome;
                 out.scheduled = true;
