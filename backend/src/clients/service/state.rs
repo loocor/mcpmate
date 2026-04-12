@@ -8,7 +8,7 @@ use std::collections::HashMap;
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata FROM client",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -57,12 +57,49 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))
+    }
+
+    pub async fn delete_client_record(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<bool> {
+        let Some(state) = self.fetch_state(identifier).await? else {
+            return Ok(false);
+        };
+
+        self.delete_all_client_backups(identifier).await?;
+
+        if let Some(custom_profile_id) = state.custom_profile_id.as_deref() {
+            crate::config::profile::delete_profile(self.db_pool.as_ref(), custom_profile_id)
+                .await
+                .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        }
+
+        sqlx::query("DELETE FROM client_template_runtime WHERE identifier = ?")
+            .bind(identifier)
+            .execute(&*self.db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        let result = sqlx::query("DELETE FROM client WHERE identifier = ?")
+            .bind(identifier)
+            .execute(&*self.db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+
+        crate::core::profile::visibility::invalidate_visibility_cache(identifier);
+
+        Ok(true)
     }
 
     pub(crate) async fn resolve_client_name(
@@ -467,13 +504,53 @@ impl ClientConfigService {
         let template_identifier = template.as_ref().map(|entry| entry.identifier.clone());
         let generated_id = crate::generate_id!("clnt");
 
+        // Extract template configuration fields for persistence
+        let (config_format, protocol_revision, container_type, container_keys, storage_kind,
+             storage_adapter, storage_path_strategy, merge_strategy, keep_original_config,
+             managed_source, format_rules) = if let Some(ref tmpl) = template {
+            let config_format = Some(tmpl.format.as_str().to_string());
+            let protocol_revision = tmpl.protocol_revision.clone();
+            let container_type = Some(match tmpl.config_mapping.container_type {
+                crate::clients::models::ContainerType::ObjectMap => "object",
+                crate::clients::models::ContainerType::Array => "array",
+            }.to_string());
+            let container_keys = serde_json::to_string(&tmpl.config_mapping.container_keys).ok();
+            let storage_kind = Some(match tmpl.storage.kind {
+                crate::clients::models::StorageKind::File => "file",
+                crate::clients::models::StorageKind::Kv => "kv",
+                crate::clients::models::StorageKind::Custom => "custom",
+            }.to_string());
+            let storage_adapter = tmpl.storage.adapter.clone();
+            let storage_path_strategy = tmpl.storage.path_strategy.clone();
+            let merge_strategy = Some(match tmpl.config_mapping.merge_strategy {
+                crate::clients::models::MergeStrategy::Replace => "replace",
+                crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
+            }.to_string());
+            let keep_original_config = Some(if tmpl.config_mapping.keep_original_config { 1_i64 } else { 0_i64 });
+            let managed_source = tmpl.config_mapping.managed_source.clone();
+            let format_rules = if tmpl.config_mapping.format_rules.is_empty() {
+                None
+            } else {
+                serde_json::to_string(&tmpl.config_mapping.format_rules).ok()
+            };
+
+            (config_format, protocol_revision, container_type, container_keys, storage_kind,
+             storage_adapter, storage_path_strategy, merge_strategy, keep_original_config,
+             managed_source, format_rules)
+        } else {
+            (None, None, None, None, None, None, None, None, None, None, None)
+        };
+
         let insert_result = sqlx::query(
             r#"
             INSERT INTO client (
                 id, name, display_name, identifier, config_path, managed, backup_policy, backup_limit,
-                approval_status, governance_kind, connection_mode, record_kind, template_identifier
+                approval_status, governance_kind, connection_mode, record_kind, template_identifier,
+                config_format, protocol_revision, container_type, container_keys,
+                storage_kind, storage_adapter, storage_path_strategy,
+                merge_strategy, keep_original_config, managed_source, format_rules
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'keep_n', 30, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'keep_n', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&generated_id)
@@ -487,6 +564,17 @@ impl ClientConfigService {
         .bind(connection_mode)
         .bind(record_kind)
         .bind(template_identifier)
+        .bind(config_format)
+        .bind(protocol_revision)
+        .bind(container_type)
+        .bind(container_keys)
+        .bind(storage_kind)
+        .bind(storage_adapter)
+        .bind(storage_path_strategy)
+        .bind(merge_strategy)
+        .bind(keep_original_config)
+        .bind(managed_source)
+        .bind(format_rules)
         .execute(&*self.db_pool)
         .await;
 
@@ -632,12 +720,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_policy_is_auto_manage() {
+    async fn default_policy_is_require_approval() {
         let (_temp_dir, service) = create_test_service().await;
 
         let policy = service.get_onboarding_policy().await.expect("get policy");
 
-        assert_eq!(policy, OnboardingPolicy::AutoManage);
+        assert_eq!(policy, OnboardingPolicy::RequireApproval);
     }
 
     #[tokio::test]
@@ -709,4 +797,49 @@ mod tests {
         assert_eq!(promoted.config_mode.as_deref(), Some("hosted"));
     }
 
+    #[tokio::test]
+    async fn delete_client_record_cleans_runtime_and_allows_recreation() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        service
+            .set_client_settings("test.client", Some("hosted".to_string()), None, None)
+            .await
+            .expect("create active client state");
+
+        sqlx::query(
+            "INSERT OR REPLACE INTO client_template_runtime (identifier, payload_json, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        )
+        .bind("test.client")
+        .bind("{}")
+        .execute(service.db_pool.as_ref())
+        .await
+        .expect("insert runtime snapshot");
+
+        let deleted = service
+            .delete_client_record("test.client")
+            .await
+            .expect("delete client record");
+
+        assert!(deleted);
+        assert!(
+            service
+                .fetch_state("test.client")
+                .await
+                .expect("fetch state after delete")
+                .is_none()
+        );
+        let runtime_payload: Option<String> =
+            sqlx::query_scalar("SELECT payload_json FROM client_template_runtime WHERE identifier = ?")
+                .bind("test.client")
+                .fetch_optional(service.db_pool.as_ref())
+                .await
+                .expect("query runtime snapshot after delete");
+        assert!(runtime_payload.is_none());
+
+        let recreated = service
+            .ensure_passive_observed_row("test.client", "Test Client", None)
+            .await
+            .expect("deleted client can be recreated passively");
+        assert_eq!(recreated.identifier, "test.client");
+    }
 }

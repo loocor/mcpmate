@@ -3,17 +3,18 @@
 use super::config::{analyze_config_content, get_config_last_modified};
 use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
-    ClientBackupActionData, ClientBackupActionResp, ClientCapabilityConfigData, ClientCapabilityConfigReq,
-    ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
-    ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
-    ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata,
-    ClientTemplateStorageMetadata, ClientUnifyDirectExposureData,
+    ClientBackupActionData, ClientBackupActionResp, ClientBackupPolicyPayload, ClientCapabilityConfigData,
+    ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp,
+    ClientConfigData, ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode,
+    ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData,
+    ClientConfigUpdateReq, ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo,
+    ClientTemplateMetadata, ClientTemplateStorageMetadata, ClientUnifyDirectExposureData,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::models::{
-    ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat, UnifyDirectExposureConfig,
+    BackupPolicy, BackupPolicySetting, ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat,
+    UnifyDirectExposureConfig,
 };
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
@@ -97,17 +98,21 @@ pub async fn config_details(
     })?;
 
     let mut warnings: Vec<String> = Vec::new();
-    let content = match template.as_ref() {
-        None => {
-            warnings.push("Runtime template is unavailable for this client record".to_string());
-            read_runtime_config(service.as_ref(), &request.identifier)
-                .await
-                .map_err(|err| {
-                    tracing::error!(client = %request.identifier, error = %err, "Failed to read runtime config");
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?
-        }
-        Some(_) => match service.read_current_config(&request.identifier).await {
+    let mut degraded_reasons: Vec<String> = Vec::new();
+    let has_local_config_target = state
+        .as_ref()
+        .map(ClientStateRow::has_local_config_target)
+        .unwrap_or(false);
+    let use_runtime_config_read = template.is_none() || !has_local_config_target;
+    let content = if use_runtime_config_read {
+        read_runtime_config(service.as_ref(), &request.identifier)
+            .await
+            .map_err(|err| {
+                tracing::error!(client = %request.identifier, error = %err, "Failed to read runtime config");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+    } else {
+        match service.read_current_config(&request.identifier).await {
             Ok(content) => content,
             Err(err) => {
                 let message = format!("Unable to read current configuration: {}", err);
@@ -117,20 +122,28 @@ pub async fn config_details(
                     "Gracefully degrading after configuration read failure"
                 );
                 warnings.push(message);
+                degraded_reasons.push("config_read_failed_fallback_none".to_string());
                 None
             }
-        },
+        }
     };
 
     let config_exists = content.is_some();
-    let parsed_content = match (content.as_deref(), template.as_ref()) {
-        (Some(raw), Some(template)) => parse_config_value(raw, template),
+    let parsed_content = match (content.as_deref(), state.as_ref()) {
+        (Some(raw), Some(state)) => match state.config_format() {
+            Some(_) => parse_config_value(raw, state.config_format()),
+            None => parse_runtime_config_value(raw, config_path.as_deref()),
+        },
         (Some(raw), None) => parse_runtime_config_value(raw, config_path.as_deref()),
         (None, _) => Value::Null,
     };
 
-    let (has_mcp_config, mcp_servers_count) = match (content.as_deref(), template.as_ref()) {
-        (Some(raw), Some(template)) => analyze_config_content(raw, &request.identifier, template),
+    let (has_mcp_config, mcp_servers_count) = match (content.as_deref(), state.as_ref()) {
+        (Some(raw), Some(state)) => {
+            let container_keys = state.container_keys().unwrap_or_default();
+            let is_array_container = state.container_type() == Some("array");
+            analyze_config_content(raw, &container_keys, is_array_container)
+        }
         _ => (false, 0),
     };
 
@@ -150,6 +163,7 @@ pub async fn config_details(
                 "Falling back to disabled managed state after lookup failure"
             );
             warnings.push(format!("Failed to load managed state: {}", err));
+            degraded_reasons.push("managed_state_lookup_failed_default_false".to_string());
             false
         }
     };
@@ -159,26 +173,12 @@ pub async fn config_details(
         .as_ref()
         .map(ClientStateRow::runtime_client_metadata)
         .unwrap_or_default();
-    let description = template
-        .as_ref()
-        .and_then(|template| metadata_string(template, "description"))
-        .or_else(|| runtime_metadata.description.clone());
-    let homepage_url = template
-        .as_ref()
-        .and_then(|template| metadata_string(template, "homepage_url"))
-        .or_else(|| runtime_metadata.homepage_url.clone());
-    let docs_url = template
-        .as_ref()
-        .and_then(|template| metadata_string(template, "docs_url"))
-        .or_else(|| runtime_metadata.docs_url.clone());
-    let support_url = template
-        .as_ref()
-        .and_then(|template| metadata_string(template, "support_url"))
-        .or_else(|| runtime_metadata.support_url.clone());
-    let logo_url = template
-        .as_ref()
-        .and_then(extract_logo_url)
-        .or_else(|| runtime_metadata.logo_url.clone());
+    // Meta information comes only from runtime_metadata (approval_metadata.runtime_client)
+    let description = runtime_metadata.description.clone();
+    let homepage_url = runtime_metadata.homepage_url.clone();
+    let docs_url = runtime_metadata.docs_url.clone();
+    let support_url = runtime_metadata.support_url.clone();
+    let logo_url = runtime_metadata.logo_url.clone();
 
     let capability_config = service
         .get_capability_config(&request.identifier)
@@ -203,13 +203,7 @@ pub async fn config_details(
     let connection_mode = state
         .as_ref()
         .map(|row| row.connection_mode().as_str().to_string())
-        .or_else(|| {
-            if config_path.as_deref().unwrap_or_default().is_empty() {
-                Some("manual".to_string())
-            } else {
-                Some("local_config_detected".to_string())
-            }
-        });
+        .or_else(|| Some(default_connection_mode_from_path(config_path.as_deref())));
     let governed_by_default_policy = state
         .as_ref()
         .map(|row| row.governed_by_default_policy())
@@ -220,6 +214,7 @@ pub async fn config_details(
         .await
         .unwrap_or_else(|err| {
             tracing::warn!(client = %request.identifier, error = %err, "Failed to verify local config target");
+            degraded_reasons.push("writable_target_verification_failed_default_false".to_string());
             false
         });
 
@@ -251,6 +246,7 @@ pub async fn config_details(
         governed_by_default_policy,
         writable_config,
         warnings,
+        degraded_reasons,
     };
 
     Ok(Json(ClientConfigResp::success(data)))
@@ -274,6 +270,23 @@ pub async fn config_apply(
 ) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
+    if !request.preview {
+        if let Some(payload) = request.backup_policy.as_ref() {
+            let policy = parse_backup_policy_payload(payload)?;
+            service
+                .set_backup_policy(&request.identifier, policy)
+                .await
+                .map_err(|err| {
+                    tracing::error!(
+                        client = %request.identifier,
+                        error = %err,
+                        "Failed to persist backup policy before apply"
+                    );
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+        }
+    }
+
     let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
         tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before apply");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -292,7 +305,19 @@ pub async fn config_apply(
 
     match service.has_verified_local_config_target(&request.identifier).await {
         Ok(true) => {}
-        Ok(false) => return Err(StatusCode::FORBIDDEN),
+        Ok(false) => {
+            if !existing_state
+                .as_ref()
+                .map(ClientStateRow::has_local_config_target)
+                .unwrap_or(false)
+            {
+                tracing::warn!(
+                    client = %request.identifier,
+                    "Rejected config apply without runtime local config target"
+                );
+                return Err(StatusCode::FORBIDDEN);
+            }
+        }
         Err(err) => {
             tracing::warn!(
                 client = %request.identifier,
@@ -334,15 +359,6 @@ pub async fn config_apply(
         }
     }
 
-    let template = service.get_client_template(&request.identifier).await.map_err(|err| {
-        tracing::error!(
-            client = %request.identifier,
-            error = %err,
-            "Failed to load client template"
-        );
-        StatusCode::NOT_FOUND
-    })?;
-
     let options = build_render_options(&request);
     let outcome = service.apply_with_deferred(options).await.map_err(|err| {
         let status = match err {
@@ -373,7 +389,16 @@ pub async fn config_apply(
         },
         content: outcome.preview.after.clone().unwrap_or_default(),
     };
-    let preview = build_update_preview(&template, &synthetic);
+
+    // Get config_format from state for preview parsing
+    let state = service.fetch_state(&request.identifier).await.map_err(|err| {
+        tracing::error!(client = %request.identifier, error = %err, "Failed to load client state for preview");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let config_format = state.as_ref().and_then(|s| s.config_format());
+
+    let config_path = state.as_ref().and_then(|s| s.config_path());
+    let preview = build_update_preview(config_format, config_path, &synthetic);
     let mut warnings = outcome.warnings.clone();
     warnings.extend(outcome.preview.summary.clone().into_iter());
     let diff_format = Some(outcome.preview.format.as_str().to_string());
@@ -515,10 +540,15 @@ pub async fn config_import(
     Json(request): Json<ClientConfigImportReq>,
 ) -> Result<Json<ClientConfigImportResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-    let template = service.get_client_template(&request.identifier).await.map_err(|err| {
-        tracing::error!("Failed to load client template {}: {}", request.identifier, err);
-        StatusCode::NOT_FOUND
-    })?;
+    let state = service.fetch_state(&request.identifier).await
+        .map_err(|err| {
+            tracing::error!("Failed to load client state {}: {}", request.identifier, err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            tracing::error!("Client state not found: {}", request.identifier);
+            StatusCode::NOT_FOUND
+        })?;
 
     let raw = service.read_current_config(&request.identifier).await.map_err(|err| {
         tracing::error!("Failed to read config for {}: {}", request.identifier, err);
@@ -527,7 +557,7 @@ pub async fn config_import(
 
     let json_value = raw
         .as_deref()
-        .map(|raw| parse_config_value(raw, &template))
+        .map(|raw| parse_config_value(raw, state.config_format()))
         .unwrap_or(serde_json::Value::Null);
 
     let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
@@ -640,7 +670,10 @@ struct BoundClientRuntimeState {
 }
 
 impl BoundClientRuntimeState {
-    fn should_emit_managed_visibility_change(&self, requested: bool) -> bool {
+    fn should_emit_managed_visibility_change(
+        &self,
+        requested: bool,
+    ) -> bool {
         requested && matches!(self.effective_mode.as_str(), "hosted" | "unify")
     }
 }
@@ -826,6 +859,11 @@ pub async fn update_settings(
         docs_url: runtime_metadata.docs_url.clone(),
         support_url: runtime_metadata.support_url.clone(),
         logo_url: runtime_metadata.logo_url.clone(),
+        setting_sources: crate::api::models::client::ClientSettingsSourceData {
+            display_name: settings_result.display_name_source.to_string(),
+            approval_status: settings_result.approval_status_source.to_string(),
+            connection_mode: settings_result.connection_mode_source.to_string(),
+        },
     };
 
     emit_client_audit_event(
@@ -947,44 +985,26 @@ async fn descriptor_to_client_info(
     service: &ClientConfigService,
     descriptor: ClientDescriptor,
 ) -> Result<ClientInfo, StatusCode> {
-    let template = descriptor.template.clone();
     let state = descriptor.state.clone();
     let runtime_metadata = state.runtime_client_metadata();
     let identifier = state.identifier().to_string();
-    let display_name = template
-        .as_ref()
-        .map(template_display_name)
-        .unwrap_or_else(|| state.display_name().to_string());
-    let logo_url = template
-        .as_ref()
-        .and_then(extract_logo_url)
-        .or_else(|| runtime_metadata.logo_url.clone());
-    let category = template
-        .as_ref()
-        .map(extract_category)
-        .or_else(|| runtime_metadata.category.as_deref().and_then(ClientCategory::parse))
+    let display_name = state.display_name().to_string();
+    let logo_url = runtime_metadata.logo_url.clone();
+    let category = runtime_metadata
+        .category
+        .as_deref()
+        .and_then(ClientCategory::parse)
         .unwrap_or_default();
-    let supported_transports = extract_client_supported_transports(template.as_ref(), &runtime_metadata);
-    let description = template
-        .as_ref()
-        .and_then(|template| metadata_string(template, "description"))
-        .or_else(|| runtime_metadata.description.clone());
-    let homepage_url = template
-        .as_ref()
-        .and_then(|template| metadata_string(template, "homepage_url"))
-        .or_else(|| runtime_metadata.homepage_url.clone());
-    let docs_url = template
-        .as_ref()
-        .and_then(|template| metadata_string(template, "docs_url"))
-        .or_else(|| runtime_metadata.docs_url.clone());
-    let support_url = template
-        .as_ref()
-        .and_then(|template| metadata_string(template, "support_url"))
-        .or_else(|| runtime_metadata.support_url.clone());
-    let config_type = template
-        .as_ref()
-        .and_then(|template| convert_container_type(template.config_mapping.container_type))
-        .or_else(|| infer_config_type_from_path(descriptor.config_path.as_deref()));
+    let supported_transports = runtime_metadata.supported_transports.clone();
+    let description = runtime_metadata.description.clone();
+    let homepage_url = runtime_metadata.homepage_url.clone();
+    let docs_url = runtime_metadata.docs_url.clone();
+    let support_url = runtime_metadata.support_url.clone();
+    let config_type = match state.container_type() {
+        Some("array") => Some(crate::api::models::client::ClientConfigType::Array),
+        Some("object") => Some(crate::api::models::client::ClientConfigType::Standard),
+        _ => infer_config_type_from_path(descriptor.config_path.as_deref()),
+    };
     let capability_config = service
         .get_capability_config(&identifier)
         .await
@@ -999,26 +1019,27 @@ async fn descriptor_to_client_info(
         .unwrap_or_default();
 
     let content = if descriptor.config_exists {
-        match template.as_ref() {
-            Some(_) => match service.read_current_config(&identifier).await {
-                Ok(content) => content,
-                Err(err) => {
-                    tracing::warn!(
-                        client = %identifier,
-                        error = %err,
-                        "Continuing list operation despite configuration read failure"
-                    );
-                    None
-                }
-            },
-            None => read_runtime_config(service, &identifier).await.unwrap_or(None),
+        match service.read_current_config(&identifier).await {
+            Ok(content) => content,
+            Err(err) => {
+                tracing::warn!(
+                    client = %identifier,
+                    error = %err,
+                    "Continuing list operation despite configuration read failure"
+                );
+                None
+            }
         }
     } else {
         None
     };
 
-    let (has_mcp_config, mcp_servers_count) = match (content.as_deref(), template.as_ref()) {
-        (Some(raw), Some(template)) => analyze_config_content(raw, &identifier, template),
+    let (has_mcp_config, mcp_servers_count) = match content.as_deref() {
+        Some(raw) => {
+            let container_keys = state.container_keys().unwrap_or_default();
+            let is_array_container = state.container_type() == Some("array");
+            analyze_config_content(raw, &container_keys, is_array_container)
+        }
         _ => (false, 0),
     };
 
@@ -1077,7 +1098,7 @@ async fn descriptor_to_client_info(
         last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
         last_modified,
         mcp_servers_count: Some(mcp_servers_count),
-        template: build_client_template_metadata(template.as_ref(), Some(&state), &runtime_metadata),
+        template: build_client_template_metadata(None, Some(&state), &runtime_metadata),
         approval_status,
         record_kind,
         governance_kind,
@@ -1091,24 +1112,6 @@ async fn descriptor_to_client_info(
 }
 
 // moved to POST /api/client/config/import
-
-fn template_display_name(template: &ClientTemplate) -> String {
-    template
-        .display_name
-        .clone()
-        .unwrap_or_else(|| template.identifier.clone())
-}
-
-fn extract_logo_url(template: &ClientTemplate) -> Option<String> {
-    metadata_string(template, "logo_url")
-}
-
-fn extract_category(template: &ClientTemplate) -> ClientCategory {
-    metadata_string(template, "category")
-        .as_deref()
-        .and_then(ClientCategory::parse)
-        .unwrap_or_default()
-}
 
 fn extract_supported_transports(template: &ClientTemplate) -> Vec<String> {
     let keymap = crate::clients::keymap::registry();
@@ -1126,32 +1129,6 @@ fn extract_client_supported_transports(
     match template {
         Some(template) => extract_supported_transports(template),
         None => runtime_metadata.supported_transports.clone(),
-    }
-}
-
-fn build_template_metadata(template: &ClientTemplate) -> ClientTemplateMetadata {
-    ClientTemplateMetadata {
-        format: template.format.as_str().to_string(),
-        protocol_revision: template.protocol_revision.clone(),
-        storage: ClientTemplateStorageMetadata {
-            kind: storage_kind_to_str(template.storage.kind).to_string(),
-            path_strategy: template.storage.path_strategy.clone(),
-        },
-        container_type: convert_container_type(template.config_mapping.container_type)
-            .unwrap_or(crate::api::models::client::ClientConfigType::Standard),
-        merge_strategy: merge_strategy_to_str(template.config_mapping.merge_strategy).to_string(),
-        keep_original_config: template.config_mapping.keep_original_config,
-        managed_source: template.config_mapping.managed_source.clone().or_else(|| {
-            template
-                .config_mapping
-                .managed_endpoint
-                .as_ref()
-                .and_then(|e| e.source.clone())
-        }),
-        description: metadata_string(template, "description"),
-        homepage_url: metadata_string(template, "homepage_url"),
-        docs_url: metadata_string(template, "docs_url"),
-        support_url: metadata_string(template, "support_url"),
     }
 }
 
@@ -1181,29 +1158,90 @@ fn build_runtime_template_metadata(
     }
 }
 
+fn build_template_metadata_from_state(
+    state: &ClientStateRow,
+    runtime_metadata: &RuntimeClientMetadata,
+) -> ClientTemplateMetadata {
+    let container_type = match state.container_type() {
+        Some("array") => crate::api::models::client::ClientConfigType::Array,
+        _ => crate::api::models::client::ClientConfigType::Standard,
+    };
+
+    ClientTemplateMetadata {
+        format: state.config_format().unwrap_or("json").to_string(),
+        protocol_revision: state.protocol_revision().map(|s| s.to_string()),
+        storage: ClientTemplateStorageMetadata {
+            kind: state.storage_kind().unwrap_or("file").to_string(),
+            path_strategy: state.storage_path_strategy().map(|s| s.to_string()),
+        },
+        container_type,
+        merge_strategy: state.merge_strategy().unwrap_or("replace").to_string(),
+        keep_original_config: state.keep_original_config(),
+        managed_source: state.managed_source().map(|s| s.to_string()),
+        description: runtime_metadata.description.clone(),
+        homepage_url: runtime_metadata.homepage_url.clone(),
+        docs_url: runtime_metadata.docs_url.clone(),
+        support_url: runtime_metadata.support_url.clone(),
+    }
+}
+
+fn build_template_metadata_from_template(
+    template: &ClientTemplate,
+    runtime_metadata: &RuntimeClientMetadata,
+) -> ClientTemplateMetadata {
+    let container_type = match template.config_mapping.container_type {
+        ContainerType::Array => crate::api::models::client::ClientConfigType::Array,
+        ContainerType::ObjectMap => crate::api::models::client::ClientConfigType::Standard,
+    };
+
+    ClientTemplateMetadata {
+        format: template.format.as_str().to_string(),
+        protocol_revision: template.protocol_revision.clone(),
+        storage: ClientTemplateStorageMetadata {
+            kind: match template.storage.kind {
+                StorageKind::File => "file".to_string(),
+                StorageKind::Kv => "kv".to_string(),
+                StorageKind::Custom => "custom".to_string(),
+            },
+            path_strategy: template.storage.path_strategy.clone(),
+        },
+        container_type,
+        merge_strategy: match template.config_mapping.merge_strategy {
+            MergeStrategy::Replace => "replace".to_string(),
+            MergeStrategy::DeepMerge => "deep_merge".to_string(),
+        },
+        keep_original_config: template.config_mapping.keep_original_config,
+        managed_source: template.config_mapping.managed_source.clone(),
+        description: runtime_metadata.description.clone(),
+        homepage_url: runtime_metadata.homepage_url.clone(),
+        docs_url: runtime_metadata.docs_url.clone(),
+        support_url: runtime_metadata.support_url.clone(),
+    }
+}
+
 fn build_client_template_metadata(
     template: Option<&ClientTemplate>,
     state: Option<&ClientStateRow>,
     runtime_metadata: &RuntimeClientMetadata,
 ) -> ClientTemplateMetadata {
-    match template {
-        Some(template) => build_template_metadata(template),
-        None => build_runtime_template_metadata(state, runtime_metadata),
+    match state {
+        Some(state) => {
+            if state.managed_source().is_none() {
+                if let Some(template) = template {
+                    return build_template_metadata_from_template(template, runtime_metadata);
+                }
+            }
+            build_template_metadata_from_state(state, runtime_metadata)
+        }
+        None => build_runtime_template_metadata(None, runtime_metadata),
     }
 }
 
-fn storage_kind_to_str(kind: StorageKind) -> &'static str {
-    match kind {
-        StorageKind::File => "file",
-        StorageKind::Kv => "kv",
-        StorageKind::Custom => "custom",
-    }
-}
-
-fn merge_strategy_to_str(strategy: MergeStrategy) -> &'static str {
-    match strategy {
-        MergeStrategy::Replace => "replace",
-        MergeStrategy::DeepMerge => "deep_merge",
+fn default_connection_mode_from_path(config_path: Option<&str>) -> String {
+    if config_path.unwrap_or_default().is_empty() {
+        "manual".to_string()
+    } else {
+        "local_config_detected".to_string()
     }
 }
 
@@ -1217,14 +1255,22 @@ fn convert_container_type(container: ContainerType) -> Option<crate::api::models
 
 fn parse_config_value(
     content: &str,
-    template: &ClientTemplate,
+    config_format: Option<&str>,
 ) -> Value {
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Value::Null;
     }
 
-    match template.format {
+    let format = match config_format {
+        Some("json") => TemplateFormat::Json,
+        Some("json5") => TemplateFormat::Json5,
+        Some("toml") => TemplateFormat::Toml,
+        Some("yaml") => TemplateFormat::Yaml,
+        _ => return Value::Null,
+    };
+
+    match format {
         TemplateFormat::Json => serde_json::from_str(trimmed).unwrap_or(Value::Null),
         TemplateFormat::Json5 => json5::from_str(trimmed).unwrap_or(Value::Null),
         TemplateFormat::Toml => toml::from_str::<toml::Value>(trimmed)
@@ -1294,16 +1340,6 @@ async fn read_runtime_config(
     }
 }
 
-fn metadata_string(
-    template: &ClientTemplate,
-    key: &str,
-) -> Option<String> {
-    template
-        .metadata
-        .get(key)
-        .and_then(|value| value.as_str().map(|s| s.to_string()))
-}
-
 fn build_render_options(request: &ClientConfigUpdateReq) -> ClientRenderOptions {
     let mode = map_mode(request.mode.clone());
     let profile_id = match &request.selected_config {
@@ -1325,6 +1361,44 @@ fn build_render_options(request: &ClientConfigUpdateReq) -> ClientRenderOptions 
     }
 }
 
+fn parse_backup_policy_payload(payload: &ClientBackupPolicyPayload) -> Result<BackupPolicySetting, StatusCode> {
+    let policy = payload.policy.trim().to_lowercase();
+    match policy.as_str() {
+        "keep_last" => Ok(BackupPolicySetting {
+            policy: BackupPolicy::KeepLast,
+            limit: None,
+        }),
+        "off" => Ok(BackupPolicySetting {
+            policy: BackupPolicy::Off,
+            limit: None,
+        }),
+        "keep_n" => {
+            let limit = payload.limit.unwrap_or(5);
+            if limit == 0 {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            Ok(BackupPolicySetting {
+                policy: BackupPolicy::KeepN,
+                limit: Some(limit),
+            })
+        }
+        other => {
+            if let Some(number_suffix) = other.strip_prefix("keep_") {
+                let parsed_limit: u32 = number_suffix.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+                if parsed_limit == 0 {
+                    return Err(StatusCode::BAD_REQUEST);
+                }
+                return Ok(BackupPolicySetting {
+                    policy: BackupPolicy::KeepN,
+                    limit: Some(parsed_limit),
+                });
+            }
+
+            Err(StatusCode::BAD_REQUEST)
+        }
+    }
+}
+
 fn map_mode(mode: ClientConfigMode) -> ConfigMode {
     match mode {
         ClientConfigMode::Unify => ConfigMode::Managed,
@@ -1334,13 +1408,20 @@ fn map_mode(mode: ClientConfigMode) -> ConfigMode {
 }
 
 fn build_update_preview(
-    template: &ClientTemplate,
+    config_format: Option<&str>,
+    config_path: Option<&str>,
     execution: &TemplateExecutionResult,
 ) -> Value {
-    match execution {
-        TemplateExecutionResult::Applied { content, .. } => parse_config_value(content, template),
-        TemplateExecutionResult::DryRun { content, .. } => parse_config_value(content, template),
+    let content = match execution {
+        TemplateExecutionResult::Applied { content, .. } => content,
+        TemplateExecutionResult::DryRun { content, .. } => content,
+    };
+
+    if config_format.is_some() {
+        return parse_config_value(content, config_format);
     }
+
+    parse_runtime_config_value(content, config_path)
 }
 
 #[cfg(test)]
@@ -1420,7 +1501,10 @@ mod tests {
         })
         .await;
 
-        assert!(result.is_err(), "unexpected client visible change event arrived in timeout window");
+        assert!(
+            result.is_err(),
+            "unexpected client visible change event arrived in timeout window"
+        );
     }
 
     async fn create_test_context() -> TestContext {
@@ -1795,14 +1879,7 @@ mod tests {
     #[tokio::test]
     async fn capability_config_roundtrips_unify_prompt_resource_and_template_selection() {
         let context = create_test_context().await;
-        insert_unify_server(
-            &context.db_pool,
-            "server-mixed",
-            "Mixed Server",
-            true,
-            &["tool-a"],
-        )
-        .await;
+        insert_unify_server(&context.db_pool, "server-mixed", "Mixed Server", true, &["tool-a"]).await;
         insert_unify_non_tool_capabilities(
             &context.db_pool,
             "server-mixed",
@@ -1863,9 +1940,24 @@ mod tests {
                 uri_template: "template-a".to_string(),
             }]
         );
-        assert!(data.unify_direct_exposure.diagnostics.invalid_prompt_surfaces.is_empty());
-        assert!(data.unify_direct_exposure.diagnostics.invalid_resource_surfaces.is_empty());
-        assert!(data.unify_direct_exposure.diagnostics.invalid_template_surfaces.is_empty());
+        assert!(
+            data.unify_direct_exposure
+                .diagnostics
+                .invalid_prompt_surfaces
+                .is_empty()
+        );
+        assert!(
+            data.unify_direct_exposure
+                .diagnostics
+                .invalid_resource_surfaces
+                .is_empty()
+        );
+        assert!(
+            data.unify_direct_exposure
+                .diagnostics
+                .invalid_template_surfaces
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -2541,7 +2633,7 @@ mod tests {
         );
         assert!(runtime_template.config_mapping.format_rules.contains_key("stdio"));
         assert_eq!(
-            metadata_string(&runtime_template, "homepage_url").as_deref(),
+            runtime_template.metadata.get("homepage_url").and_then(|v| v.as_str()),
             Some("https://example.com")
         );
     }
@@ -2702,9 +2794,7 @@ mod tests {
     async fn update_settings_infers_manual_when_config_path_is_explicitly_cleared() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("client-manual-empty-string.json");
-        tokio::fs::write(&config_path, "{}")
-            .await
-            .expect("seed config file");
+        tokio::fs::write(&config_path, "{}").await.expect("seed config file");
 
         let Json(initial_response) = update_settings(
             State(context.app_state.clone()),
@@ -2804,6 +2894,7 @@ mod tests {
                 mode: ClientConfigMode::Hosted,
                 preview: false,
                 selected_config: ClientConfigSelected::Default,
+                backup_policy: None,
             }),
         )
         .await;
@@ -2851,9 +2942,7 @@ mod tests {
         let kv_dir = context._temp_dir.path().join("read-only-kv");
         tokio::fs::create_dir_all(&kv_dir).await.expect("create kv directory");
 
-        let original_permissions = std::fs::metadata(&kv_dir)
-            .expect("directory metadata")
-            .permissions();
+        let original_permissions = std::fs::metadata(&kv_dir).expect("directory metadata").permissions();
         let mut read_only_permissions = original_permissions.clone();
         read_only_permissions.set_mode(0o555);
         std::fs::set_permissions(&kv_dir, read_only_permissions).expect("set read-only permissions");
@@ -2988,6 +3077,7 @@ mod tests {
                 mode: ClientConfigMode::Hosted,
                 preview: false,
                 selected_config: ClientConfigSelected::Default,
+                backup_policy: None,
             }),
         )
         .await
@@ -3064,6 +3154,7 @@ mod tests {
                 selected_config: ClientConfigSelected::Profile {
                     profile_id: "PROF001".to_string(),
                 },
+                backup_policy: None,
             }),
         )
         .await;
