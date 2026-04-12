@@ -1,17 +1,20 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, FolderOpen, ImageIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronsUpDown, FolderOpen, ImageIcon, Trash2 } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { type ControllerRenderProps, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import * as z from "zod";
 import { clientsApi } from "../lib/api";
+import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-policy";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { pickClientConfigFilePath, readAbsolutePathFromFile } from "../lib/pick-client-config-file";
 import { isTauriEnvironmentSync } from "../lib/platform";
+import { useAppStore } from "../lib/store";
 import type { ClientConnectionMode, ClientInfo } from "../lib/types";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
+import { ConfirmDialog } from "./confirm-dialog";
 import {
 	Command,
 	CommandEmpty,
@@ -54,6 +57,7 @@ interface ClientFormDrawerProps {
 	mode: ClientFormMode;
 	client?: ClientInfo | null;
 	onSuccess?: (identifier: string) => void;
+	onDeleteSuccess?: (identifier: string) => void;
 }
 
 const formSchema = z.object({
@@ -168,20 +172,27 @@ function hasWritableConfig(values: Pick<ClientRecordFormValues, "connectionShape
 	return values.connectionShape === "local_with_config" && Boolean(values.configPath?.trim());
 }
 
+function parseSupportedTransportValue(value: unknown): SupportedTransportValue | null {
+	const candidate = String(value).trim().toLowerCase();
+
+	switch (candidate) {
+		case "streamable_http":
+			return "streamable_http";
+		case "sse":
+			return "sse";
+		case "stdio":
+			return "stdio";
+		default:
+			return null;
+	}
+}
+
 function normalizeSupportedTransports(value: unknown): SupportedTransportValue[] {
 	const seen = new Set<SupportedTransportValue>();
 	const normalized: SupportedTransportValue[] = [];
 
 	for (const item of Array.isArray(value) ? value : []) {
-		const candidate = String(item).trim().toLowerCase();
-		const transport =
-			candidate === "streamable_http"
-				? "streamable_http"
-				: candidate === "sse"
-					? "sse"
-					: candidate === "stdio"
-						? "stdio"
-						: null;
+		const transport = parseSupportedTransportValue(item);
 		if (transport && !seen.has(transport)) {
 			seen.add(transport);
 			normalized.push(transport);
@@ -198,32 +209,32 @@ function getTransportSupportLabel(
 	transport: SupportedTransportValue,
 	t: ReturnType<typeof useTranslation>["t"],
 ): string {
-	return transport === "streamable_http"
-		? t("detail.form.transportSupport.options.streamableHttpLegacy", {
+	switch (transport) {
+		case "streamable_http":
+			return t("detail.form.transportSupport.options.streamableHttpLegacy", {
 				defaultValue: "Streamable HTTP",
-			})
-		: transport === "sse"
-			? t("detail.form.transportSupport.options.sseLegacy", {
-					defaultValue: "SSE (Legacy)",
-				})
-			: t("detail.form.transportSupport.options.stdio", {
-					defaultValue: "STDIO",
-				});
+			});
+		case "sse":
+			return t("detail.form.transportSupport.options.sseLegacy", {
+				defaultValue: "SSE (Legacy)",
+			});
+		case "stdio":
+			return t("detail.form.transportSupport.options.stdio", {
+				defaultValue: "STDIO",
+			});
+	}
 }
 
-function TransportSupportCombobox({
-	value,
-	onChange,
-	options,
-	placeholder,
-	emptyText,
-}: {
-	value: SupportedTransportValue[];
-	onChange: (next: SupportedTransportValue[]) => void;
-	options: Array<{ value: SupportedTransportValue; label: string }>;
-	placeholder: string;
-	emptyText: string;
-}) {
+const TransportSupportCombobox = React.forwardRef<
+	HTMLButtonElement,
+	{
+		value: SupportedTransportValue[];
+		onChange: (next: SupportedTransportValue[]) => void;
+		options: Array<{ value: SupportedTransportValue; label: string }>;
+		placeholder: string;
+		emptyText: string;
+	}
+>(({ value, onChange, options, placeholder, emptyText }, ref) => {
 	const [open, setOpen] = useState(false);
 	const selectedLabels = options
 		.filter((option) => value.includes(option.value))
@@ -233,6 +244,7 @@ function TransportSupportCombobox({
 		<Popover open={open} onOpenChange={setOpen}>
 			<PopoverTrigger asChild>
 				<Button
+					ref={ref}
 					type="button"
 					variant="outline"
 					role="combobox"
@@ -280,7 +292,9 @@ function TransportSupportCombobox({
 			</PopoverContent>
 		</Popover>
 	);
-}
+});
+
+TransportSupportCombobox.displayName = "TransportSupportCombobox";
 
 function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 	const identifier = client?.identifier ?? "";
@@ -309,11 +323,15 @@ export function ClientFormDrawer({
 	mode,
 	client,
 	onSuccess,
+	onDeleteSuccess,
 }: ClientFormDrawerProps) {
-	const { t } = useTranslation("clients");
+	const { t, i18n } = useTranslation("clients");
+	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const qc = useQueryClient();
 	const [isHydrating, setIsHydrating] = useState(false);
 	const [formError, setFormError] = useState<string | null>(null);
+	const [deleteError, setDeleteError] = useState<string | null>(null);
+	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 	const [configPathPickBusy, setConfigPathPickBusy] = useState(false);
 	const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
 	const configPathFileInputRef = useRef<HTMLInputElement>(null);
@@ -328,6 +346,8 @@ export function ClientFormDrawer({
 	useEffect(() => {
 		if (!open) return;
 		setFormError(null);
+		setDeleteError(null);
+		setIsDeleteConfirmOpen(false);
 		setIsHydrating(true);
 
 		const baseValues = defaultValues(client);
@@ -364,7 +384,7 @@ export function ClientFormDrawer({
 				label: t("detail.form.connectionShape.options.remoteHttp", { defaultValue: "Remote HTTP" }),
 			},
 		],
-		[t],
+		[t, i18n.language],
 	);
 	const supportedTransportOptions = useMemo(
 		() =>
@@ -372,7 +392,7 @@ export function ClientFormDrawer({
 				value: transport,
 				label: getTransportSupportLabel(transport, t),
 			})),
-		[t],
+		[t, i18n.language],
 	);
 
 	const handleConfigPathBrowse = useCallback(async () => {
@@ -461,6 +481,12 @@ export function ClientFormDrawer({
 				support_url: values.supportUrl || undefined,
 				logo_url: values.logoUrl || undefined,
 			});
+			if (mode === "create") {
+				await clientsApi.setBackupPolicy({
+					identifier: normalizedIdentifier,
+					policy: mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
+				});
+			}
 			return normalizedIdentifier;
 		},
 		onSuccess: async (savedIdentifier) => {
@@ -482,6 +508,47 @@ export function ClientFormDrawer({
 			setFormError(message);
 			notifyError(
 				t("detail.form.notifications.saveFailed.title", { defaultValue: "Unable to save client record" }),
+				message,
+			);
+		},
+	});
+
+	const deleteMutation = useMutation({
+		mutationFn: async () => {
+			if (!client?.identifier) {
+				throw new Error(
+					t("detail.form.notifications.deleteFailed.messageMissingIdentifier", {
+						defaultValue: "Client identifier is missing.",
+					}),
+				);
+			}
+			await clientsApi.deleteRecord(client.identifier);
+			return client.identifier;
+		},
+		onSuccess: async (deletedIdentifier) => {
+			setDeleteError(null);
+			setIsDeleteConfirmOpen(false);
+			await qc.invalidateQueries({ queryKey: ["clients"] });
+			await qc.invalidateQueries({ queryKey: ["client-config", deletedIdentifier] });
+			await qc.invalidateQueries({ queryKey: ["client-capability-config", deletedIdentifier] });
+			notifySuccess(
+				t("detail.form.notifications.deleteSuccess.title", {
+					defaultValue: "Client record deleted",
+				}),
+				t("detail.form.notifications.deleteSuccess.message", {
+					defaultValue: "The client record has been deleted.",
+				}),
+			);
+			onOpenChange(false);
+			onDeleteSuccess?.(deletedIdentifier);
+		},
+		onError: (error) => {
+			const message = String(error);
+			setDeleteError(message);
+			notifyError(
+				t("detail.form.notifications.deleteFailed.title", {
+					defaultValue: "Unable to delete client record",
+				}),
 				message,
 			);
 		},
@@ -878,15 +945,30 @@ export function ClientFormDrawer({
 							type="button"
 							variant="outline"
 							onClick={() => onOpenChange(false)}
-							disabled={saveMutation.isPending}
+							disabled={saveMutation.isPending || deleteMutation.isPending}
 						>
 							{t("detail.form.buttons.cancel", { defaultValue: "Cancel" })}
 						</Button>
 						<div className="flex items-center gap-3">
+							{mode === "edit" ? (
+								<Button
+									type="button"
+									variant="destructive"
+									onClick={() => {
+										setDeleteError(null);
+										setIsDeleteConfirmOpen(true);
+									}}
+									disabled={saveMutation.isPending || deleteMutation.isPending}
+									className="gap-2"
+								>
+									<Trash2 className="h-4 w-4" />
+									{t("detail.form.buttons.delete", { defaultValue: "Delete" })}
+								</Button>
+							) : null}
 							<Button
 								type="button"
 								onClick={form.handleSubmit(() => saveMutation.mutate())}
-								disabled={saveMutation.isPending}
+								disabled={saveMutation.isPending || deleteMutation.isPending}
 							>
 								{mode === "create"
 									? t("detail.form.buttons.create", { defaultValue: "Create Record" }) : t("detail.form.buttons.save", { defaultValue: "Save Changes" })}
@@ -894,6 +976,33 @@ export function ClientFormDrawer({
 						</div>
 					</div>
 				</DrawerFooter>
+				<ConfirmDialog
+					isOpen={isDeleteConfirmOpen}
+					onClose={() => {
+						if (deleteMutation.isPending) return;
+						setIsDeleteConfirmOpen(false);
+						setDeleteError(null);
+					}}
+					onConfirm={async () => {
+						await deleteMutation.mutateAsync();
+					}}
+					title={t("detail.form.confirmDelete.title", {
+						defaultValue: "Delete Client Record",
+					})}
+					description={t("detail.form.confirmDelete.description", {
+						defaultValue:
+							"Are you sure you want to delete this client record? This action cannot be undone.",
+					})}
+					confirmLabel={t("detail.form.confirmDelete.confirm", {
+						defaultValue: "Delete",
+					})}
+					cancelLabel={t("detail.form.confirmDelete.cancel", {
+						defaultValue: "Cancel",
+					})}
+					variant="destructive"
+					isLoading={deleteMutation.isPending}
+					error={deleteError}
+				/>
 			</DrawerContent>
 		</Drawer>
 	);
