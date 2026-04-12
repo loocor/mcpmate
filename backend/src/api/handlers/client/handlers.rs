@@ -1,20 +1,20 @@
 // HTTP handlers for client management API (template-driven)
 
 use super::config::{analyze_config_content, get_config_last_modified};
+use super::backups::parse_policy_payload;
 use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
-    ClientBackupActionData, ClientBackupActionResp, ClientBackupPolicyPayload, ClientCapabilityConfigData,
-    ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp,
-    ClientConfigData, ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode,
-    ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData,
-    ClientConfigUpdateReq, ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo,
-    ClientTemplateMetadata, ClientTemplateStorageMetadata, ClientUnifyDirectExposureData,
+    ClientBackupActionData, ClientBackupActionResp, ClientCapabilityConfigData, ClientCapabilityConfigReq,
+    ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
+    ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
+    ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
+    ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata,
+    ClientTemplateStorageMetadata, ClientUnifyDirectExposureData,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::models::{
-    BackupPolicy, BackupPolicySetting, ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat,
-    UnifyDirectExposureConfig,
+    ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat, UnifyDirectExposureConfig,
 };
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
@@ -270,22 +270,15 @@ pub async fn config_apply(
 ) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    if !request.preview {
-        if let Some(payload) = request.backup_policy.as_ref() {
-            let policy = parse_backup_policy_payload(payload)?;
-            service
-                .set_backup_policy(&request.identifier, policy)
-                .await
-                .map_err(|err| {
-                    tracing::error!(
-                        client = %request.identifier,
-                        error = %err,
-                        "Failed to persist backup policy before apply"
-                    );
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?;
-        }
-    }
+    let requested_backup_policy = if request.preview {
+        None
+    } else {
+        request
+            .backup_policy
+            .as_ref()
+            .map(parse_policy_payload)
+            .transpose()?
+    };
 
     let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
         tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before apply");
@@ -380,6 +373,20 @@ pub async fn config_apply(
         );
         status
     })?;
+
+    if let Some(policy) = requested_backup_policy {
+        service
+            .set_backup_policy(&request.identifier, policy)
+            .await
+            .map_err(|err| {
+                tracing::error!(
+                    client = %request.identifier,
+                    error = %err,
+                    "Failed to persist backup policy after apply"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
     let synthetic = TemplateExecutionResult::DryRun {
         diff: crate::clients::renderer::ConfigDiff {
             format: outcome.preview.format,
@@ -1369,44 +1376,6 @@ fn build_render_options(request: &ClientConfigUpdateReq) -> ClientRenderOptions 
         profile_id,
         server_ids,
         dry_run: request.preview,
-    }
-}
-
-fn parse_backup_policy_payload(payload: &ClientBackupPolicyPayload) -> Result<BackupPolicySetting, StatusCode> {
-    let policy = payload.policy.trim().to_lowercase();
-    match policy.as_str() {
-        "keep_last" => Ok(BackupPolicySetting {
-            policy: BackupPolicy::KeepLast,
-            limit: None,
-        }),
-        "off" => Ok(BackupPolicySetting {
-            policy: BackupPolicy::Off,
-            limit: None,
-        }),
-        "keep_n" => {
-            let limit = payload.limit.unwrap_or(5);
-            if limit == 0 {
-                return Err(StatusCode::BAD_REQUEST);
-            }
-            Ok(BackupPolicySetting {
-                policy: BackupPolicy::KeepN,
-                limit: Some(limit),
-            })
-        }
-        other => {
-            if let Some(number_suffix) = other.strip_prefix("keep_") {
-                let parsed_limit: u32 = number_suffix.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
-                if parsed_limit == 0 {
-                    return Err(StatusCode::BAD_REQUEST);
-                }
-                return Ok(BackupPolicySetting {
-                    policy: BackupPolicy::KeepN,
-                    limit: Some(parsed_limit),
-                });
-            }
-
-            Err(StatusCode::BAD_REQUEST)
-        }
     }
 }
 

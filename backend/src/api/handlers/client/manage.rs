@@ -64,18 +64,18 @@ pub async fn delete_client(
         return Err(StatusCode::NOT_FOUND);
     }
 
-    // Release lock before spawning downstream session cleanup to avoid holding the global proxy lock
-    // during async work. Follows the repo pattern: do synchronous work, then release lock before async.
+    // Clone ProxyServer under lock, then release lock before async cleanup.
     if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
-        if proxy.try_lock().is_ok() {
-            // If we can acquire the lock, the proxy is responsive. Now spawn cleanup in the background.
-            let client_id = request.identifier.clone();
-            tokio::spawn(async move {
-                if let Ok(guard) = proxy.try_lock() {
-                    let removed_sessions = guard.remove_downstream_sessions_for_client(&client_id).await;
-                    tracing::info!(client = %client_id, removed_sessions, "Removed downstream sessions after client deletion");
-                }
-            });
+        let proxy_server = proxy.try_lock().ok().map(|guard| guard.clone());
+        if let Some(proxy_server) = proxy_server {
+            let removed_sessions = proxy_server
+                .remove_downstream_sessions_for_client(&request.identifier)
+                .await;
+            tracing::info!(
+                client = %request.identifier,
+                removed_sessions,
+                "Removed downstream sessions after client deletion"
+            );
         }
     }
 
