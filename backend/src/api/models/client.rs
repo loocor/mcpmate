@@ -250,6 +250,22 @@ pub struct ClientManageData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Delete a client record")]
+pub struct ClientDeleteReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Deleted client record summary")]
+pub struct ClientDeleteData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "Whether the client record was deleted")]
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Single backup entry for a client configuration")]
 pub struct ClientBackupEntry {
     #[schemars(description = "Client identifier")]
@@ -289,7 +305,7 @@ pub struct ClientBackupPolicyData {
     pub identifier: String,
     #[schemars(description = "Backup policy label (system default: keep_n)")]
     pub policy: String,
-    #[schemars(description = "Optional limit for keep_n policy (system default: 30)")]
+    #[schemars(description = "Optional limit for keep_n policy (system default: 5)")]
     pub limit: Option<u32>,
 }
 
@@ -303,6 +319,9 @@ pub struct ClientConfigData {
     #[schemars(description = "Warning messages related to reading configuration")]
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[schemars(description = "Structured degraded reasons when fallback paths were triggered")]
+    #[serde(default)]
+    pub degraded_reasons: Vec<String>,
     #[schemars(description = "Configuration file content")]
     pub content: serde_json::Value,
     #[schemars(description = "Whether MCP servers are configured")]
@@ -502,6 +521,7 @@ api_resp!(
     "Client configuration import response"
 );
 api_resp!(ClientManageResp, ClientManageData, "Client management toggle response");
+api_resp!(ClientDeleteResp, ClientDeleteData, "Client deletion response");
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Client capability configuration payload")]
@@ -597,6 +617,19 @@ pub struct ClientSettingsUpdateData {
     pub support_url: Option<String>,
     #[serde(default)]
     pub logo_url: Option<String>,
+    #[serde(default)]
+    pub setting_sources: ClientSettingsSourceData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[schemars(description = "Source markers for derived values in active client settings writes")]
+pub struct ClientSettingsSourceData {
+    #[schemars(description = "Source for display_name: provided|stored|default")]
+    pub display_name: String,
+    #[schemars(description = "Source for approval_status: provided|stored|default")]
+    pub approval_status: String,
+    #[schemars(description = "Source for connection_mode: provided|derived|stored")]
+    pub connection_mode: String,
 }
 
 api_resp!(
@@ -756,6 +789,9 @@ pub struct ClientConfigUpdateReq {
     #[serde(default)]
     #[schemars(description = "Selected configuration source (default: default)")]
     pub selected_config: ClientConfigSelected,
+    #[serde(default)]
+    #[schemars(description = "Optional backup policy to persist before applying configuration")]
+    pub backup_policy: Option<ClientBackupPolicyPayload>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -852,7 +888,7 @@ pub struct ClientConfigImportReq {
 pub struct ClientBackupPolicyPayload {
     #[schemars(description = "Policy name: keep_last, keep_n, off")]
     pub policy: String,
-    #[schemars(description = "Optional limit for keep_n policy (recommended: 30; new clients default to 30)")]
+    #[schemars(description = "Optional limit for keep_n policy (recommended: 5; new clients default to 5)")]
     pub limit: Option<u32>,
 }
 

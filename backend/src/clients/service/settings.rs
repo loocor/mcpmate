@@ -52,6 +52,9 @@ pub struct ActiveClientSettingsUpdate {
 pub struct ActiveClientSettingsResult {
     pub old_effective_mode: String,
     pub new_effective_mode: String,
+    pub display_name_source: &'static str,
+    pub approval_status_source: &'static str,
+    pub connection_mode_source: &'static str,
 }
 
 impl ActiveClientSettingsResult {
@@ -91,12 +94,61 @@ fn unify_direct_exposure_references_server(
 }
 
 fn serialize_json_or_none<T: serde::Serialize>(value: &T) -> ConfigResult<Option<String>> {
-    let serialized = serde_json::to_string(value)
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+    let serialized = serde_json::to_string(value).map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
     Ok(Some(serialized))
 }
 
 impl ClientConfigService {
+    pub async fn persist_handshake_observation(
+        &self,
+        identifier: &str,
+        observed_name: Option<&str>,
+        client_version: Option<&str>,
+        transport: Option<&str>,
+        supported_transports: Option<Vec<String>>,
+        connection_mode: Option<&str>,
+    ) -> ConfigResult<()> {
+        let display_name = observed_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let client_version = client_version
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let transport = transport
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let connection_mode = connection_mode
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        if display_name.is_none()
+            && client_version.is_none()
+            && transport.is_none()
+            && supported_transports.is_none()
+            && connection_mode.is_none()
+        {
+            return Ok(());
+        }
+
+        self.set_active_client_settings(
+            identifier,
+            ActiveClientSettingsUpdate {
+                display_name,
+                client_version,
+                transport,
+                supported_transports,
+                connection_mode,
+                ..ActiveClientSettingsUpdate::default()
+            },
+        )
+        .await
+        .map(|_| ())
+    }
+
     async fn resolve_effective_mode_from_explicit(
         &self,
         explicit_mode: Option<&str>,
@@ -261,15 +313,20 @@ impl ClientConfigService {
             }
         }
 
-        let name = update
+        let trimmed_display_name = update
             .display_name
             .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or(self.resolve_client_name(identifier).await?);
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let (name, display_name_source): (String, &'static str) = match trimmed_display_name {
+            Some(value) => (value.to_string(), "provided"),
+            None => (self.resolve_client_name(identifier).await?, "stored"),
+        };
         let existing_state = self.fetch_state(identifier).await?;
         let old_effective_mode = self
-            .resolve_effective_mode_from_explicit(existing_state.as_ref().and_then(|state| state.config_mode.as_deref()))
+            .resolve_effective_mode_from_explicit(
+                existing_state.as_ref().and_then(|state| state.config_mode.as_deref()),
+            )
             .await?;
         let requested_config_mode = update.config_mode.clone();
         let should_persist_runtime_template = self
@@ -277,23 +334,26 @@ impl ClientConfigService {
             .await?;
 
         let raw_config_path = update.config_path.as_deref().map(str::trim);
-        let normalized_config_path = raw_config_path
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
+        let normalized_config_path = raw_config_path.filter(|value| !value.is_empty()).map(str::to_string);
 
-        let resolved_connection_mode = update.connection_mode.clone().or_else(|| match raw_config_path {
-            Some("") => Some("manual".to_string()),
-            Some(_) => Some("local_config_detected".to_string()),
-            None => None,
-        });
+        let (resolved_connection_mode, connection_mode_source): (Option<String>, &'static str) =
+            if let Some(mode) = update.connection_mode.clone() {
+                (Some(mode), "provided")
+            } else {
+                match raw_config_path {
+                    Some("") => (Some("manual".to_string()), "derived"),
+                    Some(_) => (Some("local_config_detected".to_string()), "derived"),
+                    None => (None, "stored"),
+                }
+            };
 
         self.validate_runtime_target_input(resolved_connection_mode.as_deref(), normalized_config_path.as_deref())
             .await?;
 
-        let approval_status = existing_state
+        let (approval_status, approval_status_source): (String, &'static str) = existing_state
             .as_ref()
-            .map(|state| state.approval_status().to_string())
-            .unwrap_or_else(|| "approved".to_string());
+            .map(|state| (state.approval_status().to_string(), "stored"))
+            .unwrap_or_else(|| ("approved".to_string(), "default"));
 
         self.ensure_active_state_row_with_name(identifier, &name, None, Some(&approval_status))
             .await?;
@@ -333,6 +393,14 @@ impl ClientConfigService {
                 .as_ref()
                 .map(|state| state.runtime_client_metadata())
                 .unwrap_or_default();
+
+            tracing::info!(
+                client = %identifier,
+                update_logo_url = ?update.logo_url,
+                existing_logo_url = ?existing_metadata.logo_url,
+                "Merging runtime metadata"
+            );
+
             let next_metadata = RuntimeClientMetadata {
                 description: update.description.or(existing_metadata.description),
                 homepage_url: update.homepage_url.or(existing_metadata.homepage_url),
@@ -344,6 +412,13 @@ impl ClientConfigService {
                     .supported_transports
                     .unwrap_or(existing_metadata.supported_transports),
             };
+
+            tracing::info!(
+                client = %identifier,
+                merged_logo_url = ?next_metadata.logo_url,
+                "Merged runtime metadata, calling update_runtime_client_metadata"
+            );
+
             self.update_runtime_client_metadata(identifier, &next_metadata).await?;
         }
 
@@ -352,13 +427,18 @@ impl ClientConfigService {
         }
 
         let new_effective_mode = self
-            .resolve_effective_mode_from_explicit(requested_config_mode.as_deref().or(Some(old_effective_mode.as_str())))
+            .resolve_effective_mode_from_explicit(
+                requested_config_mode.as_deref().or(Some(old_effective_mode.as_str())),
+            )
             .await?;
 
         tracing::info!(client = %identifier, "set_active_client_settings: complete");
         Ok(ActiveClientSettingsResult {
             old_effective_mode,
             new_effective_mode,
+            display_name_source,
+            approval_status_source,
+            connection_mode_source,
         })
     }
 
@@ -694,7 +774,8 @@ impl ClientConfigService {
             )
             .await?;
 
-        let new_fingerprint = crate::core::profile::visibility::compute_capability_fingerprint(&state.capability_config);
+        let new_fingerprint =
+            crate::core::profile::visibility::compute_capability_fingerprint(&state.capability_config);
 
         if let Some(ref fingerprint) = old_fingerprint {
             if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
@@ -856,24 +937,33 @@ impl ClientConfigService {
             } else {
                 serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_tool_surfaces)?
             };
-        let unify_selected_prompt_surfaces_json =
-            if resolved_unify_direct_exposure.config.selected_prompt_surfaces.is_empty() {
-                None
-            } else {
-                serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_prompt_surfaces)?
-            };
-        let unify_selected_resource_surfaces_json =
-            if resolved_unify_direct_exposure.config.selected_resource_surfaces.is_empty() {
-                None
-            } else {
-                serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_resource_surfaces)?
-            };
-        let unify_selected_template_surfaces_json =
-            if resolved_unify_direct_exposure.config.selected_template_surfaces.is_empty() {
-                None
-            } else {
-                serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_template_surfaces)?
-            };
+        let unify_selected_prompt_surfaces_json = if resolved_unify_direct_exposure
+            .config
+            .selected_prompt_surfaces
+            .is_empty()
+        {
+            None
+        } else {
+            serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_prompt_surfaces)?
+        };
+        let unify_selected_resource_surfaces_json = if resolved_unify_direct_exposure
+            .config
+            .selected_resource_surfaces
+            .is_empty()
+        {
+            None
+        } else {
+            serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_resource_surfaces)?
+        };
+        let unify_selected_template_surfaces_json = if resolved_unify_direct_exposure
+            .config
+            .selected_template_surfaces
+            .is_empty()
+        {
+            None
+        } else {
+            serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_template_surfaces)?
+        };
 
         sqlx::query(
             r#"
@@ -989,8 +1079,7 @@ impl ClientConfigService {
                 }
             })
             .collect::<Vec<_>>();
-        let selected_prompt_surfaces =
-            self.normalize_selected_prompt_surfaces(config.selected_prompt_surfaces.clone());
+        let selected_prompt_surfaces = self.normalize_selected_prompt_surfaces(config.selected_prompt_surfaces.clone());
         let selected_prompt_surfaces = selected_prompt_surfaces
             .into_iter()
             .filter_map(|surface| {
@@ -1274,10 +1363,7 @@ impl ClientConfigService {
             crate::clients::models::UnifyRouteMode::CapabilityLevel => {
                 for surface in &unify_direct_exposure.selected_tool_surfaces {
                     if visible_server_ids.contains(&surface.server_id) {
-                        visible_surfaces.push(format!(
-                            "tool\u{1f}{}\u{1f}{}",
-                            surface.server_id, surface.tool_name
-                        ));
+                        visible_surfaces.push(format!("tool\u{1f}{}\u{1f}{}", surface.server_id, surface.tool_name));
                     }
                 }
                 for surface in &unify_direct_exposure.selected_prompt_surfaces {

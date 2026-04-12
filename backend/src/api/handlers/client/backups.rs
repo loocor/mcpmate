@@ -134,7 +134,7 @@ fn parse_policy(payload: &ClientBackupPolicyPayload) -> Result<BackupPolicySetti
             limit: None,
         }),
         "keep_n" => {
-            let limit = payload.limit.unwrap_or(30);
+            let limit = payload.limit.unwrap_or(5);
             if limit == 0 {
                 return Err(StatusCode::BAD_REQUEST);
             }

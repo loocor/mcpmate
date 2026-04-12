@@ -4,7 +4,8 @@ use crate::api::models::client::{
     ClientBackupOperateReq, ClientBackupPolicyReq, ClientBackupPolicyResp, ClientBackupPolicySetReq,
     ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckReq, ClientCheckResp, ClientConfigImportReq,
     ClientConfigImportResp, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientManageReq, ClientManageResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
+    ClientConfigUpdateResp, ClientDeleteReq, ClientDeleteResp, ClientManageReq, ClientManageResp,
+    ClientSettingsUpdateReq, ClientSettingsUpdateResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -58,6 +59,13 @@ aide_wrapper_payload!(
     ClientManageReq,
     ClientManageResp,
     "Enable or disable MCPMate management for a client"
+);
+
+aide_wrapper_payload!(
+    client::delete_client,
+    ClientDeleteReq,
+    ClientDeleteResp,
+    "Delete a client record"
 );
 
 // Update client settings (config_mode/transport/client_version)
@@ -150,6 +158,7 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             post_with(config_import_aide, config_import_docs),
         )
         .api_route("/client/manage", post_with(manage_aide, manage_docs))
+        .api_route("/client/delete", post_with(delete_client_aide, delete_client_docs))
         .api_route("/client/update", post_with(update_settings_aide, update_settings_docs))
         .api_route(
             "/client/capability-config",

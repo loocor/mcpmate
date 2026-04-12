@@ -66,10 +66,10 @@ pub struct BackupPolicySetting {
 
 impl Default for BackupPolicySetting {
     fn default() -> Self {
-        // Default strategy: keep_n with a retention limit of 30
+        // Default strategy: keep_n with a retention limit of 5
         Self {
             policy: BackupPolicy::KeepN,
-            limit: Some(30),
+            limit: Some(5),
         }
     }
 }
@@ -89,7 +89,7 @@ impl BackupPolicySetting {
                 limit: None,
             },
             Some("keep_n") => {
-                let normalized = limit.unwrap_or(30).max(1);
+                let normalized = limit.unwrap_or(5).max(1);
                 Self {
                     policy: BackupPolicy::KeepN,
                     limit: Some(normalized),
@@ -103,7 +103,7 @@ impl BackupPolicySetting {
         match self.policy {
             BackupPolicy::Off => (self.policy.as_str(), None),
             BackupPolicy::KeepLast => (self.policy.as_str(), None),
-            BackupPolicy::KeepN => (self.policy.as_str(), Some(self.limit.unwrap_or(30).max(1))),
+            BackupPolicy::KeepN => (self.policy.as_str(), Some(self.limit.unwrap_or(5).max(1))),
         }
     }
 
@@ -115,7 +115,7 @@ impl BackupPolicySetting {
         match self.policy {
             BackupPolicy::Off => None,
             BackupPolicy::KeepLast => Some(1),
-            BackupPolicy::KeepN => Some(self.limit.unwrap_or(30).max(1) as usize),
+            BackupPolicy::KeepN => Some(self.limit.unwrap_or(5).max(1) as usize),
         }
     }
 }
@@ -401,9 +401,9 @@ pub enum FirstContactBehavior {
     /// Reject unknown clients until explicitly registered (no passive row on first MCP connect).
     Deny,
     /// Require approval: unknown clients appear as pending; MCP initialize fails until approved.
+    #[default]
     Review,
     /// Auto-approve and enable management for new clients.
-    #[default]
     Allow,
 }
 
@@ -461,10 +461,10 @@ mod tests {
 
     #[test]
     fn parses_policy_from_pair() {
-        // Default now maps to keep_n with limit 30
+        // Default now maps to keep_n with limit 5
         let default_setting = BackupPolicySetting::from_pair(None, None);
         assert_eq!(default_setting.policy, BackupPolicy::KeepN);
-        assert_eq!(default_setting.limit, Some(30));
+        assert_eq!(default_setting.limit, Some(5));
 
         let off = BackupPolicySetting::from_pair(Some("off"), Some(3));
         assert_eq!(off.policy, BackupPolicy::Off);
@@ -475,7 +475,7 @@ mod tests {
         assert_eq!(keep_n.limit, Some(2));
 
         let keep_n_default = BackupPolicySetting::from_pair(Some("keep_n"), None);
-        assert_eq!(keep_n_default.limit, Some(30));
+        assert_eq!(keep_n_default.limit, Some(5));
 
         let keep_last = BackupPolicySetting::from_pair(Some("keep_last"), Some(99));
         assert_eq!(keep_last.policy, BackupPolicy::KeepLast);
