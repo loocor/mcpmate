@@ -131,6 +131,18 @@ pub struct ClientStateRow {
     pub(super) template_version: Option<String>,
     #[allow(dead_code)]
     pub(super) approval_metadata: Option<String>,
+    // Template configuration fields (persisted from template at initialization)
+    pub(super) config_format: Option<String>,
+    pub(super) protocol_revision: Option<String>,
+    pub(super) container_type: Option<String>,
+    pub(super) container_keys: Option<String>,
+    pub(super) storage_kind: Option<String>,
+    pub(super) storage_adapter: Option<String>,
+    pub(super) storage_path_strategy: Option<String>,
+    pub(super) merge_strategy: Option<String>,
+    pub(super) keep_original_config: Option<i64>,
+    pub(super) managed_source: Option<String>,
+    pub(super) format_rules: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -213,12 +225,7 @@ impl ClientStateRow {
     }
 
     pub fn has_local_config_target(&self) -> bool {
-        self.connection_mode() != ClientConnectionMode::RemoteHttp
-            && self
-                .config_path
-                .as_deref()
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false)
+        self.connection_mode() != ClientConnectionMode::RemoteHttp && self.config_path().is_some()
     }
 
     #[allow(dead_code)]
@@ -277,6 +284,71 @@ impl ClientStateRow {
             .cloned()
             .and_then(|entry| serde_json::from_value::<RuntimeClientMetadata>(entry).ok())
             .unwrap_or_default()
+    }
+
+    // Template configuration accessors (persisted from template at initialization)
+
+    pub fn config_format(&self) -> Option<&str> {
+        self.config_format.as_deref().filter(|v| !v.trim().is_empty())
+    }
+
+    pub fn protocol_revision(&self) -> Option<&str> {
+        self.protocol_revision.as_deref().filter(|v| !v.trim().is_empty())
+    }
+
+    pub fn container_type(&self) -> Option<&str> {
+        self.container_type.as_deref().filter(|v| !v.trim().is_empty())
+    }
+
+    pub fn container_keys(&self) -> ConfigResult<Vec<String>> {
+        let Some(raw) = self.container_keys.as_deref() else {
+            return Ok(Vec::new());
+        };
+
+        if raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
+        serde_json::from_str::<Vec<String>>(raw)
+            .map_err(|e| ConfigError::DataAccessError(format!("Failed to parse container_keys: {}", e)))
+    }
+
+    pub fn storage_kind(&self) -> Option<&str> {
+        self.storage_kind.as_deref().filter(|v| !v.trim().is_empty())
+    }
+
+    pub fn storage_adapter(&self) -> Option<&str> {
+        self.storage_adapter.as_deref().filter(|v| !v.trim().is_empty())
+    }
+
+    pub fn storage_path_strategy(&self) -> Option<&str> {
+        self.storage_path_strategy.as_deref().filter(|v| !v.trim().is_empty())
+    }
+
+    pub fn merge_strategy(&self) -> Option<&str> {
+        self.merge_strategy.as_deref().filter(|v| !v.trim().is_empty())
+    }
+
+    pub fn keep_original_config(&self) -> bool {
+        self.keep_original_config.map(|v| v != 0).unwrap_or(false)
+    }
+
+    pub fn managed_source(&self) -> Option<&str> {
+        self.managed_source.as_deref().filter(|v| !v.trim().is_empty())
+    }
+
+    pub fn format_rules(&self) -> ConfigResult<Option<serde_json::Value>> {
+        let Some(raw) = self.format_rules.as_deref() else {
+            return Ok(None);
+        };
+
+        if raw.trim().is_empty() {
+            return Ok(None);
+        }
+
+        serde_json::from_str::<serde_json::Value>(raw)
+            .map(Some)
+            .map_err(|e| ConfigError::DataAccessError(format!("Failed to parse format_rules: {}", e)))
     }
 }
 
@@ -400,9 +472,14 @@ impl ClientConfigService {
         &self,
         client_id: &str,
     ) -> crate::clients::error::ConfigResult<Option<String>> {
-        let template = self.get_client_template(client_id).await?;
-        let storage = self.template_engine.storage_for_template(&template)?;
-        storage.read(&template).await
+        let state = self.fetch_state(client_id).await?.ok_or_else(|| {
+            ConfigError::DataAccessError(format!("Client {} not found", client_id))
+        })?;
+        let config_path = state.config_path().ok_or_else(|| {
+            ConfigError::PathResolutionError(format!("No config_path for client {}", client_id))
+        })?;
+        let storage = self.template_engine.storage_for_client(&state)?;
+        storage.read(config_path).await
     }
 
     /// Get resolved configuration path for a client on current platform
@@ -470,9 +547,7 @@ impl ClientConfigService {
         Ok(Some(config_path))
     }
 
-    pub(super) async fn validate_directory_target_writable(
-        directory_path: &std::path::Path,
-    ) -> ConfigResult<()> {
+    pub(super) async fn validate_directory_target_writable(directory_path: &std::path::Path) -> ConfigResult<()> {
         let probe_name = format!(
             ".mcpmate-write-test-{}-{}",
             std::process::id(),
@@ -789,18 +864,78 @@ impl ClientConfigService {
             let config_path = Self::extract_runtime_config_path_from_template(template);
             let id = crate::generate_id!("clnt");
 
+            // Extract template configuration fields for persistence (same as create_state_row)
+            let config_format = template.format.as_str().to_string();
+            let protocol_revision = template.protocol_revision.clone();
+            let container_type = match template.config_mapping.container_type {
+                crate::clients::models::ContainerType::ObjectMap => "object",
+                crate::clients::models::ContainerType::Array => "array",
+            };
+            let container_keys = serde_json::to_string(&template.config_mapping.container_keys).ok();
+            let storage_kind = match template.storage.kind {
+                crate::clients::models::StorageKind::File => "file",
+                crate::clients::models::StorageKind::Kv => "kv",
+                crate::clients::models::StorageKind::Custom => "custom",
+            };
+            let storage_adapter = template.storage.adapter.clone();
+            let storage_path_strategy = template.storage.path_strategy.clone();
+            let merge_strategy = match template.config_mapping.merge_strategy {
+                crate::clients::models::MergeStrategy::Replace => "replace",
+                crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
+            };
+            let keep_original_config = if template.config_mapping.keep_original_config { 1_i64 } else { 0_i64 };
+            let managed_source = template.config_mapping.managed_source.clone();
+            let format_rules = if template.config_mapping.format_rules.is_empty() {
+                None
+            } else {
+                serde_json::to_string(&template.config_mapping.format_rules).ok()
+            };
+
+            // Extract Meta information from template
+            let runtime_metadata = serde_json::json!({
+                "runtime_client": {
+                    "description": template.metadata.get("description").and_then(|v| v.as_str()),
+                    "homepage_url": template.metadata.get("homepage_url").and_then(|v| v.as_str()),
+                    "docs_url": template.metadata.get("docs_url").and_then(|v| v.as_str()),
+                    "support_url": template.metadata.get("support_url").and_then(|v| v.as_str()),
+                    "logo_url": template.metadata.get("logo_url").and_then(|v| v.as_str()),
+                    "category": template.metadata.get("category").and_then(|v| v.as_str()),
+                    "supported_transports": template.metadata.get("supported_transports")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                }
+            });
+            let approval_metadata = serde_json::to_string(&runtime_metadata).ok();
+
             sqlx::query(
                 r#"
                 INSERT INTO client (
                     id, name, display_name, identifier, config_path, managed, backup_policy, backup_limit,
-                    capability_source, governance_kind, connection_mode, approval_status, record_kind, template_identifier
+                    capability_source, governance_kind, connection_mode, approval_status, record_kind, template_identifier,
+                    config_format, protocol_revision, container_type, container_keys,
+                    storage_kind, storage_adapter, storage_path_strategy,
+                    merge_strategy, keep_original_config, managed_source, format_rules, approval_metadata
                 )
-                VALUES (?, ?, ?, ?, ?, 1, 'keep_n', 30, 'activated', 'passive', 'local_config_detected', 'approved', 'template_known', ?)
+                VALUES (?, ?, ?, ?, ?, 1, 'keep_n', 5, 'activated', 'passive', 'local_config_detected', 'approved', 'template_known', ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(identifier) DO UPDATE SET
                     display_name = COALESCE(NULLIF(client.display_name, ''), excluded.display_name),
                     config_path = COALESCE(NULLIF(client.config_path, ''), excluded.config_path),
                     record_kind = COALESCE(NULLIF(client.record_kind, ''), excluded.record_kind),
                     template_identifier = COALESCE(NULLIF(client.template_identifier, ''), excluded.template_identifier),
+                    config_format = excluded.config_format,
+                    protocol_revision = excluded.protocol_revision,
+                    container_type = excluded.container_type,
+                    container_keys = excluded.container_keys,
+                    storage_kind = excluded.storage_kind,
+                    storage_adapter = excluded.storage_adapter,
+                    storage_path_strategy = excluded.storage_path_strategy,
+                    merge_strategy = excluded.merge_strategy,
+                    keep_original_config = excluded.keep_original_config,
+                    managed_source = excluded.managed_source,
+                    format_rules = excluded.format_rules,
+                    approval_metadata = COALESCE(client.approval_metadata, excluded.approval_metadata),
                     updated_at = CURRENT_TIMESTAMP
                 "#,
             )
@@ -810,6 +945,18 @@ impl ClientConfigService {
             .bind(&template.identifier)
             .bind(config_path)
             .bind(&template.identifier)
+            .bind(config_format)
+            .bind(protocol_revision)
+            .bind(container_type)
+            .bind(container_keys)
+            .bind(storage_kind)
+            .bind(storage_adapter)
+            .bind(storage_path_strategy)
+            .bind(merge_strategy)
+            .bind(keep_original_config)
+            .bind(managed_source)
+            .bind(format_rules)
+            .bind(approval_metadata)
             .execute(db_pool)
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;

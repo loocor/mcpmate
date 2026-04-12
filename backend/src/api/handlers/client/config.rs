@@ -1,16 +1,15 @@
 // Configuration file processing for client handlers
 
 use crate::clients::analyzer::analyze_config_content as analyze;
-use crate::clients::models::ClientTemplate;
 use crate::common::ConfigChecker;
 
 /// Helper function to analyze config content for MCP information
 pub fn analyze_config_content(
     content: &str,
-    _client_identifier: &str,
-    template: &ClientTemplate,
+    container_keys: &[String],
+    is_array_container: bool,
 ) -> (bool, u32) {
-    analyze(content, template)
+    analyze(content, container_keys, is_array_container)
 }
 
 /// Fallback analysis when database lookup fails
@@ -19,8 +18,8 @@ pub fn analyze_config_content(
 /// Now supports client-specific top-level keys
 pub async fn check_mcp_config_exists(
     config_path: &std::path::Path,
-    client_identifier: &str,
-    template: &ClientTemplate,
+    container_keys: &[String],
+    is_array_container: bool,
 ) -> bool {
     // Use the unified configuration checker for basic checks
     let checker = ConfigChecker::new();
@@ -30,7 +29,7 @@ pub async fn check_mcp_config_exists(
 
     // If basic checks pass, perform more detailed client-specific checks
     match std::fs::read_to_string(config_path) {
-        Ok(content) => analyze_config_content(&content, client_identifier, template).0,
+        Ok(content) => analyze_config_content(&content, container_keys, is_array_container).0,
         Err(_) => false,
     }
 }

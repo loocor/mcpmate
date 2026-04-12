@@ -5,6 +5,7 @@ use tracing;
 use crate::common::constants::database::tables;
 
 const DEFAULT_BACKUP_POLICY: &str = "keep_n";
+const DEFAULT_BACKUP_LIMIT: i64 = 5;
 const DEFAULT_CAPABILITY_SOURCE: &str = "activated";
 const DEFAULT_CONNECTION_MODE: &str = "local_config_detected";
 const DEFAULT_GOVERNANCE_KIND: &str = "passive";
@@ -43,7 +44,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             backup_policy TEXT NOT NULL DEFAULT '{default_policy}' CHECK (
                 backup_policy IN ('keep_last', 'keep_n', 'off')
             ),
-            backup_limit INTEGER DEFAULT 30,
+            backup_limit INTEGER DEFAULT {default_backup_limit},
             capability_source TEXT NOT NULL DEFAULT '{default_capability_source}' CHECK (
                 capability_source IN ('activated', 'profiles', 'custom')
             ),
@@ -73,6 +74,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         "#,
         table = tables::CLIENT,
         default_policy = DEFAULT_BACKUP_POLICY,
+        default_backup_limit = DEFAULT_BACKUP_LIMIT,
         default_capability_source = DEFAULT_CAPABILITY_SOURCE,
         default_governance_kind = DEFAULT_GOVERNANCE_KIND,
         default_connection_mode = DEFAULT_CONNECTION_MODE,
@@ -159,6 +161,19 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     ensure_column(pool, tables::CLIENT, "template_version", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "approval_metadata", "TEXT").await?;
 
+    // Template configuration fields (persisted from template at initialization)
+    ensure_column(pool, tables::CLIENT, "config_format", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "protocol_revision", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "container_type", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "container_keys", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "storage_kind", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "storage_adapter", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "storage_path_strategy", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "merge_strategy", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "keep_original_config", "INTEGER").await?;
+    ensure_column(pool, tables::CLIENT, "managed_source", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "format_rules", "TEXT").await?;
+
     sqlx::query(&format!(
         r#"
         CREATE TABLE IF NOT EXISTS {table} (
@@ -202,7 +217,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
 
     sqlx::query(&format!(
         "UPDATE {table} SET capability_source = ? WHERE capability_source IS NULL OR capability_source = ''",
-        table = tables::CLIENT
+        table = tables::CLIENT,
     ))
     .bind(DEFAULT_CAPABILITY_SOURCE)
     .execute(pool)
@@ -240,7 +255,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             WHEN transport IS NOT NULL AND TRIM(transport) <> '' AND transport <> 'auto' THEN 'active' \
             WHEN client_version IS NOT NULL AND TRIM(client_version) <> '' THEN 'active' \
             WHEN backup_policy IS NOT NULL AND backup_policy <> 'keep_n' THEN 'active' \
-            WHEN backup_limit IS NOT NULL AND backup_limit <> 30 THEN 'active' \
+WHEN backup_limit IS NOT NULL AND backup_limit <> {default_backup_limit} THEN 'active' \
             WHEN capability_source IS NOT NULL AND capability_source <> 'activated' THEN 'active' \
             WHEN selected_profile_ids IS NOT NULL AND TRIM(selected_profile_ids) <> '' THEN 'active' \
             WHEN custom_profile_id IS NOT NULL AND TRIM(custom_profile_id) <> '' THEN 'active' \
@@ -248,7 +263,8 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             WHEN approval_status = 'approved' AND managed = 0 THEN 'active' \
             ELSE ? END \
          WHERE governance_kind IS NULL OR governance_kind = ''",
-        table = tables::CLIENT
+        table = tables::CLIENT,
+        default_backup_limit = DEFAULT_BACKUP_LIMIT,
     ))
     .bind(DEFAULT_GOVERNANCE_KIND)
     .execute(pool)
@@ -383,7 +399,7 @@ async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> R
                 backup_policy TEXT NOT NULL DEFAULT '{default_policy}' CHECK (
                     backup_policy IN ('keep_last', 'keep_n', 'off')
                 ),
-                backup_limit INTEGER DEFAULT 30,
+                backup_limit INTEGER DEFAULT {default_backup_limit},
                 capability_source TEXT NOT NULL DEFAULT '{default_capability_source}' CHECK (
                     capability_source IN ('activated', 'profiles', 'custom')
                 ),
@@ -395,6 +411,7 @@ async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> R
             "#,
             temp_table = temp_table,
             default_policy = DEFAULT_BACKUP_POLICY,
+            default_backup_limit = DEFAULT_BACKUP_LIMIT,
             default_capability_source = DEFAULT_CAPABILITY_SOURCE,
         ))
         .execute(&mut *tx)
@@ -540,7 +557,8 @@ pub async fn initialize_system_settings_table(pool: &Pool<Sqlite>) -> Result<()>
         let initial_behavior = match onboarding_policy.as_deref() {
             Some("require_approval") => "review",
             Some("manual") => "deny",
-            Some("auto_manage") | Some(_) | None => "allow",
+            Some("auto_manage") => "review",
+            Some(_) | None => "review",
         };
 
         sqlx::query(&format!(
