@@ -1,17 +1,16 @@
-use crate::clients::models::{ClientTemplate, ContainerType};
 use crate::clients::utils::get_nested_value;
 
-/// Analyze config content for MCP presence and server count according to template mapping.
+/// Analyze config content for MCP presence and server count according to container configuration.
 pub fn analyze_config_content(
     content: &str,
-    template: &ClientTemplate,
+    container_keys: &[String],
+    is_array_container: bool,
 ) -> (bool, u32) {
     if content.is_empty() {
         return (false, 0);
     }
-    let mapping = &template.config_mapping;
-    let keys = &mapping.container_keys;
-    let is_array = matches!(mapping.container_type, ContainerType::Array);
+    let keys = container_keys;
+    let is_array = is_array_container;
 
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(json) => {
