@@ -1,16 +1,16 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
+    Router,
     body::Body,
     extract::State,
     http::{Method, Request},
-    middleware::{from_fn_with_state, Next},
+    middleware::{Next, from_fn_with_state},
     response::Response,
-    Router,
 };
 use mcpmate::common::server::ServerType;
 use mcpmate::core::models::MCPServerConfig;
-use mcpmate::core::transport::{connect_http_server, TransportType};
+use mcpmate::core::transport::{TransportType, connect_http_server};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -87,10 +87,7 @@ async fn streamable_http_carries_bearer_on_init_sse_delete() -> anyhow::Result<(
 
     let url = format!("http://{addr}/mcp");
     let mut headers = std::collections::HashMap::new();
-    headers.insert(
-        "Authorization".to_string(),
-        "Bearer SECRET-XYZ".to_string(),
-    );
+    headers.insert("Authorization".to_string(), "Bearer SECRET-XYZ".to_string());
     let server_cfg = MCPServerConfig {
         kind: ServerType::StreamableHttp,
         command: None,
@@ -100,8 +97,7 @@ async fn streamable_http_carries_bearer_on_init_sse_delete() -> anyhow::Result<(
         headers: Some(headers),
     };
 
-    let (service, _tools, _caps) =
-        connect_http_server("auth-test", &server_cfg, TransportType::StreamableHttp).await?;
+    let (service, _tools, _caps) = connect_http_server("auth-test", &server_cfg, TransportType::StreamableHttp).await?;
 
     sleep(Duration::from_millis(200)).await;
 
@@ -117,9 +113,11 @@ async fn streamable_http_carries_bearer_on_init_sse_delete() -> anyhow::Result<(
 
     assert!(posts.iter().any(|h| matches!(h.as_deref(), Some("Bearer SECRET-XYZ"))));
     assert!(gets.iter().any(|h| matches!(h.as_deref(), Some("Bearer SECRET-XYZ"))));
-    assert!(deletes
-        .iter()
-        .any(|h| matches!(h.as_deref(), Some("Bearer SECRET-XYZ"))));
+    assert!(
+        deletes
+            .iter()
+            .any(|h| matches!(h.as_deref(), Some("Bearer SECRET-XYZ")))
+    );
 
     Ok(())
 }

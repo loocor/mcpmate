@@ -336,9 +336,11 @@ pub(crate) async fn reconcile_client_direct_exposure_after_server_constraint_cha
     let reconciled = client_service
         .reconcile_unify_direct_exposure_for_server(server_id)
         .await
-        .map_err(|err| ApiError::InternalError(format!(
-            "Failed to reconcile client direct exposure after server constraint change: {err}"
-        )))?;
+        .map_err(|err| {
+            ApiError::InternalError(format!(
+                "Failed to reconcile client direct exposure after server constraint change: {err}"
+            ))
+        })?;
 
     if reconciled.is_empty() {
         return Ok(0);
@@ -348,10 +350,7 @@ pub(crate) async fn reconcile_client_direct_exposure_after_server_constraint_cha
         if let Ok(guard) = proxy.try_lock() {
             for client in &reconciled {
                 if let Err(err) = guard
-                    .apply_persisted_unify_direct_exposure(
-                        &client.identifier,
-                        client.unify_direct_exposure.clone(),
-                    )
+                    .apply_persisted_unify_direct_exposure(&client.identifier, client.unify_direct_exposure.clone())
                     .await
                 {
                     warn!(client = %client.identifier, server_id = %server_id, error = %err, "Failed to refresh reconciled Unify direct exposure state");

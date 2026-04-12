@@ -124,8 +124,8 @@ impl ProxyServer {
             .map_err(|error| self.map_client_context_error(error))?;
         let client = self.attach_runtime_identity(client).await?;
 
-        if let Some(session_id) = client.session_id.clone() {
-            if !self.downstream_clients.contains_key(&session_id) {
+        if let Some(session_id) = client.session_id.as_deref() {
+            if !self.downstream_clients.contains_key(session_id) {
                 self.register_downstream_client(&client, context.peer.clone()).await?;
             }
         }
@@ -279,6 +279,40 @@ impl ProxyServer {
             None => crate::config::client::init::resolve_default_client_config_mode(&db.pool)
                 .await
                 .map_err(|error| self.map_client_context_error(error)),
+        }
+    }
+
+    async fn persist_initialize_observation(
+        &self,
+        client: &ClientContext,
+    ) {
+        let Some(service) = self.client_config_service.as_ref() else {
+            return;
+        };
+
+        let observed_name = client.observed_client_info.as_ref().map(|info| info.name.as_str());
+        let client_version = client.observed_client_info.as_ref().map(|info| info.version.as_str());
+        let (transport, supported_transports, connection_mode) = match client.transport {
+            super::common::ClientTransport::StreamableHttp => (
+                Some("streamable_http"),
+                Some(vec!["streamable_http".to_string()]),
+                Some("remote_http"),
+            ),
+            super::common::ClientTransport::Other => (None, None, None),
+        };
+
+        if let Err(err) = service
+            .persist_handshake_observation(
+                &client.client_id,
+                observed_name,
+                client_version,
+                transport,
+                supported_transports,
+                connection_mode,
+            )
+            .await
+        {
+            tracing::warn!(client = %client.client_id, error = %err, "Failed to persist initialize observation");
         }
     }
 
@@ -458,6 +492,26 @@ impl ProxyServer {
         if let Err(error) = self.client_context_resolver.unbind_session(session_id).await {
             tracing::warn!(session_id = %session_id, error = %error, "Failed to unbind downstream session");
         }
+    }
+
+    pub async fn remove_downstream_sessions_for_client(
+        &self,
+        client_id: &str,
+    ) -> usize {
+        let session_ids = self
+            .client_context_resolver
+            .session_bindings
+            .iter()
+            .filter(|entry| entry.client_id == client_id)
+            .map(|entry| entry.session_id.clone())
+            .collect::<Vec<_>>();
+        let count = session_ids.len();
+
+        for session_id in session_ids {
+            self.remove_downstream_session(&session_id).await;
+        }
+
+        count
     }
 
     fn allowed_origin(origin: &str) -> bool {
@@ -1050,6 +1104,7 @@ impl ServerHandler for ProxyServer {
         let client = self.resolve_initialize_client_context(&context, &request).await?;
         if client.session_id.is_some() {
             self.register_downstream_client(&client, context.peer.clone()).await?;
+            self.persist_initialize_observation(&client).await;
         }
 
         let mut data = Map::new();
@@ -1722,7 +1777,7 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO client (id, name, identifier, managed, config_mode, backup_policy, backup_limit)
-            VALUES (?, ?, ?, 1, ?, 'keep_n', 30)
+            VALUES (?, ?, ?, 1, ?, 'keep_n', 5)
             "#,
         )
         .bind(crate::generate_id!("clnt"))
@@ -1756,7 +1811,7 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO client (id, name, identifier, managed, config_mode, backup_policy, backup_limit)
-            VALUES (?, ?, ?, 1, ?, 'keep_n', 30)
+            VALUES (?, ?, ?, 1, ?, 'keep_n', 5)
             "#,
         )
         .bind(crate::generate_id!("clnt"))
