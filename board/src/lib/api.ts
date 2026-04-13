@@ -23,6 +23,7 @@ import type {
 	ClientConfigRestoreReq,
 	ClientConfigUpdateReq,
 	ClientConfigUpdateResp,
+	ClientDeleteResp,
 	ClientManageAction,
 	ClientManageResp,
 	ClientRecordLifecycleResp,
@@ -239,7 +240,47 @@ type CapabilityListResult = {
 	items: unknown[];
 	meta?: unknown;
 	state?: string;
+	degraded_reason?: string;
 };
+
+function normalizeCapabilityListPayload(
+	resp: { success: boolean; data?: CapabilityListResult | null; error?: unknown | null } | null | undefined,
+): CapabilityListResult {
+	if (!resp?.data) {
+		return {
+			items: [],
+			state: "empty_data",
+			degraded_reason: "empty_payload",
+		};
+	}
+	const items = Array.isArray(resp.data.items) ? resp.data.items : [];
+	if (items.length === 0 && !resp.data.state) {
+		return { ...resp.data, items, state: "empty_data" };
+	}
+	return { ...resp.data, items };
+}
+
+function capabilityTransportErrorResult(): CapabilityListResult {
+	return { items: [], state: "transport_error", degraded_reason: "request_failed" };
+}
+
+async function fetchCapabilityList(
+	path: string,
+	serverId: string,
+	refresh: "auto" | "force" | "cache",
+): Promise<CapabilityListResult> {
+	try {
+		const q = new URLSearchParams({ id: serverId, refresh });
+		const resp = await fetchApi<{
+			success: boolean;
+			data?: CapabilityListResult | null;
+			error?: unknown | null;
+		}>(`${path}?${q}`);
+		return normalizeCapabilityListPayload(resp);
+	} catch {
+		return capabilityTransportErrorResult();
+	}
+}
 
 /** Row shape from `/api/mcp/profile/list` */
 interface ProfileApiRow {
@@ -1248,51 +1289,23 @@ export const serversApi = {
 	listTools: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<CapabilityListResult> => {
-		const q = new URLSearchParams({ id: serverId, refresh });
-		const resp = await fetchApi<{
-			success: boolean;
-			data?: CapabilityListResult | null;
-			error?: unknown | null;
-		}>(`/api/mcp/servers/tools?${q}`);
-		return resp?.data ?? { items: [] };
-	},
+	): Promise<CapabilityListResult> =>
+		fetchCapabilityList("/api/mcp/servers/tools", serverId, refresh),
 	listResources: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<CapabilityListResult> => {
-		const q = new URLSearchParams({ id: serverId, refresh });
-		const resp = await fetchApi<{
-			success: boolean;
-			data?: CapabilityListResult | null;
-			error?: unknown | null;
-		}>(`/api/mcp/servers/resources?${q}`);
-		return resp?.data ?? { items: [] };
-	},
+	): Promise<CapabilityListResult> =>
+		fetchCapabilityList("/api/mcp/servers/resources", serverId, refresh),
 	listPrompts: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<CapabilityListResult> => {
-		const q = new URLSearchParams({ id: serverId, refresh });
-		const resp = await fetchApi<{
-			success: boolean;
-			data?: CapabilityListResult | null;
-			error?: unknown | null;
-		}>(`/api/mcp/servers/prompts?${q}`);
-		return resp?.data ?? { items: [] };
-	},
+	): Promise<CapabilityListResult> =>
+		fetchCapabilityList("/api/mcp/servers/prompts", serverId, refresh),
 	listResourceTemplates: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<CapabilityListResult> => {
-		const q = new URLSearchParams({ id: serverId, refresh });
-		const resp = await fetchApi<{
-			success: boolean;
-			data?: CapabilityListResult | null;
-			error?: unknown | null;
-		}>(`/api/mcp/servers/resources/templates?${q}`);
-		return resp?.data ?? { items: [] };
-	},
+	): Promise<CapabilityListResult> =>
+		fetchCapabilityList("/api/mcp/servers/resources/templates", serverId, refresh),
 
 	// Import servers from JSON-like configuration object
 	importServers: async (payload: {
@@ -2428,7 +2441,7 @@ function normalizeFirstContactBehavior(raw: string): "deny" | "review" | "allow"
 	if (raw === "deny" || raw === "review" || raw === "allow") {
 		return raw;
 	}
-	return "allow";
+	return "review";
 }
 
 // Clients Management API
@@ -2521,6 +2534,14 @@ export const clientsApi = {
 		const resp = await fetchApi<ClientManageResp>("/api/client/manage", {
 			method: "POST",
 			body: JSON.stringify({ identifier, action }),
+		});
+		return extractApiData(resp);
+	},
+
+	deleteRecord: async (identifier: string) => {
+		const resp = await fetchApi<ClientDeleteResp>("/api/client/delete", {
+			method: "POST",
+			body: JSON.stringify({ identifier }),
 		});
 		return extractApiData(resp);
 	},

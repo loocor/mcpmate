@@ -1012,6 +1012,15 @@ export interface ClientRecordLifecycleResp {
   managed: boolean;
 }
 
+export interface ClientDeleteResp {
+  data?: {
+    identifier: string;
+    deleted: boolean;
+  } | null;
+  error?: unknown | null;
+  success: boolean;
+}
+
 export interface ClientObserveReq {
   identifier: string;
   display_name?: string | null;
@@ -1115,6 +1124,7 @@ export interface ClientConfigData {
   config_type?: ClientConfigType | null;
   content: unknown;
   warnings?: string[];
+  degraded_reasons?: string[];
   has_mcp_config: boolean;
   imported_servers?: ClientImportedServer[] | null;
   import_summary?: ClientImportSummary | null;
@@ -1137,6 +1147,35 @@ export interface ClientConfigData {
   capability_source?: CapabilitySource;
   selected_profile_ids?: string[];
   custom_profile_id?: string | null;
+}
+
+export interface ClientSettingsSourceData {
+  display_name: "provided" | "stored" | "default" | string;
+  approval_status: "provided" | "stored" | "default" | string;
+  connection_mode: "provided" | "derived" | "stored" | string;
+}
+
+export interface ClientSettingsUpdateData {
+  identifier: string;
+  display_name: string;
+  config_mode?: string | null;
+  transport: string;
+  client_version?: string | null;
+  connection_mode?: string | null;
+  config_path?: string | null;
+  supported_transports: string[];
+  description?: string | null;
+  homepage_url?: string | null;
+  docs_url?: string | null;
+  support_url?: string | null;
+  logo_url?: string | null;
+  setting_sources?: ClientSettingsSourceData | null;
+}
+
+export interface ClientSettingsUpdateResp {
+  data?: ClientSettingsUpdateData | null;
+  error?: unknown | null;
+  success: boolean;
 }
 
 export interface ClientConfigResp {
@@ -1202,6 +1241,7 @@ export interface ClientConfigUpdateReq {
   mode?: ClientConfigMode;
   preview?: boolean;
   selected_config?: ClientConfigSelected;
+  backup_policy?: ClientBackupPolicyPayload;
 }
 
 export interface ClientConfigUpdateData {

@@ -10,7 +10,6 @@ import {
 } from "../components/ui/card";
 
 export interface EntityCardProps {
-	// 基本信息
 	id: string;
 	title: string;
 	description?: string | ReactNode;
@@ -21,7 +20,6 @@ export interface EntityCardProps {
 	};
 	avatarShape?: "circle" | "rounded" | "square";
 
-	// 右上角标签
 	topRightBadge?: ReactNode;
 
 	// 统计信息 (4x2 网格)
@@ -37,6 +35,7 @@ export interface EntityCardProps {
 	onClick?: () => void;
 	onKeyDown?: (e: React.KeyboardEvent) => void;
 	className?: string;
+	titleClassName?: string;
 }
 
 export function EntityCard({
@@ -52,6 +51,7 @@ export function EntityCard({
 	onClick,
 	onKeyDown,
 	className = "",
+	titleClassName = "",
 }: EntityCardProps) {
 	const handleClick = (e: React.MouseEvent) => {
 		const target = e.target as HTMLElement;
@@ -72,7 +72,6 @@ export function EntityCard({
 
 	return (
 		<Card
-			key={id}
 			className={`group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700 ${className}`}
 			role="button"
 			tabIndex={0}
@@ -91,10 +90,10 @@ export function EntityCard({
 					/>
 					<div className="min-w-0 flex-1 space-y-2">
 						<div className="flex min-w-0 items-start justify-between gap-2">
-							<CardTitle
-								className="min-w-0 flex-1 truncate text-lg font-semibold leading-tight"
-								title={title}
-							>
+						<CardTitle
+							className={`min-w-0 flex-1 truncate text-lg font-semibold leading-tight ${titleClassName}`}
+							title={title}
+						>
 								{title}
 							</CardTitle>
 							{topRightBadge ? (
