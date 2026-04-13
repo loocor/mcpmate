@@ -31,6 +31,7 @@ export default function ClientConfiguration() {
 				<Li>You can still adjust management mode, capability source, and client metadata while a client is denied or suspended.</Li>
 				<Li>Actually writing a client&apos;s own MCP config file is a different gate: Hosted, Unify, and Transparent only apply to disk after the client has a verified writable local config target.</Li>
 				<Li>Saving governance state alone never creates a new client config file or upgrades an unverified path into a trusted write target.</Li>
+				<Li>If those checks fail during apply, MCPMate rejects or defers the write instead of leaving a partially updated client configuration on disk.</Li>
 			</Ul>
 
 			<H2>What each mode really means</H2>
@@ -67,7 +68,7 @@ export default function ClientConfiguration() {
 			</Ul>
 
 			<P>
-				Capability-Level Direct now opens a dedicated client-scoped editor page instead of reusing the Profiles route. This keeps the navigation state accurate while preserving the same bulk-editing workflow for tools.
+				Capability-Level Direct now opens a dedicated client-scoped editor page instead of reusing the Profiles route. This keeps the navigation state accurate while preserving the same bulk-editing workflow for tools and the same governance-aware apply checks as the other client configuration paths.
 			</P>
 
 			<Callout type="warning" title="Mixed routing warning">
