@@ -1,5 +1,26 @@
 [
 	{
+		"version": "0.1.10",
+		"date": "2026-04-11",
+		"highlights": [
+			"Unify により明確な直接公開コントロールが加わり、プロキシ優先ワークフローと選択的な直接アクセスを意図的に組み合わせられるようになりました。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Unify は All Proxy、Server Direct、Capability-Level Direct の経路をより明確に備え、どの capability をブローカー経由のままにし、どれを直接公開するかをよりはっきり制御できます。"
+			},
+			{
+				"type": "feat",
+				"text": "Capability-Level Direct はクライアントスコープの専用エディタで開くようになり、直接公開管理を共有プロファイル編集から切り離しました。"
+			},
+			{
+				"type": "docs",
+				"text": "ダッシュボードの表示ラベルと website ドキュメントを最終的な Unify 直接公開モデルに揃え、適格性判断とルーティング動作を理解しやすくしました。"
+			}
+		]
+	},
+	{
 		"version": "0.1.9",
 		"date": "2026-04-06",
 		"highlights": [
