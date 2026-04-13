@@ -2,7 +2,7 @@ use super::core::{ApplyOutcome, ClientConfigService, ClientRenderOptions, Client
 use crate::clients::TemplateExecutionResult;
 use crate::clients::engine::RenderRequest;
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::{ClientTemplate, ConfigMode, TemplateFormat};
+use crate::clients::models::{ConfigMode, TemplateFormat};
 use std::collections::HashSet;
 
 impl ClientConfigService {
@@ -17,63 +17,70 @@ impl ClientConfigService {
             });
         }
 
-        if matches!(options.mode, ConfigMode::Managed | ConfigMode::Native) {
-            match self.verified_local_config_target(&options.client_id).await? {
-                Some(_) => {}
-                None => {
-                    return Err(ConfigError::DataAccessError(format!(
-                        "Client '{}' has no configured local config target; cannot render {:?} mode",
-                        options.client_id, options.mode
-                    )));
-                }
-            }
+        if matches!(options.mode, ConfigMode::Managed | ConfigMode::Native)
+            && self.verified_local_config_target(&options.client_id).await?.is_none()
+        {
+            return Err(ConfigError::DataAccessError(format!(
+                "Client '{}' has no configured local config target; cannot render {:?} mode",
+                options.client_id, options.mode
+            )));
         }
 
-        let template = self.get_client_template(&options.client_id).await?;
+        // Get client state for configuration metadata
+        let state = self.fetch_state(&options.client_id).await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!(
+                "Client state not found: {}", options.client_id
+            )))?;
+        let format_rules = state.format_rules()?
+            .and_then(|v| serde_json::from_value::<std::collections::HashMap<String, crate::clients::models::FormatRule>>(v).ok());
+        
+        // Validate format_rules exists for Managed mode
+        if matches!(options.mode, ConfigMode::Managed) && format_rules.is_none() {
+            return Err(ConfigError::DataAccessError(format!(
+                "Client '{}' has no format_rules (likely legacy record); re-detect this client to populate transport configuration",
+                options.client_id
+            )));
+        }
+
         // Select transport for managed mode if applicable
         let mut chosen_transport: Option<String> = None;
         let mut auto_selected = false;
         if matches!(options.mode, ConfigMode::Managed) {
             // load client settings
-            if let Some((_, transport, ver_opt)) = self.get_client_settings(&options.client_id).await.unwrap_or(None) {
+            if let Some((_, transport, _)) = self.get_client_settings(&options.client_id).await.unwrap_or(None) {
                 let supported = {
                     let keymap = crate::clients::keymap::registry();
                     let mut list: Vec<&'static str> = Vec::new();
-                    for t in ["streamable_http", "stdio"] {
-                        if keymap.has_rule(&template.config_mapping.format_rules, t) {
-                            list.push(t);
+                    if let Some(ref rules) = format_rules {
+                        for t in ["streamable_http", "stdio"] {
+                            if keymap.has_rule(rules, t) {
+                                list.push(t);
+                            }
                         }
                     }
                     list
                 };
-                let allows = |_t: &str| -> bool {
-                    let _ver = ver_opt.as_deref();
-                    // TODO: version gating; currently allow all
-                    let _ = _ver;
-                    true
-                };
                 // Check if transport is explicitly set (not "auto")
-                if transport != "auto" && supported.contains(&transport.as_str()) && allows(transport.as_str()) {
+                if transport != "auto" && supported.contains(&transport.as_str()) {
                     chosen_transport = Some(transport.clone());
                 }
                 // If still not chosen (either "auto" or unsupported), auto-select
                 if chosen_transport.is_none() {
-                    for t in supported {
-                        if allows(t) {
-                            chosen_transport = Some(t.to_string());
-                            auto_selected = transport == "auto";
-                            break;
-                        }
+                    if let Some(t) = supported.into_iter().next() {
+                        chosen_transport = Some(t.to_string());
+                        auto_selected = transport == "auto";
                     }
                 }
             } else {
                 // No settings row yet: pick by priority
                 let keymap = crate::clients::keymap::registry();
-                for t in ["streamable_http", "stdio"] {
-                    if keymap.has_rule(&template.config_mapping.format_rules, t) {
-                        chosen_transport = Some(t.to_string());
-                        auto_selected = true;
-                        break;
+                if let Some(ref rules) = format_rules {
+                    for t in ["streamable_http", "stdio"] {
+                        if keymap.has_rule(rules, t) {
+                            chosen_transport = Some(t.to_string());
+                            auto_selected = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -82,16 +89,18 @@ impl ClientConfigService {
         let backup_policy = self.get_backup_policy(&options.client_id).await?;
 
         if matches!(options.mode, ConfigMode::Native) {
-            let supported: HashSet<String> = template.config_mapping.format_rules.keys().cloned().collect();
-            let before = servers.len();
-            servers.retain(|server| supported.contains(&server.transport));
-            if before != servers.len() {
-                tracing::debug!(
-                    "Filtered unsupported servers for client {} (native mode): {} -> {}",
-                    options.client_id,
-                    before,
-                    servers.len()
-                );
+            if let Some(ref rules) = format_rules {
+                let supported: HashSet<String> = rules.keys().cloned().collect();
+                let before = servers.len();
+                servers.retain(|server| supported.contains(&server.transport));
+                if before != servers.len() {
+                    tracing::debug!(
+                        "Filtered unsupported servers for client {} (native mode): {} -> {}",
+                        options.client_id,
+                        before,
+                        servers.len()
+                    );
+                }
             }
         }
 
@@ -148,6 +157,9 @@ impl ClientConfigService {
             ..Default::default()
         };
         if let TemplateExecutionResult::Applied { backup_path, .. } = result.execution {
+            let backup_policy = self.get_backup_policy(&options.client_id).await?;
+            self.enforce_backup_retention(&options.client_id, &backup_policy)
+                .await?;
             outcome.applied = true;
             outcome.backup_path = backup_path;
         }
@@ -166,10 +178,14 @@ impl ClientConfigService {
         // Temporary: write-probe logging before actual apply
         // Helps diagnose which transports are being generated and whether 'args' exist
         if let Some(ref after) = preview_outcome.preview.after {
-            if let Ok(template) = self.get_client_template(&options.client_id).await {
+            let state = self.fetch_state(&options.client_id).await.ok().flatten();
+            if let Some(state) = state {
                 let format = preview_outcome.preview.format;
+                let container_keys = state.container_keys().unwrap_or_default();
+                let container_type = state.container_type();
                 // best-effort parse + summarize; don't fail the apply path on parse errors
-                if let Some(summary) = Self::summarize_servers_for_probe(after, format, &template) {
+                if let Some(summary) = Self::summarize_servers_for_probe(after, format, &container_keys, container_type)
+                {
                     for entry in summary.into_iter().take(5) {
                         tracing::debug!(
                             target: "mcpmate::client::apply_probe",
@@ -203,6 +219,9 @@ impl ClientConfigService {
             Ok(exec) => {
                 let mut out = preview_outcome;
                 if let TemplateExecutionResult::Applied { backup_path, .. } = exec.execution {
+                    let backup_policy = self.get_backup_policy(&options.client_id).await?;
+                    self.enforce_backup_retention(&options.client_id, &backup_policy)
+                        .await?;
                     out.applied = true;
                     out.backup_path = backup_path;
                 }
@@ -210,16 +229,27 @@ impl ClientConfigService {
             }
             Err(ConfigError::FileOperationError(msg)) if msg.to_ascii_lowercase().contains("locked") => {
                 // Only Cherry triggers delayed write
-                let template = self.get_client_template(&options.client_id).await?;
-                let is_cherry = template.storage.kind == crate::clients::models::StorageKind::Kv
-                    && template.storage.adapter.as_deref() == Some("cherry_kv");
+                let state = self.fetch_state(&options.client_id).await?;
+                let is_cherry = state
+                    .as_ref()
+                    .and_then(|s| s.storage_kind())
+                    .map(|k| k == "kv")
+                    .unwrap_or(false)
+                    && state
+                        .as_ref()
+                        .and_then(|s| s.storage_adapter())
+                        .map(|a| a == "cherry_kv")
+                        .unwrap_or(false);
                 if !is_cherry {
                     return Err(ConfigError::FileOperationError(msg));
                 }
 
+                let config_path = self.resolved_config_path(&options.client_id).await?.ok_or_else(|| {
+                    ConfigError::PathResolutionError(format!("No config_path for client {}", options.client_id))
+                })?;
                 let merged_after = preview_outcome.preview.after.clone().unwrap_or_default();
                 let policy = self.get_backup_policy(&options.client_id).await?;
-                self.schedule_write_after_unlock(template, merged_after, policy)?;
+                self.schedule_write_after_unlock(options.client_id.clone(), config_path, merged_after, policy)?;
 
                 let mut out = preview_outcome;
                 out.scheduled = true;
@@ -247,13 +277,14 @@ impl ClientConfigService {
     fn summarize_servers_for_probe(
         raw: &str,
         format: TemplateFormat,
-        template: &ClientTemplate,
+        container_keys: &[String],
+        container_type: Option<&str>,
     ) -> Option<Vec<ProbeEntry>> {
         use serde_json::Value;
         let doc = Self::parse_by_format(format, raw)?;
         // Find container
         let mut container: Option<Value> = None;
-        for key in &template.config_mapping.container_keys {
+        for key in container_keys {
             if let Some(v) = crate::clients::utils::get_nested_value(&doc, key) {
                 container = Some(v.clone());
                 break;
@@ -262,8 +293,9 @@ impl ClientConfigService {
         let container = container?;
 
         let mut out: Vec<ProbeEntry> = Vec::new();
-        match (template.config_mapping.container_type, container) {
-            (crate::clients::models::ContainerType::ObjectMap, Value::Object(map)) => {
+        let is_array = container_type == Some("array");
+        match (is_array, container) {
+            (false, Value::Object(map)) => {
                 for (name, v) in map {
                     let transport = v.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
                     let has_args = v.get("args").is_some();
@@ -284,7 +316,7 @@ impl ClientConfigService {
                     });
                 }
             }
-            (crate::clients::models::ContainerType::Array, Value::Array(items)) => {
+            (true, Value::Array(items)) => {
                 for v in items {
                     let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
                     let transport = v.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();

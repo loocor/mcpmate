@@ -69,7 +69,6 @@ export function ClientsPage() {
 		defaultView: storedDefaultView,
 		validViews: ["grid", "list"],
 	});
-	const viewMode = view;
 
 	const { filter, setFilter } = useUrlFilter({
 		paramName: "filter",
@@ -168,6 +167,29 @@ export function ClientsPage() {
 		return t("entity.badge.allowed", { defaultValue: "Allowed" });
 	};
 
+	const getClientAttentionClasses = (approvalStatus?: string | null) => {
+		if (approvalStatus === "pending") {
+			return {
+				cardClassName:
+					"border-amber-300/90 hover:border-amber-400 dark:border-amber-700/80 dark:hover:border-amber-600",
+				titleClassName: "text-amber-700 dark:text-amber-400",
+			};
+		}
+
+		if (approvalStatus === "rejected" || approvalStatus === "suspended") {
+			return {
+				cardClassName:
+					"border-red-300/90 hover:border-red-400 dark:border-red-800/80 dark:hover:border-red-700",
+				titleClassName: "text-red-700 dark:text-red-400",
+			};
+		}
+
+		return {
+			cardClassName: "",
+			titleClassName: "",
+		};
+	};
+
 	const [sortedClients, setSortedClients] = React.useState<ClientToolbarEntity[]>(
 		filteredClientsAsEntities,
 	);
@@ -235,6 +257,7 @@ export function ClientsPage() {
 		});
 		const governanceStatus = getGovernanceStatus(client);
 		const governanceLabel = getGovernanceStatusLabel(governanceStatus);
+		const attentionClasses = getClientAttentionClasses(client.approval_status);
 
 		const recordKindLabel = client.governed_by_default_policy
 			? t("entity.badge.defaultPolicy", { defaultValue: "Default Policy" })
@@ -280,7 +303,7 @@ export function ClientsPage() {
 						manageMutation.mutate({ identifier, managed: checked }),
 					disabled: manageMutation.isPending,
 				}}
-				className={governanceStatus === "pending" ? "opacity-75" : ""}
+				className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName}`.trim()}
 				onClick={() => navigate(`/clients/${encodeURIComponent(identifier)}`)}
 			/>
 		);
@@ -324,6 +347,7 @@ export function ClientsPage() {
 		];
 
 		const governanceStatus = getGovernanceStatus(client);
+		const attentionClasses = getClientAttentionClasses(client.approval_status);
 
 		const allowedLabel = t("entity.badge.allowed", { defaultValue: "Allowed" });
 		const pendingLabel = t("entity.badge.pending", { defaultValue: "Pending" });
@@ -413,7 +437,8 @@ export function ClientsPage() {
 				}}
 				avatarShape="rounded"
 				stats={statItems}
-				className={governanceStatus === "pending" ? "opacity-75" : ""}
+				className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName}`.trim()}
+				titleClassName={attentionClasses.titleClassName}
 				topRightBadge={
 					quickLinks.length > 0 ? (
 						<>
@@ -567,7 +592,7 @@ export function ClientsPage() {
 
 	// Prepare loading skeleton
 	const loadingSkeleton =
-		viewMode === "grid"
+		view === "grid"
 			? Array.from({ length: 6 }, (_, index) => (
 				<Card key={`client-skeleton-grid-${index}`} className="p-4">
 					<div className="flex items-start gap-3">
@@ -808,7 +833,7 @@ export function ClientsPage() {
 				loadingSkeleton={loadingSkeleton}
 				emptyState={sortedClients.length === 0 ? emptyState : undefined}
 			>
-				{viewMode === "grid"
+				{view === "grid"
 					? sortedClients.map((client) => {
 						const sourceClient = clientsByIdentifier.get(client.identifier);
 						return sourceClient ? renderClientCard(sourceClient) : null;
@@ -826,6 +851,9 @@ export function ClientsPage() {
 				onSuccess={(identifier) => {
 					void refetch();
 					navigate(`/clients/${encodeURIComponent(identifier)}`);
+				}}
+				onDeleteSuccess={() => {
+					setEditingClient(null);
 				}}
 			/>
 		</PageLayout>

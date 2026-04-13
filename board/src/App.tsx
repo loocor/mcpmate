@@ -42,7 +42,12 @@ function App() {
 	return (
 		<QueryClientProvider client={queryClient}>
 			<LanguageSynchronizer />
-			<BrowserRouter>
+			<BrowserRouter
+				future={{
+					v7_startTransition: true,
+					v7_relativeSplatPath: true,
+				}}
+			>
 				<Routes>
 					<Route path="oauth/callback" element={<OAuthCallbackPage />} />
 					<Route path="/" element={<Layout />}>

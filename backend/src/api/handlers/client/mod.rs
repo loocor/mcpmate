@@ -15,4 +15,4 @@ pub use handlers::{
     config_apply, config_details, config_import, config_restore, get_capability_config, list, update_capability_config,
     update_settings,
 };
-pub use manage::manage;
+pub use manage::{delete_client, manage};

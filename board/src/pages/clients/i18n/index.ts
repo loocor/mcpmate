@@ -258,11 +258,26 @@ export const clientsTranslations = {
 								"These meta fields are stored for display and guidance; the old template files remain only as compatibility seeds.",
 						},
 					},
-					buttons: { cancel: "Cancel", create: "Create Record", save: "Save Changes" },
+					buttons: { cancel: "Cancel", create: "Create Record", save: "Save Changes", delete: "Delete" },
+					confirmDelete: {
+						title: "Delete Client Record",
+						description: "Are you sure you want to delete this client record? This action cannot be undone.",
+						confirm: "Delete",
+						cancel: "Cancel",
+					},
 					notifications: {
 						createSuccess: { title: "Client record created", message: "The client record has been created." },
 						editSuccess: { title: "Client record updated", message: "The client record has been updated." },
+						deleteSuccess: { title: "Client record deleted", message: "The client record has been deleted." },
+						createBackupPolicyFailed: {
+							message:
+								"Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
+						},
 						saveFailed: { title: "Unable to save client record" },
+						deleteFailed: {
+							title: "Unable to delete client record",
+							messageMissingIdentifier: "Client identifier is missing.",
+						},
 					},
 				},
 				configuration: {
@@ -451,6 +466,7 @@ export const clientsTranslations = {
 					delete: "Delete",
 				},
 				empty: "No backups.",
+				emptyDisabledByPolicy: "Backups are currently disabled by system policy.",
 				bulk: {
 					title: "Delete Selected Backups",
 					description:
@@ -480,7 +496,7 @@ export const clientsTranslations = {
 				deleteDescription:
 					"Are you sure you want to delete this backup? This action cannot be undone.",
 				restoreDescription:
-					"Restore configuration from the selected backup? Current config may be overwritten.",
+					"Restore the local client configuration file from the selected backup? MCPMate management mode and capability settings stay unchanged.",
 				deleteLabel: "Delete",
 				restoreLabel: "Restore",
 				cancelLabel: "Cancel",
@@ -872,11 +888,25 @@ export const clientsTranslations = {
 							description: "这些元数据字段仅用于展示与提示；旧模板文件现在只保留兼容性 seed 作用。",
 						},
 					},
-					buttons: { cancel: "取消", create: "创建记录", save: "保存更改" },
+					buttons: { cancel: "取消", create: "创建记录", save: "保存更改", delete: "删除" },
+					confirmDelete: {
+						title: "删除客户端记录",
+						description: "确定要删除这条客户端记录吗？此操作不可撤销。",
+						confirm: "删除",
+						cancel: "取消",
+					},
 					notifications: {
 						createSuccess: { title: "客户端记录已创建", message: "客户端记录已创建。" },
 						editSuccess: { title: "客户端记录已更新", message: "客户端记录已更新。" },
+						deleteSuccess: { title: "客户端记录已删除", message: "客户端记录已删除。" },
+						createBackupPolicyFailed: {
+							message: "客户端记录已创建，但初始化备份策略失败。你可以稍后在备份设置中重试。",
+						},
 						saveFailed: { title: "无法保存客户端记录" },
+						deleteFailed: {
+							title: "无法删除客户端记录",
+							messageMissingIdentifier: "缺少客户端标识符。",
+						},
 					},
 				},
 				configuration: {
@@ -1053,6 +1083,7 @@ export const clientsTranslations = {
 					delete: "删除",
 				},
 				empty: "暂无备份。",
+				emptyDisabledByPolicy: "系统策略当前已禁用备份。",
 				bulk: {
 					title: "删除备份",
 					description: "确定要删除 {{count}} 个备份吗？该操作不可撤销。",
@@ -1079,7 +1110,8 @@ export const clientsTranslations = {
 				deleteTitle: "删除备份",
 				restoreTitle: "恢复备份",
 				deleteDescription: "确定要删除该备份吗？此操作不可撤销。",
-				restoreDescription: "要从选定备份恢复配置吗？当前配置可能被覆盖。",
+				restoreDescription:
+					"要从选定备份恢复本地客户端配置文件吗？MCPMate 的管理模式与能力设置不会改变。",
 				deleteLabel: "删除",
 				restoreLabel: "恢复",
 				cancelLabel: "取消",
@@ -1471,11 +1503,26 @@ export const clientsTranslations = {
 							description: "これらのメタデータは表示とガイダンスのために保存されます。旧テンプレートファイルは互換性 seed としてのみ残ります。",
 						},
 					},
-					buttons: { cancel: "キャンセル", create: "レコードを作成", save: "変更を保存" },
+					buttons: { cancel: "キャンセル", create: "レコードを作成", save: "変更を保存", delete: "削除" },
+					confirmDelete: {
+						title: "クライアントレコードを削除",
+						description: "このクライアントレコードを削除してもよろしいですか？この操作は元に戻せません。",
+						confirm: "削除",
+						cancel: "キャンセル",
+					},
 					notifications: {
 						createSuccess: { title: "クライアントレコードを作成しました", message: "クライアントレコードを作成しました。" },
 						editSuccess: { title: "クライアントレコードを更新しました", message: "クライアントレコードを更新しました。" },
+						deleteSuccess: { title: "クライアントレコードを削除しました", message: "クライアントレコードを削除しました。" },
+						createBackupPolicyFailed: {
+							message:
+								"クライアントレコードは作成されましたが、初期バックアップポリシーの適用に失敗しました。後でバックアップ設定から再試行できます。",
+						},
 						saveFailed: { title: "クライアントレコードを保存できませんでした" },
+						deleteFailed: {
+							title: "クライアントレコードを削除できません",
+							messageMissingIdentifier: "クライアント識別子がありません。",
+						},
 					},
 				},
 				configuration: {
@@ -1661,6 +1708,7 @@ export const clientsTranslations = {
 					delete: "削除",
 				},
 				empty: "バックアップはありません。",
+				emptyDisabledByPolicy: "システムポリシーにより現在バックアップは無効です。",
 				bulk: {
 					title: "選択したバックアップを削除",
 					description:
@@ -1691,7 +1739,7 @@ export const clientsTranslations = {
 				deleteDescription:
 					"このバックアップを削除しますか？この操作は元に戻せません。",
 				restoreDescription:
-					"選択したバックアップから設定を復元しますか？現在の設定は上書きされる可能性があります。",
+					"選択したバックアップからローカルのクライアント設定ファイルを復元しますか？MCPMate の管理モードと能力設定は変更されません。",
 				deleteLabel: "削除",
 				restoreLabel: "復元",
 				cancelLabel: "キャンセル",
