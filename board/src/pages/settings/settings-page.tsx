@@ -320,7 +320,7 @@ export function SettingsPage() {
 		"localhost",
 	);
 	const [localhostRuntimeMode, setLocalhostRuntimeMode] =
-		useState<LocalhostRuntimeMode>("service");
+		useState<LocalhostRuntimeMode>("desktop_managed");
 	const [remoteBaseUrl, setRemoteBaseUrl] = useState("");
 	const [localService, setLocalService] = useState<
 		DesktopCoreSourceResponse["localService"]
@@ -542,7 +542,7 @@ export function SettingsPage() {
 				setMcpPort(mcp);
 				persistLocalPorts(api, mcp);
 				setCoreSource("localhost");
-				setLocalhostRuntimeMode("service");
+				setLocalhostRuntimeMode("desktop_managed");
 				setRemoteBaseUrl("");
 				setLocalService((current) => ({
 					...current,
@@ -814,7 +814,7 @@ export function SettingsPage() {
 			| "deny"
 			| "review"
 			| "allow"
-			| undefined) ?? "allow";
+			| undefined) ?? "review";
 
 	const handleClientDefaultModeSegmentChange = useCallback(
 		(value: string) => {

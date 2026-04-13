@@ -168,8 +168,7 @@ pub async fn resolve_direct_surface_value(
         }
     }
 
-    strip_server_prefix(kind, server_name, presented_value)
-        .unwrap_or_else(|| presented_value.to_string())
+    strip_server_prefix(kind, server_name, presented_value).unwrap_or_else(|| presented_value.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,8 +1,3 @@
-#[cfg(feature = "kv-cherry")]
-use crate::clients::adapters::cherry_kv::CherryKvStorage;
-#[cfg(feature = "warp-sqlite")]
-use crate::clients::adapters::warp_sqlite::WarpSqliteStorage;
-
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     BackupPolicySetting, ClientTemplate, ConfigMode, ContainerType, ServerTemplateInput, StorageKind, TemplateFormat,
@@ -75,7 +70,7 @@ impl TemplateEngine {
         engine.register_renderer(crate::clients::renderer::StructuredRenderer::new(TemplateFormat::Json5));
         engine.register_renderer(crate::clients::renderer::StructuredRenderer::new(TemplateFormat::Toml));
         engine.register_renderer(crate::clients::renderer::StructuredRenderer::new(TemplateFormat::Yaml));
-        engine.register_storage(Arc::new(FileConfigStorage::new(config_source)));
+        engine.register_storage(Arc::new(FileConfigStorage::new()));
         engine
     }
 
@@ -126,55 +121,54 @@ impl TemplateEngine {
                 .cloned()
                 .ok_or_else(|| ConfigError::StorageAdapterMissing("file".into())),
             StorageKind::Kv => {
-                let adapter = template.storage.adapter.as_deref().unwrap_or("").to_ascii_lowercase();
-                match adapter.as_str() {
-                    "cherry_kv" => {
-                        #[cfg(feature = "kv-cherry")]
-                        {
-                            Ok(Arc::new(CherryKvStorage::new(self.config_source.clone())))
-                        }
-                        #[cfg(not(feature = "kv-cherry"))]
-                        {
-                            Err(ConfigError::StorageAdapterMissing(
-                                "cherry_kv adapter requires kv-cherry feature".into(),
-                            ))
-                        }
-                    }
-                    other => Err(ConfigError::StorageAdapterMissing(format!(
-                        "kv adapter not supported: {}",
-                        other
-                    ))),
-                }
+                Err(ConfigError::StorageAdapterMissing(
+                    "kv storage is no longer supported".into(),
+                ))
             }
             StorageKind::Custom => {
-                let adapter = template.storage.adapter.as_deref().unwrap_or("").to_ascii_lowercase();
-                match adapter.as_str() {
-                    "warp_sqlite" => {
-                        #[cfg(feature = "warp-sqlite")]
-                        {
-                            Ok(Arc::new(WarpSqliteStorage::new(self.config_source.clone())))
-                        }
-                        #[cfg(not(feature = "warp-sqlite"))]
-                        {
-                            Err(ConfigError::StorageAdapterMissing(
-                                "warp_sqlite adapter requires warp-sqlite feature".into(),
-                            ))
-                        }
-                    }
-                    other => Err(ConfigError::StorageAdapterMissing(format!(
-                        "custom adapter not supported: {}",
-                        other
-                    ))),
-                }
+                Err(ConfigError::StorageAdapterMissing(
+                    "custom storage is no longer supported".into(),
+                ))
             }
         }
     }
 
-    pub(crate) fn storage_for_template(
+    /// Get storage adapter from persisted client state fields
+    pub(crate) fn storage_for_client(
         &self,
-        template: &ClientTemplate,
+        state: &crate::clients::service::core::ClientStateRow,
     ) -> ConfigResult<DynConfigStorage> {
-        self.resolve_storage(template)
+        let storage_kind = match state.storage_kind() {
+            Some(kind) => kind,
+            None if state.has_local_config_target() => "file",
+            None => {
+                return Err(ConfigError::StorageAdapterMissing(
+                    "storage_kind not set".into(),
+                ));
+            }
+        };
+
+        match storage_kind {
+            "file" => self
+                .storages
+                .get(&StorageKind::File)
+                .cloned()
+                .ok_or_else(|| ConfigError::StorageAdapterMissing("file".into())),
+            "kv" => {
+                Err(ConfigError::StorageAdapterMissing(
+                    "kv storage is no longer supported".into(),
+                ))
+            }
+            "custom" => {
+                Err(ConfigError::StorageAdapterMissing(
+                    "custom storage is no longer supported".into(),
+                ))
+            }
+            other => Err(ConfigError::StorageAdapterMissing(format!(
+                "storage kind not supported: {}",
+                other
+            ))),
+        }
     }
 
     fn current_platform() -> &'static str {
@@ -217,6 +211,15 @@ impl TemplateEngine {
         let renderer = self.resolve_renderer(&template)?;
         let storage = self.resolve_storage(&template)?;
 
+        // Get config_path from config_source
+        let platform = Self::current_platform();
+        let config_path = self.config_source
+            .get_config_path(request.client_id, platform)
+            .await?
+            .ok_or_else(|| ConfigError::PathResolutionError(
+                format!("No config_path for client {}", request.client_id)
+            ))?;
+
         let fragment = match request.mode {
             ConfigMode::Native => self.render_native_config(&template, request.servers, request.warnings)?,
             ConfigMode::Managed => self.render_managed_config(
@@ -227,14 +230,14 @@ impl TemplateEngine {
             )?,
         };
 
-        let existing = storage.read(&template).await?.unwrap_or_default();
+        let existing = storage.read(&config_path).await?.unwrap_or_default();
         let merged = renderer.merge(&existing, &fragment, &template)?;
 
         if request.dry_run {
             let diff = renderer.diff(&existing, &merged)?;
             Ok(TemplateExecutionResult::DryRun { diff, content: merged })
         } else {
-            let backup_path = storage.write_atomic(&template, &merged, request.backup_policy).await?;
+            let backup_path = storage.write_atomic(request.client_id, &config_path, &merged, request.backup_policy).await?;
             Ok(TemplateExecutionResult::Applied {
                 backup_path,
                 content: merged,

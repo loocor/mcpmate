@@ -5,8 +5,7 @@ use async_trait::async_trait;
 use tokio::fs;
 
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::{BackupPolicySetting, ClientTemplate, StorageKind};
-use crate::clients::source::ClientConfigSource;
+use crate::clients::models::{BackupPolicySetting, StorageKind};
 use crate::system::paths::get_path_service;
 
 pub type DynConfigStorage = Arc<dyn ConfigStorage>;
@@ -27,84 +26,60 @@ pub trait ConfigStorage: Send + Sync {
 
     async fn read(
         &self,
-        template: &ClientTemplate,
+        config_path: &str,
     ) -> ConfigResult<Option<String>>;
 
     async fn write_atomic(
         &self,
-        template: &ClientTemplate,
+        identifier: &str,
+        config_path: &str,
         content: &str,
         policy: &BackupPolicySetting,
     ) -> ConfigResult<Option<String>>;
 
     async fn list_backups(
         &self,
-        template: &ClientTemplate,
+        identifier: &str,
+        config_path: &str,
     ) -> ConfigResult<Vec<BackupFile>>;
 
     async fn delete_backup(
         &self,
-        template: &ClientTemplate,
+        identifier: &str,
+        config_path: &str,
         backup_name: &str,
     ) -> ConfigResult<()>;
 
     async fn restore_backup(
         &self,
-        template: &ClientTemplate,
+        identifier: &str,
+        config_path: &str,
         backup_name: &str,
         policy: &BackupPolicySetting,
     ) -> ConfigResult<Option<String>>;
 }
 
 /// File-based configuration storage adapter
-pub struct FileConfigStorage {
-    config_source: Arc<dyn ClientConfigSource>,
+pub struct FileConfigStorage;
+
+impl Default for FileConfigStorage {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FileConfigStorage {
-    pub fn new(config_source: Arc<dyn ClientConfigSource>) -> Self {
-        Self { config_source }
-    }
-
-    fn current_platform() -> &'static str {
-        #[cfg(target_os = "macos")]
-        {
-            "macos"
-        }
-        #[cfg(target_os = "windows")]
-        {
-            "windows"
-        }
-        #[cfg(target_os = "linux")]
-        {
-            "linux"
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        {
-            "unknown"
-        }
+    pub fn new() -> Self {
+        Self
     }
 
     async fn resolve_target_path(
         &self,
-        template: &ClientTemplate,
+        config_path: &str,
     ) -> ConfigResult<PathBuf> {
-        let platform = Self::current_platform();
-        let resolved = self
-            .config_source
-            .get_config_path(&template.identifier, platform)
-            .await?;
-
-        let Some(path) = resolved else {
-            return Err(ConfigError::PathResolutionError(format!(
-                "Failed to resolve configuration path for client {}",
-                template.identifier
-            )));
-        };
-
         let path_service = get_path_service();
         path_service
-            .resolve_user_path(&path)
+            .resolve_user_path(config_path)
             .map_err(|err| ConfigError::PathResolutionError(err.to_string()))
     }
 }
@@ -117,9 +92,9 @@ impl ConfigStorage for FileConfigStorage {
 
     async fn read(
         &self,
-        template: &ClientTemplate,
+        config_path: &str,
     ) -> ConfigResult<Option<String>> {
-        let path = match self.resolve_target_path(template).await {
+        let path = match self.resolve_target_path(config_path).await {
             Ok(path) => path,
             Err(ConfigError::PathResolutionError(_)) => return Ok(None),
             Err(err) => return Err(err),
@@ -134,16 +109,21 @@ impl ConfigStorage for FileConfigStorage {
 
     async fn write_atomic(
         &self,
-        template: &ClientTemplate,
+        identifier: &str,
+        config_path: &str,
         content: &str,
         policy: &BackupPolicySetting,
     ) -> ConfigResult<Option<String>> {
-        let path = self.resolve_target_path(template).await?;
+        let path = self.resolve_target_path(config_path).await?;
 
         // Normalize JSON forward slashes to avoid "\/" in on-disk files.
         // Serde may legally emit escaped slashes; some editors persist them literally.
         // We prefer human-friendly URLs in configs.
         let normalized = content.replace("\\/", "/");
+
+        if self.read(config_path).await?.as_deref() == Some(normalized.as_str()) {
+            return Ok(None);
+        }
 
         if !policy.should_backup() {
             let path_service = get_path_service();
@@ -160,15 +140,16 @@ impl ConfigStorage for FileConfigStorage {
         let retention = policy.retention_limit();
         let max_backups = retention.unwrap_or(MAX_DEFAULT_BACKUPS);
 
-        self.write_with_custom_limit(&path, &normalized, max_backups, &template.identifier)
+        self.write_with_custom_limit(&path, &normalized, max_backups, identifier)
             .await
     }
 
     async fn list_backups(
         &self,
-        template: &ClientTemplate,
+        identifier: &str,
+        config_path: &str,
     ) -> ConfigResult<Vec<BackupFile>> {
-        let target = match self.resolve_target_path(template).await {
+        let target = match self.resolve_target_path(config_path).await {
             Ok(path) => path,
             Err(ConfigError::PathResolutionError(_)) => return Ok(Vec::new()),
             Err(err) => return Err(err),
@@ -176,7 +157,7 @@ impl ConfigStorage for FileConfigStorage {
 
         let path_service = get_path_service();
         let entries = path_service
-            .list_backups_for(Some(&template.identifier), &target)
+            .list_backups_for(Some(identifier), &target)
             .await
             .map_err(|err| ConfigError::FileOperationError(err.to_string()))?;
 
@@ -211,13 +192,14 @@ impl ConfigStorage for FileConfigStorage {
 
     async fn delete_backup(
         &self,
-        template: &ClientTemplate,
+        identifier: &str,
+        config_path: &str,
         backup_name: &str,
     ) -> ConfigResult<()> {
-        let target = self.resolve_target_path(template).await?;
+        let target = self.resolve_target_path(config_path).await?;
         let path_service = get_path_service();
         let backup_path = path_service
-            .backup_path_for(Some(&template.identifier), &target, backup_name)
+            .backup_path_for(Some(identifier), &target, backup_name)
             .map_err(|err| ConfigError::FileOperationError(err.to_string()))?;
 
         if !backup_path.exists() {
@@ -231,26 +213,27 @@ impl ConfigStorage for FileConfigStorage {
 
     async fn restore_backup(
         &self,
-        template: &ClientTemplate,
+        identifier: &str,
+        config_path: &str,
         backup_name: &str,
         policy: &BackupPolicySetting,
     ) -> ConfigResult<Option<String>> {
-        let target = self.resolve_target_path(template).await?;
+        let target = self.resolve_target_path(config_path).await?;
         let path_service = get_path_service();
         let backup_path = path_service
-            .backup_path_for(Some(&template.identifier), &target, backup_name)
+            .backup_path_for(Some(identifier), &target, backup_name)
             .map_err(|err| ConfigError::FileOperationError(err.to_string()))?;
 
         if !backup_path.exists() {
             return Err(ConfigError::FileOperationError(format!(
                 "Backup {} not found for client {}",
-                backup_name, template.identifier
+                backup_name, identifier
             )));
         }
 
         let content = fs::read_to_string(&backup_path).await.map_err(ConfigError::IoError)?;
 
-        self.write_atomic(template, &content, policy).await
+        self.write_atomic(identifier, config_path, &content, policy).await
     }
 }
 

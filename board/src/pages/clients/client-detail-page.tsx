@@ -69,6 +69,7 @@ import {
 	TabsTrigger,
 } from "../../components/ui/tabs";
 import { auditApi, clientsApi, configSuitsApi, serversApi } from "../../lib/api";
+import { mapDashboardSettingsToClientBackupPolicy } from "../../lib/client-backup-policy";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
@@ -257,6 +258,7 @@ export function ClientDetailPage() {
 	const showClientLiveLogs = useAppStore(
 		(state) => state.dashboardSettings.showClientLiveLogs,
 	);
+	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const clientDefaultMode = useAppStore(
 		(state) => state.dashboardSettings.clientDefaultMode,
 	);
@@ -276,12 +278,16 @@ export function ClientDetailPage() {
 		() => clientsData?.client?.find((client) => client.identifier === identifier),
 		[clientsData?.client, identifier],
 	);
+	const supportsBackupOperations =
+		Boolean(currentClient) &&
+		currentClient?.writable_config !== false &&
+		currentClient?.template?.managed_source !== "runtime_active_client";
 	const detailTabs = useMemo(
 		() =>
-			currentClient?.writable_config === false
+			!supportsBackupOperations
 				? ["overview", "configuration"]
 				: ["overview", "configuration", "backups"],
-		[currentClient?.writable_config],
+		[supportsBackupOperations],
 	);
 	const { activeTab: tabValue, setActiveTab: setTabValue } = useUrlTab({
 		paramName: "tab",
@@ -363,7 +369,7 @@ export function ClientDetailPage() {
 	} = useQuery({
 		queryKey: ["client-backups", identifier],
 		queryFn: () => clientsApi.listBackups(identifier || undefined),
-		enabled: Boolean(identifier && currentClient?.writable_config !== false),
+		enabled: Boolean(identifier && supportsBackupOperations),
 	});
 
 	// Fetch eligible servers for Unify direct exposure
@@ -557,6 +563,7 @@ export function ClientDetailPage() {
 	const managedTransportSupported = (configDetails?.supported_transports?.length ?? 0) > 0;
 	const canWriteClientConfig = configDetails?.writable_config !== false;
 	const isPendingApproval = configDetails?.approval_status === "pending";
+	const isRejectedClient = isDeniedApprovalStatus(configDetails?.approval_status);
 	const canSaveManagementSettings = !isPendingApproval;
 	const canApplyTransparentConfig =
 		canSaveManagementSettings &&
@@ -1159,7 +1166,7 @@ export function ClientDetailPage() {
 	const { data: policyData, refetch: refetchPolicy } = useQuery({
 		queryKey: ["client-policy", identifier],
 		queryFn: () => clientsApi.getBackupPolicy(identifier || ""),
-		enabled: !!identifier,
+		enabled: Boolean(identifier && supportsBackupOperations),
 	});
 
 	const reviewMutation = useMutation({
@@ -1259,6 +1266,9 @@ export function ClientDetailPage() {
 					mode,
 					selected_config: buildApplySelectedConfig(capabilityData),
 					preview,
+					backup_policy: preview
+						? undefined
+						: mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
 				});
 				return { data: data ?? null, preview, clientConfigApplied: true };
 			}
@@ -1272,6 +1282,9 @@ export function ClientDetailPage() {
 				mode,
 				selected_config: selectedConfigForManagedApply,
 				preview,
+				backup_policy: preview
+					? undefined
+					: mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
 			});
 			return { data: data ?? null, preview, clientConfigApplied: true };
 		},
@@ -1493,7 +1506,7 @@ export function ClientDetailPage() {
 					defaultValue: "Restored",
 				}),
 				t("detail.notifications.restored.message", {
-					defaultValue: "Configuration restored from backup",
+					defaultValue: "Local client configuration restored from backup",
 				}),
 			);
 			refetchDetails();
@@ -1594,13 +1607,15 @@ export function ClientDetailPage() {
 	});
 
 	const [policyLabel, setPolicyLabel] = useState<string>("keep_n");
-	const [policyLimit, setPolicyLimit] = useState<number | undefined>(30);
+	const [policyLimit, setPolicyLimit] = useState<number | undefined>(5);
 	useEffect(() => {
 		if (policyData) {
 			setPolicyLabel(policyData.policy || "keep_n");
 			setPolicyLimit(policyData.limit ?? undefined);
 		}
 	}, [policyData]);
+	const backupsDisabledByPolicy =
+		visibleBackups.length === 0 && (policyData?.policy === "off" || policyData?.policy === "none");
 
 	// Heuristic extract current servers from config content for preview
 	const currentServers = useMemo(() => {
@@ -1645,7 +1660,7 @@ export function ClientDetailPage() {
 								{t("detail.badges.pendingReview", { defaultValue: "Pending Review" })}
 							</Badge>
 						)}
-						{isDeniedApprovalStatus(configDetails?.approval_status) && (
+						{isRejectedClient && (
 							<Badge variant="destructive">
 								{t("detail.badges.rejected", { defaultValue: "Rejected" })}
 							</Badge>
@@ -2843,9 +2858,13 @@ export function ClientDetailPage() {
 								</CapsuleStripeList>
 							) : (
 								<div className="text-slate-500 text-sm">
-									{t("detail.backups.empty", {
-										defaultValue: "No backups.",
-									})}
+									{backupsDisabledByPolicy
+										? t("detail.backups.emptyDisabledByPolicy", {
+											defaultValue: "Backups are currently disabled by system policy.",
+										})
+										: t("detail.backups.empty", {
+											defaultValue: "No backups.",
+										})}
 								</div>
 							)}
 						</CardContent>
@@ -2872,7 +2891,7 @@ export function ClientDetailPage() {
 						})
 						: t("detail.confirm.restoreDescription", {
 							defaultValue:
-								"Restore configuration from the selected backup? Current config may be overwritten.",
+								"Restore the local client configuration file from the selected backup? MCPMate management mode and capability settings stay unchanged.",
 						})
 				}
 				confirmLabel={
@@ -3167,6 +3186,9 @@ export function ClientDetailPage() {
 				onSuccess={() => {
 					void refetchDetails();
 					qc.invalidateQueries({ queryKey: ["clients"] });
+				}}
+				onDeleteSuccess={() => {
+					navigate("/clients");
 				}}
 			/>
 

@@ -95,7 +95,7 @@ pub async fn set_backup_policy(
     Json(request): Json<ClientBackupPolicySetReq>,
 ) -> Result<Json<ClientBackupPolicyResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-    let policy = parse_policy(&request.policy)?;
+    let policy = parse_policy_payload(&request.policy)?;
     let updated = service
         .set_backup_policy(&request.identifier, policy)
         .await
@@ -122,7 +122,7 @@ pub async fn set_backup_policy(
     })))
 }
 
-fn parse_policy(payload: &ClientBackupPolicyPayload) -> Result<BackupPolicySetting, StatusCode> {
+pub(crate) fn parse_policy_payload(payload: &ClientBackupPolicyPayload) -> Result<BackupPolicySetting, StatusCode> {
     let policy = payload.policy.trim().to_lowercase();
     match policy.as_str() {
         "keep_last" => Ok(BackupPolicySetting {
@@ -134,7 +134,7 @@ fn parse_policy(payload: &ClientBackupPolicyPayload) -> Result<BackupPolicySetti
             limit: None,
         }),
         "keep_n" => {
-            let limit = payload.limit.unwrap_or(30);
+            let limit = payload.limit.unwrap_or(5);
             if limit == 0 {
                 return Err(StatusCode::BAD_REQUEST);
             }
@@ -225,14 +225,14 @@ mod tests {
 
     #[test]
     fn parses_keep_last_and_off() {
-        let last = parse_policy(&ClientBackupPolicyPayload {
+        let last = parse_policy_payload(&ClientBackupPolicyPayload {
             policy: "keep_last".into(),
             limit: None,
         })
         .expect("keep_last");
         assert_eq!(last.policy, BackupPolicy::KeepLast);
 
-        let off = parse_policy(&ClientBackupPolicyPayload {
+        let off = parse_policy_payload(&ClientBackupPolicyPayload {
             policy: "off".into(),
             limit: Some(3),
         })
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn parses_keep_n_variants() {
-        let explicit = parse_policy(&ClientBackupPolicyPayload {
+        let explicit = parse_policy_payload(&ClientBackupPolicyPayload {
             policy: "keep_n".into(),
             limit: Some(7),
         })
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(explicit.policy, BackupPolicy::KeepN);
         assert_eq!(explicit.limit, Some(7));
 
-        let shorthand = parse_policy(&ClientBackupPolicyPayload {
+        let shorthand = parse_policy_payload(&ClientBackupPolicyPayload {
             policy: "keep_5".into(),
             limit: None,
         })
@@ -262,14 +262,14 @@ mod tests {
 
     #[test]
     fn rejects_invalid_keep_alias() {
-        let err = parse_policy(&ClientBackupPolicyPayload {
+        let err = parse_policy_payload(&ClientBackupPolicyPayload {
             policy: "keep_0".into(),
             limit: None,
         })
         .expect_err("invalid suffix");
         assert_eq!(err, StatusCode::BAD_REQUEST);
 
-        let err = parse_policy(&ClientBackupPolicyPayload {
+        let err = parse_policy_payload(&ClientBackupPolicyPayload {
             policy: "keep_invalid".into(),
             limit: None,
         })

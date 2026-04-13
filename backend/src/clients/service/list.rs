@@ -9,8 +9,12 @@ impl ClientConfigService {
     /// List known clients enriched with detection and filesystem information
     pub async fn list_clients(
         &self,
-        _force_detect: bool,
+        force_detect: bool,
     ) -> ConfigResult<Vec<ClientDescriptor>> {
+        if force_detect {
+            self.template_source.reload().await?;
+        }
+
         let detected = self.detector.detect_installed_client().await?;
         let states = self.fetch_client_states().await?;
         let templates = self.template_source.list_client().await?;
