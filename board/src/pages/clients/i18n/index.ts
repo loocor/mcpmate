@@ -269,6 +269,10 @@ export const clientsTranslations = {
 						createSuccess: { title: "Client record created", message: "The client record has been created." },
 						editSuccess: { title: "Client record updated", message: "The client record has been updated." },
 						deleteSuccess: { title: "Client record deleted", message: "The client record has been deleted." },
+						createBackupPolicyFailed: {
+							message:
+								"Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
+						},
 						saveFailed: { title: "Unable to save client record" },
 						deleteFailed: {
 							title: "Unable to delete client record",
@@ -895,6 +899,9 @@ export const clientsTranslations = {
 						createSuccess: { title: "客户端记录已创建", message: "客户端记录已创建。" },
 						editSuccess: { title: "客户端记录已更新", message: "客户端记录已更新。" },
 						deleteSuccess: { title: "客户端记录已删除", message: "客户端记录已删除。" },
+						createBackupPolicyFailed: {
+							message: "客户端记录已创建，但初始化备份策略失败。你可以稍后在备份设置中重试。",
+						},
 						saveFailed: { title: "无法保存客户端记录" },
 						deleteFailed: {
 							title: "无法删除客户端记录",
@@ -1507,6 +1514,10 @@ export const clientsTranslations = {
 						createSuccess: { title: "クライアントレコードを作成しました", message: "クライアントレコードを作成しました。" },
 						editSuccess: { title: "クライアントレコードを更新しました", message: "クライアントレコードを更新しました。" },
 						deleteSuccess: { title: "クライアントレコードを削除しました", message: "クライアントレコードを削除しました。" },
+						createBackupPolicyFailed: {
+							message:
+								"クライアントレコードは作成されましたが、初期バックアップポリシーの適用に失敗しました。後でバックアップ設定から再試行できます。",
+						},
 						saveFailed: { title: "クライアントレコードを保存できませんでした" },
 						deleteFailed: {
 							title: "クライアントレコードを削除できません",
