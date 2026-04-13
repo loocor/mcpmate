@@ -151,6 +151,7 @@ Configure management mode and capability source for each AI client.
 - **All Proxy** keeps every enabled server behind the builtin UCAN tool flow.
 - **Server Direct** lets selected direct-eligible servers expose their full capabilities to the client in Unify mode.
 - **Capability-Level Direct** opens a client-scoped direct editor so selected tools can be exposed without switching the sidebar into the Profiles section.
+- All three paths share the same governance and verified-target checks before MCPMate writes client configuration.
 
 ### Market
 
@@ -261,6 +262,7 @@ MCPMate detects, configures, and extends multiple AI clients:
 - New and observed clients can be promoted into actively managed records without reworking compatibility templates.
 - Allow / Deny governance acts as a dedicated safety line: you can keep editing rollout expectations while still preventing a client from entering the allowed capability circle.
 - Writing to a client's own MCP configuration now requires a verified local config target. Saving governance state alone never creates or infers that target.
+- Governance fallback flows reject or defer unsafe writes so partial configuration updates do not leave clients in an inconsistent state.
 
 ### Browser Extension Import
 
