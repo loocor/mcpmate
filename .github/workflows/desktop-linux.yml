@@ -1,0 +1,111 @@
+name: Desktop (Linux Test)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundles:
+        description: "Tauri bundle types"
+        required: false
+        default: "appimage,deb"
+  push:
+    branches: [test/desktop-ci]
+    paths:
+      - ".github/workflows/desktop-linux.yml"
+      - "desktop/**"
+      - "board/**"
+      - "backend/**"
+  pull_request:
+    branches: [test/desktop-ci]
+    paths:
+      - ".github/workflows/desktop-linux.yml"
+      - "desktop/**"
+      - "board/**"
+      - "backend/**"
+
+concurrency:
+  group: desktop-linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            bundles: deb
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            file \
+            jq \
+            libayatana-appindicator3-dev \
+            libfuse2 \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            backend -> target
+            desktop/src-tauri -> target
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Tauri CLI
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: tauri-cli
+          locked: true
+
+      - name: Build Linux desktop artifacts
+        working-directory: desktop
+        env:
+          INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
+        run: |
+          chmod +x script/linux-build-tauri-release.sh
+          BUNDLES="${INPUT_BUNDLES:-${{ matrix.bundles }}}"
+          ./script/linux-build-tauri-release.sh \
+            --target "${{ matrix.target }}" \
+            --bundles "${BUNDLES}" \
+            --output-dir "${GITHUB_WORKSPACE}/desktop-linux-artifacts/${{ matrix.arch }}"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpmate-linux-${{ matrix.arch }}-bundles
+          path: |
+            desktop-linux-artifacts/${{ matrix.arch }}/*.AppImage
+            desktop-linux-artifacts/${{ matrix.arch }}/*.deb
+          if-no-files-found: error
+          retention-days: 14

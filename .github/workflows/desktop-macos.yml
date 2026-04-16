@@ -1,23 +1,24 @@
 # Builds the MCPMate Tauri desktop app for macOS (DMG), without codesigning or notarization.
 # Artifacts are suitable for local testing or internal distribution; Gatekeeper may warn on open.
 
-name: Desktop (macOS)
+name: Desktop (macOS Test)
 
 on:
   workflow_dispatch:
     inputs:
-      targets:
-        description: "Rust triples (comma-separated). Default builds Apple Silicon + Intel."
+      bundles:
+        description: "Tauri bundle types"
         required: false
-        default: "aarch64-apple-darwin,x86_64-apple-darwin"
+        default: "dmg"
   push:
-    branches: [main, dev]
+    branches: [test/desktop-ci]
     paths:
       - ".github/workflows/desktop-macos.yml"
       - "desktop/**"
       - "board/**"
       - "backend/**"
   pull_request:
+    branches: [test/desktop-ci]
     paths:
       - ".github/workflows/desktop-macos.yml"
       - "desktop/**"
@@ -25,7 +26,7 @@ on:
       - "backend/**"
 
 concurrency:
-  group: desktop-macos-${{ github.workflow }}-${{ github.ref }}
+  group: desktop-macos-test-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -33,6 +34,19 @@ env:
 
 jobs:
   build:
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-apple-darwin
+            artifact_name: mcpmate-macos-aarch64-dmg
+            artifact_path: desktop-macos-artifacts/*aarch64*.dmg
+          - arch: x64
+            target: x86_64-apple-darwin
+            artifact_name: mcpmate-macos-x64-dmg
+            artifact_path: desktop-macos-artifacts/*x64*.dmg
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
@@ -42,7 +56,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -67,20 +81,19 @@ jobs:
       - name: Build DMGs (no sign / no notarize)
         working-directory: desktop
         env:
-          INPUT_TARGETS: ${{ github.event.inputs.targets }}
+          INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
         run: |
           chmod +x script/macos-build-tauri-release.sh
-          TARGETS="${INPUT_TARGETS:-aarch64-apple-darwin,x86_64-apple-darwin}"
           ./script/macos-build-tauri-release.sh \
-            --targets "${TARGETS}" \
-            --bundles dmg \
+            --targets "${{ matrix.target }}" \
+            --bundles "${INPUT_BUNDLES:-dmg}" \
             --skip-notarize \
             --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts"
 
-      - name: Upload DMG artifacts
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mcpmate-macos-dmg
-          path: desktop-macos-artifacts/*.dmg
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
           if-no-files-found: error
           retention-days: 14
