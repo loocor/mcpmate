@@ -225,7 +225,7 @@ MCPMate/
 ├── board/             # React + Vite 管理 Dashboard
 ├── website/           # 营销站点和文档
 ├── desktop/           # Tauri 2 桌面应用
-├── extension/cherry/  # Cherry Studio 配置集成
+├── extension/         # 可选集成与浏览器导入辅助
 └── docs/              # 产品文档
 ```
 
@@ -234,7 +234,7 @@ MCPMate/
 - [Backend](./backend/README.md) — 架构、API 和开发指南
 - [Board](./board/README.md) — Dashboard 功能和 UI 开发
 - [Desktop](./desktop/README.md) — 桌面应用构建和配置
-- [Extension/Cherry](./extension/cherry/README.md) — Cherry Studio 集成
+- [Extension/Chrome](./extension/chrome/README.md) — 面向 `mcpmate://import/server` 的浏览器导入桥接
 
 ## 主要功能
 

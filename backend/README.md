@@ -42,6 +42,32 @@ Default ports:
 - REST API: `8080`
 - MCP endpoint: `8000`
 
+### Docker
+
+Build the registry-ready image from the repository root:
+
+```bash
+bash backend/script/docker-build.sh
+```
+
+Run the image locally:
+
+```bash
+docker run --rm -p 3000:3000 -p 8080:8080 -p 8000:8000 ghcr.io/loocor/mcpmate:latest
+```
+
+The image exposes:
+
+- MCPBoard at `http://localhost:3000`
+- REST API at `http://localhost:8080`
+- MCP endpoint at `http://localhost:8000/mcp`
+
+The image carries the MCP Registry verification label declared in `server.json`. Validate the registry metadata and Dockerfile alignment with:
+
+```bash
+bash backend/script/registry-validate.sh
+```
+
 ## API Reference
 
 ### Server Management
