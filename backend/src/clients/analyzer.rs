@@ -1,5 +1,12 @@
 use crate::clients::utils::get_nested_value;
 
+/// Required fields to identify a valid MCP server entry in array form.
+const SERVER_NAME_FIELD: &str = "name";
+const SERVER_COMMAND_FIELD: &str = "command";
+const SERVER_URL_FIELD: &str = "url";
+
+/// Parse file content into a JSON value based on the specified format.
+/// Supports JSON, JSON5, TOML, and YAML formats with automatic fallback to JSON.
 fn parse_to_json_value(
     content: &str,
     format: Option<&str>,
@@ -32,56 +39,71 @@ pub fn analyze_config_content(
     let is_array = is_array_container;
 
     match parse_to_json_value(content, format) {
-        Some(json) => {
-            if is_array {
-                if let Some(arr) = json.as_array() {
-                    let has = !arr.is_empty()
-                        && arr.iter().any(|it| {
-                            it.get("name").is_some() && (it.get("command").is_some() || it.get("url").is_some())
-                        });
-                    return (has, arr.len() as u32);
-                }
-                for key in keys {
-                    if let Some(val) = get_nested_value(&json, key) {
-                        if let Some(arr) = val.as_array() {
-                            let has = !arr.is_empty()
-                                && arr.iter().any(|it| {
-                                    it.get("name").is_some() && (it.get("command").is_some() || it.get("url").is_some())
-                                });
-                            return (has, arr.len() as u32);
-                        } else if !val.is_null() {
-                            return (true, 0);
-                        }
-                    }
-                }
-                (false, 0)
-            } else {
-                for key in keys {
-                    if let Some(servers) = get_nested_value(&json, key) {
-                        if let Some(obj) = servers.as_object() {
-                            return (true, obj.len() as u32);
-                        } else if servers.is_null() || servers.is_array() || servers.is_string() {
-                            return (true, 0);
-                        }
-                    }
-                }
-                (false, 0)
-            }
-        }
+        Some(json) => analyze_parsed_json(&json, keys, is_array),
         None => {
+            // Fallback: use string-based heuristics when JSON parsing fails
             if is_array {
-                let has = content.contains("[") && (content.contains("\"command\"") || content.contains("\"url\""));
+                // Check for array syntax and server fields
+                let has = content.contains('[')
+                    && (content.contains(&format!("\"{}\"", SERVER_COMMAND_FIELD))
+                        || content.contains(&format!("\"{}\"", SERVER_URL_FIELD)));
                 return (has, 0);
             }
             if keys.is_empty() {
                 return (false, 0);
             }
+            // Check if any container key appears in content
             let has = keys.iter().any(|k| {
                 let leaf = k.rsplit('.').next().unwrap_or(k);
                 content.contains(leaf)
             });
             (has, 0)
         }
+    }
+}
+
+/// Check if an object is a valid MCP server entry (has name and either command or url).
+fn is_valid_server_entry(entry: &serde_json::Value) -> bool {
+    entry.get(SERVER_NAME_FIELD).is_some()
+        && (entry.get(SERVER_COMMAND_FIELD).is_some() || entry.get(SERVER_URL_FIELD).is_some())
+}
+
+/// Analyze a parsed JSON value to detect MCP server presence and count.
+fn analyze_parsed_json(
+    json: &serde_json::Value,
+    keys: &[String],
+    is_array: bool,
+) -> (bool, u32) {
+    if is_array {
+        // For array container, check root level or specified key paths
+        if let Some(arr) = json.as_array() {
+            let has = !arr.is_empty() && arr.iter().any(is_valid_server_entry);
+            return (has, arr.len() as u32);
+        }
+
+        for key in keys {
+            if let Some(val) = get_nested_value(json, key) {
+                if let Some(arr) = val.as_array() {
+                    let has = !arr.is_empty() && arr.iter().any(is_valid_server_entry);
+                    return (has, arr.len() as u32);
+                } else if !val.is_null() {
+                    return (true, 0);
+                }
+            }
+        }
+        (false, 0)
+    } else {
+        // For object_map container, check each key path
+        for key in keys {
+            if let Some(servers) = get_nested_value(json, key) {
+                if let Some(obj) = servers.as_object() {
+                    return (true, obj.len() as u32);
+                } else if servers.is_null() || servers.is_array() || servers.is_string() {
+                    return (true, 0);
+                }
+            }
+        }
+        (false, 0)
     }
 }
 
