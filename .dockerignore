@@ -1,0 +1,13 @@
+.git
+.github
+target
+**/target
+**/dist
+**/node_modules
+**/.DS_Store
+**/*.log
+desktop
+docs/.git
+website
+workers
+assets
