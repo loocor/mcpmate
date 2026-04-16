@@ -16,6 +16,11 @@ export interface DesktopCoreSourceResponse {
 		level: string;
 		installed: boolean;
 		running: boolean;
+		diagnostics?: {
+			startupLogPath: string;
+			startupLogTail?: string;
+			lastError?: string;
+		};
 	};
 	remoteAvailable: boolean;
 }

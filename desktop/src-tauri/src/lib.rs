@@ -1,7 +1,12 @@
 use std::{
+    fs::OpenOptions,
+    io::Write,
     process::{Child, Command, Stdio},
     sync::Arc,
 };
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 use anyhow::{Context, Error, Result};
 use mcpmate::common::{MCPMatePaths, global_paths, set_global_paths};
@@ -27,8 +32,9 @@ mod runtime_ports;
 mod shell;
 mod source_config;
 use core_service::{
-    LocalCoreServiceStatusView, install_local_service, read_local_service_status,
-    resolve_local_core_binary, restart_local_service, start_local_service, stop_local_service,
+    LocalCoreServiceDiagnosticsView, LocalCoreServiceStatusView, install_local_service,
+    read_local_service_status, resolve_local_core_binary, resolve_local_core_working_dir,
+    restart_local_service, start_local_service, stop_local_service,
     sync_local_service_definition, uninstall_local_service,
 };
 use deep_link::ImportServerDeepLinkPayload;
@@ -42,6 +48,7 @@ use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
 const MENU_ABOUT_ID: &str = "menu.help.about";
@@ -102,27 +109,76 @@ struct DesktopCoreSourceView {
     remote_available: bool,
 }
 
+struct DesktopManagedCoreProcess {
+    child: Child,
+    token: String,
+}
+
 #[derive(Clone, Default)]
 struct DesktopManagedCoreState {
-    inner: Arc<AsyncMutex<Option<Child>>>,
+    inner: Arc<AsyncMutex<Option<DesktopManagedCoreProcess>>>,
 }
 
 impl DesktopManagedCoreState {
-    async fn replace(&self, child: Child) {
+    async fn replace(&self, child: Child, token: String) {
         let mut guard = self.inner.lock().await;
-        *guard = Some(child);
+        *guard = Some(DesktopManagedCoreProcess { child, token });
     }
 
-    async fn take(&self) -> Option<Child> {
+    async fn take(&self, reason: &str) -> Option<Child> {
         let mut guard = self.inner.lock().await;
-        guard.take()
+        if let Some(process) = guard.take() {
+            append_desktop_managed_shell_log(&format!(
+                "state:take reason={} token={}",
+                reason, process.token
+            ));
+            Some(process.child)
+        } else {
+            append_desktop_managed_shell_log(&format!(
+                "state:take reason={} token=missing",
+                reason
+            ));
+            None
+        }
+    }
+
+    async fn expected_token(&self) -> Option<String> {
+        let mut guard = self.inner.lock().await;
+        if let Some(process) = guard.as_mut() {
+            match process.child.try_wait() {
+                Ok(Some(status)) => {
+                    let exit_info = status
+                        .code()
+                        .map(|code| format!("exit_code:{}", code))
+                        .unwrap_or_else(|| "terminated_by_signal".to_string());
+                    append_desktop_managed_shell_log(&format!(
+                        "state:expected_token observed_exit status={} token={}",
+                        exit_info, process.token
+                    ));
+                    *guard = None;
+                    None
+                }
+                Ok(None) => Some(process.token.clone()),
+                Err(_) => Some(process.token.clone()),
+            }
+        } else {
+            None
+        }
     }
 
     async fn is_spawned(&self) -> bool {
         let mut guard = self.inner.lock().await;
-        if let Some(child) = guard.as_mut() {
-            match child.try_wait() {
-                Ok(Some(_)) => {
+        if let Some(process) = guard.as_mut() {
+            match process.child.try_wait() {
+                Ok(Some(status)) => {
+                    let exit_info = status
+                        .code()
+                        .map(|code| format!("exit_code:{}", code))
+                        .unwrap_or_else(|| "terminated_by_signal".to_string());
+                    append_desktop_managed_shell_log(&format!(
+                        "state:is_spawned observed_exit status={} token={}",
+                        exit_info, process.token
+                    ));
                     *guard = None;
                     false
                 }
@@ -180,6 +236,47 @@ impl DesktopCoreSourceView {
     }
 }
 
+fn desktop_managed_startup_log_path(base_dir: &std::path::Path) -> std::path::PathBuf {
+    base_dir.join("mcpmate-core-startup.log")
+}
+
+fn desktop_managed_shell_log_path() -> std::path::PathBuf {
+    global_paths().logs_dir().join("desktop-managed-shell.log")
+}
+
+fn append_desktop_managed_shell_log(message: &str) {
+    let log_path = desktop_managed_shell_log_path();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = writeln!(file, "{}", message);
+    }
+}
+
+fn read_startup_log_tail(log_path: &std::path::Path) -> Option<String> {
+    let content = std::fs::read_to_string(log_path).ok()?;
+    let mut lines = content.lines().rev().take(60).collect::<Vec<_>>();
+    lines.reverse();
+    let tail = lines.join("\n").trim().to_string();
+    (!tail.is_empty()).then_some(tail)
+}
+
+fn desktop_managed_diagnostics(
+    base_dir: &std::path::Path,
+    last_error: Option<String>,
+) -> Option<LocalCoreServiceDiagnosticsView> {
+    let log_path = desktop_managed_startup_log_path(base_dir);
+    let startup_log_tail = read_startup_log_tail(&log_path);
+
+    Some(LocalCoreServiceDiagnosticsView {
+        startup_log_path: log_path.display().to_string(),
+        startup_log_tail,
+        last_error,
+    })
+}
+
 async fn sync_shell_service_state(
     shell_state: &ShellState,
     status: &LocalCoreServiceStatusView,
@@ -222,6 +319,12 @@ async fn stop_localhost_runtime(
     managed_state: &DesktopManagedCoreState,
     config: &DesktopCoreSourceConfig,
 ) {
+    append_desktop_managed_shell_log(&format!(
+        "stop:localhost_runtime requested mode={:?} api_port={} mcp_port={}",
+        config.localhost_runtime_mode,
+        config.localhost.api_port,
+        config.localhost.mcp_port,
+    ));
     match config.localhost_runtime_mode {
         LocalCoreRuntimeMode::DesktopManaged => {
             let _ = stop_desktop_managed_core(managed_state, config).await;
@@ -1123,6 +1226,7 @@ where
 
     let window = builder.build()?;
 
+    #[cfg(target_os = "macos")]
     let _ = manager.app_handle().show();
     let _ = window.show();
     let _ = window.set_focus();
@@ -1201,10 +1305,25 @@ async fn initialize_selected_core_source(
 fn spawn_desktop_managed_core(
     app: &tauri::AppHandle,
     config: &DesktopCoreSourceConfig,
-) -> Result<Child> {
+) -> Result<(Child, String)> {
+    #[cfg(target_os = "windows")]
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
     let binary = resolve_local_core_binary(app)?;
     let base_dir = global_paths().base_dir().to_path_buf();
-    let mut command = Command::new(binary);
+    let working_dir = resolve_local_core_working_dir(&binary, &base_dir);
+    let desktop_managed_token = Uuid::new_v4().to_string();
+    append_desktop_managed_shell_log(&format!(
+        "spawn:start binary={} cwd={} data_dir={} api_port={} mcp_port={} token={} startup_log={}",
+        binary.display(),
+        working_dir.display(),
+        base_dir.display(),
+        config.localhost.api_port,
+        config.localhost.mcp_port,
+        desktop_managed_token,
+        desktop_managed_startup_log_path(&base_dir).display(),
+    ));
+    let mut command = Command::new(binary.clone());
     command
         .arg("--api-port")
         .arg(config.localhost.api_port.to_string())
@@ -1213,18 +1332,63 @@ fn spawn_desktop_managed_core(
         .arg("--log-level")
         .arg("info")
         .stdin(Stdio::null())
-        .current_dir(&base_dir)
+        .current_dir(&working_dir)
         .env("MCPMATE_DATA_DIR", &base_dir)
+        .env("MCPMATE_DESKTOP_MANAGED_TOKEN", &desktop_managed_token)
         .env("MCPMATE_API_PORT", config.localhost.api_port.to_string())
         .env("MCPMATE_MCP_PORT", config.localhost.mcp_port.to_string());
-    configure_desktop_managed_stdio(&mut command);
 
-    command
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    configure_desktop_managed_stdio(&mut command, &base_dir);
+
+    let mut child = command
         .spawn()
-        .context("failed to spawn desktop-managed localhost core")
+        .context("failed to spawn desktop-managed localhost core")?;
+
+    // Validate child process state immediately after spawn to catch premature exits
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let exit_info = if let Some(code) = status.code() {
+                format!("exit code {}", code)
+            } else {
+                "terminated by signal".to_string()
+            };
+            let log_path = desktop_managed_startup_log_path(&base_dir);
+            let log_tail = read_startup_log_tail(&log_path)
+                .map(|tail| format!("\n\nLast startup log lines:\n{}", tail))
+                .unwrap_or_default();
+            append_desktop_managed_shell_log(&format!(
+                "spawn:exited_immediately status={} startup_log={}",
+                exit_info,
+                log_path.display(),
+            ));
+            Err(anyhow::anyhow!(
+                "mcpmate-core process exited immediately after spawn ({}). Check {} for error details.{}",
+                exit_info,
+                log_path.display(),
+                log_tail,
+            ))
+        }
+        Ok(None) => {
+            // Process is still running, this is good
+            append_desktop_managed_shell_log("spawn:child_running_after_spawn");
+            Ok((child, desktop_managed_token))
+        }
+        Err(e) => {
+            // try_wait() itself failed; attempt to kill the child and return error
+            let _ = child.kill();
+            append_desktop_managed_shell_log(&format!(
+                "spawn:try_wait_failed error={}",
+                e
+            ));
+            Err(e).context("failed to check child process state after spawn")
+        }
+    }
 }
 
-fn configure_desktop_managed_stdio(command: &mut Command) {
+fn configure_desktop_managed_stdio(command: &mut Command, _base_dir: &std::path::Path) {
     #[cfg(debug_assertions)]
     {
         command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
@@ -1232,7 +1396,16 @@ fn configure_desktop_managed_stdio(command: &mut Command) {
 
     #[cfg(not(debug_assertions))]
     {
-        command.stdout(Stdio::null()).stderr(Stdio::null());
+        command.stdout(Stdio::null());
+
+        let log_path = _base_dir.join("mcpmate-core-startup.log");
+        if std::fs::create_dir_all(_base_dir).is_ok()
+            && let Ok(log_file) = OpenOptions::new().create(true).append(true).open(&log_path)
+        {
+            command.stderr(log_file);
+        } else {
+            command.stderr(Stdio::null());
+        }
     }
 }
 
@@ -1240,27 +1413,80 @@ async fn read_desktop_managed_status(
     state: &DesktopManagedCoreState,
     config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
-    let running = state.is_spawned().await
-        || core_service::probe_localhost_core(config.localhost.api_port).await;
+    read_desktop_managed_status_with_error(state, config, None).await
+}
+
+async fn read_desktop_managed_status_with_error(
+    state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
+    last_error: Option<String>,
+) -> Result<LocalCoreServiceStatusView> {
+    let base_dir = global_paths().base_dir().to_path_buf();
+    let process_running = state.is_spawned().await;
+    let expected_token = state.expected_token().await;
+    let api_ready = if let Some(expected_token) = expected_token.as_deref() {
+        core_service::probe_localhost_core(config.localhost.api_port, Some(expected_token)).await
+    } else {
+        false
+    };
+    let running = process_running || api_ready;
+    let probe_summary = core_service::describe_localhost_core_probe(config.localhost.api_port).await;
+    let diagnostics = if api_ready {
+        None
+    } else {
+        desktop_managed_diagnostics(&base_dir, last_error)
+    };
+
+    append_desktop_managed_shell_log(&format!(
+        "status:read process_running={} api_ready={} expected_token={} probe={} last_error={}",
+        process_running,
+        api_ready,
+        expected_token.as_deref().unwrap_or("missing"),
+        probe_summary,
+        diagnostics
+            .as_ref()
+            .and_then(|item| item.last_error.as_deref())
+            .unwrap_or("none"),
+    ));
+
+    let (status, label, detail) = if api_ready {
+        (
+            core_service::LocalCoreServiceStatusKind::Running,
+            "Running".to_string(),
+            "The localhost core is managed by MCPMate Desktop and is responding to health checks."
+                .to_string(),
+        )
+    } else if process_running {
+        (
+            core_service::LocalCoreServiceStatusKind::RunningUnhealthy,
+            "Running (Unhealthy)".to_string(),
+            "The desktop-managed core process is still running, but the localhost health check has not succeeded. Review the startup diagnostics below before retrying."
+                .to_string(),
+        )
+    } else if diagnostics.is_some() {
+        (
+            core_service::LocalCoreServiceStatusKind::Stopped,
+            "Stopped".to_string(),
+            "The localhost core is currently stopped. Review the startup diagnostics below before retrying."
+                .to_string(),
+        )
+    } else {
+        (
+            core_service::LocalCoreServiceStatusKind::Stopped,
+            "Stopped".to_string(),
+            "The localhost core is currently stopped. Starting it will keep it alive while MCPMate Desktop is running."
+                .to_string(),
+        )
+    };
+
     Ok(LocalCoreServiceStatusView {
-        status: if running {
-            core_service::LocalCoreServiceStatusKind::Running
-        } else {
-            core_service::LocalCoreServiceStatusKind::Stopped
-        },
-        label: if running {
-            "Running".to_string()
-        } else {
-            "Stopped".to_string()
-        },
-        detail: if running {
-            "The localhost core is managed by MCPMate Desktop and will stop only when the app truly quits.".to_string()
-        } else {
-            "The localhost core is currently stopped. Starting it will keep it alive while MCPMate Desktop is running.".to_string()
-        },
+        status,
+        label,
+        detail,
         level: "desktop".to_string(),
         installed: false,
         running,
+        diagnostics,
     })
 }
 
@@ -1269,11 +1495,36 @@ async fn start_desktop_managed_core(
     state: &DesktopManagedCoreState,
     config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
-    if core_service::probe_localhost_core(config.localhost.api_port).await {
-        return read_desktop_managed_status(state, config).await;
+    append_desktop_managed_shell_log(&format!(
+        "start:requested mode=desktop_managed api_port={} mcp_port={}",
+        config.localhost.api_port,
+        config.localhost.mcp_port,
+    ));
+    if core_service::probe_localhost_core(config.localhost.api_port, None).await {
+        let probe_summary = core_service::describe_localhost_core_probe(config.localhost.api_port).await;
+        append_desktop_managed_shell_log(&format!(
+            "start:blocked_existing_core probe={}",
+            probe_summary,
+        ));
+        return read_desktop_managed_status_with_error(
+            state,
+            config,
+            Some(format!(
+                "Port {} is already served by a core instance that was not started by this desktop session. Stop the external mcpmate-core process before starting Desktop mode.",
+                config.localhost.api_port
+            )),
+        )
+        .await;
     }
-    let child = spawn_desktop_managed_core(app, config)?;
-    state.replace(child).await;
+    let (child, token) = match spawn_desktop_managed_core(app, config) {
+        Ok(result) => result,
+        Err(err) => {
+            append_desktop_managed_shell_log(&format!("start:spawn_failed error={}", err));
+            return read_desktop_managed_status_with_error(state, config, Some(err.to_string())).await;
+        }
+    };
+    append_desktop_managed_shell_log(&format!("start:spawn_succeeded token={}", token));
+    state.replace(child, token).await;
 
     spawn_core_ready_notification(app.clone(), state.clone(), config.clone());
 
@@ -1286,12 +1537,35 @@ fn spawn_core_ready_notification(
     config: DesktopCoreSourceConfig,
 ) {
     tauri::async_runtime::spawn(async move {
-        if core_service::wait_for_localhost_core(config.localhost.api_port)
+        let expected_token = state.expected_token().await;
+        append_desktop_managed_shell_log(&format!(
+            "ready:wait_begin api_port={} expected_token={}",
+            config.localhost.api_port,
+            expected_token.as_deref().unwrap_or("missing"),
+        ));
+
+        let wait_result = core_service::wait_for_localhost_core(
+            config.localhost.api_port,
+            expected_token.as_deref(),
+        )
             .await
-            .is_err()
-        {
+            .err()
+            .map(|err| err.to_string());
+
+        if let Some(last_error) = wait_result {
+            append_desktop_managed_shell_log(&format!(
+                "ready:wait_failed error={}",
+                last_error
+            ));
+
+            if let Ok(status) = read_desktop_managed_status_with_error(&state, &config, Some(last_error)).await {
+                let view = DesktopCoreSourceView::from_config(&config, status);
+                emit_core_state_changed(&app, &view);
+            }
             return;
         }
+
+        append_desktop_managed_shell_log("ready:wait_succeeded");
 
         if let Ok(status) = read_desktop_managed_status(&state, &config).await {
             let view = DesktopCoreSourceView::from_config(&config, status);
@@ -1304,13 +1578,20 @@ async fn stop_desktop_managed_core(
     state: &DesktopManagedCoreState,
     config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
-    if let Some(mut child) = state.take().await {
+    append_desktop_managed_shell_log(&format!(
+        "stop:desktop_managed requested api_port={} mcp_port={}",
+        config.localhost.api_port,
+        config.localhost.mcp_port,
+    ));
+    if let Some(mut child) = state.take("stop_desktop_managed_core").await {
         child
             .kill()
             .context("failed to kill desktop-managed localhost core process")?;
+        append_desktop_managed_shell_log("stop:desktop_managed kill_sent");
         child
             .wait()
             .context("failed to wait for desktop-managed localhost core process exit")?;
+        append_desktop_managed_shell_log("stop:desktop_managed wait_completed");
     }
 
     let _ = core_service::wait_for_localhost_core_stopped(config.localhost.api_port).await;

@@ -354,6 +354,7 @@ where
     super::spawn_main_window(manager)?;
 
     if let Some(window) = manager.get_webview_window("main") {
+        #[cfg(target_os = "macos")]
         let _ = manager.app_handle().show();
         let _ = window.show();
         let _ = window.set_focus();

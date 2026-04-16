@@ -83,12 +83,16 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Syste
     }
 
     let connected_servers = summary.values().filter(|(_, ready, _)| *ready > 0).count();
+    let desktop_managed_token = std::env::var("MCPMATE_DESKTOP_MANAGED_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
 
     Ok(Json(SystemStatusResp {
         status: "running".to_string(),
         uptime: get_uptime_seconds(),
         total_servers,
         connected_servers,
+        desktop_managed_token,
     }))
 }
 

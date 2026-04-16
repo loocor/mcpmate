@@ -41,13 +41,13 @@ fn desktop_runtime_environment() -> BTreeMap<String, String> {
             env_entries.insert("PATH".to_string(), path);
         }
 
-        if let Ok(home) = env::var("HOME") {
-            if !home.trim().is_empty() {
-                env_entries.insert("HOME".to_string(), home);
-            }
+        if let Ok(home) = env::var("HOME")
+            && !home.trim().is_empty()
+        {
+            env_entries.insert("HOME".to_string(), home);
         }
 
-        return env_entries;
+        env_entries
     }
 
     #[cfg(not(target_os = "macos"))]

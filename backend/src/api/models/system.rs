@@ -18,6 +18,9 @@ pub struct SystemStatusResp {
     pub total_servers: usize,
     #[schemars(description = "Number of connected servers")]
     pub connected_servers: usize,
+    #[schemars(description = "Desktop-managed instance token when this process was spawned by MCPMate Desktop")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub desktop_managed_token: Option<String>,
 }
 
 /// Active REST and MCP listener ports (from runtime configuration).

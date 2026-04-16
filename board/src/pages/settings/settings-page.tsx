@@ -1967,14 +1967,46 @@ export function SettingsPage() {
 														value: localService.level,
 													})}
 												</p>
-												<p className="text-xs leading-5 text-muted-foreground">
-													{localService.detail ||
-														t("settings:system.serviceStatusFallback", {
-															defaultValue:
-																"The desktop will attach to the configured localhost core service when it is available.",
-														})}
+										<p className="text-xs leading-5 text-muted-foreground">
+											{localService.detail ||
+												t("settings:system.serviceStatusFallback", {
+													defaultValue:
+														"The desktop will attach to the configured localhost core service when it is available.",
+												})}
+										</p>
+										{localService.diagnostics ? (
+											<div className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/80 p-3 dark:border-amber-900/60 dark:bg-amber-950/30">
+												<p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+													{t("settings:system.coreDiagnosticsTitle", {
+														defaultValue: "Desktop Core Diagnostics",
+													})}
 												</p>
+												{localService.diagnostics.lastError ? (
+													<p className="text-xs leading-5 text-amber-950 dark:text-amber-100 whitespace-pre-wrap break-words">
+														{localService.diagnostics.lastError}
+													</p>
+												) : null}
+												<p className="text-[11px] text-muted-foreground break-all">
+													{t("settings:system.coreDiagnosticsLogPath", {
+														defaultValue: "Startup log: {{value}}",
+														value: localService.diagnostics.startupLogPath,
+													})}
+												</p>
+												{localService.diagnostics.startupLogTail ? (
+													<pre className="max-h-48 overflow-auto rounded bg-slate-950/95 p-3 text-[11px] leading-5 text-slate-100 whitespace-pre-wrap break-words">
+														{localService.diagnostics.startupLogTail}
+													</pre>
+												) : (
+													<p className="text-[11px] text-muted-foreground">
+														{t("settings:system.coreDiagnosticsLogMissing", {
+															defaultValue:
+																"No startup log has been captured yet. Retry the action and refresh this page after the next failure.",
+														})}
+													</p>
+												)}
 											</div>
+										) : null}
+									</div>
 											{localhostRuntimeMode === "service" ? (
 												<div className="flex shrink-0 items-center gap-2">
 													<Button

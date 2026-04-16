@@ -1,4 +1,4 @@
-use std::{ffi::OsString, path::PathBuf, time::Duration};
+use std::{ffi::OsString, path::{Path, PathBuf}, time::Duration};
 
 use anyhow::{Context, Result};
 use mcpmate::common::global_paths;
@@ -9,6 +9,113 @@ use service_manager::{
 use tauri::{AppHandle, Manager};
 
 use crate::source_config::DesktopCoreSourceConfig;
+
+#[derive(Debug, serde::Deserialize)]
+struct SystemStatusProbe {
+    #[serde(default)]
+    desktop_managed_token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum LocalhostCoreProbeResult {
+    Unreachable,
+    HttpStatus(reqwest::StatusCode),
+    InvalidPayload,
+    Reachable { desktop_managed_token: Option<String> },
+}
+
+impl LocalhostCoreProbeResult {
+    fn matches_expected_token(&self, expected_token: Option<&str>) -> bool {
+        match (self, expected_token) {
+            (Self::Reachable { .. }, None) => true,
+            (Self::Reachable { desktop_managed_token }, Some(expected_token)) => {
+                desktop_managed_token.as_deref() == Some(expected_token)
+            }
+            _ => false,
+        }
+    }
+
+    fn timeout_detail(&self, expected_token: Option<&str>) -> String {
+        match (self, expected_token) {
+            (Self::Unreachable, _) => {
+                "localhost core did not respond on /api/system/status".to_string()
+            }
+            (Self::HttpStatus(status), _) => format!(
+                "localhost core returned HTTP {} from /api/system/status",
+                status.as_u16()
+            ),
+            (Self::InvalidPayload, _) => {
+                "localhost core responded, but /api/system/status returned an invalid payload"
+                    .to_string()
+            }
+            (
+                Self::Reachable {
+                    desktop_managed_token: None,
+                },
+                Some(_),
+            ) => {
+                "localhost core responded, but desktop_managed_token was missing"
+                    .to_string()
+            }
+            (
+                Self::Reachable {
+                    desktop_managed_token: Some(actual_token),
+                },
+                Some(expected_token),
+            ) => format!(
+                "localhost core responded, but desktop_managed_token mismatched (expected {}, got {})",
+                expected_token, actual_token
+            ),
+            (Self::Reachable { .. }, None) => {
+                "localhost core responded successfully".to_string()
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for LocalhostCoreProbeResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unreachable => write!(f, "unreachable"),
+            Self::HttpStatus(status) => write!(f, "http_status:{}", status.as_u16()),
+            Self::InvalidPayload => write!(f, "invalid_payload"),
+            Self::Reachable {
+                desktop_managed_token: Some(token),
+            } => write!(f, "reachable(token={token})"),
+            Self::Reachable {
+                desktop_managed_token: None,
+            } => write!(f, "reachable(token=missing)"),
+        }
+    }
+}
+
+async fn probe_localhost_core_result(api_port: u16) -> LocalhostCoreProbeResult {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(1200))
+        .build();
+
+    let Ok(client) = client else {
+        return LocalhostCoreProbeResult::Unreachable;
+    };
+
+    let url = format!("http://127.0.0.1:{api_port}/api/system/status");
+    match client.get(url).send().await {
+        Ok(response) if response.status().is_success() => {
+            match response.json::<SystemStatusProbe>().await {
+                Ok(payload) => LocalhostCoreProbeResult::Reachable {
+                    desktop_managed_token: payload.desktop_managed_token,
+                },
+                Err(_) => LocalhostCoreProbeResult::InvalidPayload,
+            }
+        }
+        Ok(response) => LocalhostCoreProbeResult::HttpStatus(response.status()),
+        Err(_) => LocalhostCoreProbeResult::Unreachable,
+    }
+}
+
+pub async fn describe_localhost_core_probe(api_port: u16) -> String {
+    probe_localhost_core_result(api_port).await.to_string()
+}
 
 pub const LOCAL_CORE_SERVICE_LABEL: &str = "ai.umate.mcpmate.core";
 
@@ -23,6 +130,16 @@ pub enum LocalCoreServiceStatusKind {
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalCoreServiceDiagnosticsView {
+    pub startup_log_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub startup_log_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalCoreServiceStatusView {
     pub status: LocalCoreServiceStatusKind,
     pub label: String,
@@ -30,6 +147,8 @@ pub struct LocalCoreServiceStatusView {
     pub level: String,
     pub installed: bool,
     pub running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<LocalCoreServiceDiagnosticsView>,
 }
 
 impl LocalCoreServiceStatusView {
@@ -87,6 +206,10 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
             )
         });
     let mut candidates: Vec<PathBuf> = Vec::new();
+    let push_sidecar_candidates = |candidates: &mut Vec<PathBuf>, base_dir: &std::path::Path| {
+        candidates.push(base_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
+        candidates.push(base_dir.join(format!("mcpmate-core{exe_suffix}")));
+    };
 
     // For release builds, check MacOS directory first (where Tauri bundles sidecars)
     // The app bundle structure is: MCPMate.app/Contents/MacOS/mcpmate-core
@@ -94,13 +217,41 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         // Try MacOS directory (sibling to Resources)
         if let Some(contents_dir) = resource_dir.parent() {
             let macos_dir = contents_dir.join("MacOS");
-            candidates.push(macos_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
-            candidates.push(macos_dir.join(format!("mcpmate-core{exe_suffix}")));
+            push_sidecar_candidates(&mut candidates, &macos_dir);
+
+            // Linux/Windows packages commonly place sidecars next to the main executable or
+            // under the parent resource directory rather than inside Resources.
+            push_sidecar_candidates(&mut candidates, contents_dir);
         }
 
         // Also check Resources directory (standard Tauri resource location)
-        candidates.push(resource_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
-        candidates.push(resource_dir.join(format!("mcpmate-core{exe_suffix}")));
+        push_sidecar_candidates(&mut candidates, &resource_dir);
+
+        // On Windows/Linux, Tauri places externalBin sidecars in a bin subdirectory
+        // alongside the main executable, or directly next to resources. Check these
+        // locations to support packaged distributions (MSI, deb, etc.)
+        #[cfg(target_os = "windows")]
+        if let Some(parent) = resource_dir.parent() {
+            let bin_dir = parent.join("bin");
+            push_sidecar_candidates(&mut candidates, &bin_dir);
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(parent) = resource_dir.parent() {
+                let bin_dir = parent.join("bin");
+                push_sidecar_candidates(&mut candidates, &bin_dir);
+            }
+            // On Linux AppImage or systemd-installed builds, also check /usr/local/bin
+            candidates.push(PathBuf::from("/usr/local/bin").join(format!("mcpmate-core{exe_suffix}")));
+            candidates.push(PathBuf::from("/usr/bin").join(format!("mcpmate-core{exe_suffix}")));
+        }
+    }
+
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(exe_dir) = current_exe.parent()
+    {
+        push_sidecar_candidates(&mut candidates, exe_dir);
     }
 
     // For debug builds, check workspace target directories
@@ -133,6 +284,22 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         .context("unable to resolve local MCPMate core service binary")
 }
 
+pub fn resolve_local_core_working_dir(binary: &Path, base_dir: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        binary
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| base_dir.to_path_buf())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = binary;
+        base_dir.to_path_buf()
+    }
+}
+
 pub async fn install_local_service(
     app: &AppHandle,
     config: &DesktopCoreSourceConfig,
@@ -159,6 +326,7 @@ pub fn uninstall_local_service(
             level: level_label(resolve_service_level()),
             installed: false,
             running: false,
+            diagnostics: None,
         });
     }
 
@@ -181,6 +349,7 @@ pub fn uninstall_local_service(
         level: level_label(resolve_service_level()),
         installed: false,
         running: false,
+        diagnostics: None,
     })
 }
 
@@ -191,6 +360,7 @@ fn service_install_ctx(
     let base_dir = global_paths().base_dir().to_path_buf();
     let label = service_label()?;
     let program = resolve_local_core_binary(app)?;
+    let working_directory = resolve_local_core_working_dir(&program, &base_dir);
     let environment = crate::runtime_env::merge_service_environment(vec![
         (
             "MCPMATE_DATA_DIR".to_string(),
@@ -225,7 +395,7 @@ fn service_install_ctx(
         ],
         contents: None,
         username: None,
-        working_directory: Some(base_dir.clone()),
+        working_directory: Some(working_directory),
         environment: Some(environment),
         autostart: true,
         restart_policy: RestartPolicy::OnFailure {
@@ -236,36 +406,33 @@ fn service_install_ctx(
     })
 }
 
-pub async fn probe_localhost_core(api_port: u16) -> bool {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(500))
-        .build();
-
-    let Ok(client) = client else {
-        return false;
-    };
-
-    let url = format!("http://127.0.0.1:{api_port}/api/system/status");
-    match client.get(url).send().await {
-        Ok(response) => response.status().is_success(),
-        Err(_) => false,
-    }
+pub async fn probe_localhost_core(api_port: u16, expected_token: Option<&str>) -> bool {
+    probe_localhost_core_result(api_port)
+        .await
+        .matches_expected_token(expected_token)
 }
 
-pub async fn wait_for_localhost_core(api_port: u16) -> Result<()> {
-    for _ in 0..20 {
-        if probe_localhost_core(api_port).await {
+pub async fn wait_for_localhost_core(api_port: u16, expected_token: Option<&str>) -> Result<()> {
+    let mut last_probe = LocalhostCoreProbeResult::Unreachable;
+
+    for _ in 0..40 {
+        let probe = probe_localhost_core_result(api_port).await;
+        if probe.matches_expected_token(None) {
             return Ok(());
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        last_probe = probe;
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
-    anyhow::bail!("localhost core service did not become ready in time")
+    anyhow::bail!(
+        "localhost core service did not become ready in time: {}",
+        last_probe.timeout_detail(expected_token)
+    )
 }
 
 pub async fn wait_for_localhost_core_stopped(api_port: u16) -> bool {
     for _ in 0..20 {
-        if !probe_localhost_core(api_port).await {
+        if !probe_localhost_core(api_port, None).await {
             return true;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -319,6 +486,7 @@ pub async fn read_local_service_status(
             level,
             installed: false,
             running: false,
+            diagnostics: None,
         },
         ServiceStatus::Stopped(reason) => LocalCoreServiceStatusView {
             status: LocalCoreServiceStatusKind::Stopped,
@@ -329,9 +497,10 @@ pub async fn read_local_service_status(
             level,
             installed: true,
             running: false,
+            diagnostics: None,
         },
         ServiceStatus::Running => {
-            if probe_localhost_core(config.localhost.api_port).await {
+            if probe_localhost_core(config.localhost.api_port, None).await {
                 LocalCoreServiceStatusView {
                     status: LocalCoreServiceStatusKind::Running,
                     label: "Running".to_string(),
@@ -341,6 +510,7 @@ pub async fn read_local_service_status(
                     level,
                     installed: true,
                     running: true,
+                    diagnostics: None,
                 }
             } else {
                 LocalCoreServiceStatusView {
@@ -350,6 +520,7 @@ pub async fn read_local_service_status(
                     level,
                     installed: true,
                     running: true,
+                    diagnostics: None,
                 }
             }
         }
@@ -399,7 +570,7 @@ pub async fn start_local_service(
             })
             .context("failed to start local core service")?;
     }
-    wait_for_localhost_core(config.localhost.api_port).await?;
+    wait_for_localhost_core(config.localhost.api_port, None).await?;
     read_local_service_status(config).await
 }
 
@@ -419,7 +590,7 @@ pub async fn restart_local_service(
             })
             .context("failed to restart local core service")?;
     }
-    wait_for_localhost_core(config.localhost.api_port).await?;
+    wait_for_localhost_core(config.localhost.api_port, None).await?;
     read_local_service_status(config).await
 }
 
@@ -477,5 +648,32 @@ pub async fn sync_local_service_definition(
         start_local_service(app, config).await
     } else {
         read_local_service_status(config).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_local_core_working_dir;
+    use std::path::Path;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_working_dir_prefers_binary_parent() {
+        let binary = Path::new(r"C:\Program Files\MCPMate\mcpmate-core.exe");
+        let base_dir = Path::new(r"C:\Users\tester\AppData\Roaming\MCPMate");
+
+        assert_eq!(
+            resolve_local_core_working_dir(binary, base_dir),
+            Path::new(r"C:\Program Files\MCPMate")
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn non_windows_working_dir_stays_on_base_dir() {
+        let binary = Path::new("/opt/MCPMate/mcpmate-core");
+        let base_dir = Path::new("/var/lib/mcpmate");
+
+        assert_eq!(resolve_local_core_working_dir(binary, base_dir), base_dir);
     }
 }
