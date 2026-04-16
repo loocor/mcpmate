@@ -12,7 +12,7 @@ pub struct HostedClientReapplySummary {
     pub attempted: usize,
     /// Config files written immediately.
     pub applied: usize,
-    /// Deferred writes (e.g. Cherry LevelDB locked).
+    /// Deferred writes caused by a temporarily locked config target.
     pub scheduled: usize,
     /// Pairs of (client identifier, error message).
     pub failures: Vec<(String, String)>,

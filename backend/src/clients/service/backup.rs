@@ -142,8 +142,8 @@ impl ClientConfigService {
         let engine = self.template_engine.clone();
         let detector = self.detector.clone();
         let template_source = self.template_source.clone();
-        let retry_window = std::time::Duration::from_secs(timeouts::CHERRY_LOCK_RETRY_WINDOW_SEC);
-        let interval = std::time::Duration::from_millis(timeouts::CHERRY_LOCK_RETRY_INTERVAL_MS);
+        let retry_window = std::time::Duration::from_secs(timeouts::LOCKED_WRITE_RETRY_WINDOW_SEC);
+        let interval = std::time::Duration::from_millis(timeouts::LOCKED_WRITE_RETRY_INTERVAL_MS);
 
         tokio::spawn(async move {
             use std::time::Instant;
