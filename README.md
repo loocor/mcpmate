@@ -198,6 +198,25 @@ The proxy starts with:
 - REST API on `http://localhost:8080`
 - MCP endpoint on `http://localhost:8000`
 
+### Docker Preview
+
+MCPMate also has a registry-ready OCI image definition that bundles the backend proxy and the MCPBoard web console:
+
+```bash
+# Build the local image from the repository root
+bash backend/script/docker-build.sh
+
+# Run the full container
+docker run --rm -p 3000:3000 -p 8080:8080 -p 8000:8000 ghcr.io/loocor/mcpmate:latest
+```
+
+After startup:
+- MCPBoard is available at `http://localhost:3000`
+- REST API stays at `http://localhost:8080`
+- MCP endpoint stays at `http://localhost:8000/mcp`
+
+The MCP Registry metadata lives in [`server.json`](./server.json), and the distribution workflow is documented in [`docs/features/registry-distribution.md`](./docs/features/registry-distribution.md).
+
 ### Using the Dashboard
 
 ```bash
@@ -225,7 +244,7 @@ MCPMate/
 ├── board/             # React + Vite management dashboard
 ├── website/           # Marketing site and documentation
 ├── desktop/           # Tauri 2 desktop application
-├── extension/cherry/  # Cherry Studio configuration integration
+├── extension/         # Optional integrations and browser import helpers
 └── docs/              # Product documentation
 ```
 
@@ -234,7 +253,7 @@ Each subproject maintains its own build system and dependencies. See individual 
 - [Backend](./backend/README.md) — Architecture, API, and development guide
 - [Board](./board/README.md) — Dashboard features and UI development
 - [Desktop](./desktop/README.md) — Desktop app build and configuration
-- [Extension/Cherry](./extension/cherry/README.md) — Cherry Studio integration
+- [Extension/Chrome](./extension/chrome/README.md) — Browser import bridge for `mcpmate://import/server`
 
 ## Key Features
 
