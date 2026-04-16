@@ -50,15 +50,15 @@ impl ClientRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Detailed information about a clientlication")]
+#[schemars(description = "Detailed information about a client application")]
 pub struct ClientInfo {
     #[schemars(description = "Unique client identifier (e.g., 'cursor', 'windsurf')")]
     pub identifier: String,
-    #[schemars(description = "Display name of the clientlication")]
+    #[schemars(description = "Display name of the client application")]
     pub display_name: String,
     #[schemars(description = "URL to client logo image")]
     pub logo_url: Option<String>,
-    #[schemars(description = "Type of clientlication")]
+    #[schemars(description = "Type of client application")]
     pub category: ClientCategory,
     #[schemars(description = "Whether client is enabled in MCPMate")]
     pub enabled: bool,
@@ -66,7 +66,7 @@ pub struct ClientInfo {
     pub managed: bool,
     #[schemars(description = "Whether client is installed and detected")]
     pub detected: bool,
-    #[schemars(description = "Installation path of the clientlication")]
+    #[schemars(description = "Installation path of the client application")]
     pub install_path: Option<String>,
     #[schemars(description = "Path to client configuration file")]
     pub config_path: String,
@@ -199,9 +199,9 @@ pub enum ClientConfigSelected {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Response containing detected clientlications")]
+#[schemars(description = "Response containing detected client applications")]
 pub struct ClientCheckData {
-    #[schemars(description = "Array of clientlications with their detection status")]
+    #[schemars(description = "Array of client applications with their detection status")]
     pub client: Vec<ClientInfo>,
     #[schemars(description = "Total count of clientlications")]
     pub total: usize,
