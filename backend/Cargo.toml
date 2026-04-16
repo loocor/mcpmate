@@ -5,6 +5,12 @@ edition = "2024"
 default-run = "mcpmate"
 description = "MCPMate - A comprehensive management center for Model Context Protocol (MCP) servers"
 authors = ["Loocor <loocor@gmail.com>"]
+homepage = "https://mcp.umate.ai"
+repository = "https://github.com/loocor/MCPMate"
+license = "AGPL-3.0-only"
+readme = "README.md"
+keywords = ["mcp", "proxy", "ai", "server", "desktop"]
+categories = ["network-programming", "web-programming::http-server"]
 resolver = "2"
 build = "build.rs"
 
@@ -114,17 +120,18 @@ schemars = { version = "0.9", features = ["chrono04", "derive"] }
 paste = "1.0"
 uuid = { version = "1", features = ["v5"] }
 
-# Cherry Studio KV adapter (optional, default-enabled via feature)
-cherry-db-manager = { path = "../extension/cherry", optional = true }
-rusty-leveldb = { version = "3.0", optional = true }
-
 # AI module dependencies
-candle-core = { version = "0.8", features = ["metal"] }
-candle-transformers = { version = "0.8", features = ["metal"] }
-candle-nn = { version = "0.8", features = ["metal"] }
+candle-core = "0.8"
+candle-transformers = "0.8"
+candle-nn = "0.8"
 tokenizers = "0.15"
 hf-hub = "0.3"
 arc-swap = "1.7.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { version = "0.8", features = ["metal"] }
+candle-transformers = { version = "0.8", features = ["metal"] }
+candle-nn = { version = "0.8", features = ["metal"] }
 
 # Build Targets
 [[bin]]
@@ -133,10 +140,9 @@ path = "src/bin/bridge.rs"
 
 # Feature Flags
 [features]
-default = ["kv-cherry", "warp-sqlite"]
+default = ["warp-sqlite"]
 interop = []
 standalone = []
-kv-cherry = ["dep:cherry-db-manager", "dep:rusty-leveldb"]
 warp-sqlite = []
 
 # Development Profile - Optimized for fast compilation

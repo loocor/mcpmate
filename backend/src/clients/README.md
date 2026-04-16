@@ -25,8 +25,7 @@ storage: {
 
 - `kind` – which storage adapter to use. Built-ins:
   - `"file"` – read/write a text file via `FileConfigStorage`.
-  - `"kv"` – key-value backed adapters. Currently supported: `adapter: "cherry_kv"` (Cherry Studio LevelDB). Enabled by default via the `kv-cherry` feature.
-  - `"custom"` – reserved for future adapters.
+  - `"kv"` / `"custom"` – parsed for legacy metadata, but not supported by the current backend runtime.
 - `path_strategy` – optional hint to the storage adapter.  For the file adapter we currently support:
   - `"config_path"` – resolve the first `detection` rule that supplies `config_path`/`value` as the target file.
   - `null`/omitted – adapter chooses default behaviour.
