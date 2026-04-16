@@ -2887,21 +2887,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_settings_accepts_directory_target_for_kv_client() {
+    async fn update_settings_accepts_directory_target_for_directory_backed_client() {
         let context = create_test_context().await;
-        let kv_dir = context._temp_dir.path().join("cherry-kv");
-        tokio::fs::create_dir_all(&kv_dir).await.expect("create kv directory");
+        let config_dir = context._temp_dir.path().join("directory-backed-client");
+        tokio::fs::create_dir_all(&config_dir).await.expect("create config directory");
 
         let Json(response) = update_settings(
             State(context.app_state.clone()),
             Json(crate::api::models::client::ClientSettingsUpdateReq {
-                identifier: "cherry_studio".to_string(),
+                identifier: "client-a".to_string(),
                 config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 client_version: None,
-                display_name: Some("Cherry Studio".to_string()),
+                display_name: Some("Client A".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
-                config_path: Some(kv_dir.to_string_lossy().to_string()),
+                config_path: Some(config_dir.to_string_lossy().to_string()),
                 supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
@@ -2911,7 +2911,7 @@ mod tests {
             }),
         )
         .await
-        .expect("kv directory target should be accepted");
+        .expect("directory target should be accepted");
 
         assert!(response.success);
     }
@@ -2922,24 +2922,24 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let context = create_test_context().await;
-        let kv_dir = context._temp_dir.path().join("read-only-kv");
-        tokio::fs::create_dir_all(&kv_dir).await.expect("create kv directory");
+        let config_dir = context._temp_dir.path().join("read-only-config-directory");
+        tokio::fs::create_dir_all(&config_dir).await.expect("create config directory");
 
-        let original_permissions = std::fs::metadata(&kv_dir).expect("directory metadata").permissions();
+        let original_permissions = std::fs::metadata(&config_dir).expect("directory metadata").permissions();
         let mut read_only_permissions = original_permissions.clone();
         read_only_permissions.set_mode(0o555);
-        std::fs::set_permissions(&kv_dir, read_only_permissions).expect("set read-only permissions");
+        std::fs::set_permissions(&config_dir, read_only_permissions).expect("set read-only permissions");
 
         let result = update_settings(
             State(context.app_state.clone()),
             Json(crate::api::models::client::ClientSettingsUpdateReq {
-                identifier: "cherry_studio".to_string(),
+                identifier: "client-a".to_string(),
                 config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 client_version: None,
-                display_name: Some("Cherry Studio".to_string()),
+                display_name: Some("Client A".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
-                config_path: Some(kv_dir.to_string_lossy().to_string()),
+                config_path: Some(config_dir.to_string_lossy().to_string()),
                 supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
@@ -2950,7 +2950,7 @@ mod tests {
         )
         .await;
 
-        std::fs::set_permissions(&kv_dir, original_permissions).expect("restore permissions");
+        std::fs::set_permissions(&config_dir, original_permissions).expect("restore permissions");
 
         let (status, Json(response)) = result.expect_err("read-only directory target should fail");
         assert_eq!(status, StatusCode::BAD_REQUEST);
