@@ -3,6 +3,11 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIST_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT_DIR="$(cd "${DIST_DIR}/.." && pwd)"
+BACKEND_DIR="${ROOT_DIR}/backend"
+
 BUILD_MODE="${1:-debug}"
 TARGET="${2:-x86_64-pc-windows-gnullvm}"
 
@@ -52,7 +57,7 @@ if [ "$IS_NATIVE" = "false" ]; then
     BUILD_CMD="$BUILD_CMD --target $TARGET"
 fi
 
-echo "Running: $BUILD_CMD"
-$BUILD_CMD
+echo "Running in ${BACKEND_DIR}: $BUILD_CMD"
+( cd "${BACKEND_DIR}" && $BUILD_CMD )
 
 echo "✅ Windows build completed"
