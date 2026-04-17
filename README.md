@@ -204,7 +204,7 @@ MCPMate also has a registry-ready OCI image definition that bundles the backend 
 
 ```bash
 # Build the local image from the repository root
-bash backend/script/docker-build.sh
+bash distribution/scripts/docker-build.sh
 
 # Run the full container
 docker run --rm -p 3000:3000 -p 8080:8080 -p 8000:8000 ghcr.io/loocor/mcpmate:latest
@@ -215,7 +215,7 @@ After startup:
 - REST API stays at `http://localhost:8080`
 - MCP endpoint stays at `http://localhost:8000/mcp`
 
-The MCP Registry metadata lives in [`server.json`](./server.json), and the distribution workflow is documented in [`docs/features/registry-distribution.md`](./docs/features/registry-distribution.md).
+The MCP Registry metadata lives in [`server.json`](./server.json), and the distribution workflow is documented in [`distribution/docs/registry-distribution.md`](./distribution/docs/registry-distribution.md).
 
 ### Using the Dashboard
 
@@ -242,6 +242,7 @@ MCPMate supports both integrated and separated operation modes:
 MCPMate/
 ├── backend/           # Rust MCP gateway, management API, bridge binary
 ├── board/             # React + Vite management dashboard
+├── distribution/      # Docker, registry, and release tooling
 ├── website/           # Marketing site and documentation
 ├── desktop/           # Tauri 2 desktop application
 ├── extension/         # Optional integrations and browser import helpers

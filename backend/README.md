@@ -22,7 +22,7 @@ backend/
 │   └── mcpmate-types/    # Shared types
 ├── config/               # Presets and defaults
 ├── docs/                 # Backend documentation
-└── script/               # Build helpers
+└── ...                   # Core backend sources (distribution tooling lives at ../distribution/)
 ```
 
 ## Quick Start
@@ -47,7 +47,7 @@ Default ports:
 Build the registry-ready image from the repository root:
 
 ```bash
-bash backend/script/docker-build.sh
+bash distribution/scripts/docker-build.sh
 ```
 
 Run the image locally:
@@ -65,7 +65,7 @@ The image exposes:
 The image carries the MCP Registry verification label declared in `server.json`. Validate the registry metadata and Dockerfile alignment with:
 
 ```bash
-bash backend/script/registry-validate.sh
+bash distribution/scripts/registry-validate.sh
 ```
 
 ## API Reference
