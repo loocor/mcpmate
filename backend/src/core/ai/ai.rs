@@ -187,16 +187,16 @@ impl ModelManager {
         }
 
         // Create device
-        let device = if cfg!(target_os = "macos") {
-            Device::new_metal(0).map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to initialize Metal device: {}. Metal support is required on macOS.",
-                    e
-                )
-            })?
-        } else {
-            Device::Cpu
-        };
+        #[cfg(target_os = "macos")]
+        let device = Device::new_metal(0).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to initialize Metal device: {}. Metal support is required on macOS.",
+                e
+            )
+        })?;
+
+        #[cfg(not(target_os = "macos"))]
+        let device = Device::Cpu;
 
         if config.debug {
             println!("🚀 Using device: {:?}", device);
