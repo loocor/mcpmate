@@ -2,11 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ROOT_DIR="$(cd "${BACKEND_DIR}/.." && pwd)"
+DIST_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT_DIR="$(cd "${DIST_DIR}/.." && pwd)"
+BACKEND_DIR="${ROOT_DIR}/backend"
 SERVER_JSON="${ROOT_DIR}/server.json"
-DOCKERFILE="${BACKEND_DIR}/Dockerfile"
-ENTRYPOINT_SCRIPT="${BACKEND_DIR}/script/docker-entrypoint.sh"
+DOCKERFILE="${DIST_DIR}/docker/Dockerfile"
+ENTRYPOINT_SCRIPT="${DIST_DIR}/docker/docker-entrypoint.sh"
 
 python3 - "${SERVER_JSON}" "${BACKEND_DIR}/Cargo.toml" "${DOCKERFILE}" "${ENTRYPOINT_SCRIPT}" <<'PY'
 import json
@@ -54,7 +55,7 @@ if package["version"] != cargo_version:
 
 label = f'LABEL io.modelcontextprotocol.server.name="{server["name"]}"'
 if label not in dockerfile:
-    raise SystemExit("backend/Dockerfile MCP Registry label does not match server.json name")
+    raise SystemExit("distribution/docker/Dockerfile MCP Registry label does not match server.json name")
 
 for env_name in ("MCPMATE_API_PORT", "MCPMATE_MCP_PORT", "MCPMATE_DASHBOARD_PORT", "MCPMATE_LOG", "MCPMATE_TRANSPORT"):
     if env_name not in entrypoint:
