@@ -19,7 +19,11 @@ FROM debian:bookworm-slim AS runtime
 
 LABEL org.opencontainers.image.title="MCPMate"
 LABEL org.opencontainers.image.description="Local MCP proxy and management server for AI clients"
+LABEL org.opencontainers.image.authors="Loocor <loocor@gmail.com>"
+LABEL org.opencontainers.image.url="https://mcp.umate.ai"
+LABEL org.opencontainers.image.documentation="https://mcp.umate.ai"
 LABEL org.opencontainers.image.source="https://github.com/loocor/MCPMate"
+LABEL org.opencontainers.image.vendor="Loocor"
 LABEL io.modelcontextprotocol.server.name="io.github.loocor/mcpmate"
 
 RUN apt-get update \
@@ -30,7 +34,7 @@ RUN apt-get update \
 COPY --from=builder /workspace/backend/target/release/mcpmate /usr/local/bin/mcpmate
 COPY --from=builder /workspace/backend/target/release/bridge /usr/local/bin/bridge
 COPY --from=board-builder /workspace/board/dist /opt/mcpmate/board
-COPY backend/script/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY distribution/docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 ENV MCPMATE_API_PORT=8080
 ENV MCPMATE_MCP_PORT=8000

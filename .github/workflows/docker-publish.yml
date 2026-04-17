@@ -39,10 +39,10 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Validate registry metadata
-        run: bash backend/script/registry-validate.sh
+        run: bash distribution/scripts/registry-validate.sh
 
       - name: Build local verification image
-        run: docker build -t mcpmate:ci -f backend/Dockerfile .
+        run: docker build -t mcpmate:ci -f distribution/docker/Dockerfile .
 
       - name: Verify image label
         run: |
@@ -131,7 +131,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: backend/Dockerfile
+          file: distribution/docker/Dockerfile
           push: ${{ startsWith(github.ref, 'refs/tags/') || github.event.inputs.push_image == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
