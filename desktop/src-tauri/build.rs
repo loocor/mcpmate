@@ -68,6 +68,7 @@ fn backend_fingerprint(context: &BackendBuildContext, binary_name: &str) -> Stri
         collect_files(&input, &mut files);
     }
     files.sort();
+    files.dedup();
 
     let mut hasher = DefaultHasher::new();
     context.target.hash(&mut hasher);
@@ -235,14 +236,27 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
     let fingerprint_path = context.sidecar_dir.join(format!("{sidecar_name}-{}.fingerprint", context.target));
     let fingerprint = backend_fingerprint(context, binary_name);
 
+    let sync_plain_sidecar = |source: &Path| {
+        fs::copy(source, &sidecar_plain)
+            .unwrap_or_else(|_| panic!("failed to sync {binary_name} sidecar plain file"));
+    };
+
     if env_truthy(SKIP_SIDECAR_BUILD_ENV) {
-        assert!(sidecar_target.exists() || sidecar_plain.exists(), "missing prebuilt {binary_name} sidecar while {} is enabled", SKIP_SIDECAR_BUILD_ENV);
+        assert!(
+            sidecar_target.exists() || sidecar_plain.exists(),
+            "missing prebuilt {binary_name} sidecar while {} is enabled",
+            SKIP_SIDECAR_BUILD_ENV
+        );
+        if sidecar_target.exists() {
+            sync_plain_sidecar(&sidecar_target);
+        }
         return;
     }
 
     if sidecar_target.exists() && sidecar_plain.exists() {
         if let Ok(existing) = fs::read_to_string(&fingerprint_path) {
             if existing.trim() == fingerprint {
+                sync_plain_sidecar(&sidecar_target);
                 println!("cargo:warning=Reusing cached {binary_name} sidecar");
                 return;
             }
@@ -286,7 +300,6 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
     fs::create_dir_all(&context.sidecar_dir).expect("failed to create sidecar directory");
     fs::copy(&built_binary, &sidecar_target)
         .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar target file"));
-    fs::copy(&built_binary, &sidecar_plain)
-        .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar plain file"));
+    sync_plain_sidecar(&built_binary);
     fs::write(&fingerprint_path, format!("{fingerprint}\n")).expect("failed to write sidecar fingerprint");
 }

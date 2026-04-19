@@ -227,6 +227,7 @@ reuse_sidecar_if_unchanged() {
     local existing
     existing=$(tr -d '[:space:]' < "$fingerprint_path")
     if [[ "$existing" == "$expected" ]]; then
+      cp "$sidecar_target" "$sidecar_plain"
       log "reusing cached ${sidecar_name} sidecar for $target"
       return 0
     fi
