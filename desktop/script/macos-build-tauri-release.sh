@@ -171,6 +171,82 @@ export CI
 
 log() { echo "[macos-build-tauri-release] $*"; }
 
+backend_sidecar_fingerprint() {
+  local binary_name="$1"
+  local target="$2"
+  local profile="$3"
+  local backend_inputs=(
+    "$BACKEND_DIR/Cargo.toml"
+    "$BACKEND_DIR/Cargo.lock"
+    "$BACKEND_DIR/build.rs"
+    "$BACKEND_DIR/.cargo/config.toml"
+    "$BACKEND_DIR/src"
+    "$BACKEND_DIR/config"
+    "$BACKEND_DIR/crates"
+    "$BACKEND_DIR/script"
+    "$BACKEND_DIR/src/bin/${binary_name}.rs"
+  )
+
+  {
+    printf '%s
+' "$target" "$profile" "$binary_name"
+    for input in "${backend_inputs[@]}"; do
+      if [[ ! -e "$input" ]]; then
+        continue
+      fi
+      if [[ -f "$input" ]]; then
+        local rel="${input#${BACKEND_DIR}/}"
+        local stat_out
+        stat_out=$(stat -f '%z|%m' "$input")
+        printf '%s|%s
+' "$rel" "$stat_out"
+      else
+        while IFS= read -r -d '' file; do
+          local rel="${file#${BACKEND_DIR}/}"
+          local stat_out
+          stat_out=$(stat -f '%z|%m' "$file")
+          printf '%s|%s
+' "$rel" "$stat_out"
+        done < <(find -s "$input" -type f -print0)
+      fi
+    done
+  } | shasum -a 256 | awk '{print $1}'
+}
+
+reuse_sidecar_if_unchanged() {
+  local sidecar_name="$1"
+  local binary_name="$2"
+  local target="$3"
+  local profile="$4"
+  local fingerprint_path="$SIDECAR_OUTPUT_DIR/${sidecar_name}-${target}.fingerprint"
+  local sidecar_target="$SIDECAR_OUTPUT_DIR/${sidecar_name}-${target}"
+  local sidecar_plain="$SIDECAR_OUTPUT_DIR/${sidecar_name}"
+  local expected
+  expected=$(backend_sidecar_fingerprint "$binary_name" "$target" "$profile")
+  if [[ -f "$sidecar_target" && -f "$sidecar_plain" && -f "$fingerprint_path" ]]; then
+    local existing
+    existing=$(tr -d '[:space:]' < "$fingerprint_path")
+    if [[ "$existing" == "$expected" ]]; then
+      cp "$sidecar_target" "$sidecar_plain"
+      log "reusing cached ${sidecar_name} sidecar for $target"
+      return 0
+    fi
+  fi
+  printf '%s
+' "$expected" > "$fingerprint_path.tmp"
+  mv "$fingerprint_path.tmp" "$fingerprint_path.pending"
+  return 1
+}
+
+finalize_sidecar_fingerprint() {
+  local sidecar_name="$1"
+  local target="$2"
+  local fingerprint_path="$SIDECAR_OUTPUT_DIR/${sidecar_name}-${target}.fingerprint"
+  if [[ -f "$fingerprint_path.pending" ]]; then
+    mv "$fingerprint_path.pending" "$fingerprint_path"
+  fi
+}
+
 # When set to 1/true, print signing identity strings, Team ID, and API issuer (verbose; avoid in shared CI logs).
 signing_details_enabled() {
   local v="${MCPMATE_BUILD_LOG_SIGNING_DETAILS:-}"
@@ -393,16 +469,16 @@ fi
 
 mkdir -p "$SIDECAR_OUTPUT_DIR"
 
-if [[ -d "$SIDECAR_OUTPUT_DIR" ]]; then
-  find "$SIDECAR_OUTPUT_DIR" -maxdepth 1 -type f \( -name 'bridge*' -o -name 'mcpmate-core*' \) -delete
-fi
-
 build_bridge_sidecar() {
   local target="$1"
 
   local cargo_profile_flags=""
   if [[ "$PROFILE" == "release" ]]; then
     cargo_profile_flags="--release"
+  fi
+
+  if reuse_sidecar_if_unchanged "bridge" "bridge" "$target" "$PROFILE"; then
+    return 0
   fi
 
   echo "[macos-build-tauri-release] building bridge sidecar for $target"
@@ -425,6 +501,7 @@ build_bridge_sidecar() {
   chmod +x "$SIDECAR_OUTPUT_DIR/bridge-$target"
   cp "$built_path" "$SIDECAR_OUTPUT_DIR/bridge"
   chmod +x "$SIDECAR_OUTPUT_DIR/bridge"
+  finalize_sidecar_fingerprint "bridge" "$target"
 }
 
 build_core_sidecar() {
@@ -433,6 +510,10 @@ build_core_sidecar() {
   local cargo_profile_flags=""
   if [[ "$PROFILE" == "release" ]]; then
     cargo_profile_flags="--release"
+  fi
+
+  if reuse_sidecar_if_unchanged "mcpmate-core" "mcpmate" "$target" "$PROFILE"; then
+    return 0
   fi
 
   echo "[macos-build-tauri-release] building core sidecar for $target"
@@ -455,6 +536,7 @@ build_core_sidecar() {
   chmod +x "$SIDECAR_OUTPUT_DIR/mcpmate-core-$target"
   cp "$built_path" "$SIDECAR_OUTPUT_DIR/mcpmate-core"
   chmod +x "$SIDECAR_OUTPUT_DIR/mcpmate-core"
+  finalize_sidecar_fingerprint "mcpmate-core" "$target"
 }
 
 for TARGET in "${TARGET_LIST[@]}"; do
@@ -487,7 +569,7 @@ for TARGET in "${TARGET_LIST[@]}"; do
     cmd+=("${extraFromEnv[@]}")
   fi
 
-  "${cmd[@]}"
+  MCPMATE_SKIP_SIDECAR_BUILD=1 "${cmd[@]}"
 
   echo "[macos-build-tauri-release] artifact: src-tauri/target/$TARGET/$PROFILE/bundle"
 
