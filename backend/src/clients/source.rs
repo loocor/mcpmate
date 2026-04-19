@@ -10,7 +10,7 @@ use toml;
 use walkdir::WalkDir;
 
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::{ClientTemplate, DetectionMethod, TemplateFormat};
+use crate::clients::models::{ClientConfigFileParse, ClientTemplate, DetectionMethod, TemplateFormat};
 use crate::common::constants::database::tables;
 use crate::system::paths::PathService;
 use sqlx::SqlitePool;
@@ -171,6 +171,16 @@ impl DbTemplateSource {
                 Ok(template)
             })
             .collect()
+    }
+
+    fn apply_parse_override(
+        template: &mut ClientTemplate,
+        override_parse: ClientConfigFileParse,
+    ) {
+        template.format = override_parse.format;
+        template.config_mapping.container_type = override_parse.container_type;
+        template.config_mapping.container_keys = override_parse.container_keys.clone();
+        template.config_mapping.parse = Some(override_parse);
     }
 }
 
@@ -492,12 +502,36 @@ impl ClientConfigSource for DbTemplateSource {
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-        row.map(|payload_json| {
-            serde_json::from_str::<ClientTemplate>(&payload_json).map_err(|err| {
-                ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err))
+        let mut template = row
+            .map(|payload_json| {
+                serde_json::from_str::<ClientTemplate>(&payload_json).map_err(|err| {
+                    ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err))
+                })
             })
-        })
-        .transpose()
+            .transpose()?;
+
+        if let Some(template_ref) = template.as_mut() {
+            let override_parse = sqlx::query_scalar::<_, String>(&format!(
+                "SELECT config_file_parse FROM {} WHERE identifier = ? AND config_file_parse IS NOT NULL AND TRIM(config_file_parse) <> ''",
+                tables::CLIENT
+            ))
+            .bind(client_id)
+            .fetch_optional(&*self.db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+            if let Some(raw) = override_parse {
+                let parsed = serde_json::from_str::<ClientConfigFileParse>(&raw).map_err(|err| {
+                    ConfigError::TemplateParseError(format!(
+                        "Failed to parse client config_file_parse override: {}",
+                        err
+                    ))
+                })?;
+                Self::apply_parse_override(template_ref, parsed);
+            }
+        }
+
+        Ok(template)
     }
 
     async fn get_config_path(
