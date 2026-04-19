@@ -1,6 +1,7 @@
 // MCP Proxy API handlers module
 // Contains handler functions for API endpoints
 
+#[cfg(feature = "ai")]
 pub mod ai;
 pub mod audit;
 pub mod client;

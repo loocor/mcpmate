@@ -85,6 +85,7 @@ import type {
 	UpdateConfigSuitRequest,
 } from "./types";
 import { useMemo } from "react";
+import { isTauriEnvironmentSync } from "./platform";
 import { useQuery } from "@tanstack/react-query";
 
 // Base API configuration
@@ -92,33 +93,6 @@ import { useQuery } from "@tanstack/react-query";
 // For desktop (Tauri), allow runtime override so Settings can change ports without full reload.
 const API_BASE_OVERRIDE_KEY = "mcpmate.api_base_override";
 export const API_BASE_CHANGED_EVENT = "mcpmate:api-base-changed";
-
-const isDesktopShellEnvironment = (): boolean => {
-	if (typeof window === "undefined") {
-		return false;
-	}
-	const w = window as unknown as {
-		__TAURI__?: unknown;
-		__TAURI_IPC__?: unknown;
-		__TAURI_INTERNALS__?: unknown;
-		__TAURI_METADATA__?: unknown;
-		__MCPMATE_IS_TAURI__?: unknown;
-	};
-	const protocol = window.location?.protocol?.toLowerCase() ?? "";
-	const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
-	return (
-		protocol === "tauri:" ||
-		protocol === "app:" ||
-		protocol === "file:" ||
-		w.__TAURI__ !== undefined ||
-		w.__TAURI_IPC__ !== undefined ||
-		w.__TAURI_INTERNALS__ !== undefined ||
-		w.__TAURI_METADATA__ !== undefined ||
-		w.__MCPMATE_IS_TAURI__ !== undefined ||
-		ua.includes("Tauri") ||
-		ua.includes("MCPMate")
-	);
-};
 
 const resolveApiBaseUrl = (): string => {
 	const envBase =
@@ -129,7 +103,7 @@ const resolveApiBaseUrl = (): string => {
 	}
 
 	try {
-		if (isDesktopShellEnvironment() && typeof window !== "undefined" && window.localStorage) {
+		if (isTauriEnvironmentSync() && typeof window !== "undefined" && window.localStorage) {
 			const override = window.localStorage.getItem(API_BASE_OVERRIDE_KEY);
 			if (override && override.trim().length > 0) {
 				return override.trim();
@@ -158,9 +132,17 @@ const resolveApiBaseUrl = (): string => {
 
 // Mutable API base URL with runtime setter for desktop shells
 export let API_BASE_URL = resolveApiBaseUrl();
+export function requireApiBaseUrl(context: string): string {
+	const trimmed = API_BASE_URL.trim();
+	if (trimmed.length > 0) {
+		return trimmed;
+	}
+	throw new Error(`Missing MCPMate API base URL for ${context}`);
+}
+
 export function setApiBaseUrl(newBase: string | null | undefined) {
 	const candidate = (newBase ?? "").trim();
-	const shouldPersistOverride = isDesktopShellEnvironment();
+	const shouldPersistOverride = isTauriEnvironmentSync();
 	if (candidate.length > 0) {
 		API_BASE_URL = candidate;
 		try {
@@ -2321,8 +2303,18 @@ export class NotificationsService {
 	/** When true, the next `onclose` reconnects immediately to the current `API_BASE_URL` (no backoff). */
 	private reconnectToNewBasePending = false;
 
+	private hasActiveListeners(): boolean {
+		for (const callbacks of this.listeners.values()) {
+			if (callbacks.length > 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	connect() {
 		if (this.ws) return;
+		if (!this.hasActiveListeners()) return;
 
 		const wsUrl = resolveWebSocketUrl();
 		if (!wsUrl) {
@@ -2362,6 +2354,12 @@ export class NotificationsService {
 					`WebSocket connection closed: ${event.code} ${event.reason}`,
 				);
 				this.ws = null;
+
+				if (!this.hasActiveListeners()) {
+					this.reconnectToNewBasePending = false;
+					this.reconnectAttempts = 0;
+					return;
+				}
 
 				if (this.reconnectToNewBasePending) {
 					this.reconnectToNewBasePending = false;
@@ -2405,6 +2403,14 @@ export class NotificationsService {
 			const index = eventListeners.indexOf(callback);
 			if (index !== -1) {
 				eventListeners.splice(index, 1);
+			}
+
+			if (eventListeners.length === 0) {
+				this.listeners.delete(event);
+			}
+
+			if (!this.hasActiveListeners()) {
+				this.disconnect();
 			}
 		};
 	}

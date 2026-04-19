@@ -1,6 +1,7 @@
 // MCP Proxy API routes module
 // Contains route definitions for the API server
 
+#[cfg(feature = "ai")]
 pub mod ai;
 pub mod audit;
 pub mod client;
@@ -197,7 +198,6 @@ async fn create_router_internal(
 
     // Create API router with aide support
     let api_router = ApiRouter::new()
-        .merge(ai::routes(state.clone()))
         .merge(audit::routes(state.clone()))
         .merge(server::routes(state.clone()))
         .merge(system::routes(state.clone()))
@@ -205,7 +205,12 @@ async fn create_router_internal(
         .merge(runtime::routes(state.clone()))
         .merge(inspector::routes(state.clone()))
         .merge(client::routes(state.clone()))
-        .merge(registry::routes(state.clone()))
+        .merge(registry::routes(state.clone()));
+
+    #[cfg(feature = "ai")]
+    let api_router = api_router.merge(ai::routes(state.clone()));
+
+    let api_router = api_router
         .finish_api_with(&mut api, openapi::api_docs)
         .layer(axum::middleware::from_fn(crate::common::env::origin_guard_middleware));
 
