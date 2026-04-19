@@ -1,21 +1,22 @@
 // HTTP handlers for client management API (template-driven)
 
-use super::config::{analyze_config_content, get_config_last_modified};
 use super::backups::parse_policy_payload;
+use super::config::{analyze_config_content, get_config_last_modified};
 use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
     ClientBackupActionData, ClientBackupActionResp, ClientCapabilityConfigData, ClientCapabilityConfigReq,
     ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
-    ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
-    ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
+    ClientFormatRuleData,
+    ClientConfigFileParseData, ClientConfigFileParseInspectData, ClientConfigFileParseInspectReq,
+    ClientConfigFileParseInspectResp, ClientConfigFileParseValidationData, ClientConfigImportData,
+    ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq, ClientConfigResp,
+    ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
     ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata,
     ClientTemplateStorageMetadata, ClientUnifyDirectExposureData,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::models::{
-    ClientTemplate, ContainerType, MergeStrategy, StorageKind, TemplateFormat, UnifyDirectExposureConfig,
-};
+use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat, UnifyDirectExposureConfig};
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
 use crate::clients::{
@@ -30,10 +31,37 @@ use chrono::Utc;
 use json5;
 use serde_json::{Value, json};
 use serde_yaml;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use toml;
 
 type ClientSettingsErrorResponse = (StatusCode, Json<crate::api::models::client::ClientSettingsUpdateResp>);
+
+fn convert_parse_container_type(container_type: ContainerType) -> crate::api::models::client::ClientConfigType {
+    match container_type {
+        ContainerType::Array => crate::api::models::client::ClientConfigType::Array,
+        ContainerType::ObjectMap => crate::api::models::client::ClientConfigType::Standard,
+    }
+}
+
+fn parse_data_from_rule(rule: &ClientConfigFileParse) -> ClientConfigFileParseData {
+    ClientConfigFileParseData {
+        format: rule.format.as_str().to_string(),
+        container_type: convert_parse_container_type(rule.container_type),
+        container_keys: rule.container_keys.clone(),
+    }
+}
+
+fn resolve_effective_config_file_parse(state: Option<&ClientStateRow>) -> Option<ClientConfigFileParse> {
+    if let Some(state) = state {
+        if let Ok(Some(override_parse)) = state.config_file_parse_override() {
+            return Some(override_parse);
+        }
+        return state.legacy_config_file_parse().ok().flatten();
+    }
+
+    None
+}
 
 fn client_settings_error(
     status: StatusCode,
@@ -46,6 +74,136 @@ fn client_settings_error(
             &message.into(),
         )),
     )
+}
+
+fn parse_rule_from_api_data(parse: &ClientConfigFileParseData) -> ClientConfigFileParse {
+    ClientConfigFileParse {
+        format: match parse.format.as_str() {
+            "json5" => TemplateFormat::Json5,
+            "toml" => TemplateFormat::Toml,
+            "yaml" => TemplateFormat::Yaml,
+            _ => TemplateFormat::Json,
+        },
+        container_type: match parse.container_type {
+            crate::api::models::client::ClientConfigType::Array => ContainerType::Array,
+            _ => ContainerType::ObjectMap,
+        },
+        container_keys: parse.container_keys.clone(),
+    }
+}
+
+fn format_rule_data_from_rule(rule: &crate::clients::models::FormatRule) -> ClientFormatRuleData {
+    let extra_fields = if rule.extra_fields.is_empty() {
+        None
+    } else {
+        Some(
+            rule.extra_fields
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        )
+    };
+
+    ClientFormatRuleData {
+        type_value: rule.type_value.clone(),
+        url_field: rule.url_field.clone(),
+        headers_field: rule.headers_field.clone(),
+        extra_fields,
+        requires_type_field: rule.requires_type_field,
+    }
+}
+
+fn format_rule_from_api_data(data: &ClientFormatRuleData) -> crate::clients::models::FormatRule {
+    let extra_fields = data
+        .extra_fields
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<serde_json::Map<String, serde_json::Value>>();
+
+    let mut rule = crate::clients::models::FormatRule {
+        template: serde_json::Value::Object(serde_json::Map::new()),
+        type_value: data.type_value.clone(),
+        url_field: data.url_field.clone(),
+        headers_field: data.headers_field.clone(),
+        extra_fields,
+        requires_type_field: data.requires_type_field,
+    };
+    rule.template = rule.to_template();
+    rule
+}
+
+fn format_rules_data_from_state(
+    state: Option<&ClientStateRow>,
+) -> Option<HashMap<String, ClientFormatRuleData>> {
+    let state = state?;
+    let rules = state.parsed_format_rules().ok()?;
+    if rules.is_empty() {
+        return None;
+    }
+
+    Some(
+        rules
+            .into_iter()
+            .map(|(transport, rule)| (transport, format_rule_data_from_rule(&rule)))
+            .collect(),
+    )
+}
+
+pub async fn config_file_parse_inspect(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientConfigFileParseInspectReq>,
+) -> Result<Json<ClientConfigFileParseInspectResp>, (StatusCode, Json<ClientConfigFileParseInspectResp>)> {
+    let service = get_client_service(&app_state).map_err(|status| {
+        (
+            status,
+            Json(ClientConfigFileParseInspectResp::error_simple(
+                "client_config_parse_unavailable",
+                "Client service unavailable",
+            )),
+        )
+    })?;
+
+    let draft = request.config_file_parse.as_ref().map(parse_rule_from_api_data);
+    let inspection = service
+        .inspect_config_file_parse(&request.config_path, draft.as_ref())
+        .await
+        .map_err(|err| {
+            let status = match err {
+                ConfigError::DataAccessError(_)
+                | ConfigError::PathResolutionError(_)
+                | ConfigError::PathNotWritable { .. }
+                | ConfigError::FileOperationError(_)
+                | ConfigError::IoError(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (
+                status,
+                Json(ClientConfigFileParseInspectResp::error_simple(
+                    "client_config_parse_invalid",
+                    &err.to_string(),
+                )),
+            )
+        })?;
+
+    Ok(Json(ClientConfigFileParseInspectResp::success(
+        ClientConfigFileParseInspectData {
+            normalized_path: inspection.normalized_path,
+            detected_format: inspection.detected_format.map(|format| format.as_str().to_string()),
+            inferred_parse: inspection.inferred_parse.as_ref().map(parse_data_from_rule),
+            validation: inspection
+                .validation
+                .map(|validation| ClientConfigFileParseValidationData {
+                    matches: validation.matches,
+                    format_matches: validation.format_matches,
+                    container_found: validation.container_found,
+                    server_count: validation.server_count,
+                }),
+            preview: inspection.preview,
+            preview_text: inspection.preview_text,
+            warnings: inspection.warnings,
+        },
+    )))
 }
 
 /// Handler for GET /api/client
@@ -86,8 +244,7 @@ pub async fn config_details(
 ) -> Result<Json<ClientConfigResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
     let state = service.fetch_state(&request.identifier).await.ok().flatten();
-    let template = service.get_client_template(&request.identifier).await.ok();
-    if template.is_none() && state.is_none() {
+    if state.is_none() {
         tracing::error!("Failed to resolve client config details for {}", request.identifier);
         return Err(StatusCode::NOT_FOUND);
     }
@@ -103,7 +260,7 @@ pub async fn config_details(
         .as_ref()
         .map(ClientStateRow::has_local_config_target)
         .unwrap_or(false);
-    let use_runtime_config_read = template.is_none() || !has_local_config_target;
+    let use_runtime_config_read = !has_local_config_target;
     let content = if use_runtime_config_read {
         read_runtime_config(service.as_ref(), &request.identifier)
             .await
@@ -140,9 +297,19 @@ pub async fn config_details(
 
     let (has_mcp_config, mcp_servers_count) = match (content.as_deref(), state.as_ref()) {
         (Some(raw), Some(state)) => {
-            let container_keys = state.container_keys().unwrap_or_default();
-            let is_array_container = state.container_type() == Some("array");
-            let format = state.config_format();
+            let effective_parse = resolve_effective_config_file_parse(Some(state));
+            let container_keys = effective_parse
+                .as_ref()
+                .map(|parse| parse.container_keys.clone())
+                .unwrap_or_else(|| state.container_keys().unwrap_or_default());
+            let is_array_container = effective_parse
+                .as_ref()
+                .map(|parse| parse.container_type == ContainerType::Array)
+                .unwrap_or_else(|| state.container_type() == Some("array"));
+            let format = effective_parse
+                .as_ref()
+                .map(|parse| parse.format.as_str())
+                .or_else(|| state.config_format());
             analyze_config_content(raw, &container_keys, is_array_container, format)
         }
         _ => (false, 0),
@@ -150,9 +317,13 @@ pub async fn config_details(
 
     let last_modified = config_path.as_deref().and_then(get_config_last_modified);
 
-    let config_type = template
+    let config_type = state
         .as_ref()
-        .and_then(|template| convert_container_type(template.config_mapping.container_type))
+        .and_then(|row| match row.container_type() {
+            Some("array") => Some(crate::api::models::client::ClientConfigType::Array),
+            Some("object") => Some(crate::api::models::client::ClientConfigType::Standard),
+            _ => None,
+        })
         .or_else(|| infer_config_type_from_path(config_path.as_deref()));
 
     let managed = match service.is_client_managed(&request.identifier).await {
@@ -218,6 +389,18 @@ pub async fn config_details(
             degraded_reasons.push("writable_target_verification_failed_default_false".to_string());
             false
         });
+    let config_file_parse_effective = state
+        .as_ref()
+        .and_then(|row| resolve_effective_config_file_parse(Some(row)))
+        .as_ref()
+        .map(parse_data_from_rule);
+    let config_file_parse_override = state
+        .as_ref()
+        .and_then(|row| row.config_file_parse_override().ok().flatten())
+        .as_ref()
+        .map(parse_data_from_rule);
+    let uses_template_parse_default = config_file_parse_override.is_none();
+    let format_rules = format_rules_data_from_state(state.as_ref());
 
     let data = ClientConfigData {
         config_path: config_path.unwrap_or_default(),
@@ -229,8 +412,9 @@ pub async fn config_details(
         config_type,
         imported_servers,
         import_summary,
-        template: build_client_template_metadata(template.as_ref(), state.as_ref(), &runtime_metadata),
-        supported_transports: extract_client_supported_transports(template.as_ref(), &runtime_metadata),
+        template: build_client_template_metadata(state.as_ref(), &runtime_metadata),
+        supported_transports: extract_client_supported_transports(state.as_ref(), &runtime_metadata),
+        format_rules,
         managed,
         description,
         homepage_url,
@@ -246,6 +430,9 @@ pub async fn config_details(
         connection_mode,
         governed_by_default_policy,
         writable_config,
+        config_file_parse_effective,
+        config_file_parse_override,
+        uses_template_parse_default,
         warnings,
         degraded_reasons,
     };
@@ -274,11 +461,7 @@ pub async fn config_apply(
     let requested_backup_policy = if request.preview {
         None
     } else {
-        request
-            .backup_policy
-            .as_ref()
-            .map(parse_policy_payload)
-            .transpose()?
+        request.backup_policy.as_ref().map(parse_policy_payload).transpose()?
     };
 
     let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
@@ -823,6 +1006,15 @@ pub async fn update_settings(
                 support_url: request.support_url.clone(),
                 logo_url: request.logo_url.clone(),
                 supported_transports: request.supported_transports.clone(),
+                config_file_parse: request.config_file_parse.as_ref().map(parse_rule_from_api_data),
+                clear_config_file_parse: request.clear_config_file_parse,
+                format_rules: request.format_rules.as_ref().map(|rules| {
+                    rules
+                        .iter()
+                        .map(|(transport, rule)| (transport.clone(), format_rule_from_api_data(rule)))
+                        .collect()
+                }),
+                clear_format_rules: request.clear_format_rules,
             },
         )
         .await
@@ -864,6 +1056,17 @@ pub async fn update_settings(
         })?
         .ok_or_else(|| client_settings_error(StatusCode::NOT_FOUND, "Client state not found"))?;
     let runtime_metadata = state.runtime_client_metadata();
+    let config_file_parse_effective = resolve_effective_config_file_parse(Some(&state))
+        .as_ref()
+        .map(parse_data_from_rule);
+    let config_file_parse_override = state
+        .config_file_parse_override()
+        .ok()
+        .flatten()
+        .as_ref()
+        .map(parse_data_from_rule);
+    let uses_template_parse_default = config_file_parse_override.is_none();
+    let format_rules = format_rules_data_from_state(Some(&state));
 
     let data = crate::api::models::client::ClientSettingsUpdateData {
         identifier: request.identifier,
@@ -874,11 +1077,15 @@ pub async fn update_settings(
         connection_mode: Some(state.connection_mode().as_str().to_string()),
         config_path: state.config_path().map(str::to_string),
         supported_transports: runtime_metadata.supported_transports.clone(),
+        format_rules,
         description: runtime_metadata.description.clone(),
         homepage_url: runtime_metadata.homepage_url.clone(),
         docs_url: runtime_metadata.docs_url.clone(),
         support_url: runtime_metadata.support_url.clone(),
         logo_url: runtime_metadata.logo_url.clone(),
+        config_file_parse_effective,
+        config_file_parse_override,
+        uses_template_parse_default,
         setting_sources: crate::api::models::client::ClientSettingsSourceData {
             display_name: settings_result.display_name_source.to_string(),
             approval_status: settings_result.approval_status_source.to_string(),
@@ -901,6 +1108,8 @@ pub async fn update_settings(
             "connection_mode": data.connection_mode,
             "config_path": data.config_path,
             "supported_transports": data.supported_transports,
+            "config_file_parse_effective": data.config_file_parse_effective,
+            "config_file_parse_override": data.config_file_parse_override,
         })),
         None,
     )
@@ -1007,6 +1216,17 @@ async fn descriptor_to_client_info(
 ) -> Result<ClientInfo, StatusCode> {
     let state = descriptor.state.clone();
     let runtime_metadata = state.runtime_client_metadata();
+    let config_file_parse_effective = resolve_effective_config_file_parse(Some(&state))
+        .as_ref()
+        .map(parse_data_from_rule);
+    let config_file_parse_override = state
+        .config_file_parse_override()
+        .ok()
+        .flatten()
+        .as_ref()
+        .map(parse_data_from_rule);
+    let uses_template_parse_default = config_file_parse_override.is_none();
+    let format_rules = format_rules_data_from_state(Some(&state));
     let identifier = state.identifier().to_string();
     let display_name = state.display_name().to_string();
     let logo_url = runtime_metadata.logo_url.clone();
@@ -1056,9 +1276,18 @@ async fn descriptor_to_client_info(
 
     let (has_mcp_config, mcp_servers_count) = match content.as_deref() {
         Some(raw) => {
-            let container_keys = state.container_keys().unwrap_or_default();
-            let is_array_container = state.container_type() == Some("array");
-            let format = state.config_format();
+            let container_keys = config_file_parse_effective
+                .as_ref()
+                .map(|parse| parse.container_keys.clone())
+                .unwrap_or_else(|| state.container_keys().unwrap_or_default());
+            let is_array_container = config_file_parse_effective
+                .as_ref()
+                .map(|parse| parse.container_type == crate::api::models::client::ClientConfigType::Array)
+                .unwrap_or_else(|| state.container_type() == Some("array"));
+            let format = config_file_parse_effective
+                .as_ref()
+                .map(|parse| parse.format.as_str())
+                .or_else(|| state.config_format());
             analyze_config_content(raw, &container_keys, is_array_container, format)
         }
         _ => (false, 0),
@@ -1097,6 +1326,7 @@ async fn descriptor_to_client_info(
         config_exists: descriptor.config_exists,
         has_mcp_config,
         supported_transports,
+        format_rules,
         description,
         homepage_url,
         docs_url,
@@ -1119,7 +1349,7 @@ async fn descriptor_to_client_info(
         last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
         last_modified,
         mcp_servers_count: Some(mcp_servers_count),
-        template: build_client_template_metadata(None, Some(&state), &runtime_metadata),
+        template: build_client_template_metadata(Some(&state), &runtime_metadata),
         approval_status,
         record_kind,
         governance_kind,
@@ -1129,26 +1359,59 @@ async fn descriptor_to_client_info(
         template_id,
         template_known,
         pending_approval,
+        config_file_parse_effective,
+        config_file_parse_override,
+        uses_template_parse_default,
     })
 }
 
 // moved to POST /api/client/config/import
 
-fn extract_supported_transports(template: &ClientTemplate) -> Vec<String> {
-    let keymap = crate::clients::keymap::registry();
-    keymap.advertise_supported(&template.config_mapping.format_rules)
+fn extract_supported_transports(state: &ClientStateRow) -> Vec<String> {
+    match state.parsed_format_rules() {
+        Ok(rules) => extract_supported_transports_from_rules(&rules),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn extract_supported_transports_from_rules(
+    rules: &HashMap<String, crate::clients::models::FormatRule>,
+) -> Vec<String> {
+    let mut available: HashSet<&'static str> = HashSet::new();
+
+    for key in rules.keys() {
+        let normalized = key.to_ascii_lowercase();
+        match normalized.as_str() {
+            "streamable_http" | "streamablehttp" | "http" => {
+                available.insert("streamable_http");
+            }
+            "sse" => {
+                available.insert("sse");
+            }
+            "stdio" => {
+                available.insert("stdio");
+            }
+            _ => {}
+        }
+    }
+
+    ["streamable_http", "sse", "stdio"]
+        .into_iter()
+        .filter(|transport| available.contains(*transport))
+        .map(str::to_string)
+        .collect()
 }
 
 fn extract_client_supported_transports(
-    template: Option<&ClientTemplate>,
+    state: Option<&ClientStateRow>,
     runtime_metadata: &RuntimeClientMetadata,
 ) -> Vec<String> {
     if !runtime_metadata.supported_transports.is_empty() {
         return runtime_metadata.supported_transports.clone();
     }
 
-    match template {
-        Some(template) => extract_supported_transports(template),
+    match state {
+        Some(state) => extract_supported_transports(state),
         None => runtime_metadata.supported_transports.clone(),
     }
 }
@@ -1206,54 +1469,12 @@ fn build_template_metadata_from_state(
     }
 }
 
-fn build_template_metadata_from_template(
-    template: &ClientTemplate,
-    runtime_metadata: &RuntimeClientMetadata,
-) -> ClientTemplateMetadata {
-    let container_type = match template.config_mapping.container_type {
-        ContainerType::Array => crate::api::models::client::ClientConfigType::Array,
-        ContainerType::ObjectMap => crate::api::models::client::ClientConfigType::Standard,
-    };
-
-    ClientTemplateMetadata {
-        format: template.format.as_str().to_string(),
-        protocol_revision: template.protocol_revision.clone(),
-        storage: ClientTemplateStorageMetadata {
-            kind: match template.storage.kind {
-                StorageKind::File => "file".to_string(),
-                StorageKind::Kv => "kv".to_string(),
-                StorageKind::Custom => "custom".to_string(),
-            },
-            path_strategy: template.storage.path_strategy.clone(),
-        },
-        container_type,
-        merge_strategy: match template.config_mapping.merge_strategy {
-            MergeStrategy::Replace => "replace".to_string(),
-            MergeStrategy::DeepMerge => "deep_merge".to_string(),
-        },
-        keep_original_config: template.config_mapping.keep_original_config,
-        managed_source: template.config_mapping.managed_source.clone(),
-        description: runtime_metadata.description.clone(),
-        homepage_url: runtime_metadata.homepage_url.clone(),
-        docs_url: runtime_metadata.docs_url.clone(),
-        support_url: runtime_metadata.support_url.clone(),
-    }
-}
-
 fn build_client_template_metadata(
-    template: Option<&ClientTemplate>,
     state: Option<&ClientStateRow>,
     runtime_metadata: &RuntimeClientMetadata,
 ) -> ClientTemplateMetadata {
     match state {
-        Some(state) => {
-            if state.managed_source().is_none() {
-                if let Some(template) = template {
-                    return build_template_metadata_from_template(template, runtime_metadata);
-                }
-            }
-            build_template_metadata_from_state(state, runtime_metadata)
-        }
+        Some(state) => build_template_metadata_from_state(state, runtime_metadata),
         None => build_runtime_template_metadata(None, runtime_metadata),
     }
 }
@@ -1263,14 +1484,6 @@ fn default_connection_mode_from_path(config_path: Option<&str>) -> String {
         "manual".to_string()
     } else {
         "local_config_detected".to_string()
-    }
-}
-
-fn convert_container_type(container: ContainerType) -> Option<crate::api::models::client::ClientConfigType> {
-    use crate::api::models::client::ClientConfigType;
-    match container {
-        ContainerType::ObjectMap => Some(ClientConfigType::Standard),
-        ContainerType::Array => Some(ClientConfigType::Array),
     }
 }
 
@@ -1991,6 +2204,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn hosted_capability_source_switch_emits_visible_change_event() {
         let context = create_test_context().await;
         let profile = Profile {
@@ -2039,6 +2253,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn mode_switch_to_hosted_emits_visible_change_event() {
         let context = create_test_context().await;
         context
@@ -2070,6 +2285,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2080,6 +2299,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn mode_switch_to_transparent_does_not_emit_visible_change_event() {
         let context = create_test_context().await;
         context
@@ -2111,6 +2331,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2533,7 +2757,7 @@ mod tests {
         assert_eq!(data.description.as_deref(), Some("Runtime-only client"));
         assert_eq!(data.template.format, "json");
         assert_eq!(data.template.storage.kind, "file");
-        assert_eq!(data.record_kind.as_deref(), Some("template_known"));
+        assert_eq!(data.record_kind.as_deref(), Some("observed_unknown"));
     }
 
     #[tokio::test]
@@ -2560,6 +2784,10 @@ mod tests {
                 docs_url: Some("https://example.com/docs".to_string()),
                 support_url: Some("https://example.com/support".to_string()),
                 logo_url: Some("https://example.com/logo.png".to_string()),
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2582,43 +2810,25 @@ mod tests {
             .expect("fetch state")
             .expect("state exists");
         assert_eq!(state.governance_kind().as_str(), "active");
-        assert_eq!(state.record_kind().as_str(), "template_known");
+        assert_eq!(state.record_kind().as_str(), "observed_unknown");
         assert_eq!(state.display_name(), "Custom Runtime");
         assert_eq!(state.connection_mode().as_str(), "local_config_detected");
         assert_eq!(state.config_path(), Some(config_path.to_string_lossy().as_ref()));
-        assert_eq!(state.template_identifier(), Some("custom.runtime.payload"));
+        assert_eq!(state.template_identifier(), None);
         assert_eq!(
             state.runtime_client_metadata().homepage_url.as_deref(),
             Some("https://example.com")
         );
 
-        let runtime_template = context
-            .client_service
-            .get_client_template("custom.runtime.payload")
-            .await
-            .expect("load runtime template");
-        assert_eq!(runtime_template.identifier, "custom.runtime.payload");
-        assert_eq!(runtime_template.display_name.as_deref(), Some("Custom Runtime"));
-        assert_eq!(runtime_template.version.as_deref(), Some("1.2.3"));
+        assert_eq!(state.config_format(), Some("json"));
         assert_eq!(
-            runtime_template.config_mapping.container_keys,
+            state.container_keys().expect("container keys"),
             vec!["mcpServers".to_string()]
         );
-        assert_eq!(
-            runtime_template.config_mapping.managed_source.as_deref(),
-            Some("runtime_active_client")
-        );
-        assert!(
-            runtime_template
-                .config_mapping
-                .format_rules
-                .contains_key("streamable_http")
-        );
-        assert!(runtime_template.config_mapping.format_rules.contains_key("stdio"));
-        assert_eq!(
-            runtime_template.metadata.get("homepage_url").and_then(|v| v.as_str()),
-            Some("https://example.com")
-        );
+        assert_eq!(state.managed_source(), None);
+        let format_rules = state.parsed_format_rules().expect("format rules");
+        assert!(format_rules.contains_key("streamable_http"));
+        assert!(format_rules.contains_key("stdio"));
     }
 
     #[tokio::test]
@@ -2645,6 +2855,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2682,6 +2896,26 @@ mod tests {
         assert_eq!(listed_client.supported_transports, vec!["stdio".to_string()]);
     }
 
+    #[test]
+    fn extract_supported_transports_from_rules_does_not_infer_sse_from_http_keys() {
+        let mut rules: HashMap<String, crate::clients::models::FormatRule> = HashMap::new();
+        rules.insert(
+            "http".to_string(),
+            crate::clients::models::FormatRule {
+                template: serde_json::json!({
+                    "type": "streamable_http",
+                    "url": "{{{url}}}",
+                    "headers": "{{{json headers}}}"
+                }),
+                requires_type_field: false,
+                ..Default::default()
+            },
+        );
+
+        let transports = extract_supported_transports_from_rules(&rules);
+        assert_eq!(transports, vec!["streamable_http".to_string()]);
+    }
+
     #[tokio::test]
     async fn update_settings_rejects_missing_local_config_target() {
         let context = create_test_context().await;
@@ -2703,6 +2937,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await;
@@ -2735,6 +2973,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2757,6 +2999,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2795,6 +3041,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2817,6 +3067,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2887,6 +3141,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_settings_accepts_directory_target_for_kv_client() {
+        let context = create_test_context().await;
+        let kv_dir = context._temp_dir.path().join("cherry-kv");
+        tokio::fs::create_dir_all(&kv_dir).await.expect("create kv directory");
+
+        let Json(response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "cherry_studio".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Cherry Studio".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(kv_dir.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
+            }),
+        )
+        .await
+        .expect("kv directory target should be accepted");
+
+        assert!(response.success);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn update_settings_rejects_non_writable_directory_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let context = create_test_context().await;
+        let kv_dir = context._temp_dir.path().join("read-only-kv");
+        tokio::fs::create_dir_all(&kv_dir).await.expect("create kv directory");
+
+        let original_permissions = std::fs::metadata(&kv_dir).expect("directory metadata").permissions();
+        let mut read_only_permissions = original_permissions.clone();
+        read_only_permissions.set_mode(0o555);
+        std::fs::set_permissions(&kv_dir, read_only_permissions).expect("set read-only permissions");
+
+        let result = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "cherry_studio".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                client_version: None,
+                display_name: Some("Cherry Studio".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(kv_dir.to_string_lossy().to_string()),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
+            }),
+        )
+        .await;
+
+        std::fs::set_permissions(&kv_dir, original_permissions).expect("restore permissions");
+
+        let (status, Json(response)) = result.expect_err("read-only directory target should fail");
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let error = response.error.expect("error payload");
+        assert!(error.message.contains("not writable"));
+    }
+
+    #[tokio::test]
     async fn update_settings_preserves_suspended_governance_state() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("suspended-client.json");
@@ -2933,6 +3267,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -2951,7 +3289,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn config_apply_uses_persisted_runtime_template_for_runtime_only_client() {
+    async fn config_apply_uses_db_runtime_definition_for_runtime_only_client() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("runtime-client.json");
         tokio::fs::write(&config_path, "{}")
@@ -2974,6 +3312,10 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                format_rules: None,
+                clear_format_rules: false,
             }),
         )
         .await
@@ -3021,10 +3363,7 @@ mod tests {
         assert!(details_response.success);
         let details = details_response.data.expect("details data");
         assert!(details.config_exists);
-        assert_eq!(
-            details.template.managed_source.as_deref(),
-            Some("runtime_active_client")
-        );
+        assert_eq!(details.template.managed_source.as_deref(), None);
         assert_eq!(details.content["mcpServers"]["MCPMate"]["type"], "streamable_http");
     }
 
