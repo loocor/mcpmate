@@ -205,12 +205,14 @@ async fn create_router_internal(
         .merge(runtime::routes(state.clone()))
         .merge(inspector::routes(state.clone()))
         .merge(client::routes(state.clone()))
-        .merge(registry::routes(state.clone()))
-        .finish_api_with(&mut api, openapi::api_docs)
-        .layer(axum::middleware::from_fn(crate::common::env::origin_guard_middleware));
+        .merge(registry::routes(state.clone()));
 
     #[cfg(feature = "ai")]
     let api_router = api_router.merge(ai::routes(state.clone()));
+
+    let api_router = api_router
+        .finish_api_with(&mut api, openapi::api_docs)
+        .layer(axum::middleware::from_fn(crate::common::env::origin_guard_middleware));
 
     let inspector_ws = Router::new()
         .route(
