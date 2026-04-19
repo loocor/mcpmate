@@ -1087,7 +1087,13 @@ where
             .hidden_title(true);
     }
 
-    // Compose initialization script: disable context menu + expose native shell marker
+    #[cfg(debug_assertions)]
+    let init_script = String::from(
+        r#"window.__MCPMATE_IS_TAURI__ = true;
+        "#,
+    );
+
+    #[cfg(not(debug_assertions))]
     let init_script = String::from(
         r#"window.addEventListener('contextmenu', (event) => {
             if (event.metaKey || event.ctrlKey) {
@@ -1122,6 +1128,9 @@ where
     });
 
     let window = builder.build()?;
+
+    #[cfg(debug_assertions)]
+    window.open_devtools();
 
     let _ = manager.app_handle().show();
     let _ = window.show();
