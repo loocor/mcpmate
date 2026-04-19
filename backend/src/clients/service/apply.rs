@@ -227,35 +227,6 @@ impl ClientConfigService {
                 }
                 Ok(out)
             }
-            Err(ConfigError::FileOperationError(msg)) if msg.to_ascii_lowercase().contains("locked") => {
-                // Only Cherry triggers delayed write
-                let state = self.fetch_state(&options.client_id).await?;
-                let is_cherry = state
-                    .as_ref()
-                    .and_then(|s| s.storage_kind())
-                    .map(|k| k == "kv")
-                    .unwrap_or(false)
-                    && state
-                        .as_ref()
-                        .and_then(|s| s.storage_adapter())
-                        .map(|a| a == "cherry_kv")
-                        .unwrap_or(false);
-                if !is_cherry {
-                    return Err(ConfigError::FileOperationError(msg));
-                }
-
-                let config_path = self.resolved_config_path(&options.client_id).await?.ok_or_else(|| {
-                    ConfigError::PathResolutionError(format!("No config_path for client {}", options.client_id))
-                })?;
-                let merged_after = preview_outcome.preview.after.clone().unwrap_or_default();
-                let policy = self.get_backup_policy(&options.client_id).await?;
-                self.schedule_write_after_unlock(options.client_id.clone(), config_path, merged_after, policy)?;
-
-                let mut out = preview_outcome;
-                out.scheduled = true;
-                out.scheduled_reason = Some("db_locked".into());
-                Ok(out)
-            }
             Err(e) => Err(e),
         }
     }
