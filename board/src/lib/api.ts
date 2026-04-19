@@ -17,6 +17,9 @@ import type {
 	ClientCapabilityConfigReq,
 	ClientCapabilityConfigResp,
 	ClientCheckResp,
+	ClientConfigFileParse,
+	ClientConfigFileParseInspectReq,
+	ClientConfigFileParseInspectResp,
 	ClientConfigImportData,
 	ClientConfigImportReq,
 	ClientConfigResp,
@@ -24,6 +27,7 @@ import type {
 	ClientConfigUpdateReq,
 	ClientConfigUpdateResp,
 	ClientDeleteResp,
+	ClientFormatRuleData,
 	ClientManageAction,
 	ClientManageResp,
 	ClientRecordLifecycleResp,
@@ -2452,6 +2456,16 @@ function normalizeFirstContactBehavior(raw: string): "deny" | "review" | "allow"
 
 // Clients Management API
 export const clientsApi = {
+	inspectConfigFileParse: async (req: ClientConfigFileParseInspectReq): Promise<ClientConfigFileParseInspectResp> => {
+		const resp = await fetchApi<ApiWrapper<ClientConfigFileParseInspectResp>>(
+			"/api/client/config-file-parse/inspect",
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		);
+		return extractApiData(resp);
+	},
 	getDefaultPolicy: async () => {
 		const [mode, firstContact] = await Promise.all([
 			systemApi.getDefaultClientMode(),
@@ -2595,6 +2609,9 @@ export const clientsApi = {
         docs_url?: string;
         support_url?: string;
         logo_url?: string;
+		config_file_parse?: ClientConfigFileParse;
+		format_rules?: Record<string, ClientFormatRuleData>;
+		clear_format_rules?: boolean;
 	}) => {
 		const resp = await fetchApi<
 			{ success: boolean } & ApiWrapper<Record<string, unknown>>

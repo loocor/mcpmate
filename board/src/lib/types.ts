@@ -959,6 +959,12 @@ export interface ClientInfo {
   docs_url?: string | null;
   support_url?: string | null;
   config_type?: ClientConfigType | null;
+  /** Resolved rules used for parsing (template default or legacy row). */
+  config_file_parse_effective?: ClientConfigFileParse | null;
+  /** User override when set; when absent, uses effective/template. */
+  config_file_parse_override?: ClientConfigFileParse | null;
+  /** True when no stored override exists (template/runtime default). */
+  uses_template_parse_default?: boolean;
   config_mode?: string | null;
   transport?: string | null;
   client_version?: string | null;
@@ -968,6 +974,7 @@ export interface ClientInfo {
   last_modified?: string | null;
   template: ClientTemplateMetadata;
   mcp_servers_count?: number | null;
+  format_rules?: Record<string, ClientFormatRuleData> | null;
 }
 
 export interface ClientCheckData {
@@ -1122,6 +1129,9 @@ export interface ClientConfigData {
   config_exists: boolean;
   config_path: string;
   config_type?: ClientConfigType | null;
+  config_file_parse_effective?: ClientConfigFileParse | null;
+  config_file_parse_override?: ClientConfigFileParse | null;
+  uses_template_parse_default?: boolean;
   content: unknown;
   warnings?: string[];
   degraded_reasons?: string[];
@@ -1147,6 +1157,7 @@ export interface ClientConfigData {
   capability_source?: CapabilitySource;
   selected_profile_ids?: string[];
   custom_profile_id?: string | null;
+  format_rules?: Record<string, ClientFormatRuleData> | null;
 }
 
 export interface ClientSettingsSourceData {
@@ -1170,6 +1181,7 @@ export interface ClientSettingsUpdateData {
   support_url?: string | null;
   logo_url?: string | null;
   setting_sources?: ClientSettingsSourceData | null;
+  format_rules?: Record<string, ClientFormatRuleData> | null;
 }
 
 export interface ClientSettingsUpdateResp {
@@ -1403,4 +1415,40 @@ export interface OAuthCallbackNotificationPayload {
 export interface OAuthCallbackRequest {
   code: string;
   state: string;
+}
+
+export interface ClientConfigFileParse {
+  format: string;
+  container_type: string;
+  container_keys?: string[];
+}
+
+export interface ClientFormatRuleData {
+  type_value?: string | null;
+  url_field?: string | null;
+  headers_field?: string | null;
+  extra_fields?: Record<string, unknown> | null;
+  requires_type_field?: boolean;
+}
+
+export interface ClientConfigFileParseInspectReq {
+  config_path: string;
+  config_file_parse?: ClientConfigFileParse;
+}
+
+export interface ClientConfigFileParseValidation {
+  matches: boolean;
+  format_matches: boolean;
+  container_found: boolean;
+  server_count: number;
+}
+
+export interface ClientConfigFileParseInspectResp {
+  normalized_path: string;
+  detected_format?: string | null;
+  inferred_parse?: ClientConfigFileParse | null;
+  validation?: ClientConfigFileParseValidation | null;
+  preview?: unknown;
+  preview_text?: string;
+  warnings?: string[];
 }

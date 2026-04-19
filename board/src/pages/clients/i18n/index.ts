@@ -247,6 +247,29 @@ export const clientsTranslations = {
 							webPickInfoDescription:
 								"Your browser cannot read the absolute path automatically. Please paste it manually if needed.",
 						},
+						configFileParse: {
+							format: { label: "Format" },
+							containerType: { label: "Container Type" },
+							containerKeys: { label: "Container Keys (JSON Path)" },
+							validation: {
+								formatMatch: "Format matches",
+								formatMismatch: "Format mismatch",
+								containerFound: "Container found",
+								containerMissing: "Container missing",
+								serversDetected: "{{count}} server(s) detected",
+								noServers: "No servers detected",
+								checking: "Inspecting..."
+							},
+							preview: "Preview",
+							previewTitle: "Config Preview",
+							autoDetect: "Auto-Detect Rules",
+							applyDetected: "Apply Detected Rules"
+						},
+						formatRulesJsonText: {
+							label: "Format Rules (JSON)",
+							placeholder: "Paste JSON format rules here",
+							description: "Advanced: Fine-grained transport format rules as JSON. Leave empty to reset to defaults.",
+						},
 						logoUrl: { label: "Logo URL", placeholder: "https://example.com/logo.png" },
 						homepageUrl: { label: "Homepage URL", placeholder: "https://example.com" },
 						docsUrl: { label: "Docs URL", placeholder: "https://docs.example.com" },
@@ -273,6 +296,7 @@ export const clientsTranslations = {
 							message:
 								"Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
 						},
+						formatRulesJsonParseError: "Failed to parse format rules JSON. Please check the syntax and try again.",
 						saveFailed: { title: "Unable to save client record" },
 						deleteFailed: {
 							title: "Unable to delete client record",
@@ -878,6 +902,29 @@ export const clientsTranslations = {
 							webPickInfoTitle: "浏览器文件访问",
 							webPickInfoDescription: "浏览器无法自动读取绝对路径，如有需要请手动粘贴。",
 						},
+						configFileParse: {
+							format: { label: "文件格式" },
+							containerType: { label: "容器类型" },
+							containerKeys: { label: "容器键名 (JSON Path)" },
+							validation: {
+								formatMatch: "格式匹配",
+								formatMismatch: "格式不匹配",
+								containerFound: "找到容器",
+								containerMissing: "未找到容器",
+								serversDetected: "检测到 {{count}} 个服务器",
+								noServers: "未检测到服务器",
+								checking: "检查中..."
+							},
+							preview: "预览",
+							previewTitle: "配置预览",
+							autoDetect: "自动检测规则",
+							applyDetected: "应用检测到的规则"
+						},
+						formatRulesJsonText: {
+							label: "格式规则（JSON）",
+							placeholder: "在此粘贴 JSON 格式规则",
+							description: "高级：为传输格式定义细粒度规则（JSON 格式）。留空将重置为默认值。",
+						},
 						logoUrl: { label: "Logo 地址", placeholder: "https://example.com/logo.png" },
 						homepageUrl: { label: "主页地址", placeholder: "https://example.com" },
 						docsUrl: { label: "文档地址", placeholder: "https://docs.example.com" },
@@ -902,6 +949,7 @@ export const clientsTranslations = {
 						createBackupPolicyFailed: {
 							message: "客户端记录已创建，但初始化备份策略失败。你可以稍后在备份设置中重试。",
 						},
+						formatRulesJsonParseError: "格式规则 JSON 解析失败。请检查语法后重试。",
 						saveFailed: { title: "无法保存客户端记录" },
 						deleteFailed: {
 							title: "无法删除客户端记录",
@@ -1493,6 +1541,29 @@ export const clientsTranslations = {
 							webPickInfoTitle: "ブラウザのファイルアクセス",
 							webPickInfoDescription: "ブラウザは絶対パスを自動取得できません。必要なら手動で貼り付けてください。",
 						},
+						configFileParse: {
+							format: { label: "フォーマット" },
+							containerType: { label: "コンテナタイプ" },
+							containerKeys: { label: "コンテナキー (JSON Path)" },
+							validation: {
+								formatMatch: "フォーマット一致",
+								formatMismatch: "フォーマット不一致",
+								containerFound: "コンテナ検出",
+								containerMissing: "コンテナ未検出",
+								serversDetected: "{{count}}個のサーバーを検出",
+								noServers: "サーバー未検出",
+								checking: "検査中..."
+							},
+							preview: "プレビュー",
+							previewTitle: "設定プレビュー",
+							autoDetect: "ルール自動検出",
+							applyDetected: "検出ルールを適用"
+						},
+						formatRulesJsonText: {
+							label: "フォーマットルール（JSON）",
+							placeholder: "JSON フォーマットルールをここに貼り付けてください",
+							description: "高度な設定：トランスポート形式の細粒度ルールを JSON で定義します。空にするとデフォルト値にリセットされます。",
+						},
 						logoUrl: { label: "ロゴ URL", placeholder: "https://example.com/logo.png" },
 						homepageUrl: { label: "ホームページ URL", placeholder: "https://example.com" },
 						docsUrl: { label: "ドキュメント URL", placeholder: "https://docs.example.com" },
@@ -1518,6 +1589,7 @@ export const clientsTranslations = {
 							message:
 								"クライアントレコードは作成されましたが、初期バックアップポリシーの適用に失敗しました。後でバックアップ設定から再試行できます。",
 						},
+						formatRulesJsonParseError: "フォーマットルール JSON の解析に失敗しました。構文を確認して再度お試しください。",
 						saveFailed: { title: "クライアントレコードを保存できませんでした" },
 						deleteFailed: {
 							title: "クライアントレコードを削除できません",
