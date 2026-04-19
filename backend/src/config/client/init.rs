@@ -173,6 +173,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     ensure_column(pool, tables::CLIENT, "keep_original_config", "INTEGER").await?;
     ensure_column(pool, tables::CLIENT, "managed_source", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "format_rules", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "config_file_parse", "TEXT").await?;
 
     sqlx::query(&format!(
         r#"
