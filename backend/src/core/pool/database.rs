@@ -611,30 +611,66 @@ impl UpstreamConnectionPool {
             .filter(|t| t.server_id == *server_id)
             .map(|t| t.tool_name.clone())
             .collect();
+        let existing_unique_tool_names: std::collections::HashSet<String> = existing_tools
+            .iter()
+            .filter(|t| t.server_id == *server_id)
+            .map(|t| t.unique_name.clone())
+            .collect();
 
         // Add new tools to the profile
         for tool in tools {
-            let tool_name = tool.name.to_string();
+            let incoming_tool_name = tool.name.to_string();
 
-            // Skip if tool already exists in this profile
-            if existing_tool_names.contains(&tool_name) {
+            // Skip if tool already exists in this profile (raw name or unique name).
+            let already_exists = existing_tool_names.contains(&incoming_tool_name)
+                || existing_unique_tool_names.contains(&incoming_tool_name);
+            if already_exists {
                 continue;
             }
 
-            // Add the tool to the profile (enabled by default)
-            match crate::config::profile::add_tool_to_profile(pool, profile_id, server_id, &tool_name, true).await {
+            // Normalize incoming names to canonical server tool_name before existence check.
+            // This avoids re-enabling disabled tools when upstream returns unique names.
+            let unique_lookup = crate::config::server::tools::get_server_tool_by_unique_name(pool, &incoming_tool_name)
+                .await
+                .context("Failed to lookup tool by unique name during pool sync")?;
+            let normalized_tool_name = match unique_lookup {
+                Some(existing) if existing.server_id == server_id => existing.tool_name,
+                Some(_) => incoming_tool_name.clone(),
+                None => {
+                    if let Some(stripped) = crate::core::capability::naming::strip_server_prefix(
+                        crate::core::capability::naming::NamingKind::Tool,
+                        server_name,
+                        &incoming_tool_name,
+                    ) {
+                        stripped
+                    } else {
+                        incoming_tool_name.clone()
+                    }
+                }
+            };
+
+            if existing_tool_names.contains(&normalized_tool_name) {
+                continue;
+            }
+
+            // Add missing tools to the profile (enabled by default)
+            match crate::config::profile::add_tool_to_profile(pool, profile_id, server_id, &normalized_tool_name, true)
+                .await
+            {
                 Ok(_) => {
                     tracing::debug!(
-                        "Added tool '{}' from server '{}' to profile '{}'",
-                        tool_name,
+                        "Added tool '{}' (incoming '{}') from server '{}' to profile '{}'",
+                        normalized_tool_name,
+                        incoming_tool_name,
                         server_name,
                         profile_name
                     );
                 }
                 Err(e) => {
                     tracing::error!(
-                        "Failed to add tool '{}' from server '{}' to profile '{}': {}",
-                        tool_name,
+                        "Failed to add tool '{}' (incoming '{}') from server '{}' to profile '{}': {}",
+                        normalized_tool_name,
+                        incoming_tool_name,
                         server_name,
                         profile_name,
                         e
@@ -642,7 +678,6 @@ impl UpstreamConnectionPool {
                 }
             }
         }
-
         Ok(())
     }
 
