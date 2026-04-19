@@ -1,4 +1,4 @@
-use std::collections::{HashMap, hash_map::DefaultHasher};
+use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -14,6 +14,11 @@ struct BackendBuildContext {
 }
 
 const SKIP_SIDECAR_BUILD_ENV: &str = "MCPMATE_SKIP_SIDECAR_BUILD";
+const TAURI_MARKET_DIAG_DEFAULT_ENV: &str = "MCPMATE_TAURI_MARKET_DIAG_DEFAULT";
+const TAURI_PREVIEW_EXPIRY_DATE_ENV: &str = "MCPMATE_TAURI_PREVIEW_EXPIRY_DATE";
+const TAURI_ENABLE_INSPECTOR_ENV: &str = "MCPMATE_TAURI_ENABLE_INSPECTOR";
+const AUTH_WORKER_BASE_ENV: &str = "MCPMATE_AUTH_WORKER_BASE";
+const KEYCHAIN_SERVICE_ENV: &str = "MCPMATE_KEYCHAIN_SERVICE";
 
 const BACKEND_SIDECAR_INPUTS: &[&str] = &[
     "Cargo.toml",
@@ -26,7 +31,6 @@ const BACKEND_SIDECAR_INPUTS: &[&str] = &[
     "script",
 ];
 
-
 fn env_truthy(name: &str) -> bool {
     matches!(
         env::var(name).ok().as_deref(),
@@ -38,7 +42,11 @@ fn fingerprint_inputs(context: &BackendBuildContext, binary_name: &str) -> Vec<P
     BACKEND_SIDECAR_INPUTS
         .iter()
         .map(|path| context.backend_dir.join(path))
-        .chain(std::iter::once(context.backend_dir.join(format!("src/bin/{binary_name}.rs"))))
+        .chain(std::iter::once(
+            context
+                .backend_dir
+                .join(format!("src/bin/{binary_name}.rs")),
+        ))
         .collect()
 }
 
@@ -92,8 +100,8 @@ fn backend_fingerprint(context: &BackendBuildContext, binary_name: &str) -> Stri
     format!("{:016x}", hasher.finish())
 }
 
-
 fn main() {
+    emit_env_rerun_hints();
     embed_auth_config_from_env_file();
     ensure_local_core_sidecar();
     ensure_bridge_sidecar();
@@ -101,7 +109,7 @@ fn main() {
     // Allow cfg gate in sources and enable a compile-time cfg for a special diagnostic build of the market proxy.
     println!("cargo:rustc-check-cfg=cfg(market_diag_default)");
     // Set MCPMATE_TAURI_MARKET_DIAG_DEFAULT=1 in the environment to turn this on.
-    match env::var("MCPMATE_TAURI_MARKET_DIAG_DEFAULT") {
+    match env::var(TAURI_MARKET_DIAG_DEFAULT_ENV) {
         Ok(v) if matches!(v.as_str(), "1" | "true" | "TRUE" | "True") => {
             println!("cargo:rustc-cfg=market_diag_default");
             println!("cargo:warning=Building with market diagnostic logging enabled by default");
@@ -110,14 +118,27 @@ fn main() {
     }
 
     // Pass through select environment variables as compile-time env for runtime access.
-    if let Ok(v) = env::var("MCPMATE_TAURI_PREVIEW_EXPIRY_DATE") {
+    if let Ok(v) = env::var(TAURI_PREVIEW_EXPIRY_DATE_ENV) {
         println!("cargo:rustc-env=MCPMATE_TAURI_PREVIEW_EXPIRY_DATE={}", v);
     }
-    if let Ok(v) = env::var("MCPMATE_TAURI_ENABLE_INSPECTOR") {
+    if let Ok(v) = env::var(TAURI_ENABLE_INSPECTOR_ENV) {
         println!("cargo:rustc-env=MCPMATE_TAURI_ENABLE_INSPECTOR={}", v);
     }
 
     tauri_build::build();
+}
+
+fn emit_env_rerun_hints() {
+    for name in [
+        SKIP_SIDECAR_BUILD_ENV,
+        TAURI_MARKET_DIAG_DEFAULT_ENV,
+        TAURI_PREVIEW_EXPIRY_DATE_ENV,
+        TAURI_ENABLE_INSPECTOR_ENV,
+        AUTH_WORKER_BASE_ENV,
+        KEYCHAIN_SERVICE_ENV,
+    ] {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
 }
 
 fn ensure_local_core_sidecar() {
@@ -158,24 +179,24 @@ fn embed_auth_config_from_env_file() {
         );
     }
 
-    let auth_base = env::var("MCPMATE_AUTH_WORKER_BASE")
+    let auth_base = env::var(AUTH_WORKER_BASE_ENV)
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| from_file.get("AUTH_WORKER_BASE").cloned())
         .unwrap_or_else(|| {
             panic!(
-                "AUTH_WORKER_BASE missing in {} and MCPMATE_AUTH_WORKER_BASE not set",
+                "AUTH_WORKER_BASE missing in {} and {AUTH_WORKER_BASE_ENV} not set",
                 path.display()
             )
         });
 
-    let keychain_service = env::var("MCPMATE_KEYCHAIN_SERVICE")
+    let keychain_service = env::var(KEYCHAIN_SERVICE_ENV)
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| from_file.get("KEYCHAIN_SERVICE").cloned())
         .unwrap_or_else(|| {
             panic!(
-                "KEYCHAIN_SERVICE missing in {} and MCPMATE_KEYCHAIN_SERVICE not set",
+                "KEYCHAIN_SERVICE missing in {} and {KEYCHAIN_SERVICE_ENV} not set",
                 path.display()
             )
         });
@@ -233,7 +254,9 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
     let sidecar_plain = context
         .sidecar_dir
         .join(format!("{sidecar_name}{}", context.exe_suffix));
-    let fingerprint_path = context.sidecar_dir.join(format!("{sidecar_name}-{}.fingerprint", context.target));
+    let fingerprint_path = context
+        .sidecar_dir
+        .join(format!("{sidecar_name}-{}.fingerprint", context.target));
     let fingerprint = backend_fingerprint(context, binary_name);
 
     let sync_plain_sidecar = |source: &Path| {
@@ -301,5 +324,6 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
     fs::copy(&built_binary, &sidecar_target)
         .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar target file"));
     sync_plain_sidecar(&built_binary);
-    fs::write(&fingerprint_path, format!("{fingerprint}\n")).expect("failed to write sidecar fingerprint");
+    fs::write(&fingerprint_path, format!("{fingerprint}\n"))
+        .expect("failed to write sidecar fingerprint");
 }
