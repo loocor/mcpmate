@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -12,7 +13,95 @@ struct BackendBuildContext {
     exe_suffix: &'static str,
 }
 
+const SKIP_SIDECAR_BUILD_ENV: &str = "MCPMATE_SKIP_SIDECAR_BUILD";
+const TAURI_MARKET_DIAG_DEFAULT_ENV: &str = "MCPMATE_TAURI_MARKET_DIAG_DEFAULT";
+const TAURI_PREVIEW_EXPIRY_DATE_ENV: &str = "MCPMATE_TAURI_PREVIEW_EXPIRY_DATE";
+const TAURI_ENABLE_INSPECTOR_ENV: &str = "MCPMATE_TAURI_ENABLE_INSPECTOR";
+const AUTH_WORKER_BASE_ENV: &str = "MCPMATE_AUTH_WORKER_BASE";
+const KEYCHAIN_SERVICE_ENV: &str = "MCPMATE_KEYCHAIN_SERVICE";
+
+const BACKEND_SIDECAR_INPUTS: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "build.rs",
+    ".cargo/config.toml",
+    "src",
+    "config",
+    "crates",
+    "script",
+];
+
+fn env_truthy(name: &str) -> bool {
+    matches!(
+        env::var(name).ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "True" | "yes" | "YES" | "on" | "ON")
+    )
+}
+
+fn fingerprint_inputs(context: &BackendBuildContext, binary_name: &str) -> Vec<PathBuf> {
+    BACKEND_SIDECAR_INPUTS
+        .iter()
+        .map(|path| context.backend_dir.join(path))
+        .chain(std::iter::once(
+            context
+                .backend_dir
+                .join(format!("src/bin/{binary_name}.rs")),
+        ))
+        .collect()
+}
+
+fn collect_files(path: &Path, out: &mut Vec<PathBuf>) {
+    if !path.exists() {
+        return;
+    }
+    if path.is_file() {
+        out.push(path.to_path_buf());
+        return;
+    }
+    if let Ok(read_dir) = fs::read_dir(path) {
+        for entry in read_dir.flatten() {
+            let child = entry.path();
+            if child.is_dir() {
+                collect_files(&child, out);
+            } else if child.is_file() {
+                out.push(child);
+            }
+        }
+    }
+}
+
+fn backend_fingerprint(context: &BackendBuildContext, binary_name: &str) -> String {
+    let mut files = Vec::new();
+    for input in fingerprint_inputs(context, binary_name) {
+        collect_files(&input, &mut files);
+    }
+    files.sort();
+    files.dedup();
+
+    let mut hasher = DefaultHasher::new();
+    context.target.hash(&mut hasher);
+    context.profile.hash(&mut hasher);
+    binary_name.hash(&mut hasher);
+
+    for file in files {
+        let rel = file.strip_prefix(&context.backend_dir).unwrap_or(&file);
+        rel.to_string_lossy().hash(&mut hasher);
+        if let Ok(meta) = fs::metadata(&file) {
+            meta.len().hash(&mut hasher);
+            if let Ok(modified) = meta.modified() {
+                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    duration.as_secs().hash(&mut hasher);
+                    duration.subsec_nanos().hash(&mut hasher);
+                }
+            }
+        }
+    }
+
+    format!("{:016x}", hasher.finish())
+}
+
 fn main() {
+    emit_env_rerun_hints();
     embed_auth_config_from_env_file();
     ensure_local_core_sidecar();
     ensure_bridge_sidecar();
@@ -20,7 +109,7 @@ fn main() {
     // Allow cfg gate in sources and enable a compile-time cfg for a special diagnostic build of the market proxy.
     println!("cargo:rustc-check-cfg=cfg(market_diag_default)");
     // Set MCPMATE_TAURI_MARKET_DIAG_DEFAULT=1 in the environment to turn this on.
-    match env::var("MCPMATE_TAURI_MARKET_DIAG_DEFAULT") {
+    match env::var(TAURI_MARKET_DIAG_DEFAULT_ENV) {
         Ok(v) if matches!(v.as_str(), "1" | "true" | "TRUE" | "True") => {
             println!("cargo:rustc-cfg=market_diag_default");
             println!("cargo:warning=Building with market diagnostic logging enabled by default");
@@ -29,19 +118,32 @@ fn main() {
     }
 
     // Pass through select environment variables as compile-time env for runtime access.
-    if let Ok(v) = env::var("MCPMATE_TAURI_PREVIEW_EXPIRY_DATE") {
+    if let Ok(v) = env::var(TAURI_PREVIEW_EXPIRY_DATE_ENV) {
         println!("cargo:rustc-env=MCPMATE_TAURI_PREVIEW_EXPIRY_DATE={}", v);
     }
-    if let Ok(v) = env::var("MCPMATE_TAURI_ENABLE_INSPECTOR") {
+    if let Ok(v) = env::var(TAURI_ENABLE_INSPECTOR_ENV) {
         println!("cargo:rustc-env=MCPMATE_TAURI_ENABLE_INSPECTOR={}", v);
     }
 
     tauri_build::build();
 }
 
+fn emit_env_rerun_hints() {
+    for name in [
+        SKIP_SIDECAR_BUILD_ENV,
+        TAURI_MARKET_DIAG_DEFAULT_ENV,
+        TAURI_PREVIEW_EXPIRY_DATE_ENV,
+        TAURI_ENABLE_INSPECTOR_ENV,
+        AUTH_WORKER_BASE_ENV,
+        KEYCHAIN_SERVICE_ENV,
+    ] {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+}
+
 fn ensure_local_core_sidecar() {
     let context = backend_build_context();
-    emit_backend_rerun_hints(&context.backend_dir, &["src/main.rs", "Cargo.toml"]);
+    emit_backend_rerun_hints(&context, "mcpmate");
     ensure_backend_sidecar(&context, "mcpmate", "mcpmate-core");
 }
 
@@ -77,24 +179,24 @@ fn embed_auth_config_from_env_file() {
         );
     }
 
-    let auth_base = env::var("MCPMATE_AUTH_WORKER_BASE")
+    let auth_base = env::var(AUTH_WORKER_BASE_ENV)
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| from_file.get("AUTH_WORKER_BASE").cloned())
         .unwrap_or_else(|| {
             panic!(
-                "AUTH_WORKER_BASE missing in {} and MCPMATE_AUTH_WORKER_BASE not set",
+                "AUTH_WORKER_BASE missing in {} and {AUTH_WORKER_BASE_ENV} not set",
                 path.display()
             )
         });
 
-    let keychain_service = env::var("MCPMATE_KEYCHAIN_SERVICE")
+    let keychain_service = env::var(KEYCHAIN_SERVICE_ENV)
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| from_file.get("KEYCHAIN_SERVICE").cloned())
         .unwrap_or_else(|| {
             panic!(
-                "KEYCHAIN_SERVICE missing in {} and MCPMATE_KEYCHAIN_SERVICE not set",
+                "KEYCHAIN_SERVICE missing in {} and {KEYCHAIN_SERVICE_ENV} not set",
                 path.display()
             )
         });
@@ -106,6 +208,7 @@ fn embed_auth_config_from_env_file() {
 
 fn ensure_bridge_sidecar() {
     let context = backend_build_context();
+    emit_backend_rerun_hints(&context, "bridge");
     ensure_backend_sidecar(&context, "bridge", "bridge");
 }
 
@@ -130,12 +233,16 @@ fn backend_build_context() -> BackendBuildContext {
     }
 }
 
-fn emit_backend_rerun_hints(backend_dir: &Path, paths: &[&str]) {
-    for path in paths {
-        println!(
-            "cargo:rerun-if-changed={}",
-            backend_dir.join(path).display()
-        );
+fn emit_backend_rerun_hints(context: &BackendBuildContext, binary_name: &str) {
+    let mut files = Vec::new();
+    for input in fingerprint_inputs(context, binary_name) {
+        collect_files(&input, &mut files);
+    }
+    files.sort();
+    files.dedup();
+
+    for file in files {
+        println!("cargo:rerun-if-changed={}", file.display());
     }
 }
 
@@ -147,6 +254,37 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
     let sidecar_plain = context
         .sidecar_dir
         .join(format!("{sidecar_name}{}", context.exe_suffix));
+    let fingerprint_path = context
+        .sidecar_dir
+        .join(format!("{sidecar_name}-{}.fingerprint", context.target));
+    let fingerprint = backend_fingerprint(context, binary_name);
+
+    let sync_plain_sidecar = |source: &Path| {
+        fs::copy(source, &sidecar_plain)
+            .unwrap_or_else(|_| panic!("failed to sync {binary_name} sidecar plain file"));
+    };
+
+    if env_truthy(SKIP_SIDECAR_BUILD_ENV) {
+        assert!(
+            sidecar_target.exists() || sidecar_plain.exists(),
+            "missing prebuilt {binary_name} sidecar while {} is enabled",
+            SKIP_SIDECAR_BUILD_ENV
+        );
+        if sidecar_target.exists() {
+            sync_plain_sidecar(&sidecar_target);
+        }
+        return;
+    }
+
+    if sidecar_target.exists() && sidecar_plain.exists() {
+        if let Ok(existing) = fs::read_to_string(&fingerprint_path) {
+            if existing.trim() == fingerprint {
+                sync_plain_sidecar(&sidecar_target);
+                println!("cargo:warning=Reusing cached {binary_name} sidecar");
+                return;
+            }
+        }
+    }
 
     let mut cargo = Command::new("cargo");
     cargo
@@ -185,6 +323,7 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
     fs::create_dir_all(&context.sidecar_dir).expect("failed to create sidecar directory");
     fs::copy(&built_binary, &sidecar_target)
         .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar target file"));
-    fs::copy(&built_binary, &sidecar_plain)
-        .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar plain file"));
+    sync_plain_sidecar(&built_binary);
+    fs::write(&fingerprint_path, format!("{fingerprint}\n"))
+        .expect("failed to write sidecar fingerprint");
 }
