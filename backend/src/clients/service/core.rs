@@ -3,9 +3,10 @@ use crate::clients::detector::{ClientDetector, DetectedClient};
 use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    BackupPolicySetting, ClientCapabilityConfig, ClientConnectionMode, ClientGovernanceKind, ClientRecordKind,
-    ClientTemplate, ConfigMapping, ConfigMode, DetectionMethod, DetectionRule, FormatRule, ManagedEndpointConfig,
-    MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat, UnifyDirectExposureConfig,
+    BackupPolicySetting, ClientCapabilityConfig, ClientConfigFileParse, ClientConnectionMode, ClientGovernanceKind,
+    ClientRecordKind, ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule,
+    ManagedEndpointConfig, MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
+    UnifyDirectExposureConfig,
 };
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
@@ -13,7 +14,6 @@ use crate::clients::source::{ClientConfigSource, DbTemplateSource};
 use crate::system::paths::{PathService, get_path_service};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,8 +23,6 @@ use tokio::fs::OpenOptions;
 
 // Generated at build time from the repository's config/client directory
 include!(concat!(env!("OUT_DIR"), "/official_templates_generated.rs"));
-
-const RUNTIME_ACTIVE_TEMPLATE_SOURCE: &str = "runtime_active_client";
 
 fn parse_embedded_template(
     file_name: &str,
@@ -143,6 +141,7 @@ pub struct ClientStateRow {
     pub(super) keep_original_config: Option<i64>,
     pub(super) managed_source: Option<String>,
     pub(super) format_rules: Option<String>,
+    pub(super) config_file_parse: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -350,6 +349,131 @@ impl ClientStateRow {
             .map(Some)
             .map_err(|e| ConfigError::DataAccessError(format!("Failed to parse format_rules: {}", e)))
     }
+
+    pub fn parsed_format_rules(&self) -> ConfigResult<std::collections::HashMap<String, FormatRule>> {
+        let Some(value) = self.format_rules()? else {
+            return Ok(std::collections::HashMap::new());
+        };
+
+        serde_json::from_value::<std::collections::HashMap<String, FormatRule>>(value)
+            .map_err(|e| ConfigError::DataAccessError(format!("Failed to decode format_rules: {}", e)))
+    }
+
+    pub fn config_file_parse_override(&self) -> ConfigResult<Option<ClientConfigFileParse>> {
+        let Some(raw) = self.config_file_parse.as_deref() else {
+            return Ok(None);
+        };
+
+        if raw.trim().is_empty() {
+            return Ok(None);
+        }
+
+        serde_json::from_str::<ClientConfigFileParse>(raw)
+            .map(Some)
+            .map_err(|e| ConfigError::DataAccessError(format!("Failed to parse config_file_parse: {}", e)))
+    }
+
+    pub fn legacy_config_file_parse(&self) -> ConfigResult<Option<ClientConfigFileParse>> {
+        let format = match self.config_format() {
+            Some("json") => TemplateFormat::Json,
+            Some("json5") => TemplateFormat::Json5,
+            Some("toml") => TemplateFormat::Toml,
+            Some("yaml") => TemplateFormat::Yaml,
+            Some(_) | None => return Ok(None),
+        };
+
+        let container_keys = self.container_keys()?;
+        if container_keys.is_empty() {
+            return Ok(None);
+        }
+
+        let container_type = match self.container_type() {
+            Some("array") => crate::clients::models::ContainerType::Array,
+            _ => crate::clients::models::ContainerType::ObjectMap,
+        };
+
+        Ok(Some(ClientConfigFileParse {
+            format,
+            container_type,
+            container_keys,
+        }))
+    }
+}
+
+pub(super) fn runtime_default_format_rules(transports: &[String]) -> HashMap<String, FormatRule> {
+    let mut rules = HashMap::new();
+
+    for transport in transports {
+        match transport.as_str() {
+            "stdio" => {
+                rules.insert(
+                    "stdio".to_string(),
+                    FormatRule {
+                        template: serde_json::json!({
+                            "type": "stdio",
+                            "command": "{{{command}}}",
+                            "args": "{{{json args}}}",
+                            "env": "{{{json env}}}"
+                        }),
+                        type_value: Some("stdio".to_string()),
+                        url_field: None,
+                        headers_field: None,
+                        extra_fields: serde_json::Map::new(),
+                        requires_type_field: false,
+                    },
+                );
+            }
+            "streamable_http" | "sse" => {
+                rules.insert(
+                    transport.clone(),
+                    FormatRule {
+                        template: serde_json::json!({
+                            "type": "{{transport}}",
+                            "url": "{{{url}}}",
+                            "headers": "{{{json headers}}}"
+                        }),
+                        type_value: Some(transport.clone()),
+                        url_field: Some("url".to_string()),
+                        headers_field: Some("headers".to_string()),
+                        extra_fields: serde_json::Map::new(),
+                        requires_type_field: false,
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    rules
+}
+
+fn effective_format_rules_for_state(state: &ClientStateRow) -> ConfigResult<HashMap<String, FormatRule>> {
+    let persisted_rules = state.parsed_format_rules()?;
+    let mut supported_transports = state.runtime_client_metadata().supported_transports;
+    supported_transports.retain(|transport| matches!(transport.as_str(), "stdio" | "streamable_http" | "sse"));
+    supported_transports.sort();
+    supported_transports.dedup();
+
+    if supported_transports.is_empty() {
+        return Ok(persisted_rules);
+    }
+
+    let default_rules = runtime_default_format_rules(&supported_transports);
+    let mut effective_rules = HashMap::new();
+
+    for transport in &supported_transports {
+        if let Some(rule) = persisted_rules.get(transport) {
+            effective_rules.insert(transport.clone(), rule.clone());
+        } else if let Some(rule) = default_rules.get(transport) {
+            effective_rules.insert(transport.clone(), rule.clone());
+        }
+    }
+
+    if effective_rules.is_empty() {
+        Ok(default_rules)
+    } else {
+        Ok(effective_rules)
+    }
 }
 
 /// Summarized view of a client template combined with detection and filesystem state
@@ -467,17 +591,65 @@ impl ClientConfigService {
             })
     }
 
+    pub fn build_render_definition_from_state(state: &ClientStateRow) -> ConfigResult<ClientRenderDefinition> {
+        let config_mapping = ConfigMapping {
+            container_keys: state.container_keys()?,
+            container_type: match state.container_type() {
+                Some("array") => crate::clients::models::ContainerType::Array,
+                _ => crate::clients::models::ContainerType::ObjectMap,
+            },
+            merge_strategy: match state.merge_strategy() {
+                Some("deep_merge") => MergeStrategy::DeepMerge,
+                _ => MergeStrategy::Replace,
+            },
+            keep_original_config: state.keep_original_config(),
+            managed_endpoint: Some(ManagedEndpointConfig {
+                source: state.managed_source().map(str::to_string),
+            }),
+            managed_source: state.managed_source().map(str::to_string),
+            parse: state
+                .config_file_parse_override()?
+                .or_else(|| state.legacy_config_file_parse().ok().flatten()),
+            format_rules: effective_format_rules_for_state(state)?,
+        };
+
+        let storage = StorageConfig {
+            kind: match state.storage_kind() {
+                Some("kv") => StorageKind::Kv,
+                Some("custom") => StorageKind::Custom,
+                _ => StorageKind::File,
+            },
+            path_strategy: state.storage_path_strategy().map(str::to_string),
+            adapter: state.storage_adapter().map(str::to_string),
+        };
+
+        let format = match state.config_format() {
+            Some("json5") => TemplateFormat::Json5,
+            Some("toml") => TemplateFormat::Toml,
+            Some("yaml") => TemplateFormat::Yaml,
+            _ => TemplateFormat::Json,
+        };
+
+        Ok(ClientRenderDefinition {
+            identifier: state.identifier().to_string(),
+            format,
+            storage,
+            config_mapping,
+        })
+    }
+
     /// Read current configuration file content for a client
     pub async fn read_current_config(
         &self,
         client_id: &str,
     ) -> crate::clients::error::ConfigResult<Option<String>> {
-        let state = self.fetch_state(client_id).await?.ok_or_else(|| {
-            ConfigError::DataAccessError(format!("Client {} not found", client_id))
-        })?;
-        let config_path = state.config_path().ok_or_else(|| {
-            ConfigError::PathResolutionError(format!("No config_path for client {}", client_id))
-        })?;
+        let state = self
+            .fetch_state(client_id)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} not found", client_id)))?;
+        let config_path = state
+            .config_path()
+            .ok_or_else(|| ConfigError::PathResolutionError(format!("No config_path for client {}", client_id)))?;
         let storage = self.template_engine.storage_for_client(&state)?;
         storage.read(config_path).await
     }
@@ -618,234 +790,6 @@ impl ClientConfigService {
         Ok(())
     }
 
-    pub(super) async fn should_persist_runtime_active_template(
-        &self,
-        identifier: &str,
-        existing_state: Option<&ClientStateRow>,
-    ) -> ConfigResult<bool> {
-        if existing_state
-            .map(|state| state.record_kind() == ClientRecordKind::ObservedUnknown)
-            .unwrap_or(true)
-        {
-            return Ok(true);
-        }
-
-        let payload_json = sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT payload_json
-            FROM client_template_runtime
-            WHERE identifier = ?
-            "#,
-        )
-        .bind(identifier)
-        .fetch_optional(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        let Some(payload_json) = payload_json else {
-            return Ok(true);
-        };
-
-        let template = serde_json::from_str::<ClientTemplate>(&payload_json).map_err(|err| {
-            ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {}", err))
-        })?;
-
-        Ok(template.config_mapping.managed_source.as_deref() == Some(RUNTIME_ACTIVE_TEMPLATE_SOURCE))
-    }
-
-    pub(super) async fn persist_runtime_active_template(
-        &self,
-        identifier: &str,
-    ) -> ConfigResult<()> {
-        let state = self
-            .fetch_state(identifier)
-            .await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!("Missing client state for {}", identifier)))?;
-        let template = Self::build_runtime_active_template(&state);
-        let payload_json = serde_json::to_string(&template).map_err(|err| {
-            ConfigError::TemplateParseError(format!("Failed to serialize runtime template payload: {}", err))
-        })?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO client_template_runtime (identifier, payload_json)
-            VALUES (?, ?)
-            ON CONFLICT(identifier) DO UPDATE SET
-                payload_json = excluded.payload_json,
-                updated_at = CURRENT_TIMESTAMP
-            "#,
-        )
-        .bind(identifier)
-        .bind(payload_json)
-        .execute(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        sqlx::query(
-            r#"
-            UPDATE client
-            SET record_kind = 'template_known',
-                template_identifier = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE identifier = ?
-            "#,
-        )
-        .bind(identifier)
-        .bind(identifier)
-        .execute(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        Ok(())
-    }
-
-    fn build_runtime_active_template(state: &ClientStateRow) -> ClientTemplate {
-        let config_path = state.config_path().map(str::to_string);
-        let runtime_metadata = state.runtime_client_metadata();
-        let format = Self::infer_runtime_template_format(config_path.as_deref());
-        let mut detection = HashMap::new();
-        if let Some(config_path) = config_path.clone().filter(|value| !value.trim().is_empty()) {
-            detection.insert(
-                PathService::get_current_platform().to_string(),
-                vec![DetectionRule {
-                    method: DetectionMethod::ConfigPath,
-                    value: config_path.clone(),
-                    config_path: Some(config_path),
-                    priority: Some(0),
-                }],
-            );
-        }
-
-        let mut metadata = HashMap::new();
-        if let Some(description) = runtime_metadata.description.clone() {
-            metadata.insert("description".to_string(), json!(description));
-        }
-        if let Some(homepage_url) = runtime_metadata.homepage_url.clone() {
-            metadata.insert("homepage_url".to_string(), json!(homepage_url));
-        }
-        if let Some(docs_url) = runtime_metadata.docs_url.clone() {
-            metadata.insert("docs_url".to_string(), json!(docs_url));
-        }
-        if let Some(support_url) = runtime_metadata.support_url.clone() {
-            metadata.insert("support_url".to_string(), json!(support_url));
-        }
-        if let Some(logo_url) = runtime_metadata.logo_url.clone() {
-            metadata.insert("logo_url".to_string(), json!(logo_url));
-        }
-        if let Some(category) = runtime_metadata.category.clone() {
-            metadata.insert("category".to_string(), json!(category));
-        }
-
-        ClientTemplate {
-            identifier: state.identifier().to_string(),
-            display_name: Some(state.display_name().to_string()),
-            version: state.client_version.clone(),
-            format,
-            protocol_revision: None,
-            storage: StorageConfig {
-                kind: StorageKind::File,
-                path_strategy: Some("config_path".to_string()),
-                adapter: None,
-            },
-            detection,
-            config_mapping: ConfigMapping {
-                container_keys: vec!["mcpServers".to_string()],
-                container_type: crate::clients::models::ContainerType::ObjectMap,
-                merge_strategy: MergeStrategy::DeepMerge,
-                keep_original_config: true,
-                managed_endpoint: Some(ManagedEndpointConfig {
-                    source: Some("profile".to_string()),
-                }),
-                managed_source: Some(RUNTIME_ACTIVE_TEMPLATE_SOURCE.to_string()),
-                format_rules: Self::build_runtime_active_format_rules(
-                    &runtime_metadata.supported_transports,
-                    state.transport.as_deref(),
-                ),
-            },
-            metadata,
-        }
-    }
-
-    fn infer_runtime_template_format(config_path: Option<&str>) -> TemplateFormat {
-        let Some(path) = config_path else {
-            return TemplateFormat::Json;
-        };
-
-        let extension = std::path::Path::new(path)
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| value.to_ascii_lowercase());
-
-        match extension.as_deref() {
-            Some("json5") => TemplateFormat::Json5,
-            Some("toml") => TemplateFormat::Toml,
-            Some("yaml") | Some("yml") => TemplateFormat::Yaml,
-            _ => TemplateFormat::Json,
-        }
-    }
-
-    fn build_runtime_active_format_rules(
-        supported_transports: &[String],
-        preferred_transport: Option<&str>,
-    ) -> HashMap<String, FormatRule> {
-        let mut normalized = supported_transports
-            .iter()
-            .map(|value| value.trim().to_ascii_lowercase())
-            .filter(|value| !value.is_empty())
-            .map(|value| match value.as_str() {
-                "sse" | "http" | "streamablehttp" => "streamable_http".to_string(),
-                other => other.to_string(),
-            })
-            .collect::<Vec<_>>();
-
-        if normalized.is_empty() {
-            if let Some(preferred_transport) = preferred_transport {
-                let preferred = preferred_transport.trim().to_ascii_lowercase();
-                if matches!(preferred.as_str(), "streamable_http" | "sse" | "http") {
-                    normalized.push("streamable_http".to_string());
-                } else if preferred == "stdio" {
-                    normalized.push("stdio".to_string());
-                }
-            }
-        }
-
-        if normalized.is_empty() {
-            normalized.extend(["streamable_http".to_string(), "stdio".to_string()]);
-        }
-
-        let mut format_rules = HashMap::new();
-
-        if normalized.iter().any(|value| value == "streamable_http") {
-            let http_rule = FormatRule {
-                template: json!({
-                    "type": "streamable_http",
-                    "url": "{{url}}",
-                    "headers": "{{{json headers}}}"
-                }),
-                requires_type_field: false,
-            };
-            format_rules.insert("streamable_http".to_string(), http_rule.clone());
-            format_rules.insert("sse".to_string(), http_rule);
-        }
-
-        if normalized.iter().any(|value| value == "stdio") {
-            format_rules.insert(
-                "stdio".to_string(),
-                FormatRule {
-                    template: json!({
-                        "type": "stdio",
-                        "command": "{{command}}",
-                        "args": "{{{json args}}}",
-                        "env": "{{{json env}}}"
-                    }),
-                    requires_type_field: false,
-                },
-            );
-        }
-
-        format_rules
-    }
-
     #[cfg(test)]
     pub(crate) async fn seed_client_runtime_rows(
         db_pool: &SqlitePool,
@@ -883,7 +827,11 @@ impl ClientConfigService {
                 crate::clients::models::MergeStrategy::Replace => "replace",
                 crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
             };
-            let keep_original_config = if template.config_mapping.keep_original_config { 1_i64 } else { 0_i64 };
+            let keep_original_config = if template.config_mapping.keep_original_config {
+                1_i64
+            } else {
+                0_i64
+            };
             let managed_source = template.config_mapping.managed_source.clone();
             let format_rules = if template.config_mapping.format_rules.is_empty() {
                 None
@@ -915,10 +863,10 @@ impl ClientConfigService {
                     capability_source, governance_kind, connection_mode, approval_status, record_kind, template_identifier,
                     config_format, protocol_revision, container_type, container_keys,
                     storage_kind, storage_adapter, storage_path_strategy,
-                    merge_strategy, keep_original_config, managed_source, format_rules, approval_metadata
+                    merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse, approval_metadata
                 )
                 VALUES (?, ?, ?, ?, ?, 1, 'keep_n', 5, 'activated', 'passive', 'local_config_detected', 'approved', 'template_known', ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(identifier) DO UPDATE SET
                     display_name = COALESCE(NULLIF(client.display_name, ''), excluded.display_name),
                     config_path = COALESCE(NULLIF(client.config_path, ''), excluded.config_path),
@@ -934,7 +882,8 @@ impl ClientConfigService {
                     merge_strategy = excluded.merge_strategy,
                     keep_original_config = excluded.keep_original_config,
                     managed_source = excluded.managed_source,
-                    format_rules = excluded.format_rules,
+                    format_rules = COALESCE(client.format_rules, excluded.format_rules),
+                    config_file_parse = COALESCE(client.config_file_parse, excluded.config_file_parse),
                     approval_metadata = COALESCE(client.approval_metadata, excluded.approval_metadata),
                     updated_at = CURRENT_TIMESTAMP
                 "#,
@@ -956,6 +905,7 @@ impl ClientConfigService {
             .bind(keep_original_config)
             .bind(managed_source)
             .bind(format_rules)
+            .bind(Option::<String>::None)
             .bind(approval_metadata)
             .execute(db_pool)
             .await
@@ -975,5 +925,48 @@ impl ClientConfigService {
             .resolve_user_path(candidate)
             .ok()
             .map(|value| value.to_string_lossy().to_string())
+    }
+}
+
+#[cfg(test)]
+mod render_definition_tests {
+    use super::*;
+
+    #[test]
+    fn build_render_definition_prefers_runtime_supported_transports() {
+        let state = ClientStateRow {
+            identifier: "zed".to_string(),
+            config_path: Some("~/.config/zed/settings.json".to_string()),
+            connection_mode: Some("local_config_detected".to_string()),
+            template_identifier: Some("zed".to_string()),
+            config_format: Some("json".to_string()),
+            container_type: Some("object".to_string()),
+            container_keys: Some("[\"context_servers\"]".to_string()),
+            format_rules: Some(
+                serde_json::json!({
+                    "stdio": {
+                        "template": {
+                            "type": "stdio",
+                            "command": "{{{command}}}"
+                        },
+                        "requires_type_field": false
+                    }
+                })
+                .to_string(),
+            ),
+            approval_metadata: Some(
+                serde_json::json!({
+                    "runtime_client": {
+                        "supported_transports": ["streamable_http"]
+                    }
+                })
+                .to_string(),
+            ),
+            ..ClientStateRow::default()
+        };
+
+        let definition = ClientConfigService::build_render_definition_from_state(&state).expect("render definition");
+        assert!(definition.config_mapping.format_rules.contains_key("streamable_http"));
+        assert!(!definition.config_mapping.format_rules.contains_key("stdio"));
     }
 }

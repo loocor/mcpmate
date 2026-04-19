@@ -653,8 +653,75 @@ pub struct ManagedEndpointConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct FormatRule {
+    #[serde(default)]
     pub template: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers_field: Option<String>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra_fields: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
     pub requires_type_field: bool,
+}
+
+impl FormatRule {
+    pub fn has_dimensions(&self) -> bool {
+        self.type_value.is_some()
+            || self.url_field.is_some()
+            || self.headers_field.is_some()
+            || !self.extra_fields.is_empty()
+    }
+
+    pub fn to_template(&self) -> serde_json::Value {
+        if !self.has_dimensions() {
+            return self.template.clone();
+        }
+
+        let mut map = serde_json::Map::new();
+
+        if let Some(type_value) = &self.type_value {
+            map.insert("type".to_string(), serde_json::Value::String(type_value.clone()));
+        }
+
+        if let Some(url_key) = &self.url_field {
+            map.insert(url_key.clone(), serde_json::Value::String("{{{url}}}".to_string()));
+        }
+
+        if let Some(headers_key) = &self.headers_field {
+            map.insert(
+                headers_key.clone(),
+                serde_json::Value::String("{{{json headers}}}".to_string()),
+            );
+        }
+
+        for (key, value) in &self.extra_fields {
+            map.insert(key.clone(), value.clone());
+        }
+
+        serde_json::Value::Object(map)
+    }
+}
+
+/// Structured parsing rules for reading and locating MCP server config inside a client config file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ClientConfigFileParse {
+    pub format: TemplateFormat,
+    pub container_type: ContainerType,
+    pub container_keys: Vec<String>,
+}
+
+impl Default for ClientConfigFileParse {
+    fn default() -> Self {
+        Self {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: Vec::new(),
+        }
+    }
 }
 
 /// Template configuration mapping
@@ -668,6 +735,8 @@ pub struct ConfigMapping {
     pub managed_endpoint: Option<ManagedEndpointConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub managed_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse: Option<ClientConfigFileParse>,
     pub format_rules: HashMap<String, FormatRule>,
 }
 
@@ -680,6 +749,7 @@ impl Default for ConfigMapping {
             keep_original_config: false,
             managed_endpoint: None,
             managed_source: None,
+            parse: None,
             format_rules: HashMap::new(),
         }
     }
@@ -823,6 +893,16 @@ impl ClientTemplate {
     ) -> Option<&[DetectionRule]> {
         self.detection.get(platform).map(Vec::as_slice)
     }
+}
+
+/// Database-backed runtime render definition for a client.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ClientRenderDefinition {
+    pub identifier: String,
+    pub format: TemplateFormat,
+    pub storage: StorageConfig,
+    pub config_mapping: ConfigMapping,
 }
 
 /// MCP configuration mode
