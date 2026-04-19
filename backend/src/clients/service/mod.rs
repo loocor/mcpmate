@@ -3,6 +3,7 @@
 
 pub mod apply;
 pub mod backup;
+pub mod config_rules;
 pub mod core;
 pub mod list;
 pub mod query;

@@ -227,14 +227,9 @@ mod tests {
             .find(|entry| entry.state.identifier() == "custom.runtime")
             .expect("runtime-only descriptor should exist");
 
-        let template = descriptor.template.expect("runtime-only template should be persisted");
-        assert_eq!(template.identifier, "custom.runtime");
-        assert_eq!(
-            template.config_mapping.managed_source.as_deref(),
-            Some("runtime_active_client")
-        );
+        assert!(descriptor.template.is_none());
         assert_eq!(descriptor.state.display_name(), "custom.runtime");
-        assert_eq!(descriptor.state.record_kind().as_str(), "template_known");
+        assert_eq!(descriptor.state.record_kind().as_str(), "observed_unknown");
         assert!(descriptor.managed);
     }
 }
