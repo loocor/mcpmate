@@ -1,4 +1,4 @@
-import { API_BASE_URL, serversApi } from "./api";
+import { requireApiBaseUrl, serversApi } from "./api";
 import { isTauriEnvironmentSync } from "./platform";
 import type {
 	OAuthCallbackAccessContract,
@@ -7,8 +7,6 @@ import type {
 } from "./types";
 
 const WEB_DEV_CALLBACK_ORIGIN = "http://127.0.0.1:5173";
-const DESKTOP_DEFAULT_API_BASE = "http://127.0.0.1:8080";
-
 function isHttpCallbackSurface(): boolean {
 	if (typeof window === "undefined") {
 		return false;
@@ -48,11 +46,6 @@ export function getOAuthRedirectUriForForm(storedRedirectUri?: string | null): s
 	return trimmed || buildWebOAuthRedirectUri();
 }
 
-function resolveDesktopApiBaseUrl(): string {
-	const trimmed = API_BASE_URL.trim();
-	return trimmed.length > 0 ? trimmed : DESKTOP_DEFAULT_API_BASE;
-}
-
 export async function resolveOAuthCallbackAccess(
 	serverId: string,
 ): Promise<OAuthCallbackAccessContract> {
@@ -66,7 +59,7 @@ export async function resolveOAuthCallbackAccess(
 	const { invoke } = await import("@tauri-apps/api/core");
 	return invoke<OAuthCallbackAccessContract>("mcp_oauth_prepare_callback_access", {
 		serverId,
-		apiBaseUrl: resolveDesktopApiBaseUrl(),
+		apiBaseUrl: requireApiBaseUrl("desktop OAuth callback access"),
 	});
 }
 
