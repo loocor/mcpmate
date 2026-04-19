@@ -201,13 +201,13 @@ backend_sidecar_fingerprint() {
         printf '%s|%s
 ' "$rel" "$stat_out"
       else
-        while IFS= read -r -d '' file; do
+        while IFS= read -r file; do
           local rel="${file#${BACKEND_DIR}/}"
           local stat_out
           stat_out=$(stat -f '%z|%m' "$file")
           printf '%s|%s
 ' "$rel" "$stat_out"
-        done < <(find "$input" -type f -print0 | perl -0e 'print join "\0", sort grep { length } split /\0/, do { local $/; <STDIN> };')
+        done < <(find "$input" -type f | LC_ALL=C sort)
       fi
     done
   } | shasum -a 256 | awk '{print $1}'
