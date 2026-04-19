@@ -121,10 +121,7 @@ fn main() {
 
 fn ensure_local_core_sidecar() {
     let context = backend_build_context();
-    emit_backend_rerun_hints(
-        &context.backend_dir,
-        BACKEND_SIDECAR_INPUTS,
-    );
+    emit_backend_rerun_hints(&context, "mcpmate");
     ensure_backend_sidecar(&context, "mcpmate", "mcpmate-core");
 }
 
@@ -189,10 +186,7 @@ fn embed_auth_config_from_env_file() {
 
 fn ensure_bridge_sidecar() {
     let context = backend_build_context();
-    emit_backend_rerun_hints(
-        &context.backend_dir,
-        &[BACKEND_SIDECAR_INPUTS, &["src/bin/bridge.rs"]].concat(),
-    );
+    emit_backend_rerun_hints(&context, "bridge");
     ensure_backend_sidecar(&context, "bridge", "bridge");
 }
 
@@ -217,12 +211,16 @@ fn backend_build_context() -> BackendBuildContext {
     }
 }
 
-fn emit_backend_rerun_hints(backend_dir: &Path, paths: &[&str]) {
-    for path in paths {
-        println!(
-            "cargo:rerun-if-changed={}",
-            backend_dir.join(path).display()
-        );
+fn emit_backend_rerun_hints(context: &BackendBuildContext, binary_name: &str) {
+    let mut files = Vec::new();
+    for input in fingerprint_inputs(context, binary_name) {
+        collect_files(&input, &mut files);
+    }
+    files.sort();
+    files.dedup();
+
+    for file in files {
+        println!("cargo:rerun-if-changed={}", file.display());
     }
 }
 
