@@ -87,10 +87,6 @@ pub mod timeouts {
     /// while keeping near-real-time freshness for desktop usage.
     pub const TEMPLATE_RELOAD_TTL_SEC: u64 = 2;
 
-    /// Cherry KV: retry window when DB is locked (seconds)
-    pub const CHERRY_LOCK_RETRY_WINDOW_SEC: u64 = 120;
-    /// Cherry KV: retry interval when DB is locked (milliseconds)
-    pub const CHERRY_LOCK_RETRY_INTERVAL_MS: u64 = 1000;
 }
 
 /// Transport type constants for unified transport handling
