@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -11,6 +12,85 @@ struct BackendBuildContext {
     profile: String,
     exe_suffix: &'static str,
 }
+
+const SKIP_SIDECAR_BUILD_ENV: &str = "MCPMATE_SKIP_SIDECAR_BUILD";
+
+const BACKEND_SIDECAR_INPUTS: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "build.rs",
+    ".cargo/config.toml",
+    "src",
+    "config",
+    "crates",
+    "script",
+];
+
+
+fn env_truthy(name: &str) -> bool {
+    matches!(
+        env::var(name).ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "True" | "yes" | "YES" | "on" | "ON")
+    )
+}
+
+fn fingerprint_inputs(context: &BackendBuildContext, binary_name: &str) -> Vec<PathBuf> {
+    BACKEND_SIDECAR_INPUTS
+        .iter()
+        .map(|path| context.backend_dir.join(path))
+        .chain(std::iter::once(context.backend_dir.join(format!("src/bin/{binary_name}.rs"))))
+        .collect()
+}
+
+fn collect_files(path: &Path, out: &mut Vec<PathBuf>) {
+    if !path.exists() {
+        return;
+    }
+    if path.is_file() {
+        out.push(path.to_path_buf());
+        return;
+    }
+    if let Ok(read_dir) = fs::read_dir(path) {
+        for entry in read_dir.flatten() {
+            let child = entry.path();
+            if child.is_dir() {
+                collect_files(&child, out);
+            } else if child.is_file() {
+                out.push(child);
+            }
+        }
+    }
+}
+
+fn backend_fingerprint(context: &BackendBuildContext, binary_name: &str) -> String {
+    let mut files = Vec::new();
+    for input in fingerprint_inputs(context, binary_name) {
+        collect_files(&input, &mut files);
+    }
+    files.sort();
+
+    let mut hasher = DefaultHasher::new();
+    context.target.hash(&mut hasher);
+    context.profile.hash(&mut hasher);
+    binary_name.hash(&mut hasher);
+
+    for file in files {
+        let rel = file.strip_prefix(&context.backend_dir).unwrap_or(&file);
+        rel.to_string_lossy().hash(&mut hasher);
+        if let Ok(meta) = fs::metadata(&file) {
+            meta.len().hash(&mut hasher);
+            if let Ok(modified) = meta.modified() {
+                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    duration.as_secs().hash(&mut hasher);
+                    duration.subsec_nanos().hash(&mut hasher);
+                }
+            }
+        }
+    }
+
+    format!("{:016x}", hasher.finish())
+}
+
 
 fn main() {
     embed_auth_config_from_env_file();
@@ -41,7 +121,10 @@ fn main() {
 
 fn ensure_local_core_sidecar() {
     let context = backend_build_context();
-    emit_backend_rerun_hints(&context.backend_dir, &["src/main.rs", "Cargo.toml"]);
+    emit_backend_rerun_hints(
+        &context.backend_dir,
+        BACKEND_SIDECAR_INPUTS,
+    );
     ensure_backend_sidecar(&context, "mcpmate", "mcpmate-core");
 }
 
@@ -106,6 +189,10 @@ fn embed_auth_config_from_env_file() {
 
 fn ensure_bridge_sidecar() {
     let context = backend_build_context();
+    emit_backend_rerun_hints(
+        &context.backend_dir,
+        &[BACKEND_SIDECAR_INPUTS, &["src/bin/bridge.rs"]].concat(),
+    );
     ensure_backend_sidecar(&context, "bridge", "bridge");
 }
 
@@ -147,6 +234,22 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
     let sidecar_plain = context
         .sidecar_dir
         .join(format!("{sidecar_name}{}", context.exe_suffix));
+    let fingerprint_path = context.sidecar_dir.join(format!("{sidecar_name}-{}.fingerprint", context.target));
+    let fingerprint = backend_fingerprint(context, binary_name);
+
+    if env_truthy(SKIP_SIDECAR_BUILD_ENV) {
+        assert!(sidecar_target.exists() || sidecar_plain.exists(), "missing prebuilt {binary_name} sidecar while {} is enabled", SKIP_SIDECAR_BUILD_ENV);
+        return;
+    }
+
+    if sidecar_target.exists() && sidecar_plain.exists() {
+        if let Ok(existing) = fs::read_to_string(&fingerprint_path) {
+            if existing.trim() == fingerprint {
+                println!("cargo:warning=Reusing cached {binary_name} sidecar");
+                return;
+            }
+        }
+    }
 
     let mut cargo = Command::new("cargo");
     cargo
@@ -187,4 +290,5 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
         .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar target file"));
     fs::copy(&built_binary, &sidecar_plain)
         .unwrap_or_else(|_| panic!("failed to copy {binary_name} sidecar plain file"));
+    fs::write(&fingerprint_path, format!("{fingerprint}\n")).expect("failed to write sidecar fingerprint");
 }
