@@ -1128,6 +1128,7 @@ export interface ClientConfigImportReq {
 export interface ClientConfigData {
   config_exists: boolean;
   config_path: string;
+  config_mode?: ClientConfigMode | null;
   config_type?: ClientConfigType | null;
   config_file_parse_effective?: ClientConfigFileParse | null;
   config_file_parse_override?: ClientConfigFileParse | null;
@@ -1424,11 +1425,14 @@ export interface ClientConfigFileParse {
 }
 
 export interface ClientFormatRuleData {
+  command_field?: string | null;
+  args_field?: string | null;
+  env_field?: string | null;
+  include_type?: boolean;
   type_value?: string | null;
   url_field?: string | null;
   headers_field?: string | null;
   extra_fields?: Record<string, unknown> | null;
-  requires_type_field?: boolean;
 }
 
 export interface ClientConfigFileParseInspectReq {
