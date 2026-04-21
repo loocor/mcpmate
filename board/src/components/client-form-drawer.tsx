@@ -8,8 +8,10 @@ import {
 	ChevronsUpDown,
 	Code2,
 	FolderOpen,
+	Info,
 	ImageIcon,
 	Loader2,
+	Plus,
 	Sparkles,
 	Trash2,
 } from "lucide-react";
@@ -20,6 +22,11 @@ import { useTranslation } from "react-i18next";
 import * as z from "zod";
 import { clientsApi } from "../lib/api";
 import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-policy";
+import {
+	applyClientConfigWithResolvedSelection,
+	canApplyClientConfigWithState,
+	resolveClientConfigMode,
+} from "../lib/client-config-sync";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { pickClientConfigFilePath, readAbsolutePathFromFile } from "../lib/pick-client-config-file";
 import { isTauriEnvironmentSync } from "../lib/platform";
@@ -65,6 +72,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Segment, type SegmentOption } from "./ui/segment";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type ClientFormMode = "create" | "edit";
 type ClientConnectionShape = "local_with_config" | "local_without_config" | "remote_http";
@@ -92,6 +100,256 @@ type ParseInspectionView = ClientConfigFileParseInspectResp & {
 	preview_text?: string;
 };
 
+interface EditableExtraFieldEntry {
+	id: string;
+	key: string;
+	value: string;
+}
+
+interface TransportRuleEditorValue {
+	includeType: boolean;
+	typeValue: string;
+	commandField: string;
+	argsField: string;
+	envField: string;
+	urlField: string;
+	headersField: string;
+	extraFields: EditableExtraFieldEntry[];
+}
+
+interface TransportRulePreset {
+	id: string;
+	label: string;
+	value: TransportRuleEditorValue;
+}
+
+type TransportRuleEditors = Record<SupportedTransportValue, TransportRuleEditorValue>;
+
+function createEditorId(): string {
+	return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function createEmptyTransportRuleEditor(): TransportRuleEditorValue {
+	return {
+		includeType: false,
+		typeValue: "",
+		commandField: "",
+		argsField: "",
+		envField: "",
+		urlField: "",
+		headersField: "",
+		extraFields: [],
+	};
+}
+
+function transportRuleEditorFromData(rule?: ClientFormatRuleData | null): TransportRuleEditorValue {
+	return {
+		includeType: Boolean(rule?.include_type),
+		typeValue: rule?.type_value?.toString() ?? "",
+		commandField: rule?.command_field?.toString() ?? "",
+		argsField: rule?.args_field?.toString() ?? "",
+		envField: rule?.env_field?.toString() ?? "",
+		urlField: rule?.url_field?.toString() ?? "",
+		headersField: rule?.headers_field?.toString() ?? "",
+		extraFields: Object.entries(rule?.extra_fields ?? {}).map(([key, value]) => ({
+			id: createEditorId(),
+			key,
+			value: typeof value === "string" ? value : JSON.stringify(value),
+		})),
+	};
+}
+
+function transportRuleEditorsFromClient(client?: ClientInfo | null): TransportRuleEditors {
+	return {
+		streamable_http: transportRuleEditorFromData(client?.format_rules?.streamable_http),
+		sse: transportRuleEditorFromData(client?.format_rules?.sse),
+		stdio: transportRuleEditorFromData(client?.format_rules?.stdio),
+	};
+}
+
+function cloneTransportRuleEditorValue(value: TransportRuleEditorValue): TransportRuleEditorValue {
+	return {
+		...value,
+		extraFields: value.extraFields.map((entry) => ({ ...entry, id: createEditorId() })),
+	};
+}
+
+function isSameSupportedTransports(
+	left: SupportedTransportValue[],
+	right: SupportedTransportValue[],
+): boolean {
+	if (left.length !== right.length) return false;
+	return left.every((value, index) => value === right[index]);
+}
+
+function isTransportRuleEditorEmpty(value: TransportRuleEditorValue): boolean {
+	return !value.includeType &&
+		!value.typeValue.trim() &&
+		!value.commandField.trim() &&
+		!value.argsField.trim() &&
+		!value.envField.trim() &&
+		!value.urlField.trim() &&
+		!value.headersField.trim() &&
+		value.extraFields.length === 0;
+}
+
+function detectClientTemplateIdentifier(client?: ClientInfo | null): string {
+	return (client?.template_identifier ?? client?.identifier ?? "").trim().toLowerCase();
+}
+
+function buildTransportRulePresets(
+	transport: SupportedTransportValue,
+	client: ClientInfo | null | undefined,
+	t: TFunction,
+): TransportRulePreset[] {
+	const templateIdentifier = detectClientTemplateIdentifier(client);
+
+	if (transport === "stdio") {
+		const presets: TransportRulePreset[] = [
+			{
+				id: "common",
+				label: t("detail.form.transportRules.presets.common", { defaultValue: "Common" }),
+				value: {
+					...createEmptyTransportRuleEditor(),
+					commandField: "command",
+					argsField: "args",
+					envField: "env",
+				},
+			},
+			{
+				id: "with-type",
+				label: t("detail.form.transportRules.presets.withType", { defaultValue: "With type" }),
+				value: {
+					...createEmptyTransportRuleEditor(),
+					includeType: true,
+					typeValue: "stdio",
+					commandField: "command",
+					argsField: "args",
+					envField: "env",
+				},
+			},
+		];
+
+		if (templateIdentifier === "zed") {
+			presets.push({
+				id: "zed-style",
+				label: t("detail.form.transportRules.presets.zedStyle", { defaultValue: "Zed-style" }),
+				value: {
+					...createEmptyTransportRuleEditor(),
+					commandField: "command",
+					argsField: "args",
+					envField: "env",
+					extraFields: [
+						{ id: createEditorId(), key: "enabled", value: "true" },
+						{ id: createEditorId(), key: "source", value: "custom" },
+					],
+				},
+			});
+		}
+
+		return presets;
+	}
+
+	return [
+		{
+			id: "common",
+			label: t("detail.form.transportRules.presets.common", { defaultValue: "Common" }),
+			value: {
+				...createEmptyTransportRuleEditor(),
+				urlField: "url",
+				headersField: "headers",
+			},
+		},
+		{
+			id: "with-type",
+			label: t("detail.form.transportRules.presets.withType", { defaultValue: "With type" }),
+			value: {
+				...createEmptyTransportRuleEditor(),
+				includeType: true,
+				typeValue: transport,
+				urlField: "url",
+				headersField: "headers",
+			},
+		},
+	];
+}
+
+function parseExtraFieldValue(raw: string): unknown {
+	const trimmed = raw.trim();
+	if (!trimmed) return "";
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return trimmed;
+	}
+}
+
+function transportRuleDataFromEditor(
+	transport: SupportedTransportValue,
+	editor: TransportRuleEditorValue,
+	t: TFunction,
+): ClientFormatRuleData {
+	const commandField = editor.commandField.trim();
+	const argsField = editor.argsField.trim();
+	const envField = editor.envField.trim();
+	const urlField = editor.urlField.trim();
+	const headersField = editor.headersField.trim();
+	const typeValue = editor.typeValue.trim();
+
+	if (transport === "stdio" && !commandField) {
+		throw new Error(
+			t("detail.form.transportRules.validation.commandRequired", {
+				defaultValue: "STDIO requires a command field.",
+			}),
+		);
+	}
+
+	if ((transport === "sse" || transport === "streamable_http") && !urlField) {
+		throw new Error(
+			t("detail.form.transportRules.validation.urlRequired", {
+				defaultValue: "HTTP-based transports require a URL field.",
+			}),
+		);
+	}
+
+	if (editor.includeType && !typeValue) {
+		throw new Error(
+			t("detail.form.transportRules.validation.typeValueRequired", {
+				defaultValue: "Type value is required when including the type field.",
+			}),
+		);
+	}
+
+	const extraFields = editor.extraFields.reduce<Record<string, unknown>>((acc, entry) => {
+		const key = entry.key.trim();
+		if (!key) return acc;
+		acc[key] = parseExtraFieldValue(entry.value);
+		return acc;
+	}, {});
+
+	return {
+		include_type: editor.includeType,
+		type_value: editor.includeType ? typeValue || transport : null,
+		command_field: commandField || null,
+		args_field: argsField || null,
+		env_field: envField || null,
+		url_field: urlField || null,
+		headers_field: headersField || null,
+		extra_fields: Object.keys(extraFields).length > 0 ? extraFields : null,
+	};
+}
+
+function buildTransportRulesPayload(
+	transports: SupportedTransportValue[],
+	editors: TransportRuleEditors,
+	t: TFunction,
+): Record<string, ClientFormatRuleData> {
+	return transports.reduce<Record<string, ClientFormatRuleData>>((acc, transport) => {
+		acc[transport] = transportRuleDataFromEditor(transport, editors[transport], t);
+		return acc;
+	}, {});
+}
+
 const formSchema = z.object({
 	identifier: z.string().min(1),
 	displayName: z.string().min(1),
@@ -107,7 +365,6 @@ const formSchema = z.object({
 	docsUrl: z.string().optional(),
 	supportUrl: z.string().optional(),
 	logoUrl: z.string().optional(),
-	formatRulesJsonText: z.string().optional(),
 });
 
 type ClientRecordFormValues = z.infer<typeof formSchema>;
@@ -127,27 +384,6 @@ function extractErrorMessage(error: unknown): string {
 		return JSON.stringify(error);
 	} catch {
 		return String(error);
-	}
-}
-
-function parseFormatRulesFromJsonText(
-	jsonText: string | undefined,
-	t: TFunction,
-): Record<string, ClientFormatRuleData> | undefined {
-	const trimmed = jsonText?.trim();
-	if (!trimmed) return undefined;
-	try {
-		const parsed: unknown = JSON.parse(trimmed);
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			throw new Error("Expected a JSON object, not an array or primitive");
-		}
-		return parsed as Record<string, ClientFormatRuleData>;
-	} catch (e) {
-		throw new Error(
-			t("detail.form.notifications.formatRulesJsonParseError", {
-				defaultValue: "Invalid JSON in format rules: " + extractErrorMessage(e),
-			}),
-		);
 	}
 }
 
@@ -229,8 +465,15 @@ function hasWritableConfig(values: Pick<ClientRecordFormValues, "connectionShape
 
 function parseSupportedTransportValue(value: unknown): SupportedTransportValue | null {
 	const candidate = String(value).trim().toLowerCase();
-	if (candidate === "streamable_http" || candidate === "sse" || candidate === "stdio") {
-		return candidate;
+	if (!candidate) return null;
+	if (candidate === "sse" || candidate === "stdio") return candidate;
+	if (
+		candidate === "streamable_http" ||
+		candidate === "streamablehttp" ||
+		candidate === "streamable-http" ||
+		candidate === "http"
+	) {
+		return "streamable_http";
 	}
 	return null;
 }
@@ -362,10 +605,14 @@ TransportSupportCombobox.displayName = "TransportSupportCombobox";
 function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 	const identifier = client?.identifier ?? "";
 	const connectionShape = connectionModeToShape(client?.connection_mode, client?.config_path);
-	let supportedTransports = normalizeSupportedTransports(client?.supported_transports);
-	if (supportedTransports.length === 0) {
-		supportedTransports = ["streamable_http", "stdio"];
-	}
+	const supportedTransports = (() => {
+		const explicit = normalizeSupportedTransports(client?.supported_transports);
+		if (explicit.length > 0) return explicit;
+		const fromRules = normalizeSupportedTransports(Object.keys(client?.format_rules ?? {}));
+		if (fromRules.length > 0) return fromRules;
+		if (client?.transport) return normalizeSupportedTransports([client.transport]);
+		return [];
+	})();
 	const effectiveParse = resolveEffectiveClientParse(client);
 
 	return {
@@ -376,14 +623,13 @@ function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 		configPath: connectionShape === "local_with_config" ? client?.config_path || "" : "",
 		configFileParseFormat: (effectiveParse?.format as ConfigParseFormatValue | undefined) ?? "json",
 		configFileParseContainerType: effectiveParse?.container_type === "array" ? "array" : "standard",
-		configFileParseContainerKeysText: effectiveParse?.container_keys?.join(", ") ?? "mcpServers",
+		configFileParseContainerKeysText: effectiveParse?.container_keys?.join(", ") ?? "",
 		clientVersion: client?.client_version ?? "",
 		description: client?.description ?? "",
 		homepageUrl: client?.homepage_url ?? "",
 		docsUrl: client?.docs_url ?? "",
 		supportUrl: client?.support_url ?? "",
 		logoUrl: client?.logo_url ?? "",
-		formatRulesJsonText: client?.format_rules ? JSON.stringify(client.format_rules, null, 2) : "",
 	};
 }
 
@@ -413,6 +659,106 @@ function TextInputRow({
 	);
 }
 
+function TransportRuleField({
+	label,
+	placeholder,
+	value,
+	onChange,
+}: {
+	label: string;
+	placeholder: string;
+	value: string;
+	onChange: (next: string) => void;
+}) {
+	return (
+		<label className="space-y-1.5">
+			<span className="text-xs font-medium text-muted-foreground">{label}</span>
+			<Input value={value} onChange={(event) => onChange(event.currentTarget.value)} placeholder={placeholder} className="h-8 text-sm" />
+		</label>
+	);
+}
+
+function ExtraFieldsEditor({
+	label,
+	entries,
+	onChange,
+	addLabel,
+	keyPlaceholder,
+	valuePlaceholder,
+}: {
+	label: string;
+	entries: EditableExtraFieldEntry[];
+	onChange: (next: EditableExtraFieldEntry[]) => void;
+	addLabel: string;
+	keyPlaceholder: string;
+	valuePlaceholder: string;
+}) {
+	const rows = entries.length > 0 ? entries : [{ id: "empty", key: "", value: "" }];
+
+	return (
+		<div className="space-y-2">
+			<div className="flex items-center justify-between gap-2">
+				<p className="text-xs font-medium text-muted-foreground">{label}</p>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className="h-7 gap-1 px-2"
+					onClick={() => onChange([...entries, { id: createEditorId(), key: "", value: "" }])}
+				>
+					<Plus className="h-3 w-3" />
+					{addLabel}
+				</Button>
+			</div>
+			<div className="space-y-2">
+				{rows.map((entry, index) => {
+					const isGhost = entry.id === "empty";
+					return (
+						<div
+							key={entry.id}
+							className={`grid gap-2 ${isGhost ? "md:grid-cols-2" : "md:grid-cols-[1fr_1fr_auto]"}`}
+						>
+							<Input
+								value={entry.key}
+								onChange={(event) => {
+									const next = isGhost ? [...entries, { id: createEditorId(), key: event.currentTarget.value, value: "" }] : [...entries];
+									const targetIndex = isGhost ? next.length - 1 : index;
+									next[targetIndex] = { ...next[targetIndex], key: event.currentTarget.value };
+									onChange(next);
+								}}
+								placeholder={keyPlaceholder}
+								className="h-8 text-sm"
+							/>
+							<Input
+								value={entry.value}
+								onChange={(event) => {
+									const next = isGhost ? [...entries, { id: createEditorId(), key: "", value: event.currentTarget.value }] : [...entries];
+									const targetIndex = isGhost ? next.length - 1 : index;
+									next[targetIndex] = { ...next[targetIndex], value: event.currentTarget.value };
+									onChange(next);
+								}}
+								placeholder={valuePlaceholder}
+								className="h-8 text-sm"
+							/>
+							{isGhost ? null : (
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon"
+									className="h-8 w-8"
+									onClick={() => onChange(entries.filter((item) => item.id !== entry.id))}
+								>
+									<Trash2 className="h-3.5 w-3.5" />
+								</Button>
+							)}
+						</div>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
 export function ClientFormDrawer({
 	open,
 	onOpenChange,
@@ -433,6 +779,14 @@ export function ClientFormDrawer({
 	const [showParseCodePreview, setShowParseCodePreview] = useState(false);
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 	const [configPathPickBusy, setConfigPathPickBusy] = useState(false);
+	const [transportRuleEditors, setTransportRuleEditors] = useState<TransportRuleEditors>(() =>
+		transportRuleEditorsFromClient(client),
+	);
+	const [selectedTransportTab, setSelectedTransportTab] = useState<SupportedTransportValue | "">("");
+	const previousSupportedTransportsRef = useRef<SupportedTransportValue[]>([]);
+	const initialSupportedTransportsRef = useRef<SupportedTransportValue[]>(
+		defaultValues(client).supportedTransports,
+	);
 	const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
 	const configPathFileInputRef = useRef<HTMLInputElement>(null);
 	const autoAppliedInferenceRef = useRef<string | null>(null);
@@ -448,6 +802,7 @@ export function ClientFormDrawer({
 	const configFileParseFormat = form.watch("configFileParseFormat");
 	const configFileParseContainerType = form.watch("configFileParseContainerType");
 	const configFileParseContainerKeysText = form.watch("configFileParseContainerKeysText");
+	const supportedTransports = form.watch("supportedTransports");
 	const parseFieldsDirty = Boolean(
 		form.formState.dirtyFields.configFileParseFormat ||
 		form.formState.dirtyFields.configFileParseContainerType ||
@@ -477,10 +832,58 @@ export function ClientFormDrawer({
 		setShowParseCodePreview(false);
 		setIsDeleteConfirmOpen(false);
 		autoAppliedInferenceRef.current = null;
+		setTransportRuleEditors(transportRuleEditorsFromClient(client));
+		setSelectedTransportTab("");
+		initialSupportedTransportsRef.current = defaultValues(client).supportedTransports;
 		setIsHydrating(true);
 		form.reset(defaultValues(client));
 		setIsHydrating(false);
 	}, [open, client, mode, form]);
+
+	useEffect(() => {
+		if (supportedTransports.length === 0) {
+			if (selectedTransportTab !== "") {
+				setSelectedTransportTab("");
+			}
+			return;
+		}
+
+		if (!selectedTransportTab || !supportedTransports.includes(selectedTransportTab)) {
+			setSelectedTransportTab(supportedTransports[0]);
+		}
+	}, [selectedTransportTab, supportedTransports]);
+
+	useEffect(() => {
+		if (isHydrating) {
+			previousSupportedTransportsRef.current = supportedTransports;
+			return;
+		}
+
+		const previousSet = new Set(previousSupportedTransportsRef.current);
+		const added = supportedTransports.filter((transport) => !previousSet.has(transport));
+		if (added.length === 0) {
+			previousSupportedTransportsRef.current = supportedTransports;
+			return;
+		}
+
+		setTransportRuleEditors((current) => {
+			let changed = false;
+			const next: TransportRuleEditors = { ...current };
+
+			for (const transport of added) {
+				const existing = current[transport] ?? createEmptyTransportRuleEditor();
+				if (!isTransportRuleEditorEmpty(existing)) continue;
+				const commonPreset = buildTransportRulePresets(transport, client, t).find((preset) => preset.id === "common");
+				if (!commonPreset) continue;
+				next[transport] = cloneTransportRuleEditorValue(commonPreset.value);
+				changed = true;
+			}
+
+			return changed ? next : current;
+		});
+
+		previousSupportedTransportsRef.current = supportedTransports;
+	}, [client, i18n.language, isHydrating, supportedTransports, t]);
 
 	useEffect(() => {
 		if (isHydrating || mode !== "create") return;
@@ -519,11 +922,56 @@ export function ClientFormDrawer({
 	);
 	const configParseContainerTypeOptions: SegmentOption[] = useMemo(
 		() => [
-			{ value: "standard", label: t("detail.form.configFileParse.containerTypeOptions.standard", { defaultValue: "Object Map" }) },
-			{ value: "array", label: t("detail.form.configFileParse.containerTypeOptions.array", { defaultValue: "Array" }) },
+			{ value: "standard", label: t("detail.form.fields.configFileParse.containerTypeOptions.standard", { defaultValue: "Object Map" }) },
+			{ value: "array", label: t("detail.form.fields.configFileParse.containerTypeOptions.array", { defaultValue: "Array" }) },
 		],
 		[t, i18n.language],
 	);
+	const transportRuleValidationMessages = useMemo(
+		() => [
+			t("detail.form.transportRules.validation.commandRequired", {
+				defaultValue: "STDIO requires a command field.",
+			}),
+			t("detail.form.transportRules.validation.urlRequired", {
+				defaultValue: "HTTP-based transports require a URL field.",
+			}),
+			t("detail.form.transportRules.validation.typeValueRequired", {
+				defaultValue: "Type value is required when including the type field.",
+			}),
+		],
+		[t, i18n.language],
+	);
+	const isTransportRuleValidationError =
+		Boolean(formError) && transportRuleValidationMessages.includes(formError ?? "");
+	const applyInferredParseToForm = useCallback(
+		(inferred: ClientConfigFileParse) => {
+			form.setValue("configFileParseFormat", inferred.format as ConfigParseFormatValue, { shouldDirty: true });
+			form.setValue("configFileParseContainerType", inferred.container_type === "array" ? "array" : "standard", {
+				shouldDirty: true,
+			});
+			form.setValue("configFileParseContainerKeysText", inferred.container_keys?.join(", ") ?? "", {
+				shouldDirty: true,
+			});
+		},
+		[form],
+	);
+	const updateTransportRuleEditor = useCallback(
+		(
+			transport: SupportedTransportValue,
+			updater: (current: TransportRuleEditorValue) => TransportRuleEditorValue,
+		) => {
+			setTransportRuleEditors((current) => ({
+				...current,
+				[transport]: updater(current[transport] ?? createEmptyTransportRuleEditor()),
+			}));
+		},
+		[],
+	);
+	const applyTransportRulePreset = useCallback((transport: SupportedTransportValue, preset: TransportRulePreset) => {
+		updateTransportRuleEditor(transport, () => cloneTransportRuleEditorValue(preset.value));
+	}, [updateTransportRuleEditor]);
+	const transportRulesHelpHref =
+		client?.docs_url ?? client?.homepage_url ?? client?.template?.docs_url ?? client?.template?.homepage_url ?? null;
 
 	const inspectMutation = useMutation({
 		mutationFn: async (payload: ClientConfigFileParseInspectReq) => clientsApi.inspectConfigFileParse(payload),
@@ -544,13 +992,7 @@ export function ClientFormDrawer({
 			if (autoAppliedInferenceRef.current === signature) return;
 
 			autoAppliedInferenceRef.current = signature;
-			form.setValue("configFileParseFormat", inferred.format as ConfigParseFormatValue, { shouldDirty: true });
-			form.setValue("configFileParseContainerType", inferred.container_type === "array" ? "array" : "standard", {
-				shouldDirty: true,
-			});
-			form.setValue("configFileParseContainerKeysText", inferred.container_keys?.join(", ") ?? "", {
-				shouldDirty: true,
-			});
+			applyInferredParseToForm(inferred);
 		},
 		onError: (error) => {
 			setParseInspection(null);
@@ -592,10 +1034,8 @@ export function ClientFormDrawer({
 	const handleApplyDetectedRules = useCallback(() => {
 		const inferred = parseInspection?.inferred_parse;
 		if (!inferred) return;
-		form.setValue("configFileParseFormat", inferred.format as ConfigParseFormatValue, { shouldDirty: true });
-		form.setValue("configFileParseContainerType", inferred.container_type === "array" ? "array" : "standard", { shouldDirty: true });
-		form.setValue("configFileParseContainerKeysText", inferred.container_keys?.join(", ") ?? "", { shouldDirty: true });
-	}, [form, parseInspection?.inferred_parse]);
+		applyInferredParseToForm(inferred);
+	}, [applyInferredParseToForm, parseInspection?.inferred_parse]);
 
 	const handleConfigPathBrowse = useCallback(async () => {
 		if (!isTauriShell) return;
@@ -654,14 +1094,13 @@ export function ClientFormDrawer({
 	const saveMutation = useMutation({
 		mutationFn: async () => {
 			const values = form.getValues();
-			const dirtyFields = form.formState.dirtyFields;
 			const normalizedIdentifier = normalizeIdentifier(values.identifier);
 			const parseForSave = parseDraftFromValues(values);
-			const formatRulesTextTrimmed = values.formatRulesJsonText?.trim() ?? "";
+			const formatRules = buildTransportRulesPayload(values.supportedTransports, transportRuleEditors, t);
 
 			if (hasWritableConfig(values) && (parseForSave.container_keys?.length ?? 0) === 0) {
 				throw new Error(
-					t("detail.form.configFileParse.keysRequired", {
+					t("detail.form.fields.configFileParse.keysRequired", {
 						defaultValue: "Add at least one config node path before saving parse rules.",
 					}),
 				);
@@ -680,9 +1119,46 @@ export function ClientFormDrawer({
 				support_url: values.supportUrl || undefined,
 				logo_url: values.logoUrl || undefined,
 				config_file_parse: hasWritableConfig(values) ? parseForSave : undefined,
-				format_rules: parseFormatRulesFromJsonText(values.formatRulesJsonText, t),
-				clear_format_rules: formatRulesTextTrimmed === "" && Boolean(dirtyFields.formatRulesJsonText),
+				format_rules: formatRules,
 			});
+
+			if (
+				mode === "edit" &&
+				!isSameSupportedTransports(
+					initialSupportedTransportsRef.current,
+					values.supportedTransports,
+				)
+			) {
+				const details = await clientsApi.configDetails(normalizedIdentifier, false);
+				const configMode = resolveClientConfigMode(
+					details?.config_mode ?? client?.config_mode,
+				);
+				if (
+					canApplyClientConfigWithState({
+						mode: configMode,
+						writableConfig: details?.writable_config,
+						approvalStatus: details?.approval_status,
+					}) &&
+					configMode
+				) {
+					try {
+						await applyClientConfigWithResolvedSelection({
+							identifier: normalizedIdentifier,
+							mode: configMode,
+							backupPolicy: mapDashboardSettingsToClientBackupPolicy(
+								dashboardSettings,
+							),
+						});
+					} catch (error) {
+						notifyError(
+							t("detail.notifications.applyFailed.title", {
+								defaultValue: "Apply failed",
+							}),
+							extractErrorMessage(error),
+						);
+					}
+				}
+			}
 
 			if (mode === "create") {
 				try {
@@ -703,6 +1179,8 @@ export function ClientFormDrawer({
 
 			return normalizedIdentifier;
 		},
+		// transportRuleEditors is outside react-hook-form and must participate explicitly
+		// in mutation closure updates.
 		onSuccess: async (savedIdentifier) => {
 			setFormError(null);
 			await qc.invalidateQueries({ queryKey: ["clients"] });
@@ -823,6 +1301,19 @@ export function ClientFormDrawer({
 									</FormItem>
 								)} />
 
+								<FormField control={form.control} name="supportedTransports" render={({ field }) => (
+									<FormItem className="space-y-0">
+										<div className="flex items-start gap-4">
+											<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>{t("detail.form.transportSupport.label", { defaultValue: "Transport Support" })}</FormLabel>
+											<div className="min-w-0 flex-1 space-y-2">
+												<FormControl><TransportSupportCombobox value={field.value} onChange={field.onChange} options={supportedTransportOptions} placeholder={t("detail.form.transportSupport.placeholder", { defaultValue: "Select supported transports" })} emptyText={t("detail.form.transportSupport.empty", { defaultValue: "No transports found." })} /></FormControl>
+												<FormDescription>{t("detail.form.transportSupport.description", { defaultValue: "Choose which runtime transports this client supports. This array is the only source used to constrain hosted/unify transport selection." })}</FormDescription>
+												<FormMessage />
+											</div>
+										</div>
+									</FormItem>
+								)} />
+
 								{connectionShape === "local_with_config" ? (
 									<>
 										<FormField control={form.control} name="configPath" render={({ field }) => (
@@ -852,116 +1343,217 @@ export function ClientFormDrawer({
 										)} />
 
 										<div className="ml-24 space-y-3 rounded-lg border border-dashed bg-muted/20 p-3">
-											<div className="space-y-1">
-												<p className="font-medium">{t("detail.form.configFileParse.label", { defaultValue: "Parse Rules" })}</p>
-												<p className="text-sm text-muted-foreground">{t("detail.form.configFileParse.description", { defaultValue: "Edit the file format, container type, and config nodes used to locate MCP server entries." })}</p>
-											</div>
-
-											<div className="flex flex-wrap items-center gap-2 pt-1">
-												{parseInspection?.inferred_parse ? (
-													<Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleApplyDetectedRules}>
-														<Sparkles className="h-3 w-3" />
-														{t("detail.form.configFileParse.applyDetected", { defaultValue: "Use detected rules" })}
+											<div className="space-y-2">
+												<div className="flex items-center justify-between gap-2">
+													<p className="font-medium">{t("detail.form.fields.configFileParse.label", { defaultValue: "Parse Rules" })}</p>
+													<div className="flex items-center gap-1">
+														{parseInspection?.inferred_parse ? (
+															<Button
+																type="button"
+																variant="outline"
+																size="icon"
+																className="h-7 w-7"
+																onClick={handleApplyDetectedRules}
+																aria-label={t("detail.form.fields.configFileParse.applyDetected", { defaultValue: "Use detected rules" })}
+																title={t("detail.form.fields.configFileParse.applyDetected", { defaultValue: "Use detected rules" })}
+															>
+																<Sparkles className="h-3 w-3" />
+															</Button>
+														) : null}
+														<Button
+															type="button"
+															variant="outline"
+															size="icon"
+															className="h-7 w-7"
+															onClick={() => setIsParseAdvancedOpen((value) => !value)}
+															aria-label={isParseAdvancedOpen
+																? t("detail.form.fields.configFileParse.hideAdvanced", { defaultValue: "Hide details" })
+																: t("detail.form.fields.configFileParse.showAdvanced", { defaultValue: "Show details" })}
+															title={isParseAdvancedOpen
+																? t("detail.form.fields.configFileParse.hideAdvanced", { defaultValue: "Hide details" })
+																: t("detail.form.fields.configFileParse.showAdvanced", { defaultValue: "Show details" })}
+														>
+															<ChevronDown className={`h-3.5 w-3.5 transition-transform ${isParseAdvancedOpen ? "rotate-180" : "rotate-0"}`} />
+														</Button>
+													</div>
+												</div>
+												<div className="flex items-start justify-between gap-3 border-t pt-2 text-xs text-muted-foreground">
+													<div className="min-w-0 flex-1">
+														{showParseCodePreview ? (
+															<div className="space-y-2">
+																<div className="flex items-center gap-2">
+																	<span>{t("detail.form.fields.configFileParse.previewTitle", { defaultValue: "Detected config snippet" })}</span>
+																	{parseInspection?.detected_format ? (
+																		<span className="rounded border px-1.5 py-0.5 uppercase tracking-wide">{parseInspection.detected_format}</span>
+																	) : null}
+																</div>
+																<pre className="overflow-x-auto rounded-md px-3 py-2 text-xs whitespace-pre-wrap break-words">{previewText}</pre>
+															</div>
+														) : (
+															<div className="space-y-1">
+																<div className="flex items-center gap-2">
+																	{inspectMutation.isPending ? (
+																		<Loader2 className="h-3.5 w-3.5 animate-spin" />
+																	) : parseInspectionError ? (
+																		<AlertCircle className="h-3.5 w-3.5 text-destructive" />
+																	) : parseInspection?.validation?.matches ? (
+																		<CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+																	) : (
+																		<AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+																	)}
+																	<span>{t("detail.form.fields.configFileParse.validationTitle", { defaultValue: "File association check" })}</span>
+																</div>
+																<p className="truncate">
+																	{parseInspectionError
+																		? parseInspectionError
+																		: parseInspection?.validation?.matches
+																			? t("detail.form.fields.configFileParse.validationSuccess", { defaultValue: "The selected file matches the current parse rules." })
+																			: t("detail.form.fields.configFileParse.validationHint", { defaultValue: "Pick a config file and MCPMate will validate whether these rules can find MCP server entries." })}
+																</p>
+																{parseInspection?.validation ? (
+																	<p>
+																		{t("detail.form.fields.configFileParse.detectedFormat", { defaultValue: "Detected format" })}: {parseInspection.detected_format ?? "-"} · {t("detail.form.fields.configFileParse.containerMatch", { defaultValue: "Container" })}: {parseInspection.validation.container_found ? t("detail.form.fields.configFileParse.matchYes", { defaultValue: "Found" }) : t("detail.form.fields.configFileParse.matchNo", { defaultValue: "Missing" })} · {t("detail.form.fields.configFileParse.serverCount", { defaultValue: "Servers" })}: {parseInspection.validation.server_count}
+																	</p>
+																) : null}
+															</div>
+														)}
+													</div>
+													<Button
+														type="button"
+														variant="ghost"
+														size="icon"
+														className="h-7 w-7 shrink-0"
+														disabled={!parseInspection}
+														onClick={() => setShowParseCodePreview((value) => !value)}
+														aria-label={showParseCodePreview
+															? t("detail.form.fields.configFileParse.summaryViewButton", { defaultValue: "Summary view" })
+															: t("detail.form.fields.configFileParse.codeViewButton", { defaultValue: "Code preview" })}
+													>
+														<Code2 className="h-4 w-4" />
 													</Button>
-												) : null}
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													onClick={() => setIsParseAdvancedOpen((value) => !value)}
-												>
-													{isParseAdvancedOpen
-														? t("detail.form.configFileParse.hideAdvanced", { defaultValue: "Hide details" })
-														: t("detail.form.configFileParse.showAdvanced", { defaultValue: "Show details" })}
-													<ChevronDown className={`ml-2 h-3 w-3 transition-transform ${isParseAdvancedOpen ? "rotate-180" : "rotate-0"}`} />
-												</Button>
+												</div>
 											</div>
 
 											{isParseAdvancedOpen ? (
 												<div className="rounded-md border bg-white/80 dark:bg-slate-950/10">
 													<div className="grid gap-3 px-3 py-3 md:grid-cols-2">
 														<FormField control={form.control} name="configFileParseFormat" render={({ field }) => (
-															<FormItem className="space-y-1.5"><FormLabel className="text-xs font-medium">{t("detail.form.configFileParse.formatLabel", { defaultValue: "Config Format" })}</FormLabel><FormControl><Segment value={field.value} onValueChange={field.onChange} options={configParseFormatOptions} showDots={false} /></FormControl><FormMessage /></FormItem>
+															<FormItem className="space-y-1.5"><FormLabel className="text-xs font-medium">{t("detail.form.fields.configFileParse.formatLabel", { defaultValue: "Config Format" })}</FormLabel><FormControl><Segment value={field.value} onValueChange={field.onChange} options={configParseFormatOptions} showDots={false} /></FormControl><FormMessage /></FormItem>
 														)} />
 														<FormField control={form.control} name="configFileParseContainerType" render={({ field }) => (
-															<FormItem className="space-y-1.5"><FormLabel className="text-xs font-medium">{t("detail.form.configFileParse.containerTypeLabel", { defaultValue: "Container Type" })}</FormLabel><FormControl><Segment value={field.value} onValueChange={field.onChange} options={configParseContainerTypeOptions} showDots={false} /></FormControl><FormMessage /></FormItem>
+															<FormItem className="space-y-1.5"><FormLabel className="text-xs font-medium">{t("detail.form.fields.configFileParse.containerTypeLabel", { defaultValue: "Container Type" })}</FormLabel><FormControl><Segment value={field.value} onValueChange={field.onChange} options={configParseContainerTypeOptions} showDots={false} /></FormControl><FormMessage /></FormItem>
 														)} />
-														<FormField control={form.control} name="configFileParseContainerKeysText" render={({ field }) => (
-															<FormItem className="space-y-1.5 md:col-span-2"><FormLabel className="text-xs font-medium">{t("detail.form.configFileParse.containerKeysLabel", { defaultValue: "Config Nodes" })}</FormLabel><FormControl><Input {...field} className="h-8 text-sm" placeholder={t("detail.form.configFileParse.containerKeysPlaceholder", { defaultValue: "mcpServers, context_servers" })} /></FormControl><FormDescription>{t("detail.form.configFileParse.containerKeysDescription", { defaultValue: "Enter config node paths separated by commas. The first path is used as the primary write target." })}</FormDescription><FormMessage /></FormItem>
-														)} />
+														<FormField
+															control={form.control}
+															name="configFileParseContainerKeysText"
+															render={({ field }) => (
+																<FormItem className="space-y-1.5 md:col-span-2">
+																	<FormLabel className="text-xs font-medium">
+																		{t("detail.form.fields.configFileParse.containerKeysLabel", { defaultValue: "Config Nodes" })}
+																	</FormLabel>
+																	<FormControl>
+																		<Input
+																			{...field}
+																			className="h-8 text-sm"
+																			placeholder={t("detail.form.fields.configFileParse.containerKeysPlaceholder", {
+																				defaultValue: "mcpServers, context_servers",
+																			})}
+																		/>
+																	</FormControl>
+																	<FormMessage />
+																</FormItem>
+															)}
+														/>
+														<div className="space-y-3 border-t border-dashed pt-3 md:col-span-2">
+															<div className="flex items-center gap-1.5">
+																<FormLabel className="text-xs font-medium">{t("detail.form.transportRules.label", { defaultValue: "Transport Rules" })}</FormLabel>
+																<TooltipProvider delayDuration={200}>
+																	<Tooltip>
+																		<TooltipTrigger asChild>
+																			<Button type="button" variant="ghost" size="icon" className="h-5 w-5 rounded-full text-muted-foreground hover:text-foreground">
+																				<Info className="h-3.5 w-3.5" />
+																			</Button>
+																		</TooltipTrigger>
+																		<TooltipContent side="top" align="start" className="max-w-sm space-y-2 leading-relaxed">
+																			<p>{t("detail.form.transportRules.help.summary", { defaultValue: "These fields describe the target client's config keys, not MCPMate's own protocol fields." })}</p>
+																			<p>{t("detail.form.transportRules.help.docs", { defaultValue: "If you are unsure which keys a client expects, check that client's official documentation or an existing working config file first." })}</p>
+																			<p>{t("detail.form.transportRules.help.presets", { defaultValue: "Use the suggested variants below as a starting point, then verify the result against the client's real config structure." })}</p>
+																			{transportRulesHelpHref ? (
+																				<a href={transportRulesHelpHref} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary hover:underline">
+																					{t("detail.form.transportRules.help.openDocs", { defaultValue: "Open client documentation" })}
+																				</a>
+																			) : null}
+																		</TooltipContent>
+																	</Tooltip>
+																</TooltipProvider>
+															</div>
+															{supportedTransports.length > 0 ? (
+																<Tabs value={selectedTransportTab} onValueChange={(value) => setSelectedTransportTab(value as SupportedTransportValue)} className="space-y-3">
+																	<TabsList className={`grid w-full ${supportedTransports.length === 1 ? "grid-cols-1" : supportedTransports.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+																		{supportedTransports.map((transport) => (
+																			<TabsTrigger key={transport} value={transport}>{getTransportSupportLabel(transport, t)}</TabsTrigger>
+																		))}
+																	</TabsList>
+																	{supportedTransports.map((transport) => {
+																		const editor = transportRuleEditors[transport] ?? createEmptyTransportRuleEditor();
+																		const presets = buildTransportRulePresets(transport, client, t);
+																		return (
+																			<TabsContent key={transport} value={transport} className="mt-0">
+																				<div className="space-y-3">
+																					<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">
+																						<span className="text-xs font-medium text-muted-foreground">{t("detail.form.transportRules.suggestedVariants", { defaultValue: "Suggested variants" })}</span>
+																						{presets.map((preset) => (
+																							<Button key={preset.id} type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => applyTransportRulePreset(transport, preset)}>
+																								{preset.label}
+																							</Button>
+																						))}
+																					</div>
+																					<div className="grid gap-3 md:grid-cols-2">
+																						{transport === "stdio" ? (
+																							<>
+																								<TransportRuleField label={t("detail.form.transportRules.commandField", { defaultValue: "Command Field" })} placeholder="command" value={editor.commandField} onChange={(next) => updateTransportRuleEditor(transport, (current) => ({ ...current, commandField: next }))} />
+																								<TransportRuleField label={t("detail.form.transportRules.argsField", { defaultValue: "Args Field" })} placeholder="args" value={editor.argsField} onChange={(next) => updateTransportRuleEditor(transport, (current) => ({ ...current, argsField: next }))} />
+																								<TransportRuleField label={t("detail.form.transportRules.envField", { defaultValue: "Env Field" })} placeholder="env" value={editor.envField} onChange={(next) => updateTransportRuleEditor(transport, (current) => ({ ...current, envField: next }))} />
+																							</>
+																						) : (
+																							<>
+																								<TransportRuleField label={t("detail.form.transportRules.urlField", { defaultValue: "URL Field" })} placeholder="url" value={editor.urlField} onChange={(next) => updateTransportRuleEditor(transport, (current) => ({ ...current, urlField: next }))} />
+																								<TransportRuleField label={t("detail.form.transportRules.headersField", { defaultValue: "Headers Field" })} placeholder="headers" value={editor.headersField} onChange={(next) => updateTransportRuleEditor(transport, (current) => ({ ...current, headersField: next }))} />
+																							</>
+																						)}
+																						<div className="space-y-2 md:col-span-2 rounded-md border px-3 py-3">
+																							<label className="flex items-center gap-2 text-sm font-medium">
+																								<input type="checkbox" checked={editor.includeType} onChange={(event) => updateTransportRuleEditor(transport, (current) => ({ ...current, includeType: event.currentTarget.checked, typeValue: current.typeValue || transport }))} />
+																								<span>{t("detail.form.transportRules.includeType", { defaultValue: "Include type field" })}</span>
+																							</label>
+																							{editor.includeType ? <TransportRuleField label={t("detail.form.transportRules.typeValue", { defaultValue: "Type Value" })} placeholder={transport} value={editor.typeValue} onChange={(next) => updateTransportRuleEditor(transport, (current) => ({ ...current, typeValue: next }))} /> : null}
+																						</div>
+																						<div className="md:col-span-2">
+																							<ExtraFieldsEditor label={t("detail.form.transportRules.extraFields", { defaultValue: "Extra Fields" })} entries={editor.extraFields} onChange={(next) => updateTransportRuleEditor(transport, (current) => ({ ...current, extraFields: next }))} addLabel={t("detail.form.transportRules.addExtraField", { defaultValue: "Add field" })} keyPlaceholder={t("detail.form.transportRules.extraFieldKeyPlaceholder", { defaultValue: "enabled" })} valuePlaceholder={t("detail.form.transportRules.extraFieldValuePlaceholder", { defaultValue: "true or \"custom\"" })} />
+																						</div>
+																					</div>
+																				</div>
+																			</TabsContent>
+																		);
+																	})}
+																</Tabs>
+															) : (
+																<div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+																	{t("detail.form.transportRules.empty", { defaultValue: "Select at least one transport to edit its write rules." })}
+																</div>
+															)}
+														</div>
+														{formError && isTransportRuleValidationError ? (
+															<div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive md:col-span-2">
+																{formError}
+															</div>
+														) : null}
 													</div>
 												</div>
 											) : null}
 
-											<div className="flex items-start justify-between gap-3 border-t pt-2 text-xs text-muted-foreground">
-												<div className="min-w-0 flex-1">
-													{showParseCodePreview ? (
-														<div className="space-y-2">
-															<div className="flex items-center gap-2">
-																<span>{t("detail.form.configFileParse.previewTitle", { defaultValue: "Detected config snippet" })}</span>
-																{parseInspection?.detected_format ? (
-																	<span className="rounded border px-1.5 py-0.5 uppercase tracking-wide">{parseInspection.detected_format}</span>
-																) : null}
-															</div>
-															<pre className="overflow-x-auto rounded-md px-3 py-2 text-xs whitespace-pre-wrap break-words">{previewText}</pre>
-														</div>
-													) : (
-														<div className="space-y-1">
-															<div className="flex items-center gap-2">
-																{inspectMutation.isPending ? (
-																	<Loader2 className="h-3.5 w-3.5 animate-spin" />
-																) : parseInspectionError ? (
-																	<AlertCircle className="h-3.5 w-3.5 text-destructive" />
-																) : parseInspection?.validation?.matches ? (
-																	<CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-																) : (
-																	<AlertCircle className="h-3.5 w-3.5 text-amber-600" />
-																)}
-																<span>{t("detail.form.configFileParse.validationTitle", { defaultValue: "File association check" })}</span>
-															</div>
-															<p className="truncate">
-																{parseInspectionError
-																	? parseInspectionError
-																	: parseInspection?.validation?.matches
-																		? t("detail.form.configFileParse.validationSuccess", { defaultValue: "The selected file matches the current parse rules." })
-																		: t("detail.form.configFileParse.validationHint", { defaultValue: "Pick a config file and MCPMate will validate whether these rules can find MCP server entries." })}
-															</p>
-															{parseInspection?.validation ? (
-																<p>
-																	{t("detail.form.configFileParse.detectedFormat", { defaultValue: "Detected format" })}: {parseInspection.detected_format ?? "-"} · {t("detail.form.configFileParse.containerMatch", { defaultValue: "Container" })}: {parseInspection.validation.container_found ? t("detail.form.configFileParse.matchYes", { defaultValue: "Found" }) : t("detail.form.configFileParse.matchNo", { defaultValue: "Missing" })} · {t("detail.form.configFileParse.serverCount", { defaultValue: "Servers" })}: {parseInspection.validation.server_count}
-																</p>
-															) : null}
-														</div>
-													)}
-												</div>
-												<Button
-													type="button"
-													variant="ghost"
-													size="icon"
-													className="h-7 w-7 shrink-0"
-													disabled={!parseInspection}
-													onClick={() => setShowParseCodePreview((value) => !value)}
-													aria-label={showParseCodePreview
-														? t("detail.form.configFileParse.summaryViewButton", { defaultValue: "Summary view" })
-														: t("detail.form.configFileParse.codeViewButton", { defaultValue: "Code preview" })}
-												>
-													<Code2 className="h-4 w-4" />
-												</Button>
-											</div>
 										</div>
 
-										<FormField control={form.control} name="supportedTransports" render={({ field }) => (
-											<FormItem className="space-y-0">
-												<div className="flex items-start gap-4">
-													<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>{t("detail.form.transportSupport.label", { defaultValue: "Transport Support" })}</FormLabel>
-													<div className="min-w-0 flex-1 space-y-2">
-														<FormControl><TransportSupportCombobox value={field.value} onChange={field.onChange} options={supportedTransportOptions} placeholder={t("detail.form.transportSupport.placeholder", { defaultValue: "Select supported transports" })} emptyText={t("detail.form.transportSupport.empty", { defaultValue: "No transports found." })} /></FormControl>
-														<FormDescription>{t("detail.form.transportSupport.description", { defaultValue: "Choose which runtime transports this client supports. This array is the only source used to constrain hosted/unify transport selection." })}</FormDescription>
-														<FormMessage />
-													</div>
-												</div>
-											</FormItem>
-										)} />
 									</>
 								) : (
 									<div className="ml-24 rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
@@ -997,22 +1589,10 @@ export function ClientFormDrawer({
 										</div>
 									</FormItem>
 								)} />
-								<FormField control={form.control} name="formatRulesJsonText" render={({ field }) => (
-									<FormItem className="space-y-0">
-										<div className="flex items-start gap-4">
-											<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-3`}>{t("detail.form.fields.formatRulesJsonText.label", { defaultValue: "Format Rules (JSON)" })}</FormLabel>
-											<div className="min-w-0 flex-1">
-												<FormControl><Textarea {...field} rows={6} placeholder={t("detail.form.fields.formatRulesJsonText.placeholder", { defaultValue: '{"transport_name": {"type_value": "...", ...}}' })} /></FormControl>
-												<FormDescription>{t("detail.form.fields.formatRulesJsonText.description", { defaultValue: "Advanced: Fine-grained transport format rules as JSON. Leave empty to reset to defaults." })}</FormDescription>
-												<FormMessage />
-											</div>
-										</div>
-									</FormItem>
-								)} />
 							</TabsContent>
 						</Tabs>
 
-						{formError ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{formError}</div> : null}
+						{formError && !isTransportRuleValidationError ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{formError}</div> : null}
 					</form>
 				</Form>
 
