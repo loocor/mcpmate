@@ -70,6 +70,10 @@ import {
 } from "../../components/ui/tabs";
 import { auditApi, clientsApi, configSuitsApi, serversApi } from "../../lib/api";
 import { mapDashboardSettingsToClientBackupPolicy } from "../../lib/client-backup-policy";
+import {
+	applyClientConfigWithResolvedSelection,
+	buildClientApplySelectedConfig,
+} from "../../lib/client-config-sync";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
@@ -81,7 +85,6 @@ import type {
 	ClientCapabilitySourceSelection,
 	ClientConfigImportData,
 	ClientConfigMode,
-	ClientConfigSelected,
 	ClientConfigUpdateData,
 	ClientInfo,
 	ConfigSuit,
@@ -1002,26 +1005,6 @@ export function ClientDetailPage() {
 			),
 	});
 
-	const buildApplySelectedConfig = (
-		capabilityData: ClientCapabilityConfigData,
-	): ClientConfigSelected => {
-		if (capabilityData.capability_source === "custom") {
-			if (!capabilityData.custom_profile_id) {
-				throw new Error(
-					t("detail.configuration.errors.customProfileMissing", {
-						defaultValue:
-							"The custom profile has not been provisioned yet. Save again and reopen the editor.",
-					}),
-				);
-			}
-			return { profile: { profile_id: capabilityData.custom_profile_id } };
-		}
-
-		// For "profiles" and "activated" modes, return "default" to let backend resolve
-		// from capability_config.selected_profile_ids (supports multi-profile merge)
-		return "default";
-	};
-
 	const renderProfileCapabilitySummary = (
 		capabilities: NonNullable<ReturnType<typeof profileCapabilities.get>>,
 	) => {
@@ -1258,13 +1241,15 @@ export function ClientDetailPage() {
 			}
 
 			const selectedConfigForManagedApply =
-				mode === "unify" ? "default" : buildApplySelectedConfig(capabilityData);
+				mode === "unify"
+					? "default"
+					: buildClientApplySelectedConfig(capabilityData);
 
 			if (shouldRequireLocalConfigWrite) {
 				const data = await clientsApi.applyConfig({
 					identifier,
 					mode,
-					selected_config: buildApplySelectedConfig(capabilityData),
+					selected_config: buildClientApplySelectedConfig(capabilityData),
 					preview,
 					backup_policy: preview
 						? undefined
@@ -1912,23 +1897,67 @@ export function ClientDetailPage() {
 														<Select
 															value={transport}
 															onValueChange={async (v) => {
+																if (!identifier) return;
+																const previousTransport = transport;
 																setTransport(v);
 																try {
 																	await clientsApi.update({
-																		identifier: identifier!,
+																		identifier,
 																		transport: v,
 																	});
+
+																	let configApplied = false;
+																	const shouldApplyManagedConfig =
+																		(mode === "hosted" || mode === "unify") &&
+																		canSyncManagedConfig;
+																	if (shouldApplyManagedConfig) {
+																		const capabilityData =
+																			(await clientsApi.getCapabilityConfig(identifier)) ??
+																			effectiveCapabilityConfig;
+																		if (!capabilityData) {
+																			throw new Error(
+																				t("detail.configuration.errors.capabilityConfigMissing", {
+																					defaultValue:
+																						"Capability configuration update returned no data. Please try again.",
+																				}),
+																			);
+																		}
+
+																		await applyClientConfigWithResolvedSelection({
+																			identifier,
+																			mode,
+																			backupPolicy:
+																				mapDashboardSettingsToClientBackupPolicy(
+																					dashboardSettings,
+																				),
+																			capabilityData,
+																		});
+																		configApplied = true;
+																	}
+
 																	notifySuccess(
 																		t("detail.overview.transport.updated", {
 																			defaultValue: "Transport updated",
 																		}),
-																		"",
+																		configApplied
+																			? t("detail.notifications.applied.message", {
+																				defaultValue: "Configuration applied",
+																			})
+																			: "",
 																	);
-																	// refresh cache so list shows new transport immediately
-																	qc.invalidateQueries({
-																		queryKey: ["clients"],
-																	});
+																	await Promise.allSettled([
+																		qc.invalidateQueries({ queryKey: ["clients"] }),
+																		qc.invalidateQueries({
+																			queryKey: ["client-config", identifier],
+																		}),
+																		qc.invalidateQueries({
+																			queryKey: ["client-capability-config", identifier],
+																		}),
+																		refetchCapabilityConfig(),
+																		refetchDetails(),
+																	]);
 																} catch (err) {
+																	setTransport(previousTransport);
 																	notifyError(
 																		t(
 																			"detail.overview.transport.updateFailed",
