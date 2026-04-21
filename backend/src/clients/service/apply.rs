@@ -7,16 +7,32 @@ use crate::clients::models::{ConfigMode, TemplateFormat};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-fn available_managed_transports(format_rules: Option<&HashMap<String, FormatRule>>) -> Vec<&'static str> {
+fn normalize_transport(transport: &str) -> Option<&'static str> {
+    match transport.trim().to_ascii_lowercase().as_str() {
+        "streamable_http" | "streamablehttp" | "http" => Some("streamable_http"),
+        "sse" => Some("sse"),
+        "stdio" => Some("stdio"),
+        _ => None,
+    }
+}
+
+fn available_managed_transports(
+    format_rules: Option<&HashMap<String, FormatRule>>,
+    supported_transports: &[String],
+) -> Vec<&'static str> {
     let Some(rules) = format_rules else {
         return Vec::new();
     };
 
     let keymap = crate::clients::keymap::registry();
+    let supported_set: HashSet<&'static str> = supported_transports
+        .iter()
+        .filter_map(|transport| normalize_transport(transport))
+        .collect();
     let mut transports = Vec::new();
 
     for transport in ["streamable_http", "sse", "stdio"] {
-        if keymap.has_rule(rules, transport) {
+        if supported_set.contains(transport) && keymap.has_rule(rules, transport) {
             transports.push(transport);
         }
     }
@@ -80,7 +96,10 @@ impl ClientConfigService {
         let mut chosen_transport: Option<String> = None;
         let mut auto_selected = false;
         if matches!(options.mode, ConfigMode::Managed) {
-            let supported_transports = available_managed_transports(format_rules.as_ref());
+            let supported_transports = available_managed_transports(
+                format_rules.as_ref(),
+                &state.runtime_client_metadata().supported_transports,
+            );
 
             if let Some((_, transport, _)) = self.get_client_settings(&options.client_id).await.unwrap_or(None) {
                 (chosen_transport, auto_selected) = select_managed_transport(&transport, &supported_transports);

@@ -287,7 +287,7 @@ impl TemplateEngine {
         // Render with optional-key drop policy (format_rules scope)
         let mut rendered = self.render_object_with_policy(&rule_template, &context, &server.transport, warnings)?;
 
-        if format_rule.requires_type_field {
+        if format_rule.include_type {
             if let Value::Object(ref mut obj) = rendered {
                 obj.entry("type".to_string())
                     .or_insert_with(|| Value::String(server.transport.clone()));
@@ -442,7 +442,7 @@ impl TemplateEngine {
         preferred_transport: Option<&str>,
     ) -> ConfigResult<ServerTemplateInput> {
         // Derive supported transports directly from format_rules keys and
-        // apply fixed global priority: streamable_http -> stdio.
+        // apply fixed global priority: streamable_http -> sse -> stdio.
         let candidates = derive_transports_by_priority(&definition.config_mapping.format_rules);
         if let Some(pref) = preferred_transport {
             if candidates.contains(&pref) {
@@ -477,7 +477,7 @@ impl TemplateEngine {
         let runtime_config = get_runtime_port_config();
 
         match transport {
-            "streamable_http" => {
+            "streamable_http" | "sse" => {
                 let mut headers = HashMap::new();
                 headers.insert("x-mcpmate-client-id".to_string(), client_id.to_string());
                 if let Some(pid) = profile_id {
@@ -677,7 +677,7 @@ mod tests {
                     "args": "{{{json args}}}",
                     "env": "{{{json env}}}"
                 }),
-                requires_type_field: false,
+                include_type: false,
                 ..Default::default()
             },
         );
@@ -796,7 +796,7 @@ mod tests {
                     "command": "{{command}}",
                     "args": "{{{json args}}}"
                 }),
-                requires_type_field: false,
+                include_type: false,
                 ..Default::default()
             },
         );
@@ -807,7 +807,7 @@ mod tests {
                     "type": "streamable_http",
                     "url": "{{{url}}}"
                 }),
-                requires_type_field: false,
+                include_type: false,
                 ..Default::default()
             },
         );

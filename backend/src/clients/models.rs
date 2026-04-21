@@ -656,6 +656,12 @@ pub struct FormatRule {
     #[serde(default)]
     pub template: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_field: Option<String>,
@@ -663,41 +669,146 @@ pub struct FormatRule {
     pub headers_field: Option<String>,
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra_fields: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
-    pub requires_type_field: bool,
+    #[serde(default, alias = "requires_type_field")]
+    pub include_type: bool,
 }
 
 impl FormatRule {
+    fn template_string_matches(value: &serde_json::Value, candidates: &[&str]) -> bool {
+        let Some(raw) = value.as_str() else {
+            return false;
+        };
+
+        candidates.iter().any(|candidate| raw.trim() == *candidate)
+    }
+
+    pub fn normalized(&self) -> Self {
+        let mut normalized = self.clone();
+        let Some(template_map) = self.template.as_object() else {
+            return normalized;
+        };
+
+        let mut extra_fields = self.extra_fields.clone();
+
+        for (key, value) in template_map {
+            if Self::template_string_matches(value, &["{{command}}", "{{{command}}}"]) {
+                normalized.command_field.get_or_insert_with(|| key.clone());
+                continue;
+            }
+
+            if Self::template_string_matches(value, &["{{{json args}}}", "{{json args}}", "{{args}}", "{{{args}}}"]) {
+                normalized.args_field.get_or_insert_with(|| key.clone());
+                continue;
+            }
+
+            if Self::template_string_matches(value, &["{{{json env}}}", "{{json env}}", "{{env}}", "{{{env}}}"]) {
+                normalized.env_field.get_or_insert_with(|| key.clone());
+                continue;
+            }
+
+            if Self::template_string_matches(value, &["{{url}}", "{{{url}}}"]) {
+                normalized.url_field.get_or_insert_with(|| key.clone());
+                continue;
+            }
+
+            if Self::template_string_matches(value, &["{{{json headers}}}", "{{json headers}}", "{{headers}}", "{{{headers}}}"]) {
+                normalized.headers_field.get_or_insert_with(|| key.clone());
+                continue;
+            }
+
+            if key == "type" {
+                if let Some(type_value) = value.as_str() {
+                    if !type_value.contains("{{") {
+                        normalized.include_type = true;
+                        normalized.type_value.get_or_insert_with(|| type_value.to_string());
+                        continue;
+                    }
+                }
+            }
+
+            extra_fields.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+
+        normalized.extra_fields = extra_fields;
+        normalized
+    }
+
     pub fn has_dimensions(&self) -> bool {
-        self.type_value.is_some()
-            || self.url_field.is_some()
-            || self.headers_field.is_some()
-            || !self.extra_fields.is_empty()
+        let normalized = self.normalized();
+        normalized.command_field.is_some()
+            || normalized.args_field.is_some()
+            || normalized.env_field.is_some()
+            || normalized.include_type
+            || normalized.type_value.is_some()
+            || normalized.url_field.is_some()
+            || normalized.headers_field.is_some()
+            || !normalized.extra_fields.is_empty()
+    }
+
+    pub fn validate_for_transport(&self, transport: &str) -> Result<(), String> {
+        let normalized = self.normalized();
+
+        match transport {
+            "stdio" if normalized.command_field.is_none() => {
+                return Err("Missing required stdio rule field: command_field".to_string());
+            }
+            "sse" | "streamable_http" if normalized.url_field.is_none() => {
+                return Err(format!("Missing required {transport} rule field: url_field"));
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 
     pub fn to_template(&self) -> serde_json::Value {
-        if !self.has_dimensions() {
-            return self.template.clone();
+        let normalized = self.normalized();
+        if !normalized.has_dimensions() {
+            return normalized.template.clone();
         }
 
         let mut map = serde_json::Map::new();
 
-        if let Some(type_value) = &self.type_value {
-            map.insert("type".to_string(), serde_json::Value::String(type_value.clone()));
+        if normalized.include_type {
+            map.insert(
+                "type".to_string(),
+                serde_json::Value::String(normalized.type_value.clone().unwrap_or_default()),
+            );
         }
 
-        if let Some(url_key) = &self.url_field {
+        if let Some(command_key) = &normalized.command_field {
+            map.insert(
+                command_key.clone(),
+                serde_json::Value::String("{{command}}".to_string()),
+            );
+        }
+
+        if let Some(args_key) = &normalized.args_field {
+            map.insert(
+                args_key.clone(),
+                serde_json::Value::String("{{{json args}}}".to_string()),
+            );
+        }
+
+        if let Some(env_key) = &normalized.env_field {
+            map.insert(
+                env_key.clone(),
+                serde_json::Value::String("{{{json env}}}".to_string()),
+            );
+        }
+
+        if let Some(url_key) = &normalized.url_field {
             map.insert(url_key.clone(), serde_json::Value::String("{{{url}}}".to_string()));
         }
 
-        if let Some(headers_key) = &self.headers_field {
+        if let Some(headers_key) = &normalized.headers_field {
             map.insert(
                 headers_key.clone(),
                 serde_json::Value::String("{{{json headers}}}".to_string()),
             );
         }
 
-        for (key, value) in &self.extra_fields {
+        for (key, value) in &normalized.extra_fields {
             map.insert(key.clone(), value.clone());
         }
 

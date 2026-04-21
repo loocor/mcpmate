@@ -93,7 +93,7 @@ pub struct ClientInfo {
     pub support_url: Option<String>,
     #[schemars(description = "Configuration management mode: unify, hosted, or transparent")]
     pub config_mode: Option<String>,
-    #[schemars(description = "Preferred or resolved transport: streamable_http|stdio")]
+    #[schemars(description = "Preferred or resolved transport: auto|streamable_http|sse|stdio")]
     #[serde(default)]
     pub transport: Option<String>,
     #[schemars(description = "Detected client version string")]
@@ -492,6 +492,14 @@ pub struct ClientConfigFileParseData {
 #[schemars(description = "Fine-grained transport format rule data")]
 pub struct ClientFormatRuleData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_field: Option<String>,
+    #[serde(default)]
+    pub include_type: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_field: Option<String>,
@@ -499,8 +507,6 @@ pub struct ClientFormatRuleData {
     pub headers_field: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_fields: Option<std::collections::HashMap<String, serde_json::Value>>,
-    #[serde(default)]
-    pub requires_type_field: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

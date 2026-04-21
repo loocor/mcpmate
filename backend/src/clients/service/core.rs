@@ -400,80 +400,12 @@ impl ClientStateRow {
     }
 }
 
-pub(super) fn runtime_default_format_rules(transports: &[String]) -> HashMap<String, FormatRule> {
-    let mut rules = HashMap::new();
-
-    for transport in transports {
-        match transport.as_str() {
-            "stdio" => {
-                rules.insert(
-                    "stdio".to_string(),
-                    FormatRule {
-                        template: serde_json::json!({
-                            "type": "stdio",
-                            "command": "{{{command}}}",
-                            "args": "{{{json args}}}",
-                            "env": "{{{json env}}}"
-                        }),
-                        type_value: Some("stdio".to_string()),
-                        url_field: None,
-                        headers_field: None,
-                        extra_fields: serde_json::Map::new(),
-                        requires_type_field: false,
-                    },
-                );
-            }
-            "streamable_http" | "sse" => {
-                rules.insert(
-                    transport.clone(),
-                    FormatRule {
-                        template: serde_json::json!({
-                            "type": "{{transport}}",
-                            "url": "{{{url}}}",
-                            "headers": "{{{json headers}}}"
-                        }),
-                        type_value: Some(transport.clone()),
-                        url_field: Some("url".to_string()),
-                        headers_field: Some("headers".to_string()),
-                        extra_fields: serde_json::Map::new(),
-                        requires_type_field: false,
-                    },
-                );
-            }
-            _ => {}
-        }
-    }
-
-    rules
-}
-
 fn effective_format_rules_for_state(state: &ClientStateRow) -> ConfigResult<HashMap<String, FormatRule>> {
-    let persisted_rules = state.parsed_format_rules()?;
-    let mut supported_transports = state.runtime_client_metadata().supported_transports;
-    supported_transports.retain(|transport| matches!(transport.as_str(), "stdio" | "streamable_http" | "sse"));
-    supported_transports.sort();
-    supported_transports.dedup();
-
-    if supported_transports.is_empty() {
-        return Ok(persisted_rules);
-    }
-
-    let default_rules = runtime_default_format_rules(&supported_transports);
-    let mut effective_rules = HashMap::new();
-
-    for transport in &supported_transports {
-        if let Some(rule) = persisted_rules.get(transport) {
-            effective_rules.insert(transport.clone(), rule.clone());
-        } else if let Some(rule) = default_rules.get(transport) {
-            effective_rules.insert(transport.clone(), rule.clone());
-        }
-    }
-
-    if effective_rules.is_empty() {
-        Ok(default_rules)
-    } else {
-        Ok(effective_rules)
-    }
+    Ok(state
+        .parsed_format_rules()?
+        .into_iter()
+        .map(|(transport, rule)| (transport, rule.normalized()))
+        .collect())
 }
 
 /// Summarized view of a client template combined with detection and filesystem state
@@ -592,12 +524,47 @@ impl ClientConfigService {
     }
 
     pub fn build_render_definition_from_state(state: &ClientStateRow) -> ConfigResult<ClientRenderDefinition> {
+        let parse = state
+            .config_file_parse_override()?
+            .or_else(|| state.legacy_config_file_parse().ok().flatten())
+            .ok_or_else(|| {
+                ConfigError::DataAccessError(format!(
+                    "Client '{}' is missing persisted config_file_parse; cannot render configuration",
+                    state.identifier()
+                ))
+            })?;
+
+        if parse.container_keys.is_empty() {
+            return Err(ConfigError::DataAccessError(format!(
+                "Client '{}' is missing config_file_parse.container_keys; cannot render configuration",
+                state.identifier()
+            )));
+        }
+
+        let format_rules = effective_format_rules_for_state(state)?;
+        let supported_transports = state.runtime_client_metadata().supported_transports;
+        if supported_transports.is_empty() {
+            return Err(ConfigError::DataAccessError(format!(
+                "Client '{}' is missing supported_transports; cannot render configuration",
+                state.identifier()
+            )));
+        }
+
+        for transport in supported_transports {
+            if let Some(rule) = format_rules.get(&transport) {
+                rule.validate_for_transport(&transport)
+                    .map_err(ConfigError::DataAccessError)?;
+            } else {
+                return Err(ConfigError::DataAccessError(format!(
+                    "Client '{}' is missing persisted format rule for supported transport '{}'",
+                    state.identifier(), transport
+                )));
+            }
+        }
+
         let config_mapping = ConfigMapping {
-            container_keys: state.container_keys()?,
-            container_type: match state.container_type() {
-                Some("array") => crate::clients::models::ContainerType::Array,
-                _ => crate::clients::models::ContainerType::ObjectMap,
-            },
+            container_keys: parse.container_keys.clone(),
+            container_type: parse.container_type,
             merge_strategy: match state.merge_strategy() {
                 Some("deep_merge") => MergeStrategy::DeepMerge,
                 _ => MergeStrategy::Replace,
@@ -607,10 +574,8 @@ impl ClientConfigService {
                 source: state.managed_source().map(str::to_string),
             }),
             managed_source: state.managed_source().map(str::to_string),
-            parse: state
-                .config_file_parse_override()?
-                .or_else(|| state.legacy_config_file_parse().ok().flatten()),
-            format_rules: effective_format_rules_for_state(state)?,
+            parse: Some(parse.clone()),
+            format_rules,
         };
 
         let storage = StorageConfig {
@@ -623,16 +588,9 @@ impl ClientConfigService {
             adapter: state.storage_adapter().map(str::to_string),
         };
 
-        let format = match state.config_format() {
-            Some("json5") => TemplateFormat::Json5,
-            Some("toml") => TemplateFormat::Toml,
-            Some("yaml") => TemplateFormat::Yaml,
-            _ => TemplateFormat::Json,
-        };
-
         Ok(ClientRenderDefinition {
             identifier: state.identifier().to_string(),
-            format,
+            format: parse.format,
             storage,
             config_mapping,
         })
@@ -933,7 +891,7 @@ mod render_definition_tests {
     use super::*;
 
     #[test]
-    fn build_render_definition_prefers_runtime_supported_transports() {
+    fn build_render_definition_rejects_missing_supported_transport_rules() {
         let state = ClientStateRow {
             identifier: "zed".to_string(),
             config_path: Some("~/.config/zed/settings.json".to_string()),
@@ -949,7 +907,7 @@ mod render_definition_tests {
                             "type": "stdio",
                             "command": "{{{command}}}"
                         },
-                        "requires_type_field": false
+                    "include_type": false
                     }
                 })
                 .to_string(),
@@ -965,8 +923,10 @@ mod render_definition_tests {
             ..ClientStateRow::default()
         };
 
-        let definition = ClientConfigService::build_render_definition_from_state(&state).expect("render definition");
-        assert!(definition.config_mapping.format_rules.contains_key("streamable_http"));
-        assert!(!definition.config_mapping.format_rules.contains_key("stdio"));
+        let error = ClientConfigService::build_render_definition_from_state(&state)
+            .expect_err("render definition should fail without persisted transport rule");
+        assert!(error
+            .to_string()
+            .contains("missing persisted format rule for supported transport 'streamable_http'"));
     }
 }
