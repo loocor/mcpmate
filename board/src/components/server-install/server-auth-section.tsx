@@ -137,9 +137,9 @@ export function ServerAuthSection({
 					defaultValue: "Unable to start OAuth",
 				}),
 				errorMessage ||
-					translateRef.current("manual.auth.oauth.unknownError", {
-						defaultValue: "Unknown error",
-					}),
+				translateRef.current("manual.auth.oauth.unknownError", {
+					defaultValue: "Unknown error",
+				}),
 			);
 		};
 
@@ -338,7 +338,7 @@ export function ServerAuthSection({
 					client_secret: formState.client_secret,
 					scopes: formState.scopes,
 					redirect_uri: formState.redirect_uri,
-			};
+				};
 			await onInitiateOAuth(payload);
 		},
 		onSuccess: () => {
@@ -494,7 +494,20 @@ export function ServerAuthSection({
 								{t("manual.auth.oauth.statusLabel", { defaultValue: "OAuth status" })}
 							</span>
 						)}
-						<Badge variant={statusVariant(status.state)}>{stateLabel}</Badge>
+						<div className="flex items-center gap-2">
+							<Badge variant={statusVariant(status.state)}>{stateLabel}</Badge>
+							<Button
+								type="button"
+								variant="outline"
+								size="icon"
+								className="h-7 w-7"
+								onClick={() => setShowAdvanced((value) => !value)}
+								aria-label={t("manual.auth.oauth.actions.configure", { defaultValue: "Configure" })}
+								title={t("manual.auth.oauth.actions.configure", { defaultValue: "Configure" })}
+							>
+								<ChevronDown className={`h-3.5 w-3.5 transition-transform ${showAdvanced ? "rotate-180" : "rotate-0"}`} />
+							</Button>
+						</div>
 					</div>
 
 					{status.manual_authorization_override ? (
@@ -555,117 +568,108 @@ export function ServerAuthSection({
 								{t("manual.auth.oauth.actions.revoke", { defaultValue: "Revoke token" })}
 							</Button>
 						)}
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							onClick={() => setShowAdvanced((value) => !value)}
-						>
-							{t("manual.auth.oauth.actions.configure", { defaultValue: "Configure" })}
-							<ChevronDown className={`ml-2 h-3 w-3 transition-transform ${showAdvanced ? "rotate-180" : "rotate-0"}`} />
-						</Button>
 					</div>
 
 					{showAdvanced ? (
 						<div className="rounded-md border bg-white/80 dark:bg-slate-950/10">
 							<div className="grid gap-3 px-3 py-3 md:grid-cols-2">
 								<div className="space-y-1.5">
-							<label className="text-xs font-medium" htmlFor={authorizationEndpointId}>
-								{t("manual.auth.oauth.fields.authorizationEndpoint", { defaultValue: "Authorization endpoint" })}
-							</label>
-							<Input
-								id={authorizationEndpointId}
-								value={formState.authorization_endpoint}
-								onChange={(e) => {
-									setIsDirty(true);
-									setFormState((cur) => ({ ...cur, authorization_endpoint: e.target.value }));
-								}}
-								placeholder={t("manual.auth.oauth.fields.placeholderAuthorizationEndpoint", {
-									defaultValue: "https://issuer.example.com/authorize",
-								})}
-								className="h-8 text-sm"
-							/>
+									<label className="text-xs font-medium" htmlFor={authorizationEndpointId}>
+										{t("manual.auth.oauth.fields.authorizationEndpoint", { defaultValue: "Authorization endpoint" })}
+									</label>
+									<Input
+										id={authorizationEndpointId}
+										value={formState.authorization_endpoint}
+										onChange={(e) => {
+											setIsDirty(true);
+											setFormState((cur) => ({ ...cur, authorization_endpoint: e.target.value }));
+										}}
+										placeholder={t("manual.auth.oauth.fields.placeholderAuthorizationEndpoint", {
+											defaultValue: "https://issuer.example.com/authorize",
+										})}
+										className="h-8 text-sm"
+									/>
 								</div>
 								<div className="space-y-1.5">
-							<label className="text-xs font-medium" htmlFor={tokenEndpointId}>
-								{t("manual.auth.oauth.fields.tokenEndpoint", { defaultValue: "Token endpoint" })}
-							</label>
-							<Input
-								id={tokenEndpointId}
-								value={formState.token_endpoint}
-								onChange={(e) => {
-									setIsDirty(true);
-									setFormState((cur) => ({ ...cur, token_endpoint: e.target.value }));
-								}}
-								placeholder={t("manual.auth.oauth.fields.placeholderTokenEndpoint", {
-									defaultValue: "https://issuer.example.com/token",
-								})}
-								className="h-8 text-sm"
-							/>
+									<label className="text-xs font-medium" htmlFor={tokenEndpointId}>
+										{t("manual.auth.oauth.fields.tokenEndpoint", { defaultValue: "Token endpoint" })}
+									</label>
+									<Input
+										id={tokenEndpointId}
+										value={formState.token_endpoint}
+										onChange={(e) => {
+											setIsDirty(true);
+											setFormState((cur) => ({ ...cur, token_endpoint: e.target.value }));
+										}}
+										placeholder={t("manual.auth.oauth.fields.placeholderTokenEndpoint", {
+											defaultValue: "https://issuer.example.com/token",
+										})}
+										className="h-8 text-sm"
+									/>
 								</div>
 								<div className="space-y-1.5">
-							<label className="text-xs font-medium" htmlFor={clientIdInputId}>
-								{t("manual.auth.oauth.fields.clientId", { defaultValue: "Client ID" })}
-							</label>
-							<Input
-								id={clientIdInputId}
-								value={formState.client_id}
-								onChange={(e) => {
-									setIsDirty(true);
-									setFormState((cur) => ({ ...cur, client_id: e.target.value }));
-								}}
-								className="h-8 text-sm"
-							/>
+									<label className="text-xs font-medium" htmlFor={clientIdInputId}>
+										{t("manual.auth.oauth.fields.clientId", { defaultValue: "Client ID" })}
+									</label>
+									<Input
+										id={clientIdInputId}
+										value={formState.client_id}
+										onChange={(e) => {
+											setIsDirty(true);
+											setFormState((cur) => ({ ...cur, client_id: e.target.value }));
+										}}
+										className="h-8 text-sm"
+									/>
 								</div>
 								<div className="space-y-1.5">
-							<label className="text-xs font-medium" htmlFor={clientSecretInputId}>
-								{t("manual.auth.oauth.fields.clientSecret", { defaultValue: "Client secret" })}
-							</label>
-							<Input
-								id={clientSecretInputId}
-								type="password"
-								value={formState.client_secret ?? ""}
-								onChange={(e) => {
-									setIsDirty(true);
-									setFormState((cur) => ({ ...cur, client_secret: e.target.value }));
-								}}
-								placeholder={status.has_client_secret
-									? t("manual.auth.oauth.fields.clientSecretPlaceholderExisting", { defaultValue: "Leave blank to keep the stored secret" })
-									: t("manual.auth.oauth.fields.clientSecretPlaceholderNew", { defaultValue: "Optional for public clients" })
-								}
-								className="h-8 text-sm"
-							/>
+									<label className="text-xs font-medium" htmlFor={clientSecretInputId}>
+										{t("manual.auth.oauth.fields.clientSecret", { defaultValue: "Client secret" })}
+									</label>
+									<Input
+										id={clientSecretInputId}
+										type="password"
+										value={formState.client_secret ?? ""}
+										onChange={(e) => {
+											setIsDirty(true);
+											setFormState((cur) => ({ ...cur, client_secret: e.target.value }));
+										}}
+										placeholder={status.has_client_secret
+											? t("manual.auth.oauth.fields.clientSecretPlaceholderExisting", { defaultValue: "Leave blank to keep the stored secret" })
+											: t("manual.auth.oauth.fields.clientSecretPlaceholderNew", { defaultValue: "Optional for public clients" })
+										}
+										className="h-8 text-sm"
+									/>
 								</div>
 								<div className="space-y-1.5 md:col-span-2">
-							<label className="text-xs font-medium" htmlFor={scopesInputId}>
-								{t("manual.auth.oauth.fields.scopes", { defaultValue: "Scopes" })}
-							</label>
-							<Input
-								id={scopesInputId}
-								value={formState.scopes ?? ""}
-								onChange={(e) => {
-									setIsDirty(true);
-									setFormState((cur) => ({ ...cur, scopes: e.target.value }));
-								}}
-								placeholder={t("manual.auth.oauth.fields.placeholderScopes", {
-									defaultValue: "read write",
-								})}
-								className="h-8 text-sm"
-							/>
+									<label className="text-xs font-medium" htmlFor={scopesInputId}>
+										{t("manual.auth.oauth.fields.scopes", { defaultValue: "Scopes" })}
+									</label>
+									<Input
+										id={scopesInputId}
+										value={formState.scopes ?? ""}
+										onChange={(e) => {
+											setIsDirty(true);
+											setFormState((cur) => ({ ...cur, scopes: e.target.value }));
+										}}
+										placeholder={t("manual.auth.oauth.fields.placeholderScopes", {
+											defaultValue: "read write",
+										})}
+										className="h-8 text-sm"
+									/>
 								</div>
 								<div className="space-y-1.5 md:col-span-2">
-							<label className="text-xs font-medium" htmlFor={redirectUriInputId}>
-								{t("manual.auth.oauth.fields.redirectUri", { defaultValue: "Redirect URI" })}
-							</label>
-							<Input
-								id={redirectUriInputId}
-								value={formState.redirect_uri}
-								onChange={(e) => {
-									setIsDirty(true);
-									setFormState((cur) => ({ ...cur, redirect_uri: e.target.value }));
-								}}
-								className="h-8 text-sm"
-							/>
+									<label className="text-xs font-medium" htmlFor={redirectUriInputId}>
+										{t("manual.auth.oauth.fields.redirectUri", { defaultValue: "Redirect URI" })}
+									</label>
+									<Input
+										id={redirectUriInputId}
+										value={formState.redirect_uri}
+										onChange={(e) => {
+											setIsDirty(true);
+											setFormState((cur) => ({ ...cur, redirect_uri: e.target.value }));
+										}}
+										className="h-8 text-sm"
+									/>
 								</div>
 							</div>
 						</div>
