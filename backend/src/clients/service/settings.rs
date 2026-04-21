@@ -3,12 +3,12 @@ use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
     FormatRule,
-    TemplateFormat, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectPromptSurface,
+    UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectPromptSurface,
     UnifyDirectPromptSurfaceDiagnostic, UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic,
     UnifyDirectTemplateSurface, UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface,
     UnifyDirectToolSurfaceDiagnostic,
 };
-use crate::clients::service::core::{RuntimeClientMetadata, runtime_default_format_rules};
+use crate::clients::service::core::RuntimeClientMetadata;
 use crate::common::profile::{ProfileRole, ProfileType};
 use crate::config::models::Profile;
 use crate::system::paths::get_path_service;
@@ -105,27 +105,6 @@ fn serialize_json_or_none<T: serde::Serialize>(value: &T) -> ConfigResult<Option
 }
 
 impl ClientConfigService {
-    fn default_runtime_render_parse() -> ClientConfigFileParse {
-        ClientConfigFileParse {
-            format: TemplateFormat::Json,
-            container_type: ContainerType::ObjectMap,
-            container_keys: vec!["mcpServers".to_string()],
-        }
-    }
-
-    fn normalize_runtime_render_transports(
-        requested_supported_transports: Option<&[String]>,
-        runtime_metadata: &RuntimeClientMetadata,
-    ) -> Vec<String> {
-        let mut transports = requested_supported_transports
-            .map(|items| items.to_vec())
-            .unwrap_or_else(|| runtime_metadata.supported_transports.clone());
-
-        transports.sort();
-        transports.dedup();
-        transports
-    }
-
     pub async fn persist_handshake_observation(
         &self,
         identifier: &str,
@@ -350,7 +329,6 @@ impl ClientConfigService {
             None => (self.resolve_client_name(identifier).await?, "stored"),
         };
         let existing_state = self.fetch_state(identifier).await?;
-        let requested_supported_transports = update.supported_transports.clone();
         let old_effective_mode = self
             .resolve_effective_mode_from_explicit(
                 existing_state.as_ref().and_then(|state| state.config_mode.as_deref()),
@@ -486,13 +464,6 @@ impl ClientConfigService {
             self.update_format_rules(identifier, update.format_rules.as_ref(), update.clear_format_rules)
                 .await?;
         }
-
-        self.ensure_runtime_render_defaults(
-            identifier,
-            effective_parse_for_validation.as_ref(),
-            requested_supported_transports.as_deref(),
-        )
-        .await?;
 
         let new_effective_mode = self
             .resolve_effective_mode_from_explicit(
@@ -805,100 +776,6 @@ impl ClientConfigService {
             "#,
         )
         .bind(serialized)
-        .bind(identifier)
-        .execute(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn ensure_runtime_render_defaults(
-        &self,
-        identifier: &str,
-        requested_parse: Option<&ClientConfigFileParse>,
-        requested_supported_transports: Option<&[String]>,
-    ) -> ConfigResult<()> {
-        let Some(state) = self.fetch_state(identifier).await? else {
-            return Ok(());
-        };
-
-        // format_rules describe rendering capabilities and must stay in sync with
-        // supported_transports regardless of whether a local config target exists.
-
-        let parse = requested_parse
-            .cloned()
-            .or_else(|| state.config_file_parse_override().ok().flatten())
-            .or_else(|| state.legacy_config_file_parse().ok().flatten())
-            .unwrap_or_else(Self::default_runtime_render_parse);
-
-        let runtime_metadata = state.runtime_client_metadata();
-        let mut transports =
-            Self::normalize_runtime_render_transports(requested_supported_transports, &runtime_metadata);
-
-        // Always use DB-persisted format_rules as baseline — template files are
-        // consumed only during initial bootstrap and must not influence runtime
-        // rendering afterwards.
-        let baseline_format_rules = state.parsed_format_rules()?;
-
-        if transports.is_empty() {
-            let keymap = crate::clients::keymap::registry();
-            transports = keymap.advertise_supported(&baseline_format_rules);
-        }
-
-        let keymap = crate::clients::keymap::registry();
-        let default_format_rules = runtime_default_format_rules(&transports);
-        let mut format_rules = if transports.is_empty() {
-            baseline_format_rules.clone()
-        } else {
-            HashMap::new()
-        };
-
-        for transport in &transports {
-            if let Some(rule_key) = keymap.resolve_rule_key(&baseline_format_rules, transport) {
-                if let Some(rule) = baseline_format_rules.get(&rule_key) {
-                    format_rules.insert(transport.clone(), rule.clone());
-                    continue;
-                }
-            }
-
-            if let Some(rule) = default_format_rules.get(transport) {
-                format_rules.insert(transport.clone(), rule.clone());
-            }
-        }
-
-        if !transports.is_empty() && format_rules.is_empty() {
-            format_rules = default_format_rules;
-        }
-
-        let serialized_container_keys = serde_json::to_string(&parse.container_keys)
-            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        let serialized_format_rules =
-            serde_json::to_string(&format_rules).map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        let container_type = match parse.container_type {
-            ContainerType::Array => "array",
-            ContainerType::ObjectMap => "object",
-        };
-
-        sqlx::query(
-            r#"
-            UPDATE client
-            SET config_format = ?,
-                container_type = ?,
-                container_keys = ?,
-                storage_kind = COALESCE(storage_kind, 'file'),
-                storage_path_strategy = COALESCE(storage_path_strategy, 'config_path'),
-                merge_strategy = COALESCE(merge_strategy, 'replace'),
-                keep_original_config = COALESCE(keep_original_config, 0),
-                format_rules = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE identifier = ?
-            "#,
-        )
-        .bind(parse.format.as_str())
-        .bind(container_type)
-        .bind(serialized_container_keys)
-        .bind(serialized_format_rules)
         .bind(identifier)
         .execute(&*self.db_pool)
         .await

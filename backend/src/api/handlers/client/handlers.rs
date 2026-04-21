@@ -93,6 +93,7 @@ fn parse_rule_from_api_data(parse: &ClientConfigFileParseData) -> ClientConfigFi
 }
 
 fn format_rule_data_from_rule(rule: &crate::clients::models::FormatRule) -> ClientFormatRuleData {
+    let rule = rule.normalized();
     let extra_fields = if rule.extra_fields.is_empty() {
         None
     } else {
@@ -105,11 +106,14 @@ fn format_rule_data_from_rule(rule: &crate::clients::models::FormatRule) -> Clie
     };
 
     ClientFormatRuleData {
+        command_field: rule.command_field.clone(),
+        args_field: rule.args_field.clone(),
+        env_field: rule.env_field.clone(),
+        include_type: rule.include_type,
         type_value: rule.type_value.clone(),
         url_field: rule.url_field.clone(),
         headers_field: rule.headers_field.clone(),
         extra_fields,
-        requires_type_field: rule.requires_type_field,
     }
 }
 
@@ -123,14 +127,33 @@ fn format_rule_from_api_data(data: &ClientFormatRuleData) -> crate::clients::mod
 
     let mut rule = crate::clients::models::FormatRule {
         template: serde_json::Value::Object(serde_json::Map::new()),
+        command_field: data.command_field.clone(),
+        args_field: data.args_field.clone(),
+        env_field: data.env_field.clone(),
+        include_type: data.include_type,
         type_value: data.type_value.clone(),
         url_field: data.url_field.clone(),
         headers_field: data.headers_field.clone(),
         extra_fields,
-        requires_type_field: data.requires_type_field,
     };
     rule.template = rule.to_template();
     rule
+}
+
+fn parse_api_format_rules(
+    rules: &HashMap<String, ClientFormatRuleData>,
+) -> Result<HashMap<String, crate::clients::models::FormatRule>, String> {
+    rules
+        .iter()
+        .map(|(transport, rule)| {
+            let parsed_rule = format_rule_from_api_data(rule);
+            parsed_rule
+                .validate_for_transport(transport)
+                .map_err(|err| format!("Invalid format rule for transport '{transport}': {err}"))?;
+
+            Ok((transport.clone(), parsed_rule))
+        })
+        .collect()
 }
 
 fn format_rules_data_from_state(
@@ -766,7 +789,10 @@ pub async fn config_import(
     let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Build standard import payload from parsed config
-    let items = build_import_payload_from_value(&json_value);
+    let items = build_import_payload_from_value(
+        &json_value,
+        resolve_effective_config_file_parse(Some(&state)).as_ref(),
+    );
     let opts = crate::config::server::ImportOptions {
         by_name: true,
         by_fingerprint: true,
@@ -990,6 +1016,13 @@ pub async fn update_settings(
         "update_settings: received request"
     );
 
+    let parsed_format_rules = request
+        .format_rules
+        .as_ref()
+        .map(parse_api_format_rules)
+        .transpose()
+        .map_err(|err| client_settings_error(StatusCode::UNPROCESSABLE_ENTITY, err))?;
+
     let settings_result = service
         .set_active_client_settings(
             &request.identifier,
@@ -1008,12 +1041,7 @@ pub async fn update_settings(
                 supported_transports: request.supported_transports.clone(),
                 config_file_parse: request.config_file_parse.as_ref().map(parse_rule_from_api_data),
                 clear_config_file_parse: request.clear_config_file_parse,
-                format_rules: request.format_rules.as_ref().map(|rules| {
-                    rules
-                        .iter()
-                        .map(|(transport, rule)| (transport.clone(), format_rule_from_api_data(rule)))
-                        .collect()
-                }),
+                format_rules: parsed_format_rules,
                 clear_format_rules: request.clear_format_rules,
             },
         )
@@ -2778,7 +2806,7 @@ mod tests {
                 display_name: Some("Custom Runtime".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(config_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string(), "stdio".to_string()]),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: Some("Custom runtime client".to_string()),
                 homepage_url: Some("https://example.com".to_string()),
                 docs_url: Some("https://example.com/docs".to_string()),
@@ -2799,7 +2827,7 @@ mod tests {
         assert_eq!(data.connection_mode.as_deref(), Some("local_config_detected"));
         assert_eq!(
             data.supported_transports,
-            vec!["streamable_http".to_string(), "stdio".to_string()]
+            vec!["streamable_http".to_string()]
         );
         assert_eq!(data.description.as_deref(), Some("Custom runtime client"));
 
@@ -2820,15 +2848,11 @@ mod tests {
             Some("https://example.com")
         );
 
-        assert_eq!(state.config_format(), Some("json"));
-        assert_eq!(
-            state.container_keys().expect("container keys"),
-            vec!["mcpServers".to_string()]
-        );
+        assert_eq!(state.config_format(), None);
+        assert_eq!(state.container_keys().expect("container keys"), Vec::<String>::new());
         assert_eq!(state.managed_source(), None);
         let format_rules = state.parsed_format_rules().expect("format rules");
-        assert!(format_rules.contains_key("streamable_http"));
-        assert!(format_rules.contains_key("stdio"));
+        assert!(format_rules.is_empty());
     }
 
     #[tokio::test]
@@ -2855,9 +2879,22 @@ mod tests {
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
-                config_file_parse: None,
+                config_file_parse: Some(crate::api::models::client::ClientConfigFileParseData {
+                    format: "json".to_string(),
+                    container_type: crate::api::models::client::ClientConfigType::Standard,
+                    container_keys: vec!["mcpServers".to_string()],
+                }),
                 clear_config_file_parse: false,
-                format_rules: None,
+                format_rules: Some(HashMap::from([(
+                    "streamable_http".to_string(),
+                    crate::api::models::client::ClientFormatRuleData {
+                        include_type: true,
+                        type_value: Some("streamable_http".to_string()),
+                        url_field: Some("url".to_string()),
+                        headers_field: Some("headers".to_string()),
+                        ..Default::default()
+                    },
+                )])),
                 clear_format_rules: false,
             }),
         )
@@ -2907,7 +2944,7 @@ mod tests {
                     "url": "{{{url}}}",
                     "headers": "{{{json headers}}}"
                 }),
-                requires_type_field: false,
+                    include_type: false,
                 ..Default::default()
             },
         );
@@ -3306,15 +3343,28 @@ mod tests {
                 display_name: Some("Runtime Apply Client".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(config_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string(), "stdio".to_string()]),
+                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: Some("Runtime apply test client".to_string()),
                 homepage_url: None,
                 docs_url: None,
                 support_url: None,
                 logo_url: None,
-                config_file_parse: None,
+                config_file_parse: Some(crate::api::models::client::ClientConfigFileParseData {
+                    format: "json".to_string(),
+                    container_type: crate::api::models::client::ClientConfigType::Standard,
+                    container_keys: vec!["mcpServers".to_string()],
+                }),
                 clear_config_file_parse: false,
-                format_rules: None,
+                format_rules: Some(HashMap::from([(
+                    "streamable_http".to_string(),
+                    crate::api::models::client::ClientFormatRuleData {
+                        include_type: true,
+                        type_value: Some("streamable_http".to_string()),
+                        url_field: Some("url".to_string()),
+                        headers_field: Some("headers".to_string()),
+                        ..Default::default()
+                    },
+                )])),
                 clear_format_rules: false,
             }),
         )

@@ -1,6 +1,7 @@
 // Client import helpers: parse only. Dedup/write are handled by config::server::import core.
 
 use crate::api::models::server::ServersImportConfig;
+use crate::clients::models::{ClientConfigFileParse, ContainerType};
 use crate::common::constants::config_keys;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -21,9 +22,12 @@ struct ServerConfigParsed {
 }
 
 /// Build a unified import payload from client config JSON value (object or array form)
-pub fn build_import_payload_from_value(config: &Value) -> HashMap<String, ServersImportConfig> {
+pub fn build_import_payload_from_value(
+    config: &Value,
+    parse_rule: Option<&ClientConfigFileParse>,
+) -> HashMap<String, ServersImportConfig> {
     let mut out = HashMap::new();
-    if let Ok(map) = extract_servers(config) {
+    if let Ok(map) = extract_servers(config, parse_rule) {
         for (name, sc) in map.into_iter() {
             let (kind, command, url) = match sc.transport {
                 ParsedTransport::Stdio => ("stdio".to_string(), sc.command, None),
@@ -47,8 +51,64 @@ pub fn build_import_payload_from_value(config: &Value) -> HashMap<String, Server
     out
 }
 
-fn extract_servers(config: &Value) -> anyhow::Result<HashMap<String, ServerConfigParsed>> {
+fn locate_parse_container<'a>(config: &'a Value, parse_rule: &ClientConfigFileParse) -> Option<&'a Value> {
+    for container_key in &parse_rule.container_keys {
+        let mut current = config;
+        let mut matched = true;
+
+        for segment in container_key.split('.') {
+            let Some(next) = current.get(segment) else {
+                matched = false;
+                break;
+            };
+            current = next;
+        }
+
+        if matched {
+            return Some(current);
+        }
+    }
+
+    None
+}
+
+fn extract_servers(
+    config: &Value,
+    parse_rule: Option<&ClientConfigFileParse>,
+) -> anyhow::Result<HashMap<String, ServerConfigParsed>> {
     let mut servers = HashMap::new();
+
+    if let Some(parse_rule) = parse_rule {
+        if let Some(container) = locate_parse_container(config, parse_rule) {
+            match parse_rule.container_type {
+                ContainerType::ObjectMap => {
+                    if let Some(entries) = container.as_object() {
+                        for (name, sc) in entries {
+                            if let Some(parsed) = parse_server_config(sc) {
+                                servers.insert(name.clone(), parsed);
+                            }
+                        }
+                        return Ok(servers);
+                    }
+                }
+                ContainerType::Array => {
+                    if let Some(array) = container.as_array() {
+                        for (idx, sc) in array.iter().enumerate() {
+                            let name = sc
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| format!("server_{}", idx));
+                            if let Some(parsed) = parse_server_config(sc) {
+                                servers.insert(name, parsed);
+                            }
+                        }
+                        return Ok(servers);
+                    }
+                }
+            }
+        }
+    }
 
     // Object form (e.g., Claude Desktop)
     if let Some(mcp_servers) = config.get(config_keys::MCP_SERVERS).and_then(|v| v.as_object()) {
@@ -173,4 +233,37 @@ fn parse_env_assignment(s: &str) -> Option<(String, String)> {
         return None;
     }
     Some((k.to_string(), value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat};
+
+    #[test]
+    fn build_import_payload_uses_config_file_parse_for_zed_context_servers() {
+        let config = serde_json::json!({
+            "context_servers": {
+                "zed-mcp": {
+                    "command": "uvx",
+                    "args": ["server.py"],
+                    "env": {"DEBUG": "1"}
+                }
+            }
+        });
+
+        let parse_rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: vec!["context_servers".to_string()],
+        };
+
+        let payload = build_import_payload_from_value(&config, Some(&parse_rule));
+        let server = payload.get("zed-mcp").expect("zed import payload");
+
+        assert_eq!(server.kind, "stdio");
+        assert_eq!(server.command.as_deref(), Some("uvx"));
+        assert_eq!(server.args.as_deref(), Some(&["server.py".to_string()][..]));
+        assert_eq!(server.env.as_ref().and_then(|env| env.get("DEBUG")), Some(&"1".to_string()));
+    }
 }
