@@ -17,9 +17,10 @@ import type {
 	ClientCapabilityConfigReq,
 	ClientCapabilityConfigResp,
 	ClientCheckResp,
-	ClientConfigFileParse,
-	ClientConfigFileParseInspectReq,
-	ClientConfigFileParseInspectResp,
+ ClientConfigFileParse,
+ ClientConfigFileParseInspectExistingReq,
+ ClientConfigFileParseInspectReq,
+ ClientConfigFileParseInspectResp,
 	ClientConfigImportData,
 	ClientConfigImportReq,
 	ClientConfigResp,
@@ -2459,6 +2460,18 @@ export const clientsApi = {
 	inspectConfigFileParse: async (req: ClientConfigFileParseInspectReq): Promise<ClientConfigFileParseInspectResp> => {
 		const resp = await fetchApi<ApiWrapper<ClientConfigFileParseInspectResp>>(
 			"/api/client/config-file-parse/inspect",
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		);
+		return extractApiData(resp);
+	},
+	inspectExistingClientConfigFileParse: async (
+		req: ClientConfigFileParseInspectExistingReq,
+	): Promise<ClientConfigFileParseInspectResp> => {
+		const resp = await fetchApi<ApiWrapper<ClientConfigFileParseInspectResp>>(
+			"/api/client/config-file-parse/inspect-existing",
 			{
 				method: "POST",
 				body: JSON.stringify(req),

@@ -25,6 +25,7 @@ import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-p
 import {
 	applyClientConfigWithResolvedSelection,
 	canApplyClientConfigWithState,
+	resolveClientConfigSyncErrorMessage,
 	resolveClientConfigMode,
 } from "../lib/client-config-sync";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
@@ -33,6 +34,7 @@ import { isTauriEnvironmentSync } from "../lib/platform";
 import { useAppStore } from "../lib/store";
 import type {
 	ClientConfigFileParse,
+	ClientConfigFileParseInspectExistingReq,
 	ClientConfigFileParseInspectResp,
 	ClientConfigFileParseInspectReq,
 	ClientConnectionMode,
@@ -82,6 +84,32 @@ const CONFIG_PARSE_FORMAT_VALUES = ["json", "json5", "toml", "yaml"] as const;
 type ConfigParseFormatValue = (typeof CONFIG_PARSE_FORMAT_VALUES)[number];
 const CONFIG_PARSE_CONTAINER_TYPE_VALUES = ["standard", "array"] as const;
 
+function createFormSchema(t: TFunction) {
+	return z.object({
+		identifier: z.string().min(1),
+		displayName: z.string().min(1),
+		connectionShape: z.enum(["local_with_config", "local_without_config", "remote_http"]),
+		supportedTransports: z
+			.array(z.enum(SUPPORTED_TRANSPORT_VALUES))
+			.min(
+				1,
+				t("detail.form.transportSupport.validation.required", {
+					defaultValue: "Select at least one supported transport before saving.",
+				}),
+			),
+		configPath: z.string().optional(),
+		configFileParseFormat: z.enum(CONFIG_PARSE_FORMAT_VALUES),
+		configFileParseContainerType: z.enum(CONFIG_PARSE_CONTAINER_TYPE_VALUES),
+		configFileParseContainerKeysText: z.string().optional(),
+		clientVersion: z.string().optional(),
+		description: z.string().optional(),
+		homepageUrl: z.string().optional(),
+		docsUrl: z.string().optional(),
+		supportUrl: z.string().optional(),
+		logoUrl: z.string().optional(),
+	});
+}
+
 interface ClientFormDrawerProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -96,9 +124,7 @@ function resolveEffectiveClientParse(client: ClientInfo | null | undefined): Cli
 	return client.config_file_parse_override ?? client.config_file_parse_effective ?? null;
 }
 
-type ParseInspectionView = ClientConfigFileParseInspectResp & {
-	preview_text?: string;
-};
+type ParseInspectionView = ClientConfigFileParseInspectResp;
 
 interface EditableExtraFieldEntry {
 	id: string;
@@ -174,6 +200,32 @@ function cloneTransportRuleEditorValue(value: TransportRuleEditorValue): Transpo
 	};
 }
 
+function transportRuleEditorsSignature(editors: TransportRuleEditors): string {
+	return JSON.stringify(
+		Object.fromEntries(
+			SUPPORTED_TRANSPORT_VALUES.map((transport) => {
+				const editor = editors[transport] ?? createEmptyTransportRuleEditor();
+				return [
+					transport,
+					{
+						includeType: editor.includeType,
+						typeValue: editor.typeValue.trim(),
+						commandField: editor.commandField.trim(),
+						argsField: editor.argsField.trim(),
+						envField: editor.envField.trim(),
+						urlField: editor.urlField.trim(),
+						headersField: editor.headersField.trim(),
+						extraFields: editor.extraFields.map((entry) => ({
+							key: entry.key.trim(),
+							value: entry.value.trim(),
+						})),
+					},
+				];
+			}),
+		),
+	);
+}
+
 function isSameSupportedTransports(
 	left: SupportedTransportValue[],
 	right: SupportedTransportValue[],
@@ -193,19 +245,13 @@ function isTransportRuleEditorEmpty(value: TransportRuleEditorValue): boolean {
 		value.extraFields.length === 0;
 }
 
-function detectClientTemplateIdentifier(client?: ClientInfo | null): string {
-	return (client?.template_identifier ?? client?.identifier ?? "").trim().toLowerCase();
-}
-
 function buildTransportRulePresets(
 	transport: SupportedTransportValue,
-	client: ClientInfo | null | undefined,
+	_client: ClientInfo | null | undefined,
 	t: TFunction,
 ): TransportRulePreset[] {
-	const templateIdentifier = detectClientTemplateIdentifier(client);
-
 	if (transport === "stdio") {
-		const presets: TransportRulePreset[] = [
+		return [
 			{
 				id: "common",
 				label: t("detail.form.transportRules.presets.common", { defaultValue: "Common" }),
@@ -229,25 +275,6 @@ function buildTransportRulePresets(
 				},
 			},
 		];
-
-		if (templateIdentifier === "zed") {
-			presets.push({
-				id: "zed-style",
-				label: t("detail.form.transportRules.presets.zedStyle", { defaultValue: "Zed-style" }),
-				value: {
-					...createEmptyTransportRuleEditor(),
-					commandField: "command",
-					argsField: "args",
-					envField: "env",
-					extraFields: [
-						{ id: createEditorId(), key: "enabled", value: "true" },
-						{ id: createEditorId(), key: "source", value: "custom" },
-					],
-				},
-			});
-		}
-
-		return presets;
 	}
 
 	return [
@@ -342,32 +369,23 @@ function transportRuleDataFromEditor(
 function buildTransportRulesPayload(
 	transports: SupportedTransportValue[],
 	editors: TransportRuleEditors,
+	client: ClientInfo | null | undefined,
 	t: TFunction,
 ): Record<string, ClientFormatRuleData> {
 	return transports.reduce<Record<string, ClientFormatRuleData>>((acc, transport) => {
-		acc[transport] = transportRuleDataFromEditor(transport, editors[transport], t);
+		const currentEditor = editors[transport] ?? createEmptyTransportRuleEditor();
+		const editor = isTransportRuleEditorEmpty(currentEditor)
+			? cloneTransportRuleEditorValue(
+				(buildTransportRulePresets(transport, client, t).find((preset) => preset.id === "common")
+					?.value ?? createEmptyTransportRuleEditor()),
+			)
+			: currentEditor;
+		acc[transport] = transportRuleDataFromEditor(transport, editor, t);
 		return acc;
 	}, {});
 }
 
-const formSchema = z.object({
-	identifier: z.string().min(1),
-	displayName: z.string().min(1),
-	connectionShape: z.enum(["local_with_config", "local_without_config", "remote_http"]),
-	supportedTransports: z.array(z.enum(SUPPORTED_TRANSPORT_VALUES)),
-	configPath: z.string().optional(),
-	configFileParseFormat: z.enum(CONFIG_PARSE_FORMAT_VALUES),
-	configFileParseContainerType: z.enum(CONFIG_PARSE_CONTAINER_TYPE_VALUES),
-	configFileParseContainerKeysText: z.string().optional(),
-	clientVersion: z.string().optional(),
-	description: z.string().optional(),
-	homepageUrl: z.string().optional(),
-	docsUrl: z.string().optional(),
-	supportUrl: z.string().optional(),
-	logoUrl: z.string().optional(),
-});
-
-type ClientRecordFormValues = z.infer<typeof formSchema>;
+type ClientRecordFormValues = z.infer<ReturnType<typeof createFormSchema>>;
 
 const CLIENT_FORM_ROW_LABEL_CLASS = "w-20 shrink-0 text-right";
 
@@ -606,6 +624,7 @@ function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 	const identifier = client?.identifier ?? "";
 	const connectionShape = connectionModeToShape(client?.connection_mode, client?.config_path);
 	const supportedTransports = (() => {
+		if (!client) return ["streamable_http", "stdio"] satisfies SupportedTransportValue[];
 		const explicit = normalizeSupportedTransports(client?.supported_transports);
 		if (explicit.length > 0) return explicit;
 		const fromRules = normalizeSupportedTransports(Object.keys(client?.format_rules ?? {}));
@@ -770,6 +789,7 @@ export function ClientFormDrawer({
 	const { t, i18n } = useTranslation("clients");
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const qc = useQueryClient();
+	const formSchema = useMemo(() => createFormSchema(t), [t, i18n.language]);
 	const [isHydrating, setIsHydrating] = useState(false);
 	const [formError, setFormError] = useState<string | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -818,9 +838,16 @@ export function ClientFormDrawer({
 		[configFileParseFormat, configFileParseContainerType, configFileParseContainerKeysText],
 	);
 	const previewText = useMemo(
-		() => parseInspection?.preview_text?.trim() || inspectionPreviewText(parseInspection?.preview),
-		[parseInspection?.preview, parseInspection?.preview_text],
+		() => inspectionPreviewText(parseInspection?.preview),
+		[parseInspection?.preview],
 	);
+	const hasInspectablePreview = useMemo(() => {
+		const preview = parseInspection?.preview;
+		if (preview == null) return false;
+		if (typeof preview === "string") return preview.trim().length > 0;
+		if (typeof preview === "object") return Object.keys(preview as Record<string, unknown>).length > 0;
+		return true;
+	}, [parseInspection?.preview]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -974,7 +1001,14 @@ export function ClientFormDrawer({
 		client?.docs_url ?? client?.homepage_url ?? client?.template?.docs_url ?? client?.template?.homepage_url ?? null;
 
 	const inspectMutation = useMutation({
-		mutationFn: async (payload: ClientConfigFileParseInspectReq) => clientsApi.inspectConfigFileParse(payload),
+		mutationFn: async (
+			payload:
+				| { kind: "create"; request: ClientConfigFileParseInspectReq }
+				| { kind: "existing"; request: ClientConfigFileParseInspectExistingReq },
+		) =>
+			payload.kind === "existing"
+				? clientsApi.inspectExistingClientConfigFileParse(payload.request)
+				: clientsApi.inspectConfigFileParse(payload.request),
 		onSuccess: (data) => {
 			if (!data) {
 				setParseInspection(null);
@@ -1020,16 +1054,49 @@ export function ClientFormDrawer({
 			return;
 		}
 
+		const persistedPath = client?.config_path?.trim() ?? "";
+		const canInspectExistingClientPath =
+			mode === "edit" && Boolean(identifier?.trim()) && trimmedPath === persistedPath;
+		const canInspectCreatePath = mode === "create";
+		if (!canInspectExistingClientPath && !canInspectCreatePath) {
+			setParseInspection(null);
+			setParseInspectionError(
+				mode === "edit" && trimmedPath !== persistedPath
+					? t("detail.form.fields.configFileParse.inspectAfterSaveHint", {
+						defaultValue:
+							"Save the updated config path first, then MCPMate can inspect the stored target for this client.",
+					})
+					: null,
+			);
+			setShowParseCodePreview(false);
+			return;
+		}
+
 		const timer = window.setTimeout(() => {
+			if (canInspectExistingClientPath && identifier?.trim()) {
+				void inspectMutation.mutateAsync({
+					kind: "existing",
+					request: {
+						identifier,
+						config_file_parse:
+							(parseDraft.container_keys?.length ?? 0) > 0 ? parseDraft : undefined,
+					},
+				});
+				return;
+			}
+
 			void inspectMutation.mutateAsync({
-				config_path: trimmedPath,
-				config_file_parse:
-					(parseDraft.container_keys?.length ?? 0) > 0 ? parseDraft : undefined,
+				kind: "create",
+				request: {
+					config_path: trimmedPath,
+					config_file_parse:
+						(parseDraft.container_keys?.length ?? 0) > 0 ? parseDraft : undefined,
+				},
 			});
 		}, 350);
 
 		return () => window.clearTimeout(timer);
-	}, [open, connectionShape, configPath, parseDraft, inspectMutation]);
+	}, [open, connectionShape, configPath, parseDraft, inspectMutation, mode, identifier, client?.config_path, t]);
 
 	const handleApplyDetectedRules = useCallback(() => {
 		const inferred = parseInspection?.inferred_parse;
@@ -1096,7 +1163,23 @@ export function ClientFormDrawer({
 			const values = form.getValues();
 			const normalizedIdentifier = normalizeIdentifier(values.identifier);
 			const parseForSave = parseDraftFromValues(values);
-			const formatRules = buildTransportRulesPayload(values.supportedTransports, transportRuleEditors, t);
+			const formatRules = hasWritableConfig(values)
+				&& (
+					mode === "create" ||
+					!isSameSupportedTransports(
+						initialSupportedTransportsRef.current,
+						values.supportedTransports,
+					) ||
+					transportRuleEditorsSignature(transportRuleEditors) !==
+					transportRuleEditorsSignature(transportRuleEditorsFromClient(client))
+				)
+				? buildTransportRulesPayload(
+					values.supportedTransports,
+					transportRuleEditors,
+					client,
+					t,
+				)
+				: undefined;
 
 			if (hasWritableConfig(values) && (parseForSave.container_keys?.length ?? 0) === 0) {
 				throw new Error(
@@ -1154,7 +1237,7 @@ export function ClientFormDrawer({
 							t("detail.notifications.applyFailed.title", {
 								defaultValue: "Apply failed",
 							}),
-							extractErrorMessage(error),
+							resolveClientConfigSyncErrorMessage(error, t),
 						);
 					}
 				}
@@ -1379,7 +1462,7 @@ export function ClientFormDrawer({
 												</div>
 												<div className="flex items-start justify-between gap-3 border-t pt-2 text-xs text-muted-foreground">
 													<div className="min-w-0 flex-1">
-														{showParseCodePreview ? (
+														{showParseCodePreview && hasInspectablePreview ? (
 															<div className="space-y-2">
 																<div className="flex items-center gap-2">
 																	<span>{t("detail.form.fields.configFileParse.previewTitle", { defaultValue: "Detected config snippet" })}</span>
@@ -1423,7 +1506,7 @@ export function ClientFormDrawer({
 														variant="ghost"
 														size="icon"
 														className="h-7 w-7 shrink-0"
-														disabled={!parseInspection}
+														disabled={!parseInspection || !hasInspectablePreview}
 														onClick={() => setShowParseCodePreview((value) => !value)}
 														aria-label={showParseCodePreview
 															? t("detail.form.fields.configFileParse.summaryViewButton", { defaultValue: "Summary view" })

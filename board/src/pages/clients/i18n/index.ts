@@ -108,8 +108,6 @@ export const clientsTranslations = {
 			badges: {
 				managed: "Managed",
 				unmanaged: "Unmanaged",
-				detected: "Detected",
-				notDetected: "Not Detected",
 			},
 			tabs: {
 				overview: "Overview",
@@ -217,6 +215,9 @@ export const clientsTranslations = {
 						empty: "No transports found.",
 						description:
 							"Choose which runtime transports this client supports. This array is the only source used to constrain hosted/unify transport selection.",
+						validation: {
+							required: "Select at least one supported transport before saving.",
+						},
 						options: {
 							stdio: "STDIO",
 							streamableHttpLegacy: "Streamable HTTP",
@@ -367,6 +368,10 @@ export const clientsTranslations = {
 					warnings: {
 						mixedRouting: "Mixed routing: splitting stateful workflows may cause issues.",
 					},
+				errors: {
+					customProfileMissing:
+						"The client-specific custom workspace is missing. Create it again before applying configuration.",
+				},
 				writeTargetRequiredReason:
 					"Applying governance to the client configuration requires a verified writable local MCP config file.",
 				applyRequiresApprovedReason:
@@ -831,8 +836,6 @@ export const clientsTranslations = {
 			badges: {
 				managed: "管理中",
 				unmanaged: "未管理",
-				detected: "已检测",
-				notDetected: "未检测",
 			},
 			tabs: {
 				overview: "概览",
@@ -936,6 +939,9 @@ export const clientsTranslations = {
 						placeholder: "选择支持的传输方式",
 						empty: "未找到传输方式。",
 						description: "选择该客户端支持的运行时传输方式。该数组会作为 hosted / unify 传输选择的唯一约束来源。",
+						validation: {
+							required: "保存前请至少选择一种支持的传输方式。",
+						},
 						options: {
 							stdio: "STDIO",
 							streamableHttpLegacy: "Streamable HTTP",
@@ -1075,6 +1081,9 @@ export const clientsTranslations = {
 					warnings: {
 						mixedRouting: "混合路由：若把有状态工作流拆成代理与直连调用，可能出现问题。",
 					},
+				errors: {
+					customProfileMissing: "该客户端的专属自定义工作区已缺失，请先重新创建后再应用配置。",
+				},
 				writeTargetRequiredReason: "要把治理配置真正应用到客户端配置文件，必须先确认一个已验证且可写的本地 MCP 配置文件。",
 				applyRequiresApprovedReason: "要把客户端配置真正应用落盘，必须先处于已允许治理状态，并且拥有一个已验证的本地配置目标。",
 				managementSettingsPendingReason: "请在该客户端结束待审批状态后再保存管理设置。",
@@ -1524,8 +1533,6 @@ export const clientsTranslations = {
 			badges: {
 				managed: "管理中",
 				unmanaged: "未管理",
-				detected: "検出済み",
-				notDetected: "未検出",
 			},
 			tabs: {
 				overview: "概要",
@@ -1631,6 +1638,9 @@ export const clientsTranslations = {
 						placeholder: "対応するトランスポートを選択",
 						empty: "トランスポートが見つかりません。",
 						description: "このクライアントが対応するランタイムトランスポートを選択します。この配列は hosted / unify のトランスポート選択を制約する唯一の情報源です。",
+						validation: {
+							required: "保存する前に、少なくとも 1 つの対応トランスポートを選択してください。",
+						},
 						options: {
 							stdio: "STDIO",
 							streamableHttpLegacy: "ストリーミング HTTP",
@@ -1771,6 +1781,10 @@ export const clientsTranslations = {
 					warnings: {
 						mixedRouting: "混合ルーティング: ステートフルな手順を分割すると問題が起きる可能性があります。",
 					},
+				errors: {
+					customProfileMissing:
+						"このクライアント専用のカスタムワークスペースが見つかりません。設定を適用する前に再作成してください。",
+				},
 				writeTargetRequiredReason:
 					"クライアント設定ファイルへガバナンスを適用するには、検証済みで書き込み可能なローカル MCP 設定ファイルが必要です。",
 				applyRequiresApprovedReason:

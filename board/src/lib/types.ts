@@ -950,8 +950,6 @@ export interface ClientInfo {
   has_mcp_config: boolean;
   supported_transports: string[];
   approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
-  record_kind?: "template_known" | "observed_unknown" | string | null;
-  template_identifier?: string | null;
   writable_config?: boolean | null;
   governed_by_default_policy?: boolean | null;
   description?: string | null;
@@ -972,6 +970,7 @@ export interface ClientInfo {
   logo_url?: string | null;
   last_detected?: string | null;
   last_modified?: string | null;
+  custom_profile_missing?: boolean;
   template: ClientTemplateMetadata;
   mcp_servers_count?: number | null;
   format_rules?: Record<string, ClientFormatRuleData> | null;
@@ -995,22 +994,9 @@ export interface ClientManageResp {
   data?: {
     identifier: string;
     managed: boolean;
-    approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
-    record_kind?: "template_known" | "observed_unknown" | string | null;
   } | null;
   error?: unknown | null;
   success: boolean;
-}
-
-export interface ClientRecordLifecycleData {
-  identifier: string;
-  display_name: string;
-  managed: boolean;
-  connection_mode?: "local_config_detected" | "remote_http" | "manual" | string;
-  approval_status: "approved" | "pending" | "rejected" | "suspended" | string;
-  record_kind: "template_known" | "observed_unknown" | string;
-  template_identifier?: string | null;
-  writable_config?: boolean | null;
 }
 
 export interface ClientRecordLifecycleResp {
@@ -1145,8 +1131,6 @@ export interface ClientConfigData {
   mcp_servers_count: number;
   supported_transports: string[];
   approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
-  record_kind?: "template_known" | "observed_unknown" | string | null;
-  template_identifier?: string | null;
   writable_config?: boolean | null;
   governed_by_default_policy?: boolean | null;
   template: ClientTemplateMetadata;
@@ -1158,6 +1142,7 @@ export interface ClientConfigData {
   capability_source?: CapabilitySource;
   selected_profile_ids?: string[];
   custom_profile_id?: string | null;
+  custom_profile_missing?: boolean;
   format_rules?: Record<string, ClientFormatRuleData> | null;
 }
 
@@ -1233,6 +1218,7 @@ export interface ClientCapabilityConfigData {
   capability_source: CapabilitySource;
   selected_profile_ids: string[];
   custom_profile_id?: string | null;
+  custom_profile_missing?: boolean;
   unify_direct_exposure?: UnifyDirectExposureConfig | null;
 }
 
@@ -1437,6 +1423,11 @@ export interface ClientFormatRuleData {
 
 export interface ClientConfigFileParseInspectReq {
   config_path: string;
+  config_file_parse?: ClientConfigFileParse;
+}
+
+export interface ClientConfigFileParseInspectExistingReq {
+  identifier: string;
   config_file_parse?: ClientConfigFileParse;
 }
 

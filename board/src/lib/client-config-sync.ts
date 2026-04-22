@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import { clientsApi } from "./api";
 import type {
 	ClientBackupPolicyPayload,
@@ -5,6 +6,8 @@ import type {
 	ClientConfigMode,
 	ClientConfigSelected,
 } from "./types";
+
+const CUSTOM_PROFILE_MISSING_ERROR = "customProfileMissing";
 
 export function resolveClientConfigMode(
 	value: string | null | undefined,
@@ -18,13 +21,42 @@ export function resolveClientConfigMode(
 export function buildClientApplySelectedConfig(
 	capabilityData: ClientCapabilityConfigData | null,
 ): ClientConfigSelected {
-	if (
-		capabilityData?.capability_source === "custom" &&
-		capabilityData.custom_profile_id
-	) {
+	if (capabilityData?.capability_source === "custom") {
+		if (capabilityData.custom_profile_missing || !capabilityData.custom_profile_id) {
+			throw new Error(CUSTOM_PROFILE_MISSING_ERROR);
+		}
 		return { profile: { profile_id: capabilityData.custom_profile_id } };
 	}
 	return "default";
+}
+
+function isCustomProfileMissingError(error: unknown): boolean {
+	if (error instanceof Error) {
+		return error.message === CUSTOM_PROFILE_MISSING_ERROR;
+	}
+	return typeof error === "string" && error === CUSTOM_PROFILE_MISSING_ERROR;
+}
+
+function resolveCustomProfileMissingMessage(t: TFunction): string {
+	return t("detail.configuration.errors.customProfileMissing", {
+		defaultValue:
+			"The client-specific custom workspace is missing. Create it again before applying configuration.",
+	});
+}
+
+export function resolveClientConfigSyncErrorMessage(
+	error: unknown,
+	t: TFunction,
+): string {
+	if (isCustomProfileMissingError(error)) {
+		return resolveCustomProfileMissingMessage(t);
+	}
+
+	if (error instanceof Error && error.message.trim()) {
+		return error.message;
+	}
+
+	return String(error);
 }
 
 export function canApplyClientConfigWithState(input: {
