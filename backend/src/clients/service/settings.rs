@@ -858,6 +858,12 @@ impl ClientConfigService {
         };
 
         let capability_config = state.capability_config()?;
+        let custom_profile_missing = self
+            .resolve_custom_profile_missing(
+                capability_config.capability_source,
+                capability_config.custom_profile_id.as_deref(),
+            )
+            .await?;
         let raw_unify_direct_exposure = state.unify_direct_exposure_config()?;
         let resolved = self
             .resolve_unify_direct_exposure_config(identifier, &capability_config, &raw_unify_direct_exposure)
@@ -865,6 +871,7 @@ impl ClientConfigService {
 
         Ok(Some(ClientCapabilityConfigState {
             capability_config,
+            custom_profile_missing,
             unify_direct_exposure: resolved.config,
             unify_direct_exposure_diagnostics: resolved.diagnostics,
         }))
@@ -1045,6 +1052,9 @@ impl ClientConfigService {
             CapabilitySource::Activated | CapabilitySource::Profiles => None,
             CapabilitySource::Custom => Some(self.ensure_custom_profile(identifier).await?),
         };
+        let custom_profile_missing = self
+            .resolve_custom_profile_missing(capability_source, custom_profile_id.as_deref())
+            .await?;
         let selected_profile_ids_json = if selected_profile_ids.is_empty() {
             None
         } else {
@@ -1148,9 +1158,29 @@ impl ClientConfigService {
                 selected_profile_ids,
                 custom_profile_id,
             },
+            custom_profile_missing,
             unify_direct_exposure: resolved_unify_direct_exposure.config,
             unify_direct_exposure_diagnostics: resolved_unify_direct_exposure.diagnostics,
         })
+    }
+
+    async fn resolve_custom_profile_missing(
+        &self,
+        capability_source: CapabilitySource,
+        custom_profile_id: Option<&str>,
+    ) -> ConfigResult<bool> {
+        if capability_source != CapabilitySource::Custom {
+            return Ok(false);
+        }
+
+        let Some(profile_id) = custom_profile_id.filter(|value| !value.trim().is_empty()) else {
+            return Ok(true);
+        };
+
+        Ok(crate::config::profile::get_profile(self.db_pool.as_ref(), profile_id)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
+            .is_none())
     }
 
     async fn resolve_unify_direct_exposure_config(

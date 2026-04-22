@@ -193,12 +193,12 @@ When `ClientConfigService::list_clients()` detects an installed application with
 Configuration operations (`/api/client/config/apply`, `/api/client/config/restore`) check approval status:
 
 ```rust
-if state.is_pending_unknown() {
+if state.is_pending_approval() {
     return Err(StatusCode::FORBIDDEN);
 }
 ```
 
-Attempting to configure a pending unknown client returns **403 Forbidden** with a warning log entry.
+Attempting to configure a pending client returns **403 Forbidden** with a warning log entry.
 
 ### Template Binding
 

@@ -9,7 +9,6 @@ const DEFAULT_BACKUP_LIMIT: i64 = 5;
 const DEFAULT_CAPABILITY_SOURCE: &str = "activated";
 const DEFAULT_CONNECTION_MODE: &str = "local_config_detected";
 const DEFAULT_GOVERNANCE_KIND: &str = "passive";
-const DEFAULT_RECORD_KIND: &str = "template_known";
 pub(crate) const CLIENT_RUNTIME_SETTINGS_TABLE: &str = "client_runtime_settings";
 pub(crate) const CLIENT_TEMPLATE_RUNTIME_TABLE: &str = "client_template_runtime";
 pub(crate) const FIRST_CONTACT_BEHAVIOR_SETTING_KEY: &str = "first_contact_behavior";
@@ -54,9 +53,6 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             connection_mode TEXT NOT NULL DEFAULT '{default_connection_mode}' CHECK (
                 connection_mode IN ('local_config_detected', 'remote_http', 'manual')
             ),
-            record_kind TEXT NOT NULL DEFAULT '{default_record_kind}' CHECK (
-                record_kind IN ('template_known', 'observed_unknown')
-            ),
             template_identifier TEXT,
             selected_profile_ids TEXT,
             custom_profile_id TEXT,
@@ -78,7 +74,6 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         default_capability_source = DEFAULT_CAPABILITY_SOURCE,
         default_governance_kind = DEFAULT_GOVERNANCE_KIND,
         default_connection_mode = DEFAULT_CONNECTION_MODE,
-        default_record_kind = DEFAULT_RECORD_KIND,
     ))
     .execute(pool)
     .await
@@ -122,13 +117,6 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         tables::CLIENT,
         "connection_mode",
         "TEXT NOT NULL DEFAULT 'local_config_detected' CHECK (connection_mode IN ('local_config_detected', 'remote_http', 'manual'))",
-    )
-    .await?;
-    ensure_column(
-        pool,
-        tables::CLIENT,
-        "record_kind",
-        "TEXT NOT NULL DEFAULT 'template_known' CHECK (record_kind IN ('template_known', 'observed_unknown'))",
     )
     .await?;
     ensure_column(pool, tables::CLIENT, "template_identifier", "TEXT").await?;
@@ -273,18 +261,6 @@ WHEN backup_limit IS NOT NULL AND backup_limit <> {default_backup_limit} THEN 'a
     .map_err(|e| {
         tracing::error!("Failed to backfill {} governance_kind: {}", tables::CLIENT, e);
         anyhow::anyhow!("Failed to backfill {} governance_kind: {}", tables::CLIENT, e)
-    })?;
-
-    sqlx::query(&format!(
-        "UPDATE {table} SET record_kind = ? WHERE record_kind IS NULL OR record_kind = ''",
-        table = tables::CLIENT
-    ))
-    .bind(DEFAULT_RECORD_KIND)
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to backfill {} record_kind: {}", tables::CLIENT, e);
-        anyhow::anyhow!("Failed to backfill {} record_kind: {}", tables::CLIENT, e)
     })?;
 
     sqlx::query(&format!(
@@ -513,9 +489,6 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
                 connection_mode TEXT NOT NULL DEFAULT '{default_connection_mode}' CHECK (
                     connection_mode IN ('local_config_detected', 'remote_http', 'manual')
                 ),
-                record_kind TEXT NOT NULL DEFAULT '{default_record_kind}' CHECK (
-                    record_kind IN ('template_known', 'observed_unknown')
-                ),
                 template_identifier TEXT,
                 selected_profile_ids TEXT,
                 custom_profile_id TEXT,
@@ -555,7 +528,6 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
             default_capability_source = DEFAULT_CAPABILITY_SOURCE,
             default_governance_kind = DEFAULT_GOVERNANCE_KIND,
             default_connection_mode = DEFAULT_CONNECTION_MODE,
-            default_record_kind = DEFAULT_RECORD_KIND,
         ))
         .execute(&mut *tx)
         .await?;
@@ -565,7 +537,7 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
             INSERT INTO {temp_table} (
                 id, name, display_name, identifier, config_path, managed, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
-                connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id,
+                connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
                 unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces,
                 unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
@@ -576,7 +548,7 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
             SELECT
                 id, name, display_name, identifier, config_path, managed, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
-                connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id,
+                connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
                 unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces,
                 unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,

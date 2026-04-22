@@ -6,9 +6,9 @@ use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
     ClientBackupActionData, ClientBackupActionResp, ClientCapabilityConfigData, ClientCapabilityConfigReq,
     ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
-    ClientFormatRuleData,
-    ClientConfigFileParseData, ClientConfigFileParseInspectData, ClientConfigFileParseInspectReq,
-    ClientConfigFileParseInspectResp, ClientConfigFileParseValidationData, ClientConfigImportData,
+    ClientConfigFileParseData, ClientConfigFileParseInspectData, ClientConfigFileParseInspectExistingReq,
+    ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq, ClientConfigFileParseInspectResp,
+    ClientConfigFileParseValidationData, ClientConfigImportData, ClientFormatRuleData,
     ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq, ClientConfigResp,
     ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
     ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata,
@@ -173,6 +173,28 @@ fn format_rules_data_from_state(
     )
 }
 
+fn build_config_file_parse_inspect_data(
+    inspection: crate::clients::service::config_rules::ConfigRuleInspection,
+    include_preview: bool,
+) -> ClientConfigFileParseInspectData {
+    ClientConfigFileParseInspectData {
+        normalized_path: inspection.normalized_path,
+        detected_format: inspection.detected_format.map(|format| format.as_str().to_string()),
+        inferred_parse: inspection.inferred_parse.as_ref().map(parse_data_from_rule),
+        validation: inspection
+            .validation
+            .map(|validation| ClientConfigFileParseValidationData {
+                matches: validation.matches,
+                format_matches: validation.format_matches,
+                container_found: validation.container_found,
+                server_count: validation.server_count,
+            }),
+        preview: if include_preview { inspection.preview } else { Value::Null },
+        preview_text: None,
+        warnings: inspection.warnings,
+    }
+}
+
 pub async fn config_file_parse_inspect(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<ClientConfigFileParseInspectReq>,
@@ -210,22 +232,74 @@ pub async fn config_file_parse_inspect(
         })?;
 
     Ok(Json(ClientConfigFileParseInspectResp::success(
-        ClientConfigFileParseInspectData {
-            normalized_path: inspection.normalized_path,
-            detected_format: inspection.detected_format.map(|format| format.as_str().to_string()),
-            inferred_parse: inspection.inferred_parse.as_ref().map(parse_data_from_rule),
-            validation: inspection
-                .validation
-                .map(|validation| ClientConfigFileParseValidationData {
-                    matches: validation.matches,
-                    format_matches: validation.format_matches,
-                    container_found: validation.container_found,
-                    server_count: validation.server_count,
-                }),
-            preview: inspection.preview,
-            preview_text: inspection.preview_text,
-            warnings: inspection.warnings,
-        },
+        build_config_file_parse_inspect_data(inspection, false),
+    )))
+}
+
+pub async fn config_file_parse_inspect_existing(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientConfigFileParseInspectExistingReq>,
+) -> Result<
+    Json<ClientConfigFileParseInspectExistingResp>,
+    (StatusCode, Json<ClientConfigFileParseInspectExistingResp>),
+> {
+    let service = get_client_service(&app_state).map_err(|status| {
+        (
+            status,
+            Json(ClientConfigFileParseInspectExistingResp::error_simple(
+                "client_config_parse_unavailable",
+                "Client service unavailable",
+            )),
+        )
+    })?;
+
+    if service
+        .fetch_state(&request.identifier)
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ClientConfigFileParseInspectExistingResp::error_simple(
+                    "client_config_parse_invalid",
+                    &err.to_string(),
+                )),
+            )
+        })?
+        .is_none()
+    {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ClientConfigFileParseInspectExistingResp::error_simple(
+                "client_config_parse_missing_client",
+                "Client record not found.",
+            )),
+        ));
+    }
+
+    let draft = request.config_file_parse.as_ref().map(parse_rule_from_api_data);
+    let inspection = service
+        .inspect_existing_client_config_file_parse(&request.identifier, draft.as_ref())
+        .await
+        .map_err(|err| {
+            let status = match err {
+                ConfigError::DataAccessError(_)
+                | ConfigError::PathResolutionError(_)
+                | ConfigError::PathNotWritable { .. }
+                | ConfigError::FileOperationError(_)
+                | ConfigError::IoError(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (
+                status,
+                Json(ClientConfigFileParseInspectExistingResp::error_simple(
+                    "client_config_parse_invalid",
+                    &err.to_string(),
+                )),
+            )
+        })?;
+
+    Ok(Json(ClientConfigFileParseInspectExistingResp::success(
+        build_config_file_parse_inspect_data(inspection, true),
     )))
 }
 
@@ -244,7 +318,7 @@ pub async fn list(
 
     let mut client_infos = Vec::with_capacity(descriptors.len());
     for descriptor in descriptors {
-        match descriptor_to_client_info(service.as_ref(), descriptor).await {
+        match descriptor_to_client_info(service.as_ref(), app_state.as_ref(), descriptor).await {
             Ok(info) => client_infos.push(info),
             Err(status) => return Err(status),
         }
@@ -375,22 +449,21 @@ pub async fn config_details(
     let support_url = runtime_metadata.support_url.clone();
     let logo_url = runtime_metadata.logo_url.clone();
 
-    let capability_config = service
-        .get_capability_config(&request.identifier)
+    let capability_config_state = service
+        .get_capability_config_state(&request.identifier)
         .await
         .map_err(|err| {
-            tracing::error!(
-                client = %request.identifier,
-                error = %err,
-                "Failed to load capability config"
-            );
+            tracing::error!(client = %request.identifier, error = %err, "Failed to load capability config state");
             StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .unwrap_or_default();
-    let record_kind = state
+        })?;
+    let capability_config = capability_config_state
         .as_ref()
-        .map(|row| row.record_kind().as_str().to_string())
-        .or_else(|| Some("template_known".to_string()));
+        .map(|state| state.capability_config.clone())
+        .unwrap_or_default();
+    let custom_profile_missing = capability_config_state
+        .as_ref()
+        .map(|state| state.custom_profile_missing)
+        .unwrap_or(false);
     let governance_kind = state
         .as_ref()
         .map(|row| row.governance_kind().as_str().to_string())
@@ -447,8 +520,8 @@ pub async fn config_details(
         capability_source: capability_config.capability_source,
         selected_profile_ids: capability_config.selected_profile_ids,
         custom_profile_id: capability_config.custom_profile_id,
+        custom_profile_missing,
         approval_status,
-        record_kind,
         governance_kind,
         connection_mode,
         governed_by_default_policy,
@@ -673,11 +746,11 @@ pub async fn config_restore(
     let service = get_client_service(&app_state)?;
 
     if let Ok(Some(state)) = service.fetch_state(&request.identifier).await {
-        if state.is_pending_unknown() {
+        if state.is_pending_approval() {
             tracing::warn!(
                 client = %request.identifier,
                 approval_status = %state.approval_status(),
-                "Rejected config restore for pending unknown client"
+                "Rejected config restore for pending client"
             );
             return Err(StatusCode::FORBIDDEN);
         }
@@ -1174,11 +1247,13 @@ pub async fn update_capability_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
+    let custom_profile_id = state.capability_config.custom_profile_id.clone();
     let data = ClientCapabilityConfigData {
         identifier: request.identifier,
         capability_source: state.capability_config.capability_source,
         selected_profile_ids: state.capability_config.selected_profile_ids,
-        custom_profile_id: state.capability_config.custom_profile_id,
+        custom_profile_id: custom_profile_id.clone(),
+        custom_profile_missing: state.custom_profile_missing,
         unify_direct_exposure: ClientUnifyDirectExposureData {
             config: state.unify_direct_exposure.clone(),
             diagnostics: state.unify_direct_exposure_diagnostics.clone(),
@@ -1226,11 +1301,13 @@ pub async fn get_capability_config(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    let custom_profile_id = config.capability_config.custom_profile_id.clone();
     Ok(Json(ClientCapabilityConfigResp::success(ClientCapabilityConfigData {
         identifier: request.identifier,
         capability_source: config.capability_config.capability_source,
         selected_profile_ids: config.capability_config.selected_profile_ids,
-        custom_profile_id: config.capability_config.custom_profile_id,
+        custom_profile_id: custom_profile_id.clone(),
+        custom_profile_missing: config.custom_profile_missing,
         unify_direct_exposure: ClientUnifyDirectExposureData {
             config: config.unify_direct_exposure,
             diagnostics: config.unify_direct_exposure_diagnostics,
@@ -1240,6 +1317,7 @@ pub async fn get_capability_config(
 
 async fn descriptor_to_client_info(
     service: &ClientConfigService,
+    _app_state: &AppState,
     descriptor: ClientDescriptor,
 ) -> Result<ClientInfo, StatusCode> {
     let state = descriptor.state.clone();
@@ -1285,6 +1363,15 @@ async fn descriptor_to_client_info(
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .unwrap_or_default();
+    let custom_profile_missing = service
+        .get_capability_config_state(&identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(client = %identifier, error = %err, "Failed to load client capability config state");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .map(|state| state.custom_profile_missing)
+        .unwrap_or(false);
 
     let content = if descriptor.config_exists {
         match service.read_current_config(&identifier).await {
@@ -1324,7 +1411,6 @@ async fn descriptor_to_client_info(
     let last_modified = descriptor.config_path.as_deref().and_then(get_config_last_modified);
 
     let approval_status = Some(state.approval_status().to_string());
-    let record_kind = Some(state.record_kind().as_str().to_string());
     let governance_kind = Some(state.governance_kind().as_str().to_string());
     let connection_mode = Some(state.connection_mode().as_str().to_string());
     let governed_by_default_policy = state.governed_by_default_policy();
@@ -1337,8 +1423,6 @@ async fn descriptor_to_client_info(
         .has_verified_local_config_target(state.identifier())
         .await
         .unwrap_or(false);
-    let template_id = state.template_identifier().map(|id| id.to_string());
-    let template_known = state.is_template_known();
     let pending_approval = approval_status.as_deref() == Some("pending");
 
     Ok(ClientInfo {
@@ -1373,19 +1457,17 @@ async fn descriptor_to_client_info(
         capability_source: capability_config.capability_source,
         selected_profile_ids: capability_config.selected_profile_ids,
         custom_profile_id: capability_config.custom_profile_id,
+        custom_profile_missing,
         config_type,
         last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
         last_modified,
         mcp_servers_count: Some(mcp_servers_count),
         template: build_client_template_metadata(Some(&state), &runtime_metadata),
         approval_status,
-        record_kind,
         governance_kind,
         connection_mode,
         governed_by_default_policy,
         writable_config,
-        template_id,
-        template_known,
         pending_approval,
         config_file_parse_effective,
         config_file_parse_override,
@@ -2785,7 +2867,6 @@ mod tests {
         assert_eq!(data.description.as_deref(), Some("Runtime-only client"));
         assert_eq!(data.template.format, "json");
         assert_eq!(data.template.storage.kind, "file");
-        assert_eq!(data.record_kind.as_deref(), Some("observed_unknown"));
     }
 
     #[tokio::test]
@@ -2838,7 +2919,6 @@ mod tests {
             .expect("fetch state")
             .expect("state exists");
         assert_eq!(state.governance_kind().as_str(), "active");
-        assert_eq!(state.record_kind().as_str(), "observed_unknown");
         assert_eq!(state.display_name(), "Custom Runtime");
         assert_eq!(state.connection_mode().as_str(), "local_config_detected");
         assert_eq!(state.config_path(), Some(config_path.to_string_lossy().as_ref()));
@@ -3418,7 +3498,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn config_apply_rejects_pending_unknown_client() {
+    async fn config_apply_rejects_pending_client() {
         use crate::clients::models::OnboardingPolicy;
         use crate::common::constants::database::tables;
 
@@ -3436,14 +3516,14 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO client (
-                id, name, identifier, managed, approval_status, record_kind, connection_mode, template_identifier
+                id, name, identifier, managed, approval_status, connection_mode, template_identifier
             )
-            VALUES ('clnt001', 'Pending Client', 'pending.client', 0, 'pending', 'observed_unknown', 'manual', NULL)
+            VALUES ('clnt001', 'Pending Client', 'pending.client', 0, 'pending', 'manual', NULL)
             "#,
         )
         .execute(&context.db_pool)
         .await
-        .expect("create pending unknown client");
+        .expect("create pending client");
 
         let result = config_apply(
             State(context.app_state.clone()),
@@ -3464,7 +3544,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn config_restore_rejects_pending_unknown_client() {
+    async fn config_restore_rejects_pending_client() {
         use crate::clients::models::OnboardingPolicy;
         use crate::common::constants::database::tables;
 
@@ -3482,14 +3562,14 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO client (
-                id, name, identifier, managed, approval_status, record_kind, connection_mode, template_identifier
+                id, name, identifier, managed, approval_status, connection_mode, template_identifier
             )
-            VALUES ('clnt002', 'Pending Client', 'pending.restore', 0, 'pending', 'observed_unknown', 'manual', NULL)
+            VALUES ('clnt002', 'Pending Client', 'pending.restore', 0, 'pending', 'manual', NULL)
             "#,
         )
         .execute(&context.db_pool)
         .await
-        .expect("create pending unknown client");
+        .expect("create pending client");
 
         let result = config_restore(
             State(context.app_state.clone()),

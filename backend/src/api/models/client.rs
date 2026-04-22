@@ -110,6 +110,9 @@ pub struct ClientInfo {
     #[schemars(description = "Client-private custom profile id when using custom mode")]
     #[serde(default)]
     pub custom_profile_id: Option<String>,
+    #[schemars(description = "Whether the current custom capability profile is missing or no longer resolvable")]
+    #[serde(default)]
+    pub custom_profile_missing: bool,
     #[schemars(description = "Format type of configuration file")]
     pub config_type: Option<ClientConfigType>,
     #[schemars(description = "ISO 8601 timestamp of last detection")]
@@ -123,9 +126,6 @@ pub struct ClientInfo {
     #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
     #[serde(default)]
     pub approval_status: Option<String>,
-    #[schemars(description = "Runtime record kind (template_known or observed_unknown)")]
-    #[serde(default)]
-    pub record_kind: Option<String>,
     #[schemars(description = "Runtime governance kind (passive or active)")]
     #[serde(default)]
     pub governance_kind: Option<String>,
@@ -138,12 +138,6 @@ pub struct ClientInfo {
     #[schemars(description = "Whether this client has a real writable local configuration target")]
     #[serde(default)]
     pub writable_config: bool,
-    #[schemars(description = "Template identifier bound to this client")]
-    #[serde(default)]
-    pub template_id: Option<String>,
-    #[schemars(description = "Whether the client has a known template")]
-    #[serde(default)]
-    pub template_known: bool,
     #[schemars(description = "Whether the client is pending approval")]
     #[serde(default)]
     pub pending_approval: bool,
@@ -382,12 +376,12 @@ pub struct ClientConfigData {
     #[schemars(description = "Client-private custom profile id when using custom mode")]
     #[serde(default)]
     pub custom_profile_id: Option<String>,
+    #[schemars(description = "Whether the current custom capability profile is missing or no longer resolvable")]
+    #[serde(default)]
+    pub custom_profile_missing: bool,
     #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
     #[serde(default)]
     pub approval_status: Option<String>,
-    #[schemars(description = "Runtime record kind (template_known or observed_unknown)")]
-    #[serde(default)]
-    pub record_kind: Option<String>,
     #[schemars(description = "Runtime governance kind (passive or active)")]
     #[serde(default)]
     pub governance_kind: Option<String>,
@@ -590,6 +584,16 @@ pub struct ClientConfigFileParseInspectReq {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Stored-client config file parse rule inspection request")]
+pub struct ClientConfigFileParseInspectExistingReq {
+    #[schemars(description = "Client identifier whose stored config_path should be inspected")]
+    pub identifier: String,
+    #[schemars(description = "Optional parse rule draft to validate against the selected file")]
+    #[serde(default)]
+    pub config_file_parse: Option<ClientConfigFileParseData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Validation summary for a client config file parse rule")]
 pub struct ClientConfigFileParseValidationData {
     pub matches: bool,
@@ -611,7 +615,7 @@ pub struct ClientConfigFileParseInspectData {
     #[serde(default)]
     pub preview: serde_json::Value,
     #[serde(default)]
-    pub preview_text: String,
+    pub preview_text: Option<String>,
     #[serde(default)]
     pub warnings: Vec<String>,
 }
@@ -620,6 +624,11 @@ api_resp!(
     ClientConfigFileParseInspectResp,
     ClientConfigFileParseInspectData,
     "Client config file parse inspection response"
+);
+api_resp!(
+    ClientConfigFileParseInspectExistingResp,
+    ClientConfigFileParseInspectData,
+    "Stored client config file parse inspection response"
 );
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -635,6 +644,9 @@ pub struct ClientCapabilityConfigData {
     #[schemars(description = "Client-private custom profile id when using custom mode")]
     #[serde(default)]
     pub custom_profile_id: Option<String>,
+    #[schemars(description = "Whether the current custom capability profile is missing or no longer resolvable")]
+    #[serde(default)]
+    pub custom_profile_missing: bool,
     #[schemars(description = "Unify-only direct exposure state and diagnostics")]
     #[serde(default)]
     pub unify_direct_exposure: ClientUnifyDirectExposureData,
