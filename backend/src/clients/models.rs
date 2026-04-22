@@ -292,58 +292,6 @@ impl std::error::Error for ParseApprovalStatusError {}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum ClientRecordKind {
-    #[default]
-    TemplateKnown,
-    ObservedUnknown,
-}
-
-impl ClientRecordKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ClientRecordKind::TemplateKnown => "template_known",
-            ClientRecordKind::ObservedUnknown => "observed_unknown",
-        }
-    }
-}
-
-impl fmt::Display for ClientRecordKind {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl FromStr for ClientRecordKind {
-    type Err = ParseClientRecordKindError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "template_known" => Ok(ClientRecordKind::TemplateKnown),
-            "observed_unknown" => Ok(ClientRecordKind::ObservedUnknown),
-            _ => Err(ParseClientRecordKindError),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ParseClientRecordKindError;
-
-impl fmt::Display for ParseClientRecordKindError {
-    fn fmt(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result {
-        write!(f, "invalid client record kind")
-    }
-}
-
-impl std::error::Error for ParseClientRecordKindError {}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
 pub enum ClientGovernanceKind {
     #[default]
     Passive,
@@ -556,18 +504,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_record_kind_values() {
-        assert_eq!(
-            ClientRecordKind::from_str("template_known").expect("parse template known"),
-            ClientRecordKind::TemplateKnown
-        );
-        assert_eq!(
-            ClientRecordKind::from_str("observed_unknown").expect("parse observed unknown"),
-            ClientRecordKind::ObservedUnknown
-        );
-    }
-
-    #[test]
     fn parses_governance_kind_values() {
         assert_eq!(
             ClientGovernanceKind::from_str("passive").expect("parse passive governance kind"),
@@ -748,6 +684,17 @@ impl FormatRule {
     pub fn validate_for_transport(&self, transport: &str) -> Result<(), String> {
         let normalized = self.normalized();
 
+        if normalized.include_type
+            && normalized
+                .type_value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+        {
+            return Err("Missing required format rule field: type_value".to_string());
+        }
+
         match transport {
             "stdio" if normalized.command_field.is_none() => {
                 return Err("Missing required stdio rule field: command_field".to_string());
@@ -769,10 +716,16 @@ impl FormatRule {
 
         let mut map = serde_json::Map::new();
 
-        if normalized.include_type {
+        if normalized.include_type
+            && let Some(type_value) = normalized
+                .type_value
+                .clone()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        {
             map.insert(
                 "type".to_string(),
-                serde_json::Value::String(normalized.type_value.clone().unwrap_or_default()),
+                serde_json::Value::String(type_value),
             );
         }
 
@@ -1234,6 +1187,7 @@ pub struct ClientCapabilityConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClientCapabilityConfigState {
     pub capability_config: ClientCapabilityConfig,
+    pub custom_profile_missing: bool,
     pub unify_direct_exposure: UnifyDirectExposureConfig,
     pub unify_direct_exposure_diagnostics: UnifyDirectExposureDiagnostics,
 }

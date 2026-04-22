@@ -4,7 +4,7 @@ use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     BackupPolicySetting, ClientCapabilityConfig, ClientConfigFileParse, ClientConnectionMode, ClientGovernanceKind,
-    ClientRecordKind, ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule,
+    ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule,
     ManagedEndpointConfig, MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
     UnifyDirectExposureConfig,
 };
@@ -112,7 +112,6 @@ pub struct ClientStateRow {
     pub(super) capability_source: Option<String>,
     pub(super) governance_kind: Option<String>,
     pub(super) connection_mode: Option<String>,
-    pub(super) record_kind: Option<String>,
     pub(super) template_identifier: Option<String>,
     pub(super) selected_profile_ids: Option<String>,
     pub(super) custom_profile_id: Option<String>,
@@ -201,13 +200,6 @@ impl ClientStateRow {
             .unwrap_or_default()
     }
 
-    pub fn record_kind(&self) -> ClientRecordKind {
-        self.record_kind
-            .as_deref()
-            .and_then(|value| value.parse::<ClientRecordKind>().ok())
-            .unwrap_or_default()
-    }
-
     pub fn display_name(&self) -> &str {
         self.display_name
             .as_deref()
@@ -228,24 +220,20 @@ impl ClientStateRow {
     }
 
     #[allow(dead_code)]
-    pub fn is_template_known(&self) -> bool {
-        self.record_kind() == ClientRecordKind::TemplateKnown
+    pub fn is_pending_approval(&self) -> bool {
+        self.approval_status.as_deref() == Some("pending")
     }
 
     #[allow(dead_code)]
-    pub fn is_pending_unknown(&self) -> bool {
-        self.approval_status.as_deref() == Some("pending") && self.record_kind() == ClientRecordKind::ObservedUnknown
-    }
-
     pub fn template_id(&self) -> Option<&str> {
         self.template_id.as_deref()
     }
 
+    /// Returns the template identifier (init-time seed; NOT for runtime inference).
     pub fn template_identifier(&self) -> Option<&str> {
         self.template_identifier
             .as_deref()
             .filter(|value| !value.trim().is_empty())
-            .or_else(|| self.template_id())
     }
 
     pub(super) fn capability_config(&self) -> ConfigResult<ClientCapabilityConfig> {
@@ -818,17 +806,16 @@ impl ClientConfigService {
                 r#"
                 INSERT INTO client (
                     id, name, display_name, identifier, config_path, managed, backup_policy, backup_limit,
-                    capability_source, governance_kind, connection_mode, approval_status, record_kind, template_identifier,
+                    capability_source, governance_kind, connection_mode, approval_status, template_identifier,
                     config_format, protocol_revision, container_type, container_keys,
                     storage_kind, storage_adapter, storage_path_strategy,
                     merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse, approval_metadata
                 )
-                VALUES (?, ?, ?, ?, ?, 1, 'keep_n', 5, 'activated', 'passive', 'local_config_detected', 'approved', 'template_known', ?,
+                VALUES (?, ?, ?, ?, ?, 1, 'keep_n', 5, 'activated', 'passive', 'local_config_detected', 'approved', ?,
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(identifier) DO UPDATE SET
                     display_name = COALESCE(NULLIF(client.display_name, ''), excluded.display_name),
                     config_path = COALESCE(NULLIF(client.config_path, ''), excluded.config_path),
-                    record_kind = COALESCE(NULLIF(client.record_kind, ''), excluded.record_kind),
                     template_identifier = COALESCE(NULLIF(client.template_identifier, ''), excluded.template_identifier),
                     config_format = excluded.config_format,
                     protocol_revision = excluded.protocol_revision,
