@@ -7,6 +7,7 @@ use crate::system::paths::get_path_service;
 use serde_json::{Map, Value};
 
 const MAX_PREVIEW_ENTRIES: usize = 4;
+const MAX_CREATE_INSPECT_BYTES: u64 = 512 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigRuleValidation {
@@ -23,7 +24,6 @@ pub struct ConfigRuleInspection {
     pub inferred_parse: Option<ClientConfigFileParse>,
     pub validation: Option<ConfigRuleValidation>,
     pub preview: Value,
-    pub preview_text: String,
     pub warnings: Vec<String>,
 }
 
@@ -47,28 +47,20 @@ impl ClientConfigService {
         raw_path: &str,
         draft: Option<&ClientConfigFileParse>,
     ) -> ConfigResult<ConfigRuleInspection> {
-        let normalized_path = resolve_config_path(raw_path)?;
-        let content = tokio::fs::read_to_string(&normalized_path)
-            .await
-            .map_err(ConfigError::IoError)?;
-        let parsed = parse_document(&content, Some(&normalized_path))?;
-        let inferred_parse = infer_rule_from_document(&parsed.value, parsed.format);
-        let validation = draft.map(|rule| validate_rule_against_document(&parsed.value, parsed.format, rule));
-        let preview_rule = draft.or(inferred_parse.as_ref());
-        let preview = preview_rule
-            .and_then(|rule| build_preview_for_rule(&parsed.value, rule))
-            .unwrap_or_else(|| limit_preview_value(&parsed.value));
-        let preview_text = render_preview_text(&preview, parsed.format);
+        let normalized_path = resolve_create_inspect_path(raw_path).await?;
+        self.inspect_resolved_config_file_parse(&normalized_path, draft).await
+    }
 
-        Ok(ConfigRuleInspection {
-            normalized_path,
-            detected_format: Some(parsed.format),
-            inferred_parse,
-            validation,
-            preview,
-            preview_text,
-            warnings: Vec::new(),
-        })
+    pub async fn inspect_existing_client_config_file_parse(
+        &self,
+        identifier: &str,
+        draft: Option<&ClientConfigFileParse>,
+    ) -> ConfigResult<ConfigRuleInspection> {
+        let normalized_path = self
+            .resolved_config_path(identifier)
+            .await?
+            .ok_or_else(|| ConfigError::PathResolutionError(format!("No config_path for client {}", identifier)))?;
+        self.inspect_resolved_config_file_parse(&normalized_path, draft).await
     }
 
     pub async fn validate_config_file_parse_rule(
@@ -109,6 +101,49 @@ impl ClientConfigService {
     }
 }
 
+async fn resolve_create_inspect_path(raw_path: &str) -> ConfigResult<String> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return Err(ConfigError::DataAccessError(
+            "A configuration file path is required for parse rule inspection.".to_string(),
+        ));
+    }
+
+    let resolved = get_path_service()
+        .resolve_user_path(trimmed)
+        .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
+
+    infer_format_from_path(resolved.to_str()).ok_or_else(|| {
+        ConfigError::DataAccessError(
+            "Only json, json5, toml, yaml, or yml files can be inspected before creating a client record."
+                .to_string(),
+        )
+    })?;
+    let metadata = tokio::fs::metadata(&resolved).await.map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            ConfigError::DataAccessError(format!("Configured MCP file does not exist: {}", trimmed))
+        } else {
+            ConfigError::FileOperationError(format!("Failed to inspect configured MCP file {}: {}", trimmed, err))
+        }
+    })?;
+
+    if !metadata.is_file() {
+        return Err(ConfigError::DataAccessError(format!(
+            "Parse rule inspection requires a regular file, but got: {}",
+            trimmed
+        )));
+    }
+
+    if metadata.len() > MAX_CREATE_INSPECT_BYTES {
+        return Err(ConfigError::DataAccessError(format!(
+            "Selected config file is too large to inspect safely ({} bytes, max {}).",
+            metadata.len(),
+            MAX_CREATE_INSPECT_BYTES
+        )));
+    }
+    Ok(resolved.to_string_lossy().to_string())
+}
+
 fn resolve_config_path(raw_path: &str) -> ConfigResult<String> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
@@ -122,6 +157,34 @@ fn resolve_config_path(raw_path: &str) -> ConfigResult<String> {
         .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
 
     Ok(resolved.to_string_lossy().to_string())
+}
+
+impl ClientConfigService {
+    async fn inspect_resolved_config_file_parse(
+        &self,
+        normalized_path: &str,
+        draft: Option<&ClientConfigFileParse>,
+    ) -> ConfigResult<ConfigRuleInspection> {
+        let content = tokio::fs::read_to_string(normalized_path)
+            .await
+            .map_err(ConfigError::IoError)?;
+        let parsed = parse_document(&content, Some(normalized_path))?;
+        let inferred_parse = infer_rule_from_document(&parsed.value, parsed.format);
+        let validation = draft.map(|rule| validate_rule_against_document(&parsed.value, parsed.format, rule));
+        let preview_rule = draft.or(inferred_parse.as_ref());
+        let preview = preview_rule
+            .and_then(|rule| build_preview_for_rule(&parsed.value, rule))
+            .unwrap_or_else(|| limit_preview_value(&parsed.value));
+
+        Ok(ConfigRuleInspection {
+            normalized_path: normalized_path.to_string(),
+            detected_format: Some(parsed.format),
+            inferred_parse,
+            validation,
+            preview,
+            warnings: Vec::new(),
+        })
+    }
 }
 
 fn parse_document(
@@ -310,33 +373,6 @@ fn limit_preview_value(value: &Value) -> Value {
                 .collect(),
         ),
         _ => value.clone(),
-    }
-}
-
-fn render_preview_text(
-    value: &Value,
-    format: TemplateFormat,
-) -> String {
-    match format {
-        TemplateFormat::Json | TemplateFormat::Json5 => {
-            serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
-        }
-        TemplateFormat::Yaml => serde_yaml::to_string(value)
-            .unwrap_or_else(|_| serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()))
-            .trim()
-            .to_string(),
-        TemplateFormat::Toml => render_toml_preview_text(value),
-    }
-}
-
-fn render_toml_preview_text(value: &Value) -> String {
-    if value.is_object() {
-        toml::to_string_pretty(value)
-            .unwrap_or_else(|_| serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()))
-            .trim()
-            .to_string()
-    } else {
-        serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
     }
 }
 

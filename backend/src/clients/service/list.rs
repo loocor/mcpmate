@@ -85,7 +85,7 @@ impl ClientConfigService {
                     tracing::warn!(
                         identifier = %identifier,
                         error = %err,
-                        "Failed to ensure pending unknown row for detected client"
+                        "Failed to ensure pending row for detected client"
                     );
                 }
             }
@@ -176,7 +176,7 @@ mod tests {
         assert_eq!(state.managed, 0);
         assert_eq!(state.approval_status.as_deref(), Some("pending"));
         assert!(state.template_id.is_none());
-        assert!(state.is_pending_unknown());
+        assert!(state.is_pending_approval());
         assert_eq!(state.governance_kind().as_str(), "passive");
 
         let fetched_state = service
@@ -229,7 +229,6 @@ mod tests {
 
         assert!(descriptor.template.is_none());
         assert_eq!(descriptor.state.display_name(), "custom.runtime");
-        assert_eq!(descriptor.state.record_kind().as_str(), "observed_unknown");
         assert!(descriptor.managed);
     }
 }
