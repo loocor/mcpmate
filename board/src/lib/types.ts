@@ -950,8 +950,6 @@ export interface ClientInfo {
   has_mcp_config: boolean;
   supported_transports: string[];
   approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
-  record_kind?: "template_known" | "observed_unknown" | string | null;
-  template_identifier?: string | null;
   writable_config?: boolean | null;
   governed_by_default_policy?: boolean | null;
   description?: string | null;
@@ -959,6 +957,12 @@ export interface ClientInfo {
   docs_url?: string | null;
   support_url?: string | null;
   config_type?: ClientConfigType | null;
+  /** Resolved rules used for parsing (template default or legacy row). */
+  config_file_parse_effective?: ClientConfigFileParse | null;
+  /** User override when set; when absent, uses effective/template. */
+  config_file_parse_override?: ClientConfigFileParse | null;
+  /** True when no stored override exists (template/runtime default). */
+  uses_template_parse_default?: boolean;
   config_mode?: string | null;
   transport?: string | null;
   client_version?: string | null;
@@ -966,8 +970,10 @@ export interface ClientInfo {
   logo_url?: string | null;
   last_detected?: string | null;
   last_modified?: string | null;
+  custom_profile_missing?: boolean;
   template: ClientTemplateMetadata;
   mcp_servers_count?: number | null;
+  format_rules?: Record<string, ClientFormatRuleData> | null;
 }
 
 export interface ClientCheckData {
@@ -988,22 +994,9 @@ export interface ClientManageResp {
   data?: {
     identifier: string;
     managed: boolean;
-    approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
-    record_kind?: "template_known" | "observed_unknown" | string | null;
   } | null;
   error?: unknown | null;
   success: boolean;
-}
-
-export interface ClientRecordLifecycleData {
-  identifier: string;
-  display_name: string;
-  managed: boolean;
-  connection_mode?: "local_config_detected" | "remote_http" | "manual" | string;
-  approval_status: "approved" | "pending" | "rejected" | "suspended" | string;
-  record_kind: "template_known" | "observed_unknown" | string;
-  template_identifier?: string | null;
-  writable_config?: boolean | null;
 }
 
 export interface ClientRecordLifecycleResp {
@@ -1121,7 +1114,11 @@ export interface ClientConfigImportReq {
 export interface ClientConfigData {
   config_exists: boolean;
   config_path: string;
+  config_mode?: ClientConfigMode | null;
   config_type?: ClientConfigType | null;
+  config_file_parse_effective?: ClientConfigFileParse | null;
+  config_file_parse_override?: ClientConfigFileParse | null;
+  uses_template_parse_default?: boolean;
   content: unknown;
   warnings?: string[];
   degraded_reasons?: string[];
@@ -1134,8 +1131,6 @@ export interface ClientConfigData {
   mcp_servers_count: number;
   supported_transports: string[];
   approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
-  record_kind?: "template_known" | "observed_unknown" | string | null;
-  template_identifier?: string | null;
   writable_config?: boolean | null;
   governed_by_default_policy?: boolean | null;
   template: ClientTemplateMetadata;
@@ -1147,6 +1142,8 @@ export interface ClientConfigData {
   capability_source?: CapabilitySource;
   selected_profile_ids?: string[];
   custom_profile_id?: string | null;
+  custom_profile_missing?: boolean;
+  format_rules?: Record<string, ClientFormatRuleData> | null;
 }
 
 export interface ClientSettingsSourceData {
@@ -1170,6 +1167,7 @@ export interface ClientSettingsUpdateData {
   support_url?: string | null;
   logo_url?: string | null;
   setting_sources?: ClientSettingsSourceData | null;
+  format_rules?: Record<string, ClientFormatRuleData> | null;
 }
 
 export interface ClientSettingsUpdateResp {
@@ -1220,6 +1218,7 @@ export interface ClientCapabilityConfigData {
   capability_source: CapabilitySource;
   selected_profile_ids: string[];
   custom_profile_id?: string | null;
+  custom_profile_missing?: boolean;
   unify_direct_exposure?: UnifyDirectExposureConfig | null;
 }
 
@@ -1403,4 +1402,48 @@ export interface OAuthCallbackNotificationPayload {
 export interface OAuthCallbackRequest {
   code: string;
   state: string;
+}
+
+export interface ClientConfigFileParse {
+  format: string;
+  container_type: string;
+  container_keys?: string[];
+}
+
+export interface ClientFormatRuleData {
+  command_field?: string | null;
+  args_field?: string | null;
+  env_field?: string | null;
+  include_type?: boolean;
+  type_value?: string | null;
+  url_field?: string | null;
+  headers_field?: string | null;
+  extra_fields?: Record<string, unknown> | null;
+}
+
+export interface ClientConfigFileParseInspectReq {
+  config_path: string;
+  config_file_parse?: ClientConfigFileParse;
+}
+
+export interface ClientConfigFileParseInspectExistingReq {
+  identifier: string;
+  config_file_parse?: ClientConfigFileParse;
+}
+
+export interface ClientConfigFileParseValidation {
+  matches: boolean;
+  format_matches: boolean;
+  container_found: boolean;
+  server_count: number;
+}
+
+export interface ClientConfigFileParseInspectResp {
+  normalized_path: string;
+  detected_format?: string | null;
+  inferred_parse?: ClientConfigFileParse | null;
+  validation?: ClientConfigFileParseValidation | null;
+  preview?: unknown;
+  preview_text?: string;
+  warnings?: string[];
 }

@@ -2,10 +2,12 @@ use crate::api::handlers::client;
 use crate::api::models::client::{
     ApprovalRequest, ApprovalResponse, ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp,
     ClientBackupOperateReq, ClientBackupPolicyReq, ClientBackupPolicyResp, ClientBackupPolicySetReq,
-    ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckReq, ClientCheckResp, ClientConfigImportReq,
-    ClientConfigImportResp, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientDeleteReq, ClientDeleteResp, ClientManageReq, ClientManageResp,
-    ClientSettingsUpdateReq, ClientSettingsUpdateResp,
+    ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckReq, ClientCheckResp,
+    ClientConfigFileParseInspectExistingReq, ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq,
+    ClientConfigFileParseInspectResp, ClientConfigImportReq, ClientConfigImportResp, ClientConfigReq,
+    ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp,
+    ClientDeleteReq, ClientDeleteResp, ClientManageReq, ClientManageResp, ClientSettingsUpdateReq,
+    ClientSettingsUpdateResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -29,6 +31,20 @@ aide_wrapper_query!(
     ClientConfigReq,
     ClientConfigResp,
     "Get client configuration details"
+);
+
+aide_wrapper_payload!(
+    client::config_file_parse_inspect,
+    ClientConfigFileParseInspectReq,
+    ClientConfigFileParseInspectResp,
+    "Inspect a client config file against parse rules"
+);
+
+aide_wrapper_payload!(
+    client::config_file_parse_inspect_existing,
+    ClientConfigFileParseInspectExistingReq,
+    ClientConfigFileParseInspectExistingResp,
+    "Inspect a stored client config file against parse rules"
 );
 
 aide_wrapper_payload!(
@@ -147,6 +163,17 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/client/config/details",
             get_with(config_details_aide, config_details_docs),
+        )
+        .api_route(
+            "/client/config-file-parse/inspect",
+            post_with(config_file_parse_inspect_aide, config_file_parse_inspect_docs),
+        )
+        .api_route(
+            "/client/config-file-parse/inspect-existing",
+            post_with(
+                config_file_parse_inspect_existing_aide,
+                config_file_parse_inspect_existing_docs,
+            ),
         )
         .api_route("/client/config/apply", post_with(config_apply_aide, config_apply_docs))
         .api_route(

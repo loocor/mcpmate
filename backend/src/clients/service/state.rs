@@ -1,14 +1,14 @@
 use super::core::{ClientConfigService, ClientStateRow};
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, ClientRecordKind, FirstContactBehavior,
+    BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, FirstContactBehavior,
 };
 use std::collections::HashMap;
 
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules FROM client",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -57,7 +57,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, record_kind, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
@@ -502,37 +502,56 @@ impl ClientConfigService {
         } else {
             ClientConnectionMode::Manual.as_str()
         };
-        let record_kind = if template.is_some() {
-            ClientRecordKind::TemplateKnown.as_str()
-        } else {
-            ClientRecordKind::ObservedUnknown.as_str()
-        };
         let template_identifier = template.as_ref().map(|entry| entry.identifier.clone());
         let generated_id = crate::generate_id!("clnt");
 
         // Extract template configuration fields for persistence
-        let (config_format, protocol_revision, container_type, container_keys, storage_kind,
-             storage_adapter, storage_path_strategy, merge_strategy, keep_original_config,
-             managed_source, format_rules) = if let Some(ref tmpl) = template {
+        let (
+            config_format,
+            protocol_revision,
+            container_type,
+            container_keys,
+            storage_kind,
+            storage_adapter,
+            storage_path_strategy,
+            merge_strategy,
+            keep_original_config,
+            managed_source,
+            format_rules,
+            config_file_parse,
+        ) = if let Some(ref tmpl) = template {
             let config_format = Some(tmpl.format.as_str().to_string());
             let protocol_revision = tmpl.protocol_revision.clone();
-            let container_type = Some(match tmpl.config_mapping.container_type {
-                crate::clients::models::ContainerType::ObjectMap => "object",
-                crate::clients::models::ContainerType::Array => "array",
-            }.to_string());
+            let container_type = Some(
+                match tmpl.config_mapping.container_type {
+                    crate::clients::models::ContainerType::ObjectMap => "object",
+                    crate::clients::models::ContainerType::Array => "array",
+                }
+                .to_string(),
+            );
             let container_keys = serde_json::to_string(&tmpl.config_mapping.container_keys).ok();
-            let storage_kind = Some(match tmpl.storage.kind {
-                crate::clients::models::StorageKind::File => "file",
-                crate::clients::models::StorageKind::Kv => "kv",
-                crate::clients::models::StorageKind::Custom => "custom",
-            }.to_string());
+            let storage_kind = Some(
+                match tmpl.storage.kind {
+                    crate::clients::models::StorageKind::File => "file",
+                    crate::clients::models::StorageKind::Kv => "kv",
+                    crate::clients::models::StorageKind::Custom => "custom",
+                }
+                .to_string(),
+            );
             let storage_adapter = tmpl.storage.adapter.clone();
             let storage_path_strategy = tmpl.storage.path_strategy.clone();
-            let merge_strategy = Some(match tmpl.config_mapping.merge_strategy {
-                crate::clients::models::MergeStrategy::Replace => "replace",
-                crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
-            }.to_string());
-            let keep_original_config = Some(if tmpl.config_mapping.keep_original_config { 1_i64 } else { 0_i64 });
+            let merge_strategy = Some(
+                match tmpl.config_mapping.merge_strategy {
+                    crate::clients::models::MergeStrategy::Replace => "replace",
+                    crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
+                }
+                .to_string(),
+            );
+            let keep_original_config = Some(if tmpl.config_mapping.keep_original_config {
+                1_i64
+            } else {
+                0_i64
+            });
             let managed_source = tmpl.config_mapping.managed_source.clone();
             let format_rules = if tmpl.config_mapping.format_rules.is_empty() {
                 None
@@ -540,21 +559,32 @@ impl ClientConfigService {
                 serde_json::to_string(&tmpl.config_mapping.format_rules).ok()
             };
 
-            (config_format, protocol_revision, container_type, container_keys, storage_kind,
-             storage_adapter, storage_path_strategy, merge_strategy, keep_original_config,
-             managed_source, format_rules)
+            (
+                config_format,
+                protocol_revision,
+                container_type,
+                container_keys,
+                storage_kind,
+                storage_adapter,
+                storage_path_strategy,
+                merge_strategy,
+                keep_original_config,
+                managed_source,
+                format_rules,
+                None::<String>,
+            )
         } else {
-            (None, None, None, None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None, None, None, None, None)
         };
 
         let insert_result = sqlx::query(
             r#"
             INSERT INTO client (
                 id, name, display_name, identifier, config_path, managed, backup_policy, backup_limit,
-                approval_status, governance_kind, connection_mode, record_kind, template_identifier,
+                approval_status, governance_kind, connection_mode, template_identifier,
                 config_format, protocol_revision, container_type, container_keys,
                 storage_kind, storage_adapter, storage_path_strategy,
-                merge_strategy, keep_original_config, managed_source, format_rules
+                merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse
             )
             VALUES (?, ?, ?, ?, ?, ?, 'keep_n', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
@@ -568,7 +598,6 @@ impl ClientConfigService {
         .bind(approval_status)
         .bind(governance_kind.as_str())
         .bind(connection_mode)
-        .bind(record_kind)
         .bind(template_identifier)
         .bind(config_format)
         .bind(protocol_revision)
@@ -581,6 +610,7 @@ impl ClientConfigService {
         .bind(keep_original_config)
         .bind(managed_source)
         .bind(format_rules)
+        .bind(config_file_parse)
         .execute(&*self.db_pool)
         .await;
 

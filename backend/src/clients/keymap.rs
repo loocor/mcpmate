@@ -63,7 +63,7 @@ impl KeyMapRegistry {
         format_rules: &HashMap<String, crate::clients::models::FormatRule>,
     ) -> Vec<String> {
         let mut out = Vec::new();
-        for t in ["streamable_http", "stdio"] {
+        for t in ["streamable_http", "sse", "stdio"] {
             if self.has_rule(format_rules, t) {
                 out.push(t.to_string());
             }
@@ -74,9 +74,10 @@ impl KeyMapRegistry {
 
 static REGISTRY: Lazy<KeyMapRegistry> = Lazy::new(KeyMapRegistry::from_defaults);
 
-fn default_transport_aliases() -> [(&'static str, &'static [&'static str]); 2] {
+fn default_transport_aliases() -> [(&'static str, &'static [&'static str]); 3] {
     [
-        ("streamable_http", &["streamableHttp", "http", "HTTP", "sse", "SSE"]),
+        ("streamable_http", &["streamableHttp", "http", "HTTP"]),
+        ("sse", &["SSE", "sse"]),
         ("stdio", &["STDIO", "Stdio", "stdio"]),
     ]
 }
