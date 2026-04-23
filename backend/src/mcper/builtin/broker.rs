@@ -24,7 +24,11 @@ use crate::core::profile::visibility::ProfileVisibilityService;
 use crate::core::proxy::server::{ClientContext, ClientIdentitySource, ClientTransport};
 use crate::system::paths::PathService;
 
-use super::{ClientBuiltinContext, registry::BuiltinService};
+use super::{
+    ClientBuiltinContext,
+    names::{MCPMATE_UCAN_CALL_TOOL, MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL},
+    registry::BuiltinService,
+};
 
 /// Structured error response for UCAN tools, designed for LLM parsing and recovery.
 #[derive(Debug, Clone, Serialize)]
@@ -218,12 +222,13 @@ impl UcanError {
         Self {
             error_code: "unknown_tool".to_string(),
             message: format!("Unknown broker tool: {}", tool_name),
-            recovery_hint: "Available tools are: mcpmate_ucan_catalog, mcpmate_ucan_details, mcpmate_ucan_call."
-                .to_string(),
+            recovery_hint: format!(
+                "Available tools are: {MCPMATE_UCAN_CATALOG_TOOL}, {MCPMATE_UCAN_DETAILS_TOOL}, {MCPMATE_UCAN_CALL_TOOL}."
+            ),
             alternatives: vec![
-                "mcpmate_ucan_catalog".to_string(),
-                "mcpmate_ucan_details".to_string(),
-                "mcpmate_ucan_call".to_string(),
+                MCPMATE_UCAN_CATALOG_TOOL.to_string(),
+                MCPMATE_UCAN_DETAILS_TOOL.to_string(),
+                MCPMATE_UCAN_CALL_TOOL.to_string(),
             ],
             retry_eligible: false,
         }
@@ -2182,7 +2187,7 @@ impl BuiltinService for BrokerService {
         let prompt_config = UCAN_PROMPT_REPO.get_blocking();
         vec![
             Tool::new(
-                "mcpmate_ucan_catalog",
+                MCPMATE_UCAN_CATALOG_TOOL,
                 prompt_config.catalog_tool_description.clone(),
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -2220,7 +2225,7 @@ impl BuiltinService for BrokerService {
                 ),
             ),
             Tool::new(
-                "mcpmate_ucan_details",
+                MCPMATE_UCAN_DETAILS_TOOL,
                 prompt_config.details_tool_description.clone(),
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -2249,7 +2254,7 @@ impl BuiltinService for BrokerService {
                 ),
             ),
             Tool::new(
-                "mcpmate_ucan_call",
+                MCPMATE_UCAN_CALL_TOOL,
                 prompt_config.call_tool_description.clone(),
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -2299,7 +2304,7 @@ impl BuiltinService for BrokerService {
         };
 
         match request.name.as_ref() {
-            "mcpmate_ucan_catalog" => {
+            MCPMATE_UCAN_CATALOG_TOOL => {
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
                 match serde_json::from_value::<CatalogParams>(args) {
                     Ok(params) => {
@@ -2313,11 +2318,12 @@ impl BuiltinService for BrokerService {
                         .await
                     }
                     Err(e) => {
-                        Ok(UcanError::invalid_parameters("mcpmate_ucan_catalog", &e.to_string()).to_call_tool_result())
+                        Ok(UcanError::invalid_parameters(MCPMATE_UCAN_CATALOG_TOOL, &e.to_string())
+                            .to_call_tool_result())
                     }
                 }
             }
-            "mcpmate_ucan_details" => {
+            MCPMATE_UCAN_DETAILS_TOOL => {
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
                 match serde_json::from_value::<CapabilityLookupParams>(args) {
                     Ok(params) => {
@@ -2330,11 +2336,12 @@ impl BuiltinService for BrokerService {
                         .await
                     }
                     Err(e) => {
-                        Ok(UcanError::invalid_parameters("mcpmate_ucan_details", &e.to_string()).to_call_tool_result())
+                        Ok(UcanError::invalid_parameters(MCPMATE_UCAN_DETAILS_TOOL, &e.to_string())
+                            .to_call_tool_result())
                     }
                 }
             }
-            "mcpmate_ucan_call" => {
+            MCPMATE_UCAN_CALL_TOOL => {
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
                 match serde_json::from_value::<BrokerCapabilityCallParams>(args) {
                     Ok(params) => {
@@ -2347,7 +2354,7 @@ impl BuiltinService for BrokerService {
                         .await
                     }
                     Err(e) => {
-                        Ok(UcanError::invalid_parameters("mcpmate_ucan_call", &e.to_string()).to_call_tool_result())
+                        Ok(UcanError::invalid_parameters(MCPMATE_UCAN_CALL_TOOL, &e.to_string()).to_call_tool_result())
                     }
                 }
             }
@@ -2763,14 +2770,14 @@ mod tests {
     #[test]
     fn find_similar_names_returns_closest_matches() {
         let candidates = vec![
-            "mcpmate_ucan_catalog".to_string(),
-            "mcpmate_ucan_details".to_string(),
-            "mcpmate_ucan_call".to_string(),
+            super::MCPMATE_UCAN_CATALOG_TOOL.to_string(),
+            super::MCPMATE_UCAN_DETAILS_TOOL.to_string(),
+            super::MCPMATE_UCAN_CALL_TOOL.to_string(),
             "other_tool".to_string(),
         ];
         let result = find_similar_names("mcpmate_ucan_catlog", &candidates, 3);
         assert_eq!(result.len(), 3);
-        assert!(result.contains(&"mcpmate_ucan_catalog".to_string()));
+        assert!(result.contains(&super::MCPMATE_UCAN_CATALOG_TOOL.to_string()));
     }
 
     #[test]
@@ -2796,9 +2803,9 @@ mod tests {
     #[test]
     fn test_error_capability_not_found_includes_alternatives() {
         let catalog_names = vec![
-            "mcpmate_ucan_catalog".to_string(),
-            "mcpmate_ucan_details".to_string(),
-            "mcpmate_ucan_call".to_string(),
+            super::MCPMATE_UCAN_CATALOG_TOOL.to_string(),
+            super::MCPMATE_UCAN_DETAILS_TOOL.to_string(),
+            super::MCPMATE_UCAN_CALL_TOOL.to_string(),
         ];
         let error = UcanError::capability_not_found("tool", "mcpmate_ucan_catlog", &catalog_names);
 
@@ -2806,7 +2813,11 @@ mod tests {
         assert!(error.message.contains("Tool"));
         assert!(error.message.contains("mcpmate_ucan_catlog"));
         assert!(!error.alternatives.is_empty());
-        assert!(error.alternatives.contains(&"mcpmate_ucan_catalog".to_string()));
+        assert!(
+            error
+                .alternatives
+                .contains(&super::MCPMATE_UCAN_CATALOG_TOOL.to_string())
+        );
         assert!(!error.retry_eligible);
         assert!(error.recovery_hint.contains("alternatives"));
     }
@@ -2818,7 +2829,7 @@ mod tests {
 
         assert_eq!(error.error_code, "capability_not_found");
         assert!(error.alternatives.is_empty());
-        assert!(error.recovery_hint.contains("mcpmate_ucan_catalog"));
+        assert!(error.recovery_hint.contains(super::MCPMATE_UCAN_CATALOG_TOOL));
     }
 
     #[test]
@@ -2840,7 +2851,7 @@ mod tests {
         assert_eq!(error.error_code, "visibility_denied");
         assert!(error.message.contains("not available"));
         assert!(!error.retry_eligible);
-        assert!(error.recovery_hint.contains("mcpmate_ucan_catalog"));
+        assert!(error.recovery_hint.contains(super::MCPMATE_UCAN_CATALOG_TOOL));
     }
 
     #[test]
@@ -2896,10 +2907,10 @@ mod tests {
 
     #[test]
     fn test_error_context_required() {
-        let error = UcanError::context_required("mcpmate_ucan_catalog");
+        let error = UcanError::context_required(super::MCPMATE_UCAN_CATALOG_TOOL);
 
         assert_eq!(error.error_code, "context_required");
-        assert!(error.message.contains("mcpmate_ucan_catalog"));
+        assert!(error.message.contains(super::MCPMATE_UCAN_CATALOG_TOOL));
         assert!(!error.retry_eligible);
     }
 
@@ -2910,14 +2921,22 @@ mod tests {
         assert_eq!(error.error_code, "unknown_tool");
         assert!(error.message.contains("invalid_tool"));
         assert!(!error.retry_eligible);
-        assert!(error.alternatives.contains(&"mcpmate_ucan_catalog".to_string()));
-        assert!(error.alternatives.contains(&"mcpmate_ucan_details".to_string()));
-        assert!(error.alternatives.contains(&"mcpmate_ucan_call".to_string()));
+        assert!(
+            error
+                .alternatives
+                .contains(&super::MCPMATE_UCAN_CATALOG_TOOL.to_string())
+        );
+        assert!(
+            error
+                .alternatives
+                .contains(&super::MCPMATE_UCAN_DETAILS_TOOL.to_string())
+        );
+        assert!(error.alternatives.contains(&super::MCPMATE_UCAN_CALL_TOOL.to_string()));
     }
 
     #[test]
     fn test_error_invalid_parameters() {
-        let error = UcanError::invalid_parameters("mcpmate_ucan_call", "missing capability_kind");
+        let error = UcanError::invalid_parameters(super::MCPMATE_UCAN_CALL_TOOL, "missing capability_kind");
 
         assert_eq!(error.error_code, "invalid_parameters");
         assert!(error.message.contains("missing capability_kind"));
@@ -4131,7 +4150,11 @@ mod tests {
         assert!(tool_hints.iter().any(|hint| hint.contains("required arguments")));
 
         let prompt_hints = default_workflow_hints_prompt();
-        assert!(prompt_hints.iter().any(|hint| hint.contains("mcpmate_ucan_call")));
+        assert!(
+            prompt_hints
+                .iter()
+                .any(|hint| hint.contains(super::MCPMATE_UCAN_CALL_TOOL))
+        );
 
         let resource_hints = default_workflow_hints_resource();
         assert!(resource_hints[0].contains("without arguments"));

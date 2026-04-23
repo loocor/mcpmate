@@ -4,3 +4,5 @@
 //! into MCP protocol interfaces for client consumption.
 
 pub mod builtin;
+
+pub use builtin::names::*;
