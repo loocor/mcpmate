@@ -17,9 +17,9 @@ impl ClientConfigService {
             Some(state) => state,
             None => return Ok(()),
         };
-        let config_path = state.config_path().ok_or_else(|| {
-            ConfigError::PathResolutionError(format!("No config_path for client {}", identifier))
-        })?;
+        let config_path = state
+            .config_path()
+            .ok_or_else(|| ConfigError::PathResolutionError(format!("No config_path for client {}", identifier)))?;
         let storage = self.template_engine.storage_for_client(&state)?;
         let mut backups = storage.list_backups(identifier, config_path).await?;
 
@@ -68,9 +68,11 @@ impl ClientConfigService {
         identifier: Option<&str>,
     ) -> ConfigResult<Vec<ClientBackupRecord>> {
         let states = if let Some(id) = identifier {
-            vec![self.fetch_state(id).await?.ok_or_else(|| {
-                ConfigError::DataAccessError(format!("Client {} not found", id))
-            })?]
+            vec![
+                self.fetch_state(id)
+                    .await?
+                    .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} not found", id)))?,
+            ]
         } else {
             self.fetch_client_states().await?.into_values().collect()
         };
@@ -101,12 +103,13 @@ impl ClientConfigService {
         identifier: &str,
         backup: &str,
     ) -> ConfigResult<()> {
-        let state = self.fetch_state(identifier).await?.ok_or_else(|| {
-            ConfigError::DataAccessError(format!("Client {} not found", identifier))
-        })?;
-        let config_path = state.config_path().ok_or_else(|| {
-            ConfigError::PathResolutionError(format!("No config_path for client {}", identifier))
-        })?;
+        let state = self
+            .fetch_state(identifier)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} not found", identifier)))?;
+        let config_path = state
+            .config_path()
+            .ok_or_else(|| ConfigError::PathResolutionError(format!("No config_path for client {}", identifier)))?;
         let storage = self.template_engine.storage_for_client(&state)?;
         storage.delete_backup(identifier, config_path, backup).await
     }
@@ -116,12 +119,13 @@ impl ClientConfigService {
         identifier: &str,
         backup: &str,
     ) -> ConfigResult<Option<String>> {
-        let state = self.fetch_state(identifier).await?.ok_or_else(|| {
-            ConfigError::DataAccessError(format!("Client {} not found", identifier))
-        })?;
-        let config_path = state.config_path().ok_or_else(|| {
-            ConfigError::PathResolutionError(format!("No config_path for client {}", identifier))
-        })?;
+        let state = self
+            .fetch_state(identifier)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} not found", identifier)))?;
+        let config_path = state
+            .config_path()
+            .ok_or_else(|| ConfigError::PathResolutionError(format!("No config_path for client {}", identifier)))?;
         let storage = self.template_engine.storage_for_client(&state)?;
         let policy = self.get_backup_policy(identifier).await?;
         let restored = storage.restore_backup(identifier, config_path, backup, &policy).await?;

@@ -1,6 +1,6 @@
 use crate::clients::utils::get_nested_value;
 
-fn parse_to_json_value(
+pub fn parse_config_to_json_value(
     content: &str,
     format: Option<&str>,
 ) -> Option<serde_json::Value> {
@@ -31,7 +31,7 @@ pub fn analyze_config_content(
     let keys = container_keys;
     let is_array = is_array_container;
 
-    match parse_to_json_value(content, format) {
+    match parse_config_to_json_value(content, format) {
         Some(json) => {
             if is_array {
                 if let Some(arr) = json.as_array() {

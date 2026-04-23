@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use once_cell::sync::OnceCell;
 use sqlx::{Pool, Sqlite};
 
-use crate::core::capability::naming::{NamingKind, generate_unique_name};
+use crate::core::capability::naming::{NamingKind, generate_unique_name, strip_server_prefix};
 use std::sync::Arc;
 
 use crate::common::{capability::CapabilityToken, server::ServerType};
@@ -654,6 +654,78 @@ pub async fn store_dual_write(
     Ok(())
 }
 
+async fn normalize_seed_tool_name(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: Option<&str>,
+    incoming_tool_name: &str,
+) -> String {
+    let unique_lookup = crate::config::server::tools::get_server_tool_by_unique_name(pool, incoming_tool_name)
+        .await
+        .ok()
+        .flatten();
+
+    match unique_lookup {
+        Some(existing) if existing.server_id == server_id => existing.tool_name,
+        Some(_) => incoming_tool_name.to_string(),
+        None => {
+            if let Some(server_name) = server_name {
+                strip_server_prefix(NamingKind::Tool, server_name, incoming_tool_name)
+                    .unwrap_or_else(|| incoming_tool_name.to_string())
+            } else {
+                incoming_tool_name.to_string()
+            }
+        }
+    }
+}
+
+async fn profile_has_seed_tool(
+    pool: &Pool<Sqlite>,
+    profile_id: &str,
+    server_id: &str,
+    normalized_tool_name: &str,
+    incoming_tool_name: &str,
+) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM profile_tool pt
+            JOIN server_tools st ON st.id = pt.server_tool_id
+            WHERE pt.profile_id = ?
+              AND st.server_id = ?
+              AND (st.tool_name = ? OR st.unique_name = ?)
+        )
+        "#,
+    )
+    .bind(profile_id)
+    .bind(server_id)
+    .bind(normalized_tool_name)
+    .bind(incoming_tool_name)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false)
+}
+
+async fn profile_has_seed_capability(
+    pool: &Pool<Sqlite>,
+    profile_id: &str,
+    server_id: &str,
+    table: &str,
+    value_column: &str,
+    value: &str,
+) -> bool {
+    let query =
+        format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE profile_id = ? AND server_id = ? AND {value_column} = ?)");
+    sqlx::query_scalar::<_, bool>(&query)
+        .bind(profile_id)
+        .bind(server_id)
+        .bind(value)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false)
+}
+
 /// Seed active profiles with discovered capabilities (enabled=true by default).
 /// This honors the REDB-first + seed-profile rule on first-run so that API `/mcp/profile/*`
 /// endpoints are not empty immediately after initialization.
@@ -668,22 +740,67 @@ pub async fn seed_profiles_with_snapshot(
         return Ok(());
     }
 
+    let server_name = crate::config::operations::server::get_server_name_safe(pool, server_id)
+        .await
+        .ok();
+
     for profile in profiles {
         let Some(profile_id) = profile.id.as_deref() else {
             continue;
         };
 
-        // Tools
+        // Tools: only seed missing rows; never override existing user toggles.
         for t in &snapshot.tools {
-            let _ = crate::config::profile::add_tool_to_profile(pool, profile_id, server_id, &t.name, true).await;
+            let normalized_tool_name = normalize_seed_tool_name(pool, server_id, server_name.as_deref(), &t.name).await;
+            if !profile_has_seed_tool(pool, profile_id, server_id, &normalized_tool_name, &t.name).await {
+                let _ = crate::config::profile::add_tool_to_profile(
+                    pool,
+                    profile_id,
+                    server_id,
+                    &normalized_tool_name,
+                    true,
+                )
+                .await;
+            }
         }
-        // Resources
+        // Resources: only seed missing rows; never override existing user toggles.
         for r in &snapshot.resources {
-            let _ = crate::config::profile::add_resource_to_profile(pool, profile_id, server_id, &r.uri, true).await;
+            if !profile_has_seed_capability(pool, profile_id, server_id, "profile_resource", "resource_uri", &r.uri)
+                .await
+            {
+                let _ =
+                    crate::config::profile::add_resource_to_profile(pool, profile_id, server_id, &r.uri, true).await;
+            }
         }
-        // Prompts
+        // Prompts: only seed missing rows; never override existing user toggles.
         for p in &snapshot.prompts {
-            let _ = crate::config::profile::add_prompt_to_profile(pool, profile_id, server_id, &p.name, true).await;
+            if !profile_has_seed_capability(pool, profile_id, server_id, "profile_prompt", "prompt_name", &p.name).await
+            {
+                let _ = crate::config::profile::add_prompt_to_profile(pool, profile_id, server_id, &p.name, true).await;
+            }
+        }
+
+        // Resource templates: only seed missing rows; never override existing user toggles.
+        for t in &snapshot.resource_templates {
+            if !profile_has_seed_capability(
+                pool,
+                profile_id,
+                server_id,
+                "profile_resource_template",
+                "uri_template",
+                &t.uri_template,
+            )
+            .await
+            {
+                let _ = crate::config::profile::add_resource_template_to_profile(
+                    pool,
+                    profile_id,
+                    server_id,
+                    &t.uri_template,
+                    true,
+                )
+                .await;
+            }
         }
     }
     Ok(())

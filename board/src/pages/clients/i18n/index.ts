@@ -108,8 +108,6 @@ export const clientsTranslations = {
 			badges: {
 				managed: "Managed",
 				unmanaged: "Unmanaged",
-				detected: "Detected",
-				notDetected: "Not Detected",
 			},
 			tabs: {
 				overview: "Overview",
@@ -217,10 +215,47 @@ export const clientsTranslations = {
 						empty: "No transports found.",
 						description:
 							"Choose which runtime transports this client supports. This array is the only source used to constrain hosted/unify transport selection.",
+						validation: {
+							required: "Select at least one supported transport before saving.",
+						},
 						options: {
 							stdio: "STDIO",
 							streamableHttpLegacy: "Streamable HTTP",
 							sseLegacy: "SSE (Legacy)",
+						},
+					},
+					transportRules: {
+						label: "Transport Rules",
+						suggestedVariants: "Suggested variants",
+						empty: "Select at least one transport to edit its write rules.",
+						stdioDescription: "Define the field names used to write command-based MCP servers for this client.",
+						httpDescription: "Define the field names used to write URL-based MCP servers for this client.",
+						commandField: "Command Field",
+						argsField: "Args Field",
+						envField: "Env Field",
+						urlField: "URL Field",
+						headersField: "Headers Field",
+						includeType: "Include type field",
+						typeValue: "Type Value",
+						extraFields: "Extra Fields",
+						addExtraField: "Add field",
+						extraFieldKeyPlaceholder: "enabled",
+						extraFieldValuePlaceholder: 'true or "custom"',
+						presets: {
+							common: "Common",
+							withType: "With type",
+							zedStyle: "Zed-style",
+						},
+						help: {
+							summary: "These fields describe the target client's config keys, not MCPMate's own protocol fields.",
+							docs: "If you are unsure which keys a client expects, check that client's official documentation or an existing working config file first.",
+							presets: "Use the suggested variants below as a starting point, then verify the result against the client's real config structure.",
+							openDocs: "Open client documentation",
+						},
+						validation: {
+							commandRequired: "STDIO requires a command field.",
+							urlRequired: "HTTP-based transports require a URL field.",
+							typeValueRequired: "Type value is required when including the type field.",
 						},
 					},
 					fields: {
@@ -246,6 +281,51 @@ export const clientsTranslations = {
 							webPickInfoTitle: "Browser file access",
 							webPickInfoDescription:
 								"Your browser cannot read the absolute path automatically. Please paste it manually if needed.",
+						},
+						configFileParse: {
+							label: "Parse Rules",
+							formatLabel: "Config Format",
+							containerTypeLabel: "Container Type",
+							containerKeysLabel: "Config Nodes",
+							containerKeysPlaceholder: "mcpServers, context_servers",
+							showAdvanced: "Show details",
+							hideAdvanced: "Hide details",
+							validationTitle: "File association check",
+							validationSuccess: "The selected file matches the current parse rules.",
+							validationHint: "Pick a config file and MCPMate will validate whether these rules can find MCP server entries.",
+							detectedFormat: "Detected format",
+							containerMatch: "Container",
+							serverCount: "Servers",
+							matchYes: "Found",
+							matchNo: "Missing",
+							summaryViewButton: "Summary view",
+							codeViewButton: "Code preview",
+							keysRequired: "Add at least one config node path before saving parse rules.",
+							containerTypeOptions: {
+								standard: "Object Map",
+								array: "Array",
+							},
+							format: { label: "Format" },
+							containerType: { label: "Container Type" },
+							containerKeys: { label: "Container Keys (JSON Path)" },
+							validation: {
+								formatMatch: "Format matches",
+								formatMismatch: "Format mismatch",
+								containerFound: "Container found",
+								containerMissing: "Container missing",
+								serversDetected: "{{count}} server(s) detected",
+								noServers: "No servers detected",
+								checking: "Inspecting..."
+							},
+							preview: "Preview",
+							previewTitle: "Config Preview",
+							autoDetect: "Auto-Detect Rules",
+							applyDetected: "Apply Detected Rules"
+						},
+						formatRulesJsonText: {
+							label: "Format Rules (JSON)",
+							placeholder: "Paste JSON format rules here",
+							description: "Advanced: Fine-grained transport format rules as JSON. Leave empty to reset to defaults.",
 						},
 						logoUrl: { label: "Logo URL", placeholder: "https://example.com/logo.png" },
 						homepageUrl: { label: "Homepage URL", placeholder: "https://example.com" },
@@ -273,6 +353,7 @@ export const clientsTranslations = {
 							message:
 								"Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
 						},
+						formatRulesJsonParseError: "Failed to parse format rules JSON. Please check the syntax and try again.",
 						saveFailed: { title: "Unable to save client record" },
 						deleteFailed: {
 							title: "Unable to delete client record",
@@ -287,6 +368,10 @@ export const clientsTranslations = {
 					warnings: {
 						mixedRouting: "Mixed routing: splitting stateful workflows may cause issues.",
 					},
+				errors: {
+					customProfileMissing:
+						"The client-specific custom workspace is missing. Create it again before applying configuration.",
+				},
 				writeTargetRequiredReason:
 					"Applying governance to the client configuration requires a verified writable local MCP config file.",
 				applyRequiresApprovedReason:
@@ -751,8 +836,6 @@ export const clientsTranslations = {
 			badges: {
 				managed: "管理中",
 				unmanaged: "未管理",
-				detected: "已检测",
-				notDetected: "未检测",
 			},
 			tabs: {
 				overview: "概览",
@@ -856,10 +939,47 @@ export const clientsTranslations = {
 						placeholder: "选择支持的传输方式",
 						empty: "未找到传输方式。",
 						description: "选择该客户端支持的运行时传输方式。该数组会作为 hosted / unify 传输选择的唯一约束来源。",
+						validation: {
+							required: "保存前请至少选择一种支持的传输方式。",
+						},
 						options: {
 							stdio: "STDIO",
 							streamableHttpLegacy: "Streamable HTTP",
 							sseLegacy: "SSE（旧版兼容）",
+						},
+					},
+					transportRules: {
+						label: "传输规则",
+						suggestedVariants: "推荐变体",
+						empty: "请先选择至少一种传输方式，再编辑对应写入规则。",
+						stdioDescription: "定义该客户端写入命令型 MCP 服务器时使用的字段名。",
+						httpDescription: "定义该客户端写入 URL 型 MCP 服务器时使用的字段名。",
+						commandField: "命令字段",
+						argsField: "参数字段",
+						envField: "环境变量字段",
+						urlField: "URL 字段",
+						headersField: "请求头字段",
+						includeType: "写入 type 字段",
+						typeValue: "Type 值",
+						extraFields: "额外字段",
+						addExtraField: "添加字段",
+						extraFieldKeyPlaceholder: "enabled",
+						extraFieldValuePlaceholder: 'true 或 "custom"',
+						presets: {
+							common: "常用",
+							withType: "带 type",
+							zedStyle: "Zed 风格",
+						},
+						help: {
+							summary: "这些字段表示目标客户端配置里的键名，不是 MCPMate 自己的协议字段。",
+							docs: "如果不确定客户端期望哪些键，请优先查看该客户端官方文档，或参考一份已正常工作的现有配置。",
+							presets: "下方推荐变体可作为起点，但仍应根据该客户端的真实配置结构进行核对。",
+							openDocs: "打开客户端文档",
+						},
+						validation: {
+							commandRequired: "STDIO 必须指定命令字段。",
+							urlRequired: "HTTP 类传输必须指定 URL 字段。",
+							typeValueRequired: "启用 type 字段时必须填写对应的 type 值。",
 						},
 					},
 					fields: {
@@ -877,6 +997,51 @@ export const clientsTranslations = {
 							pickFailedTitle: "无法读取所选文件",
 							webPickInfoTitle: "浏览器文件访问",
 							webPickInfoDescription: "浏览器无法自动读取绝对路径，如有需要请手动粘贴。",
+						},
+						configFileParse: {
+							label: "解析规则",
+							formatLabel: "配置格式",
+							containerTypeLabel: "容器类型",
+							containerKeysLabel: "配置节点",
+							containerKeysPlaceholder: "mcpServers, context_servers",
+							showAdvanced: "显示详情",
+							hideAdvanced: "隐藏详情",
+							validationTitle: "文件关联检查",
+							validationSuccess: "所选文件与当前解析规则匹配。",
+							validationHint: "选择一个配置文件后，MCPMate 会验证这些规则是否能定位到 MCP server 条目。",
+							detectedFormat: "检测到的格式",
+							containerMatch: "容器",
+							serverCount: "服务器",
+							matchYes: "已找到",
+							matchNo: "缺失",
+							summaryViewButton: "摘要视图",
+							codeViewButton: "代码预览",
+							keysRequired: "保存解析规则前，至少添加一个配置节点路径。",
+							containerTypeOptions: {
+								standard: "对象映射",
+								array: "数组",
+							},
+							format: { label: "文件格式" },
+							containerType: { label: "容器类型" },
+							containerKeys: { label: "容器键名 (JSON Path)" },
+							validation: {
+								formatMatch: "格式匹配",
+								formatMismatch: "格式不匹配",
+								containerFound: "找到容器",
+								containerMissing: "未找到容器",
+								serversDetected: "检测到 {{count}} 个服务器",
+								noServers: "未检测到服务器",
+								checking: "检查中..."
+							},
+							preview: "预览",
+							previewTitle: "配置预览",
+							autoDetect: "自动检测规则",
+							applyDetected: "应用检测到的规则"
+						},
+						formatRulesJsonText: {
+							label: "格式规则（JSON）",
+							placeholder: "在此粘贴 JSON 格式规则",
+							description: "高级：为传输格式定义细粒度规则（JSON 格式）。留空将重置为默认值。",
 						},
 						logoUrl: { label: "Logo 地址", placeholder: "https://example.com/logo.png" },
 						homepageUrl: { label: "主页地址", placeholder: "https://example.com" },
@@ -902,6 +1067,7 @@ export const clientsTranslations = {
 						createBackupPolicyFailed: {
 							message: "客户端记录已创建，但初始化备份策略失败。你可以稍后在备份设置中重试。",
 						},
+						formatRulesJsonParseError: "格式规则 JSON 解析失败。请检查语法后重试。",
 						saveFailed: { title: "无法保存客户端记录" },
 						deleteFailed: {
 							title: "无法删除客户端记录",
@@ -915,6 +1081,9 @@ export const clientsTranslations = {
 					warnings: {
 						mixedRouting: "混合路由：若把有状态工作流拆成代理与直连调用，可能出现问题。",
 					},
+				errors: {
+					customProfileMissing: "该客户端的专属自定义工作区已缺失，请先重新创建后再应用配置。",
+				},
 				writeTargetRequiredReason: "要把治理配置真正应用到客户端配置文件，必须先确认一个已验证且可写的本地 MCP 配置文件。",
 				applyRequiresApprovedReason: "要把客户端配置真正应用落盘，必须先处于已允许治理状态，并且拥有一个已验证的本地配置目标。",
 				managementSettingsPendingReason: "请在该客户端结束待审批状态后再保存管理设置。",
@@ -1364,8 +1533,6 @@ export const clientsTranslations = {
 			badges: {
 				managed: "管理中",
 				unmanaged: "未管理",
-				detected: "検出済み",
-				notDetected: "未検出",
 			},
 			tabs: {
 				overview: "概要",
@@ -1471,10 +1638,47 @@ export const clientsTranslations = {
 						placeholder: "対応するトランスポートを選択",
 						empty: "トランスポートが見つかりません。",
 						description: "このクライアントが対応するランタイムトランスポートを選択します。この配列は hosted / unify のトランスポート選択を制約する唯一の情報源です。",
+						validation: {
+							required: "保存する前に、少なくとも 1 つの対応トランスポートを選択してください。",
+						},
 						options: {
 							stdio: "STDIO",
 							streamableHttpLegacy: "ストリーミング HTTP",
 							sseLegacy: "SSE（レガシー互換）",
+						},
+					},
+					transportRules: {
+						label: "トランスポートルール",
+						suggestedVariants: "推奨バリアント",
+						empty: "少なくとも 1 つのトランスポートを選択してから書き込みルールを編集してください。",
+						stdioDescription: "このクライアントへコマンド型 MCP サーバーを書き込む際のフィールド名を定義します。",
+						httpDescription: "このクライアントへ URL 型 MCP サーバーを書き込む際のフィールド名を定義します。",
+						commandField: "コマンドフィールド",
+						argsField: "引数フィールド",
+						envField: "環境変数フィールド",
+						urlField: "URL フィールド",
+						headersField: "ヘッダーフィールド",
+						includeType: "type フィールドを含める",
+						typeValue: "Type 値",
+						extraFields: "追加フィールド",
+						addExtraField: "フィールドを追加",
+						extraFieldKeyPlaceholder: "enabled",
+						extraFieldValuePlaceholder: 'true または "custom"',
+						presets: {
+							common: "一般的",
+							withType: "type 付き",
+							zedStyle: "Zed スタイル",
+						},
+						help: {
+							summary: "これらのフィールドは、MCPMate 自身のプロトコル項目ではなく、対象クライアント設定内のキー名を表します。",
+							docs: "クライアントが期待するキー名に迷った場合は、まずそのクライアントの公式ドキュメントまたは既存の正常な設定を確認してください。",
+							presets: "下の推奨バリアントは出発点として使えますが、最終的にはそのクライアントの実際の設定構造に合わせて確認してください。",
+							openDocs: "クライアントのドキュメントを開く",
+						},
+						validation: {
+							commandRequired: "STDIO では command フィールドが必要です。",
+							urlRequired: "HTTP 系トランスポートでは URL フィールドが必要です。",
+							typeValueRequired: "type フィールドを含める場合は type 値が必要です。",
 						},
 					},
 					fields: {
@@ -1492,6 +1696,51 @@ export const clientsTranslations = {
 							pickFailedTitle: "選択したファイルを読み取れませんでした",
 							webPickInfoTitle: "ブラウザのファイルアクセス",
 							webPickInfoDescription: "ブラウザは絶対パスを自動取得できません。必要なら手動で貼り付けてください。",
+						},
+						configFileParse: {
+							label: "解析ルール",
+							formatLabel: "設定フォーマット",
+							containerTypeLabel: "コンテナタイプ",
+							containerKeysLabel: "設定ノード",
+							containerKeysPlaceholder: "mcpServers, context_servers",
+							showAdvanced: "詳細を表示",
+							hideAdvanced: "詳細を非表示",
+							validationTitle: "ファイル関連付けチェック",
+							validationSuccess: "選択したファイルは現在の解析ルールに一致しています。",
+							validationHint: "設定ファイルを選択すると、MCPMate がこれらのルールで MCP server エントリを見つけられるか検証します。",
+							detectedFormat: "検出フォーマット",
+							containerMatch: "コンテナ",
+							serverCount: "サーバー",
+							matchYes: "見つかりました",
+							matchNo: "見つかりません",
+							summaryViewButton: "サマリー表示",
+							codeViewButton: "コードプレビュー",
+							keysRequired: "解析ルールを保存する前に、設定ノードパスを少なくとも1つ追加してください。",
+							containerTypeOptions: {
+								standard: "オブジェクトマップ",
+								array: "配列",
+							},
+							format: { label: "フォーマット" },
+							containerType: { label: "コンテナタイプ" },
+							containerKeys: { label: "コンテナキー (JSON Path)" },
+							validation: {
+								formatMatch: "フォーマット一致",
+								formatMismatch: "フォーマット不一致",
+								containerFound: "コンテナ検出",
+								containerMissing: "コンテナ未検出",
+								serversDetected: "{{count}}個のサーバーを検出",
+								noServers: "サーバー未検出",
+								checking: "検査中..."
+							},
+							preview: "プレビュー",
+							previewTitle: "設定プレビュー",
+							autoDetect: "ルール自動検出",
+							applyDetected: "検出ルールを適用"
+						},
+						formatRulesJsonText: {
+							label: "フォーマットルール（JSON）",
+							placeholder: "JSON フォーマットルールをここに貼り付けてください",
+							description: "高度な設定：トランスポート形式の細粒度ルールを JSON で定義します。空にするとデフォルト値にリセットされます。",
 						},
 						logoUrl: { label: "ロゴ URL", placeholder: "https://example.com/logo.png" },
 						homepageUrl: { label: "ホームページ URL", placeholder: "https://example.com" },
@@ -1518,6 +1767,7 @@ export const clientsTranslations = {
 							message:
 								"クライアントレコードは作成されましたが、初期バックアップポリシーの適用に失敗しました。後でバックアップ設定から再試行できます。",
 						},
+						formatRulesJsonParseError: "フォーマットルール JSON の解析に失敗しました。構文を確認して再度お試しください。",
 						saveFailed: { title: "クライアントレコードを保存できませんでした" },
 						deleteFailed: {
 							title: "クライアントレコードを削除できません",
@@ -1531,6 +1781,10 @@ export const clientsTranslations = {
 					warnings: {
 						mixedRouting: "混合ルーティング: ステートフルな手順を分割すると問題が起きる可能性があります。",
 					},
+				errors: {
+					customProfileMissing:
+						"このクライアント専用のカスタムワークスペースが見つかりません。設定を適用する前に再作成してください。",
+				},
 				writeTargetRequiredReason:
 					"クライアント設定ファイルへガバナンスを適用するには、検証済みで書き込み可能なローカル MCP 設定ファイルが必要です。",
 				applyRequiresApprovedReason:

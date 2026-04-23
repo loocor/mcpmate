@@ -76,6 +76,9 @@ pub struct ClientInfo {
     pub has_mcp_config: bool,
     #[schemars(description = "Supported MCP transport protocols")]
     pub supported_transports: Vec<String>,
+    #[schemars(description = "Persisted fine-grained transport rules for this client")]
+    #[serde(default)]
+    pub format_rules: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
     #[schemars(description = "Short description of the client application")]
     #[serde(default)]
     pub description: Option<String>,
@@ -90,7 +93,7 @@ pub struct ClientInfo {
     pub support_url: Option<String>,
     #[schemars(description = "Configuration management mode: unify, hosted, or transparent")]
     pub config_mode: Option<String>,
-    #[schemars(description = "Preferred or resolved transport: streamable_http|stdio")]
+    #[schemars(description = "Preferred or resolved transport: auto|streamable_http|sse|stdio")]
     #[serde(default)]
     pub transport: Option<String>,
     #[schemars(description = "Detected client version string")]
@@ -107,6 +110,9 @@ pub struct ClientInfo {
     #[schemars(description = "Client-private custom profile id when using custom mode")]
     #[serde(default)]
     pub custom_profile_id: Option<String>,
+    #[schemars(description = "Whether the current custom capability profile is missing or no longer resolvable")]
+    #[serde(default)]
+    pub custom_profile_missing: bool,
     #[schemars(description = "Format type of configuration file")]
     pub config_type: Option<ClientConfigType>,
     #[schemars(description = "ISO 8601 timestamp of last detection")]
@@ -120,9 +126,6 @@ pub struct ClientInfo {
     #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
     #[serde(default)]
     pub approval_status: Option<String>,
-    #[schemars(description = "Runtime record kind (template_known or observed_unknown)")]
-    #[serde(default)]
-    pub record_kind: Option<String>,
     #[schemars(description = "Runtime governance kind (passive or active)")]
     #[serde(default)]
     pub governance_kind: Option<String>,
@@ -135,15 +138,18 @@ pub struct ClientInfo {
     #[schemars(description = "Whether this client has a real writable local configuration target")]
     #[serde(default)]
     pub writable_config: bool,
-    #[schemars(description = "Template identifier bound to this client")]
-    #[serde(default)]
-    pub template_id: Option<String>,
-    #[schemars(description = "Whether the client has a known template")]
-    #[serde(default)]
-    pub template_known: bool,
     #[schemars(description = "Whether the client is pending approval")]
     #[serde(default)]
     pub pending_approval: bool,
+    #[schemars(description = "Effective config file parsing rules currently used for this client")]
+    #[serde(default)]
+    pub config_file_parse_effective: Option<ClientConfigFileParseData>,
+    #[schemars(description = "Client-specific config file parsing override, if any")]
+    #[serde(default)]
+    pub config_file_parse_override: Option<ClientConfigFileParseData>,
+    #[schemars(description = "Whether this client currently falls back to the stored default parsing rules")]
+    #[serde(default)]
+    pub uses_template_parse_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema, Default)]
@@ -341,6 +347,9 @@ pub struct ClientConfigData {
     pub template: ClientTemplateMetadata,
     #[schemars(description = "Supported transports derived from the template")]
     pub supported_transports: Vec<String>,
+    #[schemars(description = "Persisted fine-grained transport rules for this client")]
+    #[serde(default)]
+    pub format_rules: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
     #[schemars(description = "Whether MCPMate manages this client")]
     pub managed: bool,
     #[schemars(description = "Short description of the client application")]
@@ -367,12 +376,12 @@ pub struct ClientConfigData {
     #[schemars(description = "Client-private custom profile id when using custom mode")]
     #[serde(default)]
     pub custom_profile_id: Option<String>,
+    #[schemars(description = "Whether the current custom capability profile is missing or no longer resolvable")]
+    #[serde(default)]
+    pub custom_profile_missing: bool,
     #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
     #[serde(default)]
     pub approval_status: Option<String>,
-    #[schemars(description = "Runtime record kind (template_known or observed_unknown)")]
-    #[serde(default)]
-    pub record_kind: Option<String>,
     #[schemars(description = "Runtime governance kind (passive or active)")]
     #[serde(default)]
     pub governance_kind: Option<String>,
@@ -385,6 +394,15 @@ pub struct ClientConfigData {
     #[schemars(description = "Whether this client has a real writable local configuration target")]
     #[serde(default)]
     pub writable_config: bool,
+    #[schemars(description = "Effective config file parsing rules currently used for this client")]
+    #[serde(default)]
+    pub config_file_parse_effective: Option<ClientConfigFileParseData>,
+    #[schemars(description = "Client-specific config file parsing override, if any")]
+    #[serde(default)]
+    pub config_file_parse_override: Option<ClientConfigFileParseData>,
+    #[schemars(description = "Whether this client currently falls back to the stored default parsing rules")]
+    #[serde(default)]
+    pub uses_template_parse_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -451,6 +469,38 @@ pub struct ClientTemplateMetadata {
     #[schemars(description = "Support or community URL linked with the client template")]
     #[serde(default)]
     pub support_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[schemars(description = "Structured parsing rules for reading MCP servers from a client config file")]
+pub struct ClientConfigFileParseData {
+    #[schemars(description = "Config file format (json/json5/toml/yaml)")]
+    pub format: String,
+    #[schemars(description = "Container type used to store MCP server entries")]
+    pub container_type: ClientConfigType,
+    #[schemars(description = "Ordered dot-paths where MCP server entries may be stored")]
+    pub container_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[schemars(description = "Fine-grained transport format rule data")]
+pub struct ClientFormatRuleData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_field: Option<String>,
+    #[serde(default)]
+    pub include_type: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_fields: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -524,6 +574,64 @@ api_resp!(ClientManageResp, ClientManageData, "Client management toggle response
 api_resp!(ClientDeleteResp, ClientDeleteData, "Client deletion response");
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client config file parse rule inspection request")]
+pub struct ClientConfigFileParseInspectReq {
+    #[schemars(description = "Absolute or user-relative path to the client config file")]
+    pub config_path: String,
+    #[schemars(description = "Optional parse rule draft to validate against the selected file")]
+    #[serde(default)]
+    pub config_file_parse: Option<ClientConfigFileParseData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Stored-client config file parse rule inspection request")]
+pub struct ClientConfigFileParseInspectExistingReq {
+    #[schemars(description = "Client identifier whose stored config_path should be inspected")]
+    pub identifier: String,
+    #[schemars(description = "Optional parse rule draft to validate against the selected file")]
+    #[serde(default)]
+    pub config_file_parse: Option<ClientConfigFileParseData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Validation summary for a client config file parse rule")]
+pub struct ClientConfigFileParseValidationData {
+    pub matches: bool,
+    pub format_matches: bool,
+    pub container_found: bool,
+    pub server_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client config file parse inspection response body")]
+pub struct ClientConfigFileParseInspectData {
+    pub normalized_path: String,
+    #[serde(default)]
+    pub detected_format: Option<String>,
+    #[serde(default)]
+    pub inferred_parse: Option<ClientConfigFileParseData>,
+    #[serde(default)]
+    pub validation: Option<ClientConfigFileParseValidationData>,
+    #[serde(default)]
+    pub preview: serde_json::Value,
+    #[serde(default)]
+    pub preview_text: Option<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+api_resp!(
+    ClientConfigFileParseInspectResp,
+    ClientConfigFileParseInspectData,
+    "Client config file parse inspection response"
+);
+api_resp!(
+    ClientConfigFileParseInspectExistingResp,
+    ClientConfigFileParseInspectData,
+    "Stored client config file parse inspection response"
+);
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Client capability configuration payload")]
 pub struct ClientCapabilityConfigData {
     #[schemars(description = "Client identifier")]
@@ -536,6 +644,9 @@ pub struct ClientCapabilityConfigData {
     #[schemars(description = "Client-private custom profile id when using custom mode")]
     #[serde(default)]
     pub custom_profile_id: Option<String>,
+    #[schemars(description = "Whether the current custom capability profile is missing or no longer resolvable")]
+    #[serde(default)]
+    pub custom_profile_missing: bool,
     #[schemars(description = "Unify-only direct exposure state and diagnostics")]
     #[serde(default)]
     pub unify_direct_exposure: ClientUnifyDirectExposureData,
@@ -589,6 +700,20 @@ pub struct ClientSettingsUpdateReq {
     #[schemars(description = "Logo URL for the client application")]
     #[serde(default)]
     pub logo_url: Option<String>,
+    #[schemars(description = "Client-specific config file parsing override")]
+    #[serde(default)]
+    pub config_file_parse: Option<ClientConfigFileParseData>,
+    #[schemars(
+        description = "Clear any stored config file parsing override and fall back to the stored default rules"
+    )]
+    #[serde(default)]
+    pub clear_config_file_parse: bool,
+    #[schemars(description = "Fine-grained transport rules to persist for runtime rendering")]
+    #[serde(default)]
+    pub format_rules: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
+    #[schemars(description = "Clear persisted fine-grained transport rules")]
+    #[serde(default)]
+    pub clear_format_rules: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -608,6 +733,8 @@ pub struct ClientSettingsUpdateData {
     #[serde(default)]
     pub supported_transports: Vec<String>,
     #[serde(default)]
+    pub format_rules: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
+    #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
     pub homepage_url: Option<String>,
@@ -617,6 +744,12 @@ pub struct ClientSettingsUpdateData {
     pub support_url: Option<String>,
     #[serde(default)]
     pub logo_url: Option<String>,
+    #[serde(default)]
+    pub config_file_parse_effective: Option<ClientConfigFileParseData>,
+    #[serde(default)]
+    pub config_file_parse_override: Option<ClientConfigFileParseData>,
+    #[serde(default)]
+    pub uses_template_parse_default: bool,
     #[serde(default)]
     pub setting_sources: ClientSettingsSourceData,
 }

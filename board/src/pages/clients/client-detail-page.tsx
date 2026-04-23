@@ -70,6 +70,11 @@ import {
 } from "../../components/ui/tabs";
 import { auditApi, clientsApi, configSuitsApi, serversApi } from "../../lib/api";
 import { mapDashboardSettingsToClientBackupPolicy } from "../../lib/client-backup-policy";
+import {
+	applyClientConfigWithResolvedSelection,
+	buildClientApplySelectedConfig,
+	resolveClientConfigSyncErrorMessage,
+} from "../../lib/client-config-sync";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
@@ -81,7 +86,6 @@ import type {
 	ClientCapabilitySourceSelection,
 	ClientConfigImportData,
 	ClientConfigMode,
-	ClientConfigSelected,
 	ClientConfigUpdateData,
 	ClientInfo,
 	ConfigSuit,
@@ -264,7 +268,6 @@ export function ClientDetailPage() {
 	);
 	const [displayName, setDisplayName] = useState("");
 	const [selectedBackups, setSelectedBackups] = useState<string[]>([]);
-	const [detected, setDetected] = useState<boolean>(false);
 	const [isClientFormOpen, setIsClientFormOpen] = useState(false);
 	const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
 
@@ -310,7 +313,6 @@ export function ClientDetailPage() {
 		}
 		const isWritableConfig = currentClient.writable_config !== false;
 		setDisplayName(currentClient.display_name || "");
-		setDetected(!!currentClient.detected);
 		if (typeof currentClient.config_mode === "string") {
 			const configMode = currentClient.config_mode;
 			if (configMode === "unify") {
@@ -424,11 +426,26 @@ export function ClientDetailPage() {
 			capability_source: configDetails?.capability_source || "activated",
 			selected_profile_ids: configDetails?.selected_profile_ids || [],
 			custom_profile_id: configDetails?.custom_profile_id ?? null,
+			custom_profile_missing: configDetails?.custom_profile_missing ?? false,
 		};
-	}, [capabilityConfig, configDetails?.capability_source, configDetails?.custom_profile_id, configDetails?.selected_profile_ids, identifier]);
+	}, [
+		capabilityConfig,
+		configDetails?.capability_source,
+		configDetails?.custom_profile_id,
+		configDetails?.custom_profile_missing,
+		configDetails?.selected_profile_ids,
+		identifier,
+	]);
+
+	const customProfileMissing =
+		effectiveCapabilityConfig?.custom_profile_missing ??
+		configDetails?.custom_profile_missing ??
+		false;
 
 	const customProfileId =
-		effectiveCapabilityConfig?.custom_profile_id ?? configDetails?.custom_profile_id ?? null;
+		customProfileMissing
+			? null
+			: effectiveCapabilityConfig?.custom_profile_id ?? configDetails?.custom_profile_id ?? null;
 
 	useEffect(() => {
 		setHasUnifyDraftChanges(false);
@@ -1002,26 +1019,6 @@ export function ClientDetailPage() {
 			),
 	});
 
-	const buildApplySelectedConfig = (
-		capabilityData: ClientCapabilityConfigData,
-	): ClientConfigSelected => {
-		if (capabilityData.capability_source === "custom") {
-			if (!capabilityData.custom_profile_id) {
-				throw new Error(
-					t("detail.configuration.errors.customProfileMissing", {
-						defaultValue:
-							"The custom profile has not been provisioned yet. Save again and reopen the editor.",
-					}),
-				);
-			}
-			return { profile: { profile_id: capabilityData.custom_profile_id } };
-		}
-
-		// For "profiles" and "activated" modes, return "default" to let backend resolve
-		// from capability_config.selected_profile_ids (supports multi-profile merge)
-		return "default";
-	};
-
 	const renderProfileCapabilitySummary = (
 		capabilities: NonNullable<ReturnType<typeof profileCapabilities.get>>,
 	) => {
@@ -1258,13 +1255,15 @@ export function ClientDetailPage() {
 			}
 
 			const selectedConfigForManagedApply =
-				mode === "unify" ? "default" : buildApplySelectedConfig(capabilityData);
+				mode === "unify"
+					? "default"
+					: buildClientApplySelectedConfig(capabilityData);
 
 			if (shouldRequireLocalConfigWrite) {
 				const data = await clientsApi.applyConfig({
 					identifier,
 					mode,
-					selected_config: buildApplySelectedConfig(capabilityData),
+					selected_config: buildClientApplySelectedConfig(capabilityData),
 					preview,
 					backup_policy: preview
 						? undefined
@@ -1342,7 +1341,7 @@ export function ClientDetailPage() {
 				t("detail.notifications.applyFailed.title", {
 					defaultValue: "Apply failed",
 				}),
-				String(e),
+				resolveClientConfigSyncErrorMessage(e, t),
 			),
 	});
 
@@ -1407,7 +1406,6 @@ export function ClientDetailPage() {
 				if (f) {
 					if (typeof f.display_name === "string")
 						setDisplayName(f.display_name);
-					setDetected(!!f.detected);
 				}
 			}
 			await refetchDetails();
@@ -1650,11 +1648,6 @@ export function ClientDetailPage() {
 							{displayName || identifier}
 						</h2>
 
-						{configDetails?.record_kind === "observed_unknown" && (
-							<Badge variant="outline" className="bg-yellow-50 text-yellow-800 border-yellow-200 dark:bg-yellow-950 dark:text-yellow-200 dark:border-yellow-800">
-								{t("detail.badges.observedUnknown", { defaultValue: "Observed (Unknown)" })}
-							</Badge>
-						)}
 						{configDetails?.approval_status === "pending" && (
 							<Badge variant="outline" className="bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:border-blue-800">
 								{t("detail.badges.pendingReview", { defaultValue: "Pending Review" })}
@@ -1665,7 +1658,7 @@ export function ClientDetailPage() {
 								{t("detail.badges.rejected", { defaultValue: "Rejected" })}
 							</Badge>
 						)}
-						{/* Managed / Detected badges */}
+						{/* Managed status badge */}
 						{typeof configDetails?.managed === "boolean" ? (
 							<Badge variant={configDetails.managed ? "secondary" : "outline"}>
 								{configDetails.managed
@@ -1675,13 +1668,6 @@ export function ClientDetailPage() {
 									})}
 							</Badge>
 						) : null}
-						<Badge variant={detected ? "default" : "secondary"}>
-							{detected
-								? t("detail.badges.detected", { defaultValue: "Detected" })
-								: t("detail.badges.notDetected", {
-									defaultValue: "Not Detected",
-								})}
-						</Badge>
 					</div>
 					{detailDescription ? (
 						<p className="text-sm text-muted-foreground leading-snug w-full truncate">
@@ -1912,29 +1898,82 @@ export function ClientDetailPage() {
 														<Select
 															value={transport}
 															onValueChange={async (v) => {
+																if (!identifier) return;
+																const previousTransport = transport;
 																setTransport(v);
 																try {
 																	await clientsApi.update({
-																		identifier: identifier!,
+																		identifier,
 																		transport: v,
 																	});
+
+																	let configApplied = false;
+																	const shouldApplyManagedConfig =
+																		(mode === "hosted" || mode === "unify") &&
+																		canSyncManagedConfig;
+																	if (shouldApplyManagedConfig) {
+																		try {
+																			const capabilityData =
+																				(await clientsApi.getCapabilityConfig(identifier)) ??
+																				effectiveCapabilityConfig;
+																			if (!capabilityData) {
+																				throw new Error(
+																					t("detail.configuration.errors.capabilityConfigMissing", {
+																						defaultValue:
+																							"Capability configuration update returned no data. Please try again.",
+																					}),
+																				);
+																			}
+
+																			await applyClientConfigWithResolvedSelection({
+																				identifier,
+																				mode,
+																				backupPolicy:
+																					mapDashboardSettingsToClientBackupPolicy(
+																						dashboardSettings,
+																					),
+																				capabilityData,
+																			});
+																			configApplied = true;
+																		} catch (err) {
+																			notifyError(
+																				t("detail.notifications.applyFailed.title", {
+																					defaultValue: "Apply failed",
+																				}),
+																				resolveClientConfigSyncErrorMessage(err, t),
+																			);
+																		}
+																	}
+
 																	notifySuccess(
 																		t("detail.overview.transport.updated", {
 																			defaultValue: "Transport updated",
 																		}),
-																		"",
+																		configApplied
+																			? t("detail.notifications.applied.message", {
+																				defaultValue: "Configuration applied",
+																			})
+																			: "",
 																	);
-																	// refresh cache so list shows new transport immediately
-																	qc.invalidateQueries({
-																		queryKey: ["clients"],
-																	});
+																	await Promise.allSettled([
+																		qc.invalidateQueries({ queryKey: ["clients"] }),
+																		qc.invalidateQueries({
+																			queryKey: ["client-config", identifier],
+																		}),
+																		qc.invalidateQueries({
+																			queryKey: ["client-capability-config", identifier],
+																		}),
+																		refetchCapabilityConfig(),
+																		refetchDetails(),
+																	]);
 																} catch (err) {
+																	setTransport(previousTransport);
 																	notifyError(
 																		t(
 																			"detail.overview.transport.updateFailed",
 																			{ defaultValue: "Update failed" },
 																		),
-																		String(err),
+																		resolveClientConfigSyncErrorMessage(err, t),
 																	);
 																}
 															}}

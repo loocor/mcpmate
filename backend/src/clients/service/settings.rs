@@ -1,10 +1,12 @@
 use super::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, UnifyDirectExposureConfig,
-    UnifyDirectExposureDiagnostics, UnifyDirectPromptSurface, UnifyDirectPromptSurfaceDiagnostic,
-    UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface,
-    UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic,
+    CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
+    FormatRule,
+    UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectPromptSurface,
+    UnifyDirectPromptSurfaceDiagnostic, UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic,
+    UnifyDirectTemplateSurface, UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface,
+    UnifyDirectToolSurfaceDiagnostic,
 };
 use crate::clients::service::core::RuntimeClientMetadata;
 use crate::common::profile::{ProfileRole, ProfileType};
@@ -46,6 +48,10 @@ pub struct ActiveClientSettingsUpdate {
     pub support_url: Option<String>,
     pub logo_url: Option<String>,
     pub supported_transports: Option<Vec<String>>,
+    pub config_file_parse: Option<ClientConfigFileParse>,
+    pub clear_config_file_parse: bool,
+    pub format_rules: Option<HashMap<String, FormatRule>>,
+    pub clear_format_rules: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,9 +335,6 @@ impl ClientConfigService {
             )
             .await?;
         let requested_config_mode = update.config_mode.clone();
-        let should_persist_runtime_template = self
-            .should_persist_runtime_active_template(identifier, existing_state.as_ref())
-            .await?;
 
         let raw_config_path = update.config_path.as_deref().map(str::trim);
         let normalized_config_path = raw_config_path.filter(|value| !value.is_empty()).map(str::to_string);
@@ -349,6 +352,32 @@ impl ClientConfigService {
 
         self.validate_runtime_target_input(resolved_connection_mode.as_deref(), normalized_config_path.as_deref())
             .await?;
+
+        let effective_parse_for_validation = if let Some(parse) = update.config_file_parse.clone() {
+            Some(parse)
+        } else if update.clear_config_file_parse {
+            existing_state
+                .as_ref()
+                .and_then(|state| state.legacy_config_file_parse().ok().flatten())
+        } else {
+            existing_state
+                .as_ref()
+                .and_then(|state| state.config_file_parse_override().ok().flatten())
+                .or_else(|| {
+                    existing_state
+                        .as_ref()
+                        .and_then(|state| state.legacy_config_file_parse().ok().flatten())
+                })
+        };
+        let validation_path = normalized_config_path
+            .as_deref()
+            .or_else(|| existing_state.as_ref().and_then(|state| state.config_path()));
+
+        if matches!(resolved_connection_mode.as_deref(), Some("local_config_detected")) {
+            if let (Some(path), Some(parse)) = (validation_path, effective_parse_for_validation.as_ref()) {
+                self.validate_config_file_parse_rule(path, parse).await?;
+            }
+        }
 
         let (approval_status, approval_status_source): (String, &'static str) = existing_state
             .as_ref()
@@ -422,8 +451,18 @@ impl ClientConfigService {
             self.update_runtime_client_metadata(identifier, &next_metadata).await?;
         }
 
-        if should_persist_runtime_template {
-            self.persist_runtime_active_template(identifier).await?;
+        if update.clear_config_file_parse || update.config_file_parse.is_some() {
+            self.update_config_file_parse(
+                identifier,
+                update.config_file_parse.as_ref(),
+                update.clear_config_file_parse,
+            )
+            .await?;
+        }
+
+        if update.clear_format_rules || update.format_rules.is_some() {
+            self.update_format_rules(identifier, update.format_rules.as_ref(), update.clear_format_rules)
+                .await?;
         }
 
         let new_effective_mode = self
@@ -638,6 +677,113 @@ impl ClientConfigService {
         Ok(())
     }
 
+    async fn update_config_file_parse(
+        &self,
+        identifier: &str,
+        config_file_parse: Option<&ClientConfigFileParse>,
+        clear_override: bool,
+    ) -> ConfigResult<()> {
+        let existing_state = self.fetch_state(identifier).await?;
+        let serialized_override = if clear_override {
+            None
+        } else {
+            config_file_parse
+                .map(|value| serde_json::to_string(value).map_err(|err| ConfigError::DataAccessError(err.to_string())))
+                .transpose()?
+        };
+
+        let effective_parse = if let Some(value) = config_file_parse {
+            Some(value.clone())
+        } else if clear_override {
+            existing_state
+                .as_ref()
+                .and_then(|state| state.legacy_config_file_parse().ok().flatten())
+        } else {
+            None
+        };
+
+        let config_format = effective_parse.as_ref().map(|value| value.format.as_str().to_string());
+        let container_type = effective_parse.as_ref().map(|value| match value.container_type {
+            ContainerType::Array => "array".to_string(),
+            ContainerType::ObjectMap => "object".to_string(),
+        });
+        let container_keys = effective_parse
+            .as_ref()
+            .map(|value| {
+                serde_json::to_string(&value.container_keys)
+                    .map_err(|err| ConfigError::DataAccessError(err.to_string()))
+            })
+            .transpose()?;
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET config_file_parse = ?,
+                config_format = COALESCE(?, config_format),
+                container_type = COALESCE(?, container_type),
+                container_keys = COALESCE(?, container_keys),
+                governance_kind = 'active',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(serialized_override)
+        .bind(config_format)
+        .bind(container_type)
+        .bind(container_keys)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn update_format_rules(
+        &self,
+        identifier: &str,
+        format_rules: Option<&HashMap<String, FormatRule>>,
+        clear_override: bool,
+    ) -> ConfigResult<()> {
+        if clear_override {
+            sqlx::query(
+                r#"
+                UPDATE client
+                SET format_rules = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE identifier = ?
+                "#,
+            )
+            .bind(identifier)
+            .execute(&*self.db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+            return Ok(());
+        }
+
+        let Some(rules) = format_rules else {
+            return Ok(());
+        };
+
+        let serialized = serde_json::to_string(rules).map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET format_rules = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(serialized)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        Ok(())
+    }
+
     /// Get client settings (config_mode, transport, client_version)
     /// Returns None if client state not found
     pub async fn get_client_settings(
@@ -712,6 +858,12 @@ impl ClientConfigService {
         };
 
         let capability_config = state.capability_config()?;
+        let custom_profile_missing = self
+            .resolve_custom_profile_missing(
+                capability_config.capability_source,
+                capability_config.custom_profile_id.as_deref(),
+            )
+            .await?;
         let raw_unify_direct_exposure = state.unify_direct_exposure_config()?;
         let resolved = self
             .resolve_unify_direct_exposure_config(identifier, &capability_config, &raw_unify_direct_exposure)
@@ -719,6 +871,7 @@ impl ClientConfigService {
 
         Ok(Some(ClientCapabilityConfigState {
             capability_config,
+            custom_profile_missing,
             unify_direct_exposure: resolved.config,
             unify_direct_exposure_diagnostics: resolved.diagnostics,
         }))
@@ -899,6 +1052,9 @@ impl ClientConfigService {
             CapabilitySource::Activated | CapabilitySource::Profiles => None,
             CapabilitySource::Custom => Some(self.ensure_custom_profile(identifier).await?),
         };
+        let custom_profile_missing = self
+            .resolve_custom_profile_missing(capability_source, custom_profile_id.as_deref())
+            .await?;
         let selected_profile_ids_json = if selected_profile_ids.is_empty() {
             None
         } else {
@@ -1002,9 +1158,29 @@ impl ClientConfigService {
                 selected_profile_ids,
                 custom_profile_id,
             },
+            custom_profile_missing,
             unify_direct_exposure: resolved_unify_direct_exposure.config,
             unify_direct_exposure_diagnostics: resolved_unify_direct_exposure.diagnostics,
         })
+    }
+
+    async fn resolve_custom_profile_missing(
+        &self,
+        capability_source: CapabilitySource,
+        custom_profile_id: Option<&str>,
+    ) -> ConfigResult<bool> {
+        if capability_source != CapabilitySource::Custom {
+            return Ok(false);
+        }
+
+        let Some(profile_id) = custom_profile_id.filter(|value| !value.trim().is_empty()) else {
+            return Ok(true);
+        };
+
+        Ok(crate::config::profile::get_profile(self.db_pool.as_ref(), profile_id)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
+            .is_none())
     }
 
     async fn resolve_unify_direct_exposure_config(

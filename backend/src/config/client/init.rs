@@ -9,7 +9,6 @@ const DEFAULT_BACKUP_LIMIT: i64 = 5;
 const DEFAULT_CAPABILITY_SOURCE: &str = "activated";
 const DEFAULT_CONNECTION_MODE: &str = "local_config_detected";
 const DEFAULT_GOVERNANCE_KIND: &str = "passive";
-const DEFAULT_RECORD_KIND: &str = "template_known";
 pub(crate) const CLIENT_RUNTIME_SETTINGS_TABLE: &str = "client_runtime_settings";
 pub(crate) const CLIENT_TEMPLATE_RUNTIME_TABLE: &str = "client_template_runtime";
 pub(crate) const FIRST_CONTACT_BEHAVIOR_SETTING_KEY: &str = "first_contact_behavior";
@@ -35,9 +34,9 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
             -- Management mode: unify|hosted|transparent; NULL means use default mode
             config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
-            -- Transport protocol: auto|stdio|streamable_http (default: auto)
+            -- Transport protocol: auto|sse|stdio|streamable_http (default: auto)
             transport TEXT NOT NULL DEFAULT 'auto' CHECK (
-                transport IN ('auto', 'stdio', 'streamable_http')
+                transport IN ('auto', 'sse', 'stdio', 'streamable_http')
             ),
             -- Client version string (optional)
             client_version TEXT,
@@ -53,9 +52,6 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             ),
             connection_mode TEXT NOT NULL DEFAULT '{default_connection_mode}' CHECK (
                 connection_mode IN ('local_config_detected', 'remote_http', 'manual')
-            ),
-            record_kind TEXT NOT NULL DEFAULT '{default_record_kind}' CHECK (
-                record_kind IN ('template_known', 'observed_unknown')
             ),
             template_identifier TEXT,
             selected_profile_ids TEXT,
@@ -78,7 +74,6 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         default_capability_source = DEFAULT_CAPABILITY_SOURCE,
         default_governance_kind = DEFAULT_GOVERNANCE_KIND,
         default_connection_mode = DEFAULT_CONNECTION_MODE,
-        default_record_kind = DEFAULT_RECORD_KIND,
     ))
     .execute(pool)
     .await
@@ -124,13 +119,6 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         "TEXT NOT NULL DEFAULT 'local_config_detected' CHECK (connection_mode IN ('local_config_detected', 'remote_http', 'manual'))",
     )
     .await?;
-    ensure_column(
-        pool,
-        tables::CLIENT,
-        "record_kind",
-        "TEXT NOT NULL DEFAULT 'template_known' CHECK (record_kind IN ('template_known', 'observed_unknown'))",
-    )
-    .await?;
     ensure_column(pool, tables::CLIENT, "template_identifier", "TEXT").await?;
     sqlx::query(&format!(
         r#"
@@ -173,6 +161,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     ensure_column(pool, tables::CLIENT, "keep_original_config", "INTEGER").await?;
     ensure_column(pool, tables::CLIENT, "managed_source", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "format_rules", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "config_file_parse", "TEXT").await?;
 
     sqlx::query(&format!(
         r#"
@@ -275,18 +264,6 @@ WHEN backup_limit IS NOT NULL AND backup_limit <> {default_backup_limit} THEN 'a
     })?;
 
     sqlx::query(&format!(
-        "UPDATE {table} SET record_kind = ? WHERE record_kind IS NULL OR record_kind = ''",
-        table = tables::CLIENT
-    ))
-    .bind(DEFAULT_RECORD_KIND)
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to backfill {} record_kind: {}", tables::CLIENT, e);
-        anyhow::anyhow!("Failed to backfill {} record_kind: {}", tables::CLIENT, e)
-    })?;
-
-    sqlx::query(&format!(
         "UPDATE {table} SET template_identifier = identifier WHERE template_identifier IS NULL OR template_identifier = ''",
         table = tables::CLIENT
     ))
@@ -308,6 +285,8 @@ WHEN backup_limit IS NOT NULL AND backup_limit <> {default_backup_limit} THEN 'a
         tracing::error!("Failed to backfill {} connection_mode: {}", tables::CLIENT, e);
         anyhow::anyhow!("Failed to backfill {} connection_mode: {}", tables::CLIENT, e)
     })?;
+
+    migrate_client_table_for_sse_transport(pool).await?;
 
     tracing::debug!("{} table initialized", tables::CLIENT);
     Ok(())
@@ -393,7 +372,7 @@ async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> R
                 managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
                 config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
                 transport TEXT NOT NULL DEFAULT 'auto' CHECK (
-                    transport IN ('auto', 'stdio', 'streamable_http')
+                    transport IN ('auto', 'sse', 'stdio', 'streamable_http')
                 ),
                 client_version TEXT,
                 backup_policy TEXT NOT NULL DEFAULT '{default_policy}' CHECK (
@@ -451,6 +430,152 @@ async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> R
 
         tx.commit().await?;
 
+        Ok::<(), sqlx::Error>(())
+    }
+    .await;
+
+    match migration_result {
+        Ok(()) => Ok(()),
+        Err(error) => Err(anyhow::anyhow!(error)),
+    }
+}
+
+async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<()> {
+    let create_sql: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='{}'",
+        tables::CLIENT
+    ))
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(create_sql) = create_sql else {
+        return Ok(());
+    };
+
+    if !create_sql.contains("transport IN ('auto', 'stdio', 'streamable_http')") {
+        return Ok(());
+    }
+
+    tracing::info!("Migrating {} transport constraint to include sse", tables::CLIENT);
+
+    let migration_result = async {
+        let mut tx = pool.begin().await?;
+        let temp_table = format!("{}_transport_with_sse", tables::CLIENT);
+
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE {temp_table} (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                display_name TEXT,
+                identifier TEXT NOT NULL UNIQUE,
+                config_path TEXT,
+                managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
+                config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
+                transport TEXT NOT NULL DEFAULT 'auto' CHECK (
+                    transport IN ('auto', 'sse', 'stdio', 'streamable_http')
+                ),
+                client_version TEXT,
+                backup_policy TEXT NOT NULL DEFAULT '{default_policy}' CHECK (
+                    backup_policy IN ('keep_last', 'keep_n', 'off')
+                ),
+                backup_limit INTEGER DEFAULT {default_backup_limit},
+                capability_source TEXT NOT NULL DEFAULT '{default_capability_source}' CHECK (
+                    capability_source IN ('activated', 'profiles', 'custom')
+                ),
+                governance_kind TEXT NOT NULL DEFAULT '{default_governance_kind}' CHECK (
+                    governance_kind IN ('passive', 'active')
+                ),
+                connection_mode TEXT NOT NULL DEFAULT '{default_connection_mode}' CHECK (
+                    connection_mode IN ('local_config_detected', 'remote_http', 'manual')
+                ),
+                template_identifier TEXT,
+                selected_profile_ids TEXT,
+                custom_profile_id TEXT,
+                unify_route_mode TEXT NOT NULL DEFAULT 'broker_only' CHECK (
+                    unify_route_mode IN ('broker_only', 'server_live', 'capability_level')
+                ),
+                unify_selected_server_ids TEXT,
+                unify_selected_tool_surfaces TEXT,
+                unify_selected_prompt_surfaces TEXT,
+                unify_selected_resource_surfaces TEXT,
+                unify_selected_template_surfaces TEXT,
+                approval_status TEXT NOT NULL DEFAULT 'approved' CHECK (
+                    approval_status IN ('pending', 'approved', 'suspended', 'rejected')
+                ),
+                template_id TEXT,
+                template_version TEXT,
+                approval_metadata TEXT,
+                config_format TEXT,
+                protocol_revision TEXT,
+                container_type TEXT,
+                container_keys TEXT,
+                storage_kind TEXT,
+                storage_adapter TEXT,
+                storage_path_strategy TEXT,
+                merge_strategy TEXT,
+                keep_original_config INTEGER,
+                managed_source TEXT,
+                format_rules TEXT,
+                config_file_parse TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+            temp_table = temp_table,
+            default_policy = DEFAULT_BACKUP_POLICY,
+            default_backup_limit = DEFAULT_BACKUP_LIMIT,
+            default_capability_source = DEFAULT_CAPABILITY_SOURCE,
+            default_governance_kind = DEFAULT_GOVERNANCE_KIND,
+            default_connection_mode = DEFAULT_CONNECTION_MODE,
+        ))
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!(
+            r#"
+            INSERT INTO {temp_table} (
+                id, name, display_name, identifier, config_path, managed, config_mode, transport,
+                client_version, backup_policy, backup_limit, capability_source, governance_kind,
+                connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
+                unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces,
+                unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces,
+                approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
+                container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
+                merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse,
+                created_at, updated_at
+            )
+            SELECT
+                id, name, display_name, identifier, config_path, managed, config_mode, transport,
+                client_version, backup_policy, backup_limit, capability_source, governance_kind,
+                connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
+                unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces,
+                unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces,
+                approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
+                container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
+                merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse,
+                created_at, updated_at
+            FROM {table}
+            "#,
+            temp_table = temp_table,
+            table = tables::CLIENT,
+        ))
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(&format!("DROP TABLE {table}", table = tables::CLIENT))
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(&format!(
+            "ALTER TABLE {temp_table} RENAME TO {table}",
+            temp_table = temp_table,
+            table = tables::CLIENT,
+        ))
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
         Ok::<(), sqlx::Error>(())
     }
     .await;
