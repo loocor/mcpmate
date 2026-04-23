@@ -2,8 +2,57 @@ use super::core::{ApplyOutcome, ClientConfigService, ClientRenderOptions, Client
 use crate::clients::TemplateExecutionResult;
 use crate::clients::engine::RenderRequest;
 use crate::clients::error::{ConfigError, ConfigResult};
+use crate::clients::models::FormatRule;
 use crate::clients::models::{ConfigMode, TemplateFormat};
+use std::collections::HashMap;
 use std::collections::HashSet;
+
+fn normalize_transport(transport: &str) -> Option<&'static str> {
+    match transport.trim().to_ascii_lowercase().as_str() {
+        "streamable_http" | "streamablehttp" | "http" => Some("streamable_http"),
+        "sse" => Some("sse"),
+        "stdio" => Some("stdio"),
+        _ => None,
+    }
+}
+
+fn available_managed_transports(
+    format_rules: Option<&HashMap<String, FormatRule>>,
+    supported_transports: &[String],
+) -> Vec<&'static str> {
+    let Some(rules) = format_rules else {
+        return Vec::new();
+    };
+
+    let keymap = crate::clients::keymap::registry();
+    let supported_set: HashSet<&'static str> = supported_transports
+        .iter()
+        .filter_map(|transport| normalize_transport(transport))
+        .collect();
+    let mut transports = Vec::new();
+
+    for transport in ["streamable_http", "sse", "stdio"] {
+        if supported_set.contains(transport) && keymap.has_rule(rules, transport) {
+            transports.push(transport);
+        }
+    }
+
+    transports
+}
+
+fn select_managed_transport(
+    configured_transport: &str,
+    supported_transports: &[&'static str],
+) -> (Option<String>, bool) {
+    if configured_transport != "auto" && supported_transports.contains(&configured_transport) {
+        return (Some(configured_transport.to_string()), false);
+    }
+
+    let chosen_transport = supported_transports.first().map(|transport| (*transport).to_string());
+    let auto_selected = configured_transport == "auto" && chosen_transport.is_some();
+
+    (chosen_transport, auto_selected)
+}
 
 impl ClientConfigService {
     /// Execute configuration generation (dry-run or apply)
@@ -27,13 +76,14 @@ impl ClientConfigService {
         }
 
         // Get client state for configuration metadata
-        let state = self.fetch_state(&options.client_id).await?
-            .ok_or_else(|| ConfigError::DataAccessError(format!(
-                "Client state not found: {}", options.client_id
-            )))?;
-        let format_rules = state.format_rules()?
-            .and_then(|v| serde_json::from_value::<std::collections::HashMap<String, crate::clients::models::FormatRule>>(v).ok());
-        
+        let state = self
+            .fetch_state(&options.client_id)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Client state not found: {}", options.client_id)))?;
+        let render_definition = Self::build_render_definition_from_state(&state)?;
+        let format_rules = (!render_definition.config_mapping.format_rules.is_empty())
+            .then(|| render_definition.config_mapping.format_rules.clone());
+
         // Validate format_rules exists for Managed mode
         if matches!(options.mode, ConfigMode::Managed) && format_rules.is_none() {
             return Err(ConfigError::DataAccessError(format!(
@@ -46,43 +96,16 @@ impl ClientConfigService {
         let mut chosen_transport: Option<String> = None;
         let mut auto_selected = false;
         if matches!(options.mode, ConfigMode::Managed) {
-            // load client settings
+            let supported_transports = available_managed_transports(
+                format_rules.as_ref(),
+                &state.runtime_client_metadata().supported_transports,
+            );
+
             if let Some((_, transport, _)) = self.get_client_settings(&options.client_id).await.unwrap_or(None) {
-                let supported = {
-                    let keymap = crate::clients::keymap::registry();
-                    let mut list: Vec<&'static str> = Vec::new();
-                    if let Some(ref rules) = format_rules {
-                        for t in ["streamable_http", "stdio"] {
-                            if keymap.has_rule(rules, t) {
-                                list.push(t);
-                            }
-                        }
-                    }
-                    list
-                };
-                // Check if transport is explicitly set (not "auto")
-                if transport != "auto" && supported.contains(&transport.as_str()) {
-                    chosen_transport = Some(transport.clone());
-                }
-                // If still not chosen (either "auto" or unsupported), auto-select
-                if chosen_transport.is_none() {
-                    if let Some(t) = supported.into_iter().next() {
-                        chosen_transport = Some(t.to_string());
-                        auto_selected = transport == "auto";
-                    }
-                }
+                (chosen_transport, auto_selected) = select_managed_transport(&transport, &supported_transports);
             } else {
-                // No settings row yet: pick by priority
-                let keymap = crate::clients::keymap::registry();
-                if let Some(ref rules) = format_rules {
-                    for t in ["streamable_http", "stdio"] {
-                        if keymap.has_rule(rules, t) {
-                            chosen_transport = Some(t.to_string());
-                            auto_selected = true;
-                            break;
-                        }
-                    }
-                }
+                chosen_transport = supported_transports.first().map(|transport| (*transport).to_string());
+                auto_selected = chosen_transport.is_some();
             }
         }
         let mut servers = self.prepare_servers(&options).await?;
@@ -90,7 +113,7 @@ impl ClientConfigService {
 
         if matches!(options.mode, ConfigMode::Native) {
             if let Some(ref rules) = format_rules {
-                let supported: HashSet<String> = rules.keys().cloned().collect();
+                let supported: HashSet<String> = rules.keys().map(|transport| transport.to_string()).collect();
                 let before = servers.len();
                 servers.retain(|server| supported.contains(&server.transport));
                 if before != servers.len() {
@@ -105,10 +128,15 @@ impl ClientConfigService {
         }
 
         let mut warnings = Vec::new();
+        let config_path = self.resolved_config_path(&options.client_id).await?.ok_or_else(|| {
+            ConfigError::PathResolutionError(format!("No config_path for client {}", options.client_id))
+        })?;
         let request = RenderRequest {
             client_id: &options.client_id,
             servers: &servers,
             mode: options.mode.clone(),
+            definition: &render_definition,
+            config_path: &config_path,
             profile_id: options.profile_id.as_deref(),
             dry_run: options.dry_run,
             backup_policy: &backup_policy,

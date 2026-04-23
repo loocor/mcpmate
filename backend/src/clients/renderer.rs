@@ -1,5 +1,5 @@
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::{ClientTemplate, ContainerType, MergeStrategy, TemplateFormat};
+use crate::clients::models::{ClientRenderDefinition, ContainerType, MergeStrategy, TemplateFormat};
 use crate::clients::utils::{get_nested_value, set_nested_value};
 use json5;
 use serde_json::{Map, Value};
@@ -23,7 +23,7 @@ pub trait ConfigRenderer: Send + Sync {
         &self,
         base: &str,
         patch: &Value,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
     ) -> ConfigResult<String>;
 
     fn diff(
@@ -91,14 +91,14 @@ impl StructuredRenderer {
         &self,
         base: Value,
         patch: &Value,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
     ) -> Value {
-        let chosen_path = choose_container_path(&base, template);
-        match template.config_mapping.container_type {
+        let chosen_path = choose_container_path(&base, definition);
+        match definition.config_mapping.container_type {
             ContainerType::Array => {
-                self.merge_array_at_path(base, patch, &chosen_path, template.config_mapping.merge_strategy)
+                self.merge_array_at_path(base, patch, &chosen_path, definition.config_mapping.merge_strategy)
             }
-            ContainerType::ObjectMap => self.merge_object_at_path(base, patch, &chosen_path, template),
+            ContainerType::ObjectMap => self.merge_object_at_path(base, patch, &chosen_path, definition),
         }
     }
 
@@ -107,7 +107,7 @@ impl StructuredRenderer {
         base: Value,
         patch: &Value,
         path: &str,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
     ) -> Value {
         let mut root = match base {
             Value::Object(map) => Value::Object(map),
@@ -116,7 +116,7 @@ impl StructuredRenderer {
         };
 
         let existing = get_nested_value(&root, path).cloned();
-        let fragment = match template.config_mapping.merge_strategy {
+        let fragment = match definition.config_mapping.merge_strategy {
             MergeStrategy::Replace => patch.clone(),
             MergeStrategy::DeepMerge => {
                 let base_fragment = existing.unwrap_or_else(|| Value::Object(Map::new()));
@@ -153,14 +153,14 @@ impl StructuredRenderer {
 
 fn choose_container_path(
     base: &Value,
-    template: &ClientTemplate,
+    definition: &ClientRenderDefinition,
 ) -> String {
-    let type_is_ok = |v: &Value| match template.config_mapping.container_type {
+    let type_is_ok = |v: &Value| match definition.config_mapping.container_type {
         ContainerType::ObjectMap => v.is_object(),
         ContainerType::Array => v.is_array(),
     };
 
-    for key in &template.config_mapping.container_keys {
+    for key in &definition.config_mapping.container_keys {
         if let Some(v) = get_nested_value(base, key) {
             if type_is_ok(v) {
                 return key.clone();
@@ -168,7 +168,7 @@ fn choose_container_path(
         }
     }
     // default to first key or empty
-    template
+    definition
         .config_mapping
         .container_keys
         .first()
@@ -185,10 +185,10 @@ impl ConfigRenderer for StructuredRenderer {
         &self,
         base: &str,
         patch: &Value,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
     ) -> ConfigResult<String> {
         let base_value = self.parse(base)?;
-        let merged = self.merge_values(base_value, patch, template);
+        let merged = self.merge_values(base_value, patch, definition);
         self.serialize(&merged)
     }
 

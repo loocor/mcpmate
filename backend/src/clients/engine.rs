@@ -1,6 +1,7 @@
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    BackupPolicySetting, ClientTemplate, ConfigMode, ContainerType, ServerTemplateInput, StorageKind, TemplateFormat,
+    BackupPolicySetting, ClientRenderDefinition, ConfigMode, ContainerType, ServerTemplateInput, StorageKind,
+    TemplateFormat,
 };
 use crate::clients::renderer::{ConfigDiff, DynConfigRenderer};
 use crate::clients::source::ClientConfigSource;
@@ -33,6 +34,8 @@ pub struct RenderRequest<'a> {
     pub client_id: &'a str,
     pub servers: &'a [ServerTemplateInput],
     pub mode: ConfigMode,
+    pub definition: &'a ClientRenderDefinition,
+    pub config_path: &'a str,
     pub profile_id: Option<&'a str>,
     pub dry_run: bool,
     pub backup_policy: &'a BackupPolicySetting,
@@ -102,34 +105,30 @@ impl TemplateEngine {
 
     fn resolve_renderer(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
     ) -> ConfigResult<DynConfigRenderer> {
         self.renderers
-            .get(&template.format)
+            .get(&definition.format)
             .cloned()
-            .ok_or_else(|| ConfigError::RendererMissing(template.format.as_str().to_string()))
+            .ok_or_else(|| ConfigError::RendererMissing(definition.format.as_str().to_string()))
     }
 
     fn resolve_storage(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
     ) -> ConfigResult<DynConfigStorage> {
-        match template.storage.kind {
+        match definition.storage.kind {
             StorageKind::File => self
                 .storages
-                .get(&template.storage.kind)
+                .get(&definition.storage.kind)
                 .cloned()
                 .ok_or_else(|| ConfigError::StorageAdapterMissing("file".into())),
-            StorageKind::Kv => {
-                Err(ConfigError::StorageAdapterMissing(
-                    "kv storage is no longer supported".into(),
-                ))
-            }
-            StorageKind::Custom => {
-                Err(ConfigError::StorageAdapterMissing(
-                    "custom storage is no longer supported".into(),
-                ))
-            }
+            StorageKind::Kv => Err(ConfigError::StorageAdapterMissing(
+                "kv storage is no longer supported".into(),
+            )),
+            StorageKind::Custom => Err(ConfigError::StorageAdapterMissing(
+                "custom storage is no longer supported".into(),
+            )),
         }
     }
 
@@ -142,9 +141,7 @@ impl TemplateEngine {
             Some(kind) => kind,
             None if state.has_local_config_target() => "file",
             None => {
-                return Err(ConfigError::StorageAdapterMissing(
-                    "storage_kind not set".into(),
-                ));
+                return Err(ConfigError::StorageAdapterMissing("storage_kind not set".into()));
             }
         };
 
@@ -154,16 +151,12 @@ impl TemplateEngine {
                 .get(&StorageKind::File)
                 .cloned()
                 .ok_or_else(|| ConfigError::StorageAdapterMissing("file".into())),
-            "kv" => {
-                Err(ConfigError::StorageAdapterMissing(
-                    "kv storage is no longer supported".into(),
-                ))
-            }
-            "custom" => {
-                Err(ConfigError::StorageAdapterMissing(
-                    "custom storage is no longer supported".into(),
-                ))
-            }
+            "kv" => Err(ConfigError::StorageAdapterMissing(
+                "kv storage is no longer supported".into(),
+            )),
+            "custom" => Err(ConfigError::StorageAdapterMissing(
+                "custom storage is no longer supported".into(),
+            )),
             other => Err(ConfigError::StorageAdapterMissing(format!(
                 "storage kind not supported: {}",
                 other
@@ -171,73 +164,34 @@ impl TemplateEngine {
         }
     }
 
-    fn current_platform() -> &'static str {
-        #[cfg(target_os = "macos")]
-        {
-            "macos"
-        }
-        #[cfg(target_os = "windows")]
-        {
-            "windows"
-        }
-        #[cfg(target_os = "linux")]
-        {
-            "linux"
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        {
-            "unknown"
-        }
-    }
-
-    async fn get_client_template(
-        &self,
-        client_id: &str,
-    ) -> ConfigResult<ClientTemplate> {
-        let platform = Self::current_platform();
-        self.config_source
-            .get_template(client_id, platform)
-            .await?
-            .ok_or_else(|| {
-                ConfigError::TemplateIndexError(format!("Client {} not found in platform {}", client_id, platform))
-            })
-    }
-
     pub async fn render_config(
         &self,
         request: RenderRequest<'_>,
     ) -> ConfigResult<TemplateExecutionResult> {
-        let template = self.get_client_template(request.client_id).await?;
-        let renderer = self.resolve_renderer(&template)?;
-        let storage = self.resolve_storage(&template)?;
-
-        // Get config_path from config_source
-        let platform = Self::current_platform();
-        let config_path = self.config_source
-            .get_config_path(request.client_id, platform)
-            .await?
-            .ok_or_else(|| ConfigError::PathResolutionError(
-                format!("No config_path for client {}", request.client_id)
-            ))?;
+        let definition = request.definition;
+        let renderer = self.resolve_renderer(definition)?;
+        let storage = self.resolve_storage(definition)?;
 
         let fragment = match request.mode {
-            ConfigMode::Native => self.render_native_config(&template, request.servers, request.warnings)?,
+            ConfigMode::Native => self.render_native_config(definition, request.servers, request.warnings)?,
             ConfigMode::Managed => self.render_managed_config(
-                &template,
+                definition,
                 request.profile_id,
                 request.preferred_transport.as_deref(),
                 request.warnings,
             )?,
         };
 
-        let existing = storage.read(&config_path).await?.unwrap_or_default();
-        let merged = renderer.merge(&existing, &fragment, &template)?;
+        let existing = storage.read(request.config_path).await?.unwrap_or_default();
+        let merged = renderer.merge(&existing, &fragment, definition)?;
 
         if request.dry_run {
             let diff = renderer.diff(&existing, &merged)?;
             Ok(TemplateExecutionResult::DryRun { diff, content: merged })
         } else {
-            let backup_path = storage.write_atomic(request.client_id, &config_path, &merged, request.backup_policy).await?;
+            let backup_path = storage
+                .write_atomic(request.client_id, request.config_path, &merged, request.backup_policy)
+                .await?;
             Ok(TemplateExecutionResult::Applied {
                 backup_path,
                 content: merged,
@@ -247,45 +201,45 @@ impl TemplateEngine {
 
     fn render_native_config(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
         servers: &[ServerTemplateInput],
         warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
-        self.render_container(template, servers, warnings)
+        self.render_container(definition, servers, warnings)
     }
 
     fn render_managed_config(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
         profile_id: Option<&str>,
         preferred_transport: Option<&str>,
         warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
-        let managed = self.build_managed_server(template, profile_id, preferred_transport)?;
-        self.render_container(template, &[managed], warnings)
+        let managed = self.build_managed_server(definition, profile_id, preferred_transport)?;
+        self.render_container(definition, &[managed], warnings)
     }
 
     fn render_container(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
         servers: &[ServerTemplateInput],
         warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
-        match template.config_mapping.container_type {
-            ContainerType::ObjectMap => self.render_object_map(template, servers, warnings),
-            ContainerType::Array => self.render_array(template, servers, warnings),
+        match definition.config_mapping.container_type {
+            ContainerType::ObjectMap => self.render_object_map(definition, servers, warnings),
+            ContainerType::Array => self.render_array(definition, servers, warnings),
         }
     }
 
     fn render_object_map(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
         servers: &[ServerTemplateInput],
         warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
         let mut container = Map::new();
         for server in servers {
-            let server_config = self.render_server_config(template, server, warnings)?;
+            let server_config = self.render_server_config(definition, server, warnings)?;
             container.insert(server.name.clone(), server_config);
         }
         Ok(Value::Object(container))
@@ -293,13 +247,13 @@ impl TemplateEngine {
 
     fn render_array(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
         servers: &[ServerTemplateInput],
         warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
         let mut items = Vec::new();
         for server in servers {
-            let mut config = self.render_server_config(template, server, warnings)?;
+            let mut config = self.render_server_config(definition, server, warnings)?;
             if let Value::Object(ref mut map) = config {
                 if !map.contains_key("name") {
                     map.insert("name".to_string(), Value::String(server.name.clone()));
@@ -312,28 +266,28 @@ impl TemplateEngine {
 
     fn render_server_config(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
         server: &ServerTemplateInput,
         warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
-        let format_rules = &template.config_mapping.format_rules;
+        let format_rules = &definition.config_mapping.format_rules;
         let keymap = crate::clients::keymap::registry();
         let Some(rule_key) = keymap.resolve_rule_key(format_rules, &server.transport) else {
             return Err(ConfigError::TemplateParseError(format!(
                 "Client {} missing format rule for transport {}",
-                template.identifier, server.transport
+                definition.identifier, server.transport
             )));
         };
         let format_rule = format_rules
             .get(&rule_key)
             .ok_or_else(|| ConfigError::TemplateParseError("format rule key resolved but missing".into()))?;
+        let rule_template = format_rule.to_template();
 
         let context = serde_json::to_value(server)?;
         // Render with optional-key drop policy (format_rules scope)
-        let mut rendered =
-            self.render_object_with_policy(&format_rule.template, &context, &server.transport, warnings)?;
+        let mut rendered = self.render_object_with_policy(&rule_template, &context, &server.transport, warnings)?;
 
-        if format_rule.requires_type_field {
+        if format_rule.include_type {
             if let Value::Object(ref mut obj) = rendered {
                 obj.entry("type".to_string())
                     .or_insert_with(|| Value::String(server.transport.clone()));
@@ -483,17 +437,17 @@ impl TemplateEngine {
 
     fn build_managed_server(
         &self,
-        template: &ClientTemplate,
+        definition: &ClientRenderDefinition,
         profile_id: Option<&str>,
         preferred_transport: Option<&str>,
     ) -> ConfigResult<ServerTemplateInput> {
         // Derive supported transports directly from format_rules keys and
-        // apply fixed global priority: streamable_http -> stdio.
-        let candidates = derive_transports_by_priority(&template.config_mapping.format_rules);
+        // apply fixed global priority: streamable_http -> sse -> stdio.
+        let candidates = derive_transports_by_priority(&definition.config_mapping.format_rules);
         if let Some(pref) = preferred_transport {
             if candidates.contains(&pref) {
                 if let Some(server) =
-                    self.managed_runtime_for_transport(pref, pref, template.identifier.as_str(), profile_id)?
+                    self.managed_runtime_for_transport(pref, pref, definition.identifier.as_str(), profile_id)?
                 {
                     return Ok(server);
                 }
@@ -501,7 +455,7 @@ impl TemplateEngine {
         }
         for transport in candidates {
             if let Some(server) =
-                self.managed_runtime_for_transport(transport, transport, template.identifier.as_str(), profile_id)?
+                self.managed_runtime_for_transport(transport, transport, definition.identifier.as_str(), profile_id)?
             {
                 return Ok(server);
             }
@@ -509,7 +463,7 @@ impl TemplateEngine {
 
         Err(ConfigError::TemplateParseError(format!(
             "Client {} managed mode missing available transport or format rule",
-            template.identifier
+            definition.identifier
         )))
     }
 
@@ -523,7 +477,7 @@ impl TemplateEngine {
         let runtime_config = get_runtime_port_config();
 
         match transport {
-            "streamable_http" => {
+            "streamable_http" | "sse" => {
                 let mut headers = HashMap::new();
                 headers.insert("x-mcpmate-client-id".to_string(), client_id.to_string());
                 if let Some(pid) = profile_id {
@@ -609,7 +563,7 @@ impl TemplateEngine {
     }
 }
 
-const TRANSPORT_PRIORITY: &[&str] = &["streamable_http", "stdio"];
+const TRANSPORT_PRIORITY: &[&str] = &["streamable_http", "sse", "stdio"];
 
 fn derive_transports_by_priority(
     format_rules: &std::collections::HashMap<String, crate::clients::models::FormatRule>
@@ -659,7 +613,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::clients::models::{
-        ConfigMapping, ContainerType, FormatRule, ManagedEndpointConfig, MergeStrategy, StorageConfig, StorageKind,
+        ClientTemplate, ConfigMapping, ContainerType, FormatRule, ManagedEndpointConfig, MergeStrategy, StorageConfig,
+        StorageKind,
     };
 
     struct MemorySource {
@@ -722,7 +677,8 @@ mod tests {
                     "args": "{{{json args}}}",
                     "env": "{{{json env}}}"
                 }),
-                requires_type_field: false,
+                include_type: false,
+                ..Default::default()
             },
         );
 
@@ -743,6 +699,7 @@ mod tests {
                     source: Some("profile".to_string()),
                 }),
                 managed_source: None,
+                parse: None,
                 format_rules,
             },
             ..Default::default()
@@ -751,6 +708,12 @@ mod tests {
         let source = MemorySource {
             template,
             config_path: "~/.config/test-client.json".to_string(),
+        };
+        let definition = ClientRenderDefinition {
+            identifier: source.template.identifier.clone(),
+            format: source.template.format,
+            storage: source.template.storage.clone(),
+            config_mapping: source.template.config_mapping.clone(),
         };
 
         let engine = TemplateEngine::with_defaults(Arc::new(source));
@@ -774,6 +737,8 @@ mod tests {
             client_id: "test-client",
             servers: &servers,
             mode: ConfigMode::Managed,
+            definition: &definition,
+            config_path: "~/.config/test-client.json",
             profile_id: Some("profile-123"),
             dry_run: true,
             backup_policy: &policy,
@@ -831,7 +796,8 @@ mod tests {
                     "command": "{{command}}",
                     "args": "{{{json args}}}"
                 }),
-                requires_type_field: false,
+                include_type: false,
+                ..Default::default()
             },
         );
         format_rules.insert(
@@ -841,7 +807,8 @@ mod tests {
                     "type": "streamable_http",
                     "url": "{{{url}}}"
                 }),
-                requires_type_field: false,
+                include_type: false,
+                ..Default::default()
             },
         );
 
@@ -862,6 +829,7 @@ mod tests {
                     source: Some("profile".to_string()),
                 }),
                 managed_source: None,
+                parse: None,
                 format_rules,
             },
             ..Default::default()
@@ -870,6 +838,12 @@ mod tests {
         let source = MemorySource {
             template,
             config_path: "~/.config/test-client.json".to_string(),
+        };
+        let definition = ClientRenderDefinition {
+            identifier: source.template.identifier.clone(),
+            format: source.template.format,
+            storage: source.template.storage.clone(),
+            config_mapping: source.template.config_mapping.clone(),
         };
 
         let engine = TemplateEngine::with_defaults(Arc::new(source));
@@ -892,6 +866,8 @@ mod tests {
             client_id: "test-client",
             servers: &servers,
             mode: ConfigMode::Managed,
+            definition: &definition,
+            config_path: "~/.config/test-client.json",
             profile_id: None,
             dry_run: true,
             backup_policy: &policy,
