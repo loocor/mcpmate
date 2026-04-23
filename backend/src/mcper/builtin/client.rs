@@ -19,6 +19,10 @@ use crate::{
 
 use super::{
     helpers::load_profile_detail_components,
+    names::{
+        MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_SCOPE_ADD_TOOL, MCPMATE_SCOPE_GET_TOOL,
+        MCPMATE_SCOPE_REMOVE_TOOL, MCPMATE_SCOPE_SET_TOOL,
+    },
     registry::BuiltinService,
     types::{PromptDetail, ResourceDetail, ServerDetail, ToolDetail},
 };
@@ -327,7 +331,7 @@ impl BuiltinService for ClientService {
     fn tools(&self) -> Vec<Tool> {
         vec![
             Tool::new(
-                "mcpmate_scope_get",
+                MCPMATE_SCOPE_GET_TOOL,
                 "Get the current effective scope for this client, including mode, capability source, selected shared profiles, and custom profile ID if present.",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -341,7 +345,7 @@ impl BuiltinService for ClientService {
                 ),
             ),
             Tool::new(
-                "mcpmate_scope_set",
+                MCPMATE_SCOPE_SET_TOOL,
                 "Replace the effective profile scope with an exact list of shared profiles (profiles mode only). Use this to switch to a single scene or exact set.",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -361,7 +365,7 @@ impl BuiltinService for ClientService {
                 ),
             ),
             Tool::new(
-                "mcpmate_scope_add",
+                MCPMATE_SCOPE_ADD_TOOL,
                 "Add shared profiles to the effective profile scope without replacing the existing selection (profiles mode only).",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -381,7 +385,7 @@ impl BuiltinService for ClientService {
                 ),
             ),
             Tool::new(
-                "mcpmate_scope_remove",
+                MCPMATE_SCOPE_REMOVE_TOOL,
                 "Remove shared profiles from the effective profile scope without deleting the profile definitions themselves (profiles mode only).",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -401,7 +405,7 @@ impl BuiltinService for ClientService {
                 ),
             ),
             Tool::new(
-                "mcpmate_client_custom_profile_details",
+                MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL,
                 "Get custom profile details: servers, tools, prompts, resources (custom mode only)",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -426,11 +430,11 @@ impl BuiltinService for ClientService {
         request: &CallToolRequestParams,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            "mcpmate_scope_get"
-            | "mcpmate_scope_set"
-            | "mcpmate_scope_add"
-            | "mcpmate_scope_remove"
-            | "mcpmate_client_custom_profile_details" => Err(anyhow!(
+            MCPMATE_SCOPE_GET_TOOL
+            | MCPMATE_SCOPE_SET_TOOL
+            | MCPMATE_SCOPE_ADD_TOOL
+            | MCPMATE_SCOPE_REMOVE_TOOL
+            | MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL => Err(anyhow!(
                 "Client-aware tool '{}' requires client context. Use call_tool_with_context instead.",
                 request.name
             )),
@@ -444,34 +448,27 @@ impl BuiltinService for ClientService {
         context: Option<&ClientBuiltinContext>,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            "mcpmate_scope_get" => {
-                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_get"))?;
+            MCPMATE_SCOPE_GET_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_SCOPE_GET_TOOL)?;
                 self.scope_get(ctx).await
             }
-            "mcpmate_scope_set" => {
-                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_set"))?;
-                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                let params: ProfilesSelectParams =
-                    serde_json::from_value(args).context("Invalid parameters for scope_set")?;
+            MCPMATE_SCOPE_SET_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_SCOPE_SET_TOOL)?;
+                let params = parse_profiles_select_params(request, "Invalid parameters for scope_set")?;
                 self.scope_set(ctx, params.profile_ids).await
             }
-            "mcpmate_scope_add" => {
-                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_add"))?;
-                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                let params: ProfilesSelectParams =
-                    serde_json::from_value(args).context("Invalid parameters for scope_add")?;
+            MCPMATE_SCOPE_ADD_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_SCOPE_ADD_TOOL)?;
+                let params = parse_profiles_select_params(request, "Invalid parameters for scope_add")?;
                 self.scope_add(ctx, params.profile_ids).await
             }
-            "mcpmate_scope_remove" => {
-                let ctx = context.ok_or_else(|| anyhow!("Client context required for mcpmate_scope_remove"))?;
-                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                let params: ProfilesSelectParams =
-                    serde_json::from_value(args).context("Invalid parameters for scope_remove")?;
+            MCPMATE_SCOPE_REMOVE_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_SCOPE_REMOVE_TOOL)?;
+                let params = parse_profiles_select_params(request, "Invalid parameters for scope_remove")?;
                 self.scope_remove(ctx, params.profile_ids).await
             }
-            "mcpmate_client_custom_profile_details" => {
-                let ctx = context
-                    .ok_or_else(|| anyhow!("Client context required for mcpmate_client_custom_profile_details"))?;
+            MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL)?;
                 self.client_custom_profile_details(ctx).await
             }
             _ => Err(anyhow!("Unknown tool: {}", request.name)),
@@ -496,6 +493,21 @@ impl BuiltinService for ClientService {
 #[derive(Debug, Deserialize)]
 struct ProfilesSelectParams {
     profile_ids: Vec<String>,
+}
+
+fn require_client_context<'a>(
+    context: Option<&'a ClientBuiltinContext>,
+    tool_name: &str,
+) -> Result<&'a ClientBuiltinContext> {
+    context.ok_or_else(|| anyhow!("Client context required for {}", tool_name))
+}
+
+fn parse_profiles_select_params(
+    request: &CallToolRequestParams,
+    error_message: &'static str,
+) -> Result<ProfilesSelectParams> {
+    let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
+    serde_json::from_value(args).context(error_message)
 }
 
 #[derive(Debug, Serialize)]

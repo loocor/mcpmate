@@ -6,12 +6,14 @@
 mod broker;
 mod client;
 mod helpers;
+pub mod names;
 mod profile;
 mod registry;
 mod types;
 
 pub use broker::BrokerService;
 pub use client::{ClientBuiltinContext, ClientService};
+pub use names::*;
 pub use profile::ProfileService;
 pub use registry::BuiltinServiceRegistry;
 pub use types::{PromptDetail, ResourceDetail, ServerDetail, ToolDetail};
