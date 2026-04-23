@@ -549,20 +549,38 @@ impl ProxyServer {
             Some(p) => p,
             None => return Ok(()),
         };
-        let required = [
-            rmcp::model::ProtocolVersion::V_2025_06_18.to_string(),
-            rmcp::model::ProtocolVersion::V_2025_03_26.to_string(),
-        ];
-        match parts.headers.get("MCP-Protocol-Version").and_then(|h| h.to_str().ok()) {
-            Some(v) if required.iter().any(|r| r == v) => Ok(()),
-            Some(v) => Err(rmcp::ErrorData::invalid_request(
-                format!("Unsupported MCP-Protocol-Version: {}", v),
-                None,
-            )),
-            None => Err(rmcp::ErrorData::invalid_request(
+
+        // Distinguish three cases:
+        // 1. Header present and valid UTF-8 -> validate as normal
+        // 2. Header present but invalid UTF-8 -> reject (do not silently fall back)
+        // 3. Header absent -> fall back to negotiated version from initialize
+        let header_value = parts.headers.get("MCP-Protocol-Version");
+        let (explicit_version, header_present) = match header_value {
+            Some(v) => match v.to_str() {
+                Ok(s) => (Some(s), true),
+                Err(_) => {
+                    return Err(rmcp::ErrorData::invalid_request(
+                        "Invalid MCP-Protocol-Version header encoding".to_string(),
+                        None,
+                    ));
+                }
+            },
+            None => (None, false),
+        };
+
+        let negotiated_version = if header_present {
+            None
+        } else {
+            context.peer.peer_info().map(|info| info.protocol_version.to_string())
+        };
+
+        match Self::resolve_effective_protocol_version(explicit_version, negotiated_version) {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => Err(rmcp::ErrorData::invalid_request(
                 "Missing MCP-Protocol-Version header".to_string(),
                 None,
             )),
+            Err(error) => Err(error),
         }
     }
 
@@ -570,12 +588,65 @@ impl ProxyServer {
         &self,
         context: &RequestContext<rmcp::RoleServer>,
     ) -> Option<String> {
-        context
-            .extensions
-            .get::<axum::http::request::Parts>()
-            .and_then(|parts| parts.headers.get("MCP-Protocol-Version"))
-            .and_then(|value| value.to_str().ok())
-            .map(ToString::to_string)
+        let parts = context.extensions.get::<axum::http::request::Parts>()?;
+
+        let explicit_version: Option<String> = parts
+            .headers
+            .get("MCP-Protocol-Version")
+            .and_then(|v| v.to_str().ok())
+            .map(ToString::to_string);
+
+        // Only compute negotiated version when header is absent
+        let negotiated_version: Option<String> = if explicit_version.is_some() {
+            None
+        } else {
+            context.peer.peer_info().map(|info| info.protocol_version.to_string())
+        };
+
+        if let Some(v) = explicit_version {
+            if Self::is_valid_protocol_version(&v) {
+                return Some(v);
+            }
+        }
+
+        negotiated_version.and_then(|v| {
+            if Self::is_valid_protocol_version(&v) {
+                Some(v)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn resolve_effective_protocol_version(
+        header_protocol_version: Option<&str>,
+        negotiated_protocol_version: Option<String>,
+    ) -> Result<Option<String>, rmcp::ErrorData> {
+        if let Some(version) = header_protocol_version {
+            return Self::validate_protocol_version(version).map(|_| Some(version.to_string()));
+        }
+
+        if let Some(version) = negotiated_protocol_version {
+            Self::validate_protocol_version(&version)?;
+            return Ok(Some(version));
+        }
+
+        Ok(None)
+    }
+
+    fn is_valid_protocol_version(protocol_version: &str) -> bool {
+        const REQUIRED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26"];
+        REQUIRED_PROTOCOL_VERSIONS.contains(&protocol_version)
+    }
+
+    fn validate_protocol_version(protocol_version: &str) -> Result<(), rmcp::ErrorData> {
+        if Self::is_valid_protocol_version(protocol_version) {
+            return Ok(());
+        }
+        Err(rmcp::ErrorData::invalid_request(
+            format!("Unsupported MCP-Protocol-Version: {}", protocol_version),
+            None,
+        ))
     }
 
     pub fn new(config: Arc<crate::core::models::Config>) -> Self {
@@ -1794,6 +1865,52 @@ mod tests {
             .expect("resolve config mode");
 
         assert_eq!(mode, "unify");
+    }
+
+    #[test]
+    fn resolve_effective_protocol_version_prefers_explicit_header() {
+        let header_version = rmcp::model::ProtocolVersion::V_2025_06_18.to_string();
+        let negotiated_version = rmcp::model::ProtocolVersion::V_2025_03_26.to_string();
+
+        let resolved = ProxyServer::resolve_effective_protocol_version(
+            Some(header_version.as_str()),
+            Some(negotiated_version),
+        )
+        .expect("explicit header should be accepted");
+
+        assert_eq!(resolved.as_deref(), Some(header_version.as_str()));
+    }
+
+    #[test]
+    fn resolve_effective_protocol_version_uses_negotiated_fallback() {
+        let negotiated_version = rmcp::model::ProtocolVersion::V_2025_03_26.to_string();
+
+        let resolved =
+            ProxyServer::resolve_effective_protocol_version(None, Some(negotiated_version.clone()))
+                .expect("negotiated protocol version should be accepted");
+
+        assert_eq!(resolved.as_deref(), Some(negotiated_version.as_str()));
+    }
+
+    #[test]
+    fn resolve_effective_protocol_version_rejects_unsupported_header() {
+        let negotiated_version = rmcp::model::ProtocolVersion::V_2025_03_26.to_string();
+
+        let error = ProxyServer::resolve_effective_protocol_version(
+            Some("2024-11-05"),
+            Some(negotiated_version),
+        )
+        .expect_err("unsupported explicit header should fail");
+
+        assert_eq!(error.message, "Unsupported MCP-Protocol-Version: 2024-11-05");
+    }
+
+    #[test]
+    fn resolve_effective_protocol_version_returns_none_without_header_or_fallback() {
+        let resolved = ProxyServer::resolve_effective_protocol_version(None, None)
+            .expect("missing protocol version should not error before enforcement");
+
+        assert_eq!(resolved, None);
     }
 
     #[tokio::test]
