@@ -156,7 +156,7 @@ impl ProxyPaginator {
         );
 
         // sort tools by name using natural sort (correctly handle numbers)
-        all_tools.sort_by(|a, b| natural_sort_key(&a.name).cmp(&natural_sort_key(&b.name)));
+        all_tools.sort_by_key(|tool| natural_sort_key(&tool.name));
         tracing::debug!("Sorted {} tools by name (natural sort)", all_tools.len());
 
         // if pagination is disabled or page_size is 0, skip pagination
@@ -199,7 +199,7 @@ impl ProxyPaginator {
         mut all_prompts: Vec<rmcp::model::Prompt>,
     ) -> Result<PaginationResult<rmcp::model::Prompt>, McpError> {
         // sort prompts by name using natural sort (correctly handle numbers)
-        all_prompts.sort_by(|a, b| natural_sort_key(&a.name).cmp(&natural_sort_key(&b.name)));
+        all_prompts.sort_by_key(|prompt| natural_sort_key(&prompt.name));
 
         // if pagination is disabled or page_size is 0, skip pagination
         if !self.config.enabled || self.config.prompts_page_size == 0 {
@@ -222,7 +222,7 @@ impl ProxyPaginator {
         mut all_resources: Vec<rmcp::model::Resource>,
     ) -> Result<PaginationResult<rmcp::model::Resource>, McpError> {
         // sort resources by URI using natural sort (correctly handle numbers)
-        all_resources.sort_by(|a, b| natural_sort_key(&a.uri).cmp(&natural_sort_key(&b.uri)));
+        all_resources.sort_by_key(|resource| natural_sort_key(&resource.uri));
 
         // if pagination is disabled or page_size is 0, skip pagination
         if !self.config.enabled || self.config.resources_page_size == 0 {
@@ -245,7 +245,7 @@ impl ProxyPaginator {
         mut all_templates: Vec<rmcp::model::ResourceTemplate>,
     ) -> Result<PaginationResult<rmcp::model::ResourceTemplate>, McpError> {
         // sort resource templates by URI template using natural sort (correctly handle numbers)
-        all_templates.sort_by(|a, b| natural_sort_key(&a.uri_template).cmp(&natural_sort_key(&b.uri_template)));
+        all_templates.sort_by_key(|template| natural_sort_key(&template.uri_template));
 
         // if pagination is disabled or page_size is 0, skip pagination
         if !self.config.enabled || self.config.resource_templates_page_size == 0 {
