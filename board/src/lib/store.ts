@@ -46,7 +46,7 @@ export interface DashboardSettings {
 	enableMarketBlacklist: boolean;
 	showApiDocsMenu: boolean;
 	showClientLiveLogs: boolean;
-	showServerLiveLogs: boolean;
+	showServerLevelLogs: boolean;
 	showProfileLiveLogs: boolean;
 	/** Tokenizer used for profile capability payload estimates (ledger + dashboard charts). */
 	profileTokenEstimateMethod: ProfileTokenEstimateMethod;
@@ -112,7 +112,7 @@ const defaultDashboardSettings: DashboardSettings = {
 	enableMarketBlacklist: false,
 	showApiDocsMenu: true,
 	showClientLiveLogs: true,
-	showServerLiveLogs: true,
+	showServerLevelLogs: true,
 	showProfileLiveLogs: true,
 	profileTokenEstimateMethod: PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT,
 	defaultMarket: "official",
@@ -199,8 +199,8 @@ function normalizeDashboardSettings(
 		next.showClientLiveLogs = patch.showClientLiveLogs;
 	}
 
-	if (typeof patch.showServerLiveLogs === "boolean") {
-		next.showServerLiveLogs = patch.showServerLiveLogs;
+	if (typeof patch.showServerLevelLogs === "boolean") {
+		next.showServerLevelLogs = patch.showServerLevelLogs;
 	}
 
 	if (typeof patch.showProfileLiveLogs === "boolean") {
