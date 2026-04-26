@@ -558,10 +558,10 @@ pub async fn update_server(
         .await;
     }
 
-    let direct_constraint_restricted = (existing_server.enabled.as_bool() && !updated_server.enabled.as_bool())
-        || (existing_server.unify_direct_exposure_eligible && !updated_server.unify_direct_exposure_eligible);
+    let direct_constraint_changed = existing_server.enabled.as_bool() != updated_server.enabled.as_bool()
+        || existing_server.unify_direct_exposure_eligible != updated_server.unify_direct_exposure_eligible;
 
-    if direct_constraint_restricted {
+    if direct_constraint_changed {
         common::reconcile_client_direct_exposure_after_server_constraint_change(&state, &server_id).await?;
     }
 
