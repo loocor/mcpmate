@@ -51,7 +51,10 @@ pub fn build_import_payload_from_value(
     out
 }
 
-fn locate_parse_container<'a>(config: &'a Value, parse_rule: &ClientConfigFileParse) -> Option<&'a Value> {
+fn locate_parse_container<'a>(
+    config: &'a Value,
+    parse_rule: &ClientConfigFileParse,
+) -> Option<&'a Value> {
     for container_key in &parse_rule.container_keys {
         let mut current = config;
         let mut matched = true;
@@ -264,6 +267,9 @@ mod tests {
         assert_eq!(server.kind, "stdio");
         assert_eq!(server.command.as_deref(), Some("uvx"));
         assert_eq!(server.args.as_deref(), Some(&["server.py".to_string()][..]));
-        assert_eq!(server.env.as_ref().and_then(|env| env.get("DEBUG")), Some(&"1".to_string()));
+        assert_eq!(
+            server.env.as_ref().and_then(|env| env.get("DEBUG")),
+            Some(&"1".to_string())
+        );
     }
 }
