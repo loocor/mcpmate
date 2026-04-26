@@ -3008,7 +3008,7 @@ mod tests {
     }
 
     #[test]
-    fn unify_direct_exposure_catalog_exclusion_removes_server_live_tools() {
+    fn unify_direct_exposure_catalog_exclusion_removes_server_level_tools() {
         let context = ClientBuiltinContext {
             client_id: "client-1".to_string(),
             session_id: Some("session-1".to_string()),
@@ -3017,9 +3017,12 @@ mod tests {
             selected_profile_ids: Vec::new(),
             custom_profile_id: None,
             unify_workspace: Some(UnifyDirectExposureConfig {
-                route_mode: UnifyRouteMode::ServerLive,
-                selected_server_ids: vec!["server-a".to_string()],
-                selected_tool_surfaces: Vec::new(),
+                route_mode: UnifyRouteMode::ServerLevel,
+                selected_server_ids: Vec::new(),
+                selected_tool_surfaces: vec![UnifyDirectToolSurface {
+                    server_id: "server-a".to_string(),
+                    tool_name: "tool-one".to_string(),
+                }],
                 selected_prompt_surfaces: Vec::new(),
                 selected_resource_surfaces: Vec::new(),
                 selected_template_surfaces: Vec::new(),
@@ -3089,7 +3092,7 @@ mod tests {
     }
 
     #[test]
-    fn unify_direct_exposure_catalog_exclusion_removes_server_live_prompts() {
+    fn unify_direct_exposure_catalog_exclusion_removes_server_level_prompts() {
         let context = ClientBuiltinContext {
             client_id: "client-1".to_string(),
             session_id: Some("session-1".to_string()),
@@ -3098,10 +3101,13 @@ mod tests {
             selected_profile_ids: Vec::new(),
             custom_profile_id: None,
             unify_workspace: Some(UnifyDirectExposureConfig {
-                route_mode: UnifyRouteMode::ServerLive,
-                selected_server_ids: vec!["server-a".to_string()],
+                route_mode: UnifyRouteMode::ServerLevel,
+                selected_server_ids: Vec::new(),
                 selected_tool_surfaces: Vec::new(),
-                selected_prompt_surfaces: Vec::new(),
+                selected_prompt_surfaces: vec![UnifyDirectPromptSurface {
+                    server_id: "server-a".to_string(),
+                    prompt_name: "prompt-one".to_string(),
+                }],
                 selected_resource_surfaces: Vec::new(),
                 selected_template_surfaces: Vec::new(),
             }),
@@ -3186,7 +3192,7 @@ mod tests {
     }
 
     #[test]
-    fn unify_direct_exposure_catalog_exclusion_removes_server_live_resources() {
+    fn unify_direct_exposure_catalog_exclusion_removes_server_level_resources() {
         let context = ClientBuiltinContext {
             client_id: "client-1".to_string(),
             session_id: Some("session-1".to_string()),
@@ -3195,11 +3201,14 @@ mod tests {
             selected_profile_ids: Vec::new(),
             custom_profile_id: None,
             unify_workspace: Some(UnifyDirectExposureConfig {
-                route_mode: UnifyRouteMode::ServerLive,
-                selected_server_ids: vec!["server-a".to_string()],
+                route_mode: UnifyRouteMode::ServerLevel,
+                selected_server_ids: Vec::new(),
                 selected_tool_surfaces: Vec::new(),
                 selected_prompt_surfaces: Vec::new(),
-                selected_resource_surfaces: Vec::new(),
+                selected_resource_surfaces: vec![UnifyDirectResourceSurface {
+                    server_id: "server-a".to_string(),
+                    resource_uri: "resource-one".to_string(),
+                }],
                 selected_template_surfaces: Vec::new(),
             }),
         };
@@ -3279,7 +3288,7 @@ mod tests {
     }
 
     #[test]
-    fn unify_direct_exposure_catalog_exclusion_removes_server_live_resource_templates() {
+    fn unify_direct_exposure_catalog_exclusion_removes_server_level_resource_templates() {
         let context = ClientBuiltinContext {
             client_id: "client-1".to_string(),
             session_id: Some("session-1".to_string()),
@@ -3288,12 +3297,15 @@ mod tests {
             selected_profile_ids: Vec::new(),
             custom_profile_id: None,
             unify_workspace: Some(UnifyDirectExposureConfig {
-                route_mode: UnifyRouteMode::ServerLive,
-                selected_server_ids: vec!["server-a".to_string()],
+                route_mode: UnifyRouteMode::ServerLevel,
+                selected_server_ids: Vec::new(),
                 selected_tool_surfaces: Vec::new(),
                 selected_prompt_surfaces: Vec::new(),
                 selected_resource_surfaces: Vec::new(),
-                selected_template_surfaces: Vec::new(),
+                selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
+                    server_id: "server-a".to_string(),
+                    uri_template: "server-a://{id}".to_string(),
+                }],
             }),
         };
         let mut visible = vec![
