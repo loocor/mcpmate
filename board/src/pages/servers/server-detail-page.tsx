@@ -192,8 +192,8 @@ export function ServerDetailPage() {
 	const syncServerStateToClients = useAppStore(
 		(state) => state.dashboardSettings.syncServerStateToClients,
 	);
-	const showServerLiveLogs = useAppStore(
-		(state) => state.dashboardSettings.showServerLiveLogs,
+	const showServerLevelLogs = useAppStore(
+		(state) => state.dashboardSettings.showServerLevelLogs,
 	);
 
 	const initialChannel = useMemo(() => getInitialInspectorChannel(), []);
@@ -712,6 +712,9 @@ export function ServerDetailPage() {
 					cursor: nextCursor,
 					server_id: serverId,
 				});
+				if (!page) {
+					break;
+				}
 				nextCursor = page.next_cursor ?? undefined;
 			}
 			setLogPageCursors(nextPageCursors);
@@ -765,7 +768,7 @@ export function ServerDetailPage() {
 			serverId,
 			logCurrentCursor,
 			logPageSize,
-			showServerLiveLogs,
+			showServerLevelLogs,
 		],
 		queryFn: () =>
 			auditApi.list({
@@ -773,7 +776,7 @@ export function ServerDetailPage() {
 				cursor: logCurrentCursor,
 				server_id: serverId,
 			}),
-		enabled: Boolean(serverId && showServerLiveLogs),
+		enabled: Boolean(serverId && showServerLevelLogs),
 		refetchOnWindowFocus: false,
 		retry: false,
 	});
@@ -1309,7 +1312,7 @@ export function ServerDetailPage() {
 											</CardContent>
 										</Card>
 									) : null}
-									{showServerLiveLogs && viewMode === VIEW_MODES.browse ? (
+				{showServerLevelLogs && viewMode === VIEW_MODES.browse ? (
 										<AuditLogsPanel
 											title={t("detail.logs.title", { defaultValue: "Logs" })}
 											description={t("detail.logs.description", {
@@ -1384,7 +1387,7 @@ export function ServerDetailPage() {
 									onInspect={(item) => handleInspect("tool", item)}
 									logs={logs}
 									onClearLogs={() => clearLogsByPrefix("tools/")}
-									showLogs={showServerLiveLogs}
+										showLogs={showServerLevelLogs}
 								/>
 							</div>
 						)}
@@ -1403,7 +1406,7 @@ export function ServerDetailPage() {
 									onInspect={(item) => handleInspect("prompt", item)}
 									logs={logs}
 									onClearLogs={() => clearLogsByPrefix("prompts/")}
-									showLogs={showServerLiveLogs}
+										showLogs={showServerLevelLogs}
 								/>
 							</div>
 						)}
@@ -1422,7 +1425,7 @@ export function ServerDetailPage() {
 									onInspect={(item) => handleInspect("resource", item)}
 									logs={logs}
 									onClearLogs={() => clearLogsByPrefix("resources/")}
-									showLogs={showServerLiveLogs}
+										showLogs={showServerLevelLogs}
 								/>
 							</div>
 						)}
@@ -1441,7 +1444,7 @@ export function ServerDetailPage() {
 									onInspect={(item) => handleInspect("template", item)}
 									logs={logs}
 									onClearLogs={() => clearLogsByPrefix("templates/")}
-									showLogs={showServerLiveLogs}
+										showLogs={showServerLevelLogs}
 								/>
 							</div>
 						)}
