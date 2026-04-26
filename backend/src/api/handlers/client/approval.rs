@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::{Json, extract::State, http::StatusCode};
 
 use crate::api::handlers::client::handlers::get_client_service;
+use crate::api::handlers::client::manage::invalidate_client_runtime_visibility;
 use crate::api::models::client::{ApprovalRequest, ApprovalResponse};
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
@@ -28,6 +29,8 @@ pub async fn approve_client(
             .build(),
     )
     .await;
+
+    invalidate_client_runtime_visibility(&request.identifier).await;
 
     Ok(Json(ApprovalResponse {
         identifier: request.identifier,
@@ -58,6 +61,8 @@ pub async fn reject_client(
     )
     .await;
 
+    invalidate_client_runtime_visibility(&request.identifier).await;
+
     Ok(Json(ApprovalResponse {
         identifier: request.identifier,
         status,
@@ -86,6 +91,8 @@ pub async fn suspend_client(
             .build(),
     )
     .await;
+
+    invalidate_client_runtime_visibility(&request.identifier).await;
 
     Ok(Json(ApprovalResponse {
         identifier: request.identifier,

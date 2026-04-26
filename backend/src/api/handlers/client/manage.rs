@@ -10,6 +10,55 @@ use crate::api::models::client::{
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 
+pub(crate) async fn invalidate_client_runtime_visibility(identifier: &str) {
+    crate::core::profile::visibility::invalidate_visibility_cache(identifier);
+
+    let mut affinity_fragments = vec![format!("#client:{identifier}")];
+    let mut removed_sessions = 0_usize;
+
+    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
+        let proxy_server = proxy.try_lock().ok().map(|guard| guard.clone());
+        if let Some(proxy_server) = proxy_server {
+            let session_ids = proxy_server
+                .client_context_resolver
+                .session_bindings
+                .iter()
+                .filter(|entry| entry.client_id == identifier)
+                .map(|entry| entry.session_id.clone())
+                .collect::<Vec<_>>();
+            affinity_fragments.extend(session_ids.iter().map(|session_id| format!("#session:{session_id}")));
+
+            for session_id in session_ids {
+                proxy_server.remove_downstream_session(&session_id).await;
+                removed_sessions += 1;
+            }
+
+            let (tools_count, prompts_count, resources_count) = proxy_server.notify_all_list_changed().await;
+            tracing::info!(
+                client = %identifier,
+                removed_sessions,
+                tools_count,
+                prompts_count,
+                resources_count,
+                "Invalidated downstream client runtime visibility"
+            );
+        }
+    }
+
+    if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
+        if let Err(error) = cache_manager
+            .invalidate_by_affinity_fragments(&affinity_fragments)
+            .await
+        {
+            tracing::warn!(
+                client = %identifier,
+                error = %error,
+                "Failed to invalidate client-filtered cache entries by downstream affinity"
+            );
+        }
+    }
+}
+
 pub async fn manage(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<ClientManageReq>,
@@ -42,6 +91,10 @@ pub async fn manage(
     )
     .await;
 
+    if !managed {
+        invalidate_client_runtime_visibility(&request.identifier).await;
+    }
+
     let data = ClientManageData {
         identifier: request.identifier,
         managed: result,
@@ -64,20 +117,7 @@ pub async fn delete_client(
         return Err(StatusCode::NOT_FOUND);
     }
 
-    // Clone ProxyServer under lock, then release lock before async cleanup.
-    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
-        let proxy_server = proxy.try_lock().ok().map(|guard| guard.clone());
-        if let Some(proxy_server) = proxy_server {
-            let removed_sessions = proxy_server
-                .remove_downstream_sessions_for_client(&request.identifier)
-                .await;
-            tracing::info!(
-                client = %request.identifier,
-                removed_sessions,
-                "Removed downstream sessions after client deletion"
-            );
-        }
-    }
+    invalidate_client_runtime_visibility(&request.identifier).await;
 
     crate::audit::interceptor::emit_event(
         app_state.audit_service.as_ref(),
