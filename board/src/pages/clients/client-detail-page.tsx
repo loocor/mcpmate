@@ -16,7 +16,7 @@ import {
 	Square,
 	Trash2,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
@@ -95,6 +95,9 @@ import type {
 import { formatBackupTime } from "../../lib/utils";
 import { ConfigurationProfileTokenChart } from "./components/configuration-profile-token-chart";
 
+type UnifyRouteMode = "broker_only" | "server_level" | "capability_level";
+type DirectExposureRouteMode = Extract<UnifyRouteMode, "server_level" | "capability_level">;
+
 const governanceClientsApi = clientsApi as typeof clientsApi & {
 	suspendRecord: (payload: { identifier: string }) => Promise<unknown>;
 };
@@ -158,7 +161,7 @@ function getCapabilityId(item: Record<string, unknown>, keys: string[]): string 
 }
 
 function isUnifyServerMixedRouting(
- 	routeMode: "broker_only" | "server_level" | "capability_level",
+	routeMode: UnifyRouteMode,
 	toolSurfaceCount: number,
 	toolsCount: number | undefined,
 ): boolean {
@@ -190,6 +193,57 @@ function toggleSelectedServerIds(currentIds: string[], serverId: string): string
 	}
 
 	return [...currentIds, serverId];
+}
+
+function buildCapabilityConfigPayloadBase(
+	identifier: string,
+	currentConfig: ClientCapabilityConfigData,
+): Omit<ClientCapabilityConfigReq, "unify_direct_exposure"> {
+	return {
+		identifier,
+		capability_source: currentConfig.capability_source,
+		selected_profile_ids: currentConfig.selected_profile_ids,
+	};
+}
+
+function buildUnifyDirectExposurePayload(
+	routeMode: UnifyRouteMode,
+	serverIds: string[],
+	capabilityIds: UnifyDirectCapabilityIds,
+): NonNullable<ClientCapabilityConfigReq["unify_direct_exposure"]> {
+	return {
+		route_mode: routeMode,
+		server_ids: routeMode === "server_level" ? serverIds : [],
+		capability_ids: routeMode === "capability_level" ? normalizeDirectCapabilityIds(capabilityIds) : {},
+	};
+}
+
+function buildServerLevelExposureUpdate(
+	identifier: string,
+	currentConfig: ClientCapabilityConfigData,
+	serverId: string,
+): ClientCapabilityConfigReq {
+	const currentServerIds = currentConfig.unify_direct_exposure?.server_ids ?? [];
+
+	return {
+		...buildCapabilityConfigPayloadBase(identifier, currentConfig),
+		unify_direct_exposure: buildUnifyDirectExposurePayload(
+			"server_level",
+			toggleSelectedServerIds(currentServerIds, serverId),
+			{},
+		),
+	};
+}
+
+function buildCapabilityLevelExposureUpdate(
+	identifier: string,
+	currentConfig: ClientCapabilityConfigData,
+	nextCapabilityIds: UnifyDirectCapabilityIds,
+): ClientCapabilityConfigReq {
+	return {
+		...buildCapabilityConfigPayloadBase(identifier, currentConfig),
+		unify_direct_exposure: buildUnifyDirectExposurePayload("capability_level", [], nextCapabilityIds),
+	};
 }
 
 function getTransportOptionLabel(
@@ -324,7 +378,7 @@ export function ClientDetailPage() {
 	const limitId = useId();
 	const [mode, setMode] = useState<ClientConfigMode>("hosted");
 	const [transport, setTransport] = useState<string>("auto");
-	const [unifyRouteMode, setUnifyRouteMode] = useState<"broker_only" | "server_level" | "capability_level">("broker_only");
+	const [unifyRouteMode, setUnifyRouteMode] = useState<UnifyRouteMode>("broker_only");
 	const [unifySelectedServers, setUnifySelectedServers] = useState<string[]>([]);
 	const [unifyCapabilityIds, setUnifyCapabilityIds] = useState<UnifyDirectCapabilityIds>({});
 	const [hasUnifyDraftChanges, setHasUnifyDraftChanges] = useState(false);
@@ -380,7 +434,7 @@ export function ClientDetailPage() {
 		enabled: !!identifier,
 	});
 
-	const { data: capabilityConfig, refetch: refetchCapabilityConfig } = useQuery({
+	const { data: capabilityConfig } = useQuery({
 		queryKey: ["client-capability-config", identifier],
 		queryFn: () => clientsApi.getCapabilityConfig(identifier || ""),
 		enabled: !!identifier,
@@ -410,6 +464,14 @@ export function ClientDetailPage() {
 	const eligibleServers = useMemo(() => {
 		return serversListData?.servers?.filter((s) => s.unify_direct_exposure_eligible) || [];
 	}, [serversListData]);
+
+	const refreshClientCapabilityState = useCallback(async () => {
+		await Promise.allSettled([
+			qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] }),
+			qc.invalidateQueries({ queryKey: ["client-config", identifier] }),
+			qc.invalidateQueries({ queryKey: ["clients"] }),
+		]);
+	}, [identifier, qc]);
 
 	const { data: profilesData, isLoading: loadingProfiles } = useQuery({
 		queryKey: ["profiles"],
@@ -858,15 +920,11 @@ export function ClientDetailPage() {
 		if (mode === "unify") {
 			payload.capability_source = "activated";
 			payload.selected_profile_ids = [];
-			payload.unify_direct_exposure = {
-				route_mode: unifyRouteMode,
-				server_ids:
-					unifyRouteMode === "server_level" ? unifySelectedServers : [],
-				capability_ids:
-					unifyRouteMode === "capability_level"
-						? normalizeDirectCapabilityIds(unifyCapabilityIds)
-						: {},
-			};
+			payload.unify_direct_exposure = buildUnifyDirectExposurePayload(
+				unifyRouteMode,
+				unifySelectedServers,
+				unifyCapabilityIds,
+			);
 		} else {
 			payload.unify_direct_exposure = effectiveCapabilityConfig?.unify_direct_exposure || null;
 			if (selectedConfig === "profile") {
@@ -899,7 +957,7 @@ export function ClientDetailPage() {
 	const directExposureServerMutation = useMutation<
 		ClientCapabilityConfigData | null,
 		unknown,
-		{ server: ServerSummary; routeMode: "server_level" | "capability_level" }
+		{ server: ServerSummary; routeMode: DirectExposureRouteMode }
 	>({
 		mutationFn: async ({ server, routeMode }) => {
 			if (!identifier) {
@@ -918,17 +976,9 @@ export function ClientDetailPage() {
 			}
 
 			if (routeMode === "server_level") {
-				const currentServerIds = currentConfig.unify_direct_exposure?.server_ids ?? [];
-				return clientsApi.updateCapabilityConfig({
-					identifier,
-					capability_source: currentConfig.capability_source,
-					selected_profile_ids: currentConfig.selected_profile_ids,
-					unify_direct_exposure: {
-						route_mode: "server_level",
-						server_ids: toggleSelectedServerIds(currentServerIds, server.id),
-						capability_ids: {},
-					},
-				});
+				return clientsApi.updateCapabilityConfig(
+					buildServerLevelExposureUpdate(identifier, currentConfig, server.id),
+				);
 			}
 
 			const [toolsResponse, promptsResponse, resourcesResponse, templatesResponse] =
@@ -992,29 +1042,16 @@ export function ClientDetailPage() {
 				template_ids: resolveNextCapabilityIds(currentCapabilityIds.template_ids, hasAnySelectedForServer, serverTemplateIds),
 			};
 
-			return clientsApi.updateCapabilityConfig({
-				identifier,
-				capability_source: currentConfig.capability_source,
-				selected_profile_ids: currentConfig.selected_profile_ids,
-				unify_direct_exposure: {
-					route_mode: "capability_level",
-					server_ids: [],
-					capability_ids: nextCapabilityIds,
-				},
-			});
+			return clientsApi.updateCapabilityConfig(
+				buildCapabilityLevelExposureUpdate(identifier, currentConfig, nextCapabilityIds),
+			);
 		},
 		onSuccess: async (data, { routeMode }) => {
 			if (routeMode === "server_level") {
 				setUnifySelectedServers(data?.unify_direct_exposure?.server_ids ?? []);
 				setHasUnifyDraftChanges(false);
 			}
-			await Promise.allSettled([
-				qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] }),
-				qc.invalidateQueries({ queryKey: ["client-config", identifier] }),
-				qc.invalidateQueries({ queryKey: ["clients"] }),
-				refetchCapabilityConfig(),
-				refetchDetails(),
-			]);
+			await refreshClientCapabilityState();
 		},
 		onError: (error) =>
 			notifyError(
@@ -1072,7 +1109,7 @@ export function ClientDetailPage() {
 
 	const renderUnifyEligibleServerCapabilitySummary = (
 		server: ServerSummary,
-		routeMode: "server_level" | "capability_level",
+		routeMode: DirectExposureRouteMode,
 		exposedToolCount: number,
 	) => {
 		const cap = server.capabilities ?? server.capability;
@@ -1335,12 +1372,8 @@ export function ClientDetailPage() {
 					}),
 				);
 			}
-			qc.invalidateQueries({ queryKey: ["clients"] });
-			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
-			qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] });
+			void refreshClientCapabilityState();
 			setHasUnifyDraftChanges(false);
-			refetchCapabilityConfig();
-			refetchDetails();
 		},
 		onError: (e) =>
 			notifyError(
@@ -1961,17 +1994,7 @@ export function ClientDetailPage() {
 																			})
 																			: "",
 																	);
-																	await Promise.allSettled([
-																		qc.invalidateQueries({ queryKey: ["clients"] }),
-																		qc.invalidateQueries({
-																			queryKey: ["client-config", identifier],
-																		}),
-																		qc.invalidateQueries({
-																			queryKey: ["client-capability-config", identifier],
-																		}),
-																		refetchCapabilityConfig(),
-																		refetchDetails(),
-																	]);
+													await refreshClientCapabilityState();
 																} catch (err) {
 																	setTransport(previousTransport);
 																	notifyError(
@@ -2306,7 +2329,7 @@ export function ClientDetailPage() {
 														value={unifyRouteMode}
 														onValueChange={(v) => {
 															setHasUnifyDraftChanges(true);
-													setUnifyRouteMode(v as "broker_only" | "server_level" | "capability_level");
+													setUnifyRouteMode(v as UnifyRouteMode);
 														}}
 														options={unifyRouteModeSegmentOptions}
 														showDots={true}
