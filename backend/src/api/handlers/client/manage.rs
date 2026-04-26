@@ -11,8 +11,6 @@ use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 
 pub(crate) async fn invalidate_client_runtime_visibility(identifier: &str) {
-    crate::core::profile::visibility::invalidate_visibility_cache(identifier);
-
     let mut affinity_fragments = vec![format!("#client:{identifier}")];
     let mut removed_sessions = 0_usize;
 
