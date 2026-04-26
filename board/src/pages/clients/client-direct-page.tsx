@@ -234,54 +234,58 @@ export function ClientDirectCapabilitiesPage() {
 				? (serverTemplatesResponse.items as Array<Record<string, unknown>>)
 				: [];
 
-			const tools: ConfigSuitTool[] = rawTools.map((tool) => {
+			const tools: ConfigSuitTool[] = rawTools.flatMap((tool) => {
 				const toolName = String(tool["tool_name"] ?? tool["name"] ?? "");
 				const capabilityId = getCapabilityId(tool, ["unique_name"]);
+				if (!capabilityId) return [];
 				return {
-					id: capabilityId ?? toolName,
+					id: capabilityId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					tool_name: toolName,
-					unique_name: capabilityId ?? undefined,
-					enabled: capabilityId ? selectedToolSet.has(capabilityId) : false,
+					unique_name: capabilityId,
+					enabled: selectedToolSet.has(capabilityId),
 					allowed_operations: [],
 				};
 			});
-			const prompts: ConfigSuitPrompt[] = rawPrompts.map((prompt) => {
+			const prompts: ConfigSuitPrompt[] = rawPrompts.flatMap((prompt) => {
 				const promptName = String(prompt["prompt_name"] ?? prompt["name"] ?? "");
 				const capabilityId = getCapabilityId(prompt, ["unique_name"]);
+				if (!capabilityId) return [];
 				return {
-					id: capabilityId ?? promptName,
+					id: capabilityId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					prompt_name: promptName,
-					enabled: capabilityId ? selectedPromptSet.has(capabilityId) : false,
+					enabled: selectedPromptSet.has(capabilityId),
 					allowed_operations: [],
 				};
 			});
-			const resources: ConfigSuitResource[] = rawResources.map((resource) => {
+			const resources: ConfigSuitResource[] = rawResources.flatMap((resource) => {
 				const resourceUri = String(resource["resource_uri"] ?? resource["uri"] ?? "");
 				const capabilityId = getCapabilityId(resource, ["unique_uri"]);
+				if (!capabilityId) return [];
 				return {
-					id: capabilityId ?? resourceUri,
+					id: capabilityId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					resource_uri: resourceUri,
-					enabled: capabilityId ? selectedResourceSet.has(capabilityId) : false,
+					enabled: selectedResourceSet.has(capabilityId),
 					allowed_operations: [],
 				};
 			});
-			const templates: ConfigSuitResourceTemplate[] = rawTemplates.map((template) => {
+			const templates: ConfigSuitResourceTemplate[] = rawTemplates.flatMap((template) => {
 				const uriTemplate = String(
 					template["uri_template"] ?? template["template"] ?? "",
 				);
 				const capabilityId = getCapabilityId(template, ["unique_uri_template", "unique_name"]);
+				if (!capabilityId) return [];
 				return {
-					id: capabilityId ?? uriTemplate,
+					id: capabilityId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					uri_template: uriTemplate,
-					enabled: capabilityId ? selectedTemplateSet.has(capabilityId) : false,
+					enabled: selectedTemplateSet.has(capabilityId),
 					allowed_operations: [],
 				};
 			});

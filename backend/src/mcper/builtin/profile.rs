@@ -394,7 +394,7 @@ struct ProfileActionParams {
 
 fn parse_profile_details_params(request: &CallToolRequestParams) -> Result<ProfileDetailsParams> {
     let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-    serde_json::from_value(args).context("Invalid parameters for profile_preview")
+    serde_json::from_value(args).context(format!("Invalid parameters for {MCPMATE_PROFILE_DETAILS_TOOL}"))
 }
 
 fn parse_profile_action_params(

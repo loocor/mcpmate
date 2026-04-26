@@ -101,8 +101,6 @@ impl ClientConfigService {
             return Ok(false);
         }
 
-        crate::core::profile::visibility::invalidate_visibility_cache(identifier);
-
         Ok(true)
     }
 

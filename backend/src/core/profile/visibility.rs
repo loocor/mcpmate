@@ -2,8 +2,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 
 use crate::clients::models::{CapabilitySource, ClientCapabilityConfig, UnifyDirectExposureConfig};
@@ -13,26 +11,6 @@ use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_
 use crate::core::profile::ProfileService;
 use crate::core::proxy::server::ClientContext;
 use crate::mcper::{PROFILE_MODE_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES};
-
-static VISIBILITY_SNAPSHOT_CACHE: Lazy<DashMap<String, CachedSnapshot>> = Lazy::new(DashMap::new);
-
-pub fn invalidate_visibility_cache(client_id: &str) {
-    VISIBILITY_SNAPSHOT_CACHE.remove(client_id);
-    let unify_prefix = format!("unify::{client_id}::");
-    let unify_keys = VISIBILITY_SNAPSHOT_CACHE
-        .iter()
-        .filter_map(|entry| entry.key().starts_with(&unify_prefix).then(|| entry.key().clone()))
-        .collect::<Vec<_>>();
-    for key in unify_keys {
-        VISIBILITY_SNAPSHOT_CACHE.remove(&key);
-    }
-    tracing::debug!(client_id = %client_id, "Invalidated visibility snapshot cache");
-}
-
-pub fn invalidate_all_visibility_caches() {
-    VISIBILITY_SNAPSHOT_CACHE.clear();
-    tracing::debug!("Invalidated all visibility snapshot caches");
-}
 
 fn builtin_tool_surface_ids(
     config_mode: Option<&str>,
@@ -88,13 +66,6 @@ struct ClientCapabilityRow {
     capability_source: Option<String>,
     selected_profile_ids: Option<String>,
     custom_profile_id: Option<String>,
-}
-
-struct CachedSnapshot {
-    #[expect(dead_code)] // Reserved for future cache-hit optimization
-    snapshot: VisibilitySnapshot,
-    #[expect(dead_code)] // Reserved for future TTL-based cache invalidation
-    cached_at: std::time::Instant,
 }
 
 struct ResolvedPolicies {
@@ -159,11 +130,10 @@ impl ProfileVisibilityService {
         let surface_fingerprint = compute_surface_fingerprint(&capability_config, &policies, None, None, None);
         let snapshot = build_snapshot(client_id, surface_fingerprint, profile_ids, server_ids, policies);
 
-        cache_snapshot(client_id, &snapshot);
         tracing::debug!(
             client_id = %client_id,
             fingerprint = %snapshot.surface_fingerprint,
-            "Cached visibility snapshot"
+            "Resolved visibility snapshot"
         );
 
         Ok(snapshot)
@@ -173,20 +143,9 @@ impl ProfileVisibilityService {
         &self,
         client_context: &ClientContext,
     ) -> Result<VisibilitySnapshot> {
-        let cache_key = if matches!(client_context.config_mode.as_deref(), Some("unify")) {
-            format!(
-                "unify::{}::{}",
-                client_context.client_id,
-                client_context.session_id.clone().unwrap_or_default()
-            )
-        } else {
-            client_context.client_id.clone()
-        };
-
         if matches!(client_context.config_mode.as_deref(), Some("unify")) {
             return self
                 .resolve_unify_snapshot(
-                    &cache_key,
                     &client_context.client_id,
                     client_context.config_mode.as_deref(),
                     client_context.unify_workspace.as_ref(),
@@ -196,7 +155,6 @@ impl ProfileVisibilityService {
 
         let capability_config = self.resolve_capability_config_for_client(client_context).await?;
         self.resolve_snapshot_from_config(
-            &cache_key,
             &client_context.client_id,
             &capability_config,
             client_context.config_mode.as_deref(),
@@ -253,7 +211,6 @@ impl ProfileVisibilityService {
 
     async fn resolve_snapshot_from_config(
         &self,
-        cache_key: &str,
         client_id: &str,
         capability_config: &ClientCapabilityConfig,
         config_mode: Option<&str>,
@@ -285,14 +242,11 @@ impl ProfileVisibilityService {
 
         let snapshot = build_snapshot(client_id, surface_fingerprint, profile_ids, server_ids, policies);
 
-        cache_snapshot(cache_key, &snapshot);
-
         Ok(snapshot)
     }
 
     async fn resolve_unify_snapshot(
         &self,
-        cache_key: &str,
         client_id: &str,
         config_mode: Option<&str>,
         unify_workspace: Option<&UnifyDirectExposureConfig>,
@@ -322,8 +276,6 @@ impl ProfileVisibilityService {
         );
 
         let snapshot = build_snapshot(client_id, surface_fingerprint, profile_ids, server_ids, policies);
-
-        cache_snapshot(cache_key, &snapshot);
 
         Ok(snapshot)
     }
@@ -368,8 +320,14 @@ impl ProfileVisibilityService {
         template_surfaces.sort();
         template_surfaces.dedup();
 
+        let mut selected_server_ids = workspace.selected_server_ids.clone();
+        selected_server_ids.sort();
+        selected_server_ids.dedup();
+
         let mut hasher = Sha256::new();
         hasher.update(workspace.route_mode.as_str());
+        hasher.update([0]);
+        hasher.update(selected_server_ids.join("\u{1f}"));
         hasher.update([0]);
         hasher.update(tool_surfaces.join("\u{1f}"));
         hasher.update([0]);
@@ -1095,19 +1053,6 @@ fn build_snapshot(
     }
 }
 
-fn cache_snapshot(
-    cache_key: &str,
-    snapshot: &VisibilitySnapshot,
-) {
-    VISIBILITY_SNAPSHOT_CACHE.insert(
-        cache_key.to_string(),
-        CachedSnapshot {
-            snapshot: snapshot.clone(),
-            cached_at: std::time::Instant::now(),
-        },
-    );
-}
-
 struct SurfaceFingerprintInput<'a> {
     capability_config: &'a ClientCapabilityConfig,
     allowed_tools: &'a HashSet<String>,
@@ -1209,51 +1154,6 @@ mod tests {
 
         let service = ProfileVisibilityService::new(Some(db.clone()), None);
         (temp_dir, db, service)
-    }
-
-    fn test_snapshot(client_id: &str) -> VisibilitySnapshot {
-        VisibilitySnapshot {
-            client_id: client_id.to_string(),
-            surface_fingerprint: "surface".to_string(),
-            profile_ids: Vec::new(),
-            server_ids: Vec::new(),
-            allowed_tools: HashSet::new(),
-            allowed_resources: HashSet::new(),
-            allowed_resource_templates: HashSet::new(),
-            allowed_prompts: HashSet::new(),
-            allowed_resource_prefixes: HashSet::new(),
-            has_tool_policy: false,
-            has_resource_policy: false,
-            has_resource_template_policy: false,
-            has_prompt_policy: false,
-        }
-    }
-
-    #[test]
-    fn invalidate_visibility_cache_removes_unify_session_entries() {
-        VISIBILITY_SNAPSHOT_CACHE.clear();
-        for key in [
-            "client-a",
-            "unify::client-a::sess-1",
-            "unify::client-a::sess-2",
-            "unify::client-b::sess-1",
-        ] {
-            VISIBILITY_SNAPSHOT_CACHE.insert(
-                key.to_string(),
-                CachedSnapshot {
-                    snapshot: test_snapshot(key),
-                    cached_at: std::time::Instant::now(),
-                },
-            );
-        }
-
-        invalidate_visibility_cache("client-a");
-
-        assert!(!VISIBILITY_SNAPSHOT_CACHE.contains_key("client-a"));
-        assert!(!VISIBILITY_SNAPSHOT_CACHE.contains_key("unify::client-a::sess-1"));
-        assert!(!VISIBILITY_SNAPSHOT_CACHE.contains_key("unify::client-a::sess-2"));
-        assert!(VISIBILITY_SNAPSHOT_CACHE.contains_key("unify::client-b::sess-1"));
-        VISIBILITY_SNAPSHOT_CACHE.clear();
     }
 
     async fn insert_profile(
