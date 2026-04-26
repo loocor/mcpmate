@@ -529,9 +529,7 @@ pub async fn config_details(
         imported_servers,
         import_summary,
         template: build_client_template_metadata(state.as_ref(), &runtime_metadata),
-        supported_transports: state
-            .as_ref()
-            .map_or_else(Vec::new, extract_supported_transports),
+        supported_transports: state.as_ref().map_or_else(Vec::new, extract_supported_transports),
         format_rules,
         managed,
         description,
@@ -2160,6 +2158,93 @@ mod tests {
                 .selected_tool_surfaces
                 .iter()
                 .any(|surface| surface.server_id == "server-eligible" && surface.tool_name == "tool-c")
+        );
+    }
+
+    #[tokio::test]
+    async fn initial_unify_server_level_selection_survives_late_server_enable() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-late-enable",
+            "Late Enable Server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+        sqlx::query("UPDATE server_config SET enabled = 0 WHERE id = ?")
+            .bind("server-late-enable")
+            .execute(&context.db_pool)
+            .await
+            .expect("disable server before initial selection");
+
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-late-server-level",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("unify".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed unify client mode");
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-late-server-level".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
+                    server_ids: vec!["server-late-enable".to_string()],
+                    capability_ids: Default::default(),
+                }),
+            }),
+        )
+        .await
+        .expect("store server-level intent before server is enabled");
+
+        let data = response.data.expect("response data");
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .is_empty()
+        );
+
+        let stored_intent: Option<String> =
+            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE identifier = ?")
+                .bind("client-late-server-level")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("load stored unify intent");
+        let stored_intent: serde_json::Value =
+            serde_json::from_str(stored_intent.as_deref().expect("stored intent payload"))
+                .expect("parse stored intent payload");
+        assert_eq!(stored_intent["route_mode"], "server_level");
+        assert_eq!(stored_intent["server_ids"], serde_json::json!(["server-late-enable"]));
+
+        sqlx::query("UPDATE server_config SET enabled = 1 WHERE id = ?")
+            .bind("server-late-enable")
+            .execute(&context.db_pool)
+            .await
+            .expect("enable server after initial selection");
+
+        let reconciled = context
+            .client_service
+            .reconcile_unify_direct_exposure_for_server("server-late-enable")
+            .await
+            .expect("reconcile direct exposure after enable");
+        assert_eq!(reconciled.len(), 1);
+        assert_eq!(reconciled[0].identifier, "client-late-server-level");
+        assert_eq!(
+            reconciled[0].unify_direct_exposure.selected_tool_surfaces,
+            vec![crate::clients::models::UnifyDirectToolSurface {
+                server_id: "server-late-enable".to_string(),
+                tool_name: "tool-a".to_string(),
+            }]
         );
     }
 
