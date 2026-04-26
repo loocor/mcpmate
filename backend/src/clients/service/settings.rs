@@ -905,8 +905,11 @@ impl ClientConfigService {
 
         let old_state = self.get_capability_config_state(identifier).await?;
         let effective_mode = self.get_effective_config_mode(identifier).await?;
+        let resolve_unify_workspace = |state: &ClientCapabilityConfigState| {
+            (effective_mode == "unify").then(|| state.unify_direct_exposure.clone())
+        };
         let old_fingerprint = if let Some(state) = old_state.as_ref() {
-            let context = build_client_context(&effective_mode, Some(state.unify_direct_exposure.clone()));
+            let context = build_client_context(&effective_mode, resolve_unify_workspace(state));
             Some(
                 visibility_service
                     .resolve_snapshot_for_client(&context)
@@ -927,7 +930,7 @@ impl ClientConfigService {
             )
             .await?;
 
-        let new_context = build_client_context(&effective_mode, Some(state.unify_direct_exposure.clone()));
+        let new_context = build_client_context(&effective_mode, resolve_unify_workspace(&state));
         let new_fingerprint = visibility_service
             .resolve_snapshot_for_client(&new_context)
             .await
@@ -955,8 +958,6 @@ impl ClientConfigService {
                 }
             }
         }
-
-        crate::core::profile::visibility::invalidate_visibility_cache(identifier);
 
         let has_visible_direct_surface = !state.unify_direct_exposure.selected_tool_surfaces.is_empty()
             || !state.unify_direct_exposure.selected_prompt_surfaces.is_empty()
