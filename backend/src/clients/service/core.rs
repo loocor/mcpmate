@@ -4,9 +4,8 @@ use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     BackupPolicySetting, ClientCapabilityConfig, ClientConfigFileParse, ClientConnectionMode, ClientGovernanceKind,
-    ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule,
-    ManagedEndpointConfig, MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
-    UnifyDirectExposureConfig,
+    ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule, ManagedEndpointConfig,
+    MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
 };
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
@@ -115,12 +114,7 @@ pub struct ClientStateRow {
     pub(super) template_identifier: Option<String>,
     pub(super) selected_profile_ids: Option<String>,
     pub(super) custom_profile_id: Option<String>,
-    pub(super) unify_route_mode: Option<String>,
-    pub(super) unify_selected_server_ids: Option<String>,
-    pub(super) unify_selected_tool_surfaces: Option<String>,
-    pub(super) unify_selected_prompt_surfaces: Option<String>,
-    pub(super) unify_selected_resource_surfaces: Option<String>,
-    pub(super) unify_selected_template_surfaces: Option<String>,
+    pub(super) unify_direct_exposure_intent: Option<String>,
     pub(super) approval_status: Option<String>,
     #[allow(dead_code)]
     pub(super) template_id: Option<String>,
@@ -157,8 +151,6 @@ pub struct RuntimeClientMetadata {
     pub logo_url: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
-    #[serde(default)]
-    pub supported_transports: Vec<String>,
 }
 
 impl ClientStateRow {
@@ -245,16 +237,11 @@ impl ClientStateRow {
         .map_err(ConfigError::DataAccessError)
     }
 
-    pub(super) fn unify_direct_exposure_config(&self) -> ConfigResult<UnifyDirectExposureConfig> {
-        UnifyDirectExposureConfig::from_parts(
-            self.unify_route_mode.as_deref(),
-            self.unify_selected_server_ids.as_deref(),
-            self.unify_selected_tool_surfaces.as_deref(),
-            self.unify_selected_prompt_surfaces.as_deref(),
-            self.unify_selected_resource_surfaces.as_deref(),
-            self.unify_selected_template_surfaces.as_deref(),
-        )
-        .map_err(ConfigError::DataAccessError)
+    pub(super) fn unify_direct_exposure_intent(
+        &self
+    ) -> ConfigResult<crate::clients::models::UnifyDirectExposureIntent> {
+        crate::clients::models::UnifyDirectExposureIntent::from_parts(self.unify_direct_exposure_intent.as_deref())
+            .map_err(ConfigError::DataAccessError)
     }
 
     pub fn runtime_client_metadata(&self) -> RuntimeClientMetadata {
@@ -396,6 +383,16 @@ fn effective_format_rules_for_state(state: &ClientStateRow) -> ConfigResult<Hash
         .collect())
 }
 
+pub(crate) fn supported_transports_from_format_rules(format_rules: &HashMap<String, FormatRule>) -> Vec<String> {
+    let keymap = crate::clients::keymap::registry();
+
+    ["streamable_http", "sse", "stdio"]
+        .into_iter()
+        .filter(|transport| keymap.has_rule(format_rules, transport))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Summarized view of a client template combined with detection and filesystem state
 #[derive(Debug, Clone)]
 pub struct ClientDescriptor {
@@ -530,10 +527,10 @@ impl ClientConfigService {
         }
 
         let format_rules = effective_format_rules_for_state(state)?;
-        let supported_transports = state.runtime_client_metadata().supported_transports;
+        let supported_transports = supported_transports_from_format_rules(&format_rules);
         if supported_transports.is_empty() {
             return Err(ConfigError::DataAccessError(format!(
-                "Client '{}' is missing supported_transports; cannot render configuration",
+                "Client '{}' is missing persisted format_rules; cannot render configuration",
                 state.identifier()
             )));
         }
@@ -545,7 +542,8 @@ impl ClientConfigService {
             } else {
                 return Err(ConfigError::DataAccessError(format!(
                     "Client '{}' is missing persisted format rule for supported transport '{}'",
-                    state.identifier(), transport
+                    state.identifier(),
+                    transport
                 )));
             }
         }
@@ -785,7 +783,6 @@ impl ClientConfigService {
                 serde_json::to_string(&template.config_mapping.format_rules).ok()
             };
 
-            // Extract Meta information from template
             let runtime_metadata = serde_json::json!({
                 "runtime_client": {
                     "description": template.metadata.get("description").and_then(|v| v.as_str()),
@@ -793,11 +790,7 @@ impl ClientConfigService {
                     "docs_url": template.metadata.get("docs_url").and_then(|v| v.as_str()),
                     "support_url": template.metadata.get("support_url").and_then(|v| v.as_str()),
                     "logo_url": template.metadata.get("logo_url").and_then(|v| v.as_str()),
-                    "category": template.metadata.get("category").and_then(|v| v.as_str()),
-                    "supported_transports": template.metadata.get("supported_transports")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<_>>())
-                        .unwrap_or_default()
+                    "category": template.metadata.get("category").and_then(|v| v.as_str())
                 }
             });
             let approval_metadata = serde_json::to_string(&runtime_metadata).ok();
@@ -878,7 +871,7 @@ mod render_definition_tests {
     use super::*;
 
     #[test]
-    fn build_render_definition_rejects_missing_supported_transport_rules() {
+    fn build_render_definition_ignores_metadata_supported_transports() {
         let state = ClientStateRow {
             identifier: "zed".to_string(),
             config_path: Some("~/.config/zed/settings.json".to_string()),
@@ -910,10 +903,110 @@ mod render_definition_tests {
             ..ClientStateRow::default()
         };
 
-        let error = ClientConfigService::build_render_definition_from_state(&state)
-            .expect_err("render definition should fail without persisted transport rule");
-        assert!(error
-            .to_string()
-            .contains("missing persisted format rule for supported transport 'streamable_http'"));
+        let definition = ClientConfigService::build_render_definition_from_state(&state)
+            .expect("metadata transports should not affect render definition");
+
+        assert!(definition.config_mapping.format_rules.contains_key("stdio"));
+        assert!(!definition.config_mapping.format_rules.contains_key("streamable_http"));
+    }
+
+    #[test]
+    fn build_render_definition_derives_supported_transports_from_format_rules() {
+        let state = ClientStateRow {
+            identifier: "cursor".to_string(),
+            config_path: Some("~/.cursor/mcp.json".to_string()),
+            connection_mode: Some("local_config_detected".to_string()),
+            template_identifier: Some("cursor".to_string()),
+            config_format: Some("json".to_string()),
+            container_type: Some("object".to_string()),
+            container_keys: Some("[\"mcpServers\"]".to_string()),
+            storage_kind: Some("file".to_string()),
+            storage_path_strategy: Some("config_path".to_string()),
+            merge_strategy: Some("replace".to_string()),
+            managed_source: Some("profile".to_string()),
+            format_rules: Some(
+                serde_json::json!({
+                    "streamable_http": {
+                        "template": {
+                            "type": "streamable_http",
+                            "url": "{{{url}}}"
+                        },
+                        "include_type": false
+                    }
+                })
+                .to_string(),
+            ),
+            approval_metadata: None,
+            ..ClientStateRow::default()
+        };
+
+        let definition = ClientConfigService::build_render_definition_from_state(&state)
+            .expect("render definition should derive transports from format rules");
+
+        assert!(definition.config_mapping.format_rules.contains_key("streamable_http"));
+    }
+
+    #[tokio::test]
+    async fn seed_client_runtime_rows_persists_format_rules_without_transport_metadata() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        let mut format_rules = HashMap::new();
+        format_rules.insert(
+            "streamable_http".to_string(),
+            FormatRule {
+                template: serde_json::json!({
+                    "type": "streamable_http",
+                    "url": "{{{url}}}"
+                }),
+                include_type: false,
+                ..Default::default()
+            },
+        );
+        let template = ClientTemplate {
+            identifier: "cursor".to_string(),
+            display_name: Some("Cursor".to_string()),
+            format: TemplateFormat::Json,
+            storage: StorageConfig {
+                kind: StorageKind::File,
+                path_strategy: Some("config_path".to_string()),
+                adapter: None,
+            },
+            config_mapping: ConfigMapping {
+                container_keys: vec!["mcpServers".to_string()],
+                container_type: crate::clients::models::ContainerType::ObjectMap,
+                merge_strategy: MergeStrategy::Replace,
+                keep_original_config: false,
+                managed_endpoint: None,
+                managed_source: Some("profile".to_string()),
+                parse: None,
+                format_rules,
+            },
+            ..Default::default()
+        };
+
+        ClientConfigService::seed_client_runtime_rows_from_templates(&pool, &[template])
+            .await
+            .expect("seed client runtime row");
+        let (approval_metadata, persisted_format_rules): (String, String) =
+            sqlx::query_as("SELECT approval_metadata, format_rules FROM client WHERE identifier = ?")
+                .bind("cursor")
+                .fetch_one(&pool)
+                .await
+                .expect("load client row");
+        let value: serde_json::Value = serde_json::from_str(&approval_metadata).expect("approval metadata json");
+        let persisted_rules: HashMap<String, FormatRule> =
+            serde_json::from_str(&persisted_format_rules).expect("persisted format rules json");
+
+        assert!(value["runtime_client"].get("supported_transports").is_none());
+        assert_eq!(
+            supported_transports_from_format_rules(&persisted_rules),
+            vec!["streamable_http".to_string()]
+        );
     }
 }
