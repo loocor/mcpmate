@@ -166,7 +166,7 @@ pub struct ClientContext {
     pub profile_id: Option<String>,
     pub config_mode: Option<String>,
     pub unify_workspace: Option<UnifyDirectExposureConfig>,
-    pub rules_fingerprint: Option<String>,
+    pub surface_fingerprint: Option<String>,
     pub transport: ClientTransport,
     pub source: ClientIdentitySource,
     pub observed_client_info: Option<ObservedClientInfo>,
@@ -174,12 +174,12 @@ pub struct ClientContext {
 
 impl ClientContext {
     pub fn runtime_identity(&self) -> Option<crate::core::capability::RuntimeIdentity> {
-        self.rules_fingerprint
+        self.surface_fingerprint
             .clone()
-            .map(|rules_fingerprint| crate::core::capability::RuntimeIdentity {
+            .map(|surface_fingerprint| crate::core::capability::RuntimeIdentity {
                 client_id: self.client_id.clone(),
                 profile_id: self.profile_id.clone(),
-                rules_fingerprint,
+                surface_fingerprint,
             })
     }
 
@@ -201,10 +201,9 @@ impl ClientContext {
         server_id: impl Into<String>,
     ) -> Option<crate::core::capability::ConnectionSelection> {
         self.runtime_identity()
-            .map(|identity| crate::core::capability::ConnectionSelection {
+            .map(|_| crate::core::capability::ConnectionSelection {
                 server_id: server_id.into(),
                 affinity_key: self.connection_mode().affinity_key,
-                routing_fingerprint: Some(identity.rules_fingerprint),
             })
     }
 }
@@ -229,7 +228,7 @@ pub struct SessionBinding {
     pub profile_id: Option<String>,
     pub config_mode: Option<String>,
     pub unify_workspace: Option<UnifyDirectExposureConfig>,
-    pub rules_fingerprint: Option<String>,
+    pub surface_fingerprint: Option<String>,
     pub source: ClientIdentitySource,
     pub observed_client_info: Option<ObservedClientInfo>,
 }
@@ -283,10 +282,10 @@ pub trait ManagedClientContextResolver: Send + Sync {
         session_id: &str,
     ) -> Result<()>;
 
-    async fn refresh_session_rules_fingerprint(
+    async fn refresh_session_surface_fingerprint(
         &self,
         session_id: &str,
-        rules_fingerprint: String,
+        surface_fingerprint: String,
     ) -> Result<()>;
 
     async fn set_config_mode(
@@ -385,20 +384,20 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
             }
             // Allow upgrading from None to Some(fingerprint) during initialize flow,
             // but reject real mismatches (both Some but different values).
-            match (&existing.rules_fingerprint, &client_context.rules_fingerprint) {
+            match (&existing.surface_fingerprint, &client_context.surface_fingerprint) {
                 (Some(existing_fp), Some(new_fp)) if existing_fp != new_fp => {
                     return Err(anyhow!(
-                        "Managed session '{}' already bound to rules_fingerprint {:?} instead of {:?}",
+                        "Managed session '{}' already bound to surface_fingerprint {:?} instead of {:?}",
                         session_id,
-                        existing.rules_fingerprint,
-                        client_context.rules_fingerprint
+                        existing.surface_fingerprint,
+                        client_context.surface_fingerprint
                     ));
                 }
                 (Some(_), None) => {
                     return Err(anyhow!(
-                        "Managed session '{}' already bound to rules_fingerprint {:?}, cannot downgrade to None",
+                        "Managed session '{}' already bound to surface_fingerprint {:?}, cannot downgrade to None",
                         session_id,
-                        existing.rules_fingerprint
+                        existing.surface_fingerprint
                     ));
                 }
                 _ => {}
@@ -413,7 +412,7 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
                 profile_id: client_context.profile_id.clone(),
                 config_mode: client_context.config_mode.clone(),
                 unify_workspace: client_context.unify_workspace.clone(),
-                rules_fingerprint: client_context.rules_fingerprint.clone(),
+                surface_fingerprint: client_context.surface_fingerprint.clone(),
                 source: client_context.source,
                 observed_client_info,
             },
@@ -467,16 +466,16 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
         Ok(())
     }
 
-    async fn refresh_session_rules_fingerprint(
+    async fn refresh_session_surface_fingerprint(
         &self,
         session_id: &str,
-        rules_fingerprint: String,
+        surface_fingerprint: String,
     ) -> Result<()> {
         let mut binding = self
             .session_bindings
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("Managed session '{}' is not bound", session_id))?;
-        binding.rules_fingerprint = Some(rules_fingerprint);
+        binding.surface_fingerprint = Some(surface_fingerprint);
         Ok(())
     }
 
@@ -544,7 +543,7 @@ fn resolve_bound_request_context_parts(
         profile_id: binding.profile_id.clone(),
         config_mode: binding.config_mode.clone(),
         unify_workspace: binding.unify_workspace.clone(),
-        rules_fingerprint: binding.rules_fingerprint.clone(),
+        surface_fingerprint: binding.surface_fingerprint.clone(),
         transport: transport_from_parts(Some(parts)),
         source: ClientIdentitySource::SessionBinding,
         observed_client_info: binding.observed_client_info.clone(),
@@ -569,7 +568,7 @@ fn resolve_pending_session_context_parts(
         profile_id: initialize_context.profile_id.clone(),
         config_mode: initialize_context.config_mode.clone(),
         unify_workspace: initialize_context.unify_workspace.clone(),
-        rules_fingerprint: initialize_context.rules_fingerprint.clone(),
+        surface_fingerprint: initialize_context.surface_fingerprint.clone(),
         transport: transport_from_parts(Some(parts)),
         source: ClientIdentitySource::SessionBinding,
         observed_client_info: initialize_context.observed_client_info.clone(),
@@ -642,7 +641,7 @@ fn resolve_managed_context(
         profile_id,
         config_mode: None,
         unify_workspace: None,
-        rules_fingerprint: None,
+        surface_fingerprint: None,
         transport: transport_from_parts(Some(parts)),
         source,
         observed_client_info,
@@ -972,7 +971,7 @@ mod tests {
                 profile_id: Some("profile-a".to_string()),
                 config_mode: Some("hosted".to_string()),
                 unify_workspace: None,
-                rules_fingerprint: Some("fp-123".to_string()),
+                surface_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: Some(ObservedClientInfo {
                     name: "bridge".to_string(),
@@ -990,7 +989,7 @@ mod tests {
         assert_eq!(context.client_id, "claude-code");
         assert_eq!(context.session_id.as_deref(), Some("sess-123"));
         assert_eq!(context.profile_id.as_deref(), Some("profile-a"));
-        assert_eq!(context.rules_fingerprint.as_deref(), Some("fp-123"));
+        assert_eq!(context.surface_fingerprint.as_deref(), Some("fp-123"));
         assert_eq!(context.source, ClientIdentitySource::SessionBinding);
         assert_eq!(
             context.observed_client_info.as_ref().map(|info| info.name.as_str()),
@@ -1009,7 +1008,7 @@ mod tests {
                 profile_id: Some("profile-a".to_string()),
                 config_mode: Some("hosted".to_string()),
                 unify_workspace: None,
-                rules_fingerprint: Some("fp-123".to_string()),
+                surface_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
             },
@@ -1032,7 +1031,7 @@ mod tests {
                 profile_id: Some("profile-a".to_string()),
                 config_mode: Some("hosted".to_string()),
                 unify_workspace: None,
-                rules_fingerprint: Some("fp-123".to_string()),
+                surface_fingerprint: Some("fp-123".to_string()),
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
             },
@@ -1052,7 +1051,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: Some(ObservedClientInfo {
@@ -1068,7 +1067,7 @@ mod tests {
         assert_eq!(context.client_id, "claude-code");
         assert_eq!(context.session_id.as_deref(), Some("sess-123"));
         assert_eq!(context.profile_id.as_deref(), Some("profile-a"));
-        assert_eq!(context.rules_fingerprint.as_deref(), Some("fp-123"));
+        assert_eq!(context.surface_fingerprint.as_deref(), Some("fp-123"));
         assert_eq!(context.source, ClientIdentitySource::SessionBinding);
         assert_eq!(
             context.observed_client_info.as_ref().map(|info| info.name.as_str()),
@@ -1084,7 +1083,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1104,7 +1103,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1125,7 +1124,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1138,7 +1137,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1151,14 +1150,14 @@ mod tests {
     }
 
     #[test]
-    fn runtime_identity_includes_rules_fingerprint() {
+    fn runtime_identity_includes_surface_fingerprint() {
         let context = ClientContext {
             client_id: "claude-code".to_string(),
             session_id: Some("sess-123".to_string()),
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::Other,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1167,7 +1166,7 @@ mod tests {
         let identity = context.runtime_identity().expect("runtime identity");
         assert_eq!(identity.client_id, "claude-code");
         assert_eq!(identity.profile_id.as_deref(), Some("profile-a"));
-        assert_eq!(identity.rules_fingerprint, "fp-123");
+        assert_eq!(identity.surface_fingerprint, "fp-123");
     }
 
     #[test]
@@ -1178,7 +1177,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::Other,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1186,7 +1185,6 @@ mod tests {
 
         let selection = context.connection_selection("srv_1").expect("selection");
         assert_eq!(selection.server_id, "srv_1");
-        assert_eq!(selection.routing_fingerprint.as_deref(), Some("fp-123"));
         assert!(
             matches!(selection.affinity_key, crate::core::capability::AffinityKey::PerSession(ref id) if id == "sess-123")
         );
@@ -1205,7 +1203,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1247,7 +1245,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1279,7 +1277,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: Some(observed.clone()),
@@ -1317,7 +1315,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1347,7 +1345,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::Other,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1374,7 +1372,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1390,7 +1388,7 @@ mod tests {
             profile_id: Some("profile-b".to_string()), // Different profile
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1403,7 +1401,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_binding_rejects_rules_fingerprint_mismatch() {
+    async fn session_binding_rejects_surface_fingerprint_mismatch() {
         let resolver = SessionBoundClientContextResolver::new();
         let first = ClientContext {
             client_id: "same-client".to_string(),
@@ -1411,7 +1409,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-alpha".to_string()),
+            surface_fingerprint: Some("fp-alpha".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1427,7 +1425,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-beta".to_string()),
+            surface_fingerprint: Some("fp-beta".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1436,7 +1434,7 @@ mod tests {
             .bind_session("sess-fp", &second)
             .await
             .expect_err("should reject fingerprint mismatch");
-        assert!(err.to_string().contains("already bound to rules_fingerprint"));
+        assert!(err.to_string().contains("already bound to surface_fingerprint"));
     }
 
     #[tokio::test]
@@ -1448,7 +1446,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1464,7 +1462,7 @@ mod tests {
             profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-123".to_string()),
+            surface_fingerprint: Some("fp-123".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1478,7 +1476,7 @@ mod tests {
             .session_bindings
             .get("sess-upgrade")
             .expect("binding should exist");
-        assert_eq!(binding.rules_fingerprint.as_deref(), Some("fp-123"));
+        assert_eq!(binding.surface_fingerprint.as_deref(), Some("fp-123"));
     }
 
     #[tokio::test]
@@ -1490,7 +1488,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-original".to_string()),
+            surface_fingerprint: Some("fp-original".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1506,7 +1504,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1515,11 +1513,11 @@ mod tests {
             .bind_session("sess-downgrade", &downgrade)
             .await
             .expect_err("should reject fingerprint downgrade");
-        assert!(err.to_string().contains("already bound to rules_fingerprint"));
+        assert!(err.to_string().contains("already bound to surface_fingerprint"));
     }
 
     #[tokio::test]
-    async fn session_binding_refreshes_rules_fingerprint() {
+    async fn session_binding_refreshes_surface_fingerprint() {
         let resolver = SessionBoundClientContextResolver::new();
         let context = ClientContext {
             client_id: "cursor".to_string(),
@@ -1527,7 +1525,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-old".to_string()),
+            surface_fingerprint: Some("fp-old".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,
@@ -1538,7 +1536,7 @@ mod tests {
             .await
             .expect("bind should succeed");
         resolver
-            .refresh_session_rules_fingerprint("sess-refresh", "fp-new".to_string())
+            .refresh_session_surface_fingerprint("sess-refresh", "fp-new".to_string())
             .await
             .expect("refresh should succeed");
 
@@ -1546,7 +1544,7 @@ mod tests {
             .session_bindings
             .get("sess-refresh")
             .expect("binding should exist");
-        assert_eq!(binding.rules_fingerprint.as_deref(), Some("fp-new"));
+        assert_eq!(binding.surface_fingerprint.as_deref(), Some("fp-new"));
     }
 
     #[tokio::test]
@@ -1558,7 +1556,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: Some("fp-old".to_string()),
+            surface_fingerprint: Some("fp-old".to_string()),
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedQuery,
             observed_client_info: None,

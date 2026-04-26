@@ -897,7 +897,7 @@ impl ClientConfigService {
                 profile_id: None,
                 config_mode: Some(config_mode.to_string()),
                 unify_workspace: unify_direct_exposure,
-                rules_fingerprint: None,
+                surface_fingerprint: None,
                 transport: ClientTransport::Other,
                 source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
@@ -912,7 +912,7 @@ impl ClientConfigService {
                     .resolve_snapshot_for_client(&context)
                     .await
                     .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
-                    .rules_fingerprint,
+                    .surface_fingerprint,
             )
         } else {
             None
@@ -932,11 +932,11 @@ impl ClientConfigService {
             .resolve_snapshot_for_client(&new_context)
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
-            .rules_fingerprint;
+            .surface_fingerprint;
 
         if let Some(ref fingerprint) = old_fingerprint {
             if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
-                match cache_manager.invalidate_by_rules_fingerprint(fingerprint).await {
+                match cache_manager.invalidate_by_surface_fingerprint(fingerprint).await {
                     Ok(count) => {
                         tracing::info!(
                             client = %identifier,
@@ -958,10 +958,14 @@ impl ClientConfigService {
 
         crate::core::profile::visibility::invalidate_visibility_cache(identifier);
 
+        let has_visible_direct_surface = !state.unify_direct_exposure.selected_tool_surfaces.is_empty()
+            || !state.unify_direct_exposure.selected_prompt_surfaces.is_empty()
+            || !state.unify_direct_exposure.selected_resource_surfaces.is_empty()
+            || !state.unify_direct_exposure.selected_template_surfaces.is_empty();
         let visible_surface_changed = old_fingerprint
             .as_ref()
             .map(|fingerprint| fingerprint != &new_fingerprint)
-            .unwrap_or(false);
+            .unwrap_or(has_visible_direct_surface);
 
         Ok((state, visible_surface_changed))
     }
@@ -1146,9 +1150,10 @@ impl ClientConfigService {
             .await?;
         let mut diagnostics = UnifyDirectExposureDiagnostics::default();
 
-        let selected_server_ids = self.normalize_selected_server_ids_for_unify(intent.server_ids.clone());
-        let selected_server_ids = selected_server_ids
-            .into_iter()
+        let requested_server_ids = self.normalize_selected_server_ids_for_unify(intent.server_ids.clone());
+        let selected_server_ids = requested_server_ids
+            .iter()
+            .cloned()
             .filter_map(|server_id| {
                 if !visible_server_ids.contains(&server_id) {
                     diagnostics.invalid_server_ids.push(server_id);
@@ -1438,7 +1443,7 @@ impl ClientConfigService {
         let resolved_intent = UnifyDirectExposureIntent {
             route_mode: intent.route_mode,
             server_ids: if intent.route_mode == crate::clients::models::UnifyRouteMode::ServerLevel {
-                selected_server_ids.clone()
+                requested_server_ids
             } else {
                 Vec::new()
             },

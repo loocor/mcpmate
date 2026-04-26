@@ -101,13 +101,13 @@ impl EventHandlers {
                     }
                 }
 
-                // Downstream: listChanged across tools/prompts/resources
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
+                        let refreshed = guard.refresh_all_bound_sessions().await;
                         let (t, p, r) = guard.notify_all_list_changed().await;
                         debug!(
-                            "Profile change: list_changed notified (tools={}, prompts={}, resources={})",
-                            t, p, r
+                            "Profile change: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
+                            refreshed, t, p, r
                         );
                     }
                 }
@@ -144,10 +144,11 @@ impl EventHandlers {
                 // Downstream: listChanged across tools/prompts/resources
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
+                        let refreshed = guard.refresh_all_bound_sessions().await;
                         let (t, p, r) = guard.notify_all_list_changed().await;
                         debug!(
-                            "Server enabled change: list_changed notified (tools={}, prompts={}, resources={})",
-                            t, p, r
+                            "Server enabled change: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
+                            refreshed, t, p, r
                         );
                     }
                 }
@@ -173,10 +174,11 @@ impl EventHandlers {
                 // Downstream: listChanged across tools/prompts/resources (capability surface likely changed)
                 if let Some(server) = crate::core::proxy::server::ProxyServer::global() {
                     if let Ok(guard) = server.try_lock() {
+                        let refreshed = guard.refresh_all_bound_sessions().await;
                         let (t, p, r) = guard.notify_all_list_changed().await;
                         debug!(
-                            "Server sync event: list_changed notified (tools={}, prompts={}, resources={})",
-                            t, p, r
+                            "Server sync event: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
+                            refreshed, t, p, r
                         );
                     }
                 }
