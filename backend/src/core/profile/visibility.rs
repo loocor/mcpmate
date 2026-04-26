@@ -18,6 +18,14 @@ static VISIBILITY_SNAPSHOT_CACHE: Lazy<DashMap<String, CachedSnapshot>> = Lazy::
 
 pub fn invalidate_visibility_cache(client_id: &str) {
     VISIBILITY_SNAPSHOT_CACHE.remove(client_id);
+    let unify_prefix = format!("unify::{client_id}::");
+    let unify_keys = VISIBILITY_SNAPSHOT_CACHE
+        .iter()
+        .filter_map(|entry| entry.key().starts_with(&unify_prefix).then(|| entry.key().clone()))
+        .collect::<Vec<_>>();
+    for key in unify_keys {
+        VISIBILITY_SNAPSHOT_CACHE.remove(&key);
+    }
     tracing::debug!(client_id = %client_id, "Invalidated visibility snapshot cache");
 }
 
@@ -54,14 +62,14 @@ pub enum CapabilityKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibilityQuery {
     pub client_id: String,
-    pub rules_fingerprint: String,
+    pub surface_fingerprint: String,
     pub capability_kind: CapabilityKind,
 }
 
 #[derive(Debug, Clone)]
 pub struct VisibilitySnapshot {
     pub client_id: String,
-    pub rules_fingerprint: String,
+    pub surface_fingerprint: String,
     pub profile_ids: Vec<String>,
     pub server_ids: Vec<String>,
     pub allowed_tools: HashSet<String>,
@@ -148,13 +156,13 @@ impl ProfileVisibilityService {
             .await?;
 
         let policies = self.resolve_policies(&db.pool, &server_ids, &profile_ids).await?;
-        let rules_fingerprint = compute_rules_fingerprint(&capability_config, &policies, None, None, None);
-        let snapshot = build_snapshot(client_id, rules_fingerprint, profile_ids, server_ids, policies);
+        let surface_fingerprint = compute_surface_fingerprint(&capability_config, &policies, None, None, None);
+        let snapshot = build_snapshot(client_id, surface_fingerprint, profile_ids, server_ids, policies);
 
         cache_snapshot(client_id, &snapshot);
         tracing::debug!(
             client_id = %client_id,
-            fingerprint = %snapshot.rules_fingerprint,
+            fingerprint = %snapshot.surface_fingerprint,
             "Cached visibility snapshot"
         );
 
@@ -264,7 +272,7 @@ impl ProfileVisibilityService {
         let policies = self.resolve_policies(&db.pool, &server_ids, &profile_ids).await?;
         let direct_surface_fingerprint = self.compute_unify_direct_surface_fingerprint(unify_workspace).await?;
 
-        let rules_fingerprint = compute_rules_fingerprint(
+        let surface_fingerprint = compute_surface_fingerprint(
             capability_config,
             &policies,
             config_mode,
@@ -275,7 +283,7 @@ impl ProfileVisibilityService {
             )),
         );
 
-        let snapshot = build_snapshot(client_id, rules_fingerprint, profile_ids, server_ids, policies);
+        let snapshot = build_snapshot(client_id, surface_fingerprint, profile_ids, server_ids, policies);
 
         cache_snapshot(cache_key, &snapshot);
 
@@ -302,7 +310,7 @@ impl ProfileVisibilityService {
         let policies = self.resolve_policies(&db.pool, &server_ids, &profile_ids).await?;
         let direct_surface_fingerprint = self.compute_unify_direct_surface_fingerprint(unify_workspace).await?;
 
-        let rules_fingerprint = compute_rules_fingerprint(
+        let surface_fingerprint = compute_surface_fingerprint(
             &capability_config,
             &policies,
             config_mode,
@@ -313,7 +321,7 @@ impl ProfileVisibilityService {
             )),
         );
 
-        let snapshot = build_snapshot(client_id, rules_fingerprint, profile_ids, server_ids, policies);
+        let snapshot = build_snapshot(client_id, surface_fingerprint, profile_ids, server_ids, policies);
 
         cache_snapshot(cache_key, &snapshot);
 
@@ -1042,14 +1050,14 @@ fn repeat_placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
 }
 
-fn compute_rules_fingerprint(
+fn compute_surface_fingerprint(
     capability_config: &ClientCapabilityConfig,
     policies: &ResolvedPolicies,
     config_mode: Option<&str>,
     direct_surface_fingerprint: Option<&str>,
     builtin_tools: Option<Vec<&str>>,
 ) -> String {
-    compute_surface_fingerprint(SurfaceFingerprintInput {
+    compute_surface_hash(SurfaceFingerprintInput {
         capability_config,
         allowed_tools: &policies.allowed_tools,
         allowed_resources: &policies.allowed_resources,
@@ -1065,14 +1073,14 @@ fn compute_rules_fingerprint(
 
 fn build_snapshot(
     client_id: &str,
-    rules_fingerprint: String,
+    surface_fingerprint: String,
     profile_ids: Vec<String>,
     server_ids: Vec<String>,
     policies: ResolvedPolicies,
 ) -> VisibilitySnapshot {
     VisibilitySnapshot {
         client_id: client_id.to_string(),
-        rules_fingerprint,
+        surface_fingerprint,
         profile_ids,
         server_ids,
         allowed_tools: policies.allowed_tools,
@@ -1113,7 +1121,7 @@ struct SurfaceFingerprintInput<'a> {
     builtin_tools: Option<Vec<&'a str>>,
 }
 
-fn compute_surface_fingerprint(input: SurfaceFingerprintInput<'_>) -> String {
+fn compute_surface_hash(input: SurfaceFingerprintInput<'_>) -> String {
     let mut hasher = Sha256::new();
 
     hasher.update(input.config_mode.unwrap_or("hosted"));
@@ -1201,6 +1209,51 @@ mod tests {
 
         let service = ProfileVisibilityService::new(Some(db.clone()), None);
         (temp_dir, db, service)
+    }
+
+    fn test_snapshot(client_id: &str) -> VisibilitySnapshot {
+        VisibilitySnapshot {
+            client_id: client_id.to_string(),
+            surface_fingerprint: "surface".to_string(),
+            profile_ids: Vec::new(),
+            server_ids: Vec::new(),
+            allowed_tools: HashSet::new(),
+            allowed_resources: HashSet::new(),
+            allowed_resource_templates: HashSet::new(),
+            allowed_prompts: HashSet::new(),
+            allowed_resource_prefixes: HashSet::new(),
+            has_tool_policy: false,
+            has_resource_policy: false,
+            has_resource_template_policy: false,
+            has_prompt_policy: false,
+        }
+    }
+
+    #[test]
+    fn invalidate_visibility_cache_removes_unify_session_entries() {
+        VISIBILITY_SNAPSHOT_CACHE.clear();
+        for key in [
+            "client-a",
+            "unify::client-a::sess-1",
+            "unify::client-a::sess-2",
+            "unify::client-b::sess-1",
+        ] {
+            VISIBILITY_SNAPSHOT_CACHE.insert(
+                key.to_string(),
+                CachedSnapshot {
+                    snapshot: test_snapshot(key),
+                    cached_at: std::time::Instant::now(),
+                },
+            );
+        }
+
+        invalidate_visibility_cache("client-a");
+
+        assert!(!VISIBILITY_SNAPSHOT_CACHE.contains_key("client-a"));
+        assert!(!VISIBILITY_SNAPSHOT_CACHE.contains_key("unify::client-a::sess-1"));
+        assert!(!VISIBILITY_SNAPSHOT_CACHE.contains_key("unify::client-a::sess-2"));
+        assert!(VISIBILITY_SNAPSHOT_CACHE.contains_key("unify::client-b::sess-1"));
+        VISIBILITY_SNAPSHOT_CACHE.clear();
     }
 
     async fn insert_profile(
@@ -1423,7 +1476,7 @@ mod tests {
         assert_eq!(snapshot.server_ids, vec![active_server_id]);
         assert!(snapshot.allowed_tools.contains(&active_tool));
         assert_eq!(snapshot.allowed_tools.len(), 1);
-        assert!(!snapshot.rules_fingerprint.is_empty());
+        assert!(!snapshot.surface_fingerprint.is_empty());
     }
 
     #[tokio::test]
@@ -1706,7 +1759,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("unify".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: crate::core::proxy::server::ClientTransport::Other,
             source: crate::core::proxy::server::ClientIdentitySource::SessionBinding,
             observed_client_info: None,

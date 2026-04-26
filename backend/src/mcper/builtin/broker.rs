@@ -2371,7 +2371,7 @@ impl ClientBuiltinContext {
             profile_id: None,
             config_mode: self.config_mode.clone(),
             unify_workspace: self.unify_workspace.clone(),
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::Other,
             source: ClientIdentitySource::SessionBinding,
             observed_client_info: None,

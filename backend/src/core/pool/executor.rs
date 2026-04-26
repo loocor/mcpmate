@@ -295,7 +295,6 @@ impl UpstreamConnectionPool {
         let selection = ConnectionSelection {
             server_id: server_id.to_string(),
             affinity_key: crate::core::capability::AffinityKey::Default,
-            routing_fingerprint: None,
         };
         self.ensure_connected_with_selection(&selection).await
     }

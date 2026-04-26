@@ -543,29 +543,18 @@ pub struct ConnectionMode {
 pub struct RuntimeIdentity {
     pub client_id: String,
     pub profile_id: Option<String>,
-    pub rules_fingerprint: String,
+    pub surface_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionSelection {
     pub server_id: String,
     pub affinity_key: AffinityKey,
-    pub routing_fingerprint: Option<String>,
 }
 
 impl ConnectionSelection {
     pub fn cache_scope_key(&self) -> String {
-        match &self.routing_fingerprint {
-            Some(routing_fingerprint) => {
-                format!(
-                    "{}#{}#{}",
-                    self.server_id,
-                    self.affinity_key_string(),
-                    routing_fingerprint
-                )
-            }
-            None => format!("{}#{}", self.server_id, self.affinity_key_string()),
-        }
+        format!("{}#{}", self.server_id, self.affinity_key_string())
     }
 
     pub fn affinity_key_string(&self) -> String {
