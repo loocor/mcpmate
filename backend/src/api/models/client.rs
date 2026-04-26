@@ -1,6 +1,6 @@
 use crate::clients::models::{
-    CapabilitySource, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectPromptSurface,
-    UnifyDirectResourceSurface, UnifyDirectTemplateSurface, UnifyDirectToolSurface,
+    CapabilitySource, UnifyDirectCapabilityIds, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics,
+    UnifyDirectExposureIntent,
 };
 use crate::common::ClientCategory;
 use crate::macros::resp::api_resp;
@@ -790,9 +790,11 @@ pub struct ClientCapabilityConfigReq {
 #[schemars(description = "Unify direct exposure state returned by client capability config APIs")]
 pub struct ClientUnifyDirectExposureData {
     #[serde(flatten)]
-    pub config: UnifyDirectExposureConfig,
+    pub intent: UnifyDirectExposureIntent,
     #[serde(default)]
     pub diagnostics: UnifyDirectExposureDiagnostics,
+    #[serde(default)]
+    pub resolved_capabilities: UnifyDirectExposureConfig,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -803,30 +805,18 @@ pub struct ClientUnifyDirectExposureReq {
     pub route_mode: crate::clients::models::UnifyRouteMode,
     #[schemars(description = "Selected eligible server ids for direct exposure")]
     #[serde(default)]
-    pub selected_server_ids: Vec<String>,
-    #[schemars(description = "Selected direct tool surfaces for capability-level direct exposure")]
+    pub server_ids: Vec<String>,
+    #[schemars(description = "Selected direct capability ids for capability-level direct exposure")]
     #[serde(default)]
-    pub selected_tool_surfaces: Vec<UnifyDirectToolSurface>,
-    #[schemars(description = "Selected direct prompt surfaces for capability-level direct exposure")]
-    #[serde(default)]
-    pub selected_prompt_surfaces: Vec<UnifyDirectPromptSurface>,
-    #[schemars(description = "Selected direct resource surfaces for capability-level direct exposure")]
-    #[serde(default)]
-    pub selected_resource_surfaces: Vec<UnifyDirectResourceSurface>,
-    #[schemars(description = "Selected direct resource template surfaces for capability-level direct exposure")]
-    #[serde(default)]
-    pub selected_template_surfaces: Vec<UnifyDirectTemplateSurface>,
+    pub capability_ids: UnifyDirectCapabilityIds,
 }
 
-impl From<ClientUnifyDirectExposureReq> for UnifyDirectExposureConfig {
+impl From<ClientUnifyDirectExposureReq> for UnifyDirectExposureIntent {
     fn from(value: ClientUnifyDirectExposureReq) -> Self {
         Self {
             route_mode: value.route_mode,
-            selected_server_ids: value.selected_server_ids,
-            selected_tool_surfaces: value.selected_tool_surfaces,
-            selected_prompt_surfaces: value.selected_prompt_surfaces,
-            selected_resource_surfaces: value.selected_resource_surfaces,
-            selected_template_surfaces: value.selected_template_surfaces,
+            server_ids: value.server_ids,
+            capability_ids: value.capability_ids,
         }
     }
 }

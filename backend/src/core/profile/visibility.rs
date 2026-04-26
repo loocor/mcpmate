@@ -6,12 +6,13 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 
-use crate::clients::models::{CapabilitySource, ClientCapabilityConfig};
+use crate::clients::models::{CapabilitySource, ClientCapabilityConfig, UnifyDirectExposureConfig};
 use crate::config::database::Database;
 use crate::config::profile::basic::get_active_profile;
 use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
 use crate::core::profile::ProfileService;
 use crate::core::proxy::server::ClientContext;
+use crate::mcper::{PROFILE_MODE_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES};
 
 static VISIBILITY_SNAPSHOT_CACHE: Lazy<DashMap<String, CachedSnapshot>> = Lazy::new(DashMap::new);
 
@@ -25,16 +26,21 @@ pub fn invalidate_all_visibility_caches() {
     tracing::debug!("Invalidated all visibility snapshot caches");
 }
 
-/// Compute a deterministic fingerprint from a capability config.
-/// This is used for cache isolation - different configs produce different fingerprints.
-pub fn compute_capability_fingerprint(config: &ClientCapabilityConfig) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(config.capability_source.as_str());
-    hasher.update([0]);
-    hasher.update(config.selected_profile_ids.join("\u{1f}"));
-    hasher.update([0]);
-    hasher.update(config.custom_profile_id.as_deref().unwrap_or_default());
-    format!("{:x}", hasher.finalize())
+fn builtin_tool_surface_ids(
+    config_mode: Option<&str>,
+    capability_source: CapabilitySource,
+) -> Vec<&'static str> {
+    match config_mode {
+        Some("unify") => UNIFY_BUILTIN_TOOL_NAMES.to_vec(),
+        Some("transparent") => Vec::new(),
+        _ => {
+            if capability_source == CapabilitySource::Profiles {
+                PROFILE_MODE_BUILTIN_TOOL_NAMES.to_vec()
+            } else {
+                Vec::new()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,9 +83,33 @@ struct ClientCapabilityRow {
 }
 
 struct CachedSnapshot {
+    #[expect(dead_code)] // Reserved for future cache-hit optimization
     snapshot: VisibilitySnapshot,
     #[expect(dead_code)] // Reserved for future TTL-based cache invalidation
     cached_at: std::time::Instant,
+}
+
+struct ResolvedPolicies {
+    allowed_tools: HashSet<String>,
+    allowed_resources: HashSet<String>,
+    allowed_resource_templates: HashSet<String>,
+    allowed_prompts: HashSet<String>,
+    allowed_resource_prefixes: HashSet<String>,
+    has_tool_policy: bool,
+    has_resource_policy: bool,
+    has_resource_template_policy: bool,
+    has_prompt_policy: bool,
+}
+
+impl ResolvedPolicies {
+    fn policy_flags(&self) -> [bool; 4] {
+        [
+            self.has_tool_policy,
+            self.has_resource_policy,
+            self.has_resource_template_policy,
+            self.has_prompt_policy,
+        ]
+    }
 }
 
 pub struct ProfileVisibilityService {
@@ -111,81 +141,17 @@ impl ProfileVisibilityService {
         let capability_config = self
             .load_client_capability_config(client_id, profile_id_override)
             .await?;
-        let rules_fingerprint_pre = self.compute_config_fingerprint(&capability_config).await?;
-
-        if let Some(cached) = VISIBILITY_SNAPSHOT_CACHE.get(client_id) {
-            if cached.snapshot.rules_fingerprint == rules_fingerprint_pre {
-                tracing::debug!(
-                    client_id = %client_id,
-                    fingerprint = %rules_fingerprint_pre,
-                    "Visibility snapshot cache hit"
-                );
-                return Ok(cached.snapshot.clone());
-            }
-            tracing::debug!(
-                client_id = %client_id,
-                old_fingerprint = %cached.snapshot.rules_fingerprint,
-                new_fingerprint = %rules_fingerprint_pre,
-                "Visibility snapshot cache miss (fingerprint changed)"
-            );
-        }
 
         let profile_ids = self.resolve_profile_ids(&db.pool, &capability_config).await?;
         let server_ids = self
             .resolve_server_ids(&db.pool, capability_config.capability_source, &profile_ids)
             .await?;
 
-        let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(&db.pool, &server_ids, &profile_ids).await?;
-        let (allowed_resources, has_resource_policy) = self
-            .resolve_allowed_resources(&db.pool, &server_ids, &profile_ids)
-            .await?;
-        let (allowed_resource_templates, allowed_resource_prefixes, has_resource_template_policy) = self
-            .resolve_allowed_resource_templates(&db.pool, &server_ids, &profile_ids)
-            .await?;
-        let (allowed_prompts, has_prompt_policy) = self
-            .resolve_allowed_prompts(&db.pool, &server_ids, &profile_ids)
-            .await?;
+        let policies = self.resolve_policies(&db.pool, &server_ids, &profile_ids).await?;
+        let rules_fingerprint = compute_rules_fingerprint(&capability_config, &policies, None, None, None);
+        let snapshot = build_snapshot(client_id, rules_fingerprint, profile_ids, server_ids, policies);
 
-        let rules_fingerprint = compute_rules_fingerprint(
-            &capability_config,
-            &profile_ids,
-            &server_ids,
-            &allowed_tools,
-            &allowed_resources,
-            &allowed_resource_templates,
-            &allowed_resource_prefixes,
-            &allowed_prompts,
-            [
-                has_tool_policy,
-                has_resource_policy,
-                has_resource_template_policy,
-                has_prompt_policy,
-            ],
-        );
-
-        let snapshot = VisibilitySnapshot {
-            client_id: client_id.to_string(),
-            rules_fingerprint,
-            profile_ids,
-            server_ids,
-            allowed_tools,
-            allowed_resources,
-            allowed_resource_templates,
-            allowed_prompts,
-            allowed_resource_prefixes,
-            has_tool_policy,
-            has_resource_policy,
-            has_resource_template_policy,
-            has_prompt_policy,
-        };
-
-        VISIBILITY_SNAPSHOT_CACHE.insert(
-            client_id.to_string(),
-            CachedSnapshot {
-                snapshot: snapshot.clone(),
-                cached_at: std::time::Instant::now(),
-            },
-        );
+        cache_snapshot(client_id, &snapshot);
         tracing::debug!(
             client_id = %client_id,
             fingerprint = %snapshot.rules_fingerprint,
@@ -210,19 +176,25 @@ impl ProfileVisibilityService {
         };
 
         if matches!(client_context.config_mode.as_deref(), Some("unify")) {
-            return self.resolve_unify_snapshot(&cache_key, &client_context.client_id).await;
+            return self
+                .resolve_unify_snapshot(
+                    &cache_key,
+                    &client_context.client_id,
+                    client_context.config_mode.as_deref(),
+                    client_context.unify_workspace.as_ref(),
+                )
+                .await;
         }
 
         let capability_config = self.resolve_capability_config_for_client(client_context).await?;
-        self.resolve_snapshot_from_config(&cache_key, &client_context.client_id, &capability_config)
-            .await
-    }
-
-    async fn compute_config_fingerprint(
-        &self,
-        config: &ClientCapabilityConfig,
-    ) -> Result<String> {
-        Ok(compute_capability_fingerprint(config))
+        self.resolve_snapshot_from_config(
+            &cache_key,
+            &client_context.client_id,
+            &capability_config,
+            client_context.config_mode.as_deref(),
+            client_context.unify_workspace.as_ref(),
+        )
+        .await
     }
 
     pub async fn resolve_capability_config(
@@ -244,64 +216,21 @@ impl ProfileVisibilityService {
             .await
     }
 
-    async fn resolve_snapshot_from_config(
+    async fn resolve_policies(
         &self,
-        cache_key: &str,
-        client_id: &str,
-        capability_config: &ClientCapabilityConfig,
-    ) -> Result<VisibilitySnapshot> {
-        let db = self
-            .db
-            .as_ref()
-            .context("Profile visibility requires database access")?;
-
-        let rules_fingerprint_pre = self.compute_config_fingerprint(capability_config).await?;
-
-        if let Some(cached) = VISIBILITY_SNAPSHOT_CACHE.get(cache_key) {
-            if cached.snapshot.rules_fingerprint == rules_fingerprint_pre {
-                tracing::debug!(cache_key = %cache_key, fingerprint = %rules_fingerprint_pre, "Visibility snapshot cache hit");
-                return Ok(cached.snapshot.clone());
-            }
-        }
-
-        let profile_ids = self.resolve_profile_ids(&db.pool, capability_config).await?;
-        let server_ids = self
-            .resolve_server_ids(&db.pool, capability_config.capability_source, &profile_ids)
-            .await?;
-
-        let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(&db.pool, &server_ids, &profile_ids).await?;
-        let (allowed_resources, has_resource_policy) = self
-            .resolve_allowed_resources(&db.pool, &server_ids, &profile_ids)
-            .await?;
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        server_ids: &[String],
+        profile_ids: &[String],
+    ) -> Result<ResolvedPolicies> {
+        let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(pool, server_ids, profile_ids).await?;
+        let (allowed_resources, has_resource_policy) =
+            self.resolve_allowed_resources(pool, server_ids, profile_ids).await?;
         let (allowed_resource_templates, allowed_resource_prefixes, has_resource_template_policy) = self
-            .resolve_allowed_resource_templates(&db.pool, &server_ids, &profile_ids)
+            .resolve_allowed_resource_templates(pool, server_ids, profile_ids)
             .await?;
-        let (allowed_prompts, has_prompt_policy) = self
-            .resolve_allowed_prompts(&db.pool, &server_ids, &profile_ids)
-            .await?;
+        let (allowed_prompts, has_prompt_policy) = self.resolve_allowed_prompts(pool, server_ids, profile_ids).await?;
 
-        let rules_fingerprint = compute_rules_fingerprint(
-            capability_config,
-            &profile_ids,
-            &server_ids,
-            &allowed_tools,
-            &allowed_resources,
-            &allowed_resource_templates,
-            &allowed_resource_prefixes,
-            &allowed_prompts,
-            [
-                has_tool_policy,
-                has_resource_policy,
-                has_resource_template_policy,
-                has_prompt_policy,
-            ],
-        );
-
-        let snapshot = VisibilitySnapshot {
-            client_id: client_id.to_string(),
-            rules_fingerprint,
-            profile_ids,
-            server_ids,
+        Ok(ResolvedPolicies {
             allowed_tools,
             allowed_resources,
             allowed_resource_templates,
@@ -311,15 +240,44 @@ impl ProfileVisibilityService {
             has_resource_policy,
             has_resource_template_policy,
             has_prompt_policy,
-        };
+        })
+    }
 
-        VISIBILITY_SNAPSHOT_CACHE.insert(
-            cache_key.to_string(),
-            CachedSnapshot {
-                snapshot: snapshot.clone(),
-                cached_at: std::time::Instant::now(),
-            },
+    async fn resolve_snapshot_from_config(
+        &self,
+        cache_key: &str,
+        client_id: &str,
+        capability_config: &ClientCapabilityConfig,
+        config_mode: Option<&str>,
+        unify_workspace: Option<&UnifyDirectExposureConfig>,
+    ) -> Result<VisibilitySnapshot> {
+        let db = self
+            .db
+            .as_ref()
+            .context("Profile visibility requires database access")?;
+
+        let profile_ids = self.resolve_profile_ids(&db.pool, capability_config).await?;
+        let server_ids = self
+            .resolve_server_ids(&db.pool, capability_config.capability_source, &profile_ids)
+            .await?;
+
+        let policies = self.resolve_policies(&db.pool, &server_ids, &profile_ids).await?;
+        let direct_surface_fingerprint = self.compute_unify_direct_surface_fingerprint(unify_workspace).await?;
+
+        let rules_fingerprint = compute_rules_fingerprint(
+            capability_config,
+            &policies,
+            config_mode,
+            direct_surface_fingerprint.as_deref(),
+            Some(builtin_tool_surface_ids(
+                config_mode,
+                capability_config.capability_source,
+            )),
         );
+
+        let snapshot = build_snapshot(client_id, rules_fingerprint, profile_ids, server_ids, policies);
+
+        cache_snapshot(cache_key, &snapshot);
 
         Ok(snapshot)
     }
@@ -328,6 +286,8 @@ impl ProfileVisibilityService {
         &self,
         cache_key: &str,
         client_id: &str,
+        config_mode: Option<&str>,
+        unify_workspace: Option<&UnifyDirectExposureConfig>,
     ) -> Result<VisibilitySnapshot> {
         let db = self
             .db
@@ -335,71 +295,82 @@ impl ProfileVisibilityService {
             .context("Profile visibility requires database access")?;
 
         let capability_config = Self::active_capability_config();
-        let rules_fingerprint_pre = self.compute_config_fingerprint(&capability_config).await?;
-
-        if let Some(cached) = VISIBILITY_SNAPSHOT_CACHE.get(cache_key)
-            && cached.snapshot.rules_fingerprint == rules_fingerprint_pre
-        {
-            tracing::debug!(cache_key = %cache_key, fingerprint = %rules_fingerprint_pre, "Unify visibility snapshot cache hit");
-            return Ok(cached.snapshot.clone());
-        }
 
         let profile_ids = Vec::new();
         let server_ids = self.resolve_globally_enabled_server_ids(&db.pool).await?;
 
-        let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(&db.pool, &server_ids, &profile_ids).await?;
-        let (allowed_resources, has_resource_policy) = self
-            .resolve_allowed_resources(&db.pool, &server_ids, &profile_ids)
-            .await?;
-        let (allowed_resource_templates, allowed_resource_prefixes, has_resource_template_policy) = self
-            .resolve_allowed_resource_templates(&db.pool, &server_ids, &profile_ids)
-            .await?;
-        let (allowed_prompts, has_prompt_policy) = self
-            .resolve_allowed_prompts(&db.pool, &server_ids, &profile_ids)
-            .await?;
+        let policies = self.resolve_policies(&db.pool, &server_ids, &profile_ids).await?;
+        let direct_surface_fingerprint = self.compute_unify_direct_surface_fingerprint(unify_workspace).await?;
 
         let rules_fingerprint = compute_rules_fingerprint(
             &capability_config,
-            &profile_ids,
-            &server_ids,
-            &allowed_tools,
-            &allowed_resources,
-            &allowed_resource_templates,
-            &allowed_resource_prefixes,
-            &allowed_prompts,
-            [
-                has_tool_policy,
-                has_resource_policy,
-                has_resource_template_policy,
-                has_prompt_policy,
-            ],
+            &policies,
+            config_mode,
+            direct_surface_fingerprint.as_deref(),
+            Some(builtin_tool_surface_ids(
+                config_mode,
+                capability_config.capability_source,
+            )),
         );
 
-        let snapshot = VisibilitySnapshot {
-            client_id: client_id.to_string(),
-            rules_fingerprint,
-            profile_ids,
-            server_ids,
-            allowed_tools,
-            allowed_resources,
-            allowed_resource_templates,
-            allowed_prompts,
-            allowed_resource_prefixes,
-            has_tool_policy,
-            has_resource_policy,
-            has_resource_template_policy,
-            has_prompt_policy,
-        };
+        let snapshot = build_snapshot(client_id, rules_fingerprint, profile_ids, server_ids, policies);
 
-        VISIBILITY_SNAPSHOT_CACHE.insert(
-            cache_key.to_string(),
-            CachedSnapshot {
-                snapshot: snapshot.clone(),
-                cached_at: std::time::Instant::now(),
-            },
-        );
+        cache_snapshot(cache_key, &snapshot);
 
         Ok(snapshot)
+    }
+
+    async fn compute_unify_direct_surface_fingerprint(
+        &self,
+        unify_workspace: Option<&UnifyDirectExposureConfig>,
+    ) -> Result<Option<String>> {
+        let Some(workspace) = unify_workspace else {
+            return Ok(None);
+        };
+
+        let mut tool_surfaces = workspace
+            .selected_tool_surfaces
+            .iter()
+            .map(|surface| format!("{}\u{1e}{}", surface.server_id, surface.tool_name))
+            .collect::<Vec<_>>();
+        tool_surfaces.sort();
+        tool_surfaces.dedup();
+
+        let mut prompt_surfaces = workspace
+            .selected_prompt_surfaces
+            .iter()
+            .map(|surface| format!("{}\u{1e}{}", surface.server_id, surface.prompt_name))
+            .collect::<Vec<_>>();
+        prompt_surfaces.sort();
+        prompt_surfaces.dedup();
+
+        let mut resource_surfaces = workspace
+            .selected_resource_surfaces
+            .iter()
+            .map(|surface| format!("{}\u{1e}{}", surface.server_id, surface.resource_uri))
+            .collect::<Vec<_>>();
+        resource_surfaces.sort();
+        resource_surfaces.dedup();
+
+        let mut template_surfaces = workspace
+            .selected_template_surfaces
+            .iter()
+            .map(|surface| format!("{}\u{1e}{}", surface.server_id, surface.uri_template))
+            .collect::<Vec<_>>();
+        template_surfaces.sort();
+        template_surfaces.dedup();
+
+        let mut hasher = Sha256::new();
+        hasher.update(workspace.route_mode.as_str());
+        hasher.update([0]);
+        hasher.update(tool_surfaces.join("\u{1f}"));
+        hasher.update([0]);
+        hasher.update(prompt_surfaces.join("\u{1f}"));
+        hasher.update([0]);
+        hasher.update(resource_surfaces.join("\u{1f}"));
+        hasher.update([0]);
+        hasher.update(template_surfaces.join("\u{1f}"));
+        Ok(Some(format!("{:x}", hasher.finalize())))
     }
 
     pub async fn filter_tools_for_client(
@@ -1073,37 +1044,111 @@ fn repeat_placeholders(count: usize) -> String {
 
 fn compute_rules_fingerprint(
     capability_config: &ClientCapabilityConfig,
-    profile_ids: &[String],
-    server_ids: &[String],
-    allowed_tools: &HashSet<String>,
-    allowed_resources: &HashSet<String>,
-    allowed_resource_templates: &HashSet<String>,
-    allowed_resource_prefixes: &HashSet<String>,
-    allowed_prompts: &HashSet<String>,
-    policy_flags: [bool; 4],
+    policies: &ResolvedPolicies,
+    config_mode: Option<&str>,
+    direct_surface_fingerprint: Option<&str>,
+    builtin_tools: Option<Vec<&str>>,
 ) -> String {
+    compute_surface_fingerprint(SurfaceFingerprintInput {
+        capability_config,
+        allowed_tools: &policies.allowed_tools,
+        allowed_resources: &policies.allowed_resources,
+        allowed_resource_templates: &policies.allowed_resource_templates,
+        allowed_resource_prefixes: &policies.allowed_resource_prefixes,
+        allowed_prompts: &policies.allowed_prompts,
+        policy_flags: policies.policy_flags(),
+        config_mode,
+        direct_surface_fingerprint,
+        builtin_tools,
+    })
+}
+
+fn build_snapshot(
+    client_id: &str,
+    rules_fingerprint: String,
+    profile_ids: Vec<String>,
+    server_ids: Vec<String>,
+    policies: ResolvedPolicies,
+) -> VisibilitySnapshot {
+    VisibilitySnapshot {
+        client_id: client_id.to_string(),
+        rules_fingerprint,
+        profile_ids,
+        server_ids,
+        allowed_tools: policies.allowed_tools,
+        allowed_resources: policies.allowed_resources,
+        allowed_resource_templates: policies.allowed_resource_templates,
+        allowed_prompts: policies.allowed_prompts,
+        allowed_resource_prefixes: policies.allowed_resource_prefixes,
+        has_tool_policy: policies.has_tool_policy,
+        has_resource_policy: policies.has_resource_policy,
+        has_resource_template_policy: policies.has_resource_template_policy,
+        has_prompt_policy: policies.has_prompt_policy,
+    }
+}
+
+fn cache_snapshot(
+    cache_key: &str,
+    snapshot: &VisibilitySnapshot,
+) {
+    VISIBILITY_SNAPSHOT_CACHE.insert(
+        cache_key.to_string(),
+        CachedSnapshot {
+            snapshot: snapshot.clone(),
+            cached_at: std::time::Instant::now(),
+        },
+    );
+}
+
+struct SurfaceFingerprintInput<'a> {
+    capability_config: &'a ClientCapabilityConfig,
+    allowed_tools: &'a HashSet<String>,
+    allowed_resources: &'a HashSet<String>,
+    allowed_resource_templates: &'a HashSet<String>,
+    allowed_resource_prefixes: &'a HashSet<String>,
+    allowed_prompts: &'a HashSet<String>,
+    policy_flags: [bool; 4],
+    config_mode: Option<&'a str>,
+    direct_surface_fingerprint: Option<&'a str>,
+    builtin_tools: Option<Vec<&'a str>>,
+}
+
+fn compute_surface_fingerprint(input: SurfaceFingerprintInput<'_>) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(capability_config.capability_source.as_str());
+
+    hasher.update(input.config_mode.unwrap_or("hosted"));
     hasher.update([0]);
-    hasher.update(capability_config.selected_profile_ids.join("\u{1f}"));
+    hasher.update(sorted_values(input.allowed_tools).join("\u{1f}"));
     hasher.update([0]);
-    hasher.update(capability_config.custom_profile_id.as_deref().unwrap_or_default());
+    hasher.update(sorted_values(input.allowed_resources).join("\u{1f}"));
     hasher.update([0]);
-    hasher.update(profile_ids.join("\u{1f}"));
+    hasher.update(sorted_values(input.allowed_resource_templates).join("\u{1f}"));
     hasher.update([0]);
-    hasher.update(server_ids.join("\u{1f}"));
+    hasher.update(sorted_values(input.allowed_resource_prefixes).join("\u{1f}"));
     hasher.update([0]);
-    hasher.update(sorted_values(allowed_tools).join("\u{1f}"));
+    hasher.update(sorted_values(input.allowed_prompts).join("\u{1f}"));
     hasher.update([0]);
-    hasher.update(sorted_values(allowed_resources).join("\u{1f}"));
+
+    let mut builtin_tools = input
+        .builtin_tools
+        .unwrap_or_default()
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    builtin_tools.sort();
+    builtin_tools.dedup();
+    hasher.update(builtin_tools.join("\u{1f}"));
     hasher.update([0]);
-    hasher.update(sorted_values(allowed_resource_templates).join("\u{1f}"));
+
+    hasher.update(input.capability_config.capability_source.as_str());
     hasher.update([0]);
-    hasher.update(sorted_values(allowed_resource_prefixes).join("\u{1f}"));
+
+    if let Some(direct_surface_fingerprint) = input.direct_surface_fingerprint {
+        hasher.update(direct_surface_fingerprint);
+    }
     hasher.update([0]);
-    hasher.update(sorted_values(allowed_prompts).join("\u{1f}"));
-    hasher.update([0]);
-    for flag in policy_flags {
+
+    for flag in input.policy_flags {
         hasher.update([u8::from(flag)]);
     }
     format!("{:x}", hasher.finalize())

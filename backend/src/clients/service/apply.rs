@@ -1,3 +1,4 @@
+use super::core::supported_transports_from_format_rules;
 use super::core::{ApplyOutcome, ClientConfigService, ClientRenderOptions, ClientRenderResult, PreviewOutcome};
 use crate::clients::TemplateExecutionResult;
 use crate::clients::engine::RenderRequest;
@@ -16,28 +17,15 @@ fn normalize_transport(transport: &str) -> Option<&'static str> {
     }
 }
 
-fn available_managed_transports(
-    format_rules: Option<&HashMap<String, FormatRule>>,
-    supported_transports: &[String],
-) -> Vec<&'static str> {
+fn available_managed_transports(format_rules: Option<&HashMap<String, FormatRule>>) -> Vec<&'static str> {
     let Some(rules) = format_rules else {
         return Vec::new();
     };
 
-    let keymap = crate::clients::keymap::registry();
-    let supported_set: HashSet<&'static str> = supported_transports
-        .iter()
-        .filter_map(|transport| normalize_transport(transport))
-        .collect();
-    let mut transports = Vec::new();
-
-    for transport in ["streamable_http", "sse", "stdio"] {
-        if supported_set.contains(transport) && keymap.has_rule(rules, transport) {
-            transports.push(transport);
-        }
-    }
-
-    transports
+    supported_transports_from_format_rules(rules)
+        .into_iter()
+        .filter_map(|transport| normalize_transport(&transport))
+        .collect()
 }
 
 fn select_managed_transport(
@@ -96,10 +84,7 @@ impl ClientConfigService {
         let mut chosen_transport: Option<String> = None;
         let mut auto_selected = false;
         if matches!(options.mode, ConfigMode::Managed) {
-            let supported_transports = available_managed_transports(
-                format_rules.as_ref(),
-                &state.runtime_client_metadata().supported_transports,
-            );
+            let supported_transports = available_managed_transports(format_rules.as_ref());
 
             if let Some((_, transport, _)) = self.get_client_settings(&options.client_id).await.unwrap_or(None) {
                 (chosen_transport, auto_selected) = select_managed_transport(&transport, &supported_transports);

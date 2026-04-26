@@ -58,21 +58,6 @@ pub async fn load_unify_direct_exposure_eligible_server_ids(
     Ok(rows.into_iter().map(|(server_id,)| server_id).collect())
 }
 
-pub fn unify_directly_exposed_server_allowed(
-    workspace: Option<&UnifyDirectExposureConfig>,
-    eligible_server_ids: &HashSet<String>,
-    server_id: &str,
-) -> bool {
-    if !eligible_server_ids.contains(server_id) {
-        return false;
-    }
-
-    matches!(unify_route_mode(workspace), UnifyRouteMode::ServerLive)
-        && workspace
-            .map(|config| config.selected_server_ids.iter().any(|id| id == server_id))
-            .unwrap_or(false)
-}
-
 pub fn unify_directly_exposed_tool_allowed(
     workspace: Option<&UnifyDirectExposureConfig>,
     eligible_server_ids: &HashSet<String>,
@@ -81,8 +66,7 @@ pub fn unify_directly_exposed_tool_allowed(
 ) -> bool {
     match unify_route_mode(workspace) {
         UnifyRouteMode::BrokerOnly => false,
-        UnifyRouteMode::ServerLive => unify_directly_exposed_server_allowed(workspace, eligible_server_ids, server_id),
-        UnifyRouteMode::CapabilityLevel => workspace
+        UnifyRouteMode::ServerLevel | UnifyRouteMode::CapabilityLevel => workspace
             .filter(|_| eligible_server_ids.contains(server_id))
             .map(|config| {
                 config
@@ -102,8 +86,7 @@ pub fn unify_directly_exposed_prompt_allowed(
 ) -> bool {
     match unify_route_mode(workspace) {
         UnifyRouteMode::BrokerOnly => false,
-        UnifyRouteMode::ServerLive => unify_directly_exposed_server_allowed(workspace, eligible_server_ids, server_id),
-        UnifyRouteMode::CapabilityLevel => workspace
+        UnifyRouteMode::ServerLevel | UnifyRouteMode::CapabilityLevel => workspace
             .filter(|_| eligible_server_ids.contains(server_id))
             .map(|config| {
                 config
@@ -123,8 +106,7 @@ pub fn unify_directly_exposed_resource_allowed(
 ) -> bool {
     match unify_route_mode(workspace) {
         UnifyRouteMode::BrokerOnly => false,
-        UnifyRouteMode::ServerLive => unify_directly_exposed_server_allowed(workspace, eligible_server_ids, server_id),
-        UnifyRouteMode::CapabilityLevel => workspace
+        UnifyRouteMode::ServerLevel | UnifyRouteMode::CapabilityLevel => workspace
             .filter(|_| eligible_server_ids.contains(server_id))
             .map(|config| {
                 config
@@ -144,8 +126,7 @@ pub fn unify_directly_exposed_template_allowed(
 ) -> bool {
     match unify_route_mode(workspace) {
         UnifyRouteMode::BrokerOnly => false,
-        UnifyRouteMode::ServerLive => unify_directly_exposed_server_allowed(workspace, eligible_server_ids, server_id),
-        UnifyRouteMode::CapabilityLevel => workspace
+        UnifyRouteMode::ServerLevel | UnifyRouteMode::CapabilityLevel => workspace
             .filter(|_| eligible_server_ids.contains(server_id))
             .map(|config| {
                 config

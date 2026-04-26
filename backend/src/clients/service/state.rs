@@ -1,14 +1,12 @@
 use super::core::{ClientConfigService, ClientStateRow};
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::{
-    BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, FirstContactBehavior,
-};
+use crate::clients::models::{BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, FirstContactBehavior};
 use std::collections::HashMap;
 
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse FROM client",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -57,7 +55,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces, unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
