@@ -1184,16 +1184,20 @@ export interface ClientConfigResp {
 
 export type CapabilitySource = "activated" | "profiles" | "custom";
 
+export interface UnifyDirectCapabilityIds {
+  tool_ids?: string[];
+  prompt_ids?: string[];
+  resource_ids?: string[];
+  template_ids?: string[];
+}
 
 export interface UnifyDirectExposureConfig {
-  route_mode: "broker_only" | "server_live" | "capability_level";
-  selected_server_ids?: string[];
-  selected_tool_surfaces?: { server_id: string; tool_name: string }[];
-  selected_prompt_surfaces?: { server_id: string; prompt_name: string }[];
-  selected_resource_surfaces?: { server_id: string; resource_uri: string }[];
-  selected_template_surfaces?: { server_id: string; uri_template: string }[];
+  route_mode: "broker_only" | "server_level" | "capability_level";
+  server_ids?: string[];
+  capability_ids?: UnifyDirectCapabilityIds;
   diagnostics?: {
     invalid_server_ids?: string[];
+    invalid_capability_ids?: string[];
     invalid_tool_surfaces?: { server_id: string; tool_name: string; reason: string }[];
     invalid_prompt_surfaces?: {
       server_id: string;
@@ -1210,6 +1214,14 @@ export interface UnifyDirectExposureConfig {
       uri_template: string;
       reason: string;
     }[];
+  };
+  resolved_capabilities?: {
+    route_mode: "broker_only" | "server_level" | "capability_level";
+    selected_server_ids?: string[];
+    selected_tool_surfaces?: { server_id: string; tool_name: string }[];
+    selected_prompt_surfaces?: { server_id: string; prompt_name: string }[];
+    selected_resource_surfaces?: { server_id: string; resource_uri: string }[];
+    selected_template_surfaces?: { server_id: string; uri_template: string }[];
   };
 }
 
