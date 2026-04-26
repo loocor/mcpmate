@@ -406,7 +406,7 @@ export const clientsTranslations = {
 						titleTransparent: "2. Configuration",
 						unifyRouteModes: {
 							broker_only: "Broker Only",
-							server_live: "Server Level",
+							server_level: "Server Level",
 							capability_level: "Capability Level",
 						},
 						descriptions: {
@@ -414,7 +414,7 @@ export const clientsTranslations = {
 							"Unify does not use dashboard profile selection. Use the builtin UCAN tools during the session to browse and call capabilities from globally enabled servers.",
 							unify_broker_only:
 								"All capabilities are kept behind the UCAN broker catalog. Builtin MCP tools will browse and call capabilities from globally enabled servers.",
-							unify_server_live:
+							unify_server_level:
 								"Directly expose all capabilities from selected eligible servers to this client. Exposed capabilities are excluded from the UCAN catalog.",
 							unify_capability_level:
 								"Directly expose only selected capabilities (tools, prompts, resources, templates) from eligible servers to this client. (Advanced)",
@@ -485,7 +485,7 @@ export const clientsTranslations = {
 						descriptions: {
 							broker_only:
 								"All enabled MCP servers, including servers marked for direct exposure, remain reachable through the builtin UCAN tools in Broker Only mode.",
-							server_live:
+							server_level:
 								"Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
 							capability_level:
 								"Select eligible servers and configure direct exposure at capability level across tools, prompts, resources, and templates. (Advanced)",
@@ -1113,14 +1113,14 @@ export const clientsTranslations = {
 						titleTransparent: "2. 配置详情",
 						unifyRouteModes: {
 						broker_only: "全部代理",
-						server_live: "服务器直达",
+						server_level: "服务器级直达",
 						capability_level: "能力级直达",
 						},
 						descriptions: {
 						unify: "统一模式不使用仪表板中的配置集选择。请在当前会话内通过内建 UCAN 工具浏览并调用来自全局启用服务器的能力。",
 							unify_broker_only:
 								"所有能力均通过 UCAN 代理目录访问。内建 MCP 工具会浏览并调用来自全局启用服务器的能力。",
-							unify_server_live:
+							unify_server_level:
 								"将所选符合条件的服务器的全部能力直接暴露给该客户端。已暴露的能力不会出现在 UCAN 目录中。",
 							unify_capability_level:
 								"仅从符合条件的服务器中选择部分能力（工具、提示、资源、模板）直接暴露给该客户端。（进阶）",
@@ -1187,7 +1187,7 @@ export const clientsTranslations = {
 						descriptions: {
 							broker_only:
 								"在仅代理路由模式下，包括标记为直达暴露在内的所有已启用 MCP 服务器，仍通过内建 UCAN 工具访问。",
-							server_live:
+							server_level:
 								"选择应将工具、提示、资源与资源模板直接暴露给该客户端的符合条件服务器。",
 							capability_level:
 								"选择符合条件的服务器，并在工具、提示、资源、模板四类能力上进行能力级直达配置。（进阶）",
@@ -1819,7 +1819,7 @@ export const clientsTranslations = {
 						titleTransparent: "2. 設定",
 						unifyRouteModes: {
 							broker_only: "ブローカーのみ",
-							server_live: "サーバーレベル",
+							server_level: "サーバーレベル",
 							capability_level: "能力レベル直達",
 						},
 						descriptions: {
@@ -1827,7 +1827,7 @@ export const clientsTranslations = {
 							"統一モードではダッシュボード上のプロファイル選択を使いません。現在のセッションでは、内蔵 UCAN ツールでグローバルに有効なサーバーのケイパビリティを参照・呼び出します。",
 							unify_broker_only:
 								"すべてのケイパビリティは UCAN ブローカーカタログ越しに提供されます。内蔵 MCP ツールがグローバルに有効なサーバーのケイパビリティを参照・呼び出します。",
-							unify_server_live:
+							unify_server_level:
 								"選択した対象サーバーから、このクライアントへケイパビリティを直接公開します。公開されたケイパビリティは UCAN カタログには載りません。",
 							unify_capability_level:
 								"対象サーバーから選択したケイパビリティ（ツール、プロンプト、リソース、テンプレート）のみをこのクライアントへ直接公開します。（上級）",
@@ -1896,7 +1896,7 @@ export const clientsTranslations = {
 						descriptions: {
 							broker_only:
 								"ブローカーのみモードでは、直接公開対象としてマークされたサーバーを含む、有効な MCP サーバーはすべて内蔵 UCAN ツール経由で利用できます。",
-							server_live:
+							server_level:
 								"ツール、プロンプト、リソース、リソーステンプレートをこのクライアントへ直接公開する対象サーバーを選択します。",
 							capability_level:
 								"対象サーバーを選び、ツール、プロンプト、リソース、テンプレートを能力単位で直接公開する設定を行います。（上級）",
