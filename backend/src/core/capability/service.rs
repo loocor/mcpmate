@@ -245,7 +245,6 @@ mod tests {
         let ctx = make_list_ctx(Some(ConnectionSelection {
             server_id: "srv-visible".to_string(),
             affinity_key: AffinityKey::PerSession("session-effective-scope".to_string()),
-            routing_fingerprint: Some("fp-effective-scope".to_string()),
         }));
 
         let result = ensure_list_connection(&mut pool, &ctx).await;

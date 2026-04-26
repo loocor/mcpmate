@@ -18,7 +18,13 @@ use rmcp::model::{
 };
 use rmcp::{ServerHandler, service::RequestContext};
 use serde_json::{Map, Value};
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use tokio::sync::Mutex;
 
 static GLOBAL_PROXY_SERVER: OnceCell<Arc<Mutex<ProxyServer>>> = OnceCell::new();
@@ -27,7 +33,7 @@ static GLOBAL_PROXY_SERVER: OnceCell<Arc<Mutex<ProxyServer>>> = OnceCell::new();
 pub struct DownstreamRoute {
     pub session_id: String,
     pub client_id: String,
-    pub rules_fingerprint: Option<String>,
+    pub surface_fingerprint: Option<String>,
     pub peer: rmcp::service::Peer<rmcp::RoleServer>,
 }
 
@@ -50,6 +56,8 @@ pub struct ProxyServer {
     pub call_sessions_by_request: Arc<dashmap::DashMap<RequestId, DownstreamRoute>>,
     /// Used for first-contact governance on MCP `initialize` (unknown clients + policy).
     pub client_config_service: Option<Arc<ClientConfigService>>,
+    /// Shared guard for coalescing overlapping listChanged notifications across server clones.
+    list_changed_in_progress: Arc<AtomicBool>,
 }
 
 impl Clone for ProxyServer {
@@ -72,6 +80,7 @@ impl Clone for ProxyServer {
             call_sessions_by_token: self.call_sessions_by_token.clone(),
             call_sessions_by_request: self.call_sessions_by_request.clone(),
             client_config_service: self.client_config_service.clone(),
+            list_changed_in_progress: self.list_changed_in_progress.clone(),
         }
     }
 }
@@ -153,7 +162,7 @@ impl ProxyServer {
         Ok(DownstreamRoute {
             session_id: self.require_session_id(client)?,
             client_id: client.client_id.clone(),
-            rules_fingerprint: client.rules_fingerprint.clone(),
+            surface_fingerprint: client.surface_fingerprint.clone(),
             peer,
         })
     }
@@ -179,7 +188,7 @@ impl ProxyServer {
             }
         }
 
-        if client.rules_fingerprint.is_some() {
+        if client.surface_fingerprint.is_some() {
             return Ok(client);
         }
 
@@ -191,7 +200,7 @@ impl ProxyServer {
             .resolve_snapshot_for_client(&client)
             .await
             .map_err(|error| self.map_client_context_error(error))?;
-        client.rules_fingerprint = Some(snapshot.rules_fingerprint);
+        client.surface_fingerprint = Some(snapshot.surface_fingerprint);
         Ok(client)
     }
 
@@ -352,7 +361,7 @@ impl ProxyServer {
                 profile_id: binding.profile_id.clone(),
                 config_mode: binding.config_mode.clone(),
                 unify_workspace: binding.unify_workspace.clone(),
-                rules_fingerprint: binding.rules_fingerprint.clone(),
+                surface_fingerprint: binding.surface_fingerprint.clone(),
                 transport: crate::core::proxy::server::common::ClientTransport::StreamableHttp,
                 source: crate::core::proxy::server::common::ClientIdentitySource::SessionBinding,
                 observed_client_info: binding.observed_client_info.clone(),
@@ -367,9 +376,34 @@ impl ProxyServer {
         };
 
         self.client_context_resolver
-            .refresh_session_rules_fingerprint(session_id, snapshot.rules_fingerprint)
+            .refresh_session_surface_fingerprint(session_id, snapshot.surface_fingerprint)
             .await
             .map_err(|error| self.map_client_context_error(error))
+    }
+
+    /// Refresh surface fingerprint for all bound sessions (all clients, all sessions).
+    ///
+    /// Used after non-client-config surface changes (profile/server status, server constraint
+    /// changes) that may alter the resolved capability surface for any bound session.
+    pub async fn refresh_all_bound_sessions(&self) -> usize {
+        let session_ids = self
+            .client_context_resolver
+            .session_bindings
+            .iter()
+            .map(|entry| (entry.session_id.clone(), entry.client_id.clone()))
+            .collect::<Vec<_>>();
+
+        let mut refreshed = 0;
+        for (session_id, client_id) in session_ids {
+            if self
+                .refresh_bound_session_runtime_identity(&session_id, &client_id)
+                .await
+                .is_ok()
+            {
+                refreshed += 1;
+            }
+        }
+        refreshed
     }
 
     pub async fn update_unify_session_workspace(
@@ -675,6 +709,7 @@ impl ProxyServer {
             call_sessions_by_token: Arc::new(dashmap::DashMap::new()),
             call_sessions_by_request: Arc::new(dashmap::DashMap::new()),
             client_config_service: None,
+            list_changed_in_progress: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -836,9 +871,13 @@ impl ProxyServer {
     }
 
     pub async fn notify_all_list_changed(&self) -> (usize, usize, usize) {
+        if self.list_changed_in_progress.swap(true, Ordering::Relaxed) {
+            return (0, 0, 0);
+        }
         let t = self.notify_tool_list_changed().await;
         let p = self.notify_prompt_list_changed().await;
         let r = self.notify_resource_list_changed().await;
+        self.list_changed_in_progress.store(false, Ordering::Relaxed);
         (t, p, r)
     }
 
@@ -1737,7 +1776,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1802,7 +1841,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
@@ -1819,7 +1858,7 @@ mod tests {
             profile_id: None,
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
-            rules_fingerprint: None,
+            surface_fingerprint: None,
             transport: ClientTransport::StreamableHttp,
             source: ClientIdentitySource::ManagedHeader,
             observed_client_info: None,
