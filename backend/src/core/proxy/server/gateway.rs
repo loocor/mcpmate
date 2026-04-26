@@ -292,13 +292,9 @@ impl ProxyServer {
 
         let observed_name = client.observed_client_info.as_ref().map(|info| info.name.as_str());
         let client_version = client.observed_client_info.as_ref().map(|info| info.version.as_str());
-        let (transport, supported_transports, connection_mode) = match client.transport {
-            super::common::ClientTransport::StreamableHttp => (
-                Some("streamable_http"),
-                Some(vec!["streamable_http".to_string()]),
-                Some("remote_http"),
-            ),
-            super::common::ClientTransport::Other => (None, None, None),
+        let (transport, connection_mode) = match client.transport {
+            super::common::ClientTransport::StreamableHttp => (Some("streamable_http"), Some("remote_http")),
+            super::common::ClientTransport::Other => (None, None),
         };
 
         if let Err(err) = service
@@ -307,7 +303,6 @@ impl ProxyServer {
                 observed_name,
                 client_version,
                 transport,
-                supported_transports,
                 connection_mode,
             )
             .await
@@ -1872,11 +1867,9 @@ mod tests {
         let header_version = rmcp::model::ProtocolVersion::V_2025_06_18.to_string();
         let negotiated_version = rmcp::model::ProtocolVersion::V_2025_03_26.to_string();
 
-        let resolved = ProxyServer::resolve_effective_protocol_version(
-            Some(header_version.as_str()),
-            Some(negotiated_version),
-        )
-        .expect("explicit header should be accepted");
+        let resolved =
+            ProxyServer::resolve_effective_protocol_version(Some(header_version.as_str()), Some(negotiated_version))
+                .expect("explicit header should be accepted");
 
         assert_eq!(resolved.as_deref(), Some(header_version.as_str()));
     }
@@ -1885,9 +1878,8 @@ mod tests {
     fn resolve_effective_protocol_version_uses_negotiated_fallback() {
         let negotiated_version = rmcp::model::ProtocolVersion::V_2025_03_26.to_string();
 
-        let resolved =
-            ProxyServer::resolve_effective_protocol_version(None, Some(negotiated_version.clone()))
-                .expect("negotiated protocol version should be accepted");
+        let resolved = ProxyServer::resolve_effective_protocol_version(None, Some(negotiated_version.clone()))
+            .expect("negotiated protocol version should be accepted");
 
         assert_eq!(resolved.as_deref(), Some(negotiated_version.as_str()));
     }
@@ -1896,11 +1888,8 @@ mod tests {
     fn resolve_effective_protocol_version_rejects_unsupported_header() {
         let negotiated_version = rmcp::model::ProtocolVersion::V_2025_03_26.to_string();
 
-        let error = ProxyServer::resolve_effective_protocol_version(
-            Some("2024-11-05"),
-            Some(negotiated_version),
-        )
-        .expect_err("unsupported explicit header should fail");
+        let error = ProxyServer::resolve_effective_protocol_version(Some("2024-11-05"), Some(negotiated_version))
+            .expect_err("unsupported explicit header should fail");
 
         assert_eq!(error.message, "Unsupported MCP-Protocol-Version: 2024-11-05");
     }
