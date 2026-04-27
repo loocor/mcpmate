@@ -86,7 +86,6 @@ pub mod timeouts {
     /// Requests within this window reuse the previous reload to reduce I/O,
     /// while keeping near-real-time freshness for desktop usage.
     pub const TEMPLATE_RELOAD_TTL_SEC: u64 = 2;
-
 }
 
 /// Transport type constants for unified transport handling

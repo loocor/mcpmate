@@ -36,6 +36,7 @@ import type {
 	ConfigSuitResourceTemplate,
 	ConfigSuitTool,
 	ServerDetail,
+	UnifyDirectCapabilityIds,
 } from "../../lib/types";
 
 type ToolStatusFilter = "all" | "enabled" | "disabled";
@@ -62,55 +63,56 @@ function createEmptyCapabilityConfig(identifier: string): ClientCapabilityConfig
 		selected_profile_ids: [],
 		unify_direct_exposure: {
 			route_mode: "capability_level",
-			selected_server_ids: [],
-			selected_tool_surfaces: [],
-			selected_prompt_surfaces: [],
-			selected_resource_surfaces: [],
-			selected_template_surfaces: [],
+			server_ids: [],
+			capability_ids: {},
 		},
 	};
 }
 
-function getSelectedSurfaces(
+function normalizeCapabilityIds(ids: string[] = []): string[] {
+	return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean))).sort();
+}
+
+function getSelectedCapabilityIds(
 	capabilityConfig: ClientCapabilityConfigData,
-): {
-	tools: Array<{ server_id: string; tool_name: string }>;
-	prompts: Array<{ server_id: string; prompt_name: string }>;
-	resources: Array<{ server_id: string; resource_uri: string }>;
-	templates: Array<{ server_id: string; uri_template: string }>;
-} {
+): UnifyDirectCapabilityIds {
+	const capabilityIds = capabilityConfig.unify_direct_exposure?.capability_ids;
 	return {
-		tools: capabilityConfig.unify_direct_exposure?.selected_tool_surfaces ?? [],
-		prompts: capabilityConfig.unify_direct_exposure?.selected_prompt_surfaces ?? [],
-		resources:
-			capabilityConfig.unify_direct_exposure?.selected_resource_surfaces ?? [],
-		templates:
-			capabilityConfig.unify_direct_exposure?.selected_template_surfaces ?? [],
+		tool_ids: normalizeCapabilityIds(capabilityIds?.tool_ids),
+		prompt_ids: normalizeCapabilityIds(capabilityIds?.prompt_ids),
+		resource_ids: normalizeCapabilityIds(capabilityIds?.resource_ids),
+		template_ids: normalizeCapabilityIds(capabilityIds?.template_ids),
 	};
+}
+
+function getCapabilityId(item: Record<string, unknown>, keys: string[]): string | null {
+	for (const key of keys) {
+		const value = item[key];
+		if (typeof value === "string" && value.trim()) {
+			return value;
+		}
+	}
+	return null;
+}
+
+function resolveNextCapabilityIdList(currentIds: string[] = [], capabilityId: string, enable: boolean): string[] {
+	const remainingIds = currentIds.filter((id) => id !== capabilityId);
+	return enable ? normalizeCapabilityIds([...remainingIds, capabilityId]) : remainingIds;
 }
 
 function createCapabilityConfigPayload(
 	identifier: string,
 	existingConfig: ClientCapabilityConfigData,
-	nextSurfaces: {
-		tools: Array<{ server_id: string; tool_name: string }>;
-		prompts: Array<{ server_id: string; prompt_name: string }>;
-		resources: Array<{ server_id: string; resource_uri: string }>;
-		templates: Array<{ server_id: string; uri_template: string }>;
-	},
+	nextCapabilityIds: UnifyDirectCapabilityIds,
 ): ClientCapabilityConfigReq {
 	return {
 		identifier,
 		capability_source: existingConfig.capability_source,
 		selected_profile_ids: existingConfig.selected_profile_ids,
 		unify_direct_exposure: {
-			...existingConfig.unify_direct_exposure,
 			route_mode: "capability_level",
-			selected_server_ids: [],
-			selected_tool_surfaces: nextSurfaces.tools,
-			selected_prompt_surfaces: nextSurfaces.prompts,
-			selected_resource_surfaces: nextSurfaces.resources,
-			selected_template_surfaces: nextSurfaces.templates,
+			server_ids: [],
+			capability_ids: nextCapabilityIds,
 		},
 	};
 }
@@ -212,29 +214,13 @@ export function ClientDirectCapabilitiesPage() {
 				serversApi.listResourceTemplates(serverId).catch(() => ({ items: [] })),
 				clientsApi.getCapabilityConfig(identifier).catch(() => null),
 			]);
-			const selectedSurfaces = getSelectedSurfaces(
+			const selectedCapabilityIds = getSelectedCapabilityIds(
 				clientCapabilityConfig ?? createEmptyCapabilityConfig(identifier),
 			);
-			const selectedToolSet = new Set(
-				selectedSurfaces.tools
-					.filter((entry) => entry.server_id === serverId)
-					.map((entry) => entry.tool_name),
-			);
-			const selectedPromptSet = new Set(
-				selectedSurfaces.prompts
-					.filter((entry) => entry.server_id === serverId)
-					.map((entry) => entry.prompt_name),
-			);
-			const selectedResourceSet = new Set(
-				selectedSurfaces.resources
-					.filter((entry) => entry.server_id === serverId)
-					.map((entry) => entry.resource_uri),
-			);
-			const selectedTemplateSet = new Set(
-				selectedSurfaces.templates
-					.filter((entry) => entry.server_id === serverId)
-					.map((entry) => entry.uri_template),
-			);
+			const selectedToolSet = new Set(selectedCapabilityIds.tool_ids ?? []);
+			const selectedPromptSet = new Set(selectedCapabilityIds.prompt_ids ?? []);
+			const selectedResourceSet = new Set(selectedCapabilityIds.resource_ids ?? []);
+			const selectedTemplateSet = new Set(selectedCapabilityIds.template_ids ?? []);
 			const rawTools = Array.isArray(serverToolsResponse.items)
 				? (serverToolsResponse.items as Array<Record<string, unknown>>)
 				: [];
@@ -248,49 +234,58 @@ export function ClientDirectCapabilitiesPage() {
 				? (serverTemplatesResponse.items as Array<Record<string, unknown>>)
 				: [];
 
-			const tools: ConfigSuitTool[] = rawTools.map((tool) => {
+			const tools: ConfigSuitTool[] = rawTools.flatMap((tool) => {
 				const toolName = String(tool["tool_name"] ?? tool["name"] ?? "");
+				const capabilityId = getCapabilityId(tool, ["unique_name"]);
+				if (!capabilityId) return [];
 				return {
-					id: toolName,
+					id: capabilityId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					tool_name: toolName,
-					enabled: selectedToolSet.has(toolName),
+					unique_name: capabilityId,
+					enabled: selectedToolSet.has(capabilityId),
 					allowed_operations: [],
 				};
 			});
-			const prompts: ConfigSuitPrompt[] = rawPrompts.map((prompt) => {
+			const prompts: ConfigSuitPrompt[] = rawPrompts.flatMap((prompt) => {
 				const promptName = String(prompt["prompt_name"] ?? prompt["name"] ?? "");
+				const capabilityId = getCapabilityId(prompt, ["unique_name"]);
+				if (!capabilityId) return [];
 				return {
-					id: promptName,
+					id: capabilityId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					prompt_name: promptName,
-					enabled: selectedPromptSet.has(promptName),
+					enabled: selectedPromptSet.has(capabilityId),
 					allowed_operations: [],
 				};
 			});
-			const resources: ConfigSuitResource[] = rawResources.map((resource) => {
+			const resources: ConfigSuitResource[] = rawResources.flatMap((resource) => {
 				const resourceUri = String(resource["resource_uri"] ?? resource["uri"] ?? "");
+				const capabilityId = getCapabilityId(resource, ["unique_uri"]);
+				if (!capabilityId) return [];
 				return {
-					id: resourceUri,
+					id: capabilityId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					resource_uri: resourceUri,
-					enabled: selectedResourceSet.has(resourceUri),
+					enabled: selectedResourceSet.has(capabilityId),
 					allowed_operations: [],
 				};
 			});
-			const templates: ConfigSuitResourceTemplate[] = rawTemplates.map((template) => {
+			const templates: ConfigSuitResourceTemplate[] = rawTemplates.flatMap((template) => {
 				const uriTemplate = String(
 					template["uri_template"] ?? template["template"] ?? "",
 				);
+				const capabilityId = getCapabilityId(template, ["unique_uri_template", "unique_name"]);
+				if (!capabilityId) return [];
 				return {
-					id: uriTemplate,
+					id: capabilityId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					uri_template: uriTemplate,
-					enabled: selectedTemplateSet.has(uriTemplate),
+					enabled: selectedTemplateSet.has(capabilityId),
 					allowed_operations: [],
 				};
 			});
@@ -366,18 +361,12 @@ export function ClientDirectCapabilitiesPage() {
 			if (!identifier || !serverId) return null;
 			const existingConfig =
 				(await loadCapabilityConfig()) ?? createEmptyCapabilityConfig(identifier);
-			const currentSurfaces = getSelectedSurfaces(existingConfig);
-			const remainingToolSurfaces = currentSurfaces.tools.filter(
-				(entry) => !(entry.server_id === serverId && entry.tool_name === toolId),
-			);
-			const nextToolSurfaces = enable
-				? [...remainingToolSurfaces, { server_id: serverId, tool_name: toolId }]
-				: remainingToolSurfaces;
+			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
 
 			await clientsApi.updateCapabilityConfig(
 				createCapabilityConfigPayload(identifier, existingConfig, {
-					...currentSurfaces,
-					tools: nextToolSurfaces,
+					...currentCapabilityIds,
+					tool_ids: resolveNextCapabilityIdList(currentCapabilityIds.tool_ids, toolId, enable),
 				}),
 			);
 			return null;
@@ -409,17 +398,11 @@ export function ClientDirectCapabilitiesPage() {
 			if (!identifier || !serverId) return null;
 			const existingConfig =
 				(await loadCapabilityConfig()) ?? createEmptyCapabilityConfig(identifier);
-			const currentSurfaces = getSelectedSurfaces(existingConfig);
-			const remainingPromptSurfaces = currentSurfaces.prompts.filter(
-				(entry) => !(entry.server_id === serverId && entry.prompt_name === promptId),
-			);
-			const nextPromptSurfaces = enable
-				? [...remainingPromptSurfaces, { server_id: serverId, prompt_name: promptId }]
-				: remainingPromptSurfaces;
+			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
 			await clientsApi.updateCapabilityConfig(
 				createCapabilityConfigPayload(identifier, existingConfig, {
-					...currentSurfaces,
-					prompts: nextPromptSurfaces,
+					...currentCapabilityIds,
+					prompt_ids: resolveNextCapabilityIdList(currentCapabilityIds.prompt_ids, promptId, enable),
 				}),
 			);
 			return null;
@@ -435,17 +418,11 @@ export function ClientDirectCapabilitiesPage() {
 			if (!identifier || !serverId) return null;
 			const existingConfig =
 				(await loadCapabilityConfig()) ?? createEmptyCapabilityConfig(identifier);
-			const currentSurfaces = getSelectedSurfaces(existingConfig);
-			const remainingResourceSurfaces = currentSurfaces.resources.filter(
-				(entry) => !(entry.server_id === serverId && entry.resource_uri === resourceId),
-			);
-			const nextResourceSurfaces = enable
-				? [...remainingResourceSurfaces, { server_id: serverId, resource_uri: resourceId }]
-				: remainingResourceSurfaces;
+			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
 			await clientsApi.updateCapabilityConfig(
 				createCapabilityConfigPayload(identifier, existingConfig, {
-					...currentSurfaces,
-					resources: nextResourceSurfaces,
+					...currentCapabilityIds,
+					resource_ids: resolveNextCapabilityIdList(currentCapabilityIds.resource_ids, resourceId, enable),
 				}),
 			);
 			return null;
@@ -461,17 +438,11 @@ export function ClientDirectCapabilitiesPage() {
 			if (!identifier || !serverId) return null;
 			const existingConfig =
 				(await loadCapabilityConfig()) ?? createEmptyCapabilityConfig(identifier);
-			const currentSurfaces = getSelectedSurfaces(existingConfig);
-			const remainingTemplateSurfaces = currentSurfaces.templates.filter(
-				(entry) => !(entry.server_id === serverId && entry.uri_template === templateId),
-			);
-			const nextTemplateSurfaces = enable
-				? [...remainingTemplateSurfaces, { server_id: serverId, uri_template: templateId }]
-				: remainingTemplateSurfaces;
+			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
 			await clientsApi.updateCapabilityConfig(
 				createCapabilityConfigPayload(identifier, existingConfig, {
-					...currentSurfaces,
-					templates: nextTemplateSurfaces,
+					...currentCapabilityIds,
+					template_ids: resolveNextCapabilityIdList(currentCapabilityIds.template_ids, templateId, enable),
 				}),
 			);
 			return null;
@@ -487,71 +458,22 @@ export function ClientDirectCapabilitiesPage() {
 			if (!identifier || !serverId) return null;
 			const existingConfig =
 				(await loadCapabilityConfig()) ?? createEmptyCapabilityConfig(identifier);
-			const currentSurfaces = getSelectedSurfaces(existingConfig);
+			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
 			const selectedToolIdSet = new Set(selectedToolIds);
 			const selectedPromptIdSet = new Set(selectedPromptIds);
 			const selectedResourceIdSet = new Set(selectedResourceIds);
 			const selectedTemplateIdSet = new Set(selectedTemplateIds);
-
-			const toolsNext = (() => {
-				const currentServer = currentSurfaces.tools.filter(
-					(entry) => entry.server_id === serverId && !selectedToolIdSet.has(entry.tool_name),
-				);
-				if (!enable) return [...currentSurfaces.tools.filter((entry) => entry.server_id !== serverId), ...currentServer];
-				return [
-					...currentSurfaces.tools.filter((entry) => entry.server_id !== serverId),
-					...currentServer,
-					...tools
-						.filter((entry) => selectedToolIdSet.has(entry.id))
-						.map((entry) => ({ server_id: serverId, tool_name: entry.id })),
-				];
-			})();
-			const promptsNext = (() => {
-				const currentServer = currentSurfaces.prompts.filter(
-					(entry) => entry.server_id === serverId && !selectedPromptIdSet.has(entry.prompt_name),
-				);
-				if (!enable) return [...currentSurfaces.prompts.filter((entry) => entry.server_id !== serverId), ...currentServer];
-				return [
-					...currentSurfaces.prompts.filter((entry) => entry.server_id !== serverId),
-					...currentServer,
-					...prompts
-						.filter((entry) => selectedPromptIdSet.has(entry.id))
-						.map((entry) => ({ server_id: serverId, prompt_name: entry.id })),
-				];
-			})();
-			const resourcesNext = (() => {
-				const currentServer = currentSurfaces.resources.filter(
-					(entry) => entry.server_id === serverId && !selectedResourceIdSet.has(entry.resource_uri),
-				);
-				if (!enable) return [...currentSurfaces.resources.filter((entry) => entry.server_id !== serverId), ...currentServer];
-				return [
-					...currentSurfaces.resources.filter((entry) => entry.server_id !== serverId),
-					...currentServer,
-					...resources
-						.filter((entry) => selectedResourceIdSet.has(entry.id))
-						.map((entry) => ({ server_id: serverId, resource_uri: entry.id })),
-				];
-			})();
-			const templatesNext = (() => {
-				const currentServer = currentSurfaces.templates.filter(
-					(entry) => entry.server_id === serverId && !selectedTemplateIdSet.has(entry.uri_template),
-				);
-				if (!enable) return [...currentSurfaces.templates.filter((entry) => entry.server_id !== serverId), ...currentServer];
-				return [
-					...currentSurfaces.templates.filter((entry) => entry.server_id !== serverId),
-					...currentServer,
-					...templates
-						.filter((entry) => selectedTemplateIdSet.has(entry.id))
-						.map((entry) => ({ server_id: serverId, uri_template: entry.id })),
-				];
-			})();
+			const resolveBulkIds = (currentIds: string[] = [], selectedIds: Set<string>) => {
+				const remainingIds = currentIds.filter((id) => !selectedIds.has(id));
+				return enable ? normalizeCapabilityIds([...remainingIds, ...Array.from(selectedIds)]) : remainingIds;
+			};
 
 			await clientsApi.updateCapabilityConfig(
 				createCapabilityConfigPayload(identifier, existingConfig, {
-					tools: toolsNext,
-					prompts: promptsNext,
-					resources: resourcesNext,
-					templates: templatesNext,
+					tool_ids: resolveBulkIds(currentCapabilityIds.tool_ids, selectedToolIdSet),
+					prompt_ids: resolveBulkIds(currentCapabilityIds.prompt_ids, selectedPromptIdSet),
+					resource_ids: resolveBulkIds(currentCapabilityIds.resource_ids, selectedResourceIdSet),
+					template_ids: resolveBulkIds(currentCapabilityIds.template_ids, selectedTemplateIdSet),
 				}),
 			);
 			return null;

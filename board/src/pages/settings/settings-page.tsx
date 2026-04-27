@@ -1449,9 +1449,9 @@ export function SettingsPage() {
 										</p>
 									</div>
 									<Switch
-										checked={dashboardSettings.showServerLiveLogs}
+										checked={dashboardSettings.showServerLevelLogs}
 										onCheckedChange={(checked) =>
-											setDashboardSetting("showServerLiveLogs", checked)
+											setDashboardSetting("showServerLevelLogs", checked)
 										}
 									/>
 								</div>

@@ -397,7 +397,6 @@ pub async fn get_upstream_prompt(
                 let scoped_selection = crate::core::capability::ConnectionSelection {
                     server_id: server_key.to_string(),
                     affinity_key: selection.affinity_key.clone(),
-                    routing_fingerprint: selection.routing_fingerprint.clone(),
                 };
                 if let Err(e) = pool.ensure_connected_with_selection(&scoped_selection).await {
                     return Err(anyhow!(

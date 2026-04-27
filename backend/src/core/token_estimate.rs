@@ -12,6 +12,15 @@ use rmcp::model::{Prompt, PromptArgument, Resource, ResourceTemplate, Tool};
 use serde::Serialize;
 
 use crate::clients::models::CapabilitySource;
+use crate::mcper::{
+    MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_LIST_TOOL,
+    MCPMATE_SCOPE_ADD_TOOL, MCPMATE_SCOPE_REMOVE_TOOL, MCPMATE_SCOPE_SET_TOOL,
+};
+#[cfg(test)]
+use crate::mcper::{
+    MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL, MCPMATE_PROFILE_DISABLE_TOOL, MCPMATE_PROFILE_ENABLE_TOOL,
+    MCPMATE_SCOPE_GET_TOOL,
+};
 
 /// Result of builtin overhead calculation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,13 +195,13 @@ fn create_builtin_tools_for_mode(
 ) -> Vec<Tool> {
     match capability_source {
         CapabilitySource::Activated => Vec::new(),
-        CapabilitySource::Profiles => {
-            let mut tools = vec![create_profile_list_tool(), create_profile_preview_tool()];
-            tools.push(create_scope_set_tool());
-            tools.push(create_scope_add_tool());
-            tools.push(create_scope_remove_tool());
-            tools
-        }
+        CapabilitySource::Profiles => vec![
+            create_profile_list_tool(),
+            create_profile_preview_tool(),
+            create_scope_set_tool(),
+            create_scope_add_tool(),
+            create_scope_remove_tool(),
+        ],
         CapabilitySource::Custom => has_custom_profile
             .then_some(vec![create_client_custom_profile_details_tool()])
             .unwrap_or_default(),
@@ -203,7 +212,7 @@ fn create_builtin_tools_for_mode(
 
 fn create_profile_list_tool() -> Tool {
     Tool::new(
-        "mcpmate_profile_list",
+        MCPMATE_PROFILE_LIST_TOOL,
         "List profiles with capability counts",
         Arc::new(
             serde_json::json!({
@@ -220,7 +229,7 @@ fn create_profile_list_tool() -> Tool {
 
 fn create_profile_preview_tool() -> Tool {
     Tool::new(
-        "mcpmate_profile_preview",
+        MCPMATE_PROFILE_DETAILS_TOOL,
         "Preview a profile with lightweight capability details for one reusable scene.",
         Arc::new(
             serde_json::json!({
@@ -243,7 +252,7 @@ fn create_profile_preview_tool() -> Tool {
 #[cfg(test)]
 fn create_profile_enable_tool() -> Tool {
     Tool::new(
-        "mcpmate_profile_enable",
+        MCPMATE_PROFILE_ENABLE_TOOL,
         "Enable a profile. If the target profile is exclusive, other non-default profiles may be disabled by profile rules.",
         Arc::new(
             serde_json::json!({
@@ -266,7 +275,7 @@ fn create_profile_enable_tool() -> Tool {
 #[cfg(test)]
 fn create_profile_disable_tool() -> Tool {
     Tool::new(
-        "mcpmate_profile_disable",
+        MCPMATE_PROFILE_DISABLE_TOOL,
         "Disable a profile and remove it from the active working set.",
         Arc::new(
             serde_json::json!({
@@ -289,7 +298,7 @@ fn create_profile_disable_tool() -> Tool {
 #[cfg(test)]
 fn create_profile_activate_only_tool() -> Tool {
     Tool::new(
-        "mcpmate_profile_activate_only",
+        MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL,
         "Switch to a single shared scene by keeping only this profile active among non-default profiles.",
         Arc::new(
             serde_json::json!({
@@ -312,7 +321,7 @@ fn create_profile_activate_only_tool() -> Tool {
 #[cfg(test)]
 fn create_scope_get_tool() -> Tool {
     Tool::new(
-        "mcpmate_scope_get",
+        MCPMATE_SCOPE_GET_TOOL,
         "Get the current effective scope for this client, including mode, source, selected profiles, and custom profile ID when present.",
         Arc::new(
             serde_json::json!({
@@ -329,7 +338,7 @@ fn create_scope_get_tool() -> Tool {
 
 fn create_scope_set_tool() -> Tool {
     Tool::new(
-        "mcpmate_scope_set",
+        MCPMATE_SCOPE_SET_TOOL,
         "Replace the effective profile scope with an exact list of shared profiles. Use this to switch to a single scene or exact set.",
         Arc::new(
             serde_json::json!({
@@ -352,7 +361,7 @@ fn create_scope_set_tool() -> Tool {
 
 fn create_scope_add_tool() -> Tool {
     Tool::new(
-        "mcpmate_scope_add",
+        MCPMATE_SCOPE_ADD_TOOL,
         "Add shared profiles to the effective profile scope without replacing the existing selection.",
         Arc::new(
             serde_json::json!({
@@ -375,7 +384,7 @@ fn create_scope_add_tool() -> Tool {
 
 fn create_scope_remove_tool() -> Tool {
     Tool::new(
-        "mcpmate_scope_remove",
+        MCPMATE_SCOPE_REMOVE_TOOL,
         "Remove shared profiles from the effective profile scope without deleting the profile definitions themselves.",
         Arc::new(
             serde_json::json!({
@@ -398,7 +407,7 @@ fn create_scope_remove_tool() -> Tool {
 
 fn create_client_custom_profile_details_tool() -> Tool {
     Tool::new(
-        "mcpmate_client_custom_profile_details",
+        MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL,
         "Get custom profile details: servers, tools, prompts, resources (custom mode only)",
         Arc::new(
             serde_json::json!({
